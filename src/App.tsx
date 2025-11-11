@@ -113,7 +113,7 @@ function App() {
                 lineHeight: '1.5'
               }}
             >
-              * Coming December 2025
+              * December 2025
             </p>
           </div>
 
