@@ -3,78 +3,156 @@ import { Button } from '@/components/ui/button'
 
 function App() {
   return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#000000' }}>
+    <div
+      className="min-h-screen flex flex-col"
+      style={{
+        backgroundColor: '#F5F5F5'
+      }}
+    >
       {/* Header */}
-      <header className="w-full py-6 px-6">
-        <div className="max-w-7xl mx-auto">
-          {/* Empty header for now */}
+      <header className="w-full py-8 px-6">
+        <div className="max-w-5xl mx-auto text-center">
+          <h1
+            style={{
+              fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+              fontWeight: 400,
+              fontSize: '20px',
+              color: '#191919',
+              letterSpacing: '-0.01em'
+            }}
+          >
+            Octave
+          </h1>
         </div>
       </header>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col items-center justify-start px-4 pt-20">
-        {/* Title */}
-        <h1
-          className="text-center mb-4"
-          style={{
-            fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
-            fontWeight: 500,
-            fontSize: '42px',
-            letterSpacing: '-0.02em',
-            color: '#ffffff',
-            lineHeight: '1.1'
-          }}
-        >
-          Build faster with
-          <br />
-          Orchestrated AI agents
-        </h1>
-
-        {/* Subtitle */}
-        <p
-          className="text-center mb-6"
-          style={{
-            fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
-            fontWeight: 400,
-            fontSize: '16px',
-            letterSpacing: '-0.01em',
-            color: '#666666',
-            maxWidth: '600px'
-          }}
-        >
-          Collaborate with multiple agents, all perfectly under control.
-        </p>
-
-        {/* CTA Button */}
-        <div className="relative mb-20">
-          <div className="absolute inset-0 rounded-[10px] bg-white animate-pulse-slow opacity-75 blur-md"></div>
-          <Button
-            size="default"
-            className="relative px-5 py-2 text-sm font-medium"
+      {/* Hero Image - Full Width */}
+      <div className="w-full px-6 mb-16">
+        <div className="max-w-5xl mx-auto">
+          <div
+            className="rounded-2xl"
             style={{
-              backgroundColor: '#ffffff',
-              color: '#000000',
-              borderRadius: '10px'
+              width: '100%',
+              height: '500px',
+              backgroundColor: '#E8E8E8',
+              border: '1px solid #d0d0d0'
             }}
           >
-            Join Waitlist
-          </Button>
-        </div>
-
-        {/* Product Snapshot */}
-        <div
-          className="rounded-lg mb-20"
-          style={{
-            width: '100%',
-            maxWidth: '1200px',
-            height: '600px',
-            backgroundColor: '#1a1a1a',
-            border: '1px solid #333333'
-          }}
-        >
-          {/* Image placeholder */}
+            {/* Image placeholder */}
+          </div>
         </div>
       </div>
+
+      {/* Main Content - Two Column Layout Below Image */}
+      <main className="flex-1 px-6 pb-20">
+        <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16">
+          {/* Left Column - Product & CTA */}
+          <div className="flex flex-col">
+            {/* Title */}
+            <h2
+              className="mb-4"
+              style={{
+                fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+                fontWeight: 500,
+                fontSize: '48px',
+                letterSpacing: '-0.02em',
+                color: '#191919',
+                lineHeight: '1.1'
+              }}
+            >
+              Build faster with
+              <br />
+              Orchestrated AI agents
+            </h2>
+
+            {/* Subtitle */}
+            <p
+              className="mb-10"
+              style={{
+                fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+                fontWeight: 400,
+                fontSize: '18px',
+                letterSpacing: '-0.01em',
+                color: '#666666',
+                lineHeight: '1.5'
+              }}
+            >
+              Collaborate with multiple agents, all perfectly under control.
+            </p>
+
+            {/* CTA Button */}
+            <Button
+              size="lg"
+              className="px-7 py-2.5 text-sm font-medium"
+              style={{
+                backgroundColor: '#191919',
+                color: '#ffffff',
+                borderRadius: '10px'
+              }}
+            >
+              Join Waitlist
+            </Button>
+          </div>
+
+          {/* Right Column - Founder's Message */}
+          <div className="flex flex-col justify-start">
+            <div className="space-y-6">
+              <p
+                style={{
+                  fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+                  fontWeight: 400,
+                  fontSize: '15px',
+                  letterSpacing: '-0.01em',
+                  color: '#191919',
+                  lineHeight: '1.6'
+                }}
+              >
+                Octave is a development tool for non-developers. I'm building it because traditional IDEs can't deliver the productivity we need anymore.
+              </p>
+
+              <p
+                style={{
+                  fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+                  fontWeight: 400,
+                  fontSize: '15px',
+                  letterSpacing: '-0.01em',
+                  color: '#191919',
+                  lineHeight: '1.6'
+                }}
+              >
+                What matters now isn't solving specific problems with code editors—it's structuring your vision at a macro level and letting AI turn it into reality.
+              </p>
+
+              <p
+                style={{
+                  fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+                  fontWeight: 400,
+                  fontSize: '15px',
+                  letterSpacing: '-0.01em',
+                  color: '#191919',
+                  lineHeight: '1.6'
+                }}
+              >
+                I want non-developers to freely enter the market and build products.
+              </p>
+
+              <p
+                style={{
+                  fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+                  fontWeight: 400,
+                  fontSize: '15px',
+                  letterSpacing: '-0.01em',
+                  color: '#666666',
+                  lineHeight: '1.6',
+                  fontStyle: 'normal'
+                }}
+              >
+                William Jung
+              </p>
+            </div>
+          </div>
+        </div>
+      </main>
     </div>
   )
 }
