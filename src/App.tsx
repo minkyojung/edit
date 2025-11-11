@@ -99,36 +99,80 @@ function App() {
             <div className="space-y-6">
               <p
                 style={{
-                  fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+                  fontFamily: '"SF Pro Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
                   fontWeight: 400,
                   fontSize: '15px',
-                  letterSpacing: '-0.01em',
+                  letterSpacing: '-0.02em',
                   color: '#191919',
                   lineHeight: '1.6'
                 }}
               >
-                Octave is a development tool for non-developers. I'm building it because traditional IDEs can't deliver the productivity we need anymore.
+                Octave is a <span style={{
+                  background: 'linear-gradient(120deg, rgba(255, 234, 0, 0.4) 0%, rgba(255, 180, 0, 0.4) 100%)',
+                  backgroundPosition: '0 80%',
+                  backgroundRepeat: 'no-repeat',
+                  backgroundSize: '100% 50%',
+                  padding: '0 3px',
+                  fontWeight: 500,
+                  position: 'relative'
+                }}>development tool for non-developers</span>. I'm building it because traditional IDEs can't deliver the productivity we need anymore.
               </p>
 
               <p
                 style={{
-                  fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+                  fontFamily: '"SF Pro Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
                   fontWeight: 400,
                   fontSize: '15px',
-                  letterSpacing: '-0.01em',
+                  letterSpacing: '-0.02em',
                   color: '#191919',
                   lineHeight: '1.6'
                 }}
               >
-                What matters now isn't solving specific problems with code editors—it's structuring your vision at a macro level and letting AI turn it into reality.
+                What matters now isn't solving specific problems with code editors—it's <span style={{
+                  position: 'relative',
+                  fontWeight: 500,
+                  display: 'inline-block',
+                  paddingBottom: '8px'
+                }}>
+                  structuring your vision
+                  <svg
+                    style={{
+                      position: 'absolute',
+                      left: '-2px',
+                      bottom: '0',
+                      width: 'calc(100% + 4px)',
+                      height: '10px',
+                      overflow: 'visible'
+                    }}
+                    viewBox="0 0 200 10"
+                    preserveAspectRatio="none"
+                  >
+                    <path
+                      d="M2,5 Q12,6 22,5 T42,5 T62,6 T82,5 T102,6 T122,5 T142,6 T162,5 T182,6 T200,5"
+                      stroke="#FF9800"
+                      strokeWidth="2"
+                      fill="none"
+                      strokeLinecap="round"
+                      opacity="0.8"
+                    />
+                  </svg>
+                </span> at a macro level and letting AI <span style={{
+                  background: 'linear-gradient(120deg, rgba(16, 185, 129, 0.4) 0%, rgba(59, 130, 246, 0.4) 100%)',
+                  backgroundPosition: '0 80%',
+                  backgroundRepeat: 'no-repeat',
+                  backgroundSize: '100% 50%',
+                  padding: '0 3px',
+                  fontWeight: 500,
+                  borderRadius: '2px'
+                }}>turn it into reality</span>.
               </p>
 
               <p
                 style={{
-                  fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+                  fontFamily: '"SF Pro Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
                   fontWeight: 400,
                   fontSize: '15px',
-                  letterSpacing: '-0.01em',
+                  letterSpacing: '-0.02em',
                   color: '#191919',
                   lineHeight: '1.6'
                 }}
@@ -138,10 +182,10 @@ function App() {
 
               <p
                 style={{
-                  fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+                  fontFamily: '"SF Pro Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
                   fontWeight: 400,
                   fontSize: '15px',
-                  letterSpacing: '-0.01em',
+                  letterSpacing: '-0.02em',
                   color: '#666666',
                   lineHeight: '1.6',
                   fontStyle: 'normal'
