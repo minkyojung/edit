@@ -58,8 +58,8 @@ function App() {
                 />
               </CarouselItem>
             </CarouselContent>
-            <CarouselPrevious className="left-4" />
-            <CarouselNext className="right-4" />
+            <CarouselPrevious className="left-4 h-6 w-6" />
+            <CarouselNext className="right-4 h-6 w-6" />
           </Carousel>
         </div>
       </div>
@@ -95,10 +95,25 @@ function App() {
                 fontSize: '18px',
                 letterSpacing: '-0.01em',
                 color: '#666666',
-                lineHeight: '1.5'
+                lineHeight: '1.5',
+                marginBottom: '12px'
               }}
             >
               Collaborate with multiple agents, all perfectly under control.
+            </p>
+
+            {/* Launch Date */}
+            <p
+              style={{
+                fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+                fontWeight: 300,
+                fontSize: '14px',
+                letterSpacing: '-0.01em',
+                color: '#999999',
+                lineHeight: '1.5'
+              }}
+            >
+              * Coming December 2025
             </p>
           </div>
 
