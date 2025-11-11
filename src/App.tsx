@@ -1,5 +1,11 @@
 import './App.css'
-import { Button } from '@/components/ui/button'
+import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+  CarouselNext,
+  CarouselPrevious,
+} from '@/components/ui/carousel'
 
 function App() {
   return (
@@ -15,31 +21,46 @@ function App() {
           <h1
             style={{
               fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
-              fontWeight: 400,
+              fontWeight: 500,
               fontSize: '20px',
               color: '#191919',
-              letterSpacing: '-0.01em'
+              letterSpacing: '-0.03em'
             }}
           >
-            Octave
+            .octave
           </h1>
         </div>
       </header>
 
-      {/* Hero Image - Full Width */}
+      {/* Hero Image Carousel - Full Width */}
       <div className="w-full px-6 mb-16">
         <div className="max-w-5xl mx-auto">
-          <div
-            className="rounded-2xl"
-            style={{
-              width: '100%',
-              height: '500px',
-              backgroundColor: '#E8E8E8',
-              border: '1px solid #d0d0d0'
+          <Carousel
+            opts={{
+              align: "start",
+              loop: true,
             }}
+            className="w-full"
           >
-            {/* Image placeholder */}
-          </div>
+            <CarouselContent>
+              <CarouselItem>
+                <img
+                  src="/1.png"
+                  alt="Octave IDE Interface - Code Editor View"
+                  className="w-full h-[500px] object-cover rounded-2xl border border-[#d0d0d0]"
+                />
+              </CarouselItem>
+              <CarouselItem>
+                <img
+                  src="/2.png"
+                  alt="Octave IDE Interface - Task Management View"
+                  className="w-full h-[500px] object-cover rounded-2xl border border-[#d0d0d0]"
+                />
+              </CarouselItem>
+            </CarouselContent>
+            <CarouselPrevious className="left-4" />
+            <CarouselNext className="right-4" />
+          </Carousel>
         </div>
       </div>
 
@@ -50,7 +71,7 @@ function App() {
           <div className="flex flex-col">
             {/* Title */}
             <h2
-              className="mb-4"
+              className="mb-4 animate-title"
               style={{
                 fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
                 fontWeight: 500,
@@ -67,7 +88,7 @@ function App() {
 
             {/* Subtitle */}
             <p
-              className="mb-10"
+              className="animate-subtitle"
               style={{
                 fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
                 fontWeight: 400,
@@ -79,19 +100,6 @@ function App() {
             >
               Collaborate with multiple agents, all perfectly under control.
             </p>
-
-            {/* CTA Button */}
-            <Button
-              size="lg"
-              className="px-7 py-2.5 text-sm font-medium"
-              style={{
-                backgroundColor: '#191919',
-                color: '#ffffff',
-                borderRadius: '10px'
-              }}
-            >
-              Join Waitlist
-            </Button>
           </div>
 
           {/* Right Column - Founder's Message */}
@@ -104,7 +112,7 @@ function App() {
                   fontSize: '15px',
                   letterSpacing: '-0.02em',
                   color: '#191919',
-                  lineHeight: '1.6'
+                  lineHeight: '1.4'
                 }}
               >
                 Octave is a <span style={{
@@ -115,7 +123,7 @@ function App() {
                   padding: '0 3px',
                   fontWeight: 500,
                   position: 'relative'
-                }}>development tool for non-developers</span>. I'm building it because traditional IDEs can't deliver the productivity we need anymore.
+                }}>development tool for non-developers</span>.<br />I'm building it because traditional IDEs can't deliver the productivity<br />we need anymore.
               </p>
 
               <p
@@ -125,10 +133,10 @@ function App() {
                   fontSize: '15px',
                   letterSpacing: '-0.02em',
                   color: '#191919',
-                  lineHeight: '1.6'
+                  lineHeight: '1.4'
                 }}
               >
-                What matters now isn't solving specific problems with code editors—it's <span style={{
+                What matters now isn't solving specific problems with code editors<br />—it's <span style={{
                   position: 'relative',
                   fontWeight: 500,
                   display: 'inline-block',
@@ -174,7 +182,7 @@ function App() {
                   fontSize: '15px',
                   letterSpacing: '-0.02em',
                   color: '#191919',
-                  lineHeight: '1.6'
+                  lineHeight: '1.4'
                 }}
               >
                 I want non-developers to freely enter the market and build products.
@@ -187,7 +195,7 @@ function App() {
                   fontSize: '15px',
                   letterSpacing: '-0.02em',
                   color: '#666666',
-                  lineHeight: '1.6',
+                  lineHeight: '1.4',
                   fontStyle: 'normal'
                 }}
               >
