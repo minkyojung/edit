@@ -138,7 +138,7 @@ function App() {
                   padding: '0 3px',
                   fontWeight: 500,
                   position: 'relative'
-                }}>development tool for non-developers</span>.<br />I'm building it because traditional IDEs can't deliver the productivity<br />we need anymore.
+                }}>development tool for non-developers</span>.<br />I'm building it because traditional IDEs no longer deliver<br />the productivity we need.
               </p>
 
               <p
@@ -151,7 +151,7 @@ function App() {
                   lineHeight: '1.4'
                 }}
               >
-                What matters now isn't solving specific problems with code editors<br />—it's <span style={{
+                What matters now isn't solving specific problems in code editors<br />—it's <span style={{
                   position: 'relative',
                   fontWeight: 500,
                   display: 'inline-block',
@@ -179,7 +179,7 @@ function App() {
                       opacity="0.8"
                     />
                   </svg>
-                </span> at a macro level and letting AI <span style={{
+                </span> and letting AI <span style={{
                   background: 'linear-gradient(120deg, rgba(16, 185, 129, 0.4) 0%, rgba(59, 130, 246, 0.4) 100%)',
                   backgroundPosition: '0 80%',
                   backgroundRepeat: 'no-repeat',
