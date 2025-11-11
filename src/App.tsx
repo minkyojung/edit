@@ -6,15 +6,18 @@ import {
   CarouselNext,
   CarouselPrevious,
 } from '@/components/ui/carousel'
+import { SmoothCursor } from '@/components/ui/smooth-cursor'
 
 function App() {
   return (
-    <div
-      className="min-h-screen flex flex-col"
-      style={{
-        backgroundColor: '#F5F5F5'
-      }}
-    >
+    <>
+      <SmoothCursor />
+      <div
+        className="min-h-screen flex flex-col"
+        style={{
+          backgroundColor: '#F5F5F5'
+        }}
+      >
       {/* Header */}
       <header className="w-full py-8 px-6">
         <div className="max-w-5xl mx-auto text-center">
@@ -220,7 +223,8 @@ function App() {
           </div>
         </div>
       </main>
-    </div>
+      </div>
+    </>
   )
 }
 
