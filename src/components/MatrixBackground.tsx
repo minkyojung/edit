@@ -31,11 +31,11 @@ const MatrixBackground = () => {
     // Drawing function
     const draw = () => {
       // Semi-transparent black to create trailing effect
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.05)'
+      ctx.fillStyle = 'rgba(15, 15, 15, 0.05)'
       ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-      // Green text - brighter for visibility
-      ctx.fillStyle = '#0F9'
+      // Light gray text
+      ctx.fillStyle = '#999'
       ctx.font = fontSize + 'px monospace'
 
       // Loop through drops
@@ -86,7 +86,7 @@ const MatrixBackground = () => {
     <canvas
       ref={canvasRef}
       className="fixed top-0 left-0 w-full h-full z-0 opacity-30"
-      style={{ backgroundColor: '#000' }}
+      style={{ backgroundColor: '#0f0f0f' }}
     />
   )
 }
