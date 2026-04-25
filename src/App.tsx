@@ -20,7 +20,7 @@ function App() {
       >
       {/* Header */}
       <header className="w-full py-8 px-6">
-        <div className="max-w-5xl mx-auto text-center">
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
           <h1
             style={{
               fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
@@ -32,6 +32,19 @@ function App() {
           >
             .octave
           </h1>
+          <a
+            href="/changelog"
+            style={{
+              fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
+              fontWeight: 400,
+              fontSize: '14px',
+              color: '#666',
+              letterSpacing: '-0.01em',
+              textDecoration: 'none'
+            }}
+          >
+            Changelog
+          </a>
         </div>
       </header>
 
