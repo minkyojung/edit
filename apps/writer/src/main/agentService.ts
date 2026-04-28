@@ -2,6 +2,7 @@ import { query, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agen
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { WebContents } from 'electron'
 import { readBelief } from './wikiService'
+import { scheduleMemoryUpdate } from './memoryService'
 
 class UserMessageQueue {
   private _q: unknown[] = []
@@ -41,6 +42,7 @@ Apply the user's writing style preferences from the wiki section above when maki
 let session: Query | null = null
 let queue: UserMessageQueue | null = null
 let activeWebContents: WebContents | null = null
+let conversationLog: string[] = []
 
 function extractText(msg: SDKMessage): string | null {
   if (msg.type !== 'assistant') return null
@@ -92,13 +94,19 @@ async function processStream(): Promise<void> {
       }
 
       const text = extractText(msg)
-      if (text && activeWebContents && !activeWebContents.isDestroyed()) {
-        activeWebContents.send('agent:chunk', text)
+      if (text) {
+        if (activeWebContents && !activeWebContents.isDestroyed()) {
+          activeWebContents.send('agent:chunk', text)
+        }
+        conversationLog.push(`Assistant: ${text}`)
       }
 
       if (msg.type === 'result') {
         if (activeWebContents && !activeWebContents.isDestroyed()) {
           activeWebContents.send('agent:done')
+        }
+        if (conversationLog.length > 0) {
+          scheduleMemoryUpdate(conversationLog.join('\n\n'))
         }
       }
     }
@@ -115,6 +123,7 @@ export function trigger(text: string, webContents: WebContents): void {
   ensureSession(webContents)
     .then(() => {
       activeWebContents = webContents
+      conversationLog.push(`User: ${text}`)
       queue?.push({ type: 'user', message: { role: 'user', content: text } })
     })
     .catch((err) => console.error('[trigger]', err))
@@ -132,6 +141,7 @@ export async function resetSession(): Promise<void> {
   session = null
   queue = null
   activeWebContents = null
+  conversationLog = []
 }
 
 export async function shutdown(): Promise<void> {
