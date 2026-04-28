@@ -56,7 +56,10 @@ app.whenReady().then(() => {
   startProofServer()
   const win = createWindow()
 
-  bootstrapWiki().catch((err) => console.error('[wiki bootstrap]', err))
+  bootstrapWiki().catch((err) => {
+    console.error('[wiki bootstrap]', err)
+    win.webContents.send('server:error')
+  })
 
   ipcMain.on('agent:trigger', (_, text: string) => {
     trigger(text, win.webContents)

@@ -13,4 +13,7 @@ interface Window {
     status: () => Promise<'ok' | 'not-installed' | 'not-logged-in'>
     login: () => Promise<'ok' | 'not-installed' | 'not-logged-in'>
   }
+  server: {
+    onError: (cb: () => void) => void
+  }
 }

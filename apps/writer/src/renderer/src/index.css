@@ -84,6 +84,10 @@ body {
   color: #666;
 }
 
+.auth-status--error {
+  color: #c0392b;
+}
+
 .auth-status--clickable {
   cursor: pointer;
   color: #e07a00;
@@ -239,6 +243,14 @@ body {
   color: #bbb;
   border-top: 1px solid #ebebeb;
   background: #fff;
+}
+
+.modal-hint-error {
+  color: #c0392b;
+}
+
+.modal-error {
+  color: #c0392b;
 }
 
 .tiptap {

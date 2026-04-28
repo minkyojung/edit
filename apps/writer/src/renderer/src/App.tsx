@@ -7,19 +7,28 @@ function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
   const [markdown, setMarkdown] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    window.wiki.read().then((md) => {
-      setMarkdown(md)
-      setLoading(false)
-    })
+    window.wiki.read()
+      .then((md) => {
+        setMarkdown(md)
+        setLoading(false)
+      })
+      .catch(() => {
+        setError('위키를 불러오지 못했습니다. 서버 연결을 확인해주세요.')
+        setLoading(false)
+      })
   }, [])
 
   const handleSave = useCallback(async () => {
     setSaving(true)
+    setError(null)
     try {
       await window.wiki.save(markdown)
       onClose()
+    } catch {
+      setError('저장에 실패했습니다. 서버 연결을 확인해주세요.')
     } finally {
       setSaving(false)
     }
@@ -50,6 +59,8 @@ function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
         </div>
         {loading ? (
           <div className="modal-loading">불러오는 중...</div>
+        ) : error && !markdown ? (
+          <div className="modal-loading modal-error">{error}</div>
         ) : (
           <textarea
             className="wiki-textarea"
@@ -59,7 +70,10 @@ function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
             spellCheck={false}
           />
         )}
-        <div className="modal-hint">⌘S로 저장 · 저장 시 에이전트 세션이 갱신됩니다</div>
+        <div className="modal-hint">
+          {error && markdown ? <span className="modal-hint-error">{error} · </span> : null}
+          ⌘S로 저장 · 저장 시 에이전트 세션이 갱신됩니다
+        </div>
       </div>
     </div>
   )
@@ -83,10 +97,12 @@ export default function App(): React.ReactElement {
   const [wikiOpen, setWikiOpen] = useState(false)
   const [authStatus, setAuthStatus] = useState<'ok' | 'not-installed' | 'not-logged-in' | 'checking'>('checking')
   const [loggingIn, setLoggingIn] = useState(false)
+  const [serverError, setServerError] = useState(false)
   const listenersAdded = useRef(false)
 
   useEffect(() => {
     window.auth.status().then(setAuthStatus)
+    window.server.onError(() => setServerError(true))
   }, [])
 
   const handleLogin = useCallback(async () => {
@@ -146,6 +162,11 @@ export default function App(): React.ReactElement {
               {streaming && <span className="cursor" />}
             </div>
           )}
+        </div>
+      )}
+      {serverError && (
+        <div className="auth-status auth-status--error">
+          서버 연결 실패 — 앱을 재시작해주세요
         </div>
       )}
       {authStatus === 'not-installed' && (

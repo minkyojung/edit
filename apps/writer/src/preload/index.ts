@@ -26,3 +26,9 @@ contextBridge.exposeInMainWorld('auth', {
   status: (): Promise<string> => ipcRenderer.invoke('auth:status'),
   login: (): Promise<string> => ipcRenderer.invoke('auth:login')
 })
+
+contextBridge.exposeInMainWorld('server', {
+  onError: (cb: () => void) => {
+    ipcRenderer.on('server:error', () => cb())
+  }
+})
