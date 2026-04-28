@@ -253,7 +253,24 @@ body {
   color: #c0392b;
 }
 
-.tiptap {
+.suggestion-insertion {
+  background-color: rgba(34, 197, 94, 0.18);
+  border-bottom: 2px solid rgb(34, 197, 94);
+}
+
+.suggestion-deletion {
+  background-color: rgba(239, 68, 68, 0.18);
+  text-decoration: line-through;
+  color: rgba(0, 0, 0, 0.5);
+}
+
+.suggestion-modification {
+  background-color: rgba(234, 179, 8, 0.18);
+  border-bottom: 2px dashed rgb(234, 179, 8);
+}
+
+.milkdown,
+.ProseMirror {
   font-family: system-ui, sans-serif;
   font-size: 16px;
   line-height: 1.7;
@@ -262,16 +279,32 @@ body {
   width: 100%;
   min-height: 200px;
   cursor: text;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  border: none;
+  box-shadow: none;
+  background: none;
 }
 
-.tiptap p {
+.ProseMirror p {
   margin-bottom: 12px;
 }
 
-.tiptap p.is-editor-empty:first-child::before {
-  content: attr(data-placeholder);
-  color: #aaa;
-  pointer-events: none;
-  float: left;
-  height: 0;
+.ProseMirror h1 {
+  font-size: 1.6em;
+  font-weight: 600;
+  margin: 0 0 16px;
+}
+
+.ProseMirror h2 {
+  font-size: 1.3em;
+  font-weight: 600;
+  margin: 16px 0 12px;
+}
+
+.ProseMirror:focus,
+.ProseMirror:focus-visible,
+.milkdown:focus,
+.milkdown:focus-visible {
+  outline: none;
 }

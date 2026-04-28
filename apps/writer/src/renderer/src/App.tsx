@@ -1,10 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
-import { useEditor, EditorContent } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import Collaboration from '@tiptap/extension-collaboration'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
-import { useIdleCallback } from './hooks/useIdleCallback'
+import { useDebouncedText } from './hooks/useIdleCallback'
+import { MilkdownEditor } from './MilkdownEditor'
 
 function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
   const [markdown, setMarkdown] = useState('')
@@ -84,15 +82,16 @@ function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
 
 export default function App(): React.ReactElement {
   const ydoc = useMemo(() => new Y.Doc(), [])
-  const providerRef = useRef<HocuspocusProvider | null>(null)
+  const [provider, setProvider] = useState<HocuspocusProvider | null>(null)
 
   useEffect(() => {
+    let p: HocuspocusProvider | null = null
     window.doc.collabSession().then(({ collabWsUrl, token, slug }) => {
       const url = new URL(collabWsUrl)
       url.searchParams.set('slug', slug)
       url.searchParams.set('token', token)
       url.searchParams.set('role', 'editor')
-      const provider = new HocuspocusProvider({
+      p = new HocuspocusProvider({
         url: url.toString(),
         name: slug,
         document: ydoc,
@@ -100,26 +99,13 @@ export default function App(): React.ReactElement {
         onSynced: () => console.log('[collab] synced'),
         onAuthenticationFailed: ({ reason }) => console.error('[collab] auth failed:', reason)
       })
-      providerRef.current = provider
+      setProvider(p)
     }).catch((err) => console.error('[collab] failed to get session', err))
 
     return () => {
-      providerRef.current?.destroy()
+      p?.destroy()
     }
   }, [ydoc])
-
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ history: false }),
-      Collaboration.configure({ document: ydoc })
-    ],
-    autofocus: true,
-    editorProps: {
-      attributes: {
-        'data-placeholder': '글을 입력하세요...'
-      }
-    }
-  })
 
   const [suggestion, setSuggestion] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -128,6 +114,7 @@ export default function App(): React.ReactElement {
   const [authStatus, setAuthStatus] = useState<'ok' | 'not-installed' | 'not-logged-in' | 'checking'>('checking')
   const [loggingIn, setLoggingIn] = useState(false)
   const [serverError, setServerError] = useState(false)
+  const [editorMarkdown, setEditorMarkdown] = useState<string | null>(null)
   const listenersAdded = useRef(false)
 
   useEffect(() => {
@@ -164,8 +151,7 @@ export default function App(): React.ReactElement {
     })
   }, [])
 
-  useIdleCallback(editor, 1500, (e) => {
-    const text = e.getText()
+  useDebouncedText(editorMarkdown, 1500, (text) => {
     if (!text.trim()) return
     setSuggestion('')
     setAgentError(null)
@@ -179,7 +165,7 @@ export default function App(): React.ReactElement {
         <button className="wiki-btn" onClick={() => setWikiOpen(true)} title="글쓰기 스타일 위키">
           ✦
         </button>
-        <EditorContent editor={editor} />
+        <MilkdownEditor ydoc={ydoc} provider={provider} onMarkdownChange={setEditorMarkdown} />
       </div>
       {(suggestion || streaming || agentError) && (
         <div className="suggestion-pane">

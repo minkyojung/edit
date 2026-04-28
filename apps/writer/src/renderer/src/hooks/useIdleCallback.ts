@@ -1,30 +1,22 @@
 import { useEffect, useRef } from 'react'
-import type { Editor } from '@tiptap/react'
 
-export function useIdleCallback(
-  editor: Editor | null,
+export function useDebouncedText(
+  text: string | null,
   delay: number,
-  callback: (editor: Editor) => void
+  callback: (text: string) => void
 ): void {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const callbackRef = useRef(callback)
   callbackRef.current = callback
 
   useEffect(() => {
-    if (!editor) return
-
-    const handleUpdate = (): void => {
-      if (timer.current) clearTimeout(timer.current)
-      timer.current = setTimeout(() => {
-        callbackRef.current(editor)
-      }, delay)
-    }
-
-    editor.on('update', handleUpdate)
-
+    if (text == null) return
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      callbackRef.current(text)
+    }, delay)
     return () => {
-      editor.off('update', handleUpdate)
       if (timer.current) clearTimeout(timer.current)
     }
-  }, [editor, delay])
+  }, [text, delay])
 }
