@@ -16,4 +16,7 @@ interface Window {
   server: {
     onError: (cb: () => void) => void
   }
+  doc: {
+    collabSession: () => Promise<{ collabWsUrl: string; token: string; slug: string }>
+  }
 }

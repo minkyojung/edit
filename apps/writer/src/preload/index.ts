@@ -32,3 +32,8 @@ contextBridge.exposeInMainWorld('server', {
     ipcRenderer.on('server:error', () => cb())
   }
 })
+
+contextBridge.exposeInMainWorld('doc', {
+  collabSession: (): Promise<{ collabWsUrl: string; token: string; slug: string }> =>
+    ipcRenderer.invoke('doc:collab-session')
+})

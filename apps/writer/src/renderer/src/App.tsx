@@ -1,6 +1,9 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
+import Collaboration from '@tiptap/extension-collaboration'
+import { HocuspocusProvider } from '@hocuspocus/provider'
+import * as Y from 'yjs'
 import { useIdleCallback } from './hooks/useIdleCallback'
 
 function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
@@ -80,9 +83,36 @@ function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
 }
 
 export default function App(): React.ReactElement {
+  const ydoc = useMemo(() => new Y.Doc(), [])
+  const providerRef = useRef<HocuspocusProvider | null>(null)
+
+  useEffect(() => {
+    window.doc.collabSession().then(({ collabWsUrl, token, slug }) => {
+      const url = new URL(collabWsUrl)
+      url.searchParams.set('slug', slug)
+      url.searchParams.set('token', token)
+      url.searchParams.set('role', 'editor')
+      const provider = new HocuspocusProvider({
+        url: url.toString(),
+        name: slug,
+        document: ydoc,
+        token: () => token,
+        onSynced: () => console.log('[collab] synced'),
+        onAuthenticationFailed: ({ reason }) => console.error('[collab] auth failed:', reason)
+      })
+      providerRef.current = provider
+    }).catch((err) => console.error('[collab] failed to get session', err))
+
+    return () => {
+      providerRef.current?.destroy()
+    }
+  }, [ydoc])
+
   const editor = useEditor({
-    extensions: [StarterKit],
-    content: '<p></p>',
+    extensions: [
+      StarterKit.configure({ history: false }),
+      Collaboration.configure({ document: ydoc })
+    ],
     autofocus: true,
     editorProps: {
       attributes: {

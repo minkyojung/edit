@@ -46,7 +46,7 @@ async function saveCreds(creds: WikiCreds): Promise<void> {
   await writeFile(credsPath(), JSON.stringify(creds, null, 2), 'utf8')
 }
 
-async function waitForServer(timeoutMs = 15000): Promise<void> {
+export async function waitForServer(timeoutMs = 15000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {

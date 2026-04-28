@@ -4,6 +4,7 @@ import { spawn, ChildProcess } from 'child_process'
 import { trigger, shutdown as agentShutdown, resetSession } from './agentService'
 import { bootstrapWiki, readBelief, writeBelief } from './wikiService'
 import { checkAuth, runLogin } from './authService'
+import { bootstrapDoc, getCollabSession } from './docService'
 
 let proofServer: ChildProcess | null = null
 
@@ -13,7 +14,11 @@ function startProofServer(): void {
   proofServer = spawn('npm', ['run', 'serve'], {
     cwd: serverPath,
     stdio: 'pipe',
-    shell: true
+    shell: true,
+    env: {
+      ...process.env,
+      COLLAB_EMBEDDED_WS: 'true'
+    }
   })
 
   proofServer.stdout?.on('data', (data) => {
@@ -59,6 +64,12 @@ app.whenReady().then(() => {
   bootstrapWiki().catch((err) => {
     console.error('[wiki bootstrap]', err)
     win.webContents.send('server:error')
+  })
+
+  bootstrapDoc().catch((err) => console.error('[doc bootstrap]', err))
+
+  ipcMain.handle('doc:collab-session', async (_: IpcMainInvokeEvent) => {
+    return getCollabSession()
   })
 
   ipcMain.on('agent:trigger', (_, text: string) => {
