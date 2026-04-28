@@ -1,8 +1,12 @@
-import { query, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk'
+import { query, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { WebContents } from 'electron'
+import { z } from 'zod'
 import { readBelief } from './wikiService'
 import { scheduleMemoryUpdate } from './memoryService'
+import { bootstrapDoc } from './docService'
+
+const PROOF_URL = 'http://localhost:4000'
 
 class UserMessageQueue {
   private _q: unknown[] = []
@@ -34,10 +38,46 @@ class UserMessageQueue {
 }
 
 const COPYEDITOR_INSTRUCTIONS = `You are a copyeditor embedded in a writing app.
-The user will send you their writing. Analyze it and return concise, actionable suggestions to improve clarity, flow, and style.
-Keep suggestions brief. Output in Korean if the writing is in Korean.
-Do not rewrite the entire text — give specific targeted suggestions only.
-Apply the user's writing style preferences from the wiki section above when making suggestions.`
+The user will send you their writing. Identify specific phrases that should be replaced and use the suggest_replace tool to mark them.
+
+Rules:
+- Use the suggest_replace tool for each suggestion. Do NOT explain in plain text.
+- Quote must match the original text exactly (including punctuation).
+- Provide concise, actionable replacements.
+- Apply the user's writing style preferences from the wiki section above.
+- Output in Korean if the writing is in Korean.
+- If no improvements are needed, do nothing.`
+
+async function createSuggestServer(slug: string, token: string): Promise<ReturnType<typeof createSdkMcpServer>> {
+  return createSdkMcpServer({
+    name: 'suggest',
+    version: '0.0.1',
+    tools: [
+      tool(
+        'suggest_replace',
+        '문서 안의 특정 문구를 다른 표현으로 바꾸는 제안 마크를 추가한다. quote는 원문에 정확히 일치해야 한다.',
+        { quote: z.string(), content: z.string() },
+        async ({ quote, content }) => {
+          const res = await fetch(`${PROOF_URL}/api/agent/${slug}/marks/suggest-replace`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-share-token': token
+            },
+            body: JSON.stringify({ quote, content, by: 'ai:copyeditor' })
+          })
+          if (!res.ok) {
+            const err = await res.text()
+            console.error('[suggest_replace] failed:', res.status, err)
+            return { content: [{ type: 'text', text: `failed: ${res.status} ${err}` }] }
+          }
+          console.log('[suggest_replace] ok:', quote, '→', content)
+          return { content: [{ type: 'text', text: 'ok' }] }
+        }
+      )
+    ]
+  })
+}
 
 let session: Query | null = null
 let queue: UserMessageQueue | null = null
@@ -60,6 +100,9 @@ async function ensureSession(webContents: WebContents): Promise<void> {
     console.error('[agent] readBelief failed, continuing with empty belief:', err)
   }
 
+  const doc = await bootstrapDoc()
+  const suggestServer = await createSuggestServer(doc.slug, doc.token)
+
   queue = new UserMessageQueue()
   activeWebContents = webContents
 
@@ -72,8 +115,10 @@ async function ensureSession(webContents: WebContents): Promise<void> {
         COPYEDITOR_INSTRUCTIONS,
         SYSTEM_PROMPT_DYNAMIC_BOUNDARY
       ],
-      permissionMode: 'dontAsk',
-      tools: [],
+      mcpServers: { suggest: suggestServer },
+      allowedTools: ['mcp__suggest__suggest_replace'],
+      tools: ['mcp__suggest__suggest_replace'],
+      permissionMode: 'bypassPermissions',
       settingSources: ['user', 'project', 'local']
     }
   })
