@@ -10,8 +10,54 @@ body {
 }
 
 .app {
+  display: flex;
   height: 100vh;
+}
+
+.editor-pane {
+  flex: 1;
+  padding: 48px 40px;
+  overflow-y: auto;
+}
+
+.suggestion-pane {
+  width: 280px;
+  border-left: 1px solid #e8e8e8;
   padding: 48px 24px;
+  background: #f7f7f5;
+  overflow-y: auto;
+}
+
+.suggestion-label {
+  font-family: system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #999;
+  margin-bottom: 12px;
+}
+
+.suggestion-text {
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #444;
+  white-space: pre-wrap;
+}
+
+.cursor {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  background: #999;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
 }
 
 .tiptap {
