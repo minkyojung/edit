@@ -1,6 +1,7 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import { spawn, ChildProcess } from 'child_process'
+import { trigger } from './agentService'
 
 let proofServer: ChildProcess | null = null
 
@@ -22,7 +23,7 @@ function startProofServer(): void {
   })
 }
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -45,11 +46,17 @@ function createWindow(): void {
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  return win
 }
 
 app.whenReady().then(() => {
   startProofServer()
-  createWindow()
+  const win = createWindow()
+
+  ipcMain.on('agent:trigger', (_, text: string) => {
+    trigger(text, win.webContents)
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

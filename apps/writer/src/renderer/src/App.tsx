@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { useIdleCallback } from './hooks/useIdleCallback'
@@ -15,10 +15,15 @@ export default function App(): React.ReactElement {
     }
   })
 
+  useEffect(() => {
+    window.agent.onChunk((text) => console.log('[agent chunk]', text))
+    window.agent.onDone(() => console.log('[agent done]'))
+  }, [])
+
   useIdleCallback(editor, 1500, (e) => {
     const text = e.getText()
     if (!text.trim()) return
-    console.log('[idle] 트리거 — 에이전트 호출 예정', { chars: text.length })
+    window.agent.trigger(text)
   })
 
   return (
