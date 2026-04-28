@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import { spawn, ChildProcess } from 'child_process'
 import { trigger } from './agentService'
+import { bootstrapWiki } from './wikiService'
 
 let proofServer: ChildProcess | null = null
 
@@ -53,6 +54,8 @@ function createWindow(): BrowserWindow {
 app.whenReady().then(() => {
   startProofServer()
   const win = createWindow()
+
+  bootstrapWiki().catch((err) => console.error('[wiki bootstrap]', err))
 
   ipcMain.on('agent:trigger', (_, text: string) => {
     trigger(text, win.webContents)
