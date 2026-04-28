@@ -13,3 +13,8 @@ contextBridge.exposeInMainWorld('agent', {
     ipcRenderer.on('agent:done', () => cb())
   }
 })
+
+contextBridge.exposeInMainWorld('wiki', {
+  read: (): Promise<string> => ipcRenderer.invoke('wiki:read'),
+  save: (markdown: string): Promise<void> => ipcRenderer.invoke('wiki:save', markdown)
+})

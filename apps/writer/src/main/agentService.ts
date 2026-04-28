@@ -120,7 +120,7 @@ export function trigger(text: string, webContents: WebContents): void {
     .catch((err) => console.error('[trigger]', err))
 }
 
-export async function shutdown(): Promise<void> {
+export async function resetSession(): Promise<void> {
   if (session) {
     try {
       await session.interrupt()
@@ -129,4 +129,11 @@ export async function shutdown(): Promise<void> {
     }
   }
   queue?.close()
+  session = null
+  queue = null
+  activeWebContents = null
+}
+
+export async function shutdown(): Promise<void> {
+  await resetSession()
 }

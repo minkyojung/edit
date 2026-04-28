@@ -116,3 +116,16 @@ export async function readBelief(): Promise<string> {
   const data = (await res.json()) as { markdown: string }
   return data.markdown
 }
+
+export async function writeBelief(markdown: string): Promise<void> {
+  const creds = await bootstrapWiki()
+  const res = await fetch(`${PROOF_URL}/documents/${creds.slug}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-share-token': creds.token
+    },
+    body: JSON.stringify({ markdown })
+  })
+  if (!res.ok) throw new Error(`failed to write belief: ${res.status}`)
+}

@@ -1,8 +1,8 @@
-import { app, BrowserWindow, shell, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, IpcMainInvokeEvent } from 'electron'
 import { join } from 'path'
 import { spawn, ChildProcess } from 'child_process'
-import { trigger, shutdown as agentShutdown } from './agentService'
-import { bootstrapWiki } from './wikiService'
+import { trigger, shutdown as agentShutdown, resetSession } from './agentService'
+import { bootstrapWiki, readBelief, writeBelief } from './wikiService'
 
 let proofServer: ChildProcess | null = null
 
@@ -59,6 +59,15 @@ app.whenReady().then(() => {
 
   ipcMain.on('agent:trigger', (_, text: string) => {
     trigger(text, win.webContents)
+  })
+
+  ipcMain.handle('wiki:read', async (_: IpcMainInvokeEvent) => {
+    return readBelief()
+  })
+
+  ipcMain.handle('wiki:save', async (_: IpcMainInvokeEvent, markdown: string) => {
+    await writeBelief(markdown)
+    await resetSession()
   })
 
   app.on('activate', () => {

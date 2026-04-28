@@ -4,4 +4,8 @@ interface Window {
     onChunk: (cb: (text: string) => void) => void
     onDone: (cb: () => void) => void
   }
+  wiki: {
+    read: () => Promise<string>
+    save: (markdown: string) => Promise<void>
+  }
 }
