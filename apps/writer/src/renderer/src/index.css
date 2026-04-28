@@ -269,6 +269,12 @@ body {
   border-bottom: 2px dashed rgb(234, 179, 8);
 }
 
+.mark-focused {
+  outline: 2px solid rgba(59, 130, 246, 0.6);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
 .milkdown,
 .ProseMirror {
   font-family: system-ui, sans-serif;

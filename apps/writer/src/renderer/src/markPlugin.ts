@@ -18,9 +18,10 @@ type MarksMap = Record<string, StoredMark>
 
 type MarksState = {
   marks: MarksMap
+  focusedMarkId: string | null
 }
 
-const marksKey = new PluginKey<MarksState>('proof-marks')
+export const marksKey = new PluginKey<MarksState>('proof-marks')
 
 const STYLES: Record<string, string> = {
   insert: 'background-color: rgba(34, 197, 94, 0.10); border-bottom: 1px dashed rgb(34, 197, 94);',
@@ -90,18 +91,36 @@ function pickPrimaryReplaceIds(resolved: ResolvedMark[]): Set<string> {
   return primary
 }
 
-function buildDecorations(doc: ProseMirrorNode, marks: MarksMap): DecorationSet {
-  const decorations: Decoration[] = []
+function getRenderableMarks(doc: ProseMirrorNode, marks: MarksMap): ResolvedMark[] {
   const resolved = resolveMarks(doc, marks)
   const primaryReplaceIds = pickPrimaryReplaceIds(resolved)
+  const renderable = resolved.filter((r) => r.mark.kind !== 'replace' || primaryReplaceIds.has(r.id))
+  renderable.sort((a, b) => a.range.from - b.range.from)
+  return renderable
+}
 
-  for (const { id, mark, range } of resolved) {
+function pickFocus(renderable: ResolvedMark[], current: string | null): string | null {
+  if (renderable.length === 0) return null
+  if (current && renderable.some((r) => r.id === current)) return current
+  return renderable[0].id
+}
+
+function buildDecorations(
+  doc: ProseMirrorNode,
+  marks: MarksMap,
+  focusedId: string | null
+): DecorationSet {
+  const decorations: Decoration[] = []
+  const renderable = getRenderableMarks(doc, marks)
+
+  for (const { id, mark, range } of renderable) {
     const kind = mark.kind!
-    if (kind === 'replace' && !primaryReplaceIds.has(id)) continue
+    const isFocused = id === focusedId
 
     decorations.push(
       Decoration.inline(range.from, range.to, {
         style: STYLES[kind],
+        class: isFocused ? 'mark-focused' : '',
         'data-mark-id': id,
         'data-mark-kind': kind
       })
@@ -135,20 +154,31 @@ export const proofMarksPlugin = (ydoc: Y.Doc) =>
     new Plugin<MarksState>({
       key: marksKey,
       state: {
-        init: () => ({ marks: {} }),
-        apply(tr, value) {
+        init: () => ({ marks: {}, focusedMarkId: null }),
+        apply(tr, value, _oldState, newState) {
           const meta = tr.getMeta(marksKey)
+          let next = value
           if (meta && meta.type === 'SET_MARKS') {
-            return { marks: meta.marks }
+            next = { ...next, marks: meta.marks }
           }
-          return value
+          if (meta && meta.type === 'SET_FOCUS') {
+            next = { ...next, focusedMarkId: meta.id ?? null }
+          }
+          if (next !== value || tr.docChanged) {
+            const renderable = getRenderableMarks(newState.doc, next.marks)
+            const newFocus = pickFocus(renderable, next.focusedMarkId)
+            if (newFocus !== next.focusedMarkId) {
+              next = { ...next, focusedMarkId: newFocus }
+            }
+          }
+          return next
         }
       },
       props: {
         decorations(state) {
           const pluginState = marksKey.getState(state)
           if (!pluginState) return DecorationSet.empty
-          return buildDecorations(state.doc, pluginState.marks)
+          return buildDecorations(state.doc, pluginState.marks, pluginState.focusedMarkId)
         }
       },
       view(view) {

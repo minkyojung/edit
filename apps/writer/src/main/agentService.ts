@@ -38,15 +38,41 @@ class UserMessageQueue {
 }
 
 const COPYEDITOR_INSTRUCTIONS = `You are a copyeditor embedded in a writing app.
-The user will send you their writing. Identify specific phrases that should be replaced and use the suggest_replace tool to mark them.
+Read the user's writing and emit suggestion marks via the suggest_* tools. Do NOT respond with plain-text explanations.
+
+Available tools:
+- suggest_replace(quote, content): replace exact text "quote" with "content"
+- suggest_insert(quote, content): insert "content" at the position of "quote" (quote stays)
+- suggest_delete(quote): delete the exact text "quote"
 
 Rules:
-- Use the suggest_replace tool for each suggestion. Do NOT explain in plain text.
-- Quote must match the original text exactly (including punctuation).
-- Provide concise, actionable replacements.
+- Quote must match the original text exactly (including punctuation, whitespace).
+- Choose the right tool: if changing wording → replace; if adding extra words → insert; if removing → delete.
+- Keep suggestions short and targeted; avoid sweeping rewrites.
 - Apply the user's writing style preferences from the wiki section above.
 - Output in Korean if the writing is in Korean.
 - If no improvements are needed, do nothing.`
+
+async function callSuggestApi(
+  slug: string,
+  token: string,
+  kind: 'replace' | 'insert' | 'delete',
+  body: Record<string, string>
+): Promise<{ ok: boolean; status: number; error?: string }> {
+  const res = await fetch(`${PROOF_URL}/api/agent/${slug}/marks/suggest-${kind}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-share-token': token
+    },
+    body: JSON.stringify({ ...body, by: 'ai:copyeditor' })
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    return { ok: false, status: res.status, error: text }
+  }
+  return { ok: true, status: res.status }
+}
 
 async function createSuggestServer(slug: string, token: string): Promise<ReturnType<typeof createSdkMcpServer>> {
   return createSdkMcpServer({
@@ -58,20 +84,40 @@ async function createSuggestServer(slug: string, token: string): Promise<ReturnT
         '문서 안의 특정 문구를 다른 표현으로 바꾸는 제안 마크를 추가한다. quote는 원문에 정확히 일치해야 한다.',
         { quote: z.string(), content: z.string() },
         async ({ quote, content }) => {
-          const res = await fetch(`${PROOF_URL}/api/agent/${slug}/marks/suggest-replace`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-share-token': token
-            },
-            body: JSON.stringify({ quote, content, by: 'ai:copyeditor' })
-          })
-          if (!res.ok) {
-            const err = await res.text()
-            console.error('[suggest_replace] failed:', res.status, err)
-            return { content: [{ type: 'text', text: `failed: ${res.status} ${err}` }] }
+          const r = await callSuggestApi(slug, token, 'replace', { quote, content })
+          if (!r.ok) {
+            console.error('[suggest_replace] failed:', r.status, r.error)
+            return { content: [{ type: 'text', text: `failed: ${r.status} ${r.error}` }] }
           }
-          console.log('[suggest_replace] ok:', quote, '→', content)
+          console.log('[suggest_replace]', quote, '→', content)
+          return { content: [{ type: 'text', text: 'ok' }] }
+        }
+      ),
+      tool(
+        'suggest_insert',
+        '문서 안의 특정 문구 위치에 새 텍스트를 추가하는 제안 마크. quote는 원문에 정확히 일치하는 앵커, content는 추가할 새 텍스트.',
+        { quote: z.string(), content: z.string() },
+        async ({ quote, content }) => {
+          const r = await callSuggestApi(slug, token, 'insert', { quote, content })
+          if (!r.ok) {
+            console.error('[suggest_insert] failed:', r.status, r.error)
+            return { content: [{ type: 'text', text: `failed: ${r.status} ${r.error}` }] }
+          }
+          console.log('[suggest_insert]', quote, '+', content)
+          return { content: [{ type: 'text', text: 'ok' }] }
+        }
+      ),
+      tool(
+        'suggest_delete',
+        '문서 안의 특정 문구를 지우는 제안 마크. quote는 원문에 정확히 일치해야 한다.',
+        { quote: z.string() },
+        async ({ quote }) => {
+          const r = await callSuggestApi(slug, token, 'delete', { quote })
+          if (!r.ok) {
+            console.error('[suggest_delete] failed:', r.status, r.error)
+            return { content: [{ type: 'text', text: `failed: ${r.status} ${r.error}` }] }
+          }
+          console.log('[suggest_delete]', quote)
           return { content: [{ type: 'text', text: 'ok' }] }
         }
       )
@@ -116,8 +162,16 @@ async function ensureSession(webContents: WebContents): Promise<void> {
         SYSTEM_PROMPT_DYNAMIC_BOUNDARY
       ],
       mcpServers: { suggest: suggestServer },
-      allowedTools: ['mcp__suggest__suggest_replace'],
-      tools: ['mcp__suggest__suggest_replace'],
+      allowedTools: [
+        'mcp__suggest__suggest_replace',
+        'mcp__suggest__suggest_insert',
+        'mcp__suggest__suggest_delete'
+      ],
+      tools: [
+        'mcp__suggest__suggest_replace',
+        'mcp__suggest__suggest_insert',
+        'mcp__suggest__suggest_delete'
+      ],
       permissionMode: 'bypassPermissions',
       settingSources: ['user', 'project', 'local']
     }
