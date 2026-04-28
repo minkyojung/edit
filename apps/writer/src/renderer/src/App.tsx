@@ -85,6 +85,18 @@ export default function App(): React.ReactElement {
   const [provider, setProvider] = useState<HocuspocusProvider | null>(null)
 
   useEffect(() => {
+    const marksMap = ydoc.getMap('marks')
+    const log = (): void => {
+      const entries: Record<string, unknown> = {}
+      marksMap.forEach((v, k) => { entries[k] = v })
+      console.log('[marks]', Object.keys(entries).length, entries)
+    }
+    log()
+    marksMap.observe(log)
+    return () => marksMap.unobserve(log)
+  }, [ydoc])
+
+  useEffect(() => {
     let p: HocuspocusProvider | null = null
     window.doc.collabSession().then(({ collabWsUrl, token, slug }) => {
       const url = new URL(collabWsUrl)
