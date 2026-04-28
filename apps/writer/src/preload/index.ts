@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('agent', {
   },
   onDone: (cb: () => void) => {
     ipcRenderer.on('agent:done', () => cb())
+  },
+  onError: (cb: (msg: string) => void) => {
+    ipcRenderer.on('agent:error', (_, msg) => cb(msg))
   }
 })
 

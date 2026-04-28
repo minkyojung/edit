@@ -79,6 +79,7 @@ export default function App(): React.ReactElement {
 
   const [suggestion, setSuggestion] = useState('')
   const [streaming, setStreaming] = useState(false)
+  const [agentError, setAgentError] = useState<string | null>(null)
   const [wikiOpen, setWikiOpen] = useState(false)
   const [authStatus, setAuthStatus] = useState<'ok' | 'not-installed' | 'not-logged-in' | 'checking'>('checking')
   const [loggingIn, setLoggingIn] = useState(false)
@@ -110,12 +111,18 @@ export default function App(): React.ReactElement {
     window.agent.onDone(() => {
       setStreaming(false)
     })
+
+    window.agent.onError((msg) => {
+      setAgentError(msg)
+      setStreaming(false)
+    })
   }, [])
 
   useIdleCallback(editor, 1500, (e) => {
     const text = e.getText()
     if (!text.trim()) return
     setSuggestion('')
+    setAgentError(null)
     setStreaming(true)
     window.agent.trigger(text)
   })
@@ -128,13 +135,17 @@ export default function App(): React.ReactElement {
         </button>
         <EditorContent editor={editor} />
       </div>
-      {(suggestion || streaming) && (
+      {(suggestion || streaming || agentError) && (
         <div className="suggestion-pane">
           <div className="suggestion-label">제안</div>
-          <div className="suggestion-text">
-            {suggestion}
-            {streaming && <span className="cursor" />}
-          </div>
+          {agentError ? (
+            <div className="suggestion-error">에이전트 오류가 발생했습니다. 잠시 후 다시 시도해주세요.</div>
+          ) : (
+            <div className="suggestion-text">
+              {suggestion}
+              {streaming && <span className="cursor" />}
+            </div>
+          )}
         </div>
       )}
       {authStatus === 'not-installed' && (

@@ -53,7 +53,12 @@ function extractText(msg: SDKMessage): string | null {
 async function ensureSession(webContents: WebContents): Promise<void> {
   if (session) return
 
-  const belief = await readBelief()
+  let belief = ''
+  try {
+    belief = await readBelief()
+  } catch (err) {
+    console.error('[agent] readBelief failed, continuing with empty belief:', err)
+  }
 
   queue = new UserMessageQueue()
   activeWebContents = webContents
@@ -112,6 +117,10 @@ async function processStream(): Promise<void> {
     }
   } catch (err) {
     console.error('[agent error]', err)
+    if (activeWebContents && !activeWebContents.isDestroyed()) {
+      activeWebContents.send('agent:error', err instanceof Error ? err.message : String(err))
+      activeWebContents.send('agent:done')
+    }
   } finally {
     session = null
     queue = null

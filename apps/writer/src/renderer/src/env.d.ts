@@ -3,6 +3,7 @@ interface Window {
     trigger: (text: string) => void
     onChunk: (cb: (text: string) => void) => void
     onDone: (cb: () => void) => void
+    onError: (cb: (msg: string) => void) => void
   }
   wiki: {
     read: () => Promise<string>

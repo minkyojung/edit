@@ -46,6 +46,13 @@ body {
   white-space: pre-wrap;
 }
 
+.suggestion-error {
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #c0392b;
+}
+
 .cursor {
   display: inline-block;
   width: 2px;
