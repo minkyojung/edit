@@ -1,7 +1,7 @@
 import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import { spawn, ChildProcess } from 'child_process'
-import { trigger } from './agentService'
+import { trigger, shutdown as agentShutdown } from './agentService'
 import { bootstrapWiki } from './wikiService'
 
 let proofServer: ChildProcess | null = null
@@ -67,6 +67,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  agentShutdown().catch(() => undefined)
   proofServer?.kill()
   if (process.platform !== 'darwin') app.quit()
 })
