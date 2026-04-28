@@ -4,7 +4,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
 import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
-import { testMarkPlugin } from './markPlugin'
+import { proofMarksPlugin } from './markPlugin'
 import * as Y from 'yjs'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 
@@ -32,7 +32,7 @@ function MilkdownInner({ ydoc, provider, onMarkdownChange }: Props): React.React
       .use(commonmark)
       .use(listener)
       .use(collab)
-      .use(testMarkPlugin)
+      .use(proofMarksPlugin(ydoc))
   )
 
   useEffect(() => {
