@@ -8,4 +8,8 @@ interface Window {
     read: () => Promise<string>
     save: (markdown: string) => Promise<void>
   }
+  auth: {
+    status: () => Promise<'ok' | 'not-installed' | 'not-logged-in'>
+    login: () => Promise<'ok' | 'not-installed' | 'not-logged-in'>
+  }
 }

@@ -18,3 +18,8 @@ contextBridge.exposeInMainWorld('wiki', {
   read: (): Promise<string> => ipcRenderer.invoke('wiki:read'),
   save: (markdown: string): Promise<void> => ipcRenderer.invoke('wiki:save', markdown)
 })
+
+contextBridge.exposeInMainWorld('auth', {
+  status: (): Promise<string> => ipcRenderer.invoke('auth:status'),
+  login: (): Promise<string> => ipcRenderer.invoke('auth:login')
+})

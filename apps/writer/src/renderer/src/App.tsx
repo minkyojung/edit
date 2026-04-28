@@ -80,7 +80,23 @@ export default function App(): React.ReactElement {
   const [suggestion, setSuggestion] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [wikiOpen, setWikiOpen] = useState(false)
+  const [authStatus, setAuthStatus] = useState<'ok' | 'not-installed' | 'not-logged-in' | 'checking'>('checking')
+  const [loggingIn, setLoggingIn] = useState(false)
   const listenersAdded = useRef(false)
+
+  useEffect(() => {
+    window.auth.status().then(setAuthStatus)
+  }, [])
+
+  const handleLogin = useCallback(async () => {
+    setLoggingIn(true)
+    try {
+      const result = await window.auth.login()
+      setAuthStatus(result)
+    } finally {
+      setLoggingIn(false)
+    }
+  }, [])
 
   useEffect(() => {
     if (listenersAdded.current) return
@@ -120,6 +136,17 @@ export default function App(): React.ReactElement {
             {streaming && <span className="cursor" />}
           </div>
         </div>
+      )}
+      {authStatus === 'not-installed' && (
+        <div className="auth-status">
+          Claude CLI가 설치되어 있지 않습니다 —{' '}
+          <a href="https://claude.ai/download" target="_blank" rel="noreferrer">설치하기</a>
+        </div>
+      )}
+      {authStatus === 'not-logged-in' && (
+        <button className="auth-status auth-status--clickable" onClick={handleLogin} disabled={loggingIn}>
+          {loggingIn ? '로그인 중...' : 'Claude 로그인이 필요합니다 — 클릭하여 로그인'}
+        </button>
       )}
       {wikiOpen && <WikiModal onClose={() => setWikiOpen(false)} />}
     </div>
