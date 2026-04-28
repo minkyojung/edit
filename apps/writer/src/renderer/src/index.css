@@ -8,3 +8,31 @@ body {
   -webkit-font-smoothing: antialiased;
   background: #fafafa;
 }
+
+.app {
+  height: 100vh;
+  padding: 48px 24px;
+}
+
+.tiptap {
+  font-family: system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.7;
+  color: #1a1a1a;
+  outline: none;
+  width: 100%;
+  min-height: 200px;
+  cursor: text;
+}
+
+.tiptap p {
+  margin-bottom: 12px;
+}
+
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: #aaa;
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
