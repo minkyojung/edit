@@ -1,6 +1,7 @@
-import { query } from '@anthropic-ai/claude-agent-sdk'
+import { query, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk'
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { WebContents } from 'electron'
+import { readBelief } from './wikiService'
 
 class UserMessageQueue {
   private _q: unknown[] = []
@@ -31,10 +32,11 @@ class UserMessageQueue {
   }
 }
 
-const SYSTEM_PROMPT = `You are a copyeditor embedded in a writing app.
+const COPYEDITOR_INSTRUCTIONS = `You are a copyeditor embedded in a writing app.
 The user will send you their writing. Analyze it and return concise, actionable suggestions to improve clarity, flow, and style.
 Keep suggestions brief. Output in Korean if the writing is in Korean.
-Do not rewrite the entire text — give specific targeted suggestions only.`
+Do not rewrite the entire text — give specific targeted suggestions only.
+Apply the user's writing style preferences from the wiki section above when making suggestions.`
 
 let session: Query | null = null
 let queue: UserMessageQueue | null = null
@@ -46,8 +48,10 @@ function extractText(msg: SDKMessage): string | null {
   return textBlock && textBlock.type === 'text' ? textBlock.text : null
 }
 
-function ensureSession(webContents: WebContents): void {
+async function ensureSession(webContents: WebContents): Promise<void> {
   if (session) return
+
+  const belief = await readBelief()
 
   queue = new UserMessageQueue()
   activeWebContents = webContents
@@ -56,11 +60,11 @@ function ensureSession(webContents: WebContents): void {
     prompt: queue as AsyncIterable<unknown> as Parameters<typeof query>[0]['prompt'],
     options: {
       model: 'claude-haiku-4-5',
-      systemPrompt: {
-        type: 'preset',
-        preset: 'claude_code',
-        append: SYSTEM_PROMPT
-      },
+      systemPrompt: [
+        '## 사용자 글쓰기 스타일 (위키)\n\n' + belief,
+        COPYEDITOR_INSTRUCTIONS,
+        SYSTEM_PROMPT_DYNAMIC_BOUNDARY
+      ],
       permissionMode: 'dontAsk',
       tools: [],
       settingSources: ['user', 'project', 'local']
@@ -109,8 +113,11 @@ async function processStream(): Promise<void> {
 
 export function trigger(text: string, webContents: WebContents): void {
   ensureSession(webContents)
-  activeWebContents = webContents
-  queue?.push({ type: 'user', message: { role: 'user', content: text } })
+    .then(() => {
+      activeWebContents = webContents
+      queue?.push({ type: 'user', message: { role: 'user', content: text } })
+    })
+    .catch((err) => console.error('[trigger]', err))
 }
 
 export async function shutdown(): Promise<void> {
