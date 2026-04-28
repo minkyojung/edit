@@ -9,7 +9,7 @@
     "preview": "electron-vite preview"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.40.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.121",
     "@tiptap/core": "^2.11.5",
     "@tiptap/extension-collaboration": "^2.11.5",
     "@tiptap/extension-collaboration-cursor": "^2.11.5",
