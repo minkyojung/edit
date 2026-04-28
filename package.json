@@ -1,0 +1,12 @@
+{
+  "name": "montpellier",
+  "private": true,
+  "scripts": {
+    "setup": "pnpm install && pnpm rebuild electron",
+    "dev": "pnpm --filter writer dev",
+    "build": "pnpm --filter writer build"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["electron", "esbuild"]
+  }
+}
