@@ -28,7 +28,7 @@ function AccountIndicator(): React.ReactElement {
   }, [])
 
   return (
-    <div className="account-indicator">
+    <div className="fixed top-3.5 right-4 z-50">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -189,12 +189,16 @@ function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
           </Button>
         </DialogHeader>
         {loading ? (
-          <div className="modal-loading">불러오는 중...</div>
+          <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground p-10">
+            불러오는 중...
+          </div>
         ) : error && !markdown ? (
-          <div className="modal-loading modal-error">{error}</div>
+          <div className="flex-1 flex items-center justify-center text-sm text-destructive p-10">
+            {error}
+          </div>
         ) : (
           <textarea
-            className="wiki-textarea"
+            className="flex-1 resize-none border-none outline-none bg-muted text-foreground font-mono text-[13px] leading-relaxed p-5 min-h-[300px]"
             value={markdown}
             onChange={(e) => setMarkdown(e.target.value)}
             autoFocus
@@ -202,7 +206,7 @@ function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
           />
         )}
         <DialogFooter>
-          {error && markdown ? <span className="modal-hint-error">{error} · </span> : null}
+          {error && markdown ? <span className="text-destructive">{error} · </span> : null}
           ⌘S로 저장 · 저장 시 에이전트 세션이 갱신됩니다
         </DialogFooter>
       </DialogContent>

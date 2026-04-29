@@ -16,118 +16,82 @@
   }
 }
 
-.wiki-textarea {
-  flex: 1;
-  padding: 20px;
-  border: none;
-  resize: none;
-  font-family: 'Menlo', 'Monaco', monospace;
-  font-size: 13px;
-  line-height: 1.7;
-  color: #1a1a1a;
-  background: #fafafa;
-  outline: none;
-  min-height: 300px;
-}
+/* ── Editor / external library styles (isolated in @layer base so Tailwind
+   utilities can always override) ─────────────────────────────────────── */
+@layer base {
+  .milkdown,
+  .ProseMirror {
+    font-family: system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.7;
+    color: var(--foreground);
+    outline: none;
+    width: 100%;
+    min-height: 200px;
+    cursor: text;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    border: none;
+    box-shadow: none;
+    background: none;
+  }
 
-.modal-loading {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: system-ui, sans-serif;
-  font-size: 14px;
-  color: #999;
-  padding: 40px;
-}
+  .ProseMirror p {
+    margin-bottom: 12px;
+  }
 
-.modal-hint-error {
-  color: #c0392b;
-}
+  .ProseMirror h1 {
+    font-size: 1.6em;
+    font-weight: 600;
+    margin: 0 0 16px;
+  }
 
-.modal-error {
-  color: #c0392b;
-}
+  .ProseMirror h2 {
+    font-size: 1.3em;
+    font-weight: 600;
+    margin: 16px 0 12px;
+  }
 
-.suggestion-insertion {
-  background-color: rgba(34, 197, 94, 0.18);
-  border-bottom: 2px solid rgb(34, 197, 94);
-}
+  .ProseMirror:focus,
+  .ProseMirror:focus-visible,
+  .milkdown:focus,
+  .milkdown:focus-visible {
+    outline: none;
+  }
 
-.suggestion-deletion {
-  background-color: rgba(239, 68, 68, 0.18);
-  text-decoration: line-through;
-  color: rgba(0, 0, 0, 0.5);
-}
+  /* proofAuthored — 글자 단위 작성자 시각화 (proof-sdk 패턴) */
+  .ProseMirror span[data-proof="authored"][data-by^="human"] {
+    background-color: rgba(110, 231, 183, 0.08);
+  }
 
-.suggestion-modification {
-  background-color: rgba(234, 179, 8, 0.18);
-  border-bottom: 2px dashed rgb(234, 179, 8);
-}
+  .ProseMirror span[data-proof="authored"][data-by^="ai"] {
+    background-color: rgba(165, 180, 252, 0.12);
+  }
 
-.mark-focused {
-  outline: 2px solid rgba(59, 130, 246, 0.6);
-  outline-offset: 1px;
-  border-radius: 2px;
-}
+  .ProseMirror span[data-proof="authored"][data-by^="unknown"] {
+    background-color: rgba(156, 163, 175, 0.10);
+  }
 
-/* proofAuthored — 글자 단위 작성자 시각화 (proof-sdk 패턴) */
-.ProseMirror span[data-proof="authored"][data-by^="human"] {
-  background-color: rgba(110, 231, 183, 0.08);
-}
+  /* Suggestion marks (inline diff visualization) */
+  .suggestion-insertion {
+    background-color: rgba(34, 197, 94, 0.18);
+    border-bottom: 2px solid rgb(34, 197, 94);
+  }
 
-.ProseMirror span[data-proof="authored"][data-by^="ai"] {
-  background-color: rgba(165, 180, 252, 0.12);
-}
+  .suggestion-deletion {
+    background-color: rgba(239, 68, 68, 0.18);
+    text-decoration: line-through;
+    color: rgba(0, 0, 0, 0.5);
+  }
 
-.ProseMirror span[data-proof="authored"][data-by^="unknown"] {
-  background-color: rgba(156, 163, 175, 0.10);
-}
+  .suggestion-modification {
+    background-color: rgba(234, 179, 8, 0.18);
+    border-bottom: 2px dashed rgb(234, 179, 8);
+  }
 
-.milkdown,
-.ProseMirror {
-  font-family: system-ui, sans-serif;
-  font-size: 16px;
-  line-height: 1.7;
-  color: #1a1a1a;
-  outline: none;
-  width: 100%;
-  min-height: 200px;
-  cursor: text;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  border: none;
-  box-shadow: none;
-  background: none;
+  .mark-focused {
+    outline: 2px solid rgba(59, 130, 246, 0.6);
+    outline-offset: 1px;
+    border-radius: 2px;
+  }
 }
-
-.ProseMirror p {
-  margin-bottom: 12px;
-}
-
-.ProseMirror h1 {
-  font-size: 1.6em;
-  font-weight: 600;
-  margin: 0 0 16px;
-}
-
-.ProseMirror h2 {
-  font-size: 1.3em;
-  font-weight: 600;
-  margin: 16px 0 12px;
-}
-
-.ProseMirror:focus,
-.ProseMirror:focus-visible,
-.milkdown:focus,
-.milkdown:focus-visible {
-  outline: none;
-}
-
-.account-indicator {
-  position: fixed;
-  top: 14px;
-  right: 16px;
-  z-index: 50;
-}
-
