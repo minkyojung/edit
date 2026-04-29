@@ -14,6 +14,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
 
 function AccountIndicator(): React.ReactElement {
   const handleSignOut = useCallback(async () => {
@@ -165,23 +172,25 @@ function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
         e.preventDefault()
         handleSave()
       }
-      if (e.key === 'Escape') onClose()
     },
-    [handleSave, onClose]
+    [handleSave]
   )
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} onKeyDown={handleKeyDown}>
-        <div className="modal-header">
-          <span className="modal-title">글쓰기 스타일 위키</span>
-          <div className="modal-actions">
-            <button className="modal-save" onClick={handleSave} disabled={saving || loading}>
-              {saving ? '저장 중...' : '저장'}
-            </button>
-            <button className="modal-close" onClick={onClose}>✕</button>
-          </div>
-        </div>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent onKeyDown={handleKeyDown}>
+        <DialogHeader>
+          <DialogTitle>글쓰기 스타일 위키</DialogTitle>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={handleSave}
+            disabled={saving || loading}
+            className="mr-7"
+          >
+            {saving ? '저장 중...' : '저장'}
+          </Button>
+        </DialogHeader>
         {loading ? (
           <div className="modal-loading">불러오는 중...</div>
         ) : error && !markdown ? (
@@ -195,12 +204,12 @@ function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
             spellCheck={false}
           />
         )}
-        <div className="modal-hint">
+        <DialogFooter>
           {error && markdown ? <span className="modal-hint-error">{error} · </span> : null}
           ⌘S로 저장 · 저장 시 에이전트 세션이 갱신됩니다
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
