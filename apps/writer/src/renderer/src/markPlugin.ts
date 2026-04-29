@@ -35,10 +35,11 @@ type MarksState = {
 
 export const marksKey = new PluginKey<MarksState>('proof-marks')
 
+const STRIKE = 'background-color: rgba(239, 68, 68, 0.20); text-decoration: line-through; color: var(--muted-foreground);'
 const STYLES: Record<string, string> = {
   insert: 'background-color: rgba(34, 197, 94, 0.10); border-bottom: 1px dashed rgb(34, 197, 94);',
-  delete: 'background-color: rgba(239, 68, 68, 0.20); text-decoration: line-through; color: rgba(0, 0, 0, 0.55);',
-  replace: 'background-color: rgba(239, 68, 68, 0.20); text-decoration: line-through; color: rgba(0, 0, 0, 0.55);'
+  delete: STRIKE,
+  replace: STRIKE
 }
 
 const WIDGET_STYLE =
