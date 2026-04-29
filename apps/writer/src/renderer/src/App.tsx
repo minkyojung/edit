@@ -11,6 +11,7 @@ import { AccountMenu } from '@/components/account-menu'
 import { AgentSettingsChip } from '@/components/agent-settings-chip'
 import { SignInPanel } from '@/components/sign-in-panel'
 import { WikiModal } from '@/components/wiki-modal'
+import { AppShell } from '@/layout/AppShell'
 
 export default function App(): React.ReactElement {
   const ydoc = useMemo(() => new Y.Doc(), [])
@@ -78,8 +79,8 @@ export default function App(): React.ReactElement {
   }
 
   return (
-    <div className="flex h-screen">
-      <div className="relative flex-1 overflow-y-auto px-10 py-12">
+    <AppShell>
+      <div className="relative px-10 py-12 max-w-3xl mx-auto">
         <MilkdownEditor ydoc={ydoc} provider={provider} onMarkdownChange={setEditorMarkdown} />
       </div>
       <header className="fixed top-3 right-3 z-40 flex items-center gap-1">
@@ -111,6 +112,6 @@ export default function App(): React.ReactElement {
       )}
       {oauthStatus === 'unauthenticated' && <SignInPanel />}
       {wikiOpen && <WikiModal onClose={() => setWikiOpen(false)} />}
-    </div>
+    </AppShell>
   )
 }

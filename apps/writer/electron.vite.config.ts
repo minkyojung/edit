@@ -13,7 +13,22 @@ export default defineConfig({
   renderer: {
     plugins: [react(), tailwindcss()],
     resolve: {
-      alias: { '@': path.resolve(__dirname, 'src/renderer/src') }
+      alias: { '@': path.resolve(__dirname, 'src/renderer/src') },
+      dedupe: [
+        '@milkdown/kit',
+        '@milkdown/plugin-collab',
+        '@milkdown/core',
+        '@milkdown/ctx',
+        'yjs',
+        'y-prosemirror',
+        'y-protocols',
+        'lib0',
+        'prosemirror-model',
+        'prosemirror-state',
+        'prosemirror-view',
+        'prosemirror-transform',
+        'remark-frontmatter',
+      ]
     }
   }
 })
