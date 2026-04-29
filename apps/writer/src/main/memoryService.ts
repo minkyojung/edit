@@ -46,7 +46,7 @@ async function runMemoryWriter(conversation: string): Promise<void> {
 
   const prompt = `다음 교열 대화를 분석하고 belief 위키를 업데이트해라.\n\n${conversation}`
 
-  const q = authedQuery({
+  const q = await authedQuery({
     prompt,
     options: {
       model: 'claude-haiku-4-5',

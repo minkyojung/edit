@@ -1,5 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
-import { getToken } from './oauthService'
+import { getValidToken } from './oauthService'
 
 export class NotAuthenticatedError extends Error {
   constructor() {
@@ -10,8 +10,8 @@ export class NotAuthenticatedError extends Error {
 
 type QueryArgs = Parameters<typeof query>[0]
 
-export function authedQuery(args: QueryArgs): ReturnType<typeof query> {
-  const token = getToken()
+export async function authedQuery(args: QueryArgs): Promise<ReturnType<typeof query>> {
+  const token = await getValidToken()
   if (!token) throw new NotAuthenticatedError()
 
   process.env.CLAUDE_CODE_OAUTH_TOKEN = token

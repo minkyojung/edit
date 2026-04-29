@@ -160,7 +160,7 @@ async function ensureSession(webContents: WebContents): Promise<void> {
   activeWebContents = webContents
 
   try {
-    session = authedQuery({
+    session = await authedQuery({
       prompt: queue as AsyncIterable<unknown> as Parameters<typeof authedQuery>[0]['prompt'],
       options: {
         model: 'claude-haiku-4-5',

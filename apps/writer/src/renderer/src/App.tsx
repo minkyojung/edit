@@ -5,6 +5,45 @@ import { useDebouncedText } from './hooks/useIdleCallback'
 import { MilkdownEditor } from './MilkdownEditor'
 import sparkUrl from './assets/claude-spark.svg'
 
+function AccountIndicator(): React.ReactElement {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onClick = (e: MouseEvent): void => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [open])
+
+  const handleSignOut = useCallback(async () => {
+    setOpen(false)
+    await window.auth.logout()
+  }, [])
+
+  return (
+    <div className="account-indicator" ref={ref}>
+      <button
+        className="account-indicator-btn"
+        onClick={() => setOpen((v) => !v)}
+        title="Connected to Claude"
+      >
+        <img src={sparkUrl} alt="" className="account-indicator-icon" />
+      </button>
+      {open && (
+        <div className="account-menu">
+          <div className="account-menu-status">Connected to Claude</div>
+          <button className="account-menu-item" onClick={handleSignOut}>
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SignInPanel(): React.ReactElement {
   const [code, setCode] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -232,6 +271,7 @@ export default function App(): React.ReactElement {
           서버 연결 실패 — 앱을 재시작해주세요
         </div>
       )}
+      {oauthStatus === 'authenticated' && <AccountIndicator />}
       {oauthStatus === 'unauthenticated' && <SignInPanel />}
       {wikiOpen && <WikiModal onClose={() => setWikiOpen(false)} />}
     </div>

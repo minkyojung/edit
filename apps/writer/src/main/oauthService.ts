@@ -1,6 +1,6 @@
 import { app, safeStorage, shell } from 'electron'
 import { createHash, randomBytes } from 'crypto'
-import { writeFile, readFile, unlink } from 'fs/promises'
+import { writeFile, unlink } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 
@@ -12,12 +12,17 @@ const TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token'
 const REDIRECT_URI = 'https://console.anthropic.com/oauth/code/callback'
 const SCOPES = 'org:create_api_key user:profile user:inference'
 
-const TOKEN_FILE = () => join(app.getPath('userData'), 'anthropic-oauth.bin')
+const REFRESH_SAFETY_MARGIN_MS = 5 * 60 * 1000
 
-type PendingFlow = {
-  verifier: string
+const TOKEN_FILE = (): string => join(app.getPath('userData'), 'anthropic-oauth.bin')
+
+type TokenBundle = {
+  accessToken: string
+  refreshToken: string | null
+  expiresAt: number | null
 }
 
+type PendingFlow = { verifier: string }
 let pending: PendingFlow | null = null
 
 type AuthListener = (status: 'authenticated' | 'unauthenticated') => void
@@ -50,6 +55,58 @@ function genChallenge(verifier: string): string {
   return base64url(createHash('sha256').update(verifier).digest())
 }
 
+function bundleFromTokenResponse(
+  data: {
+    access_token?: string
+    refresh_token?: string
+    expires_in?: number
+    error?: string
+    error_description?: string
+  },
+  prev?: TokenBundle | null
+): TokenBundle {
+  if (data.error) {
+    throw new Error(`OAuth error: ${data.error_description ?? data.error}`)
+  }
+  if (!data.access_token) throw new Error('Token response missing access_token')
+  if (!data.access_token.startsWith('sk-ant-oat')) {
+    throw new Error('Unexpected access_token format')
+  }
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token ?? prev?.refreshToken ?? null,
+    expiresAt: typeof data.expires_in === 'number' ? Date.now() + data.expires_in * 1000 : null
+  }
+}
+
+async function saveBundle(bundle: TokenBundle): Promise<void> {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Secure storage is unavailable on this system')
+  }
+  const encrypted = safeStorage.encryptString(JSON.stringify(bundle))
+  await writeFile(TOKEN_FILE(), encrypted, { mode: 0o600 })
+}
+
+function loadBundle(): TokenBundle | null {
+  const path = TOKEN_FILE()
+  if (!existsSync(path)) return null
+  if (!safeStorage.isEncryptionAvailable()) return null
+  try {
+    const buf = readFileSync(path)
+    const decrypted = safeStorage.decryptString(buf)
+    const parsed = JSON.parse(decrypted) as Partial<TokenBundle>
+    if (!parsed.accessToken) return null
+    return {
+      accessToken: parsed.accessToken,
+      refreshToken: parsed.refreshToken ?? null,
+      expiresAt: parsed.expiresAt ?? null
+    }
+  } catch (err) {
+    console.error('[oauth] failed to read token bundle', err)
+    return null
+  }
+}
+
 export async function startOAuthFlow(): Promise<void> {
   const verifier = genVerifier()
   pending = { verifier }
@@ -70,11 +127,14 @@ export async function startOAuthFlow(): Promise<void> {
 export async function completeOAuthFlow(input: string): Promise<void> {
   if (!pending) throw new Error('No OAuth flow in progress. Click sign-in first.')
 
-  // Anthropic returns the code as `<code>#<state>` in the manual-paste flow.
   const trimmed = input.trim()
+  if (!trimmed) throw new Error('Authorization code is empty')
+
   const [code, returnedState] = trimmed.includes('#')
     ? trimmed.split('#')
     : [trimmed, pending.verifier]
+
+  if (!code) throw new Error('Authorization code is empty')
 
   if (returnedState !== pending.verifier) {
     pending = null
@@ -101,36 +161,66 @@ export async function completeOAuthFlow(input: string): Promise<void> {
     throw new Error(`Token exchange failed (${res.status}): ${body}`)
   }
 
-  const data = (await res.json()) as { access_token?: string }
-  if (!data.access_token) throw new Error('Token response missing access_token')
-
-  await saveToken(data.access_token)
+  const data = (await res.json()) as Parameters<typeof bundleFromTokenResponse>[0]
+  const bundle = bundleFromTokenResponse(data)
+  await saveBundle(bundle)
   emit('authenticated')
 }
 
-async function saveToken(token: string): Promise<void> {
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error('Secure storage is unavailable on this system')
-  }
-  const encrypted = safeStorage.encryptString(token)
-  await writeFile(TOKEN_FILE(), encrypted, { mode: 0o600 })
-}
+async function refreshAccessToken(prev: TokenBundle): Promise<TokenBundle | null> {
+  if (!prev.refreshToken) return null
 
-export function getToken(): string | null {
-  const path = TOKEN_FILE()
-  if (!existsSync(path)) return null
-  try {
-    if (!safeStorage.isEncryptionAvailable()) return null
-    const buf = readFileSync(path)
-    return safeStorage.decryptString(buf)
-  } catch (err) {
-    console.error('[oauth] failed to read token', err)
+  const res = await fetch(TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'refresh_token',
+      refresh_token: prev.refreshToken,
+      client_id: CLIENT_ID
+    })
+  })
+
+  if (!res.ok) {
+    const body = await res.text()
+    console.error('[oauth] refresh failed', res.status, body)
     return null
   }
+
+  const data = (await res.json()) as Parameters<typeof bundleFromTokenResponse>[0]
+  const next = bundleFromTokenResponse(data, prev)
+  await saveBundle(next)
+  return next
+}
+
+let inflightRefresh: Promise<TokenBundle | null> | null = null
+
+export async function getValidToken(): Promise<string | null> {
+  let bundle = loadBundle()
+  if (!bundle) return null
+
+  const needsRefresh =
+    bundle.expiresAt !== null && Date.now() > bundle.expiresAt - REFRESH_SAFETY_MARGIN_MS
+
+  if (!needsRefresh) return bundle.accessToken
+
+  // Coalesce concurrent refresh attempts so two simultaneous queries don't
+  // race the token endpoint and invalidate each other's refresh tokens.
+  if (!inflightRefresh) {
+    inflightRefresh = refreshAccessToken(bundle).finally(() => {
+      inflightRefresh = null
+    })
+  }
+  bundle = await inflightRefresh
+
+  if (!bundle) {
+    await clearToken()
+    return null
+  }
+  return bundle.accessToken
 }
 
 export function hasToken(): boolean {
-  return getToken() !== null
+  return loadBundle() !== null
 }
 
 export async function clearToken(): Promise<void> {
@@ -143,17 +233,4 @@ export async function clearToken(): Promise<void> {
     }
   }
   emit('unauthenticated')
-}
-
-export async function loadTokenAsync(): Promise<string | null> {
-  const path = TOKEN_FILE()
-  if (!existsSync(path)) return null
-  try {
-    if (!safeStorage.isEncryptionAvailable()) return null
-    const buf = await readFile(path)
-    return safeStorage.decryptString(buf)
-  } catch (err) {
-    console.error('[oauth] failed to read token', err)
-    return null
-  }
 }
