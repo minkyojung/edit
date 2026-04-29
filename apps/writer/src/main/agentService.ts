@@ -16,8 +16,7 @@ import { bootstrapDoc } from './docService'
 import * as sessionStore from './agentSessionStore'
 import * as settingsStore from './agentSettings'
 import type { AgentSettings } from './agentSettings'
-
-const PROOF_URL = 'http://localhost:4000'
+import { PROOF_URL, withMutationBaseRetry, type MutationBase } from './proofClient'
 
 class UserMessageQueue {
   private _q: unknown[] = []
@@ -75,19 +74,22 @@ async function callSuggestApi(
   kind: 'replace' | 'insert' | 'delete',
   body: Record<string, string>
 ): Promise<{ ok: boolean; status: number; error?: string }> {
-  const res = await fetch(`${PROOF_URL}/api/agent/${slug}/marks/suggest-${kind}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-share-token': token
-    },
-    body: JSON.stringify({ ...body, by: 'ai:copyeditor' })
-  })
-  if (!res.ok) {
-    const text = await res.text()
-    return { ok: false, status: res.status, error: text }
+  const submit = (base: MutationBase): Promise<Response> =>
+    fetch(`${PROOF_URL}/api/agent/${slug}/marks/suggest-${kind}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-share-token': token
+      },
+      body: JSON.stringify({ ...body, by: 'ai:copyeditor', ...base })
+    })
+  try {
+    const res = await withMutationBaseRetry(slug, token, submit, `suggest-${kind}`)
+    return { ok: true, status: res.status }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { ok: false, status: 0, error: message }
   }
-  return { ok: true, status: res.status }
 }
 
 async function createSuggestServer(slug: string, token: string): Promise<ReturnType<typeof createSdkMcpServer>> {
