@@ -229,7 +229,10 @@ function applyMarkChange(
   const { mark, range } = resolved
   const kind = mark.kind
   const schema = view.state.schema
+  const authoredMarkType = schema.marks.proofAuthored ?? null
+  const authoredBy = mark.by || 'ai:copyeditor'
   let tr = view.state.tr
+  let authorRange: { from: number; to: number } | null = null
 
   if (kind === 'delete') {
     const adjusted = alignRangeToWordBoundary(view.state.doc, range, {
@@ -244,11 +247,20 @@ function applyMarkChange(
       endsWithSpace: content.endsWith(' ')
     })
     tr = tr.replaceWith(adjusted.from, adjusted.to, schema.text(content))
+    authorRange = { from: adjusted.from, to: adjusted.from + content.length }
   } else if (kind === 'insert' && mark.content !== undefined) {
-    tr = tr.insert(range.to, schema.text(mark.content))
+    const content = mark.content
+    tr = tr.insert(range.to, schema.text(content))
+    authorRange = { from: range.to, to: range.to + content.length }
+  }
+
+  if (authorRange && authoredMarkType) {
+    tr = tr.removeMark(authorRange.from, authorRange.to, authoredMarkType)
+    tr = tr.addMark(authorRange.from, authorRange.to, authoredMarkType.create({ by: authoredBy }))
   }
 
   tr = tr.setMeta(marksKey, { addTombstone: tombstoneId, setFocus: nextFocusId })
+  tr = tr.setMeta('ai-authored', true)
   view.dispatch(tr)
 }
 
