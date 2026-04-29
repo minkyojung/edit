@@ -1,7 +1,10 @@
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view'
+import type { EditorView } from '@milkdown/kit/prose/view'
 import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model'
+import type { Schema } from '@milkdown/kit/prose/model'
+import type { Transaction } from '@milkdown/kit/prose/state'
 import * as Y from 'yjs'
 import {
   buildTextIndex,
@@ -221,29 +224,27 @@ function alignRangeToWordBoundary(
   return range
 }
 
-function applyMarkChange(
-  view: import('@milkdown/kit/prose/view').EditorView,
-  resolved: ResolvedMark,
-  nextFocusId: string | null,
-  tombstoneId: string
-): void {
+function applyResolvedMarkToTr(
+  tr: Transaction,
+  doc: ProseMirrorNode,
+  schema: Schema,
+  resolved: ResolvedMark
+): Transaction {
   const { mark, range } = resolved
   const kind = mark.kind
-  const schema = view.state.schema
   const authoredMarkType = schema.marks.proofAuthored ?? null
   const authoredBy = mark.by || 'ai:copyeditor'
-  let tr = view.state.tr
   let authorRange: { from: number; to: number } | null = null
 
   if (kind === 'delete') {
-    const adjusted = alignRangeToWordBoundary(view.state.doc, range, {
+    const adjusted = alignRangeToWordBoundary(doc, range, {
       startsWithSpace: false,
       endsWithSpace: false
     })
     tr = tr.delete(adjusted.from, adjusted.to)
   } else if (kind === 'replace' && mark.content !== undefined) {
     const content = mark.content
-    const adjusted = alignRangeToWordBoundary(view.state.doc, range, {
+    const adjusted = alignRangeToWordBoundary(doc, range, {
       startsWithSpace: content.startsWith(' '),
       endsWithSpace: content.endsWith(' ')
     })
@@ -260,9 +261,85 @@ function applyMarkChange(
     tr = tr.addMark(authorRange.from, authorRange.to, authoredMarkType.create({ by: authoredBy }))
   }
 
+  return tr
+}
+
+function applyMarkChange(
+  view: EditorView,
+  resolved: ResolvedMark,
+  nextFocusId: string | null,
+  tombstoneId: string
+): void {
+  let tr = applyResolvedMarkToTr(view.state.tr, view.state.doc, view.state.schema, resolved)
   tr = tr.setMeta(marksKey, { addTombstone: tombstoneId, setFocus: nextFocusId })
   tr = tr.setMeta('ai-authored', true)
   view.dispatch(tr)
+}
+
+function acceptAllOnView(view: EditorView): string[] {
+  const pluginState = marksKey.getState(view.state)
+  if (!pluginState) return []
+  const renderable = getRenderableMarks(view.state.doc, pluginState.marks, pluginState.tombstones)
+  if (renderable.length === 0) return []
+
+  const doc = view.state.doc
+  const schema = view.state.schema
+  // 뒤→앞 순으로 적용해야 앞쪽 마크의 from/to 가 유효 유지
+  const sorted = [...renderable].sort((a, b) => b.range.from - a.range.from)
+  let tr = view.state.tr
+  for (const resolved of sorted) {
+    tr = applyResolvedMarkToTr(tr, doc, schema, resolved)
+  }
+  const ids = renderable.map((r) => r.id)
+  tr = tr.setMeta(marksKey, { addTombstones: ids, setFocus: null })
+  tr = tr.setMeta('ai-authored', true)
+  view.dispatch(tr)
+  return ids
+}
+
+function rejectAllOnView(view: EditorView): string[] {
+  const pluginState = marksKey.getState(view.state)
+  if (!pluginState) return []
+  const renderable = getRenderableMarks(view.state.doc, pluginState.marks, pluginState.tombstones)
+  if (renderable.length === 0) return []
+  const ids = renderable.map((r) => r.id)
+  view.dispatch(view.state.tr.setMeta(marksKey, { addTombstones: ids, setFocus: null }))
+  return ids
+}
+
+let activeView: EditorView | null = null
+type CountListener = (count: number) => void
+const countListeners = new Set<CountListener>()
+let lastCount = 0
+
+function emitCount(count: number): void {
+  if (count === lastCount) return
+  lastCount = count
+  for (const listener of countListeners) listener(count)
+}
+
+export function subscribeMarkCount(listener: CountListener): () => void {
+  countListeners.add(listener)
+  listener(lastCount)
+  return () => {
+    countListeners.delete(listener)
+  }
+}
+
+export function acceptAllMarks(): void {
+  if (!activeView) return
+  const ids = acceptAllOnView(activeView)
+  for (const id of ids) {
+    window.marks.accept(id).catch((err) => console.error('[mark accept]', err))
+  }
+}
+
+export function rejectAllMarks(): void {
+  if (!activeView) return
+  const ids = rejectAllOnView(activeView)
+  for (const id of ids) {
+    window.marks.reject(id).catch((err) => console.error('[mark reject]', err))
+  }
 }
 
 function buildDecorations(
@@ -318,7 +395,12 @@ export const proofMarksPlugin = (ydoc: Y.Doc) =>
         init: () => ({ marks: {}, focusedMarkId: null, tombstones: new Set<string>() }),
         apply(tr, value, _oldState, newState) {
           const meta = tr.getMeta(marksKey) as
-            | { setMarks?: MarksMap; setFocus?: string | null; addTombstone?: string }
+            | {
+                setMarks?: MarksMap
+                setFocus?: string | null
+                addTombstone?: string
+                addTombstones?: string[]
+              }
             | undefined
           let next = value
           if (meta?.setMarks !== undefined) {
@@ -337,6 +419,11 @@ export const proofMarksPlugin = (ydoc: Y.Doc) =>
             newTombstones.add(meta.addTombstone)
             next = { ...next, tombstones: newTombstones }
           }
+          if (meta?.addTombstones && meta.addTombstones.length > 0) {
+            const newTombstones = new Set(next.tombstones)
+            for (const id of meta.addTombstones) newTombstones.add(id)
+            next = { ...next, tombstones: newTombstones }
+          }
           if (meta?.setFocus !== undefined) {
             next = { ...next, focusedMarkId: meta.setFocus }
           }
@@ -346,6 +433,7 @@ export const proofMarksPlugin = (ydoc: Y.Doc) =>
             if (newFocus !== next.focusedMarkId) {
               next = { ...next, focusedMarkId: newFocus }
             }
+            emitCount(renderable.length)
           }
           return next
         }
@@ -357,6 +445,22 @@ export const proofMarksPlugin = (ydoc: Y.Doc) =>
           return buildDecorations(state.doc, pluginState.marks, pluginState.focusedMarkId, pluginState.tombstones)
         },
         handleKeyDown(view, event) {
+          // ⇧⌘A / ⇧⌘R (또는 Ctrl 변형) — 일괄 수락 / 일괄 거절
+          const isCmd = event.metaKey || event.ctrlKey
+          if (event.shiftKey && isCmd && !event.altKey) {
+            const k = event.key.toLowerCase()
+            if (k === 'a') {
+              event.preventDefault()
+              acceptAllMarks()
+              return true
+            }
+            if (k === 'r') {
+              event.preventDefault()
+              rejectAllMarks()
+              return true
+            }
+          }
+
           const isTab = event.key === 'Tab'
           const isEsc = event.key === 'Escape'
           if (!isTab && !isEsc) return false
@@ -384,6 +488,7 @@ export const proofMarksPlugin = (ydoc: Y.Doc) =>
         }
       },
       view(view) {
+        activeView = view
         const marksMap = ydoc.getMap('marks')
 
         const sync = (): void => {
@@ -400,6 +505,7 @@ export const proofMarksPlugin = (ydoc: Y.Doc) =>
         return {
           destroy() {
             marksMap.unobserve(sync)
+            if (activeView === view) activeView = null
           }
         }
       }

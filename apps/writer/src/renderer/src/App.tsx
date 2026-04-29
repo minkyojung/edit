@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { AccountMenu } from '@/components/account-menu'
 import { AgentSettingsChip } from '@/components/agent-settings-chip'
+import { MarkActionsChip } from '@/components/mark-actions-chip'
 import { SignInPanel } from '@/components/sign-in-panel'
 import { WikiModal } from '@/components/wiki-modal'
 
@@ -83,6 +84,7 @@ export default function App(): React.ReactElement {
         <MilkdownEditor ydoc={ydoc} provider={provider} onMarkdownChange={setEditorMarkdown} />
       </div>
       <header className="fixed top-3 right-3 z-40 flex items-center gap-1">
+        <MarkActionsChip />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
