@@ -232,9 +232,13 @@ export default function App(): React.ReactElement {
 
   useEffect(() => {
     window.auth.oauthStatus().then(setOauthStatus)
-    window.auth.onChanged(setOauthStatus)
-    window.auth.onRequired(() => setOauthStatus('unauthenticated'))
+    const offChanged = window.auth.onChanged(setOauthStatus)
+    const offRequired = window.auth.onRequired(() => setOauthStatus('unauthenticated'))
     window.server.onError(() => setServerError(true))
+    return () => {
+      offChanged()
+      offRequired()
+    }
   }, [])
 
   useEffect(() => {
@@ -252,6 +256,10 @@ export default function App(): React.ReactElement {
     setAgentError(null)
     window.agent.trigger(text)
   })
+
+  if (oauthStatus === 'checking') {
+    return <div className="splash" />
+  }
 
   return (
     <div className="app">

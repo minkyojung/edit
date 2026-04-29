@@ -28,11 +28,19 @@ contextBridge.exposeInMainWorld('auth', {
   oauthStart: (): Promise<void> => ipcRenderer.invoke('auth:oauth-start'),
   oauthComplete: (code: string): Promise<void> => ipcRenderer.invoke('auth:oauth-complete', code),
   logout: (): Promise<void> => ipcRenderer.invoke('auth:logout'),
-  onChanged: (cb: (status: 'authenticated' | 'unauthenticated') => void) => {
-    ipcRenderer.on('auth:changed', (_, status) => cb(status))
+  onChanged: (cb: (status: 'authenticated' | 'unauthenticated') => void): (() => void) => {
+    const handler = (_: unknown, status: 'authenticated' | 'unauthenticated'): void => cb(status)
+    ipcRenderer.on('auth:changed', handler)
+    return () => {
+      ipcRenderer.removeListener('auth:changed', handler)
+    }
   },
-  onRequired: (cb: () => void) => {
-    ipcRenderer.on('auth:required', () => cb())
+  onRequired: (cb: () => void): (() => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.on('auth:required', handler)
+    return () => {
+      ipcRenderer.removeListener('auth:required', handler)
+    }
   }
 })
 

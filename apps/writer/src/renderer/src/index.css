@@ -281,6 +281,13 @@ body {
   outline: none;
 }
 
+.splash {
+  position: fixed;
+  inset: 0;
+  background: #0a0a0a;
+  z-index: 200;
+}
+
 .account-indicator {
   position: fixed;
   top: 14px;

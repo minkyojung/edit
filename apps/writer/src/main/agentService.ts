@@ -1,7 +1,13 @@
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { authedQuery, NotAuthenticatedError, isAuthError } from './claudeRuntime'
-import { clearToken } from './oauthService'
+import { clearToken, onAuthChange } from './oauthService'
+
+onAuthChange((status) => {
+  if (status === 'unauthenticated') {
+    resetSession().catch((err) => console.error('[agent] reset on logout failed', err))
+  }
+})
 import type { WebContents } from 'electron'
 import { z } from 'zod'
 import { readBelief } from './wikiService'

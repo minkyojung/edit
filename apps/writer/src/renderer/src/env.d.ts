@@ -19,8 +19,8 @@ interface Window {
     oauthStart: () => Promise<void>
     oauthComplete: (code: string) => Promise<void>
     logout: () => Promise<void>
-    onChanged: (cb: (status: 'authenticated' | 'unauthenticated') => void) => void
-    onRequired: (cb: () => void) => void
+    onChanged: (cb: (status: 'authenticated' | 'unauthenticated') => void) => () => void
+    onRequired: (cb: () => void) => () => void
   }
   server: {
     onError: (cb: () => void) => void
