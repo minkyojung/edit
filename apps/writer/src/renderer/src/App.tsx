@@ -107,8 +107,6 @@ export default function App(): React.ReactElement {
     }
   }, [ydoc])
 
-  const [suggestion, setSuggestion] = useState('')
-  const [streaming, setStreaming] = useState(false)
   const [agentError, setAgentError] = useState<string | null>(null)
   const [wikiOpen, setWikiOpen] = useState(false)
   const [authStatus, setAuthStatus] = useState<'ok' | 'not-installed' | 'not-logged-in' | 'checking'>('checking')
@@ -136,26 +134,15 @@ export default function App(): React.ReactElement {
     if (listenersAdded.current) return
     listenersAdded.current = true
 
-    window.agent.onChunk((text) => {
-      setSuggestion((prev) => prev + text)
-      setStreaming(true)
-    })
-
-    window.agent.onDone(() => {
-      setStreaming(false)
-    })
-
     window.agent.onError((msg) => {
       setAgentError(msg)
-      setStreaming(false)
+      setTimeout(() => setAgentError(null), 5000)
     })
   }, [])
 
   useDebouncedText(editorMarkdown, 1500, (text) => {
     if (!text.trim()) return
-    setSuggestion('')
     setAgentError(null)
-    setStreaming(true)
     window.agent.trigger(text)
   })
 
@@ -167,17 +154,9 @@ export default function App(): React.ReactElement {
         </button>
         <MilkdownEditor ydoc={ydoc} provider={provider} onMarkdownChange={setEditorMarkdown} />
       </div>
-      {(suggestion || streaming || agentError) && (
-        <div className="suggestion-pane">
-          <div className="suggestion-label">제안</div>
-          {agentError ? (
-            <div className="suggestion-error">에이전트 오류가 발생했습니다. 잠시 후 다시 시도해주세요.</div>
-          ) : (
-            <div className="suggestion-text">
-              {suggestion}
-              {streaming && <span className="cursor" />}
-            </div>
-          )}
+      {agentError && (
+        <div className="auth-status auth-status--error">
+          에이전트 오류 — 잠시 후 다시 시도해주세요
         </div>
       )}
       {serverError && (

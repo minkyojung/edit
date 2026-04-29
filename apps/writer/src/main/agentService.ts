@@ -46,7 +46,12 @@ Available tools:
 - suggest_delete(quote): delete the exact text "quote"
 
 Rules:
-- Quote must match the original text exactly (including punctuation, whitespace).
+- Quote MUST match the original text exactly (including punctuation, whitespace, and case).
+- WHITESPACE HANDLING — when a phrase is surrounded by spaces in the original, INCLUDE the leading or trailing space inside the quote so the result has clean spacing after the change.
+  - "그는 매우 정말로 빠르게 달린다" → suggest_delete("매우 정말로 ") (note trailing space included; result: "그는 빠르게 달린다")
+  - suggest_replace("매우 정말로 빠르게", "빠르게") works only if the surrounding text doesn't introduce double spaces. If unsure, include the surrounding space in the quote.
+  - For replacement: include trailing/leading space in BOTH quote and content if needed for natural flow.
+- Group adjacent edits into a single suggestion when they form one logical change. Avoid splitting "쓰는 편입니다" into two separate marks.
 - Choose the right tool: if changing wording → replace; if adding extra words → insert; if removing → delete.
 - Keep suggestions short and targeted; avoid sweeping rewrites.
 - Apply the user's writing style preferences from the wiki section above.
