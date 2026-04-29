@@ -83,8 +83,8 @@ app.whenReady().then(() => {
     await rejectMark(markId)
   })
 
-  ipcMain.on('agent:trigger', (_, text: string) => {
-    trigger(text, win.webContents)
+  ipcMain.on('agent:trigger', (_, text: string, processedHistory: unknown) => {
+    trigger(text, win.webContents, Array.isArray(processedHistory) ? processedHistory : [])
   })
 
   ipcMain.handle('wiki:read', async (_: IpcMainInvokeEvent) => {

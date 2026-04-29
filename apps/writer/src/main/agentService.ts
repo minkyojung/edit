@@ -288,12 +288,56 @@ async function processStream(): Promise<void> {
   }
 }
 
-export function trigger(text: string, webContents: WebContents): void {
+type ProcessedHistoryItem = {
+  status?: unknown
+  kind?: unknown
+  quote?: unknown
+  content?: unknown
+}
+
+function formatProcessedHistory(items: unknown[]): string {
+  if (!Array.isArray(items) || items.length === 0) return ''
+  const lines: string[] = []
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object') continue
+    const item = raw as ProcessedHistoryItem
+    const status = typeof item.status === 'string' ? item.status : null
+    const kind = typeof item.kind === 'string' ? item.kind : null
+    const quote = typeof item.quote === 'string' ? item.quote : null
+    if (!status || !kind || !quote) continue
+    if (status !== 'accepted' && status !== 'rejected') continue
+    const content = typeof item.content === 'string' ? item.content : null
+    const detail =
+      kind === 'replace' && content !== null
+        ? `replace "${quote}" → "${content}"`
+        : kind === 'insert' && content !== null
+          ? `insert "${content}" at "${quote}"`
+          : kind === 'delete'
+            ? `delete "${quote}"`
+            : `${kind} "${quote}"`
+    lines.push(`- (${status}) ${detail}`)
+  }
+  if (lines.length === 0) return ''
+  return [
+    '<processed_suggestions>',
+    '사용자가 이미 다음 제안들을 처리했음. 같은 인용(quote)에 대해 같은 종류의 제안을 다시 만들지 마세요. 거절된 제안은 사용자가 동의하지 않은 것이므로 같은 의도의 다른 형태도 피하세요.',
+    ...lines,
+    '</processed_suggestions>'
+  ].join('\n')
+}
+
+export function trigger(
+  text: string,
+  webContents: WebContents,
+  processedHistory: unknown[] = []
+): void {
   ensureSession(webContents)
     .then(() => {
       activeWebContents = webContents
       conversationLog.push(`User: ${text}`)
-      queue?.push({ type: 'user', message: { role: 'user', content: text } })
+      const historyBlock = formatProcessedHistory(processedHistory)
+      const content = historyBlock ? `${historyBlock}\n\n${text}` : text
+      queue?.push({ type: 'user', message: { role: 'user', content } })
     })
     .catch((err) => console.error('[trigger]', err))
 }

@@ -5,7 +5,8 @@ contextBridge.exposeInMainWorld('electron', {
 })
 
 contextBridge.exposeInMainWorld('agent', {
-  trigger: (text: string) => ipcRenderer.send('agent:trigger', text),
+  trigger: (text: string, processedHistory: unknown[] = []) =>
+    ipcRenderer.send('agent:trigger', text, processedHistory),
   onChunk: (cb: (text: string) => void) => {
     ipcRenderer.on('agent:chunk', (_, text) => cb(text))
   },

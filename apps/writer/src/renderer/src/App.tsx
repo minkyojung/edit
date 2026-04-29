@@ -3,6 +3,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { useDebouncedText } from './hooks/useIdleCallback'
 import { MilkdownEditor } from './MilkdownEditor'
+import { collectProcessedHistory } from './markPlugin'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { BookOpen01Icon } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
@@ -71,7 +72,7 @@ export default function App(): React.ReactElement {
   useDebouncedText(editorMarkdown, 1500, (text) => {
     if (!text.trim()) return
     setAgentError(null)
-    window.agent.trigger(text)
+    window.agent.trigger(text, collectProcessedHistory(ydoc))
   })
 
   if (oauthStatus === 'checking') {

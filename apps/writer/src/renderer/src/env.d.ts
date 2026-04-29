@@ -9,7 +9,7 @@ type AgentSettings = { model: AgentModelId; effort: AgentEffort }
 
 interface Window {
   agent: {
-    trigger: (text: string) => void
+    trigger: (text: string, processedHistory?: unknown[]) => void
     onChunk: (cb: (text: string) => void) => void
     onDone: (cb: () => void) => void
     onError: (cb: (msg: string) => void) => void

@@ -343,6 +343,31 @@ export function rejectAllMarks(): void {
   }
 }
 
+export type ProcessedMark = {
+  status: 'accepted' | 'rejected'
+  kind: 'insert' | 'delete' | 'replace'
+  quote: string
+  content?: string
+}
+
+export function collectProcessedHistory(ydoc: Y.Doc, limit = 30): ProcessedMark[] {
+  const map = ydoc.getMap('marks')
+  const items: { mark: ProcessedMark; createdAt: number }[] = []
+  map.forEach((value) => {
+    const m = value as StoredMark | undefined
+    if (!m || typeof m !== 'object') return
+    if (m.status !== 'accepted' && m.status !== 'rejected') return
+    if (m.kind !== 'insert' && m.kind !== 'delete' && m.kind !== 'replace') return
+    if (!m.quote) return
+    items.push({
+      mark: { status: m.status, kind: m.kind, quote: m.quote, content: m.content },
+      createdAt: m.createdAt ? Date.parse(m.createdAt) : 0
+    })
+  })
+  items.sort((a, b) => b.createdAt - a.createdAt)
+  return items.slice(0, limit).map((i) => i.mark)
+}
+
 if (typeof window !== 'undefined') {
   ;(window as unknown as { __proofDebug: () => unknown }).__proofDebug = () => {
     if (!activeView) return { error: 'no active view' }
