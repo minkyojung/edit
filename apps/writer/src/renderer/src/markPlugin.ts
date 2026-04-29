@@ -343,6 +343,34 @@ export function rejectAllMarks(): void {
   }
 }
 
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { __proofDebug: () => unknown }).__proofDebug = () => {
+    if (!activeView) return { error: 'no active view' }
+    const ps = marksKey.getState(activeView.state)
+    if (!ps) return { error: 'no plugin state' }
+    const renderable = getRenderableMarks(activeView.state.doc, ps.marks, ps.tombstones)
+    return {
+      lastEmittedCount: lastCount,
+      marksInState: Object.keys(ps.marks).length,
+      tombstones: ps.tombstones.size,
+      renderableCount: renderable.length,
+      docSize: activeView.state.doc.content.size,
+      docText: activeView.state.doc.textContent.slice(0, 200),
+      marks: Object.entries(ps.marks).map(([id, m]) => ({
+        id,
+        kind: m.kind,
+        status: m.status,
+        quote: m.quote,
+        startRel: m.startRel,
+        endRel: m.endRel,
+        content: m.content,
+        resolved: !!resolveStoredMarkRange(activeView!.state.doc, m)
+      })),
+      renderableIds: renderable.map((r) => r.id)
+    }
+  }
+}
+
 function buildDecorations(
   doc: ProseMirrorNode,
   marks: MarksMap,
@@ -434,6 +462,12 @@ export const proofMarksPlugin = (ydoc: Y.Doc) =>
             if (newFocus !== next.focusedMarkId) {
               next = { ...next, focusedMarkId: newFocus }
             }
+            // doc 이 바뀌었는데 state ref 가 그대로면 PM 이 decorations() 를
+            // 재호출하지 않아 quote→range 재매칭이 안 일어난다 (collab 으로
+            // marks 가 빈 doc 에 먼저 도착하는 race 시 0개 stuck). 강제로 새 ref.
+            if (tr.docChanged && next === value) {
+              next = { ...value }
+            }
             emitCount(renderable.length)
           }
           return next
@@ -478,10 +512,12 @@ export const proofMarksPlugin = (ydoc: Y.Doc) =>
 
           event.preventDefault()
           if (isTab) {
+            console.log('[mark client] Tab → apply + accept', { id: currentId, kind: current.mark.kind, range: current.range, docSize: view.state.doc.content.size })
             applyMarkChange(view, current, nextId, currentId)
+            console.log('[mark client] after apply, docSize:', view.state.doc.content.size)
             window.marks.accept(currentId).catch((err) => console.error('[mark accept]', err))
           } else {
-            // Esc — 거절: 텍스트 변경 없이 마크만 사라지게
+            console.log('[mark client] Esc → reject', { id: currentId })
             view.dispatch(view.state.tr.setMeta(marksKey, { addTombstone: currentId, setFocus: nextId }))
             window.marks.reject(currentId).catch((err) => console.error('[mark reject]', err))
           }
@@ -497,15 +533,24 @@ export const proofMarksPlugin = (ydoc: Y.Doc) =>
           marksMap.forEach((value, key) => {
             marks[key] = value as StoredMark
           })
+          console.log('[mark client] marksMap observer fired, count:', Object.keys(marks).length, 'docSize:', view.state.doc.content.size)
           view.dispatch(view.state.tr.setMeta(marksKey, { setMarks: marks }))
         }
 
         sync()
         marksMap.observe(sync)
 
+        // ydoc 텍스트 변경도 추적
+        const xmlFragment = ydoc.getXmlFragment('prosemirror')
+        const fragmentObserver = (): void => {
+          console.log('[mark client] ydoc fragment changed, length:', xmlFragment.length, 'docSize:', view.state.doc.content.size)
+        }
+        xmlFragment.observeDeep(fragmentObserver)
+
         return {
           destroy() {
             marksMap.unobserve(sync)
+            xmlFragment.unobserveDeep(fragmentObserver)
             if (activeView === view) activeView = null
           }
         }
