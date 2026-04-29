@@ -3,9 +3,12 @@ import { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { useDebouncedText } from './hooks/useIdleCallback'
 import { MilkdownEditor } from './MilkdownEditor'
-import { CircleUserRound } from 'lucide-react'
+import { BookOpen, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -23,34 +26,35 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
-function AccountIndicator(): React.ReactElement {
+function AccountMenu(): React.ReactElement {
   const handleSignOut = useCallback(async () => {
     await window.auth.logout()
   }, [])
 
   return (
-    <div className="fixed top-3.5 right-4 z-50">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            title="Connected to Claude"
-          >
-            <CircleUserRound className="h-5 w-5" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-            Connected to Claude
-          </DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={handleSignOut}>
-            Sign out
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="Account menu">
+              <Avatar className="size-7">
+                <AvatarFallback>
+                  <User className="size-4" />
+                </AvatarFallback>
+              </Avatar>
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Connected to Claude</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+          Connected to Claude
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={handleSignOut}>Sign out</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -84,7 +88,7 @@ function SignInPanel(): React.ReactElement {
   }, [code])
 
   return (
-    <div className="dark fixed inset-0 z-[100] flex items-center justify-center bg-background font-sans">
+    <div className="dark fixed inset-0 z-50 flex items-center justify-center bg-background font-sans">
       <div className="flex flex-col items-center text-center max-w-sm">
         {!awaitingPaste ? (
           <>
@@ -192,8 +196,8 @@ function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
             {error}
           </div>
         ) : (
-          <textarea
-            className="resize-none border border-input outline-none bg-muted text-foreground font-mono text-[13px] leading-relaxed p-4 min-h-[320px] rounded-xl focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          <Textarea
+            className="font-mono text-sm leading-relaxed min-h-[320px] resize-none rounded-xl"
             value={markdown}
             onChange={(e) => setMarkdown(e.target.value)}
             autoFocus
@@ -278,23 +282,30 @@ export default function App(): React.ReactElement {
   })
 
   if (oauthStatus === 'checking') {
-    return <div className="fixed inset-0 z-[200] bg-zinc-950" />
+    return <div className="dark fixed inset-0 z-50 bg-background" />
   }
 
   return (
     <div className="flex h-screen">
       <div className="relative flex-1 overflow-y-auto px-10 py-12">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setWikiOpen(true)}
-          title="글쓰기 스타일 위키"
-          className="absolute right-4 top-4 text-muted-foreground text-lg"
-        >
-          ✦
-        </Button>
         <MilkdownEditor ydoc={ydoc} provider={provider} onMarkdownChange={setEditorMarkdown} />
       </div>
+      <header className="fixed top-3 right-3 z-40 flex items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setWikiOpen(true)}
+              aria-label="글쓰기 스타일 위키 열기"
+            >
+              <BookOpen className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>글쓰기 스타일 위키</TooltipContent>
+        </Tooltip>
+        {oauthStatus === 'authenticated' && <AccountMenu />}
+      </header>
       {agentError && (
         <div className="fixed bottom-4 left-4 text-xs text-destructive font-sans">
           에이전트 오류 — 잠시 후 다시 시도해주세요
@@ -305,7 +316,6 @@ export default function App(): React.ReactElement {
           서버 연결 실패 — 앱을 재시작해주세요
         </div>
       )}
-      {oauthStatus === 'authenticated' && <AccountIndicator />}
       {oauthStatus === 'unauthenticated' && <SignInPanel />}
       {wikiOpen && <WikiModal onClose={() => setWikiOpen(false)} />}
     </div>
