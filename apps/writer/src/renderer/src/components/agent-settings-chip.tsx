@@ -68,7 +68,7 @@ export function AgentSettingsChip(): React.ReactElement | null {
     <DropdownMenu>
       <DropdownMenuTrigger
         disabled={pending}
-        className="fixed bottom-3 left-3 z-30 inline-flex items-center gap-2 rounded-full border border-border bg-background/80 px-3 py-1 font-sans text-xs text-muted-foreground shadow-sm backdrop-blur transition-colors hover:text-foreground disabled:opacity-50 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        className="inline-flex items-center gap-2 rounded-full border border-border bg-background/80 px-3 py-1 font-sans text-xs text-muted-foreground shadow-sm backdrop-blur transition-colors hover:text-foreground disabled:opacity-50 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
         <span className="font-medium text-foreground">{MODEL_LABELS[settings.model]}</span>
         <span className="text-muted-foreground/80">·</span>

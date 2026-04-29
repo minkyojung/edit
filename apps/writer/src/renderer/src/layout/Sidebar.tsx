@@ -1,104 +1,90 @@
 import React from 'react'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Note01Icon, LibraryIcon, Settings01Icon, FilterIcon, ArrowUpDownIcon } from '@hugeicons/core-free-icons'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Sidebar,
   SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
+  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-  SidebarSeparator,
+  SidebarTrigger,
 } from '@/components/ui/sidebar'
-
-interface NoteItem {
-  id: string
-  title: string
-  children?: NoteItem[]
-}
-
-const mockNotes: NoteItem[] = [
-  {
-    id: '1',
-    title: '회의 메모',
-    children: [
-      { id: '1-1', title: '결정사항' },
-      { id: '1-2', title: '액션 아이템' },
-    ],
-  },
-  { id: '2', title: '아이디어' },
-  { id: '3', title: '독서 노트' },
-]
-
-const mockWikiItems: NoteItem[] = [
-  { id: 'w1', title: 'belief' },
-  { id: 'w2', title: 'entity' },
-]
-
-const todayLabel = new Date().toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })
-
-function NoteTreeItem({ item }: { item: NoteItem }) {
-  if (!item.children?.length) {
-    return (
-      <SidebarMenuItem>
-        <SidebarMenuButton>
-          {item.title}
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    )
-  }
-
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton>{item.title}</SidebarMenuButton>
-      <SidebarMenuSub>
-        {item.children.map((child) => (
-          <SidebarMenuSubItem key={child.id}>
-            <SidebarMenuSubButton>{child.title}</SidebarMenuSubButton>
-          </SidebarMenuSubItem>
-        ))}
-      </SidebarMenuSub>
-    </SidebarMenuItem>
-  )
-}
 
 export function AppSidebar() {
   return (
-    <Sidebar>
-      {/* 신호등 버튼 공간 + 드래그 영역 */}
-      <SidebarHeader className="h-10 [-webkit-app-region:drag] p-0" />
+    <Sidebar
+      className="border-r"
+      style={{ '--sidebar': 'transparent' } as React.CSSProperties}
+    >
+      <SidebarHeader className="flex flex-row items-center h-10 p-0">
+        <div className="w-[72px] h-full shrink-0 [-webkit-app-region:drag]" />
+        <div className="[-webkit-app-region:no-drag]">
+          <SidebarTrigger />
+        </div>
+      </SidebarHeader>
 
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>오늘 {todayLabel}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {mockNotes.map((note) => (
-                <NoteTreeItem key={note.id} item={note} />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarSeparator />
-
-        <SidebarGroup>
-          <SidebarGroupLabel>위키</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {mockWikiItems.map((item) => (
-                <SidebarMenuItem key={item.id}>
-                  <SidebarMenuButton>{item.title}</SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+      <SidebarContent className="px-2 pt-1">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton>
+              <HugeiconsIcon icon={Note01Icon} className="size-4" strokeWidth={1.5} />
+              Notes
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton>
+              <HugeiconsIcon icon={LibraryIcon} className="size-4" strokeWidth={1.5} />
+              Wiki
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarContent>
+
+      <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuButton size="lg">
+                  <Avatar className="size-7 shrink-0">
+                    <AvatarImage src="" />
+                    <AvatarFallback className="text-xs">WJ</AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium truncate">William Jung</p>
+                    <p className="text-xs text-muted-foreground truncate">Free Plan</p>
+                  </div>
+                  <HugeiconsIcon icon={ArrowUpDownIcon} className="ml-auto size-3.5 text-muted-foreground" strokeWidth={1.5} />
+                </SidebarMenuButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="start" className="w-52">
+                <DropdownMenuItem>
+                  <HugeiconsIcon icon={Settings01Icon} className="size-4" strokeWidth={1.5} />
+                  Settings
+                </DropdownMenuItem>
+                <DropdownMenuItem>
+                  <HugeiconsIcon icon={FilterIcon} className="size-4" strokeWidth={1.5} />
+                  Filter
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="text-destructive">
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
     </Sidebar>
   )
 }

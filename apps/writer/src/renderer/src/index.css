@@ -6,6 +6,10 @@
 @custom-variant dark (&:is(.dark *));
 
 @layer base {
+  html {
+    font-size: 14px;
+  }
+
   *, *::before, *::after {
     box-sizing: border-box;
     margin: 0;

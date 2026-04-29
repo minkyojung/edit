@@ -78,8 +78,24 @@ export default function App(): React.ReactElement {
     return <div className="dark fixed inset-0 z-50 bg-background" />
   }
 
+  const bottomLeft = (
+    <div className="flex flex-col items-start gap-1">
+      {agentError && (
+        <p className="text-xs text-destructive font-sans">
+          에이전트 오류 — 잠시 후 다시 시도해주세요
+        </p>
+      )}
+      {serverError && (
+        <p className="text-xs text-destructive font-sans">
+          서버 연결 실패 — 앱을 재시작해주세요
+        </p>
+      )}
+      {oauthStatus === 'authenticated' && <AgentSettingsChip />}
+    </div>
+  )
+
   return (
-    <AppShell>
+    <AppShell bottomLeft={bottomLeft}>
       <div className="relative px-10 py-12 max-w-3xl mx-auto">
         <MilkdownEditor ydoc={ydoc} provider={provider} onMarkdownChange={setEditorMarkdown} />
       </div>
@@ -99,17 +115,6 @@ export default function App(): React.ReactElement {
         </Tooltip>
         {oauthStatus === 'authenticated' && <AccountMenu />}
       </header>
-      {oauthStatus === 'authenticated' && <AgentSettingsChip />}
-      {agentError && (
-        <div className="fixed bottom-12 left-4 text-xs text-destructive font-sans">
-          에이전트 오류 — 잠시 후 다시 시도해주세요
-        </div>
-      )}
-      {serverError && (
-        <div className="fixed bottom-12 left-4 text-xs text-destructive font-sans">
-          서버 연결 실패 — 앱을 재시작해주세요
-        </div>
-      )}
       {oauthStatus === 'unauthenticated' && <SignInPanel />}
       {wikiOpen && <WikiModal onClose={() => setWikiOpen(false)} />}
     </AppShell>
