@@ -3,14 +3,12 @@ import { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { useDebouncedText } from './hooks/useIdleCallback'
 import { MilkdownEditor } from './MilkdownEditor'
-import { collectProcessedHistory } from './markPlugin'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { BookOpen01Icon } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { AccountMenu } from '@/components/account-menu'
 import { AgentSettingsChip } from '@/components/agent-settings-chip'
-import { MarkActionsChip } from '@/components/mark-actions-chip'
 import { SignInPanel } from '@/components/sign-in-panel'
 import { WikiModal } from '@/components/wiki-modal'
 
@@ -72,7 +70,7 @@ export default function App(): React.ReactElement {
   useDebouncedText(editorMarkdown, 1500, (text) => {
     if (!text.trim()) return
     setAgentError(null)
-    window.agent.trigger(text, collectProcessedHistory(ydoc))
+    window.agent.trigger(text, [])
   })
 
   if (oauthStatus === 'checking') {
@@ -85,7 +83,6 @@ export default function App(): React.ReactElement {
         <MilkdownEditor ydoc={ydoc} provider={provider} onMarkdownChange={setEditorMarkdown} />
       </div>
       <header className="fixed top-3 right-3 z-40 flex items-center gap-1">
-        <MarkActionsChip />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

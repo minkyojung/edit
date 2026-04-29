@@ -6,7 +6,6 @@ import type { AgentSettings } from './agentSettings'
 import { bootstrapWiki, readBelief, writeBelief } from './wikiService'
 import { startOAuthFlow, completeOAuthFlow, hasToken, clearToken, onAuthChange } from './oauthService'
 import { bootstrapDoc, getCollabSession } from './docService'
-import { acceptMark, rejectMark } from './markService'
 
 let proofServer: ChildProcess | null = null
 
@@ -73,14 +72,6 @@ app.whenReady().then(() => {
 
   ipcMain.handle('doc:collab-session', async (_: IpcMainInvokeEvent) => {
     return getCollabSession()
-  })
-
-  ipcMain.handle('mark:accept', async (_: IpcMainInvokeEvent, markId: string) => {
-    await acceptMark(markId)
-  })
-
-  ipcMain.handle('mark:reject', async (_: IpcMainInvokeEvent, markId: string) => {
-    await rejectMark(markId)
   })
 
   ipcMain.on('agent:trigger', (_, text: string, processedHistory: unknown) => {

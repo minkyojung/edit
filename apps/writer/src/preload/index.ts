@@ -57,8 +57,3 @@ contextBridge.exposeInMainWorld('doc', {
   collabSession: (): Promise<{ collabWsUrl: string; token: string; slug: string }> =>
     ipcRenderer.invoke('doc:collab-session')
 })
-
-contextBridge.exposeInMainWorld('marks', {
-  accept: (markId: string): Promise<void> => ipcRenderer.invoke('mark:accept', markId),
-  reject: (markId: string): Promise<void> => ipcRenderer.invoke('mark:reject', markId)
-})

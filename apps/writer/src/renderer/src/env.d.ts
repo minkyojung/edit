@@ -34,8 +34,4 @@ interface Window {
   doc: {
     collabSession: () => Promise<{ collabWsUrl: string; token: string; slug: string }>
   }
-  marks: {
-    accept: (markId: string) => Promise<void>
-    reject: (markId: string) => Promise<void>
-  }
 }
