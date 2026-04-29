@@ -13,6 +13,7 @@ import { z } from 'zod'
 import { readBelief } from './wikiService'
 import { scheduleMemoryUpdate } from './memoryService'
 import { bootstrapDoc } from './docService'
+import * as sessionStore from './agentSessionStore'
 
 const PROOF_URL = 'http://localhost:4000'
 
@@ -164,6 +165,7 @@ async function ensureSession(webContents: WebContents): Promise<void> {
 
     const doc = await bootstrapDoc()
     const suggestServer = await createSuggestServer(doc.slug, doc.token)
+    const savedSessionId = await sessionStore.load()
 
     queue = new UserMessageQueue()
     activeWebContents = webContents
@@ -173,6 +175,8 @@ async function ensureSession(webContents: WebContents): Promise<void> {
         prompt: queue as AsyncIterable<unknown> as Parameters<typeof authedQuery>[0]['prompt'],
         options: {
           model: 'claude-haiku-4-5',
+          effort: 'low',
+          resume: savedSessionId ?? undefined,
           systemPrompt: [
             '## 사용자 글쓰기 스타일 (위키)\n\n' + belief,
             COPYEDITOR_INSTRUCTIONS,
@@ -221,6 +225,9 @@ async function processStream(): Promise<void> {
 
       if (msg.type === 'system' && msg.subtype === 'init') {
         console.log('[agent] session started:', msg.session_id)
+        sessionStore.save(msg.session_id).catch((err) =>
+          console.error('[agent] sessionStore.save failed', err)
+        )
         continue
       }
 
@@ -249,6 +256,7 @@ async function processStream(): Promise<void> {
     }
   } catch (err) {
     console.error('[agent error]', err)
+    await sessionStore.clear()
     if (isAuthError(err)) {
       await clearToken()
       if (activeWebContents && !activeWebContents.isDestroyed()) {
@@ -289,6 +297,7 @@ export async function resetSession(): Promise<void> {
   activeWebContents = null
   conversationLog = []
   sessionInit = null
+  await sessionStore.clear()
 }
 
 export async function shutdown(): Promise<void> {
