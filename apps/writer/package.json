@@ -1,0 +1,39 @@
+{
+  "name": "writer",
+  "private": true,
+  "version": "0.1.0",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.121",
+    "@hocuspocus/provider": "^4.0.0",
+    "@milkdown/kit": "^7.20.0",
+    "@milkdown/plugin-collab": "^7.20.0",
+    "@milkdown/react": "^7.20.0",
+    "@tiptap/core": "^2.11.5",
+    "@tiptap/extension-collaboration": "^2.11.5",
+    "@tiptap/extension-collaboration-cursor": "^2.11.5",
+    "@tiptap/pm": "^2.11.5",
+    "@tiptap/react": "^2.11.5",
+    "@tiptap/starter-kit": "^2.11.5",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tsx": "^4.21.0",
+    "yjs": "^13.6.24",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "electron": "^35.3.0",
+    "electron-vite": "^3.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.3"
+  }
+}
