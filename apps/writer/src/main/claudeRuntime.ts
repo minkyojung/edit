@@ -14,6 +14,7 @@ export async function authedQuery(args: QueryArgs): Promise<ReturnType<typeof qu
   const token = await getValidToken()
   if (!token) throw new NotAuthenticatedError()
 
+  // The Claude Agent SDK reads this exact env var for OAuth-based auth. Do not rename.
   process.env.CLAUDE_CODE_OAUTH_TOKEN = token
 
   // Make sure the SDK doesn't fall back to a stronger-priority credential

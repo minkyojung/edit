@@ -142,6 +142,7 @@ let session: Query | null = null
 let queue: UserMessageQueue | null = null
 let activeWebContents: WebContents | null = null
 let conversationLog: string[] = []
+let sessionInit: Promise<void> | null = null
 
 function extractText(msg: SDKMessage): string | null {
   if (msg.type !== 'assistant') return null
@@ -151,57 +152,64 @@ function extractText(msg: SDKMessage): string | null {
 
 async function ensureSession(webContents: WebContents): Promise<void> {
   if (session) return
+  if (sessionInit) return sessionInit
 
-  let belief = ''
-  try {
-    belief = await readBelief()
-  } catch (err) {
-    console.error('[agent] readBelief failed, continuing with empty belief:', err)
-  }
-
-  const doc = await bootstrapDoc()
-  const suggestServer = await createSuggestServer(doc.slug, doc.token)
-
-  queue = new UserMessageQueue()
-  activeWebContents = webContents
-
-  try {
-    session = await authedQuery({
-      prompt: queue as AsyncIterable<unknown> as Parameters<typeof authedQuery>[0]['prompt'],
-      options: {
-        model: 'claude-haiku-4-5',
-        systemPrompt: [
-          '## 사용자 글쓰기 스타일 (위키)\n\n' + belief,
-          COPYEDITOR_INSTRUCTIONS,
-          SYSTEM_PROMPT_DYNAMIC_BOUNDARY
-        ],
-        mcpServers: { suggest: suggestServer },
-        allowedTools: [
-          'mcp__suggest__suggest_replace',
-          'mcp__suggest__suggest_insert',
-          'mcp__suggest__suggest_delete'
-        ],
-        tools: [
-          'mcp__suggest__suggest_replace',
-          'mcp__suggest__suggest_insert',
-          'mcp__suggest__suggest_delete'
-        ],
-        permissionMode: 'bypassPermissions',
-        settingSources: []
-      }
-    })
-  } catch (err) {
-    if (err instanceof NotAuthenticatedError) {
-      if (!webContents.isDestroyed()) webContents.send('auth:required')
-      session = null
-      queue = null
-      activeWebContents = null
-      return
+  sessionInit = (async () => {
+    let belief = ''
+    try {
+      belief = await readBelief()
+    } catch (err) {
+      console.error('[agent] readBelief failed, continuing with empty belief:', err)
     }
-    throw err
-  }
 
-  processStream().catch((err) => console.error('[agent stream]', err))
+    const doc = await bootstrapDoc()
+    const suggestServer = await createSuggestServer(doc.slug, doc.token)
+
+    queue = new UserMessageQueue()
+    activeWebContents = webContents
+
+    try {
+      session = await authedQuery({
+        prompt: queue as AsyncIterable<unknown> as Parameters<typeof authedQuery>[0]['prompt'],
+        options: {
+          model: 'claude-haiku-4-5',
+          systemPrompt: [
+            '## 사용자 글쓰기 스타일 (위키)\n\n' + belief,
+            COPYEDITOR_INSTRUCTIONS,
+            SYSTEM_PROMPT_DYNAMIC_BOUNDARY
+          ],
+          mcpServers: { suggest: suggestServer },
+          allowedTools: [
+            'mcp__suggest__suggest_replace',
+            'mcp__suggest__suggest_insert',
+            'mcp__suggest__suggest_delete'
+          ],
+          tools: [
+            'mcp__suggest__suggest_replace',
+            'mcp__suggest__suggest_insert',
+            'mcp__suggest__suggest_delete'
+          ],
+          permissionMode: 'bypassPermissions',
+          settingSources: []
+        }
+      })
+    } catch (err) {
+      if (err instanceof NotAuthenticatedError) {
+        if (!webContents.isDestroyed()) webContents.send('auth:required')
+        session = null
+        queue = null
+        activeWebContents = null
+        return
+      }
+      throw err
+    }
+
+    processStream().catch((err) => console.error('[agent stream]', err))
+  })().finally(() => {
+    sessionInit = null
+  })
+
+  return sessionInit
 }
 
 async function processStream(): Promise<void> {
@@ -235,6 +243,7 @@ async function processStream(): Promise<void> {
         }
         if (conversationLog.length > 0) {
           scheduleMemoryUpdate(conversationLog.join('\n\n'))
+          conversationLog = []
         }
       }
     }
@@ -279,6 +288,7 @@ export async function resetSession(): Promise<void> {
   queue = null
   activeWebContents = null
   conversationLog = []
+  sessionInit = null
 }
 
 export async function shutdown(): Promise<void> {
