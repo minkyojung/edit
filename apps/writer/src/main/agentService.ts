@@ -14,6 +14,8 @@ import { readBelief } from './wikiService'
 import { scheduleMemoryUpdate } from './memoryService'
 import { bootstrapDoc } from './docService'
 import * as sessionStore from './agentSessionStore'
+import * as settingsStore from './agentSettings'
+import type { AgentSettings } from './agentSettings'
 
 const PROOF_URL = 'http://localhost:4000'
 
@@ -144,6 +146,17 @@ let queue: UserMessageQueue | null = null
 let activeWebContents: WebContents | null = null
 let conversationLog: string[] = []
 let sessionInit: Promise<void> | null = null
+let currentSettings: AgentSettings = settingsStore.DEFAULT_SETTINGS
+let settingsLoaded: Promise<void> | null = null
+
+function ensureSettingsLoaded(): Promise<void> {
+  if (!settingsLoaded) {
+    settingsLoaded = settingsStore.load().then((s) => {
+      currentSettings = s
+    })
+  }
+  return settingsLoaded
+}
 
 function extractText(msg: SDKMessage): string | null {
   if (msg.type !== 'assistant') return null
@@ -156,6 +169,8 @@ async function ensureSession(webContents: WebContents): Promise<void> {
   if (sessionInit) return sessionInit
 
   sessionInit = (async () => {
+    await ensureSettingsLoaded()
+
     let belief = ''
     try {
       belief = await readBelief()
@@ -174,8 +189,8 @@ async function ensureSession(webContents: WebContents): Promise<void> {
       session = await authedQuery({
         prompt: queue as AsyncIterable<unknown> as Parameters<typeof authedQuery>[0]['prompt'],
         options: {
-          model: 'claude-haiku-4-5',
-          effort: 'low',
+          model: currentSettings.model,
+          effort: currentSettings.effort,
           resume: savedSessionId ?? undefined,
           systemPrompt: [
             '## 사용자 글쓰기 스타일 (위키)\n\n' + belief,
@@ -298,6 +313,20 @@ export async function resetSession(): Promise<void> {
   conversationLog = []
   sessionInit = null
   await sessionStore.clear()
+}
+
+export async function getSettings(): Promise<AgentSettings> {
+  await ensureSettingsLoaded()
+  return currentSettings
+}
+
+export async function setSettings(next: AgentSettings): Promise<AgentSettings> {
+  await settingsStore.save(next)
+  const reloaded = await settingsStore.load()
+  currentSettings = reloaded
+  settingsLoaded = Promise.resolve()
+  await resetSession()
+  return reloaded
 }
 
 export async function shutdown(): Promise<void> {

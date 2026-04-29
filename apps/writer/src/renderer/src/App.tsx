@@ -8,6 +8,7 @@ import { BookOpen01Icon } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { AccountMenu } from '@/components/account-menu'
+import { AgentSettingsChip } from '@/components/agent-settings-chip'
 import { SignInPanel } from '@/components/sign-in-panel'
 import { WikiModal } from '@/components/wiki-modal'
 
@@ -97,13 +98,14 @@ export default function App(): React.ReactElement {
         </Tooltip>
         {oauthStatus === 'authenticated' && <AccountMenu />}
       </header>
+      {oauthStatus === 'authenticated' && <AgentSettingsChip />}
       {agentError && (
-        <div className="fixed bottom-4 left-4 text-xs text-destructive font-sans">
+        <div className="fixed bottom-12 left-4 text-xs text-destructive font-sans">
           에이전트 오류 — 잠시 후 다시 시도해주세요
         </div>
       )}
       {serverError && (
-        <div className="fixed bottom-4 left-4 text-xs text-destructive font-sans">
+        <div className="fixed bottom-12 left-4 text-xs text-destructive font-sans">
           서버 연결 실패 — 앱을 재시작해주세요
         </div>
       )}

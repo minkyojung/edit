@@ -3,12 +3,18 @@ declare module '*.svg' {
   export default url
 }
 
+type AgentModelId = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-7'
+type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+type AgentSettings = { model: AgentModelId; effort: AgentEffort }
+
 interface Window {
   agent: {
     trigger: (text: string) => void
     onChunk: (cb: (text: string) => void) => void
     onDone: (cb: () => void) => void
     onError: (cb: (msg: string) => void) => void
+    getSettings: () => Promise<AgentSettings>
+    setSettings: (s: AgentSettings) => Promise<AgentSettings>
   }
   wiki: {
     read: () => Promise<string>

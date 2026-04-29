@@ -14,7 +14,9 @@ contextBridge.exposeInMainWorld('agent', {
   },
   onError: (cb: (msg: string) => void) => {
     ipcRenderer.on('agent:error', (_, msg) => cb(msg))
-  }
+  },
+  getSettings: () => ipcRenderer.invoke('agent:get-settings'),
+  setSettings: (s: { model: string; effort: string }) => ipcRenderer.invoke('agent:set-settings', s)
 })
 
 contextBridge.exposeInMainWorld('wiki', {
