@@ -63,7 +63,7 @@ export function AppShell({ children, bottomLeft, documentContext }: AppShellProp
         )}
         <ResizablePanelGroup orientation="horizontal" className="h-full">
           <ResizablePanel defaultSize={75} minSize={30}>
-            <div className="relative h-full overflow-y-auto">
+            <div className="relative h-full overflow-y-auto bg-muted/40">
               {children}
               {bottomLeft && (
                 <div className="absolute bottom-3 left-3 z-30">
