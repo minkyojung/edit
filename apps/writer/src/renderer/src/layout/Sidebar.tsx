@@ -1,11 +1,25 @@
-import React from 'react'
+import React, { useCallback } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Note01Icon, LibraryIcon, Settings01Icon, FilterIcon, ArrowUpDownIcon } from '@hugeicons/core-free-icons'
+import {
+  Note01Icon,
+  LibraryIcon,
+  Settings01Icon,
+  FilterIcon,
+  ArrowUpDownIcon,
+  Sun03Icon,
+  Moon02Icon,
+  ComputerDesk01Icon,
+  Logout01Icon,
+} from '@hugeicons/core-free-icons'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { useTheme } from '@/components/theme-provider'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -21,6 +35,12 @@ import {
 } from '@/components/ui/sidebar'
 
 export function AppSidebar() {
+  const { theme, setTheme } = useTheme()
+
+  const handleSignOut = useCallback(async () => {
+    await window.auth.logout()
+  }, [])
+
   return (
     <Sidebar
       className="border-r"
@@ -68,6 +88,10 @@ export function AppSidebar() {
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-52">
+                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+                  Connected to Claude
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem>
                   <HugeiconsIcon icon={Settings01Icon} className="size-4" strokeWidth={1.5} />
                   Settings
@@ -77,7 +101,29 @@ export function AppSidebar() {
                   Filter
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive">
+                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+                  Theme
+                </DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={theme}
+                  onValueChange={(v) => setTheme(v as 'light' | 'dark' | 'system')}
+                >
+                  <DropdownMenuRadioItem value="light">
+                    <HugeiconsIcon icon={Sun03Icon} className="size-4" strokeWidth={1.5} />
+                    Light
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="dark">
+                    <HugeiconsIcon icon={Moon02Icon} className="size-4" strokeWidth={1.5} />
+                    Dark
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="system">
+                    <HugeiconsIcon icon={ComputerDesk01Icon} className="size-4" strokeWidth={1.5} />
+                    System
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="text-destructive" onClick={handleSignOut}>
+                  <HugeiconsIcon icon={Logout01Icon} className="size-4" strokeWidth={1.5} />
                   Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>

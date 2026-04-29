@@ -7,7 +7,6 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { BookOpen01Icon } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { AccountMenu } from '@/components/account-menu'
 import { AgentSettingsChip } from '@/components/agent-settings-chip'
 import { SignInPanel } from '@/components/sign-in-panel'
 import { WikiModal } from '@/components/wiki-modal'
@@ -79,7 +78,7 @@ export default function App(): React.ReactElement {
   }
 
   const bottomLeft = (
-    <div className="flex flex-col items-start gap-1">
+    <div className="flex items-center gap-2">
       {agentError && (
         <p className="text-xs text-destructive font-sans">
           에이전트 오류 — 잠시 후 다시 시도해주세요
@@ -91,6 +90,19 @@ export default function App(): React.ReactElement {
         </p>
       )}
       {oauthStatus === 'authenticated' && <AgentSettingsChip />}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setWikiOpen(true)}
+            aria-label="글쓰기 스타일 위키 열기"
+          >
+            <HugeiconsIcon icon={BookOpen01Icon} className="size-4" strokeWidth={2} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>글쓰기 스타일 위키</TooltipContent>
+      </Tooltip>
     </div>
   )
 
@@ -99,22 +111,6 @@ export default function App(): React.ReactElement {
       <div className="relative px-10 py-12 max-w-3xl mx-auto">
         <MilkdownEditor ydoc={ydoc} provider={provider} onMarkdownChange={setEditorMarkdown} />
       </div>
-      <header className="fixed top-3 right-3 z-40 flex items-center gap-1">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setWikiOpen(true)}
-              aria-label="글쓰기 스타일 위키 열기"
-            >
-              <HugeiconsIcon icon={BookOpen01Icon} className="size-4" strokeWidth={2} />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>글쓰기 스타일 위키</TooltipContent>
-        </Tooltip>
-        {oauthStatus === 'authenticated' && <AccountMenu />}
-      </header>
       {oauthStatus === 'unauthenticated' && <SignInPanel />}
       {wikiOpen && <WikiModal onClose={() => setWikiOpen(false)} />}
     </AppShell>
