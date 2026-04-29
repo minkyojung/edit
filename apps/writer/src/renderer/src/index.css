@@ -228,6 +228,19 @@ body {
   border-radius: 2px;
 }
 
+/* proofAuthored — 글자 단위 작성자 시각화 (proof-sdk 패턴) */
+.ProseMirror span[data-proof="authored"][data-by^="human"] {
+  background-color: rgba(110, 231, 183, 0.08);
+}
+
+.ProseMirror span[data-proof="authored"][data-by^="ai"] {
+  background-color: rgba(165, 180, 252, 0.12);
+}
+
+.ProseMirror span[data-proof="authored"][data-by^="unknown"] {
+  background-color: rgba(156, 163, 175, 0.10);
+}
+
 .milkdown,
 .ProseMirror {
   font-family: system-ui, sans-serif;
