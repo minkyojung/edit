@@ -3,7 +3,6 @@ import { join } from 'path'
 import { spawn, ChildProcess } from 'child_process'
 import { trigger, shutdown as agentShutdown, resetSession } from './agentService'
 import { bootstrapWiki, readBelief, writeBelief } from './wikiService'
-import { checkAuth, runLogin } from './authService'
 import { startOAuthFlow, completeOAuthFlow, hasToken, clearToken, onAuthChange } from './oauthService'
 import { bootstrapDoc, getCollabSession } from './docService'
 import { acceptMark, rejectMark } from './markService'
@@ -93,15 +92,6 @@ app.whenReady().then(() => {
   ipcMain.handle('wiki:save', async (_: IpcMainInvokeEvent, markdown: string) => {
     await writeBelief(markdown)
     await resetSession()
-  })
-
-  ipcMain.handle('auth:status', async (_: IpcMainInvokeEvent) => {
-    return checkAuth()
-  })
-
-  ipcMain.handle('auth:login', async (_: IpcMainInvokeEvent) => {
-    await runLogin()
-    return checkAuth()
   })
 
   ipcMain.handle('auth:oauth-status', async () => (hasToken() ? 'authenticated' : 'unauthenticated'))

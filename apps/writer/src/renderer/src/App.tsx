@@ -194,6 +194,7 @@ export default function App(): React.ReactElement {
   useEffect(() => {
     window.auth.oauthStatus().then(setOauthStatus)
     window.auth.onChanged(setOauthStatus)
+    window.auth.onRequired(() => setOauthStatus('unauthenticated'))
     window.server.onError(() => setServerError(true))
   }, [])
 

@@ -1,6 +1,7 @@
-import { query, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { readBelief, writeBelief } from './wikiService'
+import { authedQuery, NotAuthenticatedError } from './claudeRuntime'
 
 const MEMORY_WRITER_PROMPT = `You are a wiki manager for a writing assistant app.
 You will receive a copyediting conversation between an AI copyeditor and a user's writing.
@@ -45,7 +46,7 @@ async function runMemoryWriter(conversation: string): Promise<void> {
 
   const prompt = `다음 교열 대화를 분석하고 belief 위키를 업데이트해라.\n\n${conversation}`
 
-  const q = query({
+  const q = authedQuery({
     prompt,
     options: {
       model: 'claude-haiku-4-5',
@@ -54,7 +55,7 @@ async function runMemoryWriter(conversation: string): Promise<void> {
       allowedTools: ['mcp__wiki__read_belief', 'mcp__wiki__write_belief'],
       permissionMode: 'bypassPermissions',
       tools: ['mcp__wiki__read_belief', 'mcp__wiki__write_belief'],
-      settingSources: ['user', 'project', 'local']
+      settingSources: []
     }
   })
 
@@ -67,5 +68,11 @@ async function runMemoryWriter(conversation: string): Promise<void> {
 }
 
 export function scheduleMemoryUpdate(conversation: string): void {
-  runMemoryWriter(conversation).catch((err) => console.error('[memory error]', err))
+  runMemoryWriter(conversation).catch((err) => {
+    if (err instanceof NotAuthenticatedError) {
+      console.log('[memory] skipped — not authenticated')
+      return
+    }
+    console.error('[memory error]', err)
+  })
 }

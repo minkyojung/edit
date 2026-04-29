@@ -15,13 +15,12 @@ interface Window {
     save: (markdown: string) => Promise<void>
   }
   auth: {
-    status: () => Promise<'ok' | 'not-installed' | 'not-logged-in'>
-    login: () => Promise<'ok' | 'not-installed' | 'not-logged-in'>
     oauthStatus: () => Promise<'authenticated' | 'unauthenticated'>
     oauthStart: () => Promise<void>
     oauthComplete: (code: string) => Promise<void>
     logout: () => Promise<void>
     onChanged: (cb: (status: 'authenticated' | 'unauthenticated') => void) => void
+    onRequired: (cb: () => void) => void
   }
   server: {
     onError: (cb: () => void) => void

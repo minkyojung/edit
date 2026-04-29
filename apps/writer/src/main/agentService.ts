@@ -1,5 +1,7 @@
-import { query, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
+import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
+import { authedQuery, NotAuthenticatedError, isAuthError } from './claudeRuntime'
+import { clearToken } from './oauthService'
 import type { WebContents } from 'electron'
 import { z } from 'zod'
 import { readBelief } from './wikiService'
@@ -157,30 +159,41 @@ async function ensureSession(webContents: WebContents): Promise<void> {
   queue = new UserMessageQueue()
   activeWebContents = webContents
 
-  session = query({
-    prompt: queue as AsyncIterable<unknown> as Parameters<typeof query>[0]['prompt'],
-    options: {
-      model: 'claude-haiku-4-5',
-      systemPrompt: [
-        '## 사용자 글쓰기 스타일 (위키)\n\n' + belief,
-        COPYEDITOR_INSTRUCTIONS,
-        SYSTEM_PROMPT_DYNAMIC_BOUNDARY
-      ],
-      mcpServers: { suggest: suggestServer },
-      allowedTools: [
-        'mcp__suggest__suggest_replace',
-        'mcp__suggest__suggest_insert',
-        'mcp__suggest__suggest_delete'
-      ],
-      tools: [
-        'mcp__suggest__suggest_replace',
-        'mcp__suggest__suggest_insert',
-        'mcp__suggest__suggest_delete'
-      ],
-      permissionMode: 'bypassPermissions',
-      settingSources: ['user', 'project', 'local']
+  try {
+    session = authedQuery({
+      prompt: queue as AsyncIterable<unknown> as Parameters<typeof authedQuery>[0]['prompt'],
+      options: {
+        model: 'claude-haiku-4-5',
+        systemPrompt: [
+          '## 사용자 글쓰기 스타일 (위키)\n\n' + belief,
+          COPYEDITOR_INSTRUCTIONS,
+          SYSTEM_PROMPT_DYNAMIC_BOUNDARY
+        ],
+        mcpServers: { suggest: suggestServer },
+        allowedTools: [
+          'mcp__suggest__suggest_replace',
+          'mcp__suggest__suggest_insert',
+          'mcp__suggest__suggest_delete'
+        ],
+        tools: [
+          'mcp__suggest__suggest_replace',
+          'mcp__suggest__suggest_insert',
+          'mcp__suggest__suggest_delete'
+        ],
+        permissionMode: 'bypassPermissions',
+        settingSources: []
+      }
+    })
+  } catch (err) {
+    if (err instanceof NotAuthenticatedError) {
+      if (!webContents.isDestroyed()) webContents.send('auth:required')
+      session = null
+      queue = null
+      activeWebContents = null
+      return
     }
-  })
+    throw err
+  }
 
   processStream().catch((err) => console.error('[agent stream]', err))
 }
@@ -221,7 +234,12 @@ async function processStream(): Promise<void> {
     }
   } catch (err) {
     console.error('[agent error]', err)
-    if (activeWebContents && !activeWebContents.isDestroyed()) {
+    if (isAuthError(err)) {
+      await clearToken()
+      if (activeWebContents && !activeWebContents.isDestroyed()) {
+        activeWebContents.send('auth:required')
+      }
+    } else if (activeWebContents && !activeWebContents.isDestroyed()) {
       activeWebContents.send('agent:error', err instanceof Error ? err.message : String(err))
       activeWebContents.send('agent:done')
     }
