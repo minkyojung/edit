@@ -47,8 +47,8 @@ function MilkdownInner({ ydoc, provider, onMarkdownChange }: Props): React.React
     editor.action((ctx) => {
       const service = ctx.get(collabServiceCtx)
       service.bindDoc(ydoc)
-      if (provider) {
-        service.setOptions({ awareness: provider.awareness })
+      if (provider?.awareness) {
+        service.setAwareness(provider.awareness)
       }
       service.connect()
       connectedRef.current = true
