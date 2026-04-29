@@ -1,7 +1,8 @@
 import React, { useEffect } from 'react'
-import { Sidebar } from './Sidebar'
-import { ContextPanel } from './ContextPanel'
+import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
 import { Separator } from '@/components/ui/separator'
+import { AppSidebar } from './Sidebar'
+import { ContextPanel } from './ContextPanel'
 import { useLayoutStore } from '@/state/layoutStore'
 
 interface AppShellProps {
@@ -9,7 +10,7 @@ interface AppShellProps {
 }
 
 export function AppShell({ children }: AppShellProps) {
-  const { sidebarOpen, contextPanelOpen, toggleSidebar, toggleContextPanel, setSidebar, setContextPanel } =
+  const { sidebarOpen, contextPanelOpen, setSidebar, toggleContextPanel, setContextPanel } =
     useLayoutStore()
 
   useEffect(() => {
@@ -18,7 +19,7 @@ export function AppShell({ children }: AppShellProps) {
 
       if (e.key === '1') {
         e.preventDefault()
-        toggleSidebar()
+        setSidebar(!sidebarOpen)
       } else if (e.key === '.') {
         e.preventDefault()
         toggleContextPanel()
@@ -31,46 +32,35 @@ export function AppShell({ children }: AppShellProps) {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [toggleSidebar, toggleContextPanel, setSidebar, setContextPanel])
+  }, [sidebarOpen, setSidebar, toggleContextPanel, setContextPanel])
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      {/* 좌측 사이드바 */}
-      <div
-        className="shrink-0 h-full overflow-hidden transition-all duration-200 ease-in-out"
-        style={{ width: sidebarOpen ? 240 : 0 }}
-      >
-        <div className="w-[240px] h-full">
-          <Sidebar />
+    <SidebarProvider
+      open={sidebarOpen}
+      onOpenChange={setSidebar}
+      style={{ '--sidebar-width': '240px' } as React.CSSProperties}
+    >
+      <AppSidebar />
+      <SidebarInset className="overflow-hidden">
+        <div className="flex h-full">
+          <div className="flex-1 overflow-y-auto">
+            {children}
+          </div>
+          <Separator
+            orientation="vertical"
+            className="transition-opacity duration-200"
+            style={{ opacity: contextPanelOpen ? 1 : 0 }}
+          />
+          <div
+            className="shrink-0 h-full overflow-hidden transition-all duration-200 ease-in-out"
+            style={{ width: contextPanelOpen ? 320 : 0 }}
+          >
+            <div className="w-[320px] h-full">
+              <ContextPanel />
+            </div>
+          </div>
         </div>
-      </div>
-
-      <Separator
-        orientation="vertical"
-        className="transition-opacity duration-200"
-        style={{ opacity: sidebarOpen ? 1 : 0 }}
-      />
-
-      {/* 중앙 콘텐츠 */}
-      <main className="flex-1 overflow-y-auto">
-        {children}
-      </main>
-
-      <Separator
-        orientation="vertical"
-        className="transition-opacity duration-200"
-        style={{ opacity: contextPanelOpen ? 1 : 0 }}
-      />
-
-      {/* 우측 컨텍스트 패널 */}
-      <div
-        className="shrink-0 h-full overflow-hidden transition-all duration-200 ease-in-out"
-        style={{ width: contextPanelOpen ? 320 : 0 }}
-      >
-        <div className="w-[320px] h-full">
-          <ContextPanel />
-        </div>
-      </div>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   )
 }

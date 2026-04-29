@@ -1,7 +1,19 @@
 import React from 'react'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
-import { cn } from '@/lib/utils'
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarSeparator,
+} from '@/components/ui/sidebar'
 
 interface NoteItem {
   id: string
@@ -29,53 +41,64 @@ const mockWikiItems: NoteItem[] = [
 
 const todayLabel = new Date().toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })
 
-function SidebarItem({ item, depth = 0 }: { item: NoteItem; depth?: number }) {
+function NoteTreeItem({ item }: { item: NoteItem }) {
+  if (!item.children?.length) {
+    return (
+      <SidebarMenuItem>
+        <SidebarMenuButton>
+          {item.title}
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    )
+  }
+
   return (
-    <div>
-      <button
-        type="button"
-        className={cn(
-          'w-full text-left py-1 rounded-md text-sm text-sidebar-foreground',
-          'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-          'transition-colors'
-        )}
-        style={{ paddingLeft: `${8 + depth * 16}px`, paddingRight: '8px' }}
-      >
-        {item.title}
-      </button>
-      {item.children?.map((child) => (
-        <SidebarItem key={child.id} item={child} depth={depth + 1} />
-      ))}
-    </div>
+    <SidebarMenuItem>
+      <SidebarMenuButton>{item.title}</SidebarMenuButton>
+      <SidebarMenuSub>
+        {item.children.map((child) => (
+          <SidebarMenuSubItem key={child.id}>
+            <SidebarMenuSubButton>{child.title}</SidebarMenuSubButton>
+          </SidebarMenuSubItem>
+        ))}
+      </SidebarMenuSub>
+    </SidebarMenuItem>
   )
 }
 
-export function Sidebar() {
+export function AppSidebar() {
   return (
-    <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-      <div className="px-3 py-4">
-        <p className="px-2 text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
-          오늘 {todayLabel}
-        </p>
-        <div className="space-y-0.5">
-          {mockNotes.map((note) => (
-            <SidebarItem key={note.id} item={note} />
-          ))}
-        </div>
-      </div>
+    <Sidebar>
+      {/* 신호등 버튼 공간 + 드래그 영역 */}
+      <SidebarHeader className="h-10 [-webkit-app-region:drag] p-0" />
 
-      <Separator />
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>오늘 {todayLabel}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {mockNotes.map((note) => (
+                <NoteTreeItem key={note.id} item={note} />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
 
-      <ScrollArea className="flex-1 px-3 py-3">
-        <p className="px-2 text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
-          위키
-        </p>
-        <div className="space-y-0.5">
-          {mockWikiItems.map((item) => (
-            <SidebarItem key={item.id} item={item} />
-          ))}
-        </div>
-      </ScrollArea>
-    </div>
+        <SidebarSeparator />
+
+        <SidebarGroup>
+          <SidebarGroupLabel>위키</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {mockWikiItems.map((item) => (
+                <SidebarMenuItem key={item.id}>
+                  <SidebarMenuButton>{item.title}</SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+    </Sidebar>
   )
 }
