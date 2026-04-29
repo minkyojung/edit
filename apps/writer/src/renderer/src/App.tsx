@@ -34,7 +34,6 @@ function AccountIndicator(): React.ReactElement {
           <Button
             variant="ghost"
             size="icon"
-            className="account-indicator-btn"
             title="Connected to Claude"
           >
             <img src={sparkUrl} alt="" className="account-indicator-icon" />
@@ -90,7 +89,6 @@ function SignInPanel(): React.ReactElement {
         {!awaitingPaste ? (
           <>
             <Button
-              className="signin-btn"
               onClick={handleSignIn}
               size="lg"
             >
@@ -109,7 +107,6 @@ function SignInPanel(): React.ReactElement {
             </p>
             <Input
               type="text"
-              className="signin-paste-input"
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="Paste code here"
@@ -120,7 +117,6 @@ function SignInPanel(): React.ReactElement {
               }}
             />
             <Button
-              className="signin-btn"
               onClick={handleSubmit}
               disabled={submitting || !code.trim()}
               size="lg"

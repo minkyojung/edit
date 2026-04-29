@@ -194,87 +194,6 @@ body {
   position: relative;
 }
 
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-
-.modal {
-  background: #fff;
-  border-radius: 12px;
-  width: 640px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.18);
-  overflow: hidden;
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid #ebebeb;
-}
-
-.modal-title {
-  font-family: system-ui, sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  color: #1a1a1a;
-}
-
-.modal-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.modal-save {
-  padding: 6px 14px;
-  border: none;
-  background: #1a1a1a;
-  color: #fff;
-  font-size: 13px;
-  font-family: system-ui, sans-serif;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-
-.modal-save:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.modal-save:not(:disabled):hover {
-  opacity: 0.75;
-}
-
-.modal-close {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: none;
-  color: #999;
-  font-size: 14px;
-  cursor: pointer;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.modal-close:hover {
-  background: #f0f0f0;
-  color: #333;
-}
 
 .wiki-textarea {
   flex: 1;
@@ -299,15 +218,6 @@ body {
   font-size: 14px;
   color: #999;
   padding: 40px;
-}
-
-.modal-hint {
-  padding: 10px 20px;
-  font-family: system-ui, sans-serif;
-  font-size: 11px;
-  color: #bbb;
-  border-top: 1px solid #ebebeb;
-  background: #fff;
 }
 
 .modal-hint-error {
@@ -407,66 +317,10 @@ body {
   z-index: 50;
 }
 
-.account-indicator-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: 1px solid #e5e5e5;
-  background: #fff;
-  cursor: pointer;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.account-indicator-btn:hover {
-  border-color: #c9c9c9;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-}
-
 .account-indicator-icon {
   width: 18px;
   height: 18px;
   user-select: none;
-}
-
-.account-menu {
-  position: absolute;
-  top: 40px;
-  right: 0;
-  min-width: 180px;
-  background: #fff;
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-  font-family: system-ui, -apple-system, sans-serif;
-  overflow: hidden;
-}
-
-.account-menu-status {
-  padding: 10px 14px;
-  font-size: 12px;
-  color: #888;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.account-menu-item {
-  display: block;
-  width: 100%;
-  padding: 10px 14px;
-  background: none;
-  border: none;
-  text-align: left;
-  font-size: 13px;
-  color: #333;
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.account-menu-item:hover {
-  background: #f7f7f7;
 }
 
 .signin-overlay {
@@ -494,30 +348,6 @@ body {
   filter: invert(1) brightness(1.3);
   margin-bottom: 16px;
   user-select: none;
-}
-
-.signin-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  background: #fff;
-  color: #111;
-  border: none;
-  border-radius: 12px;
-  padding: 14px 28px;
-  font-size: 16px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-
-.signin-btn:hover {
-  opacity: 0.9;
-}
-
-.signin-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 .signin-btn-icon {
@@ -556,20 +386,6 @@ body {
   margin-bottom: 4px;
 }
 
-.signin-paste-input {
-  background: #1a1a1a;
-  border: 1px solid #333;
-  border-radius: 8px;
-  color: #fff;
-  padding: 12px 14px;
-  font-size: 13px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  outline: none;
-}
-
-.signin-paste-input:focus {
-  border-color: #666;
-}
 
 .signin-error {
   color: #e07a7a;
