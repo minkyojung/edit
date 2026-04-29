@@ -4,6 +4,7 @@ import { spawn, ChildProcess } from 'child_process'
 import { trigger, shutdown as agentShutdown, resetSession } from './agentService'
 import { bootstrapWiki, readBelief, writeBelief } from './wikiService'
 import { checkAuth, runLogin } from './authService'
+import { startOAuthFlow, completeOAuthFlow, hasToken, clearToken, onAuthChange } from './oauthService'
 import { bootstrapDoc, getCollabSession } from './docService'
 import { acceptMark, rejectMark } from './markService'
 
@@ -101,6 +102,17 @@ app.whenReady().then(() => {
   ipcMain.handle('auth:login', async (_: IpcMainInvokeEvent) => {
     await runLogin()
     return checkAuth()
+  })
+
+  ipcMain.handle('auth:oauth-status', async () => (hasToken() ? 'authenticated' : 'unauthenticated'))
+  ipcMain.handle('auth:oauth-start', async () => startOAuthFlow())
+  ipcMain.handle('auth:oauth-complete', async (_: IpcMainInvokeEvent, code: string) => {
+    await completeOAuthFlow(code)
+  })
+  ipcMain.handle('auth:logout', async () => clearToken())
+
+  onAuthChange((status) => {
+    if (!win.isDestroyed()) win.webContents.send('auth:changed', status)
   })
 
   app.on('activate', () => {

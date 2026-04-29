@@ -1,3 +1,8 @@
+declare module '*.svg' {
+  const url: string
+  export default url
+}
+
 interface Window {
   agent: {
     trigger: (text: string) => void
@@ -12,6 +17,11 @@ interface Window {
   auth: {
     status: () => Promise<'ok' | 'not-installed' | 'not-logged-in'>
     login: () => Promise<'ok' | 'not-installed' | 'not-logged-in'>
+    oauthStatus: () => Promise<'authenticated' | 'unauthenticated'>
+    oauthStart: () => Promise<void>
+    oauthComplete: (code: string) => Promise<void>
+    logout: () => Promise<void>
+    onChanged: (cb: (status: 'authenticated' | 'unauthenticated') => void) => void
   }
   server: {
     onError: (cb: () => void) => void

@@ -3,6 +3,83 @@ import { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { useDebouncedText } from './hooks/useIdleCallback'
 import { MilkdownEditor } from './MilkdownEditor'
+import sparkUrl from './assets/claude-spark.svg'
+
+function SignInPanel(): React.ReactElement {
+  const [code, setCode] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [awaitingPaste, setAwaitingPaste] = useState(false)
+
+  const handleSignIn = useCallback(async () => {
+    setError(null)
+    try {
+      await window.auth.oauthStart()
+      setAwaitingPaste(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }, [])
+
+  const handleSubmit = useCallback(async () => {
+    if (!code.trim()) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      await window.auth.oauthComplete(code.trim())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }, [code])
+
+  return (
+    <div className="signin-overlay">
+      <div className="signin-content">
+        <img src={sparkUrl} alt="Claude" className="signin-spark" />
+        {!awaitingPaste ? (
+          <>
+            <button className="signin-btn" onClick={handleSignIn}>
+              <img src={sparkUrl} alt="" className="signin-btn-icon" />
+              Sign in with Claude
+            </button>
+            <p className="signin-caption">
+              Use your existing Anthropic<br />subscription to use the agent panel.
+            </p>
+            <p className="signin-subcaption">— More models will be added.</p>
+          </>
+        ) : (
+          <div className="signin-paste">
+            <p className="signin-paste-label">
+              Paste the authorization code from your browser
+            </p>
+            <input
+              type="text"
+              className="signin-paste-input"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Paste code here"
+              autoFocus
+              spellCheck={false}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSubmit()
+              }}
+            />
+            <button
+              className="signin-btn"
+              onClick={handleSubmit}
+              disabled={submitting || !code.trim()}
+            >
+              {submitting ? 'Connecting...' : 'Connect'}
+            </button>
+            {error && <p className="signin-error">{error}</p>}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
   const [markdown, setMarkdown] = useState('')
@@ -109,25 +186,15 @@ export default function App(): React.ReactElement {
 
   const [agentError, setAgentError] = useState<string | null>(null)
   const [wikiOpen, setWikiOpen] = useState(false)
-  const [authStatus, setAuthStatus] = useState<'ok' | 'not-installed' | 'not-logged-in' | 'checking'>('checking')
-  const [loggingIn, setLoggingIn] = useState(false)
+  const [oauthStatus, setOauthStatus] = useState<'authenticated' | 'unauthenticated' | 'checking'>('checking')
   const [serverError, setServerError] = useState(false)
   const [editorMarkdown, setEditorMarkdown] = useState<string | null>(null)
   const listenersAdded = useRef(false)
 
   useEffect(() => {
-    window.auth.status().then(setAuthStatus)
+    window.auth.oauthStatus().then(setOauthStatus)
+    window.auth.onChanged(setOauthStatus)
     window.server.onError(() => setServerError(true))
-  }, [])
-
-  const handleLogin = useCallback(async () => {
-    setLoggingIn(true)
-    try {
-      const result = await window.auth.login()
-      setAuthStatus(result)
-    } finally {
-      setLoggingIn(false)
-    }
   }, [])
 
   useEffect(() => {
@@ -164,17 +231,7 @@ export default function App(): React.ReactElement {
           서버 연결 실패 — 앱을 재시작해주세요
         </div>
       )}
-      {authStatus === 'not-installed' && (
-        <div className="auth-status">
-          Claude CLI가 설치되어 있지 않습니다 —{' '}
-          <a href="https://claude.ai/download" target="_blank" rel="noreferrer">설치하기</a>
-        </div>
-      )}
-      {authStatus === 'not-logged-in' && (
-        <button className="auth-status auth-status--clickable" onClick={handleLogin} disabled={loggingIn}>
-          {loggingIn ? '로그인 중...' : 'Claude 로그인이 필요합니다 — 클릭하여 로그인'}
-        </button>
-      )}
+      {oauthStatus === 'unauthenticated' && <SignInPanel />}
       {wikiOpen && <WikiModal onClose={() => setWikiOpen(false)} />}
     </div>
   )

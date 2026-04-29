@@ -24,7 +24,15 @@ contextBridge.exposeInMainWorld('wiki', {
 
 contextBridge.exposeInMainWorld('auth', {
   status: (): Promise<string> => ipcRenderer.invoke('auth:status'),
-  login: (): Promise<string> => ipcRenderer.invoke('auth:login')
+  login: (): Promise<string> => ipcRenderer.invoke('auth:login'),
+  oauthStatus: (): Promise<'authenticated' | 'unauthenticated'> =>
+    ipcRenderer.invoke('auth:oauth-status'),
+  oauthStart: (): Promise<void> => ipcRenderer.invoke('auth:oauth-start'),
+  oauthComplete: (code: string): Promise<void> => ipcRenderer.invoke('auth:oauth-complete', code),
+  logout: (): Promise<void> => ipcRenderer.invoke('auth:logout'),
+  onChanged: (cb: (status: 'authenticated' | 'unauthenticated') => void) => {
+    ipcRenderer.on('auth:changed', (_, status) => cb(status))
+  }
 })
 
 contextBridge.exposeInMainWorld('server', {
