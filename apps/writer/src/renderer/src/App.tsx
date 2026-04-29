@@ -4,7 +4,14 @@ import * as Y from 'yjs'
 import { useDebouncedText } from './hooks/useIdleCallback'
 import { MilkdownEditor } from './MilkdownEditor'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { BookOpen01Icon, User02Icon } from '@hugeicons/core-free-icons'
+import {
+  BookOpen01Icon,
+  User02Icon,
+  Sun03Icon,
+  Moon02Icon,
+  ComputerDesk01Icon,
+} from '@hugeicons/core-free-icons'
+import { useTheme } from '@/components/theme-provider'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -17,6 +24,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from '@/components/ui/dropdown-menu'
 import {
   Dialog,
@@ -28,6 +37,8 @@ import {
 } from '@/components/ui/dialog'
 
 function AccountMenu(): React.ReactElement {
+  const { theme, setTheme } = useTheme()
+
   const handleSignOut = useCallback(async () => {
     await window.auth.logout()
   }, [])
@@ -49,9 +60,26 @@ function AccountMenu(): React.ReactElement {
         <TooltipContent>Connected to Claude</TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="end">
-        <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-          Connected to Claude
-        </DropdownMenuLabel>
+        <DropdownMenuLabel>Connected to Claude</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>Theme</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={theme}
+          onValueChange={(v) => setTheme(v as 'light' | 'dark' | 'system')}
+        >
+          <DropdownMenuRadioItem value="light">
+            <HugeiconsIcon icon={Sun03Icon} strokeWidth={2} />
+            Light
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="dark">
+            <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} />
+            Dark
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="system">
+            <HugeiconsIcon icon={ComputerDesk01Icon} strokeWidth={2} />
+            System
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleSignOut}>Sign out</DropdownMenuItem>
       </DropdownMenuContent>

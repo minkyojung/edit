@@ -91,7 +91,7 @@
   .suggestion-deletion {
     background-color: rgba(239, 68, 68, 0.18);
     text-decoration: line-through;
-    color: rgba(0, 0, 0, 0.5);
+    color: var(--muted-foreground);
   }
 
   .suggestion-modification {
