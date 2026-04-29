@@ -344,9 +344,11 @@ export const proofMarksPlugin = (ydoc: Y.Doc) =>
           return buildDecorations(state.doc, pluginState.marks, pluginState.focusedMarkId, pluginState.tombstones)
         },
         handleKeyDown(view, event) {
-          if (event.key !== 'Tab' || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
-            return false
-          }
+          const isTab = event.key === 'Tab'
+          const isEsc = event.key === 'Escape'
+          if (!isTab && !isEsc) return false
+          if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return false
+
           const pluginState = marksKey.getState(view.state)
           if (!pluginState || !pluginState.focusedMarkId) return false
           const renderable = getRenderableMarks(view.state.doc, pluginState.marks, pluginState.tombstones)
@@ -357,8 +359,14 @@ export const proofMarksPlugin = (ydoc: Y.Doc) =>
           const nextId = getNextFocus(renderable, currentId)
 
           event.preventDefault()
-          applyMarkChange(view, current, nextId, currentId)
-          window.marks.accept(currentId).catch((err) => console.error('[mark accept]', err))
+          if (isTab) {
+            applyMarkChange(view, current, nextId, currentId)
+            window.marks.accept(currentId).catch((err) => console.error('[mark accept]', err))
+          } else {
+            // Esc — 거절: 텍스트 변경 없이 마크만 사라지게
+            view.dispatch(view.state.tr.setMeta(marksKey, { addTombstone: currentId, setFocus: nextId }))
+            window.marks.reject(currentId).catch((err) => console.error('[mark reject]', err))
+          }
           return true
         }
       },
