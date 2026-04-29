@@ -11,12 +11,13 @@ import { acceptMark, rejectMark } from './markService'
 let proofServer: ChildProcess | null = null
 
 function startProofServer(): void {
-  // out/main/ → apps/writer/ → apps/ → montpellier/packages/proof-sdk
-  const serverPath = join(__dirname, '../../../../packages/proof-sdk')
-  proofServer = spawn('npm', ['run', 'serve'], {
+  // out/main/ → apps/writer/ → apps/ → root(montpellier)
+  const rootDir = join(__dirname, '../../../..')
+  const serverPath = join(rootDir, 'node_modules/proof-sdk')
+  const tsxBin = join(rootDir, 'node_modules/.bin/tsx')
+  proofServer = spawn(tsxBin, ['server/index.ts'], {
     cwd: serverPath,
     stdio: 'pipe',
-    shell: true,
     env: {
       ...process.env,
       COLLAB_EMBEDDED_WS: 'true'
