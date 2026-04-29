@@ -19,6 +19,7 @@ export type StoredMark = {
   by?: string
   startRel?: string
   endRel?: string
+  createdAt?: string
 }
 
 type MarksMap = Record<string, StoredMark>

@@ -53,4 +53,3 @@ export const proofAuthoredSchema = $markSchema('proofAuthored', (ctx) => ({
   }
 }))
 
-export const proofAuthoredPlugins = [proofAuthoredAttr, proofAuthoredSchema]

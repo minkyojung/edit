@@ -5,7 +5,7 @@ import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
 import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
 import { proofMarksPlugin } from './markPlugin'
-import { proofAuthoredPlugins } from './authoredMark'
+import { proofAuthoredAttr, proofAuthoredSchema } from './authoredMark'
 import { authoredTrackerPlugin } from './authoredTracker'
 import * as Y from 'yjs'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
@@ -34,7 +34,8 @@ function MilkdownInner({ ydoc, provider, onMarkdownChange }: Props): React.React
       .use(commonmark)
       .use(listener)
       .use(collab)
-      .use(proofAuthoredPlugins)
+      .use(proofAuthoredAttr)
+      .use(proofAuthoredSchema)
       .use(authoredTrackerPlugin)
       .use(proofMarksPlugin(ydoc))
   )
