@@ -6,7 +6,7 @@ import type { AgentSettings } from './agentSettings'
 import { bootstrapWiki, readBelief, writeBelief } from './wikiService'
 import { startOAuthFlow, completeOAuthFlow, hasToken, clearToken, onAuthChange } from './oauthService'
 import { bootstrapDoc, getCollabSession } from './docService'
-import { fetchMarkState } from './markService'
+import { fetchMarkState, acceptMark, rejectMark } from './markService'
 
 let proofServer: ChildProcess | null = null
 
@@ -77,6 +77,14 @@ app.whenReady().then(() => {
 
   ipcMain.handle('marks:fetch-state', async (_: IpcMainInvokeEvent) => {
     return fetchMarkState()
+  })
+
+  ipcMain.handle('marks:accept', async (_: IpcMainInvokeEvent, markId: string, by?: string) => {
+    return acceptMark(markId, by)
+  })
+
+  ipcMain.handle('marks:reject', async (_: IpcMainInvokeEvent, markId: string, by?: string) => {
+    return rejectMark(markId, by)
   })
 
   ipcMain.on('agent:trigger', (_, text: string, processedHistory: unknown) => {

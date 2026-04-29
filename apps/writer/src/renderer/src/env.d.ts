@@ -36,5 +36,7 @@ interface Window {
   }
   marks: {
     fetchState: () => Promise<{ marks: Record<string, unknown>; revision?: number } | null>
+    accept: (markId: string, by?: string) => Promise<{ success: boolean; status: number; body: unknown }>
+    reject: (markId: string, by?: string) => Promise<{ success: boolean; status: number; body: unknown }>
   }
 }
