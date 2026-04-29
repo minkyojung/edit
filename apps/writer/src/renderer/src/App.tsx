@@ -3,7 +3,8 @@ import { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { useDebouncedText } from './hooks/useIdleCallback'
 import { MilkdownEditor } from './MilkdownEditor'
-import { BookOpen, User } from 'lucide-react'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { BookOpen01Icon, User02Icon } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -39,7 +40,7 @@ function AccountMenu(): React.ReactElement {
             <Button variant="ghost" size="icon" aria-label="Account menu">
               <Avatar className="size-7">
                 <AvatarFallback>
-                  <User className="size-4" />
+                  <HugeiconsIcon icon={User02Icon} className="size-4" strokeWidth={2} />
                 </AvatarFallback>
               </Avatar>
             </Button>
@@ -299,7 +300,7 @@ export default function App(): React.ReactElement {
               onClick={() => setWikiOpen(true)}
               aria-label="글쓰기 스타일 위키 열기"
             >
-              <BookOpen className="size-4" />
+              <HugeiconsIcon icon={BookOpen01Icon} className="size-4" strokeWidth={2} />
             </Button>
           </TooltipTrigger>
           <TooltipContent>글쓰기 스타일 위키</TooltipContent>
