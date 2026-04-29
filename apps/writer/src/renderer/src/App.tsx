@@ -19,6 +19,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
 
@@ -175,30 +176,24 @@ function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
-      <DialogContent onKeyDown={handleKeyDown}>
+      <DialogContent onKeyDown={handleKeyDown} className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>글쓰기 스타일 위키</DialogTitle>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={handleSave}
-            disabled={saving || loading}
-            className="mr-7"
-          >
-            {saving ? '저장 중...' : '저장'}
-          </Button>
+          <DialogDescription>
+            ⌘S로 저장 · 저장 시 에이전트 세션이 갱신됩니다
+          </DialogDescription>
         </DialogHeader>
         {loading ? (
-          <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground p-10">
+          <div className="flex items-center justify-center text-sm text-muted-foreground py-16">
             불러오는 중...
           </div>
         ) : error && !markdown ? (
-          <div className="flex-1 flex items-center justify-center text-sm text-destructive p-10">
+          <div className="flex items-center justify-center text-sm text-destructive py-16">
             {error}
           </div>
         ) : (
           <textarea
-            className="flex-1 resize-none border-none outline-none bg-muted text-foreground font-mono text-[13px] leading-relaxed p-5 min-h-[300px]"
+            className="resize-none border border-input outline-none bg-muted text-foreground font-mono text-[13px] leading-relaxed p-4 min-h-[320px] rounded-xl focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
             value={markdown}
             onChange={(e) => setMarkdown(e.target.value)}
             autoFocus
@@ -206,8 +201,15 @@ function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
           />
         )}
         <DialogFooter>
-          {error && markdown ? <span className="text-destructive">{error} · </span> : null}
-          ⌘S로 저장 · 저장 시 에이전트 세션이 갱신됩니다
+          {error && markdown && (
+            <span className="text-destructive text-xs mr-auto self-center">{error}</span>
+          )}
+          <Button
+            onClick={handleSave}
+            disabled={saving || loading}
+          >
+            {saving ? '저장 중...' : '저장'}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
