@@ -1,3 +1,0 @@
-[submodule "packages/proof-sdk"]
-	path = packages/proof-sdk
-	url = https://github.com/minkyojung/proof-sdk

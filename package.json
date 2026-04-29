@@ -6,7 +6,11 @@
     "dev": "pnpm --filter writer dev",
     "build": "pnpm --filter writer build"
   },
+  "dependencies": {
+    "proof-sdk": "link:../proof-sdk",
+    "tsx": "^4.21.0"
+  },
   "pnpm": {
-    "onlyBuiltDependencies": ["electron", "esbuild"]
+    "onlyBuiltDependencies": ["electron", "esbuild", "better-sqlite3", "@resvg/resvg-js"]
   }
 }

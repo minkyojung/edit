@@ -1,21 +1,22 @@
 import { app, BrowserWindow, shell, ipcMain, IpcMainInvokeEvent } from 'electron'
 import { join } from 'path'
 import { spawn, ChildProcess } from 'child_process'
-import { trigger, shutdown as agentShutdown, resetSession } from './agentService'
+import { trigger, shutdown as agentShutdown, resetSession, getSettings, setSettings } from './agentService'
+import type { AgentSettings } from './agentSettings'
 import { bootstrapWiki, readBelief, writeBelief } from './wikiService'
 import { startOAuthFlow, completeOAuthFlow, hasToken, clearToken, onAuthChange } from './oauthService'
 import { bootstrapDoc, getCollabSession } from './docService'
-import { acceptMark, rejectMark } from './markService'
 
 let proofServer: ChildProcess | null = null
 
 function startProofServer(): void {
-  // out/main/ → apps/writer/ → apps/ → montpellier/packages/proof-sdk
-  const serverPath = join(__dirname, '../../../../packages/proof-sdk')
-  proofServer = spawn('npm', ['run', 'serve'], {
+  // out/main/ → apps/writer/ → apps/ → root(montpellier)
+  const rootDir = join(__dirname, '../../../..')
+  const serverPath = join(rootDir, 'node_modules/proof-sdk')
+  const tsxBin = join(rootDir, 'node_modules/.bin/tsx')
+  proofServer = spawn(tsxBin, ['server/index.ts'], {
     cwd: serverPath,
     stdio: 'pipe',
-    shell: true,
     env: {
       ...process.env,
       COLLAB_EMBEDDED_WS: 'true'
@@ -73,16 +74,8 @@ app.whenReady().then(() => {
     return getCollabSession()
   })
 
-  ipcMain.handle('mark:accept', async (_: IpcMainInvokeEvent, markId: string) => {
-    await acceptMark(markId)
-  })
-
-  ipcMain.handle('mark:reject', async (_: IpcMainInvokeEvent, markId: string) => {
-    await rejectMark(markId)
-  })
-
-  ipcMain.on('agent:trigger', (_, text: string) => {
-    trigger(text, win.webContents)
+  ipcMain.on('agent:trigger', (_, text: string, processedHistory: unknown) => {
+    trigger(text, win.webContents, Array.isArray(processedHistory) ? processedHistory : [])
   })
 
   ipcMain.handle('wiki:read', async (_: IpcMainInvokeEvent) => {
@@ -93,6 +86,9 @@ app.whenReady().then(() => {
     await writeBelief(markdown)
     await resetSession()
   })
+
+  ipcMain.handle('agent:get-settings', async () => getSettings())
+  ipcMain.handle('agent:set-settings', async (_: IpcMainInvokeEvent, s: AgentSettings) => setSettings(s))
 
   ipcMain.handle('auth:oauth-status', async () => (hasToken() ? 'authenticated' : 'unauthenticated'))
   ipcMain.handle('auth:oauth-start', async () => startOAuthFlow())

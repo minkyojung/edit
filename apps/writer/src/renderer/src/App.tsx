@@ -1,200 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { useDebouncedText } from './hooks/useIdleCallback'
 import { MilkdownEditor } from './MilkdownEditor'
-import sparkUrl from './assets/claude-spark.svg'
-
-function AccountIndicator(): React.ReactElement {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onClick = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
-  }, [open])
-
-  const handleSignOut = useCallback(async () => {
-    setOpen(false)
-    await window.auth.logout()
-  }, [])
-
-  return (
-    <div className="account-indicator" ref={ref}>
-      <button
-        className="account-indicator-btn"
-        onClick={() => setOpen((v) => !v)}
-        title="Connected to Claude"
-      >
-        <img src={sparkUrl} alt="" className="account-indicator-icon" />
-      </button>
-      {open && (
-        <div className="account-menu">
-          <div className="account-menu-status">Connected to Claude</div>
-          <button className="account-menu-item" onClick={handleSignOut}>
-            Sign out
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function SignInPanel(): React.ReactElement {
-  const [code, setCode] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [awaitingPaste, setAwaitingPaste] = useState(false)
-
-  const handleSignIn = useCallback(async () => {
-    setError(null)
-    try {
-      await window.auth.oauthStart()
-      setAwaitingPaste(true)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  }, [])
-
-  const handleSubmit = useCallback(async () => {
-    if (!code.trim()) return
-    setSubmitting(true)
-    setError(null)
-    try {
-      await window.auth.oauthComplete(code.trim())
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setSubmitting(false)
-    }
-  }, [code])
-
-  return (
-    <div className="signin-overlay">
-      <div className="signin-content">
-        <img src={sparkUrl} alt="Claude" className="signin-spark" />
-        {!awaitingPaste ? (
-          <>
-            <button className="signin-btn" onClick={handleSignIn}>
-              <img src={sparkUrl} alt="" className="signin-btn-icon" />
-              Sign in with Claude
-            </button>
-            <p className="signin-caption">
-              Use your existing Anthropic<br />subscription to use the agent panel.
-            </p>
-            <p className="signin-subcaption">— More models will be added.</p>
-          </>
-        ) : (
-          <div className="signin-paste">
-            <p className="signin-paste-label">
-              Paste the authorization code from your browser
-            </p>
-            <input
-              type="text"
-              className="signin-paste-input"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder="Paste code here"
-              autoFocus
-              spellCheck={false}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSubmit()
-              }}
-            />
-            <button
-              className="signin-btn"
-              onClick={handleSubmit}
-              disabled={submitting || !code.trim()}
-            >
-              {submitting ? 'Connecting...' : 'Connect'}
-            </button>
-            {error && <p className="signin-error">{error}</p>}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function WikiModal({ onClose }: { onClose: () => void }): React.ReactElement {
-  const [markdown, setMarkdown] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    window.wiki.read()
-      .then((md) => {
-        setMarkdown(md)
-        setLoading(false)
-      })
-      .catch(() => {
-        setError('위키를 불러오지 못했습니다. 서버 연결을 확인해주세요.')
-        setLoading(false)
-      })
-  }, [])
-
-  const handleSave = useCallback(async () => {
-    setSaving(true)
-    setError(null)
-    try {
-      await window.wiki.save(markdown)
-      onClose()
-    } catch {
-      setError('저장에 실패했습니다. 서버 연결을 확인해주세요.')
-    } finally {
-      setSaving(false)
-    }
-  }, [markdown, onClose])
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-        e.preventDefault()
-        handleSave()
-      }
-      if (e.key === 'Escape') onClose()
-    },
-    [handleSave, onClose]
-  )
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} onKeyDown={handleKeyDown}>
-        <div className="modal-header">
-          <span className="modal-title">글쓰기 스타일 위키</span>
-          <div className="modal-actions">
-            <button className="modal-save" onClick={handleSave} disabled={saving || loading}>
-              {saving ? '저장 중...' : '저장'}
-            </button>
-            <button className="modal-close" onClick={onClose}>✕</button>
-          </div>
-        </div>
-        {loading ? (
-          <div className="modal-loading">불러오는 중...</div>
-        ) : error && !markdown ? (
-          <div className="modal-loading modal-error">{error}</div>
-        ) : (
-          <textarea
-            className="wiki-textarea"
-            value={markdown}
-            onChange={(e) => setMarkdown(e.target.value)}
-            autoFocus
-            spellCheck={false}
-          />
-        )}
-        <div className="modal-hint">
-          {error && markdown ? <span className="modal-hint-error">{error} · </span> : null}
-          ⌘S로 저장 · 저장 시 에이전트 세션이 갱신됩니다
-        </div>
-      </div>
-    </div>
-  )
-}
+import { HugeiconsIcon } from '@hugeicons/react'
+import { BookOpen01Icon } from '@hugeicons/core-free-icons'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import { AccountMenu } from '@/components/account-menu'
+import { AgentSettingsChip } from '@/components/agent-settings-chip'
+import { SignInPanel } from '@/components/sign-in-panel'
+import { WikiModal } from '@/components/wiki-modal'
 
 export default function App(): React.ReactElement {
   const ydoc = useMemo(() => new Y.Doc(), [])
@@ -254,32 +70,45 @@ export default function App(): React.ReactElement {
   useDebouncedText(editorMarkdown, 1500, (text) => {
     if (!text.trim()) return
     setAgentError(null)
-    window.agent.trigger(text)
+    window.agent.trigger(text, [])
   })
 
   if (oauthStatus === 'checking') {
-    return <div className="splash" />
+    return <div className="dark fixed inset-0 z-50 bg-background" />
   }
 
   return (
-    <div className="app">
-      <div className="editor-pane">
-        <button className="wiki-btn" onClick={() => setWikiOpen(true)} title="글쓰기 스타일 위키">
-          ✦
-        </button>
+    <div className="flex h-screen">
+      <div className="relative flex-1 overflow-y-auto px-10 py-12">
         <MilkdownEditor ydoc={ydoc} provider={provider} onMarkdownChange={setEditorMarkdown} />
       </div>
+      <header className="fixed top-3 right-3 z-40 flex items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setWikiOpen(true)}
+              aria-label="글쓰기 스타일 위키 열기"
+            >
+              <HugeiconsIcon icon={BookOpen01Icon} className="size-4" strokeWidth={2} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>글쓰기 스타일 위키</TooltipContent>
+        </Tooltip>
+        {oauthStatus === 'authenticated' && <AccountMenu />}
+      </header>
+      {oauthStatus === 'authenticated' && <AgentSettingsChip />}
       {agentError && (
-        <div className="auth-status auth-status--error">
+        <div className="fixed bottom-12 left-4 text-xs text-destructive font-sans">
           에이전트 오류 — 잠시 후 다시 시도해주세요
         </div>
       )}
       {serverError && (
-        <div className="auth-status auth-status--error">
+        <div className="fixed bottom-12 left-4 text-xs text-destructive font-sans">
           서버 연결 실패 — 앱을 재시작해주세요
         </div>
       )}
-      {oauthStatus === 'authenticated' && <AccountIndicator />}
       {oauthStatus === 'unauthenticated' && <SignInPanel />}
       {wikiOpen && <WikiModal onClose={() => setWikiOpen(false)} />}
     </div>

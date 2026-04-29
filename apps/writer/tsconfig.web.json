@@ -6,7 +6,9 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "strict": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["src/renderer/src/*"] }
   },
   "include": ["src/renderer/**/*"]
 }

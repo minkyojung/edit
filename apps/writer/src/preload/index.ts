@@ -5,7 +5,8 @@ contextBridge.exposeInMainWorld('electron', {
 })
 
 contextBridge.exposeInMainWorld('agent', {
-  trigger: (text: string) => ipcRenderer.send('agent:trigger', text),
+  trigger: (text: string, processedHistory: unknown[] = []) =>
+    ipcRenderer.send('agent:trigger', text, processedHistory),
   onChunk: (cb: (text: string) => void) => {
     ipcRenderer.on('agent:chunk', (_, text) => cb(text))
   },
@@ -14,7 +15,9 @@ contextBridge.exposeInMainWorld('agent', {
   },
   onError: (cb: (msg: string) => void) => {
     ipcRenderer.on('agent:error', (_, msg) => cb(msg))
-  }
+  },
+  getSettings: () => ipcRenderer.invoke('agent:get-settings'),
+  setSettings: (s: { model: string; effort: string }) => ipcRenderer.invoke('agent:set-settings', s)
 })
 
 contextBridge.exposeInMainWorld('wiki', {
@@ -53,9 +56,4 @@ contextBridge.exposeInMainWorld('server', {
 contextBridge.exposeInMainWorld('doc', {
   collabSession: (): Promise<{ collabWsUrl: string; token: string; slug: string }> =>
     ipcRenderer.invoke('doc:collab-session')
-})
-
-contextBridge.exposeInMainWorld('marks', {
-  accept: (markId: string): Promise<void> => ipcRenderer.invoke('mark:accept', markId),
-  reject: (markId: string): Promise<void> => ipcRenderer.invoke('mark:reject', markId)
 })
