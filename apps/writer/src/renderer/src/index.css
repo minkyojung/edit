@@ -111,91 +111,19 @@
 }
 /* ─────────────────────────────────────────────────────────────────────── */
 
-*, *::before, *::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
 
-body {
-  -webkit-font-smoothing: antialiased;
-  background-color: var(--background);
-  color: var(--foreground);
+  body {
+    -webkit-font-smoothing: antialiased;
+    background-color: var(--background);
+    color: var(--foreground);
+  }
 }
-
-.app {
-  display: flex;
-  height: 100vh;
-}
-
-.editor-pane {
-  flex: 1;
-  padding: 48px 40px;
-  overflow-y: auto;
-}
-
-.auth-status {
-  position: fixed;
-  bottom: 16px;
-  left: 16px;
-  font-family: system-ui, sans-serif;
-  font-size: 12px;
-  color: #999;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: default;
-}
-
-.auth-status a {
-  color: #666;
-}
-
-.auth-status--error {
-  color: #c0392b;
-}
-
-.auth-status--clickable {
-  cursor: pointer;
-  color: #e07a00;
-}
-
-.auth-status--clickable:hover {
-  color: #c06000;
-}
-
-.auth-status--clickable:disabled {
-  color: #bbb;
-  cursor: default;
-}
-
-.wiki-btn {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: none;
-  color: #bbb;
-  font-size: 18px;
-  cursor: pointer;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.15s, background 0.15s;
-}
-
-.wiki-btn:hover {
-  color: #555;
-  background: #efefef;
-}
-
-.editor-pane {
-  position: relative;
-}
-
 
 .wiki-textarea {
   flex: 1;
@@ -305,13 +233,6 @@ body {
   outline: none;
 }
 
-.splash {
-  position: fixed;
-  inset: 0;
-  background: #0a0a0a;
-  z-index: 200;
-}
-
 .account-indicator {
   position: fixed;
   top: 14px;
@@ -319,80 +240,3 @@ body {
   z-index: 50;
 }
 
-.account-indicator-icon {
-  width: 18px;
-  height: 18px;
-  user-select: none;
-}
-
-.signin-overlay {
-  position: fixed;
-  inset: 0;
-  background: #0a0a0a;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  font-family: system-ui, -apple-system, sans-serif;
-}
-
-.signin-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  max-width: 360px;
-}
-
-.signin-spark {
-  width: 280px;
-  height: 280px;
-  filter: invert(1) brightness(1.3);
-  margin-bottom: 16px;
-  user-select: none;
-}
-
-.signin-btn-icon {
-  width: 22px;
-  height: 22px;
-}
-
-.signin-caption {
-  color: #ddd;
-  font-size: 17px;
-  line-height: 1.5;
-  margin-top: 28px;
-  font-weight: 400;
-}
-
-.signin-subcaption {
-  color: #777;
-  font-size: 15px;
-  margin-top: 18px;
-  font-weight: 400;
-}
-
-.signin-paste {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
-  width: 320px;
-  margin-top: 16px;
-}
-
-.signin-paste-label {
-  color: #ddd;
-  font-size: 14px;
-  text-align: center;
-  margin-bottom: 4px;
-}
-
-
-.signin-error {
-  color: #e07a7a;
-  font-size: 13px;
-  text-align: center;
-  margin-top: 4px;
-  word-break: break-word;
-}
