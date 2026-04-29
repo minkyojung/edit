@@ -57,3 +57,8 @@ contextBridge.exposeInMainWorld('doc', {
   collabSession: (): Promise<{ collabWsUrl: string; token: string; slug: string }> =>
     ipcRenderer.invoke('doc:collab-session')
 })
+
+contextBridge.exposeInMainWorld('marks', {
+  fetchState: (): Promise<{ marks: Record<string, unknown>; revision?: number } | null> =>
+    ipcRenderer.invoke('marks:fetch-state')
+})

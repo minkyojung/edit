@@ -6,6 +6,7 @@ import type { AgentSettings } from './agentSettings'
 import { bootstrapWiki, readBelief, writeBelief } from './wikiService'
 import { startOAuthFlow, completeOAuthFlow, hasToken, clearToken, onAuthChange } from './oauthService'
 import { bootstrapDoc, getCollabSession } from './docService'
+import { fetchMarkState } from './markService'
 
 let proofServer: ChildProcess | null = null
 
@@ -72,6 +73,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle('doc:collab-session', async (_: IpcMainInvokeEvent) => {
     return getCollabSession()
+  })
+
+  ipcMain.handle('marks:fetch-state', async (_: IpcMainInvokeEvent) => {
+    return fetchMarkState()
   })
 
   ipcMain.on('agent:trigger', (_, text: string, processedHistory: unknown) => {

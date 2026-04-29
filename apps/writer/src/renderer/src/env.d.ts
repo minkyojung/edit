@@ -34,4 +34,7 @@ interface Window {
   doc: {
     collabSession: () => Promise<{ collabWsUrl: string; token: string; slug: string }>
   }
+  marks: {
+    fetchState: () => Promise<{ marks: Record<string, unknown>; revision?: number } | null>
+  }
 }

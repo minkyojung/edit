@@ -8,6 +8,30 @@ importers:
 
   .:
     dependencies:
+      '@milkdown/core':
+        specifier: ^7.20.0
+        version: 7.20.0
+      '@milkdown/plugin-clipboard':
+        specifier: ^7.20.0
+        version: 7.20.0
+      '@milkdown/plugin-cursor':
+        specifier: ^7.20.0
+        version: 7.20.0
+      '@milkdown/plugin-history':
+        specifier: ^7.20.0
+        version: 7.20.0
+      '@milkdown/plugin-listener':
+        specifier: ^7.20.0
+        version: 7.20.0
+      '@milkdown/preset-commonmark':
+        specifier: ^7.20.0
+        version: 7.20.0
+      '@milkdown/preset-gfm':
+        specifier: ^7.20.0
+        version: 7.20.0
+      '@milkdown/prose':
+        specifier: ^7.20.0
+        version: 7.20.0
       proof-sdk:
         specifier: link:../proof-sdk
         version: link:../proof-sdk
