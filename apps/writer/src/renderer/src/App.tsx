@@ -4,42 +4,45 @@ import * as Y from 'yjs'
 import { useDebouncedText } from './hooks/useIdleCallback'
 import { MilkdownEditor } from './MilkdownEditor'
 import sparkUrl from './assets/claude-spark.svg'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu'
 
 function AccountIndicator(): React.ReactElement {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onClick = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
-  }, [open])
-
   const handleSignOut = useCallback(async () => {
-    setOpen(false)
     await window.auth.logout()
   }, [])
 
   return (
-    <div className="account-indicator" ref={ref}>
-      <button
-        className="account-indicator-btn"
-        onClick={() => setOpen((v) => !v)}
-        title="Connected to Claude"
-      >
-        <img src={sparkUrl} alt="" className="account-indicator-icon" />
-      </button>
-      {open && (
-        <div className="account-menu">
-          <div className="account-menu-status">Connected to Claude</div>
-          <button className="account-menu-item" onClick={handleSignOut}>
+    <div className="account-indicator">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="account-indicator-btn"
+            title="Connected to Claude"
+          >
+            <img src={sparkUrl} alt="" className="account-indicator-icon" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+            Connected to Claude
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={handleSignOut}>
             Sign out
-          </button>
-        </div>
-      )}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }
@@ -79,10 +82,14 @@ function SignInPanel(): React.ReactElement {
         <img src={sparkUrl} alt="Claude" className="signin-spark" />
         {!awaitingPaste ? (
           <>
-            <button className="signin-btn" onClick={handleSignIn}>
+            <Button
+              className="signin-btn"
+              onClick={handleSignIn}
+              size="lg"
+            >
               <img src={sparkUrl} alt="" className="signin-btn-icon" />
               Sign in with Claude
-            </button>
+            </Button>
             <p className="signin-caption">
               Use your existing Anthropic<br />subscription to use the agent panel.
             </p>
@@ -93,7 +100,7 @@ function SignInPanel(): React.ReactElement {
             <p className="signin-paste-label">
               Paste the authorization code from your browser
             </p>
-            <input
+            <Input
               type="text"
               className="signin-paste-input"
               value={code}
@@ -105,13 +112,14 @@ function SignInPanel(): React.ReactElement {
                 if (e.key === 'Enter') handleSubmit()
               }}
             />
-            <button
+            <Button
               className="signin-btn"
               onClick={handleSubmit}
               disabled={submitting || !code.trim()}
+              size="lg"
             >
               {submitting ? 'Connecting...' : 'Connect'}
-            </button>
+            </Button>
             {error && <p className="signin-error">{error}</p>}
           </div>
         )}
