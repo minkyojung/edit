@@ -84,21 +84,21 @@ function SignInPanel(): React.ReactElement {
 
   return (
     <div className="dark fixed inset-0 z-[100] flex items-center justify-center bg-background font-sans">
-      <div className="flex flex-col items-center text-center max-w-[360px]">
+      <div className="flex flex-col items-center text-center max-w-sm">
         {!awaitingPaste ? (
           <>
             <Button onClick={handleSignIn} size="lg">
               Sign in with Claude
             </Button>
-            <p className="text-foreground text-[17px] leading-relaxed mt-7 font-normal">
+            <p className="text-foreground text-base leading-relaxed mt-7 font-normal">
               Use your existing Anthropic<br />subscription to use the agent panel.
             </p>
-            <p className="text-muted-foreground text-[15px] mt-[18px]">
+            <p className="text-muted-foreground text-sm mt-4">
               — More models will be added.
             </p>
           </>
         ) : (
-          <div className="flex flex-col items-stretch gap-3 w-[320px] mt-4">
+          <div className="flex flex-col items-stretch gap-3 w-80 mt-4">
             <p className="text-foreground text-sm text-center mb-1">
               Paste the authorization code from your browser
             </p>
@@ -121,7 +121,7 @@ function SignInPanel(): React.ReactElement {
               {submitting ? 'Connecting...' : 'Connect'}
             </Button>
             {error && (
-              <p className="text-destructive text-[13px] text-center mt-1 break-words">
+              <p className="text-destructive text-xs text-center mt-1 break-words">
                 {error}
               </p>
             )}
