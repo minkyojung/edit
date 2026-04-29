@@ -3,6 +3,8 @@ declare module '*.svg' {
   export default url
 }
 
+type ChatMessage = { role: 'user' | 'assistant'; content: string }
+
 type AgentModelId = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-7'
 type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 type AgentSettings = { model: AgentModelId; effort: AgentEffort }
@@ -15,6 +17,11 @@ interface Window {
     onError: (cb: (msg: string) => void) => void
     getSettings: () => Promise<AgentSettings>
     setSettings: (s: AgentSettings) => Promise<AgentSettings>
+    chat: (messages: ChatMessage[], documentContext: string | null) => void
+    stopChat: () => void
+    onChatChunk: (cb: (chunk: string) => void) => () => void
+    onChatDone: (cb: () => void) => () => void
+    onChatError: (cb: (msg: string) => void) => () => void
   }
   wiki: {
     read: () => Promise<string>

@@ -107,7 +107,7 @@ export default function App(): React.ReactElement {
   )
 
   return (
-    <AppShell bottomLeft={bottomLeft}>
+    <AppShell bottomLeft={bottomLeft} documentContext={editorMarkdown}>
       <div className="relative px-10 py-12 max-w-3xl mx-auto">
         <MilkdownEditor ydoc={ydoc} provider={provider} onMarkdownChange={setEditorMarkdown} />
       </div>

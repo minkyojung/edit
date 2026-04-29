@@ -54,15 +54,15 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="px-2 pt-1">
-        <SidebarMenu>
+        <SidebarMenu className="gap-0">
           <SidebarMenuItem>
-            <SidebarMenuButton>
+            <SidebarMenuButton className="py-1.5">
               <HugeiconsIcon icon={Note01Icon} className="size-4" strokeWidth={1.5} />
               Notes
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <SidebarMenuButton>
+            <SidebarMenuButton className="py-1.5">
               <HugeiconsIcon icon={LibraryIcon} className="size-4" strokeWidth={1.5} />
               Wiki
             </SidebarMenuButton>
@@ -78,7 +78,7 @@ export function AppSidebar() {
                 <SidebarMenuButton size="lg">
                   <Avatar className="size-7 shrink-0">
                     <AvatarImage src="" />
-                    <AvatarFallback className="text-xs">WJ</AvatarFallback>
+                    <AvatarFallback className="avatar-luma text-xs text-white font-medium">WJ</AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium truncate">William Jung</p>

@@ -2,6 +2,8 @@ import { app, BrowserWindow, shell, ipcMain, IpcMainInvokeEvent } from 'electron
 import { join } from 'path'
 import { spawn, ChildProcess } from 'child_process'
 import { trigger, shutdown as agentShutdown, resetSession, getSettings, setSettings } from './agentService'
+import { chat, stopChat } from './chatService'
+import type { ChatMessage } from './chatService'
 import type { AgentSettings } from './agentSettings'
 import { bootstrapWiki, readBelief, writeBelief } from './wikiService'
 import { startOAuthFlow, completeOAuthFlow, hasToken, clearToken, onAuthChange } from './oauthService'
@@ -86,6 +88,14 @@ app.whenReady().then(() => {
     await writeBelief(markdown)
     await resetSession()
   })
+
+  ipcMain.on('chat:send', (_, messages: ChatMessage[], documentContext: string | null) => {
+    chat(messages, documentContext, win.webContents).catch((err) =>
+      console.error('[chat IPC]', err)
+    )
+  })
+
+  ipcMain.on('chat:stop', () => stopChat())
 
   ipcMain.handle('agent:get-settings', async () => getSettings())
   ipcMain.handle('agent:set-settings', async (_: IpcMainInvokeEvent, s: AgentSettings) => setSettings(s))
