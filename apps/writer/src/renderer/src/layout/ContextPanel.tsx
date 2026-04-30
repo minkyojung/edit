@@ -22,24 +22,33 @@ function AttachmentPreview() {
   if (files.length === 0) return null
   return (
     <PromptInputHeader>
-      {files.map((f) =>
-        f.mediaType.startsWith('image/') ? (
-          <div key={f.id} className="relative inline-block">
+      {files.map((f) => (
+        <div key={f.id} className="relative inline-block">
+          {f.mediaType.startsWith('image/') ? (
             <img
               src={f.url}
               alt={f.filename ?? 'attachment'}
               className="h-16 w-16 rounded-md object-cover"
             />
-            <button
-              type="button"
-              onClick={() => remove(f.id)}
-              className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-foreground text-background"
-            >
-              <XIcon className="size-2.5" />
-            </button>
-          </div>
-        ) : null
-      )}
+          ) : (
+            <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-md bg-accent text-center">
+              <span className="text-[10px] font-semibold uppercase text-muted-foreground">
+                {f.mediaType === 'application/pdf' ? 'PDF' : 'FILE'}
+              </span>
+              <span className="line-clamp-2 px-1 text-[9px] text-muted-foreground">
+                {f.filename ?? 'file'}
+              </span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => remove(f.id)}
+            className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-foreground text-background"
+          >
+            <XIcon className="size-2.5" />
+          </button>
+        </div>
+      ))}
     </PromptInputHeader>
   )
 }
@@ -172,7 +181,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      <PromptInput onSubmit={handleSubmit} accept="image/*" multiple>
+      <PromptInput onSubmit={handleSubmit} accept="image/*,application/pdf" multiple>
         <AttachmentPreview />
         <PromptInputBody>
           <PromptInputTextarea placeholder="Ask anything..." />

@@ -52,17 +52,28 @@ function buildMessageContent(
     ? `<document>\n${documentContext}\n</document>\n\n${text}`
     : text
 
-  const images = (files ?? []).filter((f) => f.mediaType.startsWith('image/'))
+  const allFiles = files ?? []
 
-  if (images.length === 0) return textBody
+  if (allFiles.length === 0) return textBody
 
-  const parts: unknown[] = images.map((f) => {
+  const parts: unknown[] = []
+
+  for (const f of allFiles) {
     const base64 = f.url.split(',')[1] ?? ''
-    return {
-      type: 'image',
-      source: { type: 'base64', media_type: f.mediaType, data: base64 },
+    if (f.mediaType.startsWith('image/')) {
+      parts.push({
+        type: 'image',
+        source: { type: 'base64', media_type: f.mediaType, data: base64 },
+      })
+    } else if (f.mediaType === 'application/pdf') {
+      parts.push({
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: base64 },
+      })
     }
-  })
+  }
+
+  if (parts.length === 0) return textBody
 
   if (textBody) parts.push({ type: 'text', text: textBody })
 
