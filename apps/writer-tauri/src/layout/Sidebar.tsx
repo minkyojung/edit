@@ -1,4 +1,5 @@
-import React, { useCallback } from 'react'
+import { useCallback, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import {
   IconNote,
   IconBooks,
@@ -6,8 +7,10 @@ import {
   IconFilter,
   IconSelector,
   IconLogout,
+  IconSparkles,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { useTheme } from '@/components/theme-provider'
 import {
   DropdownMenu,
@@ -35,6 +38,11 @@ type PaletteOption = {
   label: string
   swatch: { bg: string; fg: string; accent: string; border: string }
 }
+
+const NAV_ITEMS = [
+  { title: 'Notes', url: '/notes', icon: IconNote },
+  { title: 'Wiki', url: '/wiki', icon: IconBooks },
+] as const
 
 const PALETTE_OPTIONS: PaletteOption[] = [
   {
@@ -71,6 +79,8 @@ function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
 
 export function AppSidebar() {
   const { palette, setPalette } = useTheme()
+  const { pathname } = useLocation()
+  const [connectOpen, setConnectOpen] = useState(false)
 
   // TODO(M7): wire to Tauri command
   const handleSignOut = useCallback(async () => {
@@ -82,28 +92,29 @@ export function AppSidebar() {
       className="border-r"
     >
       <SidebarHeader
-        className="flex flex-row items-center p-0"
+        className="flex flex-row items-center p-0 pr-2"
         style={{ height: '31px' }}
       >
-        <div data-tauri-drag-region className="w-[72px] h-full shrink-0" />
-        <SidebarTrigger />
         <div data-tauri-drag-region className="flex-1 h-full" />
+        <SidebarTrigger />
       </SidebarHeader>
 
       <SidebarContent className="px-2 pt-1">
         <SidebarMenu className="gap-0">
-          <SidebarMenuItem>
-            <SidebarMenuButton className="py-1">
-              <IconNote size={16} stroke={1.5} />
-              Notes
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton className="py-1">
-              <IconBooks size={16} stroke={1.5} />
-              Wiki
-            </SidebarMenuButton>
-          </SidebarMenuItem>
+          {NAV_ITEMS.map((item) => (
+            <SidebarMenuItem key={item.url}>
+              <SidebarMenuButton
+                asChild
+                isActive={pathname.startsWith(item.url)}
+                className="py-1"
+              >
+                <Link to={item.url}>
+                  <item.icon size={16} stroke={1.5} />
+                  <span>{item.title}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
         </SidebarMenu>
       </SidebarContent>
 
@@ -125,9 +136,10 @@ export function AppSidebar() {
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-52">
-                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-                  Connected to Claude
-                </DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => setConnectOpen(true)}>
+                  <IconSparkles size={16} stroke={1.5} />
+                  Connect Claude
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem>
                   <IconSettings size={16} stroke={1.5} />
@@ -162,6 +174,7 @@ export function AppSidebar() {
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
+      <ConnectClaudeDialog open={connectOpen} onOpenChange={setConnectOpen} />
     </Sidebar>
   )
 }

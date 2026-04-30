@@ -1,3 +1,5 @@
+mod oauth;
+
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
@@ -97,6 +99,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(ProofServerHandle(Arc::new(Mutex::new(None))))
+        .manage(oauth::PendingOAuth::default())
+        .invoke_handler(tauri::generate_handler![
+            oauth::start_claude_oauth,
+            oauth::complete_claude_oauth,
+        ])
         .setup(|app| {
             let workspace_root = find_workspace_root(app.handle());
             println!("[proof-server] workspace root: {}", workspace_root.display());

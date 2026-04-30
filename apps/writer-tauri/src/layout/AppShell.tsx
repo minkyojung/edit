@@ -66,7 +66,7 @@ export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 
             className="absolute inset-x-0 top-0 z-10 flex items-center"
             style={{ height: '31px' }}
           >
-            <div data-tauri-drag-region className="w-[68px] h-full shrink-0" />
+            <div data-tauri-drag-region className="w-[88px] h-full shrink-0" />
             <SidebarTrigger />
             <div data-tauri-drag-region className="flex-1 h-full" />
           </div>
