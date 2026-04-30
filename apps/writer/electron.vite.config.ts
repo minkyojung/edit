@@ -83,6 +83,21 @@ export default defineConfig({
           'lib0': `${shared}/lib0`,
         }
       })(),
+      dedupe: [
+        '@milkdown/kit',
+        '@milkdown/plugin-collab',
+        '@milkdown/core',
+        '@milkdown/ctx',
+        'yjs',
+        'y-prosemirror',
+        'y-protocols',
+        'lib0',
+        'prosemirror-model',
+        'prosemirror-state',
+        'prosemirror-view',
+        'prosemirror-transform',
+        'remark-frontmatter',
+      ],
     },
     build: {
       rollupOptions: {

@@ -17,7 +17,25 @@ contextBridge.exposeInMainWorld('agent', {
     ipcRenderer.on('agent:error', (_, msg) => cb(msg))
   },
   getSettings: () => ipcRenderer.invoke('agent:get-settings'),
-  setSettings: (s: { model: string; effort: string }) => ipcRenderer.invoke('agent:set-settings', s)
+  setSettings: (s: { model: string; effort: string }) => ipcRenderer.invoke('agent:set-settings', s),
+  chat: (messages: { role: 'user' | 'assistant'; content: string; files?: { url: string; mediaType: string }[] }[], documentContext: string | null, model: string, effort: string) =>
+    ipcRenderer.send('chat:send', messages, documentContext, model, effort),
+  stopChat: () => ipcRenderer.send('chat:stop'),
+  onChatChunk: (cb: (chunk: string) => void): (() => void) => {
+    const handler = (_: unknown, chunk: string): void => cb(chunk)
+    ipcRenderer.on('chat:chunk', handler)
+    return () => ipcRenderer.removeListener('chat:chunk', handler)
+  },
+  onChatDone: (cb: () => void): (() => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.on('chat:done', handler)
+    return () => ipcRenderer.removeListener('chat:done', handler)
+  },
+  onChatError: (cb: (msg: string) => void): (() => void) => {
+    const handler = (_: unknown, msg: string): void => cb(msg)
+    ipcRenderer.on('chat:error', handler)
+    return () => ipcRenderer.removeListener('chat:error', handler)
+  }
 })
 
 contextBridge.exposeInMainWorld('wiki', {
