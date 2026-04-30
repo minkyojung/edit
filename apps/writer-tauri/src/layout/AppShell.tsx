@@ -4,7 +4,7 @@ import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/s
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 import { usePanelRef } from 'react-resizable-panels'
 import { AppSidebar } from './Sidebar'
-import { ContextPanel } from './ContextPanel'
+import { ChatPanel } from './ChatPanel'
 import { useLayoutStore } from '@/state/layoutStore'
 import type { CollabHandle } from '@/hooks/useCollabDoc'
 
@@ -17,7 +17,7 @@ interface AppShellProps {
   editorView?: EditorView | null
 }
 
-export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 'checking', collabHandle, editorView }: AppShellProps) {
+export function AppShell({ children, bottomLeft, collabHandle, editorView }: AppShellProps) {
   const { sidebarOpen, contextPanelOpen, setSidebar, toggleContextPanel, setContextPanel } =
     useLayoutStore()
   const contextPanelRef = usePanelRef()
@@ -59,7 +59,7 @@ export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 
       onOpenChange={setSidebar}
       style={{ '--sidebar-width': '220px' } as React.CSSProperties}
     >
-      <AppSidebar editorView={editorView ?? null} ydoc={collabHandle?.ydoc ?? null} />
+      <AppSidebar />
       <SidebarInset className="overflow-hidden">
         {!sidebarOpen && (
           <div
@@ -99,7 +99,7 @@ export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 
               }
             }}
           >
-            <ContextPanel documentContext={documentContext ?? null} oauthStatus={oauthStatus} collabHandle={collabHandle ?? null} editorView={editorView ?? null} />
+            <ChatPanel editorView={editorView ?? null} ydoc={collabHandle?.ydoc ?? null} />
           </ResizablePanel>
         </ResizablePanelGroup>
       </SidebarInset>

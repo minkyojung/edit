@@ -9,12 +9,9 @@ import {
   IconLogout,
   IconSparkles,
 } from '@tabler/icons-react'
-import type { EditorView } from '@milkdown/kit/prose/view'
-import * as Y from 'yjs'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
-import { runReview } from '@/agent/runReview'
 import { useTheme } from '@/components/theme-provider'
 import {
   DropdownMenu,
@@ -81,12 +78,7 @@ function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
   )
 }
 
-interface AppSidebarProps {
-  editorView?: EditorView | null
-  ydoc?: Y.Doc | null
-}
-
-export function AppSidebar({ editorView, ydoc }: AppSidebarProps = {}) {
+export function AppSidebar() {
   const { palette, setPalette } = useTheme()
   const { pathname } = useLocation()
   const [connectOpen, setConnectOpen] = useState(false)
@@ -166,18 +158,6 @@ export function AppSidebar({ editorView, ydoc }: AppSidebarProps = {}) {
                     <DropdownMenuItem disabled className="opacity-100">
                       <IconSparkles size={16} stroke={1.5} />
                       <span className="truncate">{account.email ?? 'Connected'}</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={!editorView || !ydoc}
-                      onClick={() => {
-                        if (!editorView || !ydoc) return
-                        console.log('[aiReview] starting…')
-                        runReview(editorView, ydoc)
-                          .then((r) => console.log('[aiReview] done:', r))
-                          .catch((e) => console.error('[aiReview] failed:', e))
-                      }}
-                    >
-                      AI Review
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={disconnect}>
                       Disconnect Claude

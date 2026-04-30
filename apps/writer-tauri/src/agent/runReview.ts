@@ -16,9 +16,15 @@ const MAX_TOKENS = 4096
 const AGENT_ID = 'ai:claude-haiku'
 const DOC_CHAR_CAP = 60_000 // mirrors proof-sdk's style-review cap
 
+export interface AppliedProposal {
+  markId: string
+  proposal: Proposal
+  by: string
+}
+
 interface RunReviewResult {
   proposed: number
-  applied: number
+  applied: AppliedProposal[]
   skipped: Array<{ proposal: Proposal; reason: string }>
   raw: unknown
 }
@@ -27,7 +33,7 @@ export async function runReview(view: EditorView, ydoc: Y.Doc): Promise<RunRevie
   const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
   if (!docText.trim()) {
     console.warn('[runReview] empty document — nothing to review')
-    return { proposed: 0, applied: 0, skipped: [], raw: null }
+    return { proposed: 0, applied: [], skipped: [], raw: null }
   }
 
   const truncated = docText.length > DOC_CHAR_CAP
@@ -57,16 +63,16 @@ export async function runReview(view: EditorView, ydoc: Y.Doc): Promise<RunRevie
 
   const runId = crypto.randomUUID()
   const skipped: Array<{ proposal: Proposal; reason: string }> = []
-  let applied = 0
+  const applied: AppliedProposal[] = []
   for (const p of proposals) {
     const outcome = applyProposal(view, ydoc, p, { runId, agentId: AGENT_ID })
     if (outcome.ok) {
-      applied++
+      applied.push({ markId: outcome.markId, proposal: p, by: AGENT_ID })
     } else {
       skipped.push({ proposal: p, reason: outcome.reason })
     }
   }
 
-  console.log(`[runReview] applied ${applied}/${proposals.length}; skipped`, skipped)
+  console.log(`[runReview] applied ${applied.length}/${proposals.length}; skipped`, skipped)
   return { proposed: proposals.length, applied, skipped, raw: response }
 }
