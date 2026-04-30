@@ -9,9 +9,11 @@ import {
   IconLogout,
   IconSparkles,
 } from '@tabler/icons-react'
+import type { EditorView } from '@milkdown/kit/prose/view'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
+import { runReview } from '@/agent/runReview'
 import { useTheme } from '@/components/theme-provider'
 import {
   DropdownMenu,
@@ -78,7 +80,11 @@ function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
   )
 }
 
-export function AppSidebar() {
+interface AppSidebarProps {
+  editorView?: EditorView | null
+}
+
+export function AppSidebar({ editorView }: AppSidebarProps = {}) {
   const { palette, setPalette } = useTheme()
   const { pathname } = useLocation()
   const [connectOpen, setConnectOpen] = useState(false)
@@ -158,6 +164,18 @@ export function AppSidebar() {
                     <DropdownMenuItem disabled className="opacity-100">
                       <IconSparkles size={16} stroke={1.5} />
                       <span className="truncate">{account.email ?? 'Connected'}</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!editorView}
+                      onClick={() => {
+                        if (!editorView) return
+                        console.log('[aiReview] starting…')
+                        runReview(editorView)
+                          .then((r) => console.log('[aiReview] done:', r))
+                          .catch((e) => console.error('[aiReview] failed:', e))
+                      }}
+                    >
+                      AI Review (log only)
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={disconnect}>
                       Disconnect Claude
