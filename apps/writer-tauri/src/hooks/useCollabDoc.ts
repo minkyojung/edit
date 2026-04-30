@@ -5,6 +5,26 @@ import { proofClient, waitUntilReady } from '../lib/proofClient'
 
 export type CollabStatus = 'initializing' | 'connecting' | 'connected' | 'error'
 
+export type StoredMarkStatus = 'pending' | 'accepted' | 'rejected'
+export type MarkKind = 'authored' | 'approved' | 'flagged' | 'comment' | 'insert' | 'delete' | 'replace'
+
+export interface StoredMark {
+  id?: string
+  kind: MarkKind
+  by?: string
+  at?: string
+  quote?: string
+  range?: { from: number; to: number }
+  startRel?: string
+  endRel?: string
+  content?: string
+  status?: StoredMarkStatus
+  text?: string
+  resolved?: boolean
+  orphaned?: boolean
+  note?: string
+}
+
 export interface CollabHandle {
   ydoc: Y.Doc
   provider: HocuspocusProvider
@@ -77,6 +97,15 @@ export function useCollabDoc(): { handle: CollabHandle | null; status: CollabSta
           setStatus(s === 'connected' ? 'connected' : 'connecting')
         },
       })
+
+      // Observe marks map and log changes for M5 verification
+      const marksMap = ydoc.getMap<StoredMark>('marks')
+      const logMarks = () => {
+        const entries: Record<string, StoredMark> = {}
+        marksMap.forEach((v, k) => { entries[k] = v })
+        console.log('[marks] current marks:', entries)
+      }
+      marksMap.observe(logMarks)
 
       setHandle({ ydoc, provider })
       setStatus('connecting')

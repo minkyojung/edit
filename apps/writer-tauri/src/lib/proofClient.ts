@@ -43,4 +43,11 @@ export const proofClient = {
   async getCollabSession(slug: string): Promise<{ session: CollabSession }> {
     return request(`/documents/${slug}/collab-session`)
   },
+  // Dev helper: inject a test mark to verify M5 mark observation
+  async putTestMark(slug: string, mark: Record<string, unknown>): Promise<void> {
+    await request(`/documents/${slug}`, {
+      method: 'PUT',
+      body: JSON.stringify({ marks: { [mark.id as string]: mark } }),
+    })
+  },
 }
