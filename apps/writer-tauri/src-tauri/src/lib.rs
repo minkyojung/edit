@@ -1,4 +1,5 @@
 mod oauth;
+mod secure_storage;
 
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -103,6 +104,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             oauth::start_claude_oauth,
             oauth::complete_claude_oauth,
+            oauth::get_claude_token,
+            oauth::get_claude_account,
+            oauth::disconnect_claude,
         ])
         .setup(|app| {
             let workspace_root = find_workspace_root(app.handle());

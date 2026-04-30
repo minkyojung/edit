@@ -16,9 +16,10 @@ type Stage = 'idle' | 'waiting' | 'submitting'
 interface Props {
   open: boolean
   onOpenChange: (v: boolean) => void
+  onConnected?: () => void
 }
 
-export function ConnectClaudeDialog({ open, onOpenChange }: Props) {
+export function ConnectClaudeDialog({ open, onOpenChange, onConnected }: Props) {
   const [stage, setStage] = useState<Stage>('idle')
   const [pasted, setPasted] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -45,6 +46,7 @@ export function ConnectClaudeDialog({ open, onOpenChange }: Props) {
     setError(null)
     try {
       await invoke('complete_claude_oauth', { pasted: pasted.trim() })
+      onConnected?.()
       onOpenChange(false)
       reset()
     } catch (e) {

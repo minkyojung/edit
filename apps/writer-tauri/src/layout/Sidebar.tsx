@@ -11,6 +11,7 @@ import {
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
+import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useTheme } from '@/components/theme-provider'
 import {
   DropdownMenu,
@@ -81,11 +82,13 @@ export function AppSidebar() {
   const { palette, setPalette } = useTheme()
   const { pathname } = useLocation()
   const [connectOpen, setConnectOpen] = useState(false)
+  const { account, refresh, disconnect } = useClaudeAuth()
 
-  // TODO(M7): wire to Tauri command
   const handleSignOut = useCallback(async () => {
-    console.log('sign out — not yet implemented')
-  }, [])
+    if (account.connected) {
+      await disconnect()
+    }
+  }, [account.connected, disconnect])
 
   return (
     <Sidebar
@@ -106,7 +109,7 @@ export function AppSidebar() {
               <SidebarMenuButton
                 asChild
                 isActive={pathname.startsWith(item.url)}
-                className="py-1 font-medium"
+                className="h-auto py-2 font-medium"
               >
                 <Link to={item.url}>
                   <item.icon size={16} stroke={1.5} />
@@ -130,17 +133,38 @@ export function AppSidebar() {
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium truncate">William Jung</p>
-                    <p className="text-xs text-muted-foreground truncate">Free Plan</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {account.connected ? (account.email ?? 'Connected') : 'Not connected'}
+                    </p>
                   </div>
                   <IconSelector size={14} stroke={1.5} className="ml-auto text-muted-foreground" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-52">
-                <DropdownMenuItem onClick={() => setConnectOpen(true)}>
-                  <IconSparkles size={16} stroke={1.5} />
-                  Connect Claude
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
+                {!account.connected && (
+                  <>
+                    <DropdownMenuItem onClick={() => setConnectOpen(true)}>
+                      <IconSparkles size={16} stroke={1.5} />
+                      Connect Claude
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                {account.connected && (
+                  <>
+                    <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+                      Claude
+                    </DropdownMenuLabel>
+                    <DropdownMenuItem disabled className="opacity-100">
+                      <IconSparkles size={16} stroke={1.5} />
+                      <span className="truncate">{account.email ?? 'Connected'}</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={disconnect}>
+                      Disconnect Claude
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 <DropdownMenuItem>
                   <IconSettings size={16} stroke={1.5} />
                   Settings
@@ -174,7 +198,7 @@ export function AppSidebar() {
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
-      <ConnectClaudeDialog open={connectOpen} onOpenChange={setConnectOpen} />
+      <ConnectClaudeDialog open={connectOpen} onOpenChange={setConnectOpen} onConnected={refresh} />
     </Sidebar>
   )
 }
