@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { FileUIPart } from 'ai'
-import { XIcon, TargetIcon } from 'lucide-react'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { CancelCircleIcon, Target01Icon } from '@hugeicons/core-free-icons'
 import {
   PromptInput,
   PromptInputActionAddAttachments,
@@ -89,7 +90,7 @@ function AttachmentPreview() {
             onClick={() => remove(f.id)}
             className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-foreground text-background"
           >
-            <XIcon className="size-2.5" />
+            <HugeiconsIcon icon={CancelCircleIcon} className="size-2.5" />
           </button>
         </div>
       ))}
@@ -241,7 +242,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
           <PromptInputTools>
             <DropdownMenu>
               <DropdownMenuTrigger className="inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 font-sans text-xs text-muted-foreground transition-colors hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-                <TargetIcon className="size-3.5" />
+                <HugeiconsIcon icon={Target01Icon} className="size-3.5" />
                 {MODEL_LABELS[model]}
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="min-w-36">
