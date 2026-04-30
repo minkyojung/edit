@@ -35,6 +35,7 @@ fn spawn_proof_server(workspace_root: &PathBuf) -> Option<Child> {
     match Command::new(&tsx)
         .arg(&server_entry)
         .env("PORT", "4000")
+        .env("PROOF_CORS_ALLOW_ORIGINS", "http://localhost:1420")
         .current_dir(workspace_root.join("node_modules/proof-sdk"))
         .spawn()
     {
