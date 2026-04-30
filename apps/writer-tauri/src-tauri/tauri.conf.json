@@ -12,7 +12,7 @@
     "windows": [
       {
         "title": "",
-        "titleBarStyle": "overlay",
+        "titleBarStyle": "Overlay",
         "width": 1280,
         "height": 800,
         "minWidth": 800,

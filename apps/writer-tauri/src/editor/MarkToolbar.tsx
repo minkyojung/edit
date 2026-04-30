@@ -39,10 +39,12 @@ export function MarkToolbar({ selection, onDismiss }: Props) {
   function computeAnchors(): { startRel: string; endRel: string } | null {
     const index = buildTextIndex(selection!.doc)
     if (!index) return null
+    // PM 'from' = position OF first char (in positions array)
     const startChar = posToCharOffset(index, selection!.from)
-    const endChar = posToCharOffset(index, selection!.to)
-    if (startChar === null || endChar === null) return null
-    return { startRel: `char:${startChar}`, endRel: `char:${endChar}` }
+    // PM 'to' = position AFTER last char (not in array). Look up last char, add 1.
+    const lastCharIdx = posToCharOffset(index, selection!.to - 1)
+    if (startChar === null || lastCharIdx === null) return null
+    return { startRel: `char:${startChar}`, endRel: `char:${lastCharIdx + 1}` }
   }
 
   async function submit() {

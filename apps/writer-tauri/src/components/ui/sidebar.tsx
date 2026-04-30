@@ -22,7 +22,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { IconLayoutSidebar } from "@tabler/icons-react"
+import { IconLayoutSidebarFilled } from "@tabler/icons-react"
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
@@ -263,14 +263,14 @@ function SidebarTrigger({
       data-slot="sidebar-trigger"
       variant="ghost"
       size="icon-sm"
-      className={cn("text-sidebar-trigger hover:text-foreground transition-colors", className)}
+      className={cn("text-sidebar-trigger hover:text-foreground hover:bg-white/10 dark:hover:bg-white/10 transition-colors", className)}
       onClick={(event) => {
         onClick?.(event)
         toggleSidebar()
       }}
       {...props}
     >
-      <IconLayoutSidebar size={16} stroke={2} />
+      <IconLayoutSidebarFilled size={16} />
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   )

@@ -55,13 +55,18 @@ export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 
     <SidebarProvider
       open={sidebarOpen}
       onOpenChange={setSidebar}
-      style={{ '--sidebar-width': '168px' } as React.CSSProperties}
+      style={{ '--sidebar-width': '220px' } as React.CSSProperties}
     >
       <AppSidebar />
       <SidebarInset className="overflow-hidden">
         {!sidebarOpen && (
-          <div className="absolute top-[5px] left-[76px] z-10 [-webkit-app-region:no-drag]">
+          <div
+            className="absolute inset-x-0 top-0 z-10 flex items-center"
+            style={{ height: 'env(titlebar-area-height, 31px)' }}
+          >
+            <div className="w-[68px] h-full shrink-0" data-tauri-drag-region />
             <SidebarTrigger />
+            <div className="flex-1 h-full" data-tauri-drag-region />
           </div>
         )}
         <ResizablePanelGroup orientation="horizontal" className="h-full">

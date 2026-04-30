@@ -46,11 +46,13 @@ export function AppSidebar() {
       className="border-r"
       style={{ '--sidebar': 'transparent' } as React.CSSProperties}
     >
-      <SidebarHeader className="flex flex-row items-center h-10 p-0">
-        <div className="w-[72px] h-full shrink-0 [-webkit-app-region:drag]" />
-        <div className="[-webkit-app-region:no-drag]">
-          <SidebarTrigger />
-        </div>
+      <SidebarHeader
+        className="flex flex-row items-center p-0"
+        style={{ height: 'env(titlebar-area-height, 31px)', paddingTop: 'env(titlebar-area-y, 0px)' }}
+      >
+        <div className="w-[72px] h-full shrink-0" data-tauri-drag-region />
+        <SidebarTrigger />
+        <div className="flex-1 h-full" data-tauri-drag-region />
       </SidebarHeader>
 
       <SidebarContent className="px-2 pt-1">
@@ -75,7 +77,7 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg">
+                <SidebarMenuButton size="lg" className="px-2">
                   <Avatar className="size-7 shrink-0">
                     <AvatarImage src="" />
                     <AvatarFallback className="avatar-luma text-xs text-white font-medium">WJ</AvatarFallback>
