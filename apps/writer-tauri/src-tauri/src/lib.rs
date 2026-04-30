@@ -55,6 +55,9 @@ fn spawn_proof_server(workspace_root: &PathBuf) -> Option<Child> {
     cmd.arg(&server_entry)
         .env("PORT", "4000")
         .env("PROOF_CORS_ALLOW_ORIGINS", "http://localhost:1420")
+        // Collab WS is multiplexed on the same HTTP port (embedded mode).
+        // Without this, the server computes collabWsUrl as port+1 (4001) instead of 4000.
+        .env("COLLAB_EMBEDDED_WS", "1")
         .current_dir(workspace_root.join("node_modules/proof-sdk"));
 
     // Put child in its own process group so we can kill the whole tree
