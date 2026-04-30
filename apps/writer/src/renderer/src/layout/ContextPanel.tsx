@@ -216,10 +216,10 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
                 setStatus('idle')
               }}
             >
-              <PromptInputSelectTrigger className="h-7 text-sm [&>svg]:hidden px-1.5">
+              <PromptInputSelectTrigger className="h-7 text-[13px] [&>svg]:hidden px-2">
                 <PromptInputSelectValue />
               </PromptInputSelectTrigger>
-              <PromptInputSelectContent>
+              <PromptInputSelectContent className="w-auto min-w-[120px]">
                 <PromptInputSelectItem value="claude-haiku-4-5">Haiku 4.5</PromptInputSelectItem>
                 <PromptInputSelectItem value="claude-sonnet-4-6">Sonnet 4.6</PromptInputSelectItem>
                 <PromptInputSelectItem value="claude-opus-4-7">Opus 4.7</PromptInputSelectItem>
