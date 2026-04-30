@@ -3,7 +3,8 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { FileUIPart } from 'ai'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { CancelCircleIcon, Target01Icon } from '@hugeicons/core-free-icons'
+import { CancelCircleIcon } from '@hugeicons/core-free-icons'
+
 import {
   PromptInput,
   PromptInputActionAddAttachments,
@@ -54,6 +55,34 @@ const markdownComponents: React.ComponentProps<typeof Markdown>['components'] = 
   th: ({ children }) => <th className="border border-border px-2 py-1.5 text-left font-medium text-muted-foreground">{children}</th>,
   td: ({ children }) => <td className="border border-border px-2 py-1.5 text-foreground">{children}</td>,
   a: ({ children, href }) => <a href={href} className="underline underline-offset-2 text-foreground">{children}</a>,
+}
+
+const CHAT_EFFORTS = ['low', 'medium', 'high'] as const
+type ChatEffort = typeof CHAT_EFFORTS[number]
+
+// Each tuple: [inner ring, middle ring, outer ring] opacity
+const EFFORT_OPACITIES: Record<ChatEffort, [number, number, number]> = {
+  low:    [1, 0.2, 0.2],
+  medium: [1, 1,   0.2],
+  high:   [1, 1,   1],
+}
+
+function EffortButton({ effort, onClick }: { effort: ChatEffort; onClick: () => void }) {
+  const [inner, middle, outer] = EFFORT_OPACITIES[effort]
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center justify-center p-1 text-muted-foreground hover:text-foreground transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 rounded-sm"
+      title={effort}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" opacity={outer} style={{ transition: 'opacity 0.15s' }} />
+        <circle cx="12" cy="12" r="6"  opacity={middle} style={{ transition: 'opacity 0.15s' }} />
+        <circle cx="12" cy="12" r="2"  opacity={inner} style={{ transition: 'opacity 0.15s' }} />
+      </svg>
+    </button>
+  )
 }
 
 const MODEL_LABELS: Record<AgentModelId, string> = {
@@ -113,6 +142,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [status, setStatus] = useState<'idle' | 'streaming'>('idle')
   const [model, setModel] = useState<AgentModelId>('claude-sonnet-4-6')
+  const [effort, setEffort] = useState<ChatEffort>('low')
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -240,9 +270,12 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
         </PromptInputBody>
         <PromptInputFooter>
           <PromptInputTools>
+            <EffortButton
+              effort={effort}
+              onClick={() => setEffort(prev => CHAT_EFFORTS[(CHAT_EFFORTS.indexOf(prev) + 1) % CHAT_EFFORTS.length])}
+            />
             <DropdownMenu>
               <DropdownMenuTrigger className="inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 font-sans text-xs text-muted-foreground transition-colors hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-                <HugeiconsIcon icon={Target01Icon} className="size-3.5" />
                 {MODEL_LABELS[model]}
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="min-w-36">
