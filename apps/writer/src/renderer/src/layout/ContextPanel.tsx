@@ -28,6 +28,33 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 
+const markdownComponents: React.ComponentProps<typeof Markdown>['components'] = {
+  p: ({ children }) => <p className="leading-relaxed">{children}</p>,
+  h1: ({ children }) => <h1 className="text-base font-semibold text-foreground mt-4 mb-1">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-sm font-semibold text-foreground mt-3 mb-1">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-sm font-medium text-foreground mt-2 mb-1">{children}</h3>,
+  hr: () => <hr className="border-border my-3" />,
+  ul: ({ children }) => <ul className="space-y-1 pl-4">{children}</ul>,
+  ol: ({ children }) => <ol className="space-y-1 pl-4 list-decimal">{children}</ol>,
+  li: ({ children }) => <li className="text-foreground before:content-['•'] before:mr-2 before:text-muted-foreground list-none">{children}</li>,
+  strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+  em: ({ children }) => <em className="italic">{children}</em>,
+  code: ({ children, className }) => {
+    const isBlock = className?.includes('language-')
+    if (isBlock) return (
+      <code className="block bg-muted text-foreground text-xs rounded-md px-3 py-2 overflow-x-auto font-mono whitespace-pre">{children}</code>
+    )
+    return <code className="bg-muted text-foreground text-xs rounded px-1 py-0.5 font-mono">{children}</code>
+  },
+  pre: ({ children }) => <pre className="bg-muted rounded-md overflow-x-auto">{children}</pre>,
+  blockquote: ({ children }) => <blockquote className="border-l-2 border-border pl-3 text-muted-foreground">{children}</blockquote>,
+  table: ({ children }) => <table className="w-full text-xs border-collapse">{children}</table>,
+  thead: ({ children }) => <thead>{children}</thead>,
+  th: ({ children }) => <th className="border border-border px-2 py-1.5 text-left font-medium text-muted-foreground">{children}</th>,
+  td: ({ children }) => <td className="border border-border px-2 py-1.5 text-foreground">{children}</td>,
+  a: ({ children, href }) => <a href={href} className="underline underline-offset-2 text-foreground">{children}</a>,
+}
+
 const MODEL_LABELS: Record<AgentModelId, string> = {
   'claude-haiku-4-5': 'Haiku 4.5',
   'claude-sonnet-4-6': 'Sonnet 4.6',
@@ -191,11 +218,8 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
                 <div className="flex gap-2 items-start">
                   <div className="avatar-luma size-5 rounded-full flex-shrink-0 mt-0.5" />
                   {msg.content ? (
-                    <div className="prose prose-sm max-w-none
-                      [&>*:first-child]:mt-0 [&>*:last-child]:mb-0
-                      prose-p:leading-relaxed prose-pre:bg-muted prose-pre:text-xs
-                      prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none">
-                      <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
+                    <div className="text-sm text-foreground leading-relaxed space-y-3 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{msg.content}</Markdown>
                     </div>
                   ) : status === 'streaming' ? (
                     <span className="text-muted-foreground animate-pulse">…</span>
@@ -216,8 +240,8 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
         <PromptInputFooter>
           <PromptInputTools>
             <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background/80 px-2.5 py-1 font-sans text-xs text-muted-foreground shadow-sm backdrop-blur transition-colors hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-                <span className="font-medium text-foreground">{MODEL_LABELS[model]}</span>
+              <DropdownMenuTrigger className="inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 font-sans text-xs text-muted-foreground transition-colors hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+                {MODEL_LABELS[model]}
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="min-w-36">
                 <DropdownMenuLabel className="text-xs text-muted-foreground">Model</DropdownMenuLabel>
