@@ -24,6 +24,7 @@ const ACTIONABLE_KINDS = new Set(['insert', 'delete', 'replace'])
 type Props = {
   ydoc: Y.Doc
   provider: HocuspocusProvider | null
+  collabSynced: boolean
   onMarkdownChange?: (markdown: string) => void
 }
 
@@ -48,7 +49,7 @@ function pickMarkId(view: EditorView): string | null {
   return atCursor?.id ?? null
 }
 
-export function MilkdownEditor({ ydoc, provider, onMarkdownChange }: Props): React.ReactElement {
+export function MilkdownEditor({ ydoc, provider, collabSynced, onMarkdownChange }: Props): React.ReactElement {
   const rootRef = useRef<HTMLDivElement>(null)
   const proofRef = useRef<ProofEditorImpl | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -117,19 +118,6 @@ export function MilkdownEditor({ ydoc, provider, onMarkdownChange }: Props): Rea
         scheduleEmit()
 
         const handleKeyDown = (e: KeyboardEvent): void => {
-          // ⌘⇧C / ⌃⇧C → manually ask the agent to check the current document
-          if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
-            const serialize = serializerRef.current
-            if (!serialize) return
-            e.preventDefault()
-            e.stopPropagation()
-            const md = serialize(view.state.doc)
-            if (md.trim()) {
-              window.agent.trigger(md, [])
-            }
-            return
-          }
-
           if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'a' || e.key === 'A')) {
             const allIds = getMarks(view.state).filter(isActionable).map((m) => m.id)
             if (allIds.length === 0) return
@@ -185,6 +173,7 @@ export function MilkdownEditor({ ydoc, provider, onMarkdownChange }: Props): Rea
   }, [])
 
   useEffect(() => {
+    if (!collabSynced) return
     const id = setInterval(async () => {
       const view = viewRef.current
       if (!view) return
@@ -199,7 +188,7 @@ export function MilkdownEditor({ ydoc, provider, onMarkdownChange }: Props): Rea
     }, POLL_INTERVAL_MS)
 
     return () => clearInterval(id)
-  }, [])
+  }, [collabSynced])
 
   return <div ref={rootRef} className="h-full w-full" />
 }
