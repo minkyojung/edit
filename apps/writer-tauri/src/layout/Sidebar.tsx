@@ -50,21 +50,23 @@ export function AppSidebar() {
         className="flex flex-row items-center p-0"
         style={{ height: 'env(titlebar-area-height, 31px)', paddingTop: 'env(titlebar-area-y, 0px)' }}
       >
-        <div className="w-[72px] h-full shrink-0" data-tauri-drag-region />
-        <SidebarTrigger />
-        <div className="flex-1 h-full" data-tauri-drag-region />
+        <div className="w-[72px] h-full shrink-0 [-webkit-app-region:drag]" />
+        <div className="[-webkit-app-region:no-drag]">
+          <SidebarTrigger />
+        </div>
+        <div className="flex-1 h-full [-webkit-app-region:drag]" />
       </SidebarHeader>
 
       <SidebarContent className="px-2 pt-1">
         <SidebarMenu className="gap-0">
           <SidebarMenuItem>
-            <SidebarMenuButton className="py-1.5">
+            <SidebarMenuButton className="py-1">
               <IconNote size={16} stroke={1.5} />
               Notes
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <SidebarMenuButton className="py-1.5">
+            <SidebarMenuButton className="py-1">
               <IconBooks size={16} stroke={1.5} />
               Wiki
             </SidebarMenuButton>
@@ -77,7 +79,7 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg" className="px-2">
+                <SidebarMenuButton size="lg" className="px-2 h-11">
                   <Avatar className="size-7 shrink-0">
                     <AvatarImage src="" />
                     <AvatarFallback className="avatar-luma text-xs text-white font-medium">WJ</AvatarFallback>

@@ -61,12 +61,14 @@ export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 
       <SidebarInset className="overflow-hidden">
         {!sidebarOpen && (
           <div
-            className="absolute inset-x-0 top-0 z-10 flex items-center"
+            className="absolute inset-x-0 top-0 z-10 flex items-center [-webkit-app-region:drag]"
             style={{ height: 'env(titlebar-area-height, 31px)' }}
           >
-            <div className="w-[68px] h-full shrink-0" data-tauri-drag-region />
-            <SidebarTrigger />
-            <div className="flex-1 h-full" data-tauri-drag-region />
+            <div className="w-[68px] h-full shrink-0" />
+            <div className="[-webkit-app-region:no-drag]">
+              <SidebarTrigger />
+            </div>
+            <div className="flex-1 h-full" />
           </div>
         )}
         <ResizablePanelGroup orientation="horizontal" className="h-full">
