@@ -76,7 +76,7 @@ function EffortButton({ effort, onClick }: { effort: ChatEffort; onClick: () => 
       className="flex items-center justify-center p-1 text-muted-foreground hover:text-foreground transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 rounded-sm"
       title={effort}
     >
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10" opacity={outer} style={{ transition: 'opacity 0.15s' }} />
         <circle cx="12" cy="12" r="6"  opacity={middle} style={{ transition: 'opacity 0.15s' }} />
         <circle cx="12" cy="12" r="2"  opacity={inner} style={{ transition: 'opacity 0.15s' }} />
