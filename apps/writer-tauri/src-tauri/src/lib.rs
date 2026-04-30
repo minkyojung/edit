@@ -62,6 +62,11 @@ pub fn run() {
             let state = app.state::<ProofServerHandle>();
             *state.0.lock().unwrap() = child;
 
+            #[cfg(debug_assertions)]
+            if let Some(window) = app.get_webview_window("main") {
+                window.open_devtools();
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
