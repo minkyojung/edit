@@ -1,5 +1,11 @@
 # proof-sdk 통합 — 배운 것들
 
+> **[SUPERSEDED — 2026-04-30]**
+> 이 문서는 Path A (ProofEditorImpl 직접 임베드) 과정에서 배운 내용이다.
+> Path A는 폐기됨 — 통합 충돌의 근본 원인은 proof-sdk의 의도된 사용 모델(HTTP only)과 불일치였음.
+> 결정 배경: `docs/adr/2026-04-30-path-b-rewrite.md`
+> **학습 가치는 있음**: §4 (milkdown listener + Yjs 충돌), §6 (mutation base 패턴), §7 (ydoc origin 필터링)은 Path B 구현 시에도 참고할 수 있다.
+
 작성: 2026-04-30
 대상 브랜치: `minkyojung/proof-sdk-milkdown-rewrite`
 관련: `docs/proof-sdk-integration-plan.md` (원래 계획)

@@ -1,5 +1,10 @@
 # proof-sdk 통합 계획
 
+> **[SUPERSEDED — 2026-04-30]**
+> 이 문서는 Path A (ProofEditorImpl 직접 임베드) 실행 계획이다. Path A는 폐기됨.
+> 결정 배경: `docs/adr/2026-04-30-path-b-rewrite.md`
+> 현재 방향: Path B — Milkdown 직접 구축 + proof-sdk는 HTTP API만 사용. 실행 계획: `docs/path-b-rewrite-plan.md`
+
 작성: 2026-04-29
 브랜치: minkyojung/shadcn-luma-plan
 업데이트: 2026-04-30 — Step 1~4 + (수동 trigger로 변경된) Step 5 일부 완료. 자세한 결정 기록은 `proof-sdk-integration-notes.md`.
