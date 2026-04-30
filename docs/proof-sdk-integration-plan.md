@@ -2,6 +2,9 @@
 
 작성: 2026-04-29
 브랜치: minkyojung/shadcn-luma-plan
+업데이트: 2026-04-30 — Step 1~4 + (수동 trigger로 변경된) Step 5 일부 완료. 자세한 결정 기록은 `proof-sdk-integration-notes.md`.
+
+> **현재 상태**: Step 1~4 완료, ⌘⇧C 수동 trigger 도입 후 검증됨. 통합 자체는 작동. 남은 작업은 정리/UX 다듬기.
 
 ---
 
@@ -66,7 +69,7 @@
 
 ## 4. 작업 단계
 
-### Step 1 — `MilkdownEditor.tsx` 재작성
+### Step 1 — `MilkdownEditor.tsx` 재작성 ✅
 **시간**: 30~60분
 **파일**: `apps/writer/src/renderer/src/MilkdownEditor.tsx`
 
@@ -78,7 +81,7 @@
 
 **검증**: 빌드 통과. dev 띄워서 빈 에디터 정상 표시. 콘솔 에러 없음.
 
-### Step 2 — HTTP polling 으로 마크 sync 추가
+### Step 2 — HTTP polling 으로 마크 sync 추가 ✅
 **시간**: 1시간
 **파일**: 새로 만듦 — `apps/writer/src/renderer/src/marksRefresh.ts` 또는 `MilkdownEditor.tsx` 안에
 
@@ -89,7 +92,7 @@
 
 **검증**: 글 입력 → 1.5초 후 Claude 가 mark 만듦 → 1~2초 안에 화면에 빨간 strikethrough/초록 underline 등 표시됨. `document.querySelectorAll('[data-proof="suggestion"]')` 가 entry 가져옴.
 
-### Step 3 — accept/reject HTTP wrapper 복구
+### Step 3 — accept/reject HTTP wrapper 복구 ✅
 **시간**: 1시간
 **파일**: 새로 만듦 — `apps/writer/src/main/markService.ts` (step 1 에서 삭제했던 것 비슷한 형태)
 **파일**: `apps/writer/src/preload/index.ts` (window.marks 채널 복구)
@@ -100,7 +103,7 @@
 
 **검증**: Tab 누름 → 서버에 accept 도달 → 서버가 mark 처리 (canonical markdown 변경) → polling 으로 marks 갱신 → 화면에서 mark 사라지고 텍스트 변경.
 
-### Step 4 — Tab/Esc 핸들러 추가
+### Step 4 — Tab/Esc 핸들러 추가 ✅
 **시간**: 30분
 **파일**: `MilkdownEditor.tsx` 내
 
@@ -110,13 +113,20 @@
 
 **검증**: 시나리오 6개 (공백/벌크/trailing/proofAuthored/Esc/연타) 모두 정상.
 
-### Step 5 — 정리 + commit
-**시간**: 30분
+### Step 5 — 정리 + commit (진행 중)
 
-- 디버그 헬퍼 정리
-- 시각 (CSS) — proof-sdk 가 자체 스타일 가지므로 우리는 일단 default 사용. 나중에 token 으로 색상 매칭
-- commit + push
+✅ 완료
+- 디버그 헬퍼 정리 (`[emit] / [poll] / [ydoc.update] / [pm.dispatch]` 로그, `window.__ydoc` expose 제거)
+- 자동 trigger → ⌘⇧C 수동 trigger로 변경 (사용자 통제권 + 토큰 절약)
+- 통합 노트 작성: `docs/proof-sdk-integration-notes.md`
+- step별 commit + push 완료
+
+🔲 남은 정리 거리
+- 시각 토큰 — 마크 색상이 proof-sdk 기본값. 우리 디자인 token 매칭은 별도 작업
 - (옵션) `link:` 모드 → GitHub URL 모드 전환 (안정화 후)
+- `view.dispatch` wrap을 ProseMirror Plugin으로 대체 (정공법화)
+- ydoc origin 필터링 (AI 실시간 협업 들어가기 전 필수)
+- ANCHOR_NOT_FOUND race 대응 (server-confirmed 신호 대기)
 
 ---
 
@@ -168,4 +178,10 @@
 
 ## 9. 다음 액션
 
-Step 1 — `MilkdownEditor.tsx` 재작성 시작.
+기본 통합은 완료. 남은 작업:
+
+1. **시각 토큰 매칭** — 우리 design system에 맞춘 마크 색상
+2. **PM Plugin 전환** — `view.dispatch` wrap → 정공법
+3. **AI 실시간 협업 준비** — origin filter + server-sync 대기
+
+자세한 결정 기록과 디버그 팁은 `docs/proof-sdk-integration-notes.md` 참고.
