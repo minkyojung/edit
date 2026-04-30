@@ -13,17 +13,26 @@ import {
   PromptInputBody,
   PromptInputFooter,
   PromptInputHeader,
-  PromptInputSelect,
-  PromptInputSelectContent,
-  PromptInputSelectItem,
-  PromptInputSelectTrigger,
-  PromptInputSelectValue,
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
   usePromptInputAttachments,
 } from '@/components/ui/prompt-input'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
+
+const MODEL_LABELS: Record<AgentModelId, string> = {
+  'claude-haiku-4-5': 'Haiku 4.5',
+  'claude-sonnet-4-6': 'Sonnet 4.6',
+  'claude-opus-4-7': 'Opus 4.7',
+}
 
 function AttachmentPreview() {
   const { files, remove } = usePromptInputAttachments()
@@ -206,25 +215,30 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
         </PromptInputBody>
         <PromptInputFooter>
           <PromptInputTools>
-            <PromptInputSelect
-              value={model}
-              onValueChange={(v) => {
-                const next = v as AgentModelId
-                setModel(next)
-                window.agent.stopChat()
-                setMessages([])
-                setStatus('idle')
-              }}
-            >
-              <PromptInputSelectTrigger className="h-7 text-[13px] [&>svg]:hidden px-2">
-                <PromptInputSelectValue />
-              </PromptInputSelectTrigger>
-              <PromptInputSelectContent className="w-auto min-w-[120px]">
-                <PromptInputSelectItem value="claude-haiku-4-5">Haiku 4.5</PromptInputSelectItem>
-                <PromptInputSelectItem value="claude-sonnet-4-6">Sonnet 4.6</PromptInputSelectItem>
-                <PromptInputSelectItem value="claude-opus-4-7">Opus 4.7</PromptInputSelectItem>
-              </PromptInputSelectContent>
-            </PromptInputSelect>
+            <DropdownMenu>
+              <DropdownMenuTrigger className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background/80 px-2.5 py-1 font-sans text-xs text-muted-foreground shadow-sm backdrop-blur transition-colors hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+                <span className="font-medium text-foreground">{MODEL_LABELS[model]}</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="start" className="min-w-36">
+                <DropdownMenuLabel className="text-xs text-muted-foreground">Model</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={model}
+                  onValueChange={(v) => {
+                    const next = v as AgentModelId
+                    setModel(next)
+                    window.agent.stopChat()
+                    setMessages([])
+                    setStatus('idle')
+                  }}
+                >
+                  {(Object.keys(MODEL_LABELS) as AgentModelId[]).map((m) => (
+                    <DropdownMenuRadioItem key={m} value={m}>
+                      {MODEL_LABELS[m]}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <PromptInputActionMenu>
               <PromptInputActionMenuTrigger />
               <PromptInputActionMenuContent>
