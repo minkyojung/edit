@@ -3,6 +3,9 @@ use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 struct ProofServerHandle(Arc<Mutex<Option<Child>>>);
 
 fn find_workspace_root(app_handle: &tauri::AppHandle) -> PathBuf {
@@ -23,6 +26,17 @@ fn find_workspace_root(app_handle: &tauri::AppHandle) -> PathBuf {
     PathBuf::from(".")
 }
 
+fn kill_port_holders(port: u16) {
+    // macOS/Linux: lsof -ti:PORT lists pids holding the port
+    if let Ok(out) = Command::new("lsof").arg(format!("-ti:{port}")).output() {
+        let pids = String::from_utf8_lossy(&out.stdout);
+        for pid in pids.lines().filter(|l| !l.is_empty()) {
+            let _ = Command::new("kill").arg("-9").arg(pid).status();
+            println!("[proof-server] killed leftover pid={pid} on port {port}");
+        }
+    }
+}
+
 fn spawn_proof_server(workspace_root: &PathBuf) -> Option<Child> {
     let tsx = workspace_root.join("node_modules/.bin/tsx");
     let server_entry = workspace_root.join("node_modules/proof-sdk/server/index.ts");
@@ -32,13 +46,28 @@ fn spawn_proof_server(workspace_root: &PathBuf) -> Option<Child> {
         return None;
     }
 
-    match Command::new(&tsx)
-        .arg(&server_entry)
+    // Defensive: prior dev sessions can leave a tsx process bound to port 4000.
+    // Without this, the new spawn silently fails (port in use) and the stale
+    // server keeps responding — including with stale CORS config.
+    kill_port_holders(4000);
+
+    let mut cmd = Command::new(&tsx);
+    cmd.arg(&server_entry)
         .env("PORT", "4000")
         .env("PROOF_CORS_ALLOW_ORIGINS", "http://localhost:1420")
-        .current_dir(workspace_root.join("node_modules/proof-sdk"))
-        .spawn()
-    {
+        .current_dir(workspace_root.join("node_modules/proof-sdk"));
+
+    // Put child in its own process group so we can kill the whole tree
+    // (tsx spawns a Node child; we need both to die together).
+    #[cfg(unix)]
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+
+    match cmd.spawn() {
         Ok(child) => {
             println!("[proof-server] spawned pid={}", child.id());
             Some(child)
@@ -81,7 +110,15 @@ pub fn run() {
                     };
                     let child = child_holder.lock().unwrap().take();
                     if let Some(mut child) = child {
+                        // Kill the whole process group (negative pid)
+                        #[cfg(unix)]
+                        unsafe {
+                            libc::kill(-(child.id() as i32), libc::SIGTERM);
+                        }
                         let _ = child.kill();
+                        let _ = child.wait();
+                        // Belt-and-suspenders: clean up anything still on the port
+                        kill_port_holders(4000);
                         println!("[proof-server] killed on window destroy");
                     }
                 }
