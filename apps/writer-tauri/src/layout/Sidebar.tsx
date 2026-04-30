@@ -46,14 +46,13 @@ export function AppSidebar() {
       className="border-r"
     >
       <SidebarHeader
-        className="flex flex-row items-center p-0"
+        className="flex flex-row items-center p-0 [-webkit-app-region:drag]"
         style={{ height: 'env(titlebar-area-height, 31px)', paddingTop: 'env(titlebar-area-y, 0px)' }}
       >
-        <div className="w-[72px] h-full shrink-0 [-webkit-app-region:drag]" />
+        <div className="w-[72px] h-full shrink-0" />
         <div className="[-webkit-app-region:no-drag]">
           <SidebarTrigger />
         </div>
-        <div className="flex-1 h-full [-webkit-app-region:drag]" />
       </SidebarHeader>
 
       <SidebarContent className="px-2 pt-1">
