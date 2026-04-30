@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Editor, rootCtx, editorViewOptionsCtx } from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
@@ -7,6 +7,8 @@ import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
 import { useCollabDoc } from '../hooks/useCollabDoc'
 import { createMarkDecoPlugin } from './markDecoPlugin'
+import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
+import { MarkToolbar } from './MarkToolbar'
 
 interface Props {
   onMarkdownChange?: (md: string) => void
@@ -18,10 +20,10 @@ export function MilkdownEditor({ onMarkdownChange }: Props) {
   const onChangeRef = useRef(onMarkdownChange)
   onChangeRef.current = onMarkdownChange
 
+  const [selection, setSelection] = useState<SelectionInfo | null>(null)
+
   const { handle, status } = useCollabDoc()
 
-  // Editor is created once when handle (ydoc + provider) becomes available.
-  // status changes do NOT recreate the editor.
   useEffect(() => {
     if (!rootRef.current || !handle) return
 
@@ -39,6 +41,7 @@ export function MilkdownEditor({ onMarkdownChange }: Props) {
       .use(clipboard)
       .use(collab)
       .use(createMarkDecoPlugin(ydoc))
+      .use(createSelectionPlugin(setSelection))
       .create()
       .then((editor) => {
         if (!mounted) {
@@ -64,8 +67,9 @@ export function MilkdownEditor({ onMarkdownChange }: Props) {
         editorRef.current.destroy()
         editorRef.current = null
       }
+      setSelection(null)
     }
-  }, [handle]) // handle is stable — won't change once set
+  }, [handle])
 
   return (
     <div className="relative h-full w-full">
@@ -81,6 +85,7 @@ export function MilkdownEditor({ onMarkdownChange }: Props) {
           <div ref={rootRef} />
         </div>
       </div>
+      <MarkToolbar selection={selection} onDismiss={() => setSelection(null)} />
     </div>
   )
 }

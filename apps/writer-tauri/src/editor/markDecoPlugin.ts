@@ -7,14 +7,38 @@ import type { StoredMark } from '../hooks/useCollabDoc'
 
 const key = new PluginKey<DecorationSet>('markDecoration')
 
+// Search for a quote string inside individual text nodes and return PM positions.
+function findQuoteRange(doc: Node, quote: string): { from: number; to: number } | null {
+  let found: { from: number; to: number } | null = null
+  doc.nodesBetween(0, doc.content.size, (node, pos) => {
+    if (found || !node.isText || !node.text) return
+    const idx = node.text.indexOf(quote)
+    if (idx !== -1) {
+      found = { from: pos + idx, to: pos + idx + quote.length }
+    }
+  })
+  return found
+}
+
+function resolveRange(
+  doc: Node,
+  mark: StoredMark,
+): { from: number; to: number } | null {
+  if (mark.range) {
+    const { from, to } = mark.range
+    if (from >= 0 && to <= doc.content.size && from < to) return { from, to }
+  }
+  if (mark.quote) return findQuoteRange(doc, mark.quote)
+  return null
+}
+
 function buildDecos(doc: Node, marksMap: Y.Map<StoredMark>): DecorationSet {
   const decos: Decoration[] = []
   marksMap.forEach((mark, id) => {
-    if (!mark.range) return
-    const { from, to } = mark.range
-    if (from < 0 || to > doc.content.size || from >= to) return
+    const range = resolveRange(doc, mark)
+    if (!range) return
     decos.push(
-      Decoration.inline(from, to, {
+      Decoration.inline(range.from, range.to, {
         class: `mark-deco mark-deco--${mark.kind}`,
         'data-mark-id': id,
       }),
@@ -49,8 +73,6 @@ export function createMarkDecoPlugin(ydoc: Y.Doc) {
       view(view) {
         dispatchUpdate = () => view.dispatch(view.state.tr.setMeta(key, true))
         marksMap.observe(observer)
-        // init() runs before Yjs sync so the doc is empty at that point.
-        // Rebuild once after the first transaction that brings real content.
         let built = false
         return {
           update(v) {

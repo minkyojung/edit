@@ -2,8 +2,8 @@ const BASE_URL = 'http://localhost:4000'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
   })
   if (!res.ok) throw new Error(`proof-server ${res.status}: ${path}`)
   return res.json() as Promise<T>
@@ -42,6 +42,21 @@ export const proofClient = {
   },
   async getCollabSession(slug: string): Promise<{ session: CollabSession }> {
     return request(`/documents/${slug}/collab-session`)
+  },
+  async createMark(
+    slug: string,
+    type: 'suggestion.add' | 'comment.add',
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    await request(`/api/documents/${slug}/ops`, {
+      method: 'POST',
+      body: JSON.stringify({ type, payload }),
+      headers: {
+        'x-proof-client-version': '0.30.0',
+        'x-proof-client-build': '1',
+        'x-proof-client-protocol': '3',
+      },
+    })
   },
   // Dev helper: inject a test mark to verify M5 mark observation
   async putTestMark(slug: string, mark: Record<string, unknown>): Promise<void> {
