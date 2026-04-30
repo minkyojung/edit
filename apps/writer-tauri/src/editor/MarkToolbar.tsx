@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { proofClient } from '../lib/proofClient'
 import type { SelectionInfo } from './selectionPlugin'
+import { buildTextIndex, posToCharOffset } from './utils/textRange'
 
 const DOC_SLUG_KEY = 'writer-tauri:doc-slug'
 
@@ -35,8 +36,22 @@ export function MarkToolbar({ selection, onDismiss }: Props) {
     onDismiss()
   }
 
+  function computeAnchors(): { startRel: string; endRel: string } | null {
+    const index = buildTextIndex(selection!.doc)
+    if (!index) return null
+    const startChar = posToCharOffset(index, selection!.from)
+    const endChar = posToCharOffset(index, selection!.to)
+    if (startChar === null || endChar === null) return null
+    return { startRel: `char:${startChar}`, endRel: `char:${endChar}` }
+  }
+
   async function submit() {
     if (loading) return
+    const anchors = computeAnchors()
+    if (!anchors) {
+      console.error('[mark] failed to compute anchors')
+      return
+    }
     setLoading(true)
     try {
       if (mode === 'comment') {
@@ -44,7 +59,7 @@ export function MarkToolbar({ selection, onDismiss }: Props) {
           by: 'owner',
           quote: selection!.text,
           text: input.trim() || '.',
-          range: { from: selection!.from, to: selection!.to },
+          ...anchors,
         })
       } else if (mode === 'replace') {
         await proofClient.createMark(slug!, 'suggestion.add', {
@@ -52,7 +67,7 @@ export function MarkToolbar({ selection, onDismiss }: Props) {
           by: 'owner',
           quote: selection!.text,
           content: input.trim(),
-          range: { from: selection!.from, to: selection!.to },
+          ...anchors,
         })
       }
       reset()
@@ -64,13 +79,18 @@ export function MarkToolbar({ selection, onDismiss }: Props) {
 
   async function createDelete() {
     if (!slug) return
+    const anchors = computeAnchors()
+    if (!anchors) {
+      console.error('[mark] failed to compute anchors')
+      return
+    }
     setLoading(true)
     try {
       await proofClient.createMark(slug, 'suggestion.add', {
         kind: 'delete',
         by: 'owner',
         quote: selection!.text,
-        range: { from: selection!.from, to: selection!.to },
+        ...anchors,
       })
       reset()
     } catch (err) {

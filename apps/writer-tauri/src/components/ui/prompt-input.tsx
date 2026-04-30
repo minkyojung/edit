@@ -39,15 +39,14 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { ChatStatus, FileUIPart, SourceDocumentUIPart } from "ai";
-import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  ArrowUp02Icon,
-  CancelCircleIcon,
-  ComputerIcon,
-  Image01Icon,
-  PlusSignIcon,
-  StopIcon,
-} from "@hugeicons/core-free-icons";
+  IconArrowUp,
+  IconCircleX,
+  IconDeviceLaptop,
+  IconPhoto,
+  IconPlus,
+  IconSquare,
+} from "@tabler/icons-react";
 import { nanoid } from "nanoid";
 import type {
   ChangeEvent,
@@ -429,7 +428,7 @@ export const PromptInputActionAddAttachments = ({
 
   return (
     <DropdownMenuItem {...props} onSelect={handleSelect}>
-      <HugeiconsIcon icon={Image01Icon} className="mr-2 size-4" /> {label}
+      <IconPhoto size={16} className="mr-2" /> {label}
     </DropdownMenuItem>
   );
 };
@@ -474,7 +473,7 @@ export const PromptInputActionAddScreenshot = ({
 
   return (
     <DropdownMenuItem {...props} onSelect={handleSelect}>
-      <HugeiconsIcon icon={ComputerIcon} className="mr-2 size-4" />
+      <IconDeviceLaptop size={16} className="mr-2" />
       {label}
     </DropdownMenuItem>
   );
@@ -1179,7 +1178,7 @@ export const PromptInputActionMenuTrigger = ({
 }: PromptInputActionMenuTriggerProps) => (
   <DropdownMenuTrigger asChild>
     <PromptInputButton className={className} {...props}>
-      {children ?? <HugeiconsIcon icon={PlusSignIcon} className="size-4" />}
+      {children ?? <IconPlus size={16} />}
     </PromptInputButton>
   </DropdownMenuTrigger>
 );
@@ -1224,14 +1223,14 @@ export const PromptInputSubmit = ({
 }: PromptInputSubmitProps) => {
   const isGenerating = status === "submitted" || status === "streaming";
 
-  let Icon = <HugeiconsIcon icon={ArrowUp02Icon} className="size-4" />;
+  let Icon = <IconArrowUp size={16} />;
 
   if (status === "submitted") {
     Icon = <Spinner />;
   } else if (status === "streaming") {
-    Icon = <HugeiconsIcon icon={StopIcon} className="size-4" />;
+    Icon = <IconSquare size={16} />;
   } else if (status === "error") {
-    Icon = <HugeiconsIcon icon={CancelCircleIcon} className="size-4" />;
+    Icon = <IconCircleX size={16} />;
   }
 
   const handleClick = useCallback(
