@@ -76,7 +76,7 @@ function EffortButton({ effort, onClick }: { effort: ChatEffort; onClick: () => 
       className="flex items-center justify-center p-1 text-muted-foreground hover:text-foreground transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 rounded-sm"
       title={effort}
     >
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10" opacity={outer} style={{ transition: 'opacity 0.15s' }} />
         <circle cx="12" cy="12" r="6"  opacity={middle} style={{ transition: 'opacity 0.15s' }} />
         <circle cx="12" cy="12" r="2"  opacity={inner} style={{ transition: 'opacity 0.15s' }} />
@@ -142,7 +142,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [status, setStatus] = useState<'idle' | 'streaming'>('idle')
   const [model, setModel] = useState<AgentModelId>('claude-sonnet-4-6')
-  const [effort, setEffort] = useState<ChatEffort>('low')
+  const [effort, setEffort] = useState<ChatEffort>('medium')
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -268,7 +268,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
         <PromptInputBody>
           <PromptInputTextarea placeholder="Ask anything..." className="pt-3" />
         </PromptInputBody>
-        <PromptInputFooter>
+        <PromptInputFooter className="px-2 pb-2">
           <PromptInputTools>
             <EffortButton
               effort={effort}
