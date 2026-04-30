@@ -235,7 +235,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
       <PromptInput onSubmit={handleSubmit} accept="image/*,application/pdf,text/plain,text/markdown,text/csv,.md,.txt,.csv" multiple>
         <AttachmentPreview />
         <PromptInputBody>
-          <PromptInputTextarea placeholder="Ask anything..." />
+          <PromptInputTextarea placeholder="Ask anything..." className="pt-3" />
         </PromptInputBody>
         <PromptInputFooter>
           <PromptInputTools>
