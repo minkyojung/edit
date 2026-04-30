@@ -189,7 +189,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
       setMessages(next)
       setStatus('streaming')
       setHasText(false)
-      window.agent.chat(next.slice(0, -1), documentContext, model)
+      window.agent.chat(next.slice(0, -1), documentContext, model, effort)
     },
     [messages, status, documentContext, model]
   )
