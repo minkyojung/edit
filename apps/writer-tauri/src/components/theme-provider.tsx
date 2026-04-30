@@ -1,68 +1,57 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 
-type Theme = 'dark' | 'light' | 'system'
+export type Palette = 'charcoal' | 'olive' | 'paper'
+
+const PALETTES: Palette[] = ['charcoal', 'olive', 'paper']
+const DARK_PALETTES: ReadonlySet<Palette> = new Set<Palette>(['charcoal', 'olive'])
 
 type ThemeProviderProps = {
   children: React.ReactNode
-  defaultTheme?: Theme
+  defaultPalette?: Palette
   storageKey?: string
 }
 
 type ThemeProviderState = {
-  theme: Theme
-  setTheme: (theme: Theme) => void
+  palette: Palette
+  setPalette: (palette: Palette) => void
 }
 
 const initialState: ThemeProviderState = {
-  theme: 'system',
-  setTheme: () => null,
+  palette: 'charcoal',
+  setPalette: () => null,
 }
 
 const ThemeProviderContext = createContext<ThemeProviderState>(initialState)
 
+function readStoredPalette(storageKey: string, fallback: Palette): Palette {
+  const raw = localStorage.getItem(storageKey)
+  return PALETTES.includes(raw as Palette) ? (raw as Palette) : fallback
+}
+
 export function ThemeProvider({
   children,
-  defaultTheme = 'system',
-  storageKey = 'zurich-theme',
+  defaultPalette = 'charcoal',
+  storageKey = 'zurich-palette',
   ...props
 }: ThemeProviderProps): React.ReactElement {
-  const [theme, setThemeState] = useState<Theme>(
-    () => (localStorage.getItem(storageKey) as Theme) || defaultTheme
+  const [palette, setPaletteState] = useState<Palette>(() =>
+    readStoredPalette(storageKey, defaultPalette)
   )
 
   useEffect(() => {
     const root = window.document.documentElement
+    PALETTES.forEach((p) => root.classList.remove(`palette-${p}`))
     root.classList.remove('light', 'dark')
 
-    if (theme === 'system') {
-      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'dark'
-        : 'light'
-      root.classList.add(systemTheme)
-      return
-    }
-
-    root.classList.add(theme)
-  }, [theme])
-
-  // Track OS theme changes when in system mode
-  useEffect(() => {
-    if (theme !== 'system') return
-    const media = window.matchMedia('(prefers-color-scheme: dark)')
-    const apply = (): void => {
-      const root = window.document.documentElement
-      root.classList.remove('light', 'dark')
-      root.classList.add(media.matches ? 'dark' : 'light')
-    }
-    media.addEventListener('change', apply)
-    return () => media.removeEventListener('change', apply)
-  }, [theme])
+    root.classList.add(`palette-${palette}`)
+    root.classList.add(DARK_PALETTES.has(palette) ? 'dark' : 'light')
+  }, [palette])
 
   const value = {
-    theme,
-    setTheme: (theme: Theme) => {
-      localStorage.setItem(storageKey, theme)
-      setThemeState(theme)
+    palette,
+    setPalette: (next: Palette) => {
+      localStorage.setItem(storageKey, next)
+      setPaletteState(next)
     },
   }
 

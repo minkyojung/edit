@@ -5,9 +5,6 @@ import {
   IconSettings,
   IconFilter,
   IconSelector,
-  IconSun,
-  IconMoon,
-  IconDeviceDesktop,
   IconLogout,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -33,8 +30,47 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 
+type PaletteOption = {
+  value: 'charcoal' | 'olive' | 'paper'
+  label: string
+  swatch: { bg: string; fg: string; accent: string; border: string }
+}
+
+const PALETTE_OPTIONS: PaletteOption[] = [
+  {
+    value: 'charcoal',
+    label: 'Charcoal',
+    swatch: { bg: '#141414', fg: '#ECECEC', accent: '#262626', border: '#333333' },
+  },
+  {
+    value: 'olive',
+    label: 'Olive',
+    swatch: { bg: '#111001', fg: '#E8E4D0', accent: '#26230C', border: '#3A3520' },
+  },
+  {
+    value: 'paper',
+    label: 'Paper',
+    swatch: { bg: '#D2D2D2', fg: '#1A1A1A', accent: '#BCBCBC', border: '#A8A8A8' },
+  },
+]
+
+function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
+  return (
+    <span
+      className="inline-flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-full"
+      style={{ backgroundColor: swatch.bg, boxShadow: `inset 0 0 0 1px ${swatch.border}` }}
+      aria-hidden
+    >
+      <span
+        className="block size-2 rounded-full"
+        style={{ backgroundColor: swatch.fg }}
+      />
+    </span>
+  )
+}
+
 export function AppSidebar() {
-  const { theme, setTheme } = useTheme()
+  const { palette, setPalette } = useTheme()
 
   // TODO(M7): wire to Tauri command
   const handleSignOut = useCallback(async () => {
@@ -46,13 +82,12 @@ export function AppSidebar() {
       className="border-r"
     >
       <SidebarHeader
-        className="flex flex-row items-center p-0 [-webkit-app-region:drag]"
-        style={{ height: 'env(titlebar-area-height, 31px)', paddingTop: 'env(titlebar-area-y, 0px)' }}
+        className="flex flex-row items-center p-0"
+        style={{ height: '31px' }}
       >
-        <div className="w-[72px] h-full shrink-0" />
-        <div className="[-webkit-app-region:no-drag]">
-          <SidebarTrigger />
-        </div>
+        <div data-tauri-drag-region className="w-[72px] h-full shrink-0" />
+        <SidebarTrigger />
+        <div data-tauri-drag-region className="flex-1 h-full" />
       </SidebarHeader>
 
       <SidebarContent className="px-2 pt-1">
@@ -104,24 +139,18 @@ export function AppSidebar() {
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-                  Theme
+                  Palette
                 </DropdownMenuLabel>
                 <DropdownMenuRadioGroup
-                  value={theme}
-                  onValueChange={(v) => setTheme(v as 'light' | 'dark' | 'system')}
+                  value={palette}
+                  onValueChange={(v) => setPalette(v as PaletteOption['value'])}
                 >
-                  <DropdownMenuRadioItem value="light">
-                    <IconSun size={16} stroke={1.5} />
-                    Light
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="dark">
-                    <IconMoon size={16} stroke={1.5} />
-                    Dark
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="system">
-                    <IconDeviceDesktop size={16} stroke={1.5} />
-                    System
-                  </DropdownMenuRadioItem>
+                  {PALETTE_OPTIONS.map((opt) => (
+                    <DropdownMenuRadioItem key={opt.value} value={opt.value}>
+                      <PaletteSwatch swatch={opt.swatch} />
+                      {opt.label}
+                    </DropdownMenuRadioItem>
+                  ))}
                 </DropdownMenuRadioGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="text-destructive" onClick={handleSignOut}>
