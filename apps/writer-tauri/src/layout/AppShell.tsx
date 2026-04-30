@@ -5,15 +5,17 @@ import { usePanelRef } from 'react-resizable-panels'
 import { AppSidebar } from './Sidebar'
 import { ContextPanel } from './ContextPanel'
 import { useLayoutStore } from '@/state/layoutStore'
+import type { CollabHandle } from '@/hooks/useCollabDoc'
 
 interface AppShellProps {
   children: React.ReactNode
   bottomLeft?: React.ReactNode
   documentContext?: string | null
   oauthStatus?: 'authenticated' | 'unauthenticated' | 'checking'
+  collabHandle?: CollabHandle | null
 }
 
-export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 'checking' }: AppShellProps) {
+export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 'checking', collabHandle }: AppShellProps) {
   const { sidebarOpen, contextPanelOpen, setSidebar, toggleContextPanel, setContextPanel } =
     useLayoutStore()
   const contextPanelRef = usePanelRef()
@@ -90,7 +92,7 @@ export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 
               }
             }}
           >
-            <ContextPanel documentContext={documentContext ?? null} oauthStatus={oauthStatus} />
+            <ContextPanel documentContext={documentContext ?? null} oauthStatus={oauthStatus} collabHandle={collabHandle ?? null} />
           </ResizablePanel>
         </ResizablePanelGroup>
       </SidebarInset>

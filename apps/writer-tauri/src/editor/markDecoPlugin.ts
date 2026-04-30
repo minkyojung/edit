@@ -22,8 +22,9 @@ function findQuoteRange(doc: Node, quote: string): { from: number; to: number } 
 
 function resolveRange(
   doc: Node,
-  mark: StoredMark,
+  mark: StoredMark | null | undefined,
 ): { from: number; to: number } | null {
+  if (!mark) return null
   if (mark.range) {
     const { from, to } = mark.range
     if (from >= 0 && to <= doc.content.size && from < to) return { from, to }
@@ -34,7 +35,8 @@ function resolveRange(
 
 function buildDecos(doc: Node, marksMap: Y.Map<StoredMark>): DecorationSet {
   const decos: Decoration[] = []
-  marksMap.forEach((mark, id) => {
+  marksMap.forEach((mark: StoredMark | null | undefined, id) => {
+    if (!mark) return
     const range = resolveRange(doc, mark)
     if (!range) return
     decos.push(
@@ -61,8 +63,8 @@ export function createMarkDecoPlugin(ydoc: Y.Doc) {
           return buildDecos(doc, marksMap)
         },
         apply(tr, decoSet) {
-          if (tr.getMeta(key)) return buildDecos(tr.doc, marksMap)
-          return decoSet.map(tr.mapping, tr.doc)
+          if (tr.getMeta(key) || tr.docChanged) return buildDecos(tr.doc, marksMap)
+          return decoSet
         },
       },
       props: {
@@ -73,14 +75,7 @@ export function createMarkDecoPlugin(ydoc: Y.Doc) {
       view(view) {
         dispatchUpdate = () => view.dispatch(view.state.tr.setMeta(key, true))
         marksMap.observe(observer)
-        let built = false
         return {
-          update(v) {
-            if (!built && v.state.doc.content.size > 2) {
-              built = true
-              dispatchUpdate?.()
-            }
-          },
           destroy() {
             marksMap.unobserve(observer)
             dispatchUpdate = null

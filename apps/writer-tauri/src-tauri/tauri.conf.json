@@ -11,7 +11,8 @@
   "app": {
     "windows": [
       {
-        "title": "Writer",
+        "title": "",
+        "titleBarStyle": "overlay",
         "width": 1280,
         "height": 800,
         "minWidth": 800,

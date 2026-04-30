@@ -264,7 +264,7 @@ function SidebarTrigger({
       data-slot="sidebar-trigger"
       variant="ghost"
       size="icon-sm"
-      className={cn(className)}
+      className={cn("text-sidebar-trigger hover:text-foreground transition-colors", className)}
       onClick={(event) => {
         onClick?.(event)
         toggleSidebar()

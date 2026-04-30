@@ -43,6 +43,28 @@ export const proofClient = {
   async getCollabSession(slug: string): Promise<{ session: CollabSession }> {
     return request(`/documents/${slug}/collab-session`)
   },
+  async acceptMark(slug: string, markId: string): Promise<void> {
+    await request(`/api/documents/${slug}/ops`, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'suggestion.accept', payload: { markId, by: 'owner' } }),
+      headers: {
+        'x-proof-client-version': '0.30.0',
+        'x-proof-client-build': '1',
+        'x-proof-client-protocol': '3',
+      },
+    })
+  },
+  async rejectMark(slug: string, markId: string): Promise<void> {
+    await request(`/api/documents/${slug}/ops`, {
+      method: 'POST',
+      body: JSON.stringify({ type: 'suggestion.reject', payload: { markId, by: 'owner' } }),
+      headers: {
+        'x-proof-client-version': '0.30.0',
+        'x-proof-client-build': '1',
+        'x-proof-client-protocol': '3',
+      },
+    })
+  },
   async createMark(
     slug: string,
     type: 'suggestion.add' | 'comment.add',
@@ -56,13 +78,6 @@ export const proofClient = {
         'x-proof-client-build': '1',
         'x-proof-client-protocol': '3',
       },
-    })
-  },
-  // Dev helper: inject a test mark to verify M5 mark observation
-  async putTestMark(slug: string, mark: Record<string, unknown>): Promise<void> {
-    await request(`/documents/${slug}`, {
-      method: 'PUT',
-      body: JSON.stringify({ marks: { [mark.id as string]: mark } }),
     })
   },
 }

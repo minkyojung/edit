@@ -5,24 +5,24 @@ import { gfm } from '@milkdown/kit/preset/gfm'
 import { history } from '@milkdown/kit/plugin/history'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
-import { useCollabDoc } from '../hooks/useCollabDoc'
+import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
 import { createMarkDecoPlugin } from './markDecoPlugin'
 import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
 import { MarkToolbar } from './MarkToolbar'
 
 interface Props {
+  handle: CollabHandle | null
+  status: CollabStatus
   onMarkdownChange?: (md: string) => void
 }
 
-export function MilkdownEditor({ onMarkdownChange }: Props) {
+export function MilkdownEditor({ handle, status, onMarkdownChange }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<Editor | null>(null)
   const onChangeRef = useRef(onMarkdownChange)
   onChangeRef.current = onMarkdownChange
 
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
-
-  const { handle, status } = useCollabDoc()
 
   useEffect(() => {
     if (!rootRef.current || !handle) return
