@@ -44,7 +44,6 @@ export function AppSidebar() {
   return (
     <Sidebar
       className="border-r"
-      style={{ '--sidebar': 'transparent' } as React.CSSProperties}
     >
       <SidebarHeader
         className="flex flex-row items-center p-0"
