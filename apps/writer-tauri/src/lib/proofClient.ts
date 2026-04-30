@@ -25,6 +25,7 @@ export async function waitUntilReady(maxMs = 10_000): Promise<boolean> {
 export interface CollabSession {
   collabWsUrl: string
   token: string
+  role: string
   syncProtocol: string
 }
 

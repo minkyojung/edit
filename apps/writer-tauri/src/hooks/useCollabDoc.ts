@@ -50,7 +50,13 @@ export function useCollabDoc(): { handle: CollabHandle | null; status: CollabSta
       let token: string
       try {
         const { session } = await proofClient.getCollabSession(slug)
-        wsUrl = session.collabWsUrl
+        // The server (ws.ts) detects collab connections by ?role=... in the URL.
+        // It also validates the token from URL params before handing off to Hocuspocus.
+        // This matches the v2 `parameters: { token, role }` behavior that the server expects.
+        const url = new URL(session.collabWsUrl)
+        url.searchParams.set('token', session.token)
+        url.searchParams.set('role', session.role)
+        wsUrl = url.toString()
         token = session.token
       } catch (err) {
         console.error('[collab] failed to get collab session', err)
