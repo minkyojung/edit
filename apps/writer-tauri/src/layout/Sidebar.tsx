@@ -92,7 +92,7 @@ export function AppSidebar() {
       className="border-r"
     >
       <SidebarHeader
-        className="flex flex-row items-center p-0 pr-2"
+        className="flex flex-row items-center p-0"
         style={{ height: '31px' }}
       >
         <div data-tauri-drag-region className="flex-1 h-full" />
@@ -106,7 +106,7 @@ export function AppSidebar() {
               <SidebarMenuButton
                 asChild
                 isActive={pathname.startsWith(item.url)}
-                className="py-1"
+                className="py-1 font-medium"
               >
                 <Link to={item.url}>
                   <item.icon size={16} stroke={1.5} />
