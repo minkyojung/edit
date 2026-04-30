@@ -41,11 +41,11 @@ import { cn } from "@/lib/utils";
 import type { ChatStatus, FileUIPart, SourceDocumentUIPart } from "ai";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
+  ArrowUp01Icon,
   CancelCircleIcon,
   ComputerIcon,
   Image01Icon,
   PlusSignIcon,
-  SentIcon,
   StopIcon,
 } from "@hugeicons/core-free-icons";
 import { nanoid } from "nanoid";
@@ -1224,7 +1224,7 @@ export const PromptInputSubmit = ({
 }: PromptInputSubmitProps) => {
   const isGenerating = status === "submitted" || status === "streaming";
 
-  let Icon = <HugeiconsIcon icon={SentIcon} className="size-4" />;
+  let Icon = <HugeiconsIcon icon={ArrowUp01Icon} className="size-4" />;
 
   if (status === "submitted") {
     Icon = <Spinner />;
