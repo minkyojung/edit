@@ -1,26 +1,23 @@
 import { useState } from 'react'
-import { proofClient } from '../lib/proofClient'
+import * as Y from 'yjs'
 import type { SelectionInfo } from './selectionPlugin'
+import type { StoredMark } from '../hooks/useCollabDoc'
 import { buildTextIndex, posToCharOffset } from './utils/textRange'
-
-const DOC_SLUG_KEY = 'writer-tauri:doc-slug'
 
 interface Props {
   selection: SelectionInfo | null
+  ydoc: Y.Doc
   onDismiss: () => void
 }
 
 type Mode = 'pick' | 'comment' | 'replace'
 
-export function MarkToolbar({ selection, onDismiss }: Props) {
+export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
   const [mode, setMode] = useState<Mode>('pick')
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
 
   if (!selection) return null
-
-  const slug = localStorage.getItem(DOC_SLUG_KEY)
-  if (!slug) return null
 
   const style: React.CSSProperties = {
     position: 'fixed',
@@ -47,30 +44,63 @@ export function MarkToolbar({ selection, onDismiss }: Props) {
     return { startRel: `char:${startChar}`, endRel: `char:${lastCharIdx + 1}` }
   }
 
-  async function submit() {
+  function stampInlineMark(
+    markId: string,
+    kind: 'replace' | 'insert' | 'delete' | 'comment',
+    extraAttrs: Record<string, unknown> = {},
+  ): boolean {
+    const view = selection!.view
+    const schemaName = kind === 'comment' ? 'proofComment' : 'proofSuggestion'
+    const markType = view.state.schema.marks[schemaName]
+    if (!markType) {
+      console.error(`[mark] schema mark "${schemaName}" not found`)
+      return false
+    }
+    const attrs = kind === 'comment'
+      ? { id: markId, by: 'owner' }
+      : { id: markId, kind, by: 'owner', ...extraAttrs }
+    view.dispatch(view.state.tr.addMark(selection!.from, selection!.to, markType.create(attrs)))
+    return true
+  }
+
+  function writeMarkToYMap(markId: string, mark: StoredMark) {
+    const marksMap = ydoc.getMap<StoredMark>('marks')
+    marksMap.set(markId, mark)
+  }
+
+  function submit() {
     if (loading) return
     const anchors = computeAnchors()
     if (!anchors) {
       console.error('[mark] failed to compute anchors')
       return
     }
+    const markId = crypto.randomUUID()
+    const now = new Date().toISOString()
     setLoading(true)
     try {
       if (mode === 'comment') {
-        await proofClient.createMark(slug!, 'comment.add', {
+        if (!stampInlineMark(markId, 'comment')) { setLoading(false); return }
+        writeMarkToYMap(markId, {
+          kind: 'comment',
           by: 'owner',
           quote: selection!.text,
           text: input.trim() || '.',
           ...anchors,
-        })
+          at: now,
+        } as StoredMark)
       } else if (mode === 'replace') {
-        await proofClient.createMark(slug!, 'suggestion.add', {
+        const content = input.trim()
+        if (!stampInlineMark(markId, 'replace', { content })) { setLoading(false); return }
+        writeMarkToYMap(markId, {
           kind: 'replace',
           by: 'owner',
           quote: selection!.text,
-          content: input.trim(),
+          content,
+          status: 'pending',
           ...anchors,
-        })
+          at: now,
+        } as StoredMark)
       }
       reset()
     } catch (err) {
@@ -79,21 +109,25 @@ export function MarkToolbar({ selection, onDismiss }: Props) {
     }
   }
 
-  async function createDelete() {
-    if (!slug) return
+  function createDelete() {
     const anchors = computeAnchors()
     if (!anchors) {
       console.error('[mark] failed to compute anchors')
       return
     }
+    const markId = crypto.randomUUID()
+    const now = new Date().toISOString()
     setLoading(true)
     try {
-      await proofClient.createMark(slug, 'suggestion.add', {
+      if (!stampInlineMark(markId, 'delete')) { setLoading(false); return }
+      writeMarkToYMap(markId, {
         kind: 'delete',
         by: 'owner',
         quote: selection!.text,
+        status: 'pending',
         ...anchors,
-      })
+        at: now,
+      } as StoredMark)
       reset()
     } catch (err) {
       console.error('[mark] create failed', err)

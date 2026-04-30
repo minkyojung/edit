@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react'
+import type { EditorView } from '@milkdown/kit/prose/view'
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 import { usePanelRef } from 'react-resizable-panels'
@@ -13,9 +14,10 @@ interface AppShellProps {
   documentContext?: string | null
   oauthStatus?: 'authenticated' | 'unauthenticated' | 'checking'
   collabHandle?: CollabHandle | null
+  editorView?: EditorView | null
 }
 
-export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 'checking', collabHandle }: AppShellProps) {
+export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 'checking', collabHandle, editorView }: AppShellProps) {
   const { sidebarOpen, contextPanelOpen, setSidebar, toggleContextPanel, setContextPanel } =
     useLayoutStore()
   const contextPanelRef = usePanelRef()
@@ -61,14 +63,12 @@ export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 
       <SidebarInset className="overflow-hidden">
         {!sidebarOpen && (
           <div
-            className="absolute inset-x-0 top-0 z-10 flex items-center [-webkit-app-region:drag]"
-            style={{ height: 'env(titlebar-area-height, 31px)' }}
+            className="absolute inset-x-0 top-0 z-10 flex items-center"
+            style={{ height: '31px' }}
           >
-            <div className="w-[68px] h-full shrink-0" />
-            <div className="[-webkit-app-region:no-drag]">
-              <SidebarTrigger />
-            </div>
-            <div className="flex-1 h-full" />
+            <div data-tauri-drag-region className="w-[68px] h-full shrink-0" />
+            <SidebarTrigger />
+            <div data-tauri-drag-region className="flex-1 h-full" />
           </div>
         )}
         <ResizablePanelGroup orientation="horizontal" className="h-full">
@@ -99,7 +99,7 @@ export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 
               }
             }}
           >
-            <ContextPanel documentContext={documentContext ?? null} oauthStatus={oauthStatus} collabHandle={collabHandle ?? null} />
+            <ContextPanel documentContext={documentContext ?? null} oauthStatus={oauthStatus} collabHandle={collabHandle ?? null} editorView={editorView ?? null} />
           </ResizablePanel>
         </ResizablePanelGroup>
       </SidebarInset>

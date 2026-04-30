@@ -1,17 +1,17 @@
 import { useState } from 'react'
+import type { EditorView } from '@milkdown/kit/prose/view'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { useMarks } from '@/hooks/useMarks'
-import { proofClient } from '@/lib/proofClient'
+import { acceptMark, rejectMark } from '@/editor/markActions'
 import type { CollabHandle, StoredMark } from '@/hooks/useCollabDoc'
-
-const DOC_SLUG_KEY = 'writer-tauri:doc-slug'
 
 interface Props {
   documentContext: string | null
   oauthStatus: 'authenticated' | 'unauthenticated' | 'checking'
   collabHandle: CollabHandle | null
+  editorView: EditorView | null
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -36,11 +36,9 @@ const KIND_DOT: Record<string, string> = {
 
 const SUGGESTION_KINDS = new Set(['replace', 'insert', 'delete'])
 
-export function ContextPanel({ collabHandle }: Props) {
+export function ContextPanel({ collabHandle, editorView }: Props) {
   const marks = useMarks(collabHandle?.ydoc ?? null)
   const [loading, setLoading] = useState<string | null>(null)
-
-  const slug = localStorage.getItem(DOC_SLUG_KEY)
 
   const entries = Object.entries(marks)
   const suggestions = entries.filter(([, m]) => SUGGESTION_KINDS.has(m.kind) && m.status === 'pending')
@@ -49,16 +47,20 @@ export function ContextPanel({ collabHandle }: Props) {
     (SUGGESTION_KINDS.has(m.kind) && m.status !== 'pending') || (m.kind === 'comment' && m.resolved)
   )
 
-  async function accept(id: string) {
-    if (!slug) return
+  function accept(id: string) {
+    if (!editorView || !collabHandle) return
     setLoading(id)
-    try { await proofClient.acceptMark(slug, id) } catch (e) { console.error('[mark] accept failed', e) } finally { setLoading(null) }
+    try { acceptMark(editorView, collabHandle.ydoc, id) }
+    catch (e) { console.error('[mark] accept failed', e) }
+    finally { setLoading(null) }
   }
 
-  async function reject(id: string) {
-    if (!slug) return
+  function reject(id: string) {
+    if (!editorView || !collabHandle) return
     setLoading(id)
-    try { await proofClient.rejectMark(slug, id) } catch (e) { console.error('[mark] reject failed', e) } finally { setLoading(null) }
+    try { rejectMark(editorView, collabHandle.ydoc, id) }
+    catch (e) { console.error('[mark] reject failed', e) }
+    finally { setLoading(null) }
   }
 
   if (!collabHandle) {

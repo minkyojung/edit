@@ -1,6 +1,7 @@
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
 import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model'
+import type { EditorView } from '@milkdown/kit/prose/view'
 
 export interface SelectionInfo {
   from: number
@@ -8,6 +9,7 @@ export interface SelectionInfo {
   text: string
   coords: { top: number; left: number }
   doc: ProseMirrorNode
+  view: EditorView
 }
 
 export function createSelectionPlugin(onSelect: (info: SelectionInfo | null) => void) {
@@ -27,7 +29,7 @@ export function createSelectionPlugin(onSelect: (info: SelectionInfo | null) => 
             const doc = view.state.doc
             const text = doc.textBetween(from, to, ' ')
             const coords = view.coordsAtPos(from)
-            onSelect({ from, to, text, coords: { top: coords.top, left: coords.left }, doc })
+            onSelect({ from, to, text, coords: { top: coords.top, left: coords.left }, doc, view })
           },
           destroy() {
             onSelect(null)

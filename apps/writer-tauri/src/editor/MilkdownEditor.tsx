@@ -1,22 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
-import { Editor, rootCtx, editorViewOptionsCtx } from '@milkdown/kit/core'
+import { Editor, rootCtx, editorViewOptionsCtx, editorViewCtx } from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { history } from '@milkdown/kit/plugin/history'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
+import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
 import { createMarkDecoPlugin } from './markDecoPlugin'
 import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
 import { MarkToolbar } from './MarkToolbar'
+import { proofMarkPlugins } from './proofMarkSchemas'
 
 interface Props {
   handle: CollabHandle | null
   status: CollabStatus
   onMarkdownChange?: (md: string) => void
+  onViewReady?: (view: EditorView | null) => void
 }
 
-export function MilkdownEditor({ handle, status, onMarkdownChange }: Props) {
+export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<Editor | null>(null)
   const onChangeRef = useRef(onMarkdownChange)
@@ -40,6 +43,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange }: Props) {
       .use(history)
       .use(clipboard)
       .use(collab)
+      .use(proofMarkPlugins)
       .use(createMarkDecoPlugin(ydoc))
       .use(createSelectionPlugin(setSelection))
       .create()
@@ -56,6 +60,11 @@ export function MilkdownEditor({ handle, status, onMarkdownChange }: Props) {
           if (provider.awareness) service.setAwareness(provider.awareness)
           service.connect()
         })
+
+        editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx)
+          onViewReady?.(view)
+        })
       })
 
     return () => {
@@ -68,6 +77,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange }: Props) {
         editorRef.current = null
       }
       setSelection(null)
+      onViewReady?.(null)
     }
   }, [handle])
 
@@ -85,7 +95,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange }: Props) {
           <div ref={rootRef} />
         </div>
       </div>
-      <MarkToolbar selection={selection} onDismiss={() => setSelection(null)} />
+      {handle && <MarkToolbar selection={selection} ydoc={handle.ydoc} onDismiss={() => setSelection(null)} />}
     </div>
   )
 }
