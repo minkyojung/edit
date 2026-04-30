@@ -1,3 +1,4 @@
+mod claude_api;
 mod oauth;
 mod secure_storage;
 
@@ -107,6 +108,7 @@ pub fn run() {
             oauth::get_claude_token,
             oauth::get_claude_account,
             oauth::disconnect_claude,
+            claude_api::claude_messages_create,
         ])
         .setup(|app| {
             let workspace_root = find_workspace_root(app.handle());
