@@ -31,7 +31,7 @@ export interface CollabSession {
 
 export const proofClient = {
   // Uses the agent path (/documents without /api prefix) which skips client version headers
-  async createDoc(title: string, markdown = ''): Promise<{ slug: string }> {
+  async createDoc(title: string, markdown = '# ' + title + '\n\n'): Promise<{ slug: string }> {
     return request('/documents', {
       method: 'POST',
       body: JSON.stringify({ title, markdown }),
