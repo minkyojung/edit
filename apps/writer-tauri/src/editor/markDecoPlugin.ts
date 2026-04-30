@@ -4,20 +4,14 @@ import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view'
 import type { Node } from '@milkdown/kit/prose/model'
 import type { StoredMark } from '../hooks/useCollabDoc'
+import { buildTextIndex, mapTextOffsetsToRange, resolveQuoteRange } from './utils/textRange'
 
 const key = new PluginKey<DecorationSet>('markDecoration')
 
-// Search for a quote string inside individual text nodes and return PM positions.
-function findQuoteRange(doc: Node, quote: string): { from: number; to: number } | null {
-  let found: { from: number; to: number } | null = null
-  doc.nodesBetween(0, doc.content.size, (node, pos) => {
-    if (found || !node.isText || !node.text) return
-    const idx = node.text.indexOf(quote)
-    if (idx !== -1) {
-      found = { from: pos + idx, to: pos + idx + quote.length }
-    }
-  })
-  return found
+function parseCharRel(rel: string | undefined): number | null {
+  if (!rel || !rel.startsWith('char:')) return null
+  const n = parseInt(rel.slice(5), 10)
+  return Number.isFinite(n) ? n : null
 }
 
 function resolveRange(
@@ -25,11 +19,21 @@ function resolveRange(
   mark: StoredMark | null | undefined,
 ): { from: number; to: number } | null {
   if (!mark) return null
-  if (mark.range) {
-    const { from, to } = mark.range
-    if (from >= 0 && to <= doc.content.size && from < to) return { from, to }
+
+  // 1) char-offset anchors (server's coordinate system)
+  const startChar = parseCharRel(mark.startRel)
+  const endChar = parseCharRel(mark.endRel)
+  if (startChar !== null && endChar !== null && startChar < endChar) {
+    const index = buildTextIndex(doc)
+    if (index) {
+      const range = mapTextOffsetsToRange(index, startChar, endChar)
+      if (range) return range
+    }
   }
-  if (mark.quote) return findQuoteRange(doc, mark.quote)
+
+  // 2) quote fallback with normalization
+  if (mark.quote) return resolveQuoteRange(doc, mark.quote)
+
   return null
 }
 
