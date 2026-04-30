@@ -179,16 +179,19 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
                 </div>
               )}
               {msg.role === 'assistant' && (
-                msg.content ? (
-                  <div className="prose prose-sm dark:prose-invert max-w-none
-                    [&>*:first-child]:mt-0 [&>*:last-child]:mb-0
-                    prose-p:leading-relaxed prose-pre:bg-muted prose-pre:text-xs
-                    prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none">
-                    <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
-                  </div>
-                ) : status === 'streaming' ? (
-                  <span className="text-muted-foreground animate-pulse">…</span>
-                ) : null
+                <div className="flex gap-2 items-start">
+                  <div className="avatar-luma size-5 rounded-full flex-shrink-0 mt-0.5" />
+                  {msg.content ? (
+                    <div className="prose prose-sm max-w-none
+                      [&>*:first-child]:mt-0 [&>*:last-child]:mb-0
+                      prose-p:leading-relaxed prose-pre:bg-muted prose-pre:text-xs
+                      prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none">
+                      <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
+                    </div>
+                  ) : status === 'streaming' ? (
+                    <span className="text-muted-foreground animate-pulse">…</span>
+                  ) : null}
+                </div>
               )}
             </div>
           </div>
@@ -203,13 +206,6 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
         </PromptInputBody>
         <PromptInputFooter>
           <PromptInputTools>
-            <PromptInputActionMenu>
-              <PromptInputActionMenuTrigger />
-              <PromptInputActionMenuContent>
-                <PromptInputActionAddAttachments />
-                <PromptInputActionAddScreenshot />
-              </PromptInputActionMenuContent>
-            </PromptInputActionMenu>
             <PromptInputSelect
               value={model}
               onValueChange={(v) => {
@@ -220,15 +216,22 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
                 setStatus('idle')
               }}
             >
-              <PromptInputSelectTrigger className="h-7 text-xs">
+              <PromptInputSelectTrigger className="h-7 text-sm [&>svg]:hidden px-1.5">
                 <PromptInputSelectValue />
               </PromptInputSelectTrigger>
               <PromptInputSelectContent>
-                <PromptInputSelectItem value="claude-haiku-4-5">Haiku</PromptInputSelectItem>
-                <PromptInputSelectItem value="claude-sonnet-4-6">Sonnet</PromptInputSelectItem>
-                <PromptInputSelectItem value="claude-opus-4-7">Opus</PromptInputSelectItem>
+                <PromptInputSelectItem value="claude-haiku-4-5">Haiku 4.5</PromptInputSelectItem>
+                <PromptInputSelectItem value="claude-sonnet-4-6">Sonnet 4.6</PromptInputSelectItem>
+                <PromptInputSelectItem value="claude-opus-4-7">Opus 4.7</PromptInputSelectItem>
               </PromptInputSelectContent>
             </PromptInputSelect>
+            <PromptInputActionMenu>
+              <PromptInputActionMenuTrigger />
+              <PromptInputActionMenuContent>
+                <PromptInputActionAddAttachments />
+                <PromptInputActionAddScreenshot />
+              </PromptInputActionMenuContent>
+            </PromptInputActionMenu>
           </PromptInputTools>
           <PromptInputSubmit
             status={status === 'streaming' ? 'streaming' : undefined}

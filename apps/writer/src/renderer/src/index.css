@@ -102,8 +102,9 @@
     background-color: var(--proof-ai);
   }
 
-  /* Suggestion marks (inline diff visualization) */
-  /* Override @tailwindcss/typography blue defaults with design system colors */
+  /* Override @tailwindcss/typography defaults with design system colors.
+     CSS variables cover most cases; explicit element rules below guarantee
+     hr / table / markers never bleed through Tailwind's teal invert defaults. */
   .prose {
     --tw-prose-body: var(--foreground);
     --tw-prose-headings: var(--foreground);
@@ -137,6 +138,20 @@
     --tw-prose-invert-pre-bg: var(--muted);
     --tw-prose-invert-th-borders: var(--border);
     --tw-prose-invert-td-borders: var(--border);
+  }
+
+  /* Direct element overrides — higher specificity than Tailwind typography layer */
+  .prose :where(hr) {
+    border-color: var(--border);
+  }
+
+  .prose :where(ul > li)::marker,
+  .prose :where(ol > li)::marker {
+    color: var(--muted-foreground);
+  }
+
+  .prose :where(table) :where(th, td) {
+    border-color: var(--border);
   }
 
   .suggestion-insertion {
