@@ -143,6 +143,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
   const [status, setStatus] = useState<'idle' | 'streaming'>('idle')
   const [model, setModel] = useState<AgentModelId>('claude-sonnet-4-6')
   const [effort, setEffort] = useState<ChatEffort>('medium')
+  const [hasText, setHasText] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -187,6 +188,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
       ]
       setMessages(next)
       setStatus('streaming')
+      setHasText(false)
       window.agent.chat(next.slice(0, -1), documentContext, model)
     },
     [messages, status, documentContext, model]
@@ -266,7 +268,11 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
       <PromptInput onSubmit={handleSubmit} accept="image/*,application/pdf,text/plain,text/markdown,text/csv,.md,.txt,.csv" multiple>
         <AttachmentPreview />
         <PromptInputBody>
-          <PromptInputTextarea placeholder="Ask anything..." className="pt-3" />
+          <PromptInputTextarea
+            placeholder="Ask anything..."
+            className="pt-3"
+            onChange={(e) => setHasText(e.target.value.trim().length > 0)}
+          />
         </PromptInputBody>
         <PromptInputFooter className="px-2 pb-2">
           <PromptInputTools>
@@ -284,7 +290,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
           </PromptInputTools>
           <div className="flex items-center gap-1">
             <DropdownMenu>
-              <DropdownMenuTrigger className="hover-luma inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 font-sans text-xs text-muted-foreground transition-all outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+              <DropdownMenuTrigger className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 font-sans text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
                 {MODEL_LABELS[model]}
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="end" className="min-w-36">
@@ -308,7 +314,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
               </DropdownMenuContent>
             </DropdownMenu>
             <PromptInputSubmit
-              variant="ghost"
+              variant={hasText ? 'default' : 'ghost'}
               status={status === 'streaming' ? 'streaming' : undefined}
               onStop={() => {
                 window.agent.stopChat()
