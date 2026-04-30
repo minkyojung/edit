@@ -270,7 +270,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
         <PromptInputBody>
           <PromptInputTextarea
             placeholder="Ask anything..."
-            className="pt-3 text-xs md:text-xs"
+            className="pt-3 text-sm md:text-sm"
             onChange={(e) => setHasText(e.target.value.trim().length > 0)}
           />
         </PromptInputBody>
