@@ -274,11 +274,20 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
               effort={effort}
               onClick={() => setEffort(prev => CHAT_EFFORTS[(CHAT_EFFORTS.indexOf(prev) + 1) % CHAT_EFFORTS.length])}
             />
+            <PromptInputActionMenu>
+              <PromptInputActionMenuTrigger />
+              <PromptInputActionMenuContent>
+                <PromptInputActionAddAttachments />
+                <PromptInputActionAddScreenshot />
+              </PromptInputActionMenuContent>
+            </PromptInputActionMenu>
+          </PromptInputTools>
+          <div className="flex items-center gap-1">
             <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 font-sans text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+              <DropdownMenuTrigger className="hover-luma inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 font-sans text-xs text-muted-foreground transition-all outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
                 {MODEL_LABELS[model]}
               </DropdownMenuTrigger>
-              <DropdownMenuContent side="top" align="start" className="min-w-36">
+              <DropdownMenuContent side="top" align="end" className="min-w-36">
                 <DropdownMenuLabel className="text-xs text-muted-foreground">Model</DropdownMenuLabel>
                 <DropdownMenuRadioGroup
                   value={model}
@@ -298,21 +307,15 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
-            <PromptInputActionMenu>
-              <PromptInputActionMenuTrigger />
-              <PromptInputActionMenuContent>
-                <PromptInputActionAddAttachments />
-                <PromptInputActionAddScreenshot />
-              </PromptInputActionMenuContent>
-            </PromptInputActionMenu>
-          </PromptInputTools>
-          <PromptInputSubmit
-            status={status === 'streaming' ? 'streaming' : undefined}
-            onStop={() => {
-              window.agent.stopChat()
-              setStatus('idle')
-            }}
-          />
+            <PromptInputSubmit
+              variant="ghost"
+              status={status === 'streaming' ? 'streaming' : undefined}
+              onStop={() => {
+                window.agent.stopChat()
+                setStatus('idle')
+              }}
+            />
+          </div>
         </PromptInputFooter>
       </PromptInput>
     </div>
