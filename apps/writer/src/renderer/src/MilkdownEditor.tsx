@@ -35,15 +35,17 @@ function isActionable(mark: Mark): boolean {
 
 function pickMarkId(view: EditorView): string | null {
   const state = view.state
+  // Prefer an explicitly focused mark (e.g. user clicked it).
   const active = getActiveMarkId(state)
   if (active) return active
-
-  const marks = getMarks(state).filter(isActionable)
-  if (marks.length === 0) return null
-
+  // Otherwise only act if the caret is inside an actionable mark's range.
+  // Falling back to the first mark in the doc would let Tab/Esc hijack the
+  // editor whenever any pending suggestion exists, breaking normal editing.
   const cursor = state.selection.from
-  const atCursor = marks.find((m) => m.range && cursor >= m.range.from && cursor <= m.range.to)
-  return atCursor?.id ?? marks[0].id
+  const atCursor = getMarks(state)
+    .filter(isActionable)
+    .find((m) => m.range && cursor >= m.range.from && cursor <= m.range.to)
+  return atCursor?.id ?? null
 }
 
 export function MilkdownEditor({ ydoc, provider, onMarkdownChange }: Props): React.ReactElement {
