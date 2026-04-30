@@ -191,6 +191,97 @@ importers:
         specifier: ^6.3.3
         version: 6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)
 
+  apps/writer-tauri:
+    dependencies:
+      '@fontsource-variable/geist':
+        specifier: ^5.2.8
+        version: 5.2.8
+      '@hugeicons/core-free-icons':
+        specifier: ^4.1.1
+        version: 4.1.1
+      '@hugeicons/react':
+        specifier: ^1.1.6
+        version: 1.1.6(react@19.2.5)
+      '@tailwindcss/typography':
+        specifier: ^0.5.19
+        version: 0.5.19(tailwindcss@4.2.4)
+      '@tailwindcss/vite':
+        specifier: ^4.2.4
+        version: 4.2.4(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0))
+      '@tauri-apps/api':
+        specifier: ^2.10.1
+        version: 2.10.1
+      ai:
+        specifier: ^6.0.169
+        version: 6.0.169(zod@4.3.6)
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
+      cmdk:
+        specifier: ^1.1.1
+        version: 1.1.1(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      lucide-react:
+        specifier: ^1.14.0
+        version: 1.14.0(react@19.2.5)
+      nanoid:
+        specifier: ^5.1.9
+        version: 5.1.9
+      radix-ui:
+        specifier: ^1.4.3
+        version: 1.4.3(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      react:
+        specifier: ^19.2.5
+        version: 19.2.5
+      react-dom:
+        specifier: ^19.2.5
+        version: 19.2.5(react@19.2.5)
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@19.2.14)(react@19.2.5)
+      react-resizable-panels:
+        specifier: ^4.10.0
+        version: 4.10.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
+      shadcn:
+        specifier: ^4.6.0
+        version: 4.6.0(@types/node@22.19.17)(typescript@5.9.3)
+      tailwind-merge:
+        specifier: ^3.5.0
+        version: 3.5.0
+      tailwindcss:
+        specifier: ^4.2.4
+        version: 4.2.4
+      tw-animate-css:
+        specifier: ^1.4.0
+        version: 1.4.0
+      zustand:
+        specifier: ^5.0.12
+        version: 5.0.12(@types/react@19.2.14)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
+    devDependencies:
+      '@tauri-apps/cli':
+        specifier: ^2.10.1
+        version: 2.10.1
+      '@types/react':
+        specifier: ^19.2.14
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.14)
+      '@vitejs/plugin-react':
+        specifier: ^4.7.0
+        version: 4.7.0(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0))
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^6.4.2
+        version: 6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)
+
 packages:
 
   '@ai-sdk/gateway@3.0.105':
@@ -2056,6 +2147,9 @@ packages:
     resolution: {integrity: sha512-pCvohwOCspk3ZFn6eJzrrX3g4n2JY73H6MmYC87XfGPyTty4YsCjYTMArRZm/zOI8dIt3+EcrLHAFPe5A4bgtw==}
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
+
+  '@tauri-apps/api@2.10.1':
+    resolution: {integrity: sha512-hKL/jWf293UDSUN09rR69hrToyIXBb8CjGaWC7gfinvnQrBVvnLr08FeFi38gxtugAVyVcTa5/FD/Xnkb1siBw==}
 
   '@tauri-apps/cli-darwin-arm64@2.10.1':
     resolution: {integrity: sha512-Z2OjCXiZ+fbYZy7PmP3WRnOpM9+Fy+oonKDEmUE6MwN4IGaYqgceTjwHucc/kEEYZos5GICve35f7ZiizgqEnQ==}
@@ -6748,6 +6842,8 @@ snapshots:
       '@tailwindcss/oxide': 4.2.4
       tailwindcss: 4.2.4
       vite: 6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)
+
+  '@tauri-apps/api@2.10.1': {}
 
   '@tauri-apps/cli-darwin-arm64@2.10.1':
     optional: true
