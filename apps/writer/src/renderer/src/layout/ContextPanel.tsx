@@ -270,7 +270,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
         <PromptInputBody>
           <PromptInputTextarea
             placeholder="Ask anything..."
-            className="pt-3"
+            className="pt-3 text-base md:text-base"
             onChange={(e) => setHasText(e.target.value.trim().length > 0)}
           />
         </PromptInputBody>
@@ -290,7 +290,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
           </PromptInputTools>
           <div className="flex items-center gap-1">
             <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 font-sans text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+              <DropdownMenuTrigger className="inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 font-sans text-base text-muted-foreground transition-colors hover:bg-accent hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
                 {MODEL_LABELS[model]}
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="end" className="min-w-36">
