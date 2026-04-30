@@ -1,16 +1,15 @@
 import React, { useCallback } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Note01Icon,
-  LibraryIcon,
-  Settings01Icon,
-  FilterIcon,
-  ArrowUpDownIcon,
-  Sun03Icon,
-  Moon02Icon,
-  ComputerDesk01Icon,
-  Logout01Icon,
-} from '@hugeicons/core-free-icons'
+  IconNote,
+  IconBooks,
+  IconSettings,
+  IconFilter,
+  IconSelector,
+  IconSun,
+  IconMoon,
+  IconDeviceDesktop,
+  IconLogout,
+} from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useTheme } from '@/components/theme-provider'
 import {
@@ -58,13 +57,13 @@ export function AppSidebar() {
         <SidebarMenu className="gap-0">
           <SidebarMenuItem>
             <SidebarMenuButton className="py-1.5">
-              <HugeiconsIcon icon={Note01Icon} className="size-4" strokeWidth={1.5} />
+              <IconNote size={16} stroke={1.5} />
               Notes
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton className="py-1.5">
-              <HugeiconsIcon icon={LibraryIcon} className="size-4" strokeWidth={1.5} />
+              <IconBooks size={16} stroke={1.5} />
               Wiki
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -85,7 +84,7 @@ export function AppSidebar() {
                     <p className="text-xs font-medium truncate">William Jung</p>
                     <p className="text-xs text-muted-foreground truncate">Free Plan</p>
                   </div>
-                  <HugeiconsIcon icon={ArrowUpDownIcon} className="ml-auto size-3.5 text-muted-foreground" strokeWidth={1.5} />
+                  <IconSelector size={14} stroke={1.5} className="ml-auto text-muted-foreground" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-52">
@@ -94,11 +93,11 @@ export function AppSidebar() {
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem>
-                  <HugeiconsIcon icon={Settings01Icon} className="size-4" strokeWidth={1.5} />
+                  <IconSettings size={16} stroke={1.5} />
                   Settings
                 </DropdownMenuItem>
                 <DropdownMenuItem>
-                  <HugeiconsIcon icon={FilterIcon} className="size-4" strokeWidth={1.5} />
+                  <IconFilter size={16} stroke={1.5} />
                   Filter
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
@@ -110,21 +109,21 @@ export function AppSidebar() {
                   onValueChange={(v) => setTheme(v as 'light' | 'dark' | 'system')}
                 >
                   <DropdownMenuRadioItem value="light">
-                    <HugeiconsIcon icon={Sun03Icon} className="size-4" strokeWidth={1.5} />
+                    <IconSun size={16} stroke={1.5} />
                     Light
                   </DropdownMenuRadioItem>
                   <DropdownMenuRadioItem value="dark">
-                    <HugeiconsIcon icon={Moon02Icon} className="size-4" strokeWidth={1.5} />
+                    <IconMoon size={16} stroke={1.5} />
                     Dark
                   </DropdownMenuRadioItem>
                   <DropdownMenuRadioItem value="system">
-                    <HugeiconsIcon icon={ComputerDesk01Icon} className="size-4" strokeWidth={1.5} />
+                    <IconDeviceDesktop size={16} stroke={1.5} />
                     System
                   </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="text-destructive" onClick={handleSignOut}>
-                  <HugeiconsIcon icon={Logout01Icon} className="size-4" strokeWidth={1.5} />
+                  <IconLogout size={16} stroke={1.5} />
                   Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>
