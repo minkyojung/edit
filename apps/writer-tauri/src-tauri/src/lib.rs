@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 use tauri::Manager;
 
 #[cfg(unix)]
@@ -27,12 +29,17 @@ fn find_workspace_root(app_handle: &tauri::AppHandle) -> PathBuf {
 }
 
 fn kill_port_holders(port: u16) {
-    // macOS/Linux: lsof -ti:PORT lists pids holding the port
     if let Ok(out) = Command::new("lsof").arg(format!("-ti:{port}")).output() {
         let pids = String::from_utf8_lossy(&out.stdout);
+        let mut killed = false;
         for pid in pids.lines().filter(|l| !l.is_empty()) {
             let _ = Command::new("kill").arg("-9").arg(pid).status();
             println!("[proof-server] killed leftover pid={pid} on port {port}");
+            killed = true;
+        }
+        // Wait for the OS to release the port before attempting a new bind.
+        if killed {
+            thread::sleep(Duration::from_millis(300));
         }
     }
 }
