@@ -28,7 +28,7 @@ export default function App(): React.ReactElement {
         name: slug,
         document: ydoc,
         token: () => token,
-        onSynced: () => console.log('[collab] synced'),
+        onSynced: () => { console.log('[collab] synced'); setCollabSynced(true) },
         onAuthenticationFailed: ({ reason }) => console.error('[collab] auth failed:', reason)
       })
       setProvider(p)
@@ -39,11 +39,13 @@ export default function App(): React.ReactElement {
     }
   }, [ydoc])
 
+  const [collabSynced, setCollabSynced] = useState(false)
   const [agentError, setAgentError] = useState<string | null>(null)
   const [wikiOpen, setWikiOpen] = useState(false)
   const [oauthStatus, setOauthStatus] = useState<'authenticated' | 'unauthenticated' | 'checking'>('checking')
   const [serverError, setServerError] = useState(false)
   const [editorMarkdown, setEditorMarkdown] = useState<string | null>(null)
+  const editorMarkdownRef = useRef<string | null>(null)
   const listenersAdded = useRef(false)
 
   useEffect(() => {
@@ -60,14 +62,28 @@ export default function App(): React.ReactElement {
   useEffect(() => {
     if (listenersAdded.current) return
     listenersAdded.current = true
-
     window.agent.onError((msg) => {
       setAgentError(msg)
       setTimeout(() => setAgentError(null), 5000)
     })
   }, [])
 
-  useDebouncedText(editorMarkdown, 1500, (text) => {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
+        const md = editorMarkdownRef.current
+        if (!md?.trim()) return
+        e.preventDefault()
+        e.stopPropagation()
+        setAgentError(null)
+        window.agent.trigger(md, [])
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [])
+
+  useDebouncedText(editorMarkdown, 2000, (text) => {
     if (!text.trim()) return
     setAgentError(null)
     window.agent.trigger(text, [])
@@ -109,7 +125,7 @@ export default function App(): React.ReactElement {
   return (
     <AppShell bottomLeft={bottomLeft} documentContext={editorMarkdown} oauthStatus={oauthStatus}>
       <div className="relative px-10 py-12 max-w-3xl mx-auto">
-        <MilkdownEditor ydoc={ydoc} provider={provider} onMarkdownChange={setEditorMarkdown} />
+        <MilkdownEditor ydoc={ydoc} provider={provider} collabSynced={collabSynced} onMarkdownChange={(md) => { editorMarkdownRef.current = md; setEditorMarkdown(md) }} />
       </div>
       {oauthStatus === 'unauthenticated' && <SignInPanel />}
       {wikiOpen && <WikiModal onClose={() => setWikiOpen(false)} />}

@@ -1,169 +1,194 @@
 import React, { useEffect, useRef } from 'react'
+import { collabServiceCtx } from '@milkdown/plugin-collab'
+import { editorViewCtx, parserCtx, serializerCtx } from '@milkdown/kit/core'
+import type { Ctx } from '@milkdown/kit/ctx'
+import type { EditorView } from '@milkdown/kit/prose/view'
+import { ProofEditorImpl } from 'proof-sdk/src/editor/index.js'
 import {
-  Editor,
-  rootCtx,
-  editorViewCtx,
-  parserCtx,
-  remarkStringifyOptionsCtx
-} from '@milkdown/kit/core'
-import { commonmark } from '@milkdown/kit/preset/commonmark'
-import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
-import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
-import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
-
-import { proofMarkPlugins } from 'proof-sdk/src/editor/schema/proof-marks.js'
-import { remarkProofMarksPlugin } from 'proof-sdk/src/editor/schema/remark-proof-marks-plugin.js'
-import { proofMarkHandler } from 'proof-sdk/src/formats/remark-proof-marks.js'
-import {
-  marksPlugins,
-  marksPluginKey,
+  applyRemoteMarks,
+  accept as acceptLocal,
+  reject as rejectLocal,
+  acceptAll as acceptAllLocal,
   getMarks,
-  getMarkMetadata,
-  setDefaultMarkdownParser,
-  applyRemoteMarks
+  getActiveMarkId
 } from 'proof-sdk/src/editor/plugins/marks.js'
-import { authoredTrackerPlugin } from 'proof-sdk/src/editor/plugins/authored-tracker.js'
-import { marksSyncPlugin } from 'proof-sdk/src/editor/plugins/marks-sync.js'
+import type { StoredMark, Mark } from 'proof-sdk/src/formats/marks.js'
 
 import * as Y from 'yjs'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 
+const POLL_INTERVAL_MS = 1500
+const MARKDOWN_DEBOUNCE_MS = 200
+const ACTIONABLE_KINDS = new Set(['insert', 'delete', 'replace'])
+
 type Props = {
   ydoc: Y.Doc
   provider: HocuspocusProvider | null
+  collabSynced: boolean
   onMarkdownChange?: (markdown: string) => void
 }
 
-function MilkdownInner({ ydoc, provider, onMarkdownChange }: Props): React.ReactElement {
-  const connectedRef = useRef(false)
+type Serializer = (doc: unknown) => string
+
+function isActionable(mark: Mark): boolean {
+  return ACTIONABLE_KINDS.has(mark.kind)
+}
+
+function pickMarkId(view: EditorView): string | null {
+  const state = view.state
+  // Prefer an explicitly focused mark (e.g. user clicked it).
+  const active = getActiveMarkId(state)
+  if (active) return active
+  // Otherwise only act if the caret is inside an actionable mark's range.
+  // Falling back to the first mark in the doc would let Tab/Esc hijack the
+  // editor whenever any pending suggestion exists, breaking normal editing.
+  const cursor = state.selection.from
+  const atCursor = getMarks(state)
+    .filter(isActionable)
+    .find((m) => m.range && cursor >= m.range.from && cursor <= m.range.to)
+  return atCursor?.id ?? null
+}
+
+export function MilkdownEditor({ ydoc, provider, collabSynced, onMarkdownChange }: Props): React.ReactElement {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const proofRef = useRef<ProofEditorImpl | null>(null)
+  const viewRef = useRef<EditorView | null>(null)
+  const parserRef = useRef<unknown>(null)
+  const serializerRef = useRef<Serializer | null>(null)
   const onMarkdownChangeRef = useRef(onMarkdownChange)
   onMarkdownChangeRef.current = onMarkdownChange
 
-  const { get } = useEditor((root) =>
-    Editor.make()
-      .config((ctx) => {
-        ctx.set(rootCtx, root)
-      })
-      .config((ctx) => {
-        // proofMark mdast 노드 → markdown 직렬화 핸들러.
-        // schema 의 toMarkdown 이 만든 proofMark 노드를 <span data-proof="..."> 로 변환.
-        ctx.update(remarkStringifyOptionsCtx, (prev) => ({
-          ...prev,
-          handlers: {
-            ...(prev.handlers ?? {}),
-            proofMark: proofMarkHandler
-          }
-        }))
-      })
-      .config((ctx) => {
-        ctx.get(listenerCtx).markdownUpdated((_, md) => {
-          onMarkdownChangeRef.current?.(md)
-        })
-      })
-      .use(commonmark)
-      .use(listener)
-      .use(collab)
-      // proof-sdk: schema 마크 5종 + remark plugin (markdown ↔ mdast)
-      .use(proofMarkPlugins)
-      .use(remarkProofMarksPlugin)
-      // proof-sdk: 사용자 입력에 proofAuthored mark 자동 부여
-      .use(authoredTrackerPlugin)
-      // proof-sdk: 마크 metadata + decoration 통합 plugin
-      .use(marksPlugins)
-      // 마크 변경 옵저버 — 향후 카운터 chip / 사이드바 업데이트용
-      .use(marksSyncPlugin(() => {
-        // step 4 에서 UI hook 추가 예정
-      }))
-  )
-
-  // Effect A — collab 연결 + parser 등록. 1회성 (connectedRef gate).
   useEffect(() => {
-    if (connectedRef.current) return
-    const editor = get()
-    if (!editor) return
+    if (!rootRef.current) return
+    const proof = new ProofEditorImpl()
+    proofRef.current = proof
 
-    editor.action((ctx) => {
-      const parser = ctx.get(parserCtx)
-      setDefaultMarkdownParser(parser)
+    let mounted = true
+    let detachKeys: (() => void) | null = null
+    let detachYdoc: (() => void) | null = null
+    let mdTimer: ReturnType<typeof setTimeout> | null = null
 
-      const service = ctx.get(collabServiceCtx)
-      service.bindDoc(ydoc)
-      if (provider?.awareness) {
-        service.setAwareness(provider.awareness)
+    const emitMarkdown = (): void => {
+      const view = viewRef.current
+      const serialize = serializerRef.current
+      if (!view || !serialize) return
+      try {
+        const md = serialize(view.state.doc)
+        onMarkdownChangeRef.current?.(md)
+      } catch (err) {
+        console.error('[MilkdownEditor] serialize failed', err)
       }
-      service.connect()
-      connectedRef.current = true
-    })
-  }, [get, ydoc, provider])
+    }
 
-  // Effect B — Y.Doc → 인라인 PM 마크 브릿지. **gate 없음** —
-  // StrictMode 의 mount/unmount/remount 사이에서 옵저버가 정확히 다시 등록되도록.
-  // proof-sdk 서버는 agent suggest_* 시 marks Y.Map 에 entry 를 추가한다. 우리는
-  // ydoc.on('update') 로 변경을 감지해 applyRemoteMarks 로 인라인 마크로 변환.
-  useEffect(() => {
-    const editor = get()
-    if (!editor) return
+    const scheduleEmit = (): void => {
+      if (mdTimer) clearTimeout(mdTimer)
+      mdTimer = setTimeout(emitMarkdown, MARKDOWN_DEBOUNCE_MS)
+    }
 
-    let cleanup: (() => void) | null = null
+    proof.init(rootRef.current).then(() => {
+      if (!mounted || !proof.editor) return
 
-    editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx)
-      const marksMap = ydoc.getMap('marks')
-      let lastSerialized = ''
+      proof.editor.action((ctx: Ctx) => {
+        const view = ctx.get(editorViewCtx)
+        viewRef.current = view
+        parserRef.current = ctx.get(parserCtx)
+        serializerRef.current = ctx.get(serializerCtx) as Serializer
 
-      const sync = (): void => {
-        const metadata: Record<string, unknown> = {}
-        marksMap.forEach((value, key) => {
-          metadata[key] = value
-        })
-        const serialized = JSON.stringify(Object.keys(metadata).sort().map((k) => [k, metadata[k]]))
-        if (serialized === lastSerialized) return
-        lastSerialized = serialized
-        console.log('[marks-sync] firing, ymap entries:', Object.keys(metadata).length, metadata)
-        applyRemoteMarks(view, metadata as never)
-        const after = getMarks(view.state)
-        console.log('[marks-sync] after applyRemoteMarks, getMarks count:', after.length, after)
-      }
+        const svc = ctx.get(collabServiceCtx)
+        svc.disconnect()
+        try {
+          ;(svc as unknown as { setAwareness(a: unknown): void }).setAwareness(null)
+        } catch { /* ignore */ }
+        svc.bindDoc(ydoc)
+        svc.connect()
 
-      sync()
-      const onUpdate = (): void => sync()
-      ydoc.on('update', onUpdate)
-      cleanup = () => ydoc.off('update', onUpdate)
-
-      // Debug helper
-      ;(window as unknown as { __dbg: () => unknown }).__dbg = () => {
-        const v = ctx.get(editorViewCtx)
-        const ymapEntries: Record<string, unknown> = {}
-        marksMap.forEach((val, key) => {
-          ymapEntries[key] = val
-        })
-        return {
-          ymapMarksCount: marksMap.size,
-          ymapEntries,
-          pluginMetadata: getMarkMetadata(v.state),
-          pluginMarks: getMarks(v.state),
-          schemaHasProofSuggestion: !!v.state.schema.marks.proofSuggestion,
-          schemaHasProofComment: !!v.state.schema.marks.proofComment,
-          schemaHasProofAuthored: !!v.state.schema.marks.proofAuthored,
-          docText: v.state.doc.textContent.slice(0, 200),
-          docSize: v.state.doc.content.size,
-          inlineProofSpans: document.querySelectorAll('[data-proof]').length
+        // y-prosemirror tags local edits with addToHistory:false, which
+        // suppresses milkdown's listenerCtx callbacks. Observe the ydoc and
+        // wrap PM dispatch directly so we still detect every change.
+        // See docs/proof-sdk-integration-notes.md §4.
+        const onYUpdate = (): void => scheduleEmit()
+        ydoc.on('update', onYUpdate)
+        detachYdoc = () => ydoc.off('update', onYUpdate)
+        const origDispatch = view.dispatch.bind(view)
+        ;(view as unknown as { dispatch: (tr: unknown) => void }).dispatch = (tr: unknown): void => {
+          origDispatch(tr as never)
+          if ((tr as { docChanged?: boolean }).docChanged) scheduleEmit()
         }
-      }
+        // Emit once after initial sync so debounced consumers see the seed.
+        scheduleEmit()
+
+        const handleKeyDown = (e: KeyboardEvent): void => {
+          if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'a' || e.key === 'A')) {
+            const allIds = getMarks(view.state).filter(isActionable).map((m) => m.id)
+            if (allIds.length === 0) return
+            e.preventDefault()
+            e.stopPropagation()
+            acceptAllLocal(view, parserRef.current as never)
+            for (const id of allIds) {
+              void window.marks.accept(id).catch((err) => console.error('[marks] accept failed', err))
+            }
+            return
+          }
+
+          if (e.key === 'Tab' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            const id = pickMarkId(view)
+            if (!id) return
+            e.preventDefault()
+            e.stopPropagation()
+            if (acceptLocal(view, id, parserRef.current as never)) {
+              void window.marks.accept(id).catch((err) => console.error('[marks] accept failed', err))
+            }
+            return
+          }
+
+          if (e.key === 'Escape') {
+            const id = pickMarkId(view)
+            if (!id) return
+            e.preventDefault()
+            e.stopPropagation()
+            if (rejectLocal(view, id)) {
+              void window.marks.reject(id).catch((err) => console.error('[marks] reject failed', err))
+            }
+          }
+        }
+
+        view.dom.addEventListener('keydown', handleKeyDown, true)
+        detachKeys = () => view.dom.removeEventListener('keydown', handleKeyDown, true)
+      })
     })
 
     return () => {
-      cleanup?.()
+      mounted = false
+      if (mdTimer) clearTimeout(mdTimer)
+      detachKeys?.()
+      detachYdoc?.()
+      viewRef.current = null
+      parserRef.current = null
+      serializerRef.current = null
+      proof.editor?.action((ctx: Ctx) => {
+        ctx.get(collabServiceCtx).disconnect()
+      })
     }
-  }, [get, ydoc])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  return <Milkdown />
-}
+  useEffect(() => {
+    if (!collabSynced) return
+    const id = setInterval(async () => {
+      const view = viewRef.current
+      if (!view) return
+      try {
+        const state = await window.marks.fetchState()
+        if (state?.marks) {
+          applyRemoteMarks(view, state.marks as Record<string, StoredMark>)
+        }
+      } catch {
+        // server not ready yet — will retry next tick
+      }
+    }, POLL_INTERVAL_MS)
 
-export function MilkdownEditor(props: Props): React.ReactElement {
-  return (
-    <MilkdownProvider>
-      <MilkdownInner {...props} />
-    </MilkdownProvider>
-  )
+    return () => clearInterval(id)
+  }, [collabSynced])
+
+  return <div ref={rootRef} className="h-full w-full" />
 }

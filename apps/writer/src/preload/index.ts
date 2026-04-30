@@ -75,3 +75,12 @@ contextBridge.exposeInMainWorld('doc', {
   collabSession: (): Promise<{ collabWsUrl: string; token: string; slug: string }> =>
     ipcRenderer.invoke('doc:collab-session')
 })
+
+contextBridge.exposeInMainWorld('marks', {
+  fetchState: (): Promise<{ marks: Record<string, unknown>; revision?: number } | null> =>
+    ipcRenderer.invoke('marks:fetch-state'),
+  accept: (markId: string, by?: string): Promise<{ success: boolean; status: number; body: unknown }> =>
+    ipcRenderer.invoke('marks:accept', markId, by),
+  reject: (markId: string, by?: string): Promise<{ success: boolean; status: number; body: unknown }> =>
+    ipcRenderer.invoke('marks:reject', markId, by)
+})
