@@ -17,7 +17,7 @@ use tauri_plugin_shell::ShellExt;
 
 const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
-const SCOPE: &str = "user:inference";
+const SCOPE: &str = "org:create_api_key user:profile user:inference";
 const AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 
 #[derive(Default)]
