@@ -1,17 +1,61 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
+import type { FileUIPart } from 'ai'
+import { XIcon } from 'lucide-react'
 import {
   PromptInput,
+  PromptInputActionAddAttachments,
+  PromptInputActionAddScreenshot,
+  PromptInputActionMenu,
+  PromptInputActionMenuContent,
+  PromptInputActionMenuTrigger,
   PromptInputBody,
   PromptInputFooter,
+  PromptInputHeader,
   PromptInputSubmit,
   PromptInputTextarea,
+  usePromptInputAttachments,
 } from '@/components/ui/prompt-input'
+import { Button } from '@/components/ui/button'
+
+function AttachmentPreview() {
+  const { files, remove } = usePromptInputAttachments()
+  if (files.length === 0) return null
+  return (
+    <PromptInputHeader>
+      {files.map((f) =>
+        f.mediaType.startsWith('image/') ? (
+          <div key={f.id} className="relative inline-block">
+            <img
+              src={f.url}
+              alt={f.filename ?? 'attachment'}
+              className="h-16 w-16 rounded-md object-cover"
+            />
+            <button
+              type="button"
+              onClick={() => remove(f.id)}
+              className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-foreground text-background"
+            >
+              <XIcon className="size-2.5" />
+            </button>
+          </div>
+        ) : null
+      )}
+    </PromptInputHeader>
+  )
+}
+
+interface ChatFile {
+  url: string
+  mediaType: string
+  filename?: string
+}
 
 interface Props {
   documentContext: string | null
+  oauthStatus: 'authenticated' | 'unauthenticated' | 'checking'
 }
 
-export function ContextPanel({ documentContext }: Props) {
+export function ContextPanel({ documentContext, oauthStatus }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [status, setStatus] = useState<'idle' | 'streaming'>('idle')
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -41,59 +85,106 @@ export function ContextPanel({ documentContext }: Props) {
   }, [messages])
 
   const handleSubmit = useCallback(
-    ({ text }: { text: string }) => {
+    ({ text, files }: { text: string; files: FileUIPart[] }) => {
       const trimmed = text.trim()
-      if (!trimmed || status === 'streaming') return
+      if ((!trimmed && files.length === 0) || status === 'streaming') return
+
+      const chatFiles: ChatFile[] = files.map((f) => ({
+        url: f.url,
+        mediaType: f.mediaType,
+        filename: f.filename,
+      }))
 
       const next: ChatMessage[] = [
         ...messages,
-        { role: 'user', content: trimmed },
+        { role: 'user', content: trimmed, files: chatFiles },
         { role: 'assistant', content: '' },
       ]
       setMessages(next)
       setStatus('streaming')
-      window.agent.chat(
-        next.slice(0, -1),
-        documentContext
-      )
+      window.agent.chat(next.slice(0, -1), documentContext)
     },
     [messages, status, documentContext]
   )
 
   return (
-    <div className="flex h-full flex-col p-3 border-l">
+    <div className="relative flex h-full flex-col p-3 border-l">
+      {oauthStatus !== 'authenticated' && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 backdrop-blur-[2px] bg-background/60 rounded-sm">
+          <p className="text-sm text-muted-foreground text-center px-4">
+            Claude에 연결하면<br />채팅을 사용할 수 있어요
+          </p>
+          <Button size="sm" onClick={() => window.auth.oauthStart()}>
+            Connect to Claude
+          </Button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto space-y-4 pb-2">
         {messages.map((msg, i) => (
           <div
             key={i}
-            className={
-              msg.role === 'user'
-                ? 'flex justify-end'
-                : 'flex justify-start'
-            }
+            className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
           >
             <div
               className={
                 msg.role === 'user'
-                  ? 'max-w-[85%] rounded-2xl bg-accent px-3 py-2 text-sm'
+                  ? 'max-w-[85%] space-y-1.5'
                   : 'max-w-[95%] text-sm text-foreground'
               }
             >
-              {msg.content || (status === 'streaming' && msg.role === 'assistant' ? (
-                <span className="text-muted-foreground animate-pulse">…</span>
-              ) : null)}
+              {msg.role === 'user' && msg.files && msg.files.length > 0 && (
+                <div className="flex flex-wrap gap-1 justify-end">
+                  {msg.files.map((f, fi) =>
+                    f.mediaType.startsWith('image/') ? (
+                      <img
+                        key={fi}
+                        src={f.url}
+                        alt={f.filename ?? 'attachment'}
+                        className="max-h-32 max-w-full rounded-lg object-cover"
+                      />
+                    ) : (
+                      <div
+                        key={fi}
+                        className="rounded-lg bg-accent px-2 py-1 text-xs text-muted-foreground"
+                      >
+                        {f.filename ?? 'file'}
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+              {msg.role === 'user' && msg.content && (
+                <div className="rounded-2xl bg-accent px-3 py-2 text-sm">
+                  {msg.content}
+                </div>
+              )}
+              {msg.role === 'assistant' && (
+                msg.content ? (
+                  <span>{msg.content}</span>
+                ) : status === 'streaming' ? (
+                  <span className="text-muted-foreground animate-pulse">…</span>
+                ) : null
+              )}
             </div>
           </div>
         ))}
         <div ref={bottomRef} />
       </div>
 
-      <PromptInput onSubmit={handleSubmit}>
+      <PromptInput onSubmit={handleSubmit} accept="image/*" multiple>
+        <AttachmentPreview />
         <PromptInputBody>
           <PromptInputTextarea placeholder="Ask anything..." />
         </PromptInputBody>
         <PromptInputFooter>
-          <div />
+          <PromptInputActionMenu>
+            <PromptInputActionMenuTrigger />
+            <PromptInputActionMenuContent>
+              <PromptInputActionAddAttachments />
+              <PromptInputActionAddScreenshot />
+            </PromptInputActionMenuContent>
+          </PromptInputActionMenu>
           <PromptInputSubmit
             status={status === 'streaming' ? 'streaming' : undefined}
             onStop={() => {

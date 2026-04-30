@@ -10,9 +10,10 @@ interface AppShellProps {
   children: React.ReactNode
   bottomLeft?: React.ReactNode
   documentContext?: string | null
+  oauthStatus?: 'authenticated' | 'unauthenticated' | 'checking'
 }
 
-export function AppShell({ children, bottomLeft, documentContext }: AppShellProps) {
+export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 'checking' }: AppShellProps) {
   const { sidebarOpen, contextPanelOpen, setSidebar, toggleContextPanel, setContextPanel } =
     useLayoutStore()
   const contextPanelRef = usePanelRef()
@@ -89,7 +90,7 @@ export function AppShell({ children, bottomLeft, documentContext }: AppShellProp
               }
             }}
           >
-            <ContextPanel documentContext={documentContext ?? null} />
+            <ContextPanel documentContext={documentContext ?? null} oauthStatus={oauthStatus} />
           </ResizablePanel>
         </ResizablePanelGroup>
       </SidebarInset>

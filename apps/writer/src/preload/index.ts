@@ -18,7 +18,7 @@ contextBridge.exposeInMainWorld('agent', {
   },
   getSettings: () => ipcRenderer.invoke('agent:get-settings'),
   setSettings: (s: { model: string; effort: string }) => ipcRenderer.invoke('agent:set-settings', s),
-  chat: (messages: { role: 'user' | 'assistant'; content: string }[], documentContext: string | null) =>
+  chat: (messages: { role: 'user' | 'assistant'; content: string; files?: { url: string; mediaType: string }[] }[], documentContext: string | null) =>
     ipcRenderer.send('chat:send', messages, documentContext),
   stopChat: () => ipcRenderer.send('chat:stop'),
   onChatChunk: (cb: (chunk: string) => void): (() => void) => {

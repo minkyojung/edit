@@ -95,7 +95,7 @@ app.whenReady().then(() => {
     )
   })
 
-  ipcMain.on('chat:stop', () => stopChat())
+  ipcMain.on('chat:stop', () => { stopChat().catch((err) => console.error('[chat stop]', err)) })
 
   ipcMain.handle('agent:get-settings', async () => getSettings())
   ipcMain.handle('agent:set-settings', async (_: IpcMainInvokeEvent, s: AgentSettings) => setSettings(s))

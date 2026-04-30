@@ -3,7 +3,8 @@ declare module '*.svg' {
   export default url
 }
 
-type ChatMessage = { role: 'user' | 'assistant'; content: string }
+type ChatFile = { url: string; mediaType: string; filename?: string }
+type ChatMessage = { role: 'user' | 'assistant'; content: string; files?: ChatFile[] }
 
 type AgentModelId = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-7'
 type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
