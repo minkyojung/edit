@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { FileUIPart } from 'ai'
 import { XIcon } from 'lucide-react'
 import {
@@ -117,7 +119,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
   )
 
   return (
-    <div className="relative flex h-full flex-col p-3 border-l">
+    <div className="relative flex h-full flex-col p-3 border-l overflow-hidden">
       {oauthStatus !== 'authenticated' && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 backdrop-blur-[2px] bg-background/60 rounded-sm">
           <p className="text-sm text-muted-foreground text-center px-4">
@@ -129,7 +131,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto space-y-4 pb-2">
+      <div className="flex-1 overflow-y-auto space-y-4 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {messages.map((msg, i) => (
           <div
             key={i}
@@ -171,7 +173,12 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
               )}
               {msg.role === 'assistant' && (
                 msg.content ? (
-                  <span>{msg.content}</span>
+                  <div className="prose prose-sm dark:prose-invert max-w-none
+                    [&>*:first-child]:mt-0 [&>*:last-child]:mb-0
+                    prose-p:leading-relaxed prose-pre:bg-muted prose-pre:text-xs
+                    prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none">
+                    <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
+                  </div>
                 ) : status === 'streaming' ? (
                   <span className="text-muted-foreground animate-pulse">…</span>
                 ) : null

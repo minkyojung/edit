@@ -64,7 +64,7 @@ export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 
         )}
         <ResizablePanelGroup orientation="horizontal" className="h-full">
           <ResizablePanel defaultSize={75} minSize={30}>
-            <div className="relative h-full overflow-y-auto">
+            <div className="relative h-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {children}
               {bottomLeft && (
                 <div className="absolute bottom-3 left-3 z-30">
