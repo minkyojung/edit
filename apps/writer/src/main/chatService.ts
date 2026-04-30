@@ -70,6 +70,12 @@ function buildMessageContent(
         type: 'document',
         source: { type: 'base64', media_type: 'application/pdf', data: base64 },
       })
+    } else if (f.mediaType.startsWith('text/')) {
+      const text = Buffer.from(base64, 'base64').toString('utf-8')
+      parts.push({
+        type: 'document',
+        source: { type: 'text', media_type: 'text/plain', data: text },
+      })
     }
   }
 

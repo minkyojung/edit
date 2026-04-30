@@ -33,7 +33,7 @@ function AttachmentPreview() {
           ) : (
             <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-md bg-accent text-center">
               <span className="text-[10px] font-semibold uppercase text-muted-foreground">
-                {f.mediaType === 'application/pdf' ? 'PDF' : 'FILE'}
+                {f.mediaType === 'application/pdf' ? 'PDF' : f.mediaType.startsWith('text/') ? 'TXT' : 'FILE'}
               </span>
               <span className="line-clamp-2 px-1 text-[9px] text-muted-foreground">
                 {f.filename ?? 'file'}
@@ -157,6 +157,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
                         key={fi}
                         className="rounded-lg bg-accent px-2 py-1 text-xs text-muted-foreground"
                       >
+                        {f.mediaType === 'application/pdf' ? '📄' : f.mediaType.startsWith('text/') ? '📝' : '📎'}{' '}
                         {f.filename ?? 'file'}
                       </div>
                     )
@@ -181,7 +182,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      <PromptInput onSubmit={handleSubmit} accept="image/*,application/pdf" multiple>
+      <PromptInput onSubmit={handleSubmit} accept="image/*,application/pdf,text/plain,text/markdown,text/csv,.md,.txt,.csv" multiple>
         <AttachmentPreview />
         <PromptInputBody>
           <PromptInputTextarea placeholder="Ask anything..." />
