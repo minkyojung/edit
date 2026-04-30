@@ -67,11 +67,13 @@ export default function App(): React.ReactElement {
     })
   }, [])
 
-  useDebouncedText(editorMarkdown, 1500, (text) => {
-    if (!text.trim()) return
-    setAgentError(null)
-    window.agent.trigger(text, [])
-  })
+  // Auto-trigger on typing pause is disabled — using manual ⌘⇧C trigger instead.
+  // Re-enable if we want ambient checking again.
+  // useDebouncedText(editorMarkdown, 1500, (text) => {
+  //   if (!text.trim()) return
+  //   setAgentError(null)
+  //   window.agent.trigger(text, [])
+  // })
 
   if (oauthStatus === 'checking') {
     return <div className="dark fixed inset-0 z-50 bg-background" />
