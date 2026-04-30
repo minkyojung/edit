@@ -13,6 +13,7 @@ import {
   PromptInputActionMenuContent,
   PromptInputActionMenuTrigger,
   PromptInputBody,
+  PromptInputButton,
   PromptInputFooter,
   PromptInputHeader,
   PromptInputSubmit,
@@ -29,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 const markdownComponents: React.ComponentProps<typeof Markdown>['components'] = {
   p: ({ children }) => <p className="leading-relaxed">{children}</p>,
@@ -67,21 +69,32 @@ const EFFORT_OPACITIES: Record<ChatEffort, [number, number, number]> = {
   high:   [1, 1,   1],
 }
 
+const EFFORT_LABELS: Record<ChatEffort, string> = {
+  low:    'Fast response',
+  medium: 'Balanced',
+  high:   'Deep thinking',
+}
+
 function EffortButton({ effort, onClick }: { effort: ChatEffort; onClick: () => void }) {
   const [inner, middle, outer] = EFFORT_OPACITIES[effort]
+  const [open, setOpen] = useState(false)
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex items-center justify-center p-1 text-muted-foreground hover:text-foreground transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 rounded-sm"
-      title={effort}
-    >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="10" opacity={outer} style={{ transition: 'opacity 0.15s' }} />
-        <circle cx="12" cy="12" r="6"  opacity={middle} style={{ transition: 'opacity 0.15s' }} />
-        <circle cx="12" cy="12" r="2"  opacity={inner} style={{ transition: 'opacity 0.15s' }} />
-      </svg>
-    </button>
+    <Tooltip open={open} onOpenChange={setOpen}>
+      <TooltipTrigger asChild>
+        <PromptInputButton
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={() => setOpen(false)}
+          onClick={() => { onClick(); setOpen(true) }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" opacity={outer} style={{ transition: 'opacity 0.15s' }} />
+            <circle cx="12" cy="12" r="6"  opacity={middle} style={{ transition: 'opacity 0.15s' }} />
+            <circle cx="12" cy="12" r="2"  opacity={inner} style={{ transition: 'opacity 0.15s' }} />
+          </svg>
+        </PromptInputButton>
+      </TooltipTrigger>
+      <TooltipContent side="top">{EFFORT_LABELS[effort]}</TooltipContent>
+    </Tooltip>
   )
 }
 
