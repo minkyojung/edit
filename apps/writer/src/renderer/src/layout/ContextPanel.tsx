@@ -275,7 +275,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
               onClick={() => setEffort(prev => CHAT_EFFORTS[(CHAT_EFFORTS.indexOf(prev) + 1) % CHAT_EFFORTS.length])}
             />
             <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 font-sans text-xs text-muted-foreground transition-colors hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+              <DropdownMenuTrigger className="inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 font-sans text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
                 {MODEL_LABELS[model]}
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="min-w-36">
