@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { FileUIPart } from 'ai'
-import { XIcon } from 'lucide-react'
+import { XIcon, TargetIcon } from 'lucide-react'
 import {
   PromptInput,
   PromptInputActionAddAttachments,
@@ -241,6 +241,7 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
           <PromptInputTools>
             <DropdownMenu>
               <DropdownMenuTrigger className="inline-flex items-center gap-1.5 rounded-sm px-1.5 py-1 font-sans text-xs text-muted-foreground transition-colors hover:text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+                <TargetIcon className="size-3.5" />
                 {MODEL_LABELS[model]}
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="min-w-36">
