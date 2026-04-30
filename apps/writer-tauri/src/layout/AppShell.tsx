@@ -59,7 +59,7 @@ export function AppShell({ children, bottomLeft, documentContext, oauthStatus = 
       onOpenChange={setSidebar}
       style={{ '--sidebar-width': '220px' } as React.CSSProperties}
     >
-      <AppSidebar editorView={editorView ?? null} />
+      <AppSidebar editorView={editorView ?? null} ydoc={collabHandle?.ydoc ?? null} />
       <SidebarInset className="overflow-hidden">
         {!sidebarOpen && (
           <div

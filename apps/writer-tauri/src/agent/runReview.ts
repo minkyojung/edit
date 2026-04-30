@@ -1,28 +1,33 @@
-// MVP review runner — single-turn Claude call, dumps proposals to console.
+// MVP review runner — single-turn Claude call, applies each propose_change
+// as an inline mark + Y.Map entry via applyProposal.
 //
-// Apply step (M8.2 #4) and validation hardening (M8.6) come next.
+// Multi-turn loop with search/read_document tools comes in M8.4.
 
 import type { EditorView } from '@milkdown/kit/prose/view'
+import * as Y from 'yjs'
 import { createMessage } from '../lib/anthropicClient'
 import { proposeChangeTool } from './tools'
 import { COPYEDITOR_PROMPT } from './skills/copyeditor'
+import { applyProposal } from './applyProposal'
 import type { Proposal } from './proposals'
 
 const MODEL = 'claude-haiku-4-5-20251001'
 const MAX_TOKENS = 4096
+const AGENT_ID = 'ai:claude-haiku'
 const DOC_CHAR_CAP = 60_000 // mirrors proof-sdk's style-review cap
 
 interface RunReviewResult {
   proposed: number
-  proposals: Proposal[]
+  applied: number
+  skipped: Array<{ proposal: Proposal; reason: string }>
   raw: unknown
 }
 
-export async function runReview(view: EditorView): Promise<RunReviewResult> {
+export async function runReview(view: EditorView, ydoc: Y.Doc): Promise<RunReviewResult> {
   const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
   if (!docText.trim()) {
     console.warn('[runReview] empty document — nothing to review')
-    return { proposed: 0, proposals: [], raw: null }
+    return { proposed: 0, applied: 0, skipped: [], raw: null }
   }
 
   const truncated = docText.length > DOC_CHAR_CAP
@@ -49,7 +54,19 @@ export async function runReview(view: EditorView): Promise<RunReviewResult> {
   }
 
   console.log(`[runReview] received ${proposals.length} proposal(s)`)
-  proposals.forEach((p, i) => console.log(`  [${i}]`, p))
 
-  return { proposed: proposals.length, proposals, raw: response }
+  const runId = crypto.randomUUID()
+  const skipped: Array<{ proposal: Proposal; reason: string }> = []
+  let applied = 0
+  for (const p of proposals) {
+    const outcome = applyProposal(view, ydoc, p, { runId, agentId: AGENT_ID })
+    if (outcome.ok) {
+      applied++
+    } else {
+      skipped.push({ proposal: p, reason: outcome.reason })
+    }
+  }
+
+  console.log(`[runReview] applied ${applied}/${proposals.length}; skipped`, skipped)
+  return { proposed: proposals.length, applied, skipped, raw: response }
 }
