@@ -159,6 +159,46 @@
     outline-offset: 1px;
     border-radius: 2px;
   }
+
+  /* Mark decorations */
+  .mark-deco {
+    border-radius: 2px;
+  }
+
+  .mark-deco--insert {
+    background-color: rgba(34, 197, 94, 0.18);
+    border-bottom: 2px solid rgb(34, 197, 94);
+  }
+
+  .mark-deco--delete {
+    background-color: rgba(239, 68, 68, 0.18);
+    text-decoration: line-through;
+    color: var(--muted-foreground);
+  }
+
+  .mark-deco--replace {
+    background-color: rgba(234, 179, 8, 0.18);
+    border-bottom: 2px dashed rgb(234, 179, 8);
+  }
+
+  .mark-deco--comment {
+    background-color: rgba(59, 130, 246, 0.15);
+    border-bottom: 2px solid rgba(59, 130, 246, 0.6);
+  }
+
+  .mark-deco--authored {
+    background-color: var(--proof-ai);
+  }
+
+  .mark-deco--approved {
+    background-color: rgba(34, 197, 94, 0.12);
+    border-bottom: 2px solid rgba(34, 197, 94, 0.5);
+  }
+
+  .mark-deco--flagged {
+    background-color: rgba(249, 115, 22, 0.15);
+    border-bottom: 2px solid rgba(249, 115, 22, 0.6);
+  }
 }
 
 :root {

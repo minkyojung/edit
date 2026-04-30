@@ -6,6 +6,7 @@ import { history } from '@milkdown/kit/plugin/history'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
 import { useCollabDoc } from '../hooks/useCollabDoc'
+import { createMarkDecoPlugin } from './markDecoPlugin'
 
 interface Props {
   onMarkdownChange?: (md: string) => void
@@ -37,6 +38,7 @@ export function MilkdownEditor({ onMarkdownChange }: Props) {
       .use(history)
       .use(clipboard)
       .use(collab)
+      .use(createMarkDecoPlugin(ydoc))
       .create()
       .then((editor) => {
         if (!mounted) {
