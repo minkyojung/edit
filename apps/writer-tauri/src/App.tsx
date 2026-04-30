@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppShell } from '@/layout/AppShell'
-import { EditorPlaceholder } from '@/components/EditorPlaceholder'
+import { MilkdownEditor } from '@/editor/MilkdownEditor'
 import { waitUntilReady } from '@/lib/proofClient'
 
 type ServerStatus = 'connecting' | 'ready' | 'error'
 
 export function App() {
-  const [serverStatus, setServerStatus] = useState<ServerStatus>('connecting')
+  const [_serverStatus, setServerStatus] = useState<ServerStatus>('connecting')
 
   useEffect(() => {
     waitUntilReady(15_000).then((ok) =>
@@ -18,7 +18,7 @@ export function App() {
   return (
     <ThemeProvider defaultTheme="dark" storageKey="writer-theme">
       <AppShell oauthStatus="unauthenticated">
-        <EditorPlaceholder serverStatus={serverStatus} />
+        <MilkdownEditor />
       </AppShell>
     </ThemeProvider>
   )
