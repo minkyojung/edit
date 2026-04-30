@@ -15,8 +15,11 @@ fn find_workspace_root(app_handle: &tauri::AppHandle) -> PathBuf {
         .path()
         .resource_dir()
         .unwrap_or_else(|_| PathBuf::from("."));
-    for _ in 0..8 {
-        if dir.join("node_modules").exists() {
+    for _ in 0..10 {
+        // Require both tsx and proof-sdk to be present — not just any node_modules.
+        if dir.join("node_modules/.bin/tsx").exists()
+            && dir.join("node_modules/proof-sdk/server/index.ts").exists()
+        {
             return dir;
         }
         if let Some(parent) = dir.parent() {
