@@ -92,6 +92,7 @@ let session: Query | null = null
 let queue: ChatQueue | null = null
 let activeWebContents: WebContents | null = null
 let sessionInit: Promise<void> | null = null
+let currentModel: string = 'claude-sonnet-4-6'
 
 function extractText(msg: SDKMessage): string | null {
   if (msg.type !== 'assistant') return null
@@ -130,19 +131,23 @@ async function processStream(): Promise<void> {
   }
 }
 
-async function ensureSession(webContents: WebContents): Promise<void> {
+async function ensureSession(webContents: WebContents, model: string): Promise<void> {
+  if (session && currentModel !== model) {
+    await stopChat()
+  }
   if (session) return
   if (sessionInit) return sessionInit
 
   sessionInit = (async () => {
     queue = new ChatQueue()
     activeWebContents = webContents
+    currentModel = model
 
     try {
       session = await authedQuery({
         prompt: queue as AsyncIterable<unknown> as Parameters<typeof authedQuery>[0]['prompt'],
         options: {
-          model: 'claude-sonnet-4-6',
+          model,
           systemPrompt: [CHAT_SYSTEM_PROMPT, SYSTEM_PROMPT_DYNAMIC_BOUNDARY],
           permissionMode: 'bypassPermissions',
           settingSources: []
@@ -166,10 +171,11 @@ async function ensureSession(webContents: WebContents): Promise<void> {
 export async function chat(
   messages: ChatMessage[],
   documentContext: string | null,
+  model: string,
   webContents: WebContents
 ): Promise<void> {
   try {
-    await ensureSession(webContents)
+    await ensureSession(webContents, model)
   } catch (err) {
     if (err instanceof NotAuthenticatedError) {
       if (!webContents.isDestroyed()) {

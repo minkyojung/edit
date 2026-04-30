@@ -13,8 +13,14 @@ import {
   PromptInputBody,
   PromptInputFooter,
   PromptInputHeader,
+  PromptInputSelect,
+  PromptInputSelectContent,
+  PromptInputSelectItem,
+  PromptInputSelectTrigger,
+  PromptInputSelectValue,
   PromptInputSubmit,
   PromptInputTextarea,
+  PromptInputTools,
   usePromptInputAttachments,
 } from '@/components/ui/prompt-input'
 import { Button } from '@/components/ui/button'
@@ -69,6 +75,7 @@ interface Props {
 export function ContextPanel({ documentContext, oauthStatus }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [status, setStatus] = useState<'idle' | 'streaming'>('idle')
+  const [model, setModel] = useState<AgentModelId>('claude-sonnet-4-6')
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -113,9 +120,9 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
       ]
       setMessages(next)
       setStatus('streaming')
-      window.agent.chat(next.slice(0, -1), documentContext)
+      window.agent.chat(next.slice(0, -1), documentContext, model)
     },
-    [messages, status, documentContext]
+    [messages, status, documentContext, model]
   )
 
   return (
@@ -195,13 +202,34 @@ export function ContextPanel({ documentContext, oauthStatus }: Props) {
           <PromptInputTextarea placeholder="Ask anything..." />
         </PromptInputBody>
         <PromptInputFooter>
-          <PromptInputActionMenu>
-            <PromptInputActionMenuTrigger />
-            <PromptInputActionMenuContent>
-              <PromptInputActionAddAttachments />
-              <PromptInputActionAddScreenshot />
-            </PromptInputActionMenuContent>
-          </PromptInputActionMenu>
+          <PromptInputTools>
+            <PromptInputActionMenu>
+              <PromptInputActionMenuTrigger />
+              <PromptInputActionMenuContent>
+                <PromptInputActionAddAttachments />
+                <PromptInputActionAddScreenshot />
+              </PromptInputActionMenuContent>
+            </PromptInputActionMenu>
+            <PromptInputSelect
+              value={model}
+              onValueChange={(v) => {
+                const next = v as AgentModelId
+                setModel(next)
+                window.agent.stopChat()
+                setMessages([])
+                setStatus('idle')
+              }}
+            >
+              <PromptInputSelectTrigger className="h-7 text-xs">
+                <PromptInputSelectValue />
+              </PromptInputSelectTrigger>
+              <PromptInputSelectContent>
+                <PromptInputSelectItem value="claude-haiku-4-5">Haiku</PromptInputSelectItem>
+                <PromptInputSelectItem value="claude-sonnet-4-6">Sonnet</PromptInputSelectItem>
+                <PromptInputSelectItem value="claude-opus-4-7">Opus</PromptInputSelectItem>
+              </PromptInputSelectContent>
+            </PromptInputSelect>
+          </PromptInputTools>
           <PromptInputSubmit
             status={status === 'streaming' ? 'streaming' : undefined}
             onStop={() => {

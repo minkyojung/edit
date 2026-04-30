@@ -89,8 +89,8 @@ app.whenReady().then(() => {
     await resetSession()
   })
 
-  ipcMain.on('chat:send', (_, messages: ChatMessage[], documentContext: string | null) => {
-    chat(messages, documentContext, win.webContents).catch((err) =>
+  ipcMain.on('chat:send', (_, messages: ChatMessage[], documentContext: string | null, model: string) => {
+    chat(messages, documentContext, model, win.webContents).catch((err) =>
       console.error('[chat IPC]', err)
     )
   })

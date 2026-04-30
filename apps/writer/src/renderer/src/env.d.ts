@@ -18,7 +18,7 @@ interface Window {
     onError: (cb: (msg: string) => void) => void
     getSettings: () => Promise<AgentSettings>
     setSettings: (s: AgentSettings) => Promise<AgentSettings>
-    chat: (messages: ChatMessage[], documentContext: string | null) => void
+    chat: (messages: ChatMessage[], documentContext: string | null, model: AgentModelId) => void
     stopChat: () => void
     onChatChunk: (cb: (chunk: string) => void) => () => void
     onChatDone: (cb: () => void) => () => void
