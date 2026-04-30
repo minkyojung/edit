@@ -17,13 +17,15 @@ export function MilkdownEditor({ onMarkdownChange }: Props) {
   const onChangeRef = useRef(onMarkdownChange)
   onChangeRef.current = onMarkdownChange
 
-  const collabDoc = useCollabDoc()
+  const { handle, status } = useCollabDoc()
 
+  // Editor is created once when handle (ydoc + provider) becomes available.
+  // status changes do NOT recreate the editor.
   useEffect(() => {
-    if (!rootRef.current || !collabDoc) return
+    if (!rootRef.current || !handle) return
 
     let mounted = true
-    const { ydoc, provider } = collabDoc
+    const { ydoc, provider } = handle
 
     Editor.make()
       .config((ctx) => {
@@ -61,9 +63,7 @@ export function MilkdownEditor({ onMarkdownChange }: Props) {
         editorRef.current = null
       }
     }
-  }, [collabDoc])
-
-  const status = collabDoc?.status ?? 'initializing'
+  }, [handle]) // handle is stable — won't change once set
 
   return (
     <div className="relative h-full w-full">

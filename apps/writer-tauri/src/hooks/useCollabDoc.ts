@@ -1,32 +1,38 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { proofClient, waitUntilReady } from '../lib/proofClient'
 
 export type CollabStatus = 'initializing' | 'connecting' | 'connected' | 'error'
 
-export interface CollabDoc {
+export interface CollabHandle {
   ydoc: Y.Doc
   provider: HocuspocusProvider
-  status: CollabStatus
 }
 
 const DOC_SLUG_KEY = 'writer-tauri:doc-slug'
 const DOC_TITLE = 'My Document'
 
-export function useCollabDoc(): CollabDoc | null {
-  const [collabDoc, setCollabDoc] = useState<CollabDoc | null>(null)
+// Returns a stable handle (ydoc + provider never change once set) and a separate status.
+export function useCollabDoc(): { handle: CollabHandle | null; status: CollabStatus } {
+  const [handle, setHandle] = useState<CollabHandle | null>(null)
+  const [status, setStatus] = useState<CollabStatus>('initializing')
+  // Keep a ref so onStatus callback can always read the latest cancelled flag
+  const cancelledRef = useRef(false)
 
   useEffect(() => {
-    let cancelled = false
+    cancelledRef.current = false
     let ydoc: Y.Doc | null = null
     let provider: HocuspocusProvider | null = null
 
     async function init() {
       const ready = await waitUntilReady(15_000)
-      if (!ready || cancelled) return
+      if (cancelledRef.current) return
+      if (!ready) {
+        setStatus('error')
+        return
+      }
 
-      // Reuse existing slug or create a new doc
       let slug = localStorage.getItem(DOC_SLUG_KEY)
       if (!slug) {
         try {
@@ -35,7 +41,7 @@ export function useCollabDoc(): CollabDoc | null {
           localStorage.setItem(DOC_SLUG_KEY, slug)
         } catch (err) {
           console.error('[collab] failed to create doc', err)
-          if (!cancelled) setCollabDoc(null)
+          if (!cancelledRef.current) setStatus('error')
           return
         }
       }
@@ -48,11 +54,11 @@ export function useCollabDoc(): CollabDoc | null {
         token = session.token
       } catch (err) {
         console.error('[collab] failed to get collab session', err)
-        if (!cancelled) setCollabDoc(null)
+        if (!cancelledRef.current) setStatus('error')
         return
       }
 
-      if (cancelled) return
+      if (cancelledRef.current) return
 
       ydoc = new Y.Doc()
       provider = new HocuspocusProvider({
@@ -60,31 +66,28 @@ export function useCollabDoc(): CollabDoc | null {
         name: slug,
         document: ydoc,
         token,
-        onStatus: ({ status }) => {
-          if (cancelled) return
-          setCollabDoc((prev) =>
-            prev
-              ? { ...prev, status: status === 'connected' ? 'connected' : 'connecting' }
-              : prev,
-          )
+        onStatus: ({ status: s }) => {
+          if (cancelledRef.current) return
+          setStatus(s === 'connected' ? 'connected' : 'connecting')
         },
       })
 
-      if (!cancelled) {
-        setCollabDoc({ ydoc, provider, status: 'connecting' })
-      }
+      setHandle({ ydoc, provider })
+      setStatus('connecting')
     }
 
     init()
 
     return () => {
-      cancelled = true
+      cancelledRef.current = true
       provider?.destroy()
       ydoc?.destroy()
       provider = null
       ydoc = null
+      setHandle(null)
+      setStatus('initializing')
     }
   }, [])
 
-  return collabDoc
+  return { handle, status }
 }
