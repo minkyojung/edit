@@ -1,21 +1,11 @@
-import { useEffect, useRef, useCallback } from 'react'
-import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx } from '@milkdown/kit/core'
+import { useEffect, useRef } from 'react'
+import { Editor, rootCtx, editorViewOptionsCtx } from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { history } from '@milkdown/kit/plugin/history'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
-import { listener, listenerCtx } from '@milkdown/kit/plugin/listener'
-
-const STORAGE_KEY = 'writer-tauri:editor-content'
-const DEBOUNCE_MS = 400
-
-function loadContent(): string {
-  return localStorage.getItem(STORAGE_KEY) ?? '# 새 문서\n\n여기에 글을 써보세요.\n'
-}
-
-function saveContent(markdown: string) {
-  localStorage.setItem(STORAGE_KEY, markdown)
-}
+import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
+import { useCollabDoc } from '../hooks/useCollabDoc'
 
 interface Props {
   onMarkdownChange?: (md: string) => void
@@ -27,39 +17,24 @@ export function MilkdownEditor({ onMarkdownChange }: Props) {
   const onChangeRef = useRef(onMarkdownChange)
   onChangeRef.current = onMarkdownChange
 
-  const destroyEditor = useCallback(() => {
-    if (editorRef.current) {
-      editorRef.current.destroy()
-      editorRef.current = null
-    }
-  }, [])
+  const collabDoc = useCollabDoc()
 
   useEffect(() => {
-    if (!rootRef.current) return
+    if (!rootRef.current || !collabDoc) return
 
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null
     let mounted = true
+    const { ydoc, provider } = collabDoc
 
     Editor.make()
       .config((ctx) => {
         ctx.set(rootCtx, rootRef.current!)
-        ctx.set(defaultValueCtx, loadContent())
         ctx.set(editorViewOptionsCtx, { attributes: { class: 'milkdown-editor-root' } })
-
-        ctx.get(listenerCtx).markdownUpdated((_ctx, markdown) => {
-          if (!mounted) return
-          if (debounceTimer) clearTimeout(debounceTimer)
-          debounceTimer = setTimeout(() => {
-            saveContent(markdown)
-            onChangeRef.current?.(markdown)
-          }, DEBOUNCE_MS)
-        })
       })
       .use(commonmark)
       .use(gfm)
       .use(history)
       .use(clipboard)
-      .use(listener)
+      .use(collab)
       .create()
       .then((editor) => {
         if (!mounted) {
@@ -67,19 +42,40 @@ export function MilkdownEditor({ onMarkdownChange }: Props) {
           return
         }
         editorRef.current = editor
+
+        editor.action((ctx) => {
+          const collabService = ctx.get(collabServiceCtx)
+          const service = collabService.bindDoc(ydoc)
+          if (provider.awareness) service.setAwareness(provider.awareness)
+          service.connect()
+        })
       })
 
     return () => {
       mounted = false
-      if (debounceTimer) clearTimeout(debounceTimer)
-      destroyEditor()
+      if (editorRef.current) {
+        editorRef.current.action((ctx) => {
+          ctx.get(collabServiceCtx).disconnect()
+        })
+        editorRef.current.destroy()
+        editorRef.current = null
+      }
     }
-  }, [destroyEditor])
+  }, [collabDoc])
+
+  const status = collabDoc?.status ?? 'initializing'
 
   return (
-    <div className="h-full w-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      <div className="mx-auto max-w-2xl px-8 py-12">
-        <div ref={rootRef} />
+    <div className="relative h-full w-full">
+      {status !== 'connected' && (
+        <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-center py-1 text-xs text-muted-foreground">
+          {status === 'initializing' ? 'proof-server에 연결 중…' : '동기화 서버에 연결 중…'}
+        </div>
+      )}
+      <div className="h-full w-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="mx-auto max-w-2xl px-8 py-12">
+          <div ref={rootRef} />
+        </div>
       </div>
     </div>
   )

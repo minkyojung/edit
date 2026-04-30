@@ -22,6 +22,12 @@ export async function waitUntilReady(maxMs = 10_000): Promise<boolean> {
   return false
 }
 
+export interface CollabSession {
+  collabWsUrl: string
+  token: string
+  syncProtocol: string
+}
+
 export const proofClient = {
   // Uses the agent path (/documents without /api prefix) which skips client version headers
   async createDoc(title: string, markdown = ''): Promise<{ slug: string }> {
@@ -32,5 +38,8 @@ export const proofClient = {
   },
   async getDoc(slug: string): Promise<{ slug: string; markdown: string; title?: string }> {
     return request(`/documents/${slug}`)
+  },
+  async getCollabSession(slug: string): Promise<{ session: CollabSession }> {
+    return request(`/documents/${slug}/collab-session`)
   },
 }
