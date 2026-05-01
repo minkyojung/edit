@@ -35,12 +35,13 @@ interface Props {
   onJump?: () => void
 }
 
-export function ProposalSnippet({ proposal, by, status, onAccept, onReject, onJump }: Props) {
+export function ProposalSnippet({ markId, proposal, by, status, onAccept, onReject, onJump }: Props) {
   const kind = proposal.kind === 'comment' ? 'comment' : proposal.suggestionType
   const resolved = status !== 'pending'
 
   return (
     <div
+      data-snippet-mark-id={markId}
       className={
         'rounded-md border p-2.5 space-y-2 transition-opacity ' +
         (resolved

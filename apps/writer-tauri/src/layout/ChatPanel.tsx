@@ -16,6 +16,7 @@ import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useMarks } from '@/hooks/useMarks'
 import { runReview } from '@/agent/runReview'
 import { acceptMark, jumpToMark, rejectMark } from '@/editor/markActions'
+import { MARK_CLICKED_EVENT, type MarkClickedDetail } from '@/editor/markClickPlugin'
 import { ProposalSnippet } from '@/components/agent/ProposalSnippet'
 import type { ProposalCardStatus } from '@/components/agent/ProposalSnippet'
 import type { Proposal } from '@/agent/proposals'
@@ -50,6 +51,23 @@ export function ChatPanel({ editorView, ydoc }: Props) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, running])
+
+  // Listen for clicks on inline marks in the editor and scroll the matching
+  // proposal snippet into view.
+  useEffect(() => {
+    function onMarkClicked(e: Event) {
+      const ce = e as CustomEvent<MarkClickedDetail>
+      const markId = ce.detail?.markId
+      if (!markId) return
+      const el = document.querySelector(`[data-snippet-mark-id="${markId}"]`)
+      if (!el) return
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('snippet-flash')
+      window.setTimeout(() => el.classList.remove('snippet-flash'), 1000)
+    }
+    window.addEventListener(MARK_CLICKED_EVENT, onMarkClicked)
+    return () => window.removeEventListener(MARK_CLICKED_EVENT, onMarkClicked)
+  }, [])
 
   const ready = !!editorView && !!ydoc
 
