@@ -44,7 +44,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(clipboard)
       .use(collab)
       .use(proofMarkPlugins)
-      .use(createMarkDecoPlugin(ydoc))
+      .use(createMarkDecoPlugin())
       .use(createSelectionPlugin(setSelection))
       .create()
       .then((editor) => {
