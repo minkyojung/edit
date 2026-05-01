@@ -9,6 +9,7 @@
 
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { Mark } from '@milkdown/kit/prose/model'
+import { TextSelection } from '@milkdown/kit/prose/state'
 import * as Y from 'yjs'
 import type { StoredMark } from '../hooks/useCollabDoc'
 
@@ -18,19 +19,67 @@ interface FoundAnchor {
   mark: Mark
 }
 
-function findInlineAnchor(view: EditorView, markId: string, schemaName: string): FoundAnchor | null {
+const ANCHOR_SCHEMAS = ['proofSuggestion', 'proofComment'] as const
+
+function findInlineAnchor(
+  view: EditorView,
+  markId: string,
+  schemaName?: string,
+): FoundAnchor | null {
+  const targets = schemaName ? [schemaName] : ANCHOR_SCHEMAS
   let result: FoundAnchor | null = null
   view.state.doc.descendants((node, pos) => {
     if (result) return false
     if (!node.isText) return
     for (const m of node.marks) {
-      if (m.type.name === schemaName && m.attrs.id === markId) {
+      if ((targets as readonly string[]).includes(m.type.name) && m.attrs.id === markId) {
         result = { from: pos, to: pos + node.nodeSize, mark: m }
         return false
       }
     }
   })
   return result
+}
+
+/**
+ * Move selection + scroll to the inline anchor of the given mark, and
+ * briefly flash it. Returns true if the mark was found.
+ */
+export function jumpToMark(view: EditorView, markId: string): boolean {
+  const anchor = findInlineAnchor(view, markId)
+  if (!anchor) return false
+
+  const tr = view.state.tr.setSelection(
+    TextSelection.create(view.state.doc, anchor.from, anchor.to),
+  )
+  view.dispatch(tr.scrollIntoView())
+  view.focus()
+
+  flashRange(view, anchor.from, anchor.to)
+  return true
+}
+
+function flashRange(view: EditorView, from: number, to: number) {
+  // Walk the rendered DOM for the range and toggle a CSS class for ~1s.
+  const startDom = view.domAtPos(from)
+  const endDom = view.domAtPos(to)
+  const start = startDom.node instanceof Element ? startDom.node : startDom.node.parentElement
+  const end = endDom.node instanceof Element ? endDom.node : endDom.node.parentElement
+  if (!start || !end) return
+
+  const touched: Element[] = []
+  let node: Element | null = start
+  while (node) {
+    touched.push(node)
+    if (node === end) break
+    const sibling: Element | null = node.nextElementSibling
+    node = sibling ?? node.parentElement?.nextElementSibling ?? null
+    if (touched.length > 50) break
+  }
+  for (const el of touched) el.classList.add('mark-flash')
+  window.setTimeout(() => {
+    for (const el of touched) el.classList.remove('mark-flash')
+  }, 1000)
 }
 
 export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boolean {

@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useMarks } from '@/hooks/useMarks'
 import { runReview } from '@/agent/runReview'
-import { acceptMark, rejectMark } from '@/editor/markActions'
+import { acceptMark, jumpToMark, rejectMark } from '@/editor/markActions'
 import { ProposalSnippet } from '@/components/agent/ProposalSnippet'
 import type { ProposalCardStatus } from '@/components/agent/ProposalSnippet'
 import type { Proposal } from '@/agent/proposals'
@@ -115,6 +115,10 @@ export function ChatPanel({ editorView, ydoc }: Props) {
               rejectMark(editorView, ydoc, markId)
               setResolutions((prev) => ({ ...prev, [markId]: 'rejected' }))
             }}
+            onJump={(markId) => {
+              if (!editorView) return
+              jumpToMark(editorView, markId)
+            }}
           />
         ))}
         {running && (
@@ -151,9 +155,10 @@ interface MessageRowProps {
   resolutions: Record<string, 'accepted' | 'rejected'>
   onAccept: (markId: string) => void
   onReject: (markId: string) => void
+  onJump: (markId: string) => void
 }
 
-function MessageRow({ message, marks, resolutions, onAccept, onReject }: MessageRowProps) {
+function MessageRow({ message, marks, resolutions, onAccept, onReject, onJump }: MessageRowProps) {
   if (message.role === 'user') {
     return (
       <div className="flex justify-end">
@@ -186,6 +191,7 @@ function MessageRow({ message, marks, resolutions, onAccept, onReject }: Message
               status={statusFor(p.markId)}
               onAccept={() => onAccept(p.markId)}
               onReject={() => onReject(p.markId)}
+              onJump={() => onJump(p.markId)}
             />
           ))}
         </div>

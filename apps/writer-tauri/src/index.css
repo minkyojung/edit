@@ -200,6 +200,17 @@
     background-color: rgba(249, 115, 22, 0.15);
     border-bottom: 2px solid rgba(249, 115, 22, 0.6);
   }
+
+  /* Brief outline pulse used by jumpToMark / scrollToSnippet to draw attention. */
+  .mark-flash,
+  .snippet-flash {
+    animation: mark-flash 1s ease-out;
+    border-radius: 4px;
+  }
+  @keyframes mark-flash {
+    0%, 100% { box-shadow: none; }
+    30%      { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.6); }
+  }
 }
 
 :root {
