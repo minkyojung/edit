@@ -35,13 +35,6 @@ function parseCommonAttrs(dom: HTMLElement): { id: string | null; by: string } {
   }
 }
 
-function parseBooleanAttr(value: string | null): boolean | null {
-  if (value === null) return null
-  if (value === 'true') return true
-  if (value === 'false') return false
-  return null
-}
-
 function buildCommonDomAttrs(mark: { attrs: { id?: string | null; by?: string | null } }): Record<string, string> {
   const attrs: Record<string, string> = {}
   if (mark.attrs.id) attrs['data-id'] = mark.attrs.id
@@ -65,7 +58,7 @@ export const proofSuggestionAttr = $markAttr('proofSuggestion', () => ({
   by: {},
 }))
 
-export const proofSuggestionSchema = $markSchema('proofSuggestion', (ctx) => ({
+export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
   attrs: {
     id: { default: null },
     kind: { default: 'replace' },
@@ -92,12 +85,10 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', (ctx) => ({
     },
   ],
   toDOM: (mark) => {
-    const attrs = ctx.get(proofSuggestionAttr.key)(mark)
     const domAttrs: Record<string, string> = {
       'data-proof': 'suggestion',
       'data-kind': normalizeSuggestionKind(mark.attrs.kind),
       ...buildCommonDomAttrs(mark),
-      ...attrs,
     }
     if (mark.attrs.content) domAttrs['data-content'] = String(mark.attrs.content)
     if (mark.attrs.status) domAttrs['data-status'] = String(mark.attrs.status)
@@ -139,7 +130,7 @@ export const proofCommentAttr = $markAttr('proofComment', () => ({
   by: {},
 }))
 
-export const proofCommentSchema = $markSchema('proofComment', (ctx) => ({
+export const proofCommentSchema = $markSchema('proofComment', () => ({
   attrs: {
     id: { default: null },
     by: { default: 'unknown' },
@@ -153,11 +144,9 @@ export const proofCommentSchema = $markSchema('proofComment', (ctx) => ({
     },
   ],
   toDOM: (mark) => {
-    const attrs = ctx.get(proofCommentAttr.key)(mark)
     const domAttrs: Record<string, string> = {
       'data-proof': 'comment',
       ...buildCommonDomAttrs(mark),
-      ...attrs,
     }
     return ['span', domAttrs, 0]
   },
@@ -191,7 +180,7 @@ export const proofFlaggedAttr = $markAttr('proofFlagged', () => ({
   by: {},
 }))
 
-export const proofFlaggedSchema = $markSchema('proofFlagged', (ctx) => ({
+export const proofFlaggedSchema = $markSchema('proofFlagged', () => ({
   attrs: {
     id: { default: null },
     by: { default: 'unknown' },
@@ -205,11 +194,9 @@ export const proofFlaggedSchema = $markSchema('proofFlagged', (ctx) => ({
     },
   ],
   toDOM: (mark) => {
-    const attrs = ctx.get(proofFlaggedAttr.key)(mark)
     const domAttrs: Record<string, string> = {
       'data-proof': 'flagged',
       ...buildCommonDomAttrs(mark),
-      ...attrs,
     }
     return ['span', domAttrs, 0]
   },
@@ -243,7 +230,7 @@ export const proofApprovedAttr = $markAttr('proofApproved', () => ({
   by: {},
 }))
 
-export const proofApprovedSchema = $markSchema('proofApproved', (ctx) => ({
+export const proofApprovedSchema = $markSchema('proofApproved', () => ({
   attrs: {
     id: { default: null },
     by: { default: 'unknown' },
@@ -257,11 +244,9 @@ export const proofApprovedSchema = $markSchema('proofApproved', (ctx) => ({
     },
   ],
   toDOM: (mark) => {
-    const attrs = ctx.get(proofApprovedAttr.key)(mark)
     const domAttrs: Record<string, string> = {
       'data-proof': 'approved',
       ...buildCommonDomAttrs(mark),
-      ...attrs,
     }
     return ['span', domAttrs, 0]
   },
@@ -295,7 +280,7 @@ export const proofAuthoredAttr = $markAttr('proofAuthored', () => ({
   id: {},
 }))
 
-export const proofAuthoredSchema = $markSchema('proofAuthored', (ctx) => ({
+export const proofAuthoredSchema = $markSchema('proofAuthored', () => ({
   attrs: {
     by: { default: 'human:unknown' },
     id: { default: null },
@@ -312,19 +297,15 @@ export const proofAuthoredSchema = $markSchema('proofAuthored', (ctx) => ({
       }),
     },
   ],
-  toDOM: (mark) => {
-    const attrs = ctx.get(proofAuthoredAttr.key)(mark)
-    return [
-      'span',
-      {
-        'data-proof': 'authored',
-        'data-by': mark.attrs.by,
-        'data-proof-id': mark.attrs.id ?? null,
-        ...attrs,
-      },
-      0,
-    ]
-  },
+  toDOM: (mark) => [
+    'span',
+    {
+      'data-proof': 'authored',
+      'data-by': mark.attrs.by,
+      'data-proof-id': mark.attrs.id ?? null,
+    },
+    0,
+  ],
   parseMarkdown: {
     match: (node) => (node as ProofNode).type === 'proofMark' && (node as ProofNode).proof === 'authored',
     runner: (state, node, markType) => {

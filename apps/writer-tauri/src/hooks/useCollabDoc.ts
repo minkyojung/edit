@@ -98,20 +98,6 @@ export function useCollabDoc(): { handle: CollabHandle | null; status: CollabSta
         },
       })
 
-      // M5 verification: log marks map state
-      const marksMap = ydoc.getMap<StoredMark>('marks')
-      console.log('[marks] observer attached, initial size:', marksMap.size)
-      const logMarks = () => {
-        const entries: Record<string, StoredMark> = {}
-        marksMap.forEach((v, k) => { entries[k] = v })
-        console.log('[marks] snapshot:', Object.keys(entries).length, 'marks', entries)
-      }
-      marksMap.observe(logMarks)
-      provider.on('synced', ({ state }: { state: boolean }) => {
-        console.log('[marks] synced event fired, state:', state)
-        logMarks()
-      })
-
       setHandle({ ydoc, provider })
       setStatus('connecting')
     }

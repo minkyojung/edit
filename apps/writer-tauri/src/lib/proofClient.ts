@@ -29,6 +29,11 @@ export interface CollabSession {
   syncProtocol: string
 }
 
+// Mark mutation (create / accept / reject) used to live here as REST helpers.
+// They were replaced by direct Y.Doc + Y.Map writes (see markActions and
+// MarkToolbar) so the OAuth-bearing client doesn't need to hold the
+// /api/documents ops surface anymore.
+
 export const proofClient = {
   // Uses the agent path (/documents without /api prefix) which skips client version headers
   async createDoc(title: string, markdown = '# ' + title + '\n\n'): Promise<{ slug: string }> {
@@ -37,47 +42,7 @@ export const proofClient = {
       body: JSON.stringify({ title, markdown }),
     })
   },
-  async getDoc(slug: string): Promise<{ slug: string; markdown: string; title?: string }> {
-    return request(`/documents/${slug}`)
-  },
   async getCollabSession(slug: string): Promise<{ session: CollabSession }> {
     return request(`/documents/${slug}/collab-session`)
-  },
-  async acceptMark(slug: string, markId: string): Promise<void> {
-    await request(`/api/documents/${slug}/ops`, {
-      method: 'POST',
-      body: JSON.stringify({ type: 'suggestion.accept', payload: { markId, by: 'owner' } }),
-      headers: {
-        'x-proof-client-version': '0.30.0',
-        'x-proof-client-build': '1',
-        'x-proof-client-protocol': '3',
-      },
-    })
-  },
-  async rejectMark(slug: string, markId: string): Promise<void> {
-    await request(`/api/documents/${slug}/ops`, {
-      method: 'POST',
-      body: JSON.stringify({ type: 'suggestion.reject', payload: { markId, by: 'owner' } }),
-      headers: {
-        'x-proof-client-version': '0.30.0',
-        'x-proof-client-build': '1',
-        'x-proof-client-protocol': '3',
-      },
-    })
-  },
-  async createMark(
-    slug: string,
-    type: 'suggestion.add' | 'comment.add',
-    payload: Record<string, unknown>,
-  ): Promise<void> {
-    await request(`/api/documents/${slug}/ops`, {
-      method: 'POST',
-      body: JSON.stringify({ type, payload }),
-      headers: {
-        'x-proof-client-version': '0.30.0',
-        'x-proof-client-build': '1',
-        'x-proof-client-protocol': '3',
-      },
-    })
   },
 }
