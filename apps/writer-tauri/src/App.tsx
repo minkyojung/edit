@@ -5,6 +5,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { ThemeProvider } from '@/components/theme-provider'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { FullPageErrorFallback } from '@/components/ErrorFallback'
+import { MarkPopoverLayer } from '@/components/agent/MarkPopoverLayer'
 import { AppShell } from '@/layout/AppShell'
 import { MilkdownEditor } from '@/editor/MilkdownEditor'
 import { WikiView } from '@/views/WikiView'
@@ -32,6 +33,7 @@ export function App() {
                 <Route path="/wiki" element={<WikiView />} />
               </Routes>
             </AppShell>
+            <MarkPopoverLayer editorView={view} ydoc={handle?.ydoc ?? null} />
           </HashRouter>
         </ErrorBoundary>
       </TooltipProvider>
