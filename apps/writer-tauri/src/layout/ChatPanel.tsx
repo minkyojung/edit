@@ -1,10 +1,10 @@
-// M8.3 Phase 1 — minimal chat panel.
+// Conversation surface on the right.
 //
-// Hosts the conversation with Claude on the right side. Currently the only
-// way to send a message is the "Run Review" button, which kicks off the
-// existing runReview flow and records both the user prompt and the
-// resulting summary as chat messages. Free-form chat input + ProposalSnippet
-// rendering arrive in later phases.
+// Per-proposal accept/reject lives in MarkPopover (anchored to the inline
+// mark in the editor body). This panel is now a lightweight transcript:
+// "Run Review" sends a user message, the resulting summary lands as an
+// assistant message, and the user is directed back to the body to act on
+// individual highlights.
 
 import { useEffect, useRef, useState } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
@@ -13,26 +13,13 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
-import { useMarks } from '@/hooks/useMarks'
 import { runReview } from '@/agent/runReview'
-import { acceptMark, jumpToMark, rejectMark } from '@/editor/markActions'
-import { MARK_CLICKED_EVENT, type MarkClickedDetail } from '@/editor/markClickPlugin'
-import { ProposalSnippet } from '@/components/agent/ProposalSnippet'
-import type { ProposalCardStatus } from '@/components/agent/ProposalSnippet'
-import type { Proposal } from '@/agent/proposals'
 
 type ChatRole = 'user' | 'assistant'
-
-interface AppliedProposal {
-  markId: string
-  proposal: Proposal
-  by: string
-}
 
 interface ChatMessage {
   role: ChatRole
   content: string
-  proposals?: AppliedProposal[]
 }
 
 interface Props {
@@ -42,32 +29,13 @@ interface Props {
 
 export function ChatPanel({ editorView, ydoc }: Props) {
   const { account } = useClaudeAuth()
-  const marks = useMarks(ydoc)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [running, setRunning] = useState(false)
-  const [resolutions, setResolutions] = useState<Record<string, 'accepted' | 'rejected'>>({})
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, running])
-
-  // Listen for clicks on inline marks in the editor and scroll the matching
-  // proposal snippet into view.
-  useEffect(() => {
-    function onMarkClicked(e: Event) {
-      const ce = e as CustomEvent<MarkClickedDetail>
-      const markId = ce.detail?.markId
-      if (!markId) return
-      const el = document.querySelector(`[data-snippet-mark-id="${markId}"]`)
-      if (!el) return
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      el.classList.add('snippet-flash')
-      window.setTimeout(() => el.classList.remove('snippet-flash'), 1000)
-    }
-    window.addEventListener(MARK_CLICKED_EVENT, onMarkClicked)
-    return () => window.removeEventListener(MARK_CLICKED_EVENT, onMarkClicked)
-  }, [])
 
   const ready = !!editorView && !!ydoc
 
@@ -77,20 +45,11 @@ export function ChatPanel({ editorView, ydoc }: Props) {
     setRunning(true)
     try {
       const result = await runReview(editorView!, ydoc!)
-      const skippedNote = result.skipped.length
-        ? ` · ${result.skipped.length} skipped`
-        : ''
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content:
-            result.proposed === 0
-              ? 'No issues to flag — looks clean to me.'
-              : `Found **${result.proposed}** issue${result.proposed > 1 ? 's' : ''}, applied **${result.applied.length}**${skippedNote}.`,
-          proposals: result.applied,
-        },
-      ])
+      const summary =
+        result.proposed === 0
+          ? 'No issues to flag — looks clean to me.'
+          : `Found **${result.applied.length}** issue${result.applied.length === 1 ? '' : 's'} — click any highlight in the document to review.`
+      setMessages((prev) => [...prev, { role: 'assistant', content: summary }])
     } catch (e) {
       setMessages((prev) => [
         ...prev,
@@ -118,26 +77,7 @@ export function ChatPanel({ editorView, ydoc }: Props) {
           </p>
         )}
         {messages.map((msg, i) => (
-          <MessageRow
-            key={i}
-            message={msg}
-            marks={marks}
-            resolutions={resolutions}
-            onAccept={(markId) => {
-              if (!editorView || !ydoc) return
-              acceptMark(editorView, ydoc, markId)
-              setResolutions((prev) => ({ ...prev, [markId]: 'accepted' }))
-            }}
-            onReject={(markId) => {
-              if (!editorView || !ydoc) return
-              rejectMark(editorView, ydoc, markId)
-              setResolutions((prev) => ({ ...prev, [markId]: 'rejected' }))
-            }}
-            onJump={(markId) => {
-              if (!editorView) return
-              jumpToMark(editorView, markId)
-            }}
-          />
+          <MessageRow key={i} message={msg} />
         ))}
         {running && (
           <span className="block text-sm text-muted-foreground animate-pulse">검토 중…</span>
@@ -167,16 +107,7 @@ const markdownComponents: React.ComponentProps<typeof Markdown>['components'] = 
   ),
 }
 
-interface MessageRowProps {
-  message: ChatMessage
-  marks: Record<string, unknown>
-  resolutions: Record<string, 'accepted' | 'rejected'>
-  onAccept: (markId: string) => void
-  onReject: (markId: string) => void
-  onJump: (markId: string) => void
-}
-
-function MessageRow({ message, marks, resolutions, onAccept, onReject, onJump }: MessageRowProps) {
+function MessageRow({ message }: { message: ChatMessage }) {
   if (message.role === 'user') {
     return (
       <div className="flex justify-end">
@@ -184,36 +115,11 @@ function MessageRow({ message, marks, resolutions, onAccept, onReject, onJump }:
       </div>
     )
   }
-
-  function statusFor(markId: string): ProposalCardStatus {
-    if (resolutions[markId]) return resolutions[markId]
-    if (markId in marks) return 'pending'
-    return 'rejected' // mark removed externally — treat as resolved
-  }
-
   return (
-    <div className="space-y-2">
-      <div className="text-sm text-foreground leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-        <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-          {message.content}
-        </Markdown>
-      </div>
-      {message.proposals && message.proposals.length > 0 && (
-        <div className="space-y-2">
-          {message.proposals.map((p) => (
-            <ProposalSnippet
-              key={p.markId}
-              markId={p.markId}
-              proposal={p.proposal}
-              by={p.by}
-              status={statusFor(p.markId)}
-              onAccept={() => onAccept(p.markId)}
-              onReject={() => onReject(p.markId)}
-              onJump={() => onJump(p.markId)}
-            />
-          ))}
-        </div>
-      )}
+    <div className="text-sm text-foreground leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {message.content}
+      </Markdown>
     </div>
   )
 }
