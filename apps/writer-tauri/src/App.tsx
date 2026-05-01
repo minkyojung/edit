@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { ThemeProvider } from '@/components/theme-provider'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { AppShell } from '@/layout/AppShell'
 import { MilkdownEditor } from '@/editor/MilkdownEditor'
 import { WikiView } from '@/views/WikiView'
@@ -15,18 +17,23 @@ export function App() {
   return (
     <ThemeProvider defaultPalette="charcoal" storageKey="writer-palette">
       <TooltipProvider delayDuration={200}>
-        <HashRouter>
-          <AppShell oauthStatus="unauthenticated" collabHandle={handle} editorView={view}>
-            <Routes>
-              <Route path="/" element={<Navigate to="/notes" replace />} />
-              <Route
-                path="/notes"
-                element={<MilkdownEditor handle={handle} status={status} onViewReady={setView} />}
-              />
-              <Route path="/wiki" element={<WikiView />} />
-            </Routes>
-          </AppShell>
-        </HashRouter>
+        <ErrorBoundary
+          FallbackComponent={FullPageErrorFallback}
+          onError={(error, info) => console.error('[app] uncaught render error', error, info)}
+        >
+          <HashRouter>
+            <AppShell oauthStatus="unauthenticated" collabHandle={handle} editorView={view}>
+              <Routes>
+                <Route path="/" element={<Navigate to="/notes" replace />} />
+                <Route
+                  path="/notes"
+                  element={<MilkdownEditor handle={handle} status={status} onViewReady={setView} />}
+                />
+                <Route path="/wiki" element={<WikiView />} />
+              </Routes>
+            </AppShell>
+          </HashRouter>
+        </ErrorBoundary>
       </TooltipProvider>
     </ThemeProvider>
   )

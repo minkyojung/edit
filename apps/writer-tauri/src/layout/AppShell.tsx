@@ -1,8 +1,10 @@
 import React, { useEffect } from 'react'
+import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 import { usePanelRef } from 'react-resizable-panels'
+import { PanelErrorFallback } from '@/components/ErrorFallback'
 import { AppSidebar } from './Sidebar'
 import { ChatPanel } from './ChatPanel'
 import { useLayoutStore } from '@/state/layoutStore'
@@ -99,7 +101,12 @@ export function AppShell({ children, bottomLeft, collabHandle, editorView }: App
               }
             }}
           >
-            <ChatPanel editorView={editorView ?? null} ydoc={collabHandle?.ydoc ?? null} />
+            <ErrorBoundary
+              FallbackComponent={PanelErrorFallback}
+              onError={(error, info) => console.error('[chat-panel] error', error, info)}
+            >
+              <ChatPanel editorView={editorView ?? null} ydoc={collabHandle?.ydoc ?? null} />
+            </ErrorBoundary>
           </ResizablePanel>
         </ResizablePanelGroup>
       </SidebarInset>
