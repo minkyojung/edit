@@ -8,6 +8,7 @@ import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
 import { createMarkDecoPlugin } from './markDecoPlugin'
+import { createMarkCleanupPlugin } from './markCleanupPlugin'
 import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
 import { MarkToolbar } from './MarkToolbar'
 import { proofMarkPlugins } from './proofMarkSchemas'
@@ -45,6 +46,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(collab)
       .use(proofMarkPlugins)
       .use(createMarkDecoPlugin())
+      .use(createMarkCleanupPlugin(ydoc))
       .use(createSelectionPlugin(setSelection))
       .create()
       .then((editor) => {
