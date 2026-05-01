@@ -148,6 +148,47 @@ new Plugin({
 
 ---
 
+## M8 완료 후 — proof-sdk 비교에서 빠진 안전망 (Post-M8)
+
+ErrorBoundary는 1차 방어선. proof-sdk가 추가로 가지고 있는 패턴들 중 우리도 도입할 가치 있는 것들:
+
+### Post-M8.1 — 작업 단위 try/catch 강화 (~1h)
+- `markActions.acceptMark/rejectMark/jumpToMark` — 본문 anchor 못 찾을 때 silent return 대신 로그 + 토스트
+- `runReview` — 이미 try/catch 있지만 실패 시점/원인 더 자세히 (네트워크 vs 401 vs 파싱 등)
+- `complete_claude_oauth` — 토큰 교환 실패 시 fallback UI
+
+### Post-M8.2 — 토스트 알림 시스템 (~1.5h)
+- `sonner` 도입 (shadcn 호환)
+- 사용 시나리오:
+  - Claude 연결 성공/실패
+  - AI 검토 완료 ("3 suggestions added")
+  - 마크 수락/거절 후 피드백
+  - 네트워크 에러 안내
+- ErrorBoundary fallback과 역할 분리: 토스트 = 비치명적 알림, fallback = 컴포넌트 죽음
+
+### Post-M8.3 — 자동 복구 패턴 (~2h)
+- proof-sdk의 `share-mark-mutation` 스타일
+- mark 액션 실패 시 → 서버 상태 refetch → Y.Doc 동기화
+- 단일 사용자 데스크톱 앱이라 우선순위 낮지만, 향후 멀티 디바이스 동기화 시 필수
+
+### Post-M8.4 — 텔레메트리 hook (~1h)
+- `captureEvent(name, props)` 헬퍼 (no-op으로 시작)
+- 핵심 이벤트만:
+  - `review_run_started` / `review_run_completed` / `review_run_rejected`
+  - `mark_accepted` / `mark_rejected`
+  - `oauth_completed` / `oauth_failed`
+- 출시 전 Sentry 같은 실제 backend로 hook 교체
+
+### 우선순위 (post-M8)
+```
+1. 토스트 (사용자 피드백 즉시 개선) — 중
+2. try/catch 강화 (안정성) — 중
+3. 텔레메트리 (출시 전 필수) — 출시 직전
+4. 자동 복구 (멀티 디바이스 시 필수) — 낮 (단일 사용자 단계)
+```
+
+---
+
 ## 시작할 때 체크리스트
 
 - [ ] 이 문서 다시 읽기 (5분)
