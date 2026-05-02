@@ -159,11 +159,11 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
               if (e.key === 'Enter') submit()
               if (e.key === 'Escape') reset()
             }}
-            placeholder={mode === 'comment' ? '코멘트 입력…' : '대체할 텍스트…'}
+            placeholder={mode === 'comment' ? 'Add a comment…' : 'Replacement text…'}
             className="h-7 w-48 rounded border border-border bg-background px-2 text-xs outline-none"
           />
           <ToolbarBtn onClick={submit} disabled={loading || (mode === 'replace' && !input.trim())}>
-            확인
+            Confirm
           </ToolbarBtn>
           <ToolbarBtn onClick={reset}>✕</ToolbarBtn>
         </div>

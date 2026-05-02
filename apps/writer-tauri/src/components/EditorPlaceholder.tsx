@@ -1,9 +1,9 @@
 type ServerStatus = 'connecting' | 'ready' | 'error'
 
 const statusLabel: Record<ServerStatus, string> = {
-  connecting: 'proof-server 연결 중…',
-  ready: 'proof-server 연결됨 ✓',
-  error: 'proof-server 연결 실패',
+  connecting: 'Connecting to proof-server…',
+  ready: 'Connected to proof-server ✓',
+  error: 'proof-server connection failed',
 }
 
 const statusColor: Record<ServerStatus, string> = {
@@ -16,7 +16,7 @@ export function EditorPlaceholder({ serverStatus = 'connecting' }: { serverStatu
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3">
       <div className="rounded-lg border border-dashed border-border bg-muted/30 px-16 py-12 text-center">
-        <div className="text-sm text-muted-foreground">에디터 영역 (M3에서 구현)</div>
+        <div className="text-sm text-muted-foreground">Editor area (built in M3)</div>
       </div>
       <span className={`text-xs ${statusColor[serverStatus]}`}>
         {statusLabel[serverStatus]}

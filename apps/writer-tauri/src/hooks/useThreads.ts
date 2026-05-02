@@ -1,0 +1,143 @@
+// Subscribes to the document's `threads` Y.Array and exposes thread CRUD.
+//
+// Y.Array doesn't have in-place updates, so mutations follow a
+// delete-and-insert-at-same-index pattern inside a single transaction.
+// That keeps the order stable and lands as one Yjs update on the wire.
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import * as Y from 'yjs'
+import { MAX_ACTIVE_THREADS, type ThreadMeta } from '@/chat/types'
+
+const THREADS_KEY = 'threads'
+
+export interface UseThreadsResult {
+  ready: boolean
+  threads: ThreadMeta[]
+  active: ThreadMeta[]
+  archived: ThreadMeta[]
+  createThread: (initialTitle?: string) => string | null
+  archiveThread: (id: string) => void
+  restoreThread: (id: string) => { ok: true } | { ok: false; reason: 'limit' | 'not-found' }
+  renameThread: (id: string, title: string) => void
+}
+
+export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
+  const [threads, setThreads] = useState<ThreadMeta[]>([])
+
+  useEffect(() => {
+    if (!ydoc) {
+      setThreads([])
+      return
+    }
+    const yThreads = ydoc.getArray<ThreadMeta>(THREADS_KEY)
+    const sync = () => setThreads(yThreads.toArray())
+    sync()
+    yThreads.observe(sync)
+    return () => yThreads.unobserve(sync)
+  }, [ydoc])
+
+  const findIndex = useCallback(
+    (id: string) => {
+      if (!ydoc) return -1
+      const yThreads = ydoc.getArray<ThreadMeta>(THREADS_KEY)
+      return yThreads.toArray().findIndex((t) => t.id === id)
+    },
+    [ydoc],
+  )
+
+  // Replace the entry at `i` with `next` inside one transaction.
+  // (Y.Array has no `set` for arbitrary types — delete+insert is the idiom.)
+  const replaceAt = useCallback(
+    (i: number, next: ThreadMeta) => {
+      if (!ydoc) return
+      const yThreads = ydoc.getArray<ThreadMeta>(THREADS_KEY)
+      ydoc.transact(() => {
+        yThreads.delete(i, 1)
+        yThreads.insert(i, [next])
+      })
+    },
+    [ydoc],
+  )
+
+  const createThread = useCallback<UseThreadsResult['createThread']>(
+    (initialTitle = '') => {
+      if (!ydoc) return null
+      const yThreads = ydoc.getArray<ThreadMeta>(THREADS_KEY)
+      // Block creation when 5 active threads already exist.
+      const activeCount = yThreads.toArray().filter((t) => !t.archived).length
+      if (activeCount >= MAX_ACTIVE_THREADS) return null
+
+      const now = Date.now()
+      const meta: ThreadMeta = {
+        id: crypto.randomUUID(),
+        title: initialTitle,
+        createdAt: now,
+        updatedAt: now,
+        archived: false,
+      }
+      ydoc.transact(() => yThreads.push([meta]))
+      return meta.id
+    },
+    [ydoc],
+  )
+
+  const archiveThread = useCallback<UseThreadsResult['archiveThread']>(
+    (id) => {
+      const i = findIndex(id)
+      if (i < 0) return
+      const yThreads = ydoc!.getArray<ThreadMeta>(THREADS_KEY)
+      const cur = yThreads.get(i)
+      if (cur.archived) return
+      replaceAt(i, { ...cur, archived: true, archivedAt: Date.now() })
+    },
+    [findIndex, ydoc, replaceAt],
+  )
+
+  const restoreThread = useCallback<UseThreadsResult['restoreThread']>(
+    (id) => {
+      const i = findIndex(id)
+      if (i < 0) return { ok: false, reason: 'not-found' }
+      const yThreads = ydoc!.getArray<ThreadMeta>(THREADS_KEY)
+      const cur = yThreads.get(i)
+      if (!cur.archived) return { ok: true }
+      const activeCount = yThreads.toArray().filter((t) => !t.archived).length
+      if (activeCount >= MAX_ACTIVE_THREADS) return { ok: false, reason: 'limit' }
+      const { archivedAt: _archivedAt, ...rest } = cur
+      void _archivedAt
+      replaceAt(i, { ...rest, archived: false, updatedAt: Date.now() })
+      return { ok: true }
+    },
+    [findIndex, ydoc, replaceAt],
+  )
+
+  const renameThread = useCallback<UseThreadsResult['renameThread']>(
+    (id, title) => {
+      const i = findIndex(id)
+      if (i < 0) return
+      const yThreads = ydoc!.getArray<ThreadMeta>(THREADS_KEY)
+      const cur = yThreads.get(i)
+      if (cur.title === title) return
+      replaceAt(i, { ...cur, title, updatedAt: Date.now() })
+    },
+    [findIndex, ydoc, replaceAt],
+  )
+
+  const { active, archived } = useMemo(() => {
+    const a: ThreadMeta[] = []
+    const r: ThreadMeta[] = []
+    for (const t of threads) (t.archived ? r : a).push(t)
+    r.sort((x, y) => (y.archivedAt ?? 0) - (x.archivedAt ?? 0))
+    return { active: a, archived: r }
+  }, [threads])
+
+  return {
+    ready: !!ydoc,
+    threads,
+    active,
+    archived,
+    createThread,
+    archiveThread,
+    restoreThread,
+    renameThread,
+  }
+}

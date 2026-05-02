@@ -102,13 +102,15 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(ProofServerHandle(Arc::new(Mutex::new(None))))
         .manage(oauth::PendingOAuth::default())
+        .manage(claude_api::ProxyAborts::default())
         .invoke_handler(tauri::generate_handler![
             oauth::start_claude_oauth,
             oauth::complete_claude_oauth,
             oauth::get_claude_token,
             oauth::get_claude_account,
             oauth::disconnect_claude,
-            claude_api::claude_messages_create,
+            claude_api::claude_proxy,
+            claude_api::claude_cancel,
         ])
         .setup(|app| {
             let workspace_root = find_workspace_root(app.handle());

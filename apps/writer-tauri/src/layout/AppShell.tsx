@@ -105,7 +105,12 @@ export function AppShell({ children, bottomLeft, collabHandle, editorView }: App
               FallbackComponent={PanelErrorFallback}
               onError={(error, info) => console.error('[chat-panel] error', error, info)}
             >
-              <ChatPanel editorView={editorView ?? null} ydoc={collabHandle?.ydoc ?? null} />
+              <ChatPanel
+                editorView={editorView ?? null}
+                ydoc={collabHandle?.ydoc ?? null}
+                provider={collabHandle?.provider ?? null}
+                slug={collabHandle?.slug ?? null}
+              />
             </ErrorBoundary>
           </ResizablePanel>
         </ResizablePanelGroup>

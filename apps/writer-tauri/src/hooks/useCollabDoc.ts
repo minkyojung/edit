@@ -28,6 +28,7 @@ export interface StoredMark {
 export interface CollabHandle {
   ydoc: Y.Doc
   provider: HocuspocusProvider
+  slug: string
 }
 
 const DOC_SLUG_KEY = 'writer-tauri:doc-slug'
@@ -98,7 +99,7 @@ export function useCollabDoc(): { handle: CollabHandle | null; status: CollabSta
         },
       })
 
-      setHandle({ ydoc, provider })
+      setHandle({ ydoc, provider, slug })
       setStatus('connecting')
     }
 

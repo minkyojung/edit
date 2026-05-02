@@ -10,10 +10,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { Proposal } from '@/agent/proposals'
 
 const KIND_LABEL: Record<string, string> = {
-  replace: '대체',
-  insert: '삽입',
-  delete: '삭제',
-  comment: '코멘트',
+  replace: 'Replace',
+  insert: 'Insert',
+  delete: 'Delete',
+  comment: 'Comment',
 }
 
 const KIND_DOT: Record<string, string> = {
@@ -61,7 +61,7 @@ export function ProposalSnippet({ markId, proposal, by, status, onAccept, onReje
         <span className="text-muted-foreground truncate">{by}</span>
         {resolved && (
           <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
-            {status === 'accepted' ? '수락됨' : '거절됨'}
+            {status === 'accepted' ? 'Accepted' : 'Rejected'}
           </span>
         )}
         {!resolved && onJump && (
@@ -76,7 +76,7 @@ export function ProposalSnippet({ markId, proposal, by, status, onAccept, onReje
                 <IconArrowRight size={12} stroke={1.75} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="left">본문에서 보기</TooltipContent>
+            <TooltipContent side="left">Show in document</TooltipContent>
           </Tooltip>
         )}
       </div>
@@ -100,7 +100,7 @@ export function ProposalSnippet({ markId, proposal, by, status, onAccept, onReje
       {!resolved && (
         <div className="flex gap-1.5 pt-0.5">
           <Button size="sm" className="h-6 flex-1 text-[11px]" onClick={onAccept}>
-            수락
+            Accept
           </Button>
           <Button
             size="sm"
@@ -108,7 +108,7 @@ export function ProposalSnippet({ markId, proposal, by, status, onAccept, onReje
             className="h-6 flex-1 text-[11px]"
             onClick={onReject}
           >
-            거절
+            Reject
           </Button>
         </div>
       )}

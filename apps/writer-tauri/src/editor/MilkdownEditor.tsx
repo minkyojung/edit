@@ -91,9 +91,9 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     <div className="relative h-full w-full">
       {status !== 'connected' && (
         <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-center py-1 text-xs text-muted-foreground">
-          {status === 'initializing' && 'proof-server 시작 중…'}
-          {status === 'connecting' && 'WebSocket 연결 중…'}
-          {status === 'error' && 'proof-server 연결 실패 — 앱을 재시작하세요'}
+          {status === 'initializing' && 'Starting proof-server…'}
+          {status === 'connecting' && 'Connecting WebSocket…'}
+          {status === 'error' && 'proof-server connection failed — restart the app'}
         </div>
       )}
       <div className="h-full w-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

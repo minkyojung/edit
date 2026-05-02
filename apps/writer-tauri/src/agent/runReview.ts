@@ -5,7 +5,7 @@
 
 import type { EditorView } from '@milkdown/kit/prose/view'
 import * as Y from 'yjs'
-import { createMessage } from '../lib/anthropicClient'
+import { anthropic } from '../lib/anthropic'
 import { proposeChangeTool } from './tools'
 import { COPYEDITOR_PROMPT } from './skills/copyeditor'
 import { applyProposal } from './applyProposal'
@@ -45,16 +45,16 @@ export async function runReview(view: EditorView, ydoc: Y.Doc): Promise<RunRevie
   const system = `${COPYEDITOR_PROMPT}\n\n--- DOCUMENT ---\n${docForPrompt}`
 
   console.log('[runReview] calling Claude…', { docLen: docForPrompt.length })
-  const response = await createMessage({
+  const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: MAX_TOKENS,
     system,
-    tools: [proposeChangeTool],
+    tools: [proposeChangeTool] as Parameters<typeof anthropic.messages.create>[0]['tools'],
     messages: [{ role: 'user', content: 'Begin your review.' }],
-  } as Parameters<typeof createMessage>[0])
+  })
 
   const proposals: Proposal[] = []
-  for (const block of (response as { content: Array<Record<string, unknown>> }).content) {
+  for (const block of response.content) {
     if (block.type !== 'tool_use' || block.name !== 'propose_change') continue
     proposals.push(block.input as Proposal)
   }
