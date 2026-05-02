@@ -52,6 +52,9 @@ export class Server {
     // runId -> AbortController
     this.activeChats = new Map()
     this.shuttingDown = false
+    // Pending waiters for the next setToken call. Resolved when a new token
+    // is pushed; used by the AUTH-retry path to coordinate refreshes.
+    this.tokenUpdateWaiters = []
   }
 
   async handle(message) {
@@ -115,8 +118,31 @@ export class Server {
       this.emit(errorResponse(id, INVALID_PARAMS, 'token must be sk-ant-oat...'))
       return
     }
+    const previousToken = this.token
     this.token = token
     this.emit(response(id, null))
+    // Wake up anyone waiting for a token rotation (AUTH-retry path).
+    if (token !== previousToken && this.tokenUpdateWaiters.length > 0) {
+      const waiters = this.tokenUpdateWaiters
+      this.tokenUpdateWaiters = []
+      for (const w of waiters) w()
+    }
+  }
+
+  // Returns a Promise that resolves when setToken is called with a new
+  // value, or rejects on timeout. Used to coordinate retries after AUTH.
+  #waitForTokenUpdate(timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.tokenUpdateWaiters = this.tokenUpdateWaiters.filter((w) => w !== fire)
+        reject(new Error('timeout waiting for token refresh'))
+      }, timeoutMs)
+      const fire = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+      this.tokenUpdateWaiters.push(fire)
+    })
   }
 
   #handleChat(id, params) {
@@ -148,11 +174,8 @@ export class Server {
       return
     }
 
-    // Inject the freshest token into the env every chat. The SDK reads this
-    // exact env var; we strip competing creds to avoid surprises.
-    process.env.CLAUDE_CODE_OAUTH_TOKEN = this.token
-    delete process.env.ANTHROPIC_API_KEY
-    delete process.env.ANTHROPIC_AUTH_TOKEN
+    // Token env is injected per-attempt inside #runChat so the AUTH-retry
+    // path picks up rotated tokens automatically.
 
     const controller = new AbortController()
     this.activeChats.set(runId, controller)
@@ -200,39 +223,72 @@ export class Server {
       options.mcpServers = { 'writer-relay': server }
     }
 
+    // Up to two attempts: if the first fails with AUTH, ask the host for a
+    // fresh token and retry once. Any other error (or a second AUTH) ends
+    // the chat.
     let lastResult = null
-    try {
-      const stream = query({ prompt, options })
-      for await (const event of stream) {
-        if (controller.signal.aborted) break
-        this.emit(notification('chat/event', { runId, event }))
-        if (event?.type === 'result') {
-          lastResult = event
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      // Re-inject env on every attempt: the second attempt uses the rotated
+      // token that arrived via setToken between attempts.
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = this.token
+      delete process.env.ANTHROPIC_API_KEY
+      delete process.env.ANTHROPIC_AUTH_TOKEN
+
+      let streamError = null
+      lastResult = null
+      try {
+        const stream = query({ prompt, options })
+        for await (const event of stream) {
+          if (controller.signal.aborted) break
+          this.emit(notification('chat/event', { runId, event }))
+          if (event?.type === 'result') {
+            lastResult = event
+          }
         }
+      } catch (err) {
+        streamError = err
       }
-    } catch (err) {
+
       if (controller.signal.aborted) {
         this.#emitChatError(runId, 'CANCELLED', 'cancelled by client', false)
-      } else {
-        const code = classifyError(err)
-        this.#emitChatError(runId, code, err?.message ?? String(err), code !== 'AUTH')
+        this.activeChats.delete(runId)
+        return
       }
-      this.activeChats.delete(runId)
-      return
+
+      if (streamError) {
+        const code = classifyError(streamError)
+        if (code === 'AUTH' && attempt === 1) {
+          // Pause: ask the host to push a fresh token and retry once.
+          this.emit(notification('auth/refreshNeeded', { runId }))
+          try {
+            await this.#waitForTokenUpdate(5000)
+            continue // attempt 2 with the rotated token
+          } catch {
+            // No fresh token in time; fall through to error.
+          }
+        }
+        this.#emitChatError(
+          runId,
+          code,
+          streamError?.message ?? String(streamError),
+          code !== 'AUTH',
+        )
+        this.activeChats.delete(runId)
+        return
+      }
+
+      // Success
+      break
     }
 
-    if (controller.signal.aborted) {
-      this.#emitChatError(runId, 'CANCELLED', 'cancelled by client', false)
-    } else {
-      this.emit(
-        notification('chat/done', {
-          runId,
-          stopReason: lastResult?.stop_reason ?? null,
-          usage: lastResult?.usage ?? null,
-          totalCostUsd: lastResult?.total_cost_usd ?? null,
-        }),
-      )
-    }
+    this.emit(
+      notification('chat/done', {
+        runId,
+        stopReason: lastResult?.stop_reason ?? null,
+        usage: lastResult?.usage ?? null,
+        totalCostUsd: lastResult?.total_cost_usd ?? null,
+      }),
+    )
     this.activeChats.delete(runId)
   }
 

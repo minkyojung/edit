@@ -235,6 +235,27 @@ After `chat/done`, the sidecar is idle and ready for the next `chat`.
 
 ---
 
+### `auth/refreshNeeded`
+
+Sent when Anthropic rejects an in-flight chat with 401 / unauthorized. The
+sidecar pauses the affected chat, emits this notification, and waits up to
+5 seconds for the host to push a fresh token via `setToken`. If a new token
+arrives, the chat is retried once. If retry also fails (or no fresh token
+arrives in time), the chat ends with `chat/error code=AUTH`.
+
+The sidecar cannot refresh tokens itself — it has no key-chain access. The
+host owns the OAuth flow; this notification is the sidecar asking for help.
+
+**params**:
+```json
+{ "runId": "client-uuid" }
+```
+
+The `runId` lets a multi-chat host distinguish which chat triggered the
+refresh, even though a single new token applies to all of them.
+
+---
+
 ### `chat/proposal`
 
 Sent each time the model invokes a relay tool (e.g. `propose_change`). The

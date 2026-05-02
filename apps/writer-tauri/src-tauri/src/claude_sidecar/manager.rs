@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use super::client::{NotificationHandler, SidecarClient, SidecarError};
 
@@ -36,6 +36,24 @@ impl SidecarManager {
         // raw passthrough — the inner Agent SDK event shape is its concern.
         let app_for_handler = app.clone();
         let handler: NotificationHandler = Arc::new(move |method, params| {
+            // auth/refreshNeeded is internal: the sidecar is asking the host
+            // to push a fresh token. Do it asynchronously and don't surface
+            // anything to the frontend — the retry will either succeed
+            // silently or fail with chat/error AUTH.
+            if method == "auth/refreshNeeded" {
+                let app = app_for_handler.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(state) = app.try_state::<Arc<SidecarManager>>() {
+                        let manager = state.inner().clone();
+                        match manager.try_inject_token(&app).await {
+                            Ok(true) => eprintln!("[sidecar manager] refreshed token after AUTH"),
+                            Ok(false) => eprintln!("[sidecar manager] AUTH retry: no token available"),
+                            Err(e) => eprintln!("[sidecar manager] AUTH retry inject failed: {e}"),
+                        }
+                    }
+                });
+                return;
+            }
             let event_name = match method.as_str() {
                 "chat/event" => "claude:event",
                 "chat/done" => "claude:done",
@@ -119,7 +137,6 @@ fn which_node() -> Option<PathBuf> {
 }
 
 fn find_workspace_root(app: &AppHandle) -> PathBuf {
-    use tauri::Manager;
     let mut dir = app
         .path()
         .resource_dir()
