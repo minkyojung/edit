@@ -17,7 +17,9 @@ export interface ChatTurn {
   ts: number
   attachments?: Attachment[]
   toolCalls?: ToolCall[]
-  status?: 'streaming' | 'done' | 'error'
+  status?: 'streaming' | 'done' | 'error' | 'stopped'
+  /** Accumulated thinking-block text. Rendered as a collapsible capsule. */
+  thinking?: string
 }
 
 export type Attachment =

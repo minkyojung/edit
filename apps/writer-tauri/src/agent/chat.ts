@@ -1,35 +1,29 @@
-// Streaming chat runner — multi-turn loop with the propose_change tool.
+// Streaming chat runner — drives a single chat turn through the Tauri
+// sidecar. The sidecar wraps Anthropic's Agent SDK (`query()`), which
+// internally handles tool execution; we only consume the resulting
+// notifications:
 //
-// Flow per iteration:
-//   1. anthropic.messages.stream() with the conversation so far
-//   2. text deltas → onTextDelta() (live streaming into the assistant turn)
-//   3. on stream completion, inspect the assembled message:
-//        - if no tool_use blocks, we're done
-//        - if there are tool_use blocks, apply each via applyProposal,
-//          push assistant + tool_result messages, loop again
-//   4. cap at MAX_TOOL_LOOPS to keep runaway calls bounded
+//   claude:event    → assistant text blocks (accumulated, emitted as deltas)
+//   claude:proposal → propose_change payload (we apply the mark locally)
+//   claude:done     → end of turn
+//   claude:error    → upstream failure or cancellation
 //
-// Cancellation is via AbortSignal: the SDK forwards it to our tauriFetch,
-// which invokes claude_cancel in Rust to drop the upstream request.
+// V1 multi-turn handling: prior conversation is concatenated into the prompt
+// as a transcript. This loses Agent SDK prompt-cache efficiency; a follow-up
+// can switch to session resumption (resumeSessionId) to fix that.
 
 import type { EditorView } from '@milkdown/kit/prose/view'
 import * as Y from 'yjs'
-import type {
-  MessageParam,
-  ContentBlockParam,
-} from '@anthropic-ai/sdk/resources/messages'
-import { anthropic } from '../lib/anthropic'
-import { proposeChangeTool } from './tools'
+import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { FREE_CHAT_PROMPT } from './skills/freeChat'
 import { applyProposal, type ApplyOutcome } from './applyProposal'
 import type { Proposal } from './proposals'
 import type { ChatTurn } from '@/chat/types'
 
 const MODEL = 'claude-sonnet-4-6'
-const MAX_TOKENS = 4096
 const AGENT_ID = 'ai:claude-sonnet'
 const DOC_CHAR_CAP = 60_000
-const MAX_TOOL_LOOPS = 5
 
 export interface ToolCallRecord {
   id: string
@@ -45,6 +39,8 @@ export interface RunChatArgs {
   history: ChatTurn[]
   signal?: AbortSignal
   onTextDelta: (delta: string) => void
+  /** Called for every thinking-block text fragment the model emits. */
+  onThinkingDelta?: (delta: string) => void
   onToolApplied?: (call: ToolCallRecord) => void
 }
 
@@ -53,89 +49,167 @@ export interface RunChatResult {
   toolCalls: ToolCallRecord[]
 }
 
-export async function runChat({
-  view,
-  ydoc,
-  history,
-  signal,
-  onTextDelta,
-  onToolApplied,
-}: RunChatArgs): Promise<RunChatResult> {
+interface ProposalEvent {
+  runId: string
+  input: Proposal
+}
+
+interface ChatEvent {
+  runId: string
+  event: {
+    type?: string
+    message?: { content?: Array<{ type: string; text?: string; thinking?: string }> }
+  }
+}
+
+interface DoneEvent {
+  runId: string
+  stopReason: string | null
+}
+
+interface ErrorEvent {
+  runId: string
+  code: string
+  message: string
+}
+
+function buildPrompt(history: ChatTurn[]): string {
+  const turns = history.filter((t) => t.content.trim().length > 0)
+  if (turns.length === 0) return ''
+  const last = turns[turns.length - 1]
+  const prior = turns.slice(0, -1)
+  if (prior.length === 0) return last.content
+
+  // Concatenate prior conversation as a transcript. This is a V1 bridge
+  // until we plumb Agent SDK session resumption.
+  const transcript = prior
+    .map((t) => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
+    .join('\n\n')
+  return `Prior conversation:\n${transcript}\n\n---\n\nLatest user message:\n${last.content}`
+}
+
+export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
+  const { view, ydoc, history, signal, onTextDelta, onThinkingDelta, onToolApplied } = args
+
   const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
   const docForPrompt = docText.length > DOC_CHAR_CAP ? docText.slice(0, DOC_CHAR_CAP) : docText
   const system = `${FREE_CHAT_PROMPT}\n\n--- DOCUMENT ---\n${docForPrompt}`
-
-  // Convert ChatTurn history → Anthropic messages. Skip empty assistant
-  // placeholders (we add one *after* this call kicks off, but it should be
-  // filtered upstream too).
-  let messages: MessageParam[] = history
-    .filter((t) => t.content.trim().length > 0)
-    .map((t) => ({ role: t.role, content: t.content }))
-
+  const prompt = buildPrompt(history)
   const runId = crypto.randomUUID()
-  const allToolCalls: ToolCallRecord[] = []
-  let stopReason: string | null = null
 
-  for (let i = 0; i < MAX_TOOL_LOOPS; i++) {
-    const stream = anthropic.messages.stream(
-      {
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
-        system,
-        tools: [proposeChangeTool] as Parameters<typeof anthropic.messages.create>[0]['tools'],
-        messages,
-      },
-      { signal },
-    )
+  const toolCalls: ToolCallRecord[] = []
+  let acc = ''
+  let thinkingAcc = ''
 
-    stream.on('text', (delta) => onTextDelta(delta))
+  const unlistens: UnlistenFn[] = []
+  const cleanup = () => {
+    while (unlistens.length > 0) {
+      const u = unlistens.pop()
+      try {
+        u?.()
+      } catch {
+        // listeners are best-effort; an already-detached one is fine
+      }
+    }
+  }
 
-    const final = await stream.finalMessage()
-    stopReason = final.stop_reason ?? null
+  const finished = new Promise<RunChatResult>((resolve, reject) => {
+    let settled = false
+    const settleOk = (stopReason: string | null) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve({ stopReason, toolCalls })
+    }
+    const settleErr = (err: unknown) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(err)
+    }
 
-    const toolUseBlocks = final.content.filter((b) => b.type === 'tool_use')
-    if (toolUseBlocks.length === 0) break
-
-    const toolResults: ContentBlockParam[] = []
-    for (const block of toolUseBlocks) {
-      if (block.type !== 'tool_use') continue
-      let outcome: ApplyOutcome
-      if (block.name === 'propose_change') {
-        outcome = applyProposal(view, ydoc, block.input as Proposal, {
+    Promise.all([
+      listen<ChatEvent>('claude:event', (e) => {
+        if (e.payload.runId !== runId) return
+        const ev = e.payload.event
+        if (ev?.type === 'assistant') {
+          const blocks = ev.message?.content ?? []
+          for (const b of blocks) {
+            if (b.type === 'text' && typeof b.text === 'string') {
+              const next = acc + b.text
+              const delta = next.slice(acc.length)
+              acc = next
+              if (delta) onTextDelta(delta)
+            } else if (b.type === 'thinking' && typeof b.thinking === 'string') {
+              const next = thinkingAcc + b.thinking
+              const delta = next.slice(thinkingAcc.length)
+              thinkingAcc = next
+              if (delta) onThinkingDelta?.(delta)
+            }
+          }
+        }
+      }),
+      listen<ProposalEvent>('claude:proposal', (e) => {
+        if (e.payload.runId !== runId) return
+        const outcome = applyProposal(view, ydoc, e.payload.input, {
           runId,
           agentId: AGENT_ID,
         })
-      } else {
-        outcome = { ok: false, reason: `unknown_tool:${block.name}` }
-      }
+        const record: ToolCallRecord = {
+          id: crypto.randomUUID(),
+          name: 'propose_change',
+          input: e.payload.input,
+          result: outcome,
+        }
+        toolCalls.push(record)
+        onToolApplied?.(record)
+      }),
+      listen<DoneEvent>('claude:done', (e) => {
+        if (e.payload.runId !== runId) return
+        settleOk(e.payload.stopReason)
+      }),
+      listen<ErrorEvent>('claude:error', (e) => {
+        if (e.payload.runId !== runId) return
+        if (e.payload.code === 'CANCELLED') {
+          settleErr(new DOMException(e.payload.message, 'AbortError'))
+        } else {
+          const err = new Error(`${e.payload.code}: ${e.payload.message}`)
+          settleErr(err)
+        }
+      }),
+    ])
+      .then((registered) => {
+        unlistens.push(...registered)
+      })
+      .catch((err) => settleErr(err))
 
-      const record: ToolCallRecord = {
-        id: block.id,
-        name: block.name,
-        input: block.input,
-        result: outcome,
+    if (signal) {
+      if (signal.aborted) {
+        invoke('claude_chat_cancel', { args: { runId } }).catch(() => {})
+        settleErr(new DOMException('aborted', 'AbortError'))
+        return
       }
-      allToolCalls.push(record)
-      onToolApplied?.(record)
-
-      toolResults.push({
-        type: 'tool_result',
-        tool_use_id: block.id,
-        content: outcome.ok ? `applied as mark ${outcome.markId}` : `failed: ${outcome.reason}`,
-        is_error: !outcome.ok,
+      signal.addEventListener('abort', () => {
+        invoke('claude_chat_cancel', { args: { runId } }).catch(() => {})
+        // The CANCELLED chat:error notification will arrive and finalize.
       })
     }
+  })
 
-    // Feed assistant + tool_results back for the next turn so the model
-    // can acknowledge / continue / stop.
-    messages = [
-      ...messages,
-      { role: 'assistant', content: final.content },
-      { role: 'user', content: toolResults },
-    ]
-
-    if (stopReason === 'end_turn') break
+  try {
+    await invoke('claude_chat_start', {
+      args: {
+        runId,
+        model: MODEL,
+        systemPrompt: system,
+        prompt,
+        relayTools: ['propose_change'],
+      },
+    })
+  } catch (e) {
+    cleanup()
+    throw e
   }
 
-  return { stopReason, toolCalls: allToolCalls }
+  return finished
 }

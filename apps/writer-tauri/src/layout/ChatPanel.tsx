@@ -9,7 +9,8 @@
 // "Run Review" appends a user/assistant pair to the active thread, and
 // the user is directed back to the body to act on individual highlights.
 
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
+import { IconPlayerStopFilled } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
@@ -102,6 +103,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     abortRef.current = controller
 
     let acc = ''
+    let thinkingAcc = ''
     try {
       await runChat({
         view: editorView!,
@@ -112,14 +114,23 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           acc += delta
           turnsHook.updateTurn(assistantId, { content: acc })
         },
+        onThinkingDelta: (delta) => {
+          thinkingAcc += delta
+          turnsHook.updateTurn(assistantId, { thinking: thinkingAcc })
+        },
       })
-      turnsHook.updateTurn(assistantId, { content: acc, status: 'done' })
+      turnsHook.updateTurn(assistantId, {
+        content: acc,
+        thinking: thinkingAcc || undefined,
+        status: 'done',
+      })
       setChatStatus('idle')
     } catch (e) {
       const aborted = controller.signal.aborted
       turnsHook.updateTurn(assistantId, {
         content: acc + (aborted ? '' : `\n\n_Error: ${String(e)}_`),
-        status: aborted ? 'done' : 'error',
+        thinking: thinkingAcc || undefined,
+        status: aborted ? 'stopped' : 'error',
       })
       setChatStatus(aborted ? 'idle' : 'error')
     } finally {
@@ -252,11 +263,88 @@ function MessageRow({ turn }: { turn: ChatTurn }) {
       </div>
     )
   }
-  return (
-    <div className="text-sm text-foreground leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-        {turn.content}
-      </Markdown>
+  const hasThinking = !!turn.thinking && turn.thinking.trim().length > 0
+  const hasText = turn.content.trim().length > 0
+  const isStreaming = turn.status === 'streaming'
+  const isStopped = turn.status === 'stopped'
+
+  const body = (
+    <div className="text-sm text-foreground leading-relaxed">
+      {hasThinking && (
+        <ThinkingPanel content={turn.thinking!} streamingNoText={isStreaming && !hasText} />
+      )}
+      {!hasThinking && isStreaming && !hasText && <ThinkingSpinner label="Thinking..." />}
+      {hasText && (
+        <div className="leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+          <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {turn.content}
+          </Markdown>
+        </div>
+      )}
     </div>
+  )
+
+  if (isStopped) {
+    return (
+      <div className="rounded-md border border-border/60 bg-muted/20 overflow-hidden">
+        <div className="px-3 py-2">{body}</div>
+        <div className="border-t border-border/60 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground flex items-center gap-1.5">
+          <IconPlayerStopFilled size={12} stroke={0} className="opacity-70" />
+          <span>Stopped</span>
+        </div>
+      </div>
+    )
+  }
+
+  return body
+}
+
+function ThinkingSpinner({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span className="inline-block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />
+      <span>{label}</span>
+    </div>
+  )
+}
+
+function ThinkingPanel({
+  content,
+  streamingNoText,
+}: {
+  content: string
+  streamingNoText: boolean
+}) {
+  // While the model is mid-stream and hasn't produced any text yet, render an
+  // open spinner-style panel so the user can see the chain of thought live.
+  // Once text starts flowing (or the turn finished), collapse to a small
+  // toggleable capsule so it doesn't dominate the conversation.
+  const [open, setOpen] = React.useState(streamingNoText)
+
+  React.useEffect(() => {
+    if (streamingNoText) setOpen(true)
+    else setOpen(false)
+  }, [streamingNoText])
+
+  return (
+    <details
+      open={open}
+      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+      className="mb-2 rounded-md border border-border/60 bg-muted/30 text-xs"
+    >
+      <summary className="flex cursor-pointer items-center gap-2 list-none px-2 py-1 text-muted-foreground select-none">
+        {streamingNoText ? (
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />
+        ) : (
+          <span className="inline-block transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+            ▸
+          </span>
+        )}
+        <span>{streamingNoText ? 'Thinking…' : 'Thoughts'}</span>
+      </summary>
+      <div className="px-2 pb-2 pt-1 whitespace-pre-wrap text-muted-foreground/90">
+        {content}
+      </div>
+    </details>
   )
 }
