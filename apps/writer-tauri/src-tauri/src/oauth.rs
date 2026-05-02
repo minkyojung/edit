@@ -13,8 +13,35 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_shell::ShellExt;
+use tokio::sync::Mutex as AsyncMutex;
+
+// Refresh access tokens 5 minutes before they expire.
+const REFRESH_MARGIN_MS: i64 = 5 * 60 * 1000;
+
+// Serializes token reads + refreshes so concurrent callers don't
+// race the refresh endpoint and invalidate each other's refresh tokens.
+static REFRESH_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+// Token responses arrive with `expires_in` (seconds, relative). Convert to
+// `expires_at` (ms epoch, absolute) at save time so all downstream checks
+// can compare against `now_ms()` directly.
+fn normalize_expiry(token: &mut TokenResponse) {
+    if token.expires_at.is_none() {
+        if let Some(secs) = token.expires_in {
+            token.expires_at = Some(now_ms() + secs * 1000);
+        }
+    }
+}
 
 const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
@@ -175,18 +202,92 @@ pub async fn complete_claude_oauth(
         return Err(format!("token exchange {status}: {text}"));
     }
 
-    let token: TokenResponse = resp
+    let mut token: TokenResponse = resp
         .json()
         .await
         .map_err(|e| format!("token response parse failed: {e}"))?;
 
+    normalize_expiry(&mut token);
     save_token(&app, &token)?;
     Ok(())
 }
 
+#[derive(Serialize)]
+struct RefreshRequest<'a> {
+    grant_type: &'a str,
+    refresh_token: &'a str,
+    client_id: &'a str,
+}
+
+async fn do_refresh(app: &AppHandle, refresh_token: &str) -> Result<TokenResponse, String> {
+    let resp = reqwest::Client::new()
+        .post(TOKEN_URL)
+        .json(&RefreshRequest {
+            grant_type: "refresh_token",
+            refresh_token,
+            client_id: CLIENT_ID,
+        })
+        .send()
+        .await
+        .map_err(|e| format!("refresh request failed: {e}"))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("refresh {status}: {text}"));
+    }
+
+    let mut token: TokenResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("refresh response parse failed: {e}"))?;
+
+    // Some servers don't rotate refresh tokens — keep the previous one in that case.
+    if token.refresh_token.is_none() {
+        token.refresh_token = Some(refresh_token.to_string());
+    }
+    normalize_expiry(&mut token);
+    save_token(app, &token)?;
+    Ok(token)
+}
+
 #[tauri::command]
 pub async fn get_claude_token(app: AppHandle) -> Result<Option<String>, String> {
-    Ok(load_token(&app)?.map(|t| t.access_token))
+    // Serialize concurrent callers: the first acquires, refreshes if needed,
+    // and writes the new token to disk; subsequent callers re-load that
+    // already-fresh token instead of refreshing again.
+    let _guard = REFRESH_LOCK.lock().await;
+
+    let Some(token) = load_token(&app)? else {
+        return Ok(None);
+    };
+
+    // If expires_at is missing (e.g. token saved by an older app version), we
+    // can't tell how stale it is — refresh once to populate the field, then
+    // subsequent calls follow the normal margin-based path.
+    let needs_refresh = match token.expires_at {
+        Some(exp) => now_ms() > exp - REFRESH_MARGIN_MS,
+        None => true,
+    };
+
+    if !needs_refresh {
+        return Ok(Some(token.access_token));
+    }
+
+    let Some(refresh_token) = token.refresh_token.as_deref() else {
+        // Can't refresh without a refresh_token — clear and force re-login.
+        let _ = secure_storage::delete(&app, STORAGE_NAME);
+        return Ok(None);
+    };
+
+    match do_refresh(&app, refresh_token).await {
+        Ok(new_token) => Ok(Some(new_token.access_token)),
+        Err(e) => {
+            eprintln!("[oauth] refresh failed: {e}");
+            let _ = secure_storage::delete(&app, STORAGE_NAME);
+            Ok(None)
+        }
+    }
 }
 
 #[tauri::command]
