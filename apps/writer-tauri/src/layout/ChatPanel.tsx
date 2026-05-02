@@ -23,6 +23,7 @@ import { useThreadTurns } from '@/hooks/useThreadTurns'
 import { useActiveThread } from '@/hooks/useActiveThread'
 import { runReview } from '@/agent/runReview'
 import { runChat } from '@/agent/chat'
+import { generateThreadTitle } from '@/agent/generateThreadTitle'
 import { ThreadTabs } from '@/chat/ThreadTabs'
 import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
 import type { ChatTurn } from '@/chat/types'
@@ -88,6 +89,20 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     }
     const assistantId = crypto.randomUUID()
     const historyForModel = [...turnsHook.turns, userTurn]
+
+    // First user message in an untitled thread → kick off background title
+    // generation. Fire-and-forget; the slug-style fallback stays in place
+    // until (and unless) Haiku returns something.
+    const isFirstTurn = turnsHook.turns.length === 0
+    if (isFirstTurn && activeId) {
+      const thread = threads.threads.find((t) => t.id === activeId)
+      if (thread && thread.title.trim().length === 0) {
+        const idAtSend = activeId
+        void generateThreadTitle(text).then((title) => {
+          if (title) threads.renameThread(idAtSend, title)
+        })
+      }
+    }
 
     turnsHook.appendTurn(userTurn)
     turnsHook.appendTurn({
