@@ -1,4 +1,3 @@
-mod claude_api;
 pub mod claude_sidecar;
 mod oauth;
 mod secure_storage;
@@ -103,15 +102,12 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(ProofServerHandle(Arc::new(Mutex::new(None))))
         .manage(oauth::PendingOAuth::default())
-        .manage(claude_api::ProxyAborts::default())
         .invoke_handler(tauri::generate_handler![
             oauth::start_claude_oauth,
             oauth::complete_claude_oauth,
             oauth::get_claude_token,
             oauth::get_claude_account,
             oauth::disconnect_claude,
-            claude_api::claude_proxy,
-            claude_api::claude_cancel,
             claude_sidecar::commands::claude_chat_start,
             claude_sidecar::commands::claude_chat_cancel,
             claude_sidecar::commands::claude_title,
