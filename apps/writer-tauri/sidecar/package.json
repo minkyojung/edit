@@ -1,0 +1,17 @@
+{
+  "name": "writer-tauri-sidecar",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.mjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start:chat": "node src/index.mjs --mode=chat",
+    "start:title": "node src/index.mjs --mode=title"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.121"
+  }
+}
