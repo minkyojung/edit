@@ -235,6 +235,26 @@ After `chat/done`, the sidecar is idle and ready for the next `chat`.
 
 ---
 
+### `chat/proposal`
+
+Sent each time the model invokes a relay tool (e.g. `propose_change`). The
+sidecar's tool handler immediately returns a brief ack to the model and
+forwards the call's input to the host via this notification — the host
+(frontend) is responsible for applying the actual side-effect (inserting
+marks into the editor, etc.).
+
+**params**:
+```json
+{
+  "runId": "client-uuid",
+  "input": { "kind": "suggestion", "quote": "...", "content": "...", ... }
+}
+```
+
+The shape of `input` is whatever the relay tool's schema accepts.
+
+---
+
 ### `chat/error`
 
 Sent when a chat fails or is cancelled. Mutually exclusive with `chat/done`.

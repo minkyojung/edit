@@ -40,6 +40,7 @@ impl SidecarManager {
                 "chat/event" => "claude:event",
                 "chat/done" => "claude:done",
                 "chat/error" => "claude:error",
+                "chat/proposal" => "claude:proposal",
                 _ => return,
             };
             if let Err(e) = app_for_handler.emit(event_name, params) {

@@ -1,4 +1,5 @@
-import { query } from '@anthropic-ai/claude-agent-sdk'
+import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
+import { z } from 'zod'
 import {
   response,
   errorResponse,
@@ -11,6 +12,29 @@ import {
   NOT_INITIALIZED,
   NO_TOKEN,
 } from './jsonrpc.mjs'
+
+// Relay tools: defined here, but every invocation reports back to the host
+// (frontend) via a notification rather than performing the action itself.
+// The frontend (which owns the editor / UI) does the real work.
+
+function buildProposeChangeTool(runId, emit) {
+  return tool(
+    'propose_change',
+    'Propose a single suggestion or comment for the current document. Call this once per issue you find.',
+    {
+      kind: z.enum(['suggestion', 'comment']),
+      suggestionType: z.enum(['insert', 'delete', 'replace']).optional(),
+      quote: z.string(),
+      content: z.string().optional(),
+      text: z.string().optional(),
+      rationale: z.string().optional(),
+    },
+    async (args) => {
+      emit(notification('chat/proposal', { runId, input: args }))
+      return { content: [{ type: 'text', text: 'Proposal recorded.' }] }
+    },
+  )
+}
 
 const SIDECAR_VERSION = '0.1.0'
 
@@ -147,7 +171,7 @@ export class Server {
       prompt,
       model,
       systemPrompt,
-      tools,
+      relayTools,
       permissionMode = 'bypassPermissions',
     } = params
 
@@ -157,10 +181,23 @@ export class Server {
     }
     if (model) options.model = model
     if (systemPrompt) options.systemPrompt = systemPrompt
-    if (Array.isArray(tools) && tools.length > 0) {
-      // The SDK takes tool definitions via the `tools` option on query().
-      // Pass through whatever the caller provides; we don't validate shape here.
-      options.tools = tools
+
+    // Wire relay tools: each one runs inside this sidecar but its handler
+    // just forwards args to the host as a `chat/proposal`-shaped event and
+    // returns a brief ack so the model can continue. The actual editor /
+    // UI work happens in the frontend.
+    const enabledRelay = Array.isArray(relayTools)
+      ? relayTools
+      : (this.mode === 'chat' ? ['propose_change'] : [])
+    const relayDefs = []
+    for (const name of enabledRelay) {
+      if (name === 'propose_change') {
+        relayDefs.push(buildProposeChangeTool(runId, this.emit))
+      }
+    }
+    if (relayDefs.length > 0) {
+      const server = createSdkMcpServer({ name: 'writer-relay', tools: relayDefs })
+      options.mcpServers = { 'writer-relay': server }
     }
 
     let lastResult = null

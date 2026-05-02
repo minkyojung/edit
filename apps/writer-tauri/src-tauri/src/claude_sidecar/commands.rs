@@ -22,8 +22,10 @@ pub struct ChatStartArgs {
     pub prompt: String,
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Names of relay tools to enable for this chat (e.g. ["propose_change"]).
+    /// Sidecar handles the registration; frontend does not pass tool schemas.
     #[serde(default)]
-    pub tools: Option<Value>,
+    pub relay_tools: Option<Vec<String>>,
     #[serde(default)]
     pub permission_mode: Option<String>,
 }
@@ -71,8 +73,8 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     if let Some(sp) = args.system_prompt {
         params["systemPrompt"] = Value::String(sp);
     }
-    if let Some(tools) = args.tools {
-        params["tools"] = tools;
+    if let Some(tools) = args.relay_tools {
+        params["relayTools"] = json!(tools);
     }
     if let Some(mode) = args.permission_mode {
         params["permissionMode"] = Value::String(mode);
