@@ -167,26 +167,40 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       content: 'Run review on this document.',
       ts: Date.now(),
     }
+    const assistantId = crypto.randomUUID()
     turnsHook.appendTurn(userTurn)
+    turnsHook.appendTurn({
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      ts: Date.now(),
+      status: 'streaming',
+    })
 
+    let thinkingAcc = ''
     try {
-      const result = await runReview(editorView!, ydoc!)
+      const result = await runReview({
+        view: editorView!,
+        ydoc: ydoc!,
+        onThinkingDelta: (delta) => {
+          thinkingAcc += delta
+          turnsHook.updateTurn(assistantId, { thinking: thinkingAcc })
+        },
+      })
       const summary =
         result.proposed === 0
           ? 'No issues to flag — looks clean to me.'
           : `Found **${result.applied.length}** issue${result.applied.length === 1 ? '' : 's'} — click any highlight in the document to review.`
-      turnsHook.appendTurn({
-        id: crypto.randomUUID(),
-        role: 'assistant',
+      turnsHook.updateTurn(assistantId, {
         content: summary,
-        ts: Date.now(),
+        thinking: thinkingAcc || undefined,
+        status: 'done',
       })
     } catch (e) {
-      turnsHook.appendTurn({
-        id: crypto.randomUUID(),
-        role: 'assistant',
+      turnsHook.updateTurn(assistantId, {
         content: `**Review failed.** ${String(e)}`,
-        ts: Date.now(),
+        thinking: thinkingAcc || undefined,
+        status: 'error',
       })
     } finally {
       runningRef.current = false

@@ -1,18 +1,19 @@
-// MVP review runner — single-turn Claude call, applies each propose_change
-// as an inline mark + Y.Map entry via applyProposal.
+// Run Review — bulk copyedit pass over the document.
 //
-// Multi-turn loop with search/read_document tools comes in M8.4.
+// Drives the chat sidecar with the COPYEDITOR_PROMPT and consumes proposal
+// events as they arrive. Each chat/proposal turns into an applyProposal
+// call, so marks appear in the editor progressively rather than in one
+// batch at the end.
 
 import type { EditorView } from '@milkdown/kit/prose/view'
 import * as Y from 'yjs'
-import { anthropic } from '../lib/anthropic'
-import { proposeChangeTool } from './tools'
+import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { COPYEDITOR_PROMPT } from './skills/copyeditor'
 import { applyProposal } from './applyProposal'
 import type { Proposal } from './proposals'
 
-const MODEL = 'claude-haiku-4-5-20251001'
-const MAX_TOKENS = 4096
+const MODEL = 'claude-haiku-4-5'
 const AGENT_ID = 'ai:claude-haiku'
 const DOC_CHAR_CAP = 60_000 // mirrors proof-sdk's style-review cap
 
@@ -22,18 +23,50 @@ export interface AppliedProposal {
   by: string
 }
 
-interface RunReviewResult {
+export interface RunReviewResult {
   proposed: number
   applied: AppliedProposal[]
   skipped: Array<{ proposal: Proposal; reason: string }>
-  raw: unknown
 }
 
-export async function runReview(view: EditorView, ydoc: Y.Doc): Promise<RunReviewResult> {
+interface ProposalEvent {
+  runId: string
+  input: Proposal
+}
+
+interface DoneEvent {
+  runId: string
+}
+
+interface ErrorEvent {
+  runId: string
+  code: string
+  message: string
+}
+
+interface ChatEvent {
+  runId: string
+  event: {
+    type?: string
+    message?: { content?: Array<{ type: string; text?: string; thinking?: string }> }
+  }
+}
+
+export interface RunReviewArgs {
+  view: EditorView
+  ydoc: Y.Doc
+  /** Called for every thinking-block fragment the model emits. */
+  onThinkingDelta?: (delta: string) => void
+  /** Called once per applied proposal, in arrival order. */
+  onProposalApplied?: (applied: AppliedProposal) => void
+}
+
+export async function runReview(args: RunReviewArgs): Promise<RunReviewResult> {
+  const { view, ydoc, onThinkingDelta, onProposalApplied } = args
   const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
   if (!docText.trim()) {
     console.warn('[runReview] empty document — nothing to review')
-    return { proposed: 0, applied: [], skipped: [], raw: null }
+    return { proposed: 0, applied: [], skipped: [] }
   }
 
   const truncated = docText.length > DOC_CHAR_CAP
@@ -43,36 +76,91 @@ export async function runReview(view: EditorView, ydoc: Y.Doc): Promise<RunRevie
   }
 
   const system = `${COPYEDITOR_PROMPT}\n\n--- DOCUMENT ---\n${docForPrompt}`
-
-  console.log('[runReview] calling Claude…', { docLen: docForPrompt.length })
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: MAX_TOKENS,
-    system,
-    tools: [proposeChangeTool] as Parameters<typeof anthropic.messages.create>[0]['tools'],
-    messages: [{ role: 'user', content: 'Begin your review.' }],
-  })
-
-  const proposals: Proposal[] = []
-  for (const block of response.content) {
-    if (block.type !== 'tool_use' || block.name !== 'propose_change') continue
-    proposals.push(block.input as Proposal)
-  }
-
-  console.log(`[runReview] received ${proposals.length} proposal(s)`)
-
   const runId = crypto.randomUUID()
-  const skipped: Array<{ proposal: Proposal; reason: string }> = []
+
   const applied: AppliedProposal[] = []
-  for (const p of proposals) {
-    const outcome = applyProposal(view, ydoc, p, { runId, agentId: AGENT_ID })
-    if (outcome.ok) {
-      applied.push({ markId: outcome.markId, proposal: p, by: AGENT_ID })
-    } else {
-      skipped.push({ proposal: p, reason: outcome.reason })
+  const skipped: Array<{ proposal: Proposal; reason: string }> = []
+  let proposedCount = 0
+
+  const unlistens: UnlistenFn[] = []
+  const cleanup = () => {
+    while (unlistens.length > 0) {
+      try {
+        unlistens.pop()?.()
+      } catch {
+        // already detached
+      }
     }
   }
 
-  console.log(`[runReview] applied ${applied.length}/${proposals.length}; skipped`, skipped)
-  return { proposed: proposals.length, applied, skipped, raw: response }
+  const finished = new Promise<RunReviewResult>((resolve, reject) => {
+    let settled = false
+    const settleOk = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve({ proposed: proposedCount, applied, skipped })
+    }
+    const settleErr = (err: unknown) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(err)
+    }
+
+    Promise.all([
+      listen<ChatEvent>('claude:event', (e) => {
+        if (e.payload.runId !== runId) return
+        const ev = e.payload.event
+        if (ev?.type !== 'assistant') return
+        for (const b of ev.message?.content ?? []) {
+          if (b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking) {
+            onThinkingDelta?.(b.thinking)
+          }
+        }
+      }),
+      listen<ProposalEvent>('claude:proposal', (e) => {
+        if (e.payload.runId !== runId) return
+        proposedCount += 1
+        const proposal = e.payload.input
+        const outcome = applyProposal(view, ydoc, proposal, { runId, agentId: AGENT_ID })
+        if (outcome.ok) {
+          const record = { markId: outcome.markId, proposal, by: AGENT_ID }
+          applied.push(record)
+          onProposalApplied?.(record)
+        } else {
+          skipped.push({ proposal, reason: outcome.reason })
+        }
+      }),
+      listen<DoneEvent>('claude:done', (e) => {
+        if (e.payload.runId !== runId) return
+        settleOk()
+      }),
+      listen<ErrorEvent>('claude:error', (e) => {
+        if (e.payload.runId !== runId) return
+        settleErr(new Error(`${e.payload.code}: ${e.payload.message}`))
+      }),
+    ])
+      .then((registered) => {
+        unlistens.push(...registered)
+      })
+      .catch((err) => settleErr(err))
+  })
+
+  try {
+    await invoke('claude_chat_start', {
+      args: {
+        runId,
+        model: MODEL,
+        systemPrompt: system,
+        prompt: 'Begin your review.',
+        relayTools: ['propose_change'],
+      },
+    })
+  } catch (err) {
+    cleanup()
+    throw err
+  }
+
+  return finished
 }
