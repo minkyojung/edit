@@ -22,6 +22,7 @@ import { useThreadTurns } from '@/hooks/useThreadTurns'
 import { useActiveThread } from '@/hooks/useActiveThread'
 import { runReview } from '@/agent/runReview'
 import { ThreadTabs } from '@/chat/ThreadTabs'
+import { PromptInput } from '@/chat/PromptInput'
 import type { ChatTurn } from '@/chat/types'
 
 interface Props {
@@ -71,6 +72,24 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   }, [turnsHook.turns])
 
   const ready = !!editorView && !!ydoc && !!activeId
+
+  // Step 3 stub: append the user's message and a placeholder assistant turn.
+  // Step 4 swaps the placeholder for a real streaming Claude response.
+  function handleSend(text: string) {
+    if (!ready) return
+    turnsHook.appendTurn({
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: text,
+      ts: Date.now(),
+    })
+    turnsHook.appendTurn({
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: '_Streaming responses land in Step 4._',
+      ts: Date.now(),
+    })
+  }
 
   async function handleReview() {
     if (!ready || runningRef.current) return
@@ -146,7 +165,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       <div className="flex-1 overflow-y-auto p-3 space-y-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {turnsHook.turns.length === 0 && (
           <p className="text-xs text-muted-foreground text-center py-8">
-            Run a review to see results here
+            Ask anything about this document
           </p>
         )}
         {turnsHook.turns.map((turn) => (
@@ -155,14 +174,21 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border p-3 space-y-2">
         <Button
+          variant="outline"
+          size="sm"
           className="w-full"
           disabled={!ready || !account.connected}
           onClick={handleReview}
         >
           Run Review
         </Button>
+        <PromptInput
+          status="idle"
+          disabled={!ready || !account.connected}
+          onSubmit={handleSend}
+        />
       </div>
     </div>
   )
