@@ -1,5 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { App } from './App'
 import './index.css'
 
@@ -11,6 +13,11 @@ if (import.meta.env.DEV) {
       location.reload()
     }
   })
+  // Expose Tauri primitives for ad-hoc verification from the dev console.
+  ;(window as unknown as { __tauri: { invoke: typeof invoke; listen: typeof listen } }).__tauri = {
+    invoke,
+    listen,
+  }
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

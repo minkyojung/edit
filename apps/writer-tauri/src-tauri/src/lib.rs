@@ -112,6 +112,9 @@ pub fn run() {
             oauth::disconnect_claude,
             claude_api::claude_proxy,
             claude_api::claude_cancel,
+            claude_sidecar::commands::claude_chat_start,
+            claude_sidecar::commands::claude_chat_cancel,
+            claude_sidecar::commands::claude_title,
         ])
         .setup(|app| {
             let workspace_root = find_workspace_root(app.handle());
@@ -120,6 +123,21 @@ pub fn run() {
             let child = spawn_proof_server(&workspace_root);
             let state = app.state::<ProofServerHandle>();
             *state.0.lock().unwrap() = child;
+
+            // Spawn the Claude sidecars (chat + title). Run on the Tauri
+            // async runtime; if it fails, log and let the app keep running
+            // so the user at least sees an actionable error in the chat UI.
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                match claude_sidecar::manager::SidecarManager::spawn_all(&app_handle).await {
+                    Ok(manager) => {
+                        app_handle.manage(Arc::new(manager));
+                    }
+                    Err(e) => {
+                        eprintln!("[sidecar manager] failed to spawn: {e}");
+                    }
+                }
+            });
 
             #[cfg(debug_assertions)]
             if let Some(window) = app.get_webview_window("main") {
