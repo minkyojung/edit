@@ -21,8 +21,9 @@ import { useThreads } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
 import { useActiveThread } from '@/hooks/useActiveThread'
 import { runReview } from '@/agent/runReview'
+import { runChat } from '@/agent/chat'
 import { ThreadTabs } from '@/chat/ThreadTabs'
-import { PromptInput } from '@/chat/PromptInput'
+import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
 import type { ChatTurn } from '@/chat/types'
 
 interface Props {
@@ -39,6 +40,8 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   const turnsHook = useThreadTurns(ydoc, activeId)
   const bottomRef = useRef<HTMLDivElement>(null)
   const runningRef = useRef(false)
+  const abortRef = useRef<AbortController | null>(null)
+  const [chatStatus, setChatStatus] = useState<PromptStatus>('idle')
 
   // Track Hocuspocus initial sync so we don't auto-create a thread before the
   // server has had a chance to send us the existing list — that race produces
@@ -73,22 +76,59 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
 
   const ready = !!editorView && !!ydoc && !!activeId
 
-  // Step 3 stub: append the user's message and a placeholder assistant turn.
-  // Step 4 swaps the placeholder for a real streaming Claude response.
-  function handleSend(text: string) {
-    if (!ready) return
-    turnsHook.appendTurn({
+  async function handleSend(text: string) {
+    if (!ready || chatStatus === 'streaming') return
+
+    const userTurn: ChatTurn = {
       id: crypto.randomUUID(),
       role: 'user',
       content: text,
       ts: Date.now(),
-    })
+    }
+    const assistantId = crypto.randomUUID()
+    const historyForModel = [...turnsHook.turns, userTurn]
+
+    turnsHook.appendTurn(userTurn)
     turnsHook.appendTurn({
-      id: crypto.randomUUID(),
+      id: assistantId,
       role: 'assistant',
-      content: '_Streaming responses land in Step 4._',
+      content: '',
       ts: Date.now(),
+      status: 'streaming',
     })
+
+    setChatStatus('streaming')
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    let acc = ''
+    try {
+      await runChat({
+        view: editorView!,
+        ydoc: ydoc!,
+        history: historyForModel,
+        signal: controller.signal,
+        onTextDelta: (delta) => {
+          acc += delta
+          turnsHook.updateTurn(assistantId, { content: acc })
+        },
+      })
+      turnsHook.updateTurn(assistantId, { content: acc, status: 'done' })
+      setChatStatus('idle')
+    } catch (e) {
+      const aborted = controller.signal.aborted
+      turnsHook.updateTurn(assistantId, {
+        content: acc + (aborted ? '' : `\n\n_Error: ${String(e)}_`),
+        status: aborted ? 'done' : 'error',
+      })
+      setChatStatus(aborted ? 'idle' : 'error')
+    } finally {
+      abortRef.current = null
+    }
+  }
+
+  function handleStop() {
+    abortRef.current?.abort()
   }
 
   async function handleReview() {
@@ -185,9 +225,10 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           Run Review
         </Button>
         <PromptInput
-          status="idle"
+          status={chatStatus}
           disabled={!ready || !account.connected}
           onSubmit={handleSend}
+          onStop={handleStop}
         />
       </div>
     </div>
