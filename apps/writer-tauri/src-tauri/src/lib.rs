@@ -1,4 +1,5 @@
 mod claude_api;
+pub mod claude_sidecar;
 mod oauth;
 mod secure_storage;
 
