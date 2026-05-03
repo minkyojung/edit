@@ -29,6 +29,10 @@ export interface ChatTurn {
    * invocations, etc. Mirrors the Vercel AI SDK / AI Elements `parts` model.
    * Optional so old turns (which only carry `content`) still render. */
   parts?: MessagePart[]
+  /** Wall-clock time the user waited for this assistant turn — measured from
+   * submit to settle (done/stopped/error). Surfaced as a small footer under
+   * the message. Only set on assistant turns. */
+  durationMs?: number
 }
 
 /**

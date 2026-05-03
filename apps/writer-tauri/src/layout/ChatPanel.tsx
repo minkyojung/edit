@@ -132,11 +132,12 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     const threadId = activeId
     if (!threadId) return
 
+    const startedAt = Date.now()
     const userTurn: ChatTurn = {
       id: crypto.randomUUID(),
       role: 'user',
       content: text,
-      ts: Date.now(),
+      ts: startedAt,
     }
     const assistantId = crypto.randomUUID()
     const historyForModel = [...turnsHook.turns, userTurn]
@@ -231,6 +232,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         parts,
         ts: Date.now(),
         status,
+        durationMs: Date.now() - startedAt,
       })
       setStreaming(null)
     }
@@ -278,11 +280,12 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     if (!threadId) return
     runningRef.current = true
 
+    const startedAt = Date.now()
     const userTurn: ChatTurn = {
       id: crypto.randomUUID(),
       role: 'user',
       content: 'Run review on this document.',
-      ts: Date.now(),
+      ts: startedAt,
     }
     const assistantId = crypto.randomUUID()
     turnsHook.appendTurn(userTurn)
@@ -359,6 +362,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         parts,
         ts: Date.now(),
         status,
+        durationMs: Date.now() - startedAt,
       })
       setStreaming(null)
     }
@@ -557,6 +561,11 @@ const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) 
     </div>
   )
 
+  // Duration footer — wall-clock time the user waited. Only shown after the
+  // turn settled (avoid a live ticker that fights the streaming animation).
+  const durationLabel =
+    !isStreaming && typeof turn.durationMs === 'number' ? formatDuration(turn.durationMs) : null
+
   if (isStopped) {
     return (
       <div className="rounded-md border border-border/60 bg-muted/20 overflow-hidden">
@@ -564,13 +573,33 @@ const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) 
         <div className="border-t border-border/60 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground flex items-center gap-1.5">
           <IconPlayerStopFilled size={12} stroke={0} className="opacity-70" />
           <span>Stopped</span>
+          {durationLabel && <span className="opacity-70">· {durationLabel}</span>}
         </div>
       </div>
     )
   }
 
-  return body
+  return (
+    <>
+      {body}
+      {durationLabel && (
+        <div className="mt-1 text-[10px] text-muted-foreground/70">{durationLabel}</div>
+      )}
+    </>
+  )
 })
+
+/** Human-readable wall-clock duration. Stays terse so it sits unobtrusively
+ * under the message — sub-second is shown to one decimal, single-minute uses
+ * a single integer minute, and longer waits split into m+s. */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${(ms / 1000).toFixed(1)}s`
+  const totalSec = Math.round(ms / 1000)
+  if (totalSec < 60) return `${totalSec}s`
+  const min = Math.floor(totalSec / 60)
+  const sec = totalSec % 60
+  return sec === 0 ? `${min}m` : `${min}m ${sec}s`
+}
 
 /** Walks an assistant turn's timeline. Each part type maps to its own
  * sub-component; unknown types fall through to a debug pill so coverage
