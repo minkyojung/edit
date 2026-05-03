@@ -290,7 +290,7 @@ const markdownComponents: React.ComponentProps<typeof Markdown>['components'] = 
   ),
 }
 
-function MessageRow({ turn }: { turn: ChatTurn }) {
+const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) {
   if (turn.role === 'user') {
     return (
       <div className="flex justify-end">
@@ -341,7 +341,7 @@ function MessageRow({ turn }: { turn: ChatTurn }) {
   }
 
   return body
-}
+})
 
 function ThinkingSpinner({ label }: { label: string }) {
   return (
