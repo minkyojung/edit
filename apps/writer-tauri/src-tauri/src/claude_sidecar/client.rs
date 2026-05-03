@@ -2,6 +2,7 @@
 // requests by id, dispatches notifications via a callback. See PROTOCOL.md.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -92,21 +93,22 @@ impl Drop for SidecarClient {
 }
 
 impl SidecarClient {
-    /// Spawns the sidecar Node process and starts the I/O loops.
-    /// `node_path` is the node executable; `script` is the absolute path to
-    /// `index.mjs`; `mode` is `"chat"` or `"title"`.
-    /// Spawns a sidecar process. `program` is the executable to run and
-    /// `args` is everything to pass on the command line (including any
-    /// script path in dev mode and the `--mode=...` flag).
+    /// Spawns a sidecar process. `program` is the executable, `args` are
+    /// passed verbatim, `extra_env` is layered on top of the inherited env
+    /// (so callers don't have to mutate `std::env`).
     pub async fn spawn(
         program: &Path,
         args: &[String],
+        extra_env: &[(&str, OsString)],
         on_notification: NotificationHandler,
         on_exit: Option<ExitHandler>,
     ) -> Result<Self, SidecarError> {
         let mut cmd = Command::new(program);
         for a in args {
             cmd.arg(a);
+        }
+        for (k, v) in extra_env {
+            cmd.env(k, v);
         }
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())

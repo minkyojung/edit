@@ -2,6 +2,7 @@
 // and supervises them — when a child exits unexpectedly, we respawn the
 // affected sidecar in place so frontend invocations resume working.
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, Weak};
 
@@ -31,13 +32,15 @@ impl Mode {
 }
 
 /// How a sidecar is launched. Captured at startup so restarts use the same
-/// command without re-resolving paths.
+/// command + env without re-resolving paths.
 #[derive(Clone)]
 struct Launcher {
     program: PathBuf,
     /// Args that come BEFORE `--mode=...`. In dev that's the .mjs script
     /// path; in prod it's empty.
     pre_args: Vec<String>,
+    /// Extra env vars layered on top of the inherited env.
+    env: Vec<(&'static str, OsString)>,
 }
 
 impl Launcher {
@@ -61,24 +64,11 @@ impl SidecarManager {
     pub async fn spawn_all(app: &AppHandle) -> Result<Arc<Self>, SidecarError> {
         let launcher = resolve_launcher(app)?;
         eprintln!(
-            "[sidecar manager] spawning chat + title sidecars\n  program: {}\n  args: {:?}",
+            "[sidecar manager] spawning chat + title sidecars\n  program: {}\n  args: {:?}\n  env: {:?}",
             launcher.program.display(),
             launcher.pre_args,
+            launcher.env.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
         );
-
-        // In prod, the Agent SDK's platform-specific CLI binary lives inside
-        // our bundled node_modules and the SDK auto-resolves it. In dev, the
-        // sidecar runs from the workspace where SDK can't see the .pnpm-store
-        // copy, so we look it up and pass the path through env (children
-        // inherit, sidecar reads it back as `pathToClaudeCodeExecutable`).
-        #[cfg(debug_assertions)]
-        match dev_paths::resolve_claude_cli(app) {
-            Some(cli) => {
-                std::env::set_var("CLAUDE_CODE_CLI_PATH", &cli);
-                eprintln!("[sidecar manager] CLAUDE_CODE_CLI_PATH={}", cli.display());
-            }
-            None => eprintln!("[sidecar manager] WARN: Claude CLI binary not found in .pnpm store; chat will fail"),
-        }
 
         let handler = build_notification_handler(app.clone());
         let self_ref: SelfRef = Arc::new(OnceLock::new());
@@ -89,6 +79,7 @@ impl SidecarManager {
         let chat = SidecarClient::spawn(
             &launcher.program,
             &launcher.args_for("chat"),
+            &launcher.env,
             handler.clone(),
             Some(chat_exit),
         )
@@ -96,6 +87,7 @@ impl SidecarManager {
         let title = SidecarClient::spawn(
             &launcher.program,
             &launcher.args_for("title"),
+            &launcher.env,
             handler.clone(),
             Some(title_exit),
         )
@@ -180,6 +172,7 @@ impl SidecarManager {
         let client = SidecarClient::spawn(
             &self.launcher.program,
             &self.launcher.args_for(mode.as_str()),
+            &self.launcher.env,
             self.notification_handler.clone(),
             Some(exit_handler),
         )
@@ -283,9 +276,23 @@ fn resolve_launcher(app: &AppHandle) -> Result<Launcher, SidecarError> {
             .join("src")
             .join("index.mjs");
         let node = dev_paths::which_node().unwrap_or_else(|| PathBuf::from("node"));
+        // Dev: SDK can't see the platform-specific CLI from the .pnpm store,
+        // so hand it the path explicitly. Prod's bundled node_modules makes
+        // this unnecessary.
+        let mut env: Vec<(&'static str, OsString)> = Vec::new();
+        match dev_paths::resolve_claude_cli(app) {
+            Some(cli) => {
+                eprintln!("[sidecar manager] CLAUDE_CODE_CLI_PATH={}", cli.display());
+                env.push(("CLAUDE_CODE_CLI_PATH", cli.into_os_string()));
+            }
+            None => eprintln!(
+                "[sidecar manager] WARN: Claude CLI binary not found in .pnpm store; chat will fail"
+            ),
+        }
         return Ok(Launcher {
             program: node,
             pre_args: vec![script.to_string_lossy().to_string()],
+            env,
         });
     }
 
@@ -334,6 +341,7 @@ fn resolve_launcher(app: &AppHandle) -> Result<Launcher, SidecarError> {
         return Ok(Launcher {
             program: bun_path,
             pre_args: vec!["run".into(), script.to_string_lossy().into_owned()],
+            env: Vec::new(),
         });
     }
 }

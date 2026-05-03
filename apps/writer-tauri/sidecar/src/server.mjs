@@ -234,11 +234,15 @@ export class Server {
     // the chat.
     let lastResult = null
     for (let attempt = 1; attempt <= 2; attempt++) {
-      // Re-inject env on every attempt: the second attempt uses the rotated
-      // token that arrived via setToken between attempts.
-      process.env.CLAUDE_CODE_OAUTH_TOKEN = this.token
-      delete process.env.ANTHROPIC_API_KEY
-      delete process.env.ANTHROPIC_AUTH_TOKEN
+      // Hand the token to the SDK via options.env so we don't mutate the
+      // sidecar's own process.env (which other concurrent chats share).
+      // Rebuilding per-attempt picks up rotation between attempt 1 and 2.
+      options.env = {
+        ...process.env,
+        CLAUDE_CODE_OAUTH_TOKEN: this.token,
+        ANTHROPIC_API_KEY: undefined,
+        ANTHROPIC_AUTH_TOKEN: undefined,
+      }
 
       let streamError = null
       lastResult = null
