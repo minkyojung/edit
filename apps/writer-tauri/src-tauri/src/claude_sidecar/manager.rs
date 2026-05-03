@@ -68,21 +68,18 @@ impl SidecarManager {
             launcher.pre_args,
         );
 
-        // Tell sidecars where the bundled Claude Code CLI lives. bun --compile
-        // can't embed the SDK's platform-specific native binary, so it ships
-        // alongside as its own externalBin and the sidecar wires it up via
-        // pathToClaudeCodeExecutable. Set on the parent process so child
-        // processes inherit it automatically.
-        // In prod, the Agent SDK's optional native dep is inside the bundled
-        // sidecar's node_modules and the SDK locates it on its own — no env
-        // var needed. In dev, we point at the .pnpm store copy explicitly.
-        if let Some(cli) = resolve_claude_cli(app) {
-            std::env::set_var("CLAUDE_CODE_CLI_PATH", &cli);
-            eprintln!("[sidecar manager] CLAUDE_CODE_CLI_PATH={}", cli.display());
-        } else if cfg!(debug_assertions) {
-            eprintln!("[sidecar manager] WARN: Claude CLI binary not found; chat will fail");
-        } else {
-            eprintln!("[sidecar manager] Claude CLI resolution delegated to bundled SDK");
+        // In prod, the Agent SDK's platform-specific CLI binary lives inside
+        // our bundled node_modules and the SDK auto-resolves it. In dev, the
+        // sidecar runs from the workspace where SDK can't see the .pnpm-store
+        // copy, so we look it up and pass the path through env (children
+        // inherit, sidecar reads it back as `pathToClaudeCodeExecutable`).
+        #[cfg(debug_assertions)]
+        match resolve_claude_cli(app) {
+            Some(cli) => {
+                std::env::set_var("CLAUDE_CODE_CLI_PATH", &cli);
+                eprintln!("[sidecar manager] CLAUDE_CODE_CLI_PATH={}", cli.display());
+            }
+            None => eprintln!("[sidecar manager] WARN: Claude CLI binary not found in .pnpm store; chat will fail"),
         }
 
         let handler = build_notification_handler(app.clone());
@@ -344,56 +341,42 @@ fn resolve_launcher(app: &AppHandle) -> Result<Launcher, SidecarError> {
     }
 }
 
-/// Resolve the Claude Code CLI binary that the Agent SDK needs to spawn.
-///
-/// Dev: pull it out of the .pnpm store, where the platform-specific
-/// `@anthropic-ai/claude-agent-sdk-<arch>` package lives.
-/// Prod: it's bundled next to the main exe via Tauri's externalBin.
+/// Dev-only: pull the platform-specific Claude CLI out of the .pnpm store.
+/// Prod doesn't need this — the SDK auto-resolves from our own node_modules.
+#[cfg(debug_assertions)]
 fn resolve_claude_cli(app: &AppHandle) -> Option<PathBuf> {
-    #[cfg(debug_assertions)]
-    {
-        let workspace_root = find_workspace_root(app);
-        let pnpm = workspace_root.join("node_modules").join(".pnpm");
-        let pkg_prefix = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-            "@anthropic-ai+claude-agent-sdk-darwin-arm64@"
-        } else if cfg!(target_os = "macos") {
-            "@anthropic-ai+claude-agent-sdk-darwin-x64@"
-        } else if cfg!(target_os = "linux") {
-            "@anthropic-ai+claude-agent-sdk-linux-x64@"
-        } else if cfg!(target_os = "windows") {
-            "@anthropic-ai+claude-agent-sdk-win32-x64@"
-        } else {
-            return None;
-        };
-        let cli_name = if cfg!(target_os = "windows") { "claude.exe" } else { "claude" };
-        let pkg_inner = pkg_prefix.trim_end_matches('@').trim_start_matches("@anthropic-ai+");
-        let entries = std::fs::read_dir(&pnpm).ok()?;
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with(pkg_prefix) {
-                let candidate = entry
-                    .path()
-                    .join("node_modules")
-                    .join("@anthropic-ai")
-                    .join(pkg_inner)
-                    .join(cli_name);
-                if candidate.exists() {
-                    return Some(candidate);
-                }
+    let workspace_root = find_workspace_root(app);
+    let pnpm = workspace_root.join("node_modules").join(".pnpm");
+    let pkg_prefix = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "@anthropic-ai+claude-agent-sdk-darwin-arm64@"
+    } else if cfg!(target_os = "macos") {
+        "@anthropic-ai+claude-agent-sdk-darwin-x64@"
+    } else if cfg!(target_os = "linux") {
+        "@anthropic-ai+claude-agent-sdk-linux-x64@"
+    } else if cfg!(target_os = "windows") {
+        "@anthropic-ai+claude-agent-sdk-win32-x64@"
+    } else {
+        return None;
+    };
+    let cli_name = if cfg!(target_os = "windows") { "claude.exe" } else { "claude" };
+    let pkg_inner = pkg_prefix.trim_end_matches('@').trim_start_matches("@anthropic-ai+");
+    let entries = std::fs::read_dir(&pnpm).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with(pkg_prefix) {
+            let candidate = entry
+                .path()
+                .join("node_modules")
+                .join("@anthropic-ai")
+                .join(pkg_inner)
+                .join(cli_name);
+            if candidate.exists() {
+                return Some(candidate);
             }
         }
-        None
     }
-
-    #[cfg(not(debug_assertions))]
-    {
-        let _ = app;
-        // The Agent SDK's optional dep ships inside the bundled sidecar's
-        // node_modules — it can find the binary on its own, no env needed.
-        // Returning None keeps the sidecar from over-specifying.
-        None
-    }
+    None
 }
 
 #[cfg(debug_assertions)]

@@ -19,6 +19,20 @@ fn app_quit(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Hand control of the close decision to the frontend by emitting
+/// `app:close-requested`. If the emit itself fails we exit immediately to
+/// avoid stranding the user on a window they can't dismiss.
+fn request_app_close(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        app.exit(0);
+        return;
+    };
+    if let Err(e) = window.emit("app:close-requested", ()) {
+        eprintln!("[app] emit close-requested failed: {e}");
+        app.exit(0);
+    }
+}
+
 fn find_workspace_root(app_handle: &tauri::AppHandle) -> PathBuf {
     let mut dir = app_handle
         .path()
@@ -314,16 +328,12 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Intercept the user's quit attempt and let the frontend decide
-            // whether to confirm (when a chat is streaming) or proceed.
+            // Window-level close (the X button). Defer the actual close
+            // decision to the frontend — it confirms when chats are streaming.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
                     api.prevent_close();
-                    if let Err(e) = window.emit("app:close-requested", ()) {
-                        eprintln!("[app] emit close-requested failed: {e}");
-                        // If we can't even emit, don't strand the user — just exit.
-                        window.app_handle().exit(0);
-                    }
+                    request_app_close(window.app_handle());
                     return;
                 }
             }
@@ -372,22 +382,15 @@ pub fn run() {
                 _ => {}
             }
 
+            // App-level exit (Cmd+Q via the OS, dock quit, etc.). Same
+            // confirm-via-frontend path as the window-level handler above.
             if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
                 if code.is_some() {
                     eprintln!("[run] honoring programmatic exit");
                     return;
                 }
                 api.prevent_exit();
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    if let Err(e) = window.emit("app:close-requested", ()) {
-                        eprintln!("[app] emit close-requested failed: {e}");
-                        app_handle.exit(0);
-                    } else {
-                        eprintln!("[run] emitted app:close-requested");
-                    }
-                } else {
-                    app_handle.exit(0);
-                }
+                request_app_close(app_handle);
             }
         });
 }
