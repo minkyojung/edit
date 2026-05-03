@@ -406,6 +406,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           settleErr(err)
         }
       }),
+      // Sidecar process death. The Rust supervisor emits this on child exit
+      // (before attempting restart). Without it, in-flight runs hang waiting
+      // on chat:event / chat:done that will never arrive — the producer is
+      // gone. We settle as a regular error so the UI shows a retry card.
+      listen<{ mode: string }>('sidecar:died', (e) => {
+        if (e.payload.mode !== 'chat') return
+        settleErr(new Error('SIDECAR_DIED: chat sidecar crashed'))
+      }),
     ])
       .then((registered) => {
         unlistens.push(...registered)

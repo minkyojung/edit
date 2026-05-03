@@ -73,8 +73,8 @@ impl SidecarManager {
         let handler = build_notification_handler(app.clone());
         let self_ref: SelfRef = Arc::new(OnceLock::new());
 
-        let chat_exit = build_exit(self_ref.clone(), Mode::Chat);
-        let title_exit = build_exit(self_ref.clone(), Mode::Title);
+        let chat_exit = build_exit(self_ref.clone(), Mode::Chat, app.clone());
+        let title_exit = build_exit(self_ref.clone(), Mode::Title, app.clone());
 
         let chat = SidecarClient::spawn_initialized(
             &launcher.program,
@@ -161,7 +161,7 @@ impl SidecarManager {
 
     async fn restart(&self, mode: Mode) -> Result<(), SidecarError> {
         eprintln!("[sidecar manager] {} sidecar exited; respawning", mode.as_str());
-        let exit_handler = build_exit(self.self_ref.clone(), mode);
+        let exit_handler = build_exit(self.self_ref.clone(), mode, self.app.clone());
         let client = SidecarClient::spawn_initialized(
             &self.launcher.program,
             &self.launcher.args_for(mode.as_str()),
@@ -224,8 +224,21 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
     })
 }
 
-fn build_exit(self_ref: SelfRef, mode: Mode) -> ExitHandler {
+fn build_exit(self_ref: SelfRef, mode: Mode, app: AppHandle) -> ExitHandler {
     Arc::new(move || {
+        // Tell the frontend the sidecar is gone before we attempt restart.
+        // In-flight chat runs are blocked waiting on `claude:event` /
+        // `claude:done` / `claude:error` notifications that will never
+        // arrive once the producer is dead — without this signal, the UI
+        // sits in `streaming` forever. The frontend chat loop listens for
+        // this and settles affected runs with an error so the user gets
+        // a Retry-able card instead of a frozen spinner.
+        if let Err(e) = app.emit("sidecar:died", json!({ "mode": mode.as_str() })) {
+            eprintln!(
+                "[sidecar manager] failed to emit sidecar:died for {}: {e}",
+                mode.as_str()
+            );
+        }
         let self_ref = self_ref.clone();
         tauri::async_runtime::spawn(async move {
             let weak = match self_ref.get() {
