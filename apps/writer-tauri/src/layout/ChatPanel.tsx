@@ -45,6 +45,12 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const runningRef = useRef(false)
   const [chatStatus, setChatStatus] = useState<PromptStatus>('idle')
+  // Live streaming buffer — keeps the in-flight assistant turn out of Yjs so
+  // every delta is a cheap React state update instead of a doc rewrite. The
+  // committed turn lands in Yjs only on done / stopped / error. Tagged with
+  // its owning threadId so a thread switch mid-stream doesn't bleed text into
+  // the wrong conversation.
+  const [streaming, setStreaming] = useState<{ threadId: string; turn: ChatTurn } | null>(null)
   const startActivity = useChatActivity((s) => s.start)
   const endActivity = useChatActivity((s) => s.end)
 
@@ -77,9 +83,17 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [turnsHook.turns])
+  }, [turnsHook.turns, streaming])
 
   const ready = !!editorView && !!ydoc && !!activeId
+
+  // Merge the in-flight streaming turn (local) with the persisted turns (Yjs)
+  // for rendering. Only show the streaming turn if it belongs to the thread
+  // we're currently viewing — protects against thread-switch mid-stream.
+  const renderedTurns =
+    streaming && streaming.threadId === activeId
+      ? [...turnsHook.turns, streaming.turn]
+      : turnsHook.turns
 
   async function handleSend(text: string) {
     if (!ready || chatStatus === 'streaming') return
@@ -109,13 +123,21 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       }
     }
 
+    // The user's turn is finished text — push to Yjs once and let it sync.
     turnsHook.appendTurn(userTurn)
-    turnsHook.appendTurn({
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      ts: Date.now(),
-      status: 'streaming',
+
+    // Seed the live assistant turn in local state. No Yjs op fires until the
+    // turn settles, so streaming deltas don't trigger collab traffic or
+    // whole-list re-renders.
+    setStreaming({
+      threadId,
+      turn: {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        ts: Date.now(),
+        status: 'streaming',
+      },
     })
 
     setChatStatus('streaming')
@@ -123,6 +145,18 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
 
     let acc = ''
     let thinkingAcc = ''
+    const commit = (status: ChatTurn['status']) => {
+      turnsHook.appendTurn({
+        id: assistantId,
+        role: 'assistant',
+        content: acc,
+        thinking: thinkingAcc || undefined,
+        ts: Date.now(),
+        status,
+      })
+      setStreaming(null)
+    }
+
     try {
       await runChat({
         view: editorView!,
@@ -131,26 +165,27 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         history: historyForModel,
         onTextDelta: (delta) => {
           acc += delta
-          turnsHook.updateTurn(assistantId, { content: acc })
+          setStreaming((s) =>
+            s && s.threadId === threadId
+              ? { ...s, turn: { ...s.turn, content: acc } }
+              : s,
+          )
         },
         onThinkingDelta: (delta) => {
           thinkingAcc += delta
-          turnsHook.updateTurn(assistantId, { thinking: thinkingAcc })
+          setStreaming((s) =>
+            s && s.threadId === threadId
+              ? { ...s, turn: { ...s.turn, thinking: thinkingAcc } }
+              : s,
+          )
         },
       })
-      turnsHook.updateTurn(assistantId, {
-        content: acc,
-        thinking: thinkingAcc || undefined,
-        status: 'done',
-      })
+      commit('done')
       setChatStatus('idle')
     } catch (e) {
       const aborted = e instanceof DOMException && e.name === 'AbortError'
-      turnsHook.updateTurn(assistantId, {
-        content: acc + (aborted ? '' : `\n\n_Error: ${String(e)}_`),
-        thinking: thinkingAcc || undefined,
-        status: aborted ? 'stopped' : 'error',
-      })
+      if (!aborted) acc = `${acc}\n\n_Error: ${String(e)}_`
+      commit(aborted ? 'stopped' : 'error')
       setChatStatus(aborted ? 'idle' : 'error')
     } finally {
       endActivity()
@@ -163,6 +198,8 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
 
   async function handleReview() {
     if (!ready || runningRef.current) return
+    const threadId = activeId
+    if (!threadId) return
     runningRef.current = true
 
     const userTurn: ChatTurn = {
@@ -173,41 +210,51 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     }
     const assistantId = crypto.randomUUID()
     turnsHook.appendTurn(userTurn)
-    turnsHook.appendTurn({
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      ts: Date.now(),
-      status: 'streaming',
+    setStreaming({
+      threadId,
+      turn: {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        ts: Date.now(),
+        status: 'streaming',
+      },
     })
 
     startActivity()
     let thinkingAcc = ''
+    let finalContent = ''
+    let finalStatus: ChatTurn['status'] = 'done'
     try {
       const result = await runReview({
         view: editorView!,
         ydoc: ydoc!,
         onThinkingDelta: (delta) => {
           thinkingAcc += delta
-          turnsHook.updateTurn(assistantId, { thinking: thinkingAcc })
+          setStreaming((s) =>
+            s && s.threadId === threadId
+              ? { ...s, turn: { ...s.turn, thinking: thinkingAcc } }
+              : s,
+          )
         },
       })
-      const summary =
+      finalContent =
         result.proposed === 0
           ? 'No issues to flag — looks clean to me.'
           : `Found **${result.applied.length}** issue${result.applied.length === 1 ? '' : 's'} — click any highlight in the document to review.`
-      turnsHook.updateTurn(assistantId, {
-        content: summary,
-        thinking: thinkingAcc || undefined,
-        status: 'done',
-      })
     } catch (e) {
-      turnsHook.updateTurn(assistantId, {
-        content: `**Review failed.** ${String(e)}`,
-        thinking: thinkingAcc || undefined,
-        status: 'error',
-      })
+      finalContent = `**Review failed.** ${String(e)}`
+      finalStatus = 'error'
     } finally {
+      turnsHook.appendTurn({
+        id: assistantId,
+        role: 'assistant',
+        content: finalContent,
+        thinking: thinkingAcc || undefined,
+        ts: Date.now(),
+        status: finalStatus,
+      })
+      setStreaming(null)
       runningRef.current = false
       endActivity()
     }
@@ -249,12 +296,12 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       />
 
       <div className="flex-1 overflow-y-auto p-3 space-y-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {turnsHook.turns.length === 0 && (
+        {renderedTurns.length === 0 && (
           <p className="text-xs text-muted-foreground text-center py-8">
             Ask anything about this document
           </p>
         )}
-        {turnsHook.turns.map((turn) => (
+        {renderedTurns.map((turn) => (
           <MessageRow key={turn.id} turn={turn} />
         ))}
         <div ref={bottomRef} />
