@@ -250,10 +250,29 @@ export class Server {
 
       let streamError = null
       lastResult = null
+      // Inactivity watchdog. The Claude Agent SDK delegates the actual HTTPS
+      // request to a `claude` CLI subprocess; if the network drops mid-stream
+      // (Wi-Fi off, ISP hang) the subprocess sits waiting on TCP, no events
+      // arrive, and `for await` blocks forever. We watch wall-clock gap
+      // between events and abort if it exceeds IDLE_MS — that kills the
+      // subprocess and surfaces the failure through the normal error path.
+      // 45s is comfortably above realistic reasoning pauses but well below
+      // the OS-level TCP keepalive window.
+      const IDLE_MS = 45_000
+      let idleTimedOut = false
+      let lastEventAt = Date.now()
+      const watchdog = setInterval(() => {
+        if (controller.signal.aborted) return
+        if (Date.now() - lastEventAt > IDLE_MS) {
+          idleTimedOut = true
+          controller.abort()
+        }
+      }, 5_000)
       try {
         const stream = query({ prompt, options })
         for await (const event of stream) {
           if (controller.signal.aborted) break
+          lastEventAt = Date.now()
           this.emit(notification('chat/event', { runId, event }))
           if (event?.type === 'result') {
             lastResult = event
@@ -261,10 +280,21 @@ export class Server {
         }
       } catch (err) {
         streamError = err
+      } finally {
+        clearInterval(watchdog)
       }
 
       if (controller.signal.aborted) {
-        this.#emitChatError(runId, 'CANCELLED', 'cancelled by client', false)
+        if (idleTimedOut) {
+          this.#emitChatError(
+            runId,
+            'IDLE_TIMEOUT',
+            `No response for ${Math.round(IDLE_MS / 1000)}s — check your network connection`,
+            true,
+          )
+        } else {
+          this.#emitChatError(runId, 'CANCELLED', 'cancelled by client', false)
+        }
         this.activeChats.delete(runId)
         return
       }
@@ -332,6 +362,7 @@ function classifyError(err) {
   const msg = err?.message ? String(err.message) : String(err)
   if (/401|unauthor|invalid[_ ]?token/i.test(msg)) return 'AUTH'
   if (/429|rate[_ ]?limit/i.test(msg)) return 'RATE_LIMIT'
-  if (/network|fetch failed|ECONN|ETIMEDOUT/i.test(msg)) return 'NETWORK'
+  if (/ETIMEDOUT|timed[_ ]?out/i.test(msg)) return 'IDLE_TIMEOUT'
+  if (/network|fetch failed|ECONN/i.test(msg)) return 'NETWORK'
   return 'INTERNAL'
 }

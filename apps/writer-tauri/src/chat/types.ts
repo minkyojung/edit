@@ -37,6 +37,10 @@ export interface ChatTurn {
    * Only abnormal values are surfaced in the UI — `end_turn` / `stop_sequence`
    * stay hidden as routine. */
   stopReason?: string | null
+  /** Human-readable failure message for `status: 'error'` turns. Stored as
+   * a separate field (not as a synthetic text part) so it stays out of the
+   * prompt history and out of Copy output. */
+  errorText?: string
 }
 
 /**

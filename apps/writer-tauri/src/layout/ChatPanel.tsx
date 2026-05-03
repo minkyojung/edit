@@ -168,6 +168,18 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     setChatStatus('streaming')
     startActivity()
 
+    // OS-level "offline" event: fires the moment the user disables Wi-Fi or
+    // ethernet drops. We don't wait for the sidecar's 45s idle watchdog in
+    // this case — abort immediately so the failure surfaces within a beat.
+    // `offlineAborted` lets the catch distinguish this from a user-pressed
+    // Stop (which should render as the muted "Stopped" card, not as an error).
+    let offlineAborted = false
+    const onOffline = () => {
+      offlineAborted = true
+      if (activeId) useChatRuns.getState().abortByThread(activeId)
+    }
+    window.addEventListener('offline', onOffline)
+
     // Authoritative ordered list of parts for the in-flight assistant turn.
     // chat.ts emits an upsert per state change; we maintain this map (id →
     // part) plus a stable order array, then sync into streaming state behind
@@ -208,7 +220,11 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       }, 120)
     }
 
-    const commit = (status: ChatTurn['status'], stopReason: string | null) => {
+    const commit = (
+      status: ChatTurn['status'],
+      stopReason: string | null,
+      errorText: string | null = null,
+    ) => {
       if (pendingFlush != null) {
         clearTimeout(pendingFlush)
         pendingFlush = null
@@ -226,6 +242,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         status,
         durationMs: Date.now() - startedAt,
         stopReason,
+        errorText: errorText ?? undefined,
       })
       setStreaming(null)
     }
@@ -245,20 +262,22 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       setChatStatus('idle')
     } catch (e) {
       const aborted = e instanceof DOMException && e.name === 'AbortError'
-      if (!aborted) {
-        // Surface the failure as an extra text part so the timeline still
-        // tells the story even on error.
-        const errPart: MessagePart = {
-          id: crypto.randomUUID(),
-          ts: Date.now(),
-          type: 'text',
-          text: `\n\n_Error: ${String(e)}_`,
-        }
-        upsertPart(errPart)
-      }
-      commit(aborted ? 'stopped' : 'error', null)
-      setChatStatus(aborted ? 'idle' : 'error')
+      // An offline-triggered abort looks like AbortError too, but it should
+      // render as a real error (with Retry) — not the muted "Stopped" card
+      // that user-pressed Stop produces.
+      const isError = !aborted || offlineAborted
+      const errMsg = !aborted
+        ? humanizeError(e)
+        : offlineAborted
+          ? 'Lost network connection'
+          : null
+      // Errors live on a dedicated turn field, not in the parts timeline —
+      // that keeps prompt history (`buildPrompt`) and Copy output clean, and
+      // lets the renderer surface the failure with proper error chrome.
+      commit(isError ? 'error' : 'stopped', null, errMsg)
+      setChatStatus(isError ? 'error' : 'idle')
     } finally {
+      window.removeEventListener('offline', onOffline)
       endActivity()
     }
   }
@@ -393,6 +412,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       status: ChatTurn['status'],
       summary: string | null,
       stopReason: string | null,
+      errorText: string | null = null,
     ) => {
       if (pendingFlush != null) {
         clearTimeout(pendingFlush)
@@ -412,6 +432,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         status,
         durationMs: Date.now() - startedAt,
         stopReason,
+        errorText: errorText ?? undefined,
       })
       setStreaming(null)
     }
@@ -442,8 +463,12 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       setChatStatus('idle')
     } catch (e) {
       const aborted = e instanceof DOMException && e.name === 'AbortError'
-      const summary = aborted ? null : `**Review failed.** ${String(e)}`
-      commit(aborted ? 'stopped' : 'error', summary, null)
+      commit(
+        aborted ? 'stopped' : 'error',
+        null,
+        null,
+        aborted ? null : humanizeError(e),
+      )
       setChatStatus(aborted ? 'idle' : 'error')
     } finally {
       runningRef.current = false
@@ -584,6 +609,7 @@ const MessageRow = React.memo(function MessageRow({
   const hasText = turn.content.trim().length > 0
   const isStreaming = turn.status === 'streaming'
   const isStopped = turn.status === 'stopped'
+  const isError = turn.status === 'error'
 
   // The activity line stays up until the user-facing text answer starts —
   // its label changes (Thinking… → Suggesting an edit… → …) as tools fire,
@@ -646,6 +672,37 @@ const MessageRow = React.memo(function MessageRow({
           {durationLabel && <span className="opacity-70">· {durationLabel}</span>}
           {canCopy && <CopyButton text={turn.content} />}
           {canRegenerate && <RegenerateButton onClick={() => onRegenerate!(turn.id)} />}
+        </div>
+      </div>
+    )
+  }
+
+  if (isError) {
+    // Errored turn: distinct red-tinted card. Anything that streamed before
+    // the failure (text, tool calls, reasoning) stays in the body so the user
+    // can see how far the model got. The error message + Retry sit in the
+    // footer.
+    const hasBody = (turn.parts && turn.parts.length > 0) || hasText || hasThinking
+    return (
+      <div className="rounded-md border border-destructive/40 bg-destructive/5 overflow-hidden">
+        {hasBody && <div className="px-3 py-2">{body}</div>}
+        <div className="border-t border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs text-destructive flex items-center gap-1.5">
+          <IconAlertTriangle size={12} className="shrink-0 opacity-80" />
+          <span className="flex-1 min-w-0 truncate" title={turn.errorText ?? undefined}>
+            {turn.errorText ?? "Couldn't complete response"}
+          </span>
+          {durationLabel && <span className="opacity-70 shrink-0">{durationLabel}</span>}
+          {onRegenerate && (
+            <button
+              type="button"
+              onClick={() => onRegenerate(turn.id)}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-destructive hover:bg-destructive/15 transition-colors shrink-0"
+              title="Retry"
+            >
+              <IconRefresh size={11} />
+              <span className="font-medium">Retry</span>
+            </button>
+          )}
         </div>
       </div>
     )
@@ -740,6 +797,17 @@ function formatDuration(ms: number): string {
   const min = Math.floor(totalSec / 60)
   const sec = totalSec % 60
   return sec === 0 ? `${min}m` : `${min}m ${sec}s`
+}
+
+/** Coerce whatever the SDK / fetch / our own code threw into a single
+ * readable line. Trims SDK-style prefixes ("Error: …") and clamps absurdly
+ * long messages so the inline footer can show it without wrapping. */
+function humanizeError(e: unknown): string {
+  let msg = e instanceof Error ? e.message : String(e)
+  msg = msg.replace(/^Error:\s*/i, '').trim()
+  if (msg.length === 0) return 'Something went wrong'
+  if (msg.length > 240) msg = msg.slice(0, 237) + '…'
+  return msg
 }
 
 /** Map an Anthropic stop_reason to a user-facing message. Returns null for
