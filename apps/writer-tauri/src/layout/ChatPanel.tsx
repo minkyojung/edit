@@ -25,6 +25,7 @@ import { runReview } from '@/agent/runReview'
 import { runChat } from '@/agent/chat'
 import { generateThreadTitle } from '@/agent/generateThreadTitle'
 import { useChatActivity } from '@/stores/chatActivity'
+import { useChatRuns } from '@/stores/chatRuns'
 import { ThreadTabs } from '@/chat/ThreadTabs'
 import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
 import type { ChatTurn } from '@/chat/types'
@@ -43,7 +44,6 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   const turnsHook = useThreadTurns(ydoc, activeId)
   const bottomRef = useRef<HTMLDivElement>(null)
   const runningRef = useRef(false)
-  const abortRef = useRef<AbortController | null>(null)
   const [chatStatus, setChatStatus] = useState<PromptStatus>('idle')
   const startActivity = useChatActivity((s) => s.start)
   const endActivity = useChatActivity((s) => s.end)
@@ -83,6 +83,8 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
 
   async function handleSend(text: string) {
     if (!ready || chatStatus === 'streaming') return
+    const threadId = activeId
+    if (!threadId) return
 
     const userTurn: ChatTurn = {
       id: crypto.randomUUID(),
@@ -117,8 +119,6 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     })
 
     setChatStatus('streaming')
-    const controller = new AbortController()
-    abortRef.current = controller
     startActivity()
 
     let acc = ''
@@ -127,8 +127,8 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       await runChat({
         view: editorView!,
         ydoc: ydoc!,
+        threadId,
         history: historyForModel,
-        signal: controller.signal,
         onTextDelta: (delta) => {
           acc += delta
           turnsHook.updateTurn(assistantId, { content: acc })
@@ -145,7 +145,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       })
       setChatStatus('idle')
     } catch (e) {
-      const aborted = controller.signal.aborted
+      const aborted = e instanceof DOMException && e.name === 'AbortError'
       turnsHook.updateTurn(assistantId, {
         content: acc + (aborted ? '' : `\n\n_Error: ${String(e)}_`),
         thinking: thinkingAcc || undefined,
@@ -153,13 +153,12 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       })
       setChatStatus(aborted ? 'idle' : 'error')
     } finally {
-      abortRef.current = null
       endActivity()
     }
   }
 
   function handleStop() {
-    abortRef.current?.abort()
+    if (activeId) useChatRuns.getState().abortByThread(activeId)
   }
 
   async function handleReview() {
@@ -312,9 +311,18 @@ function MessageRow({ turn }: { turn: ChatTurn }) {
       {!hasThinking && isStreaming && !hasText && <ThinkingSpinner label="Thinking..." />}
       {hasText && (
         <div className="leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-          <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {turn.content}
-          </Markdown>
+          {isStreaming ? (
+            // Skip markdown parsing while tokens are still arriving — re-running
+            // the full remark pipeline on every delta scales O(n²) and dominates
+            // the streaming render. Plain text with preserved whitespace looks
+            // nearly identical mid-stream; the markdown render kicks in once on
+            // 'done'.
+            <div className="whitespace-pre-wrap">{turn.content}</div>
+          ) : (
+            <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {turn.content}
+            </Markdown>
+          )}
         </div>
       )}
     </div>
