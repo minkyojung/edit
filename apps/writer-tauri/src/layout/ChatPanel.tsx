@@ -14,8 +14,7 @@ import { IconPlayerStopFilled } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { Streamdown } from 'streamdown'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useThreads } from '@/hooks/useThreads'
@@ -43,6 +42,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   const { activeId, setActiveId } = useActiveThread(slug, threads.active)
   const turnsHook = useThreadTurns(ydoc, activeId)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const runningRef = useRef(false)
   const [chatStatus, setChatStatus] = useState<PromptStatus>('idle')
   // Live streaming buffer — keeps the in-flight assistant turn out of Yjs so
@@ -81,8 +81,18 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     }
   }, [synced, threads])
 
+  // Auto-scroll only when the user is already pinned to the bottom — if they
+  // scrolled up to read history, leave them alone. Streaming uses 'auto' (no
+  // animation) so rapid token deltas don't fight an in-flight smooth scroll.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const c = scrollRef.current
+    if (!c) return
+    const distanceFromBottom = c.scrollHeight - c.scrollTop - c.clientHeight
+    const pinned = distanceFromBottom < 80 // px
+    if (!pinned) return
+    bottomRef.current?.scrollIntoView({
+      behavior: streaming ? 'auto' : 'smooth',
+    })
   }, [turnsHook.turns, streaming])
 
   const ready = !!editorView && !!ydoc && !!activeId
@@ -295,7 +305,10 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         }}
       />
 
-      <div className="flex-1 overflow-y-auto p-3 space-y-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto p-3 space-y-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         {renderedTurns.length === 0 && (
           <p className="text-xs text-muted-foreground text-center py-8">
             Ask anything about this document
@@ -328,7 +341,11 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   )
 }
 
-const markdownComponents: React.ComponentProps<typeof Markdown>['components'] = {
+// Streamdown renders raw markdown progressively (handles incomplete blocks
+// during streaming) and memoizes per-block, so we don't need to gate
+// markdown rendering on stream-vs-done. The component overrides below align
+// inline element styling with the rest of the chat surface.
+const markdownComponents: React.ComponentProps<typeof Streamdown>['components'] = {
   p: ({ children }) => <p className="leading-relaxed">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
@@ -358,18 +375,7 @@ const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) 
       {!hasThinking && isStreaming && !hasText && <ThinkingSpinner label="Thinking..." />}
       {hasText && (
         <div className="leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-          {isStreaming ? (
-            // Skip markdown parsing while tokens are still arriving — re-running
-            // the full remark pipeline on every delta scales O(n²) and dominates
-            // the streaming render. Plain text with preserved whitespace looks
-            // nearly identical mid-stream; the markdown render kicks in once on
-            // 'done'.
-            <div className="whitespace-pre-wrap">{turn.content}</div>
-          ) : (
-            <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-              {turn.content}
-            </Markdown>
-          )}
+          <Streamdown components={markdownComponents}>{turn.content}</Streamdown>
         </div>
       )}
     </div>
