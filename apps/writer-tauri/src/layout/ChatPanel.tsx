@@ -155,7 +155,27 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
 
     let acc = ''
     let thinkingAcc = ''
+    // Throttle streaming-state updates so each commit batches up to ~120ms of
+    // deltas. Streamdown then animates the whole batch as one chunk —
+    // 5–8 Korean morphemes / English words fade in together rather than
+    // word-by-word.
+    let pendingFlush: number | null = null
+    const scheduleFlush = () => {
+      if (pendingFlush != null) return
+      pendingFlush = window.setTimeout(() => {
+        pendingFlush = null
+        setStreaming((s) =>
+          s && s.threadId === threadId
+            ? { ...s, turn: { ...s.turn, content: acc, thinking: thinkingAcc || undefined } }
+            : s,
+        )
+      }, 120)
+    }
     const commit = (status: ChatTurn['status']) => {
+      if (pendingFlush != null) {
+        clearTimeout(pendingFlush)
+        pendingFlush = null
+      }
       turnsHook.appendTurn({
         id: assistantId,
         role: 'assistant',
@@ -175,19 +195,11 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         history: historyForModel,
         onTextDelta: (delta) => {
           acc += delta
-          setStreaming((s) =>
-            s && s.threadId === threadId
-              ? { ...s, turn: { ...s.turn, content: acc } }
-              : s,
-          )
+          scheduleFlush()
         },
         onThinkingDelta: (delta) => {
           thinkingAcc += delta
-          setStreaming((s) =>
-            s && s.threadId === threadId
-              ? { ...s, turn: { ...s.turn, thinking: thinkingAcc } }
-              : s,
-          )
+          scheduleFlush()
         },
       })
       commit('done')
@@ -354,6 +366,31 @@ const markdownComponents: React.ComponentProps<typeof Streamdown>['components'] 
   ),
 }
 
+// Streamdown's documented streaming pattern: pass content straight through,
+// let it word-wrap each new chunk in animated spans, and rely on blur+opacity
+// duration to mask token-arrival bursts (no client-side throttling needed).
+// `isAnimating` toggles the animation rehype pass off entirely once the
+// stream settles, so finished messages render with no leftover span markup.
+const STREAM_ANIMATE = {
+  animation: 'blurIn' as const,
+  duration: 200,
+  sep: 'word' as const,
+}
+
+function StreamingMarkdown({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  return (
+    <div className="leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+      <Streamdown
+        animated={STREAM_ANIMATE}
+        isAnimating={isStreaming}
+        components={markdownComponents}
+      >
+        {content}
+      </Streamdown>
+    </div>
+  )
+}
+
 const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) {
   if (turn.role === 'user') {
     return (
@@ -373,11 +410,7 @@ const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) 
         <ThinkingPanel content={turn.thinking!} streamingNoText={isStreaming && !hasText} />
       )}
       {!hasThinking && isStreaming && !hasText && <ThinkingSpinner label="Thinking..." />}
-      {hasText && (
-        <div className="leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-          <Streamdown components={markdownComponents}>{turn.content}</Streamdown>
-        </div>
-      )}
+      {hasText && <StreamingMarkdown content={turn.content} isStreaming={isStreaming} />}
     </div>
   )
 
