@@ -43,6 +43,20 @@ export function PromptInput({
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    // Cmd/Ctrl+Shift+Backspace during streaming = Stop. Bare Esc is
+    // deliberately NOT bound — it would clash with the OS-wide habit of
+    // dismissing modals/menus and risk accidentally cancelling an answer.
+    // The three-key chord requires intent.
+    if (
+      isStreaming &&
+      e.key === 'Backspace' &&
+      e.shiftKey &&
+      (e.metaKey || e.ctrlKey)
+    ) {
+      e.preventDefault()
+      onStop?.()
+      return
+    }
     // IME-safe: don't submit while composing (e.g. Korean/Japanese input).
     if (e.key !== 'Enter') return
     if (isComposing || e.nativeEvent.isComposing) return

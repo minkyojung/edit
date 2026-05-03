@@ -53,4 +53,19 @@ process.stdin.on('end', () => {
 process.on('SIGTERM', () => process.exit(0))
 process.on('SIGINT', () => process.exit(0))
 
+// Last-chance diagnostics. Unhandled errors in async code paths inside the
+// SDK / our handlers would otherwise tear down the process with no stderr
+// trace — making post-mortem debugging blind. Both handlers exit non-zero
+// so the Rust supervisor's `sidecar:died` path still fires and the user
+// sees the standard error card.
+process.on('uncaughtException', (err) => {
+  process.stderr.write(`[sidecar FATAL] uncaughtException: ${err?.stack ?? err}\n`)
+  process.exit(1)
+})
+process.on('unhandledRejection', (reason) => {
+  const detail = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)
+  process.stderr.write(`[sidecar FATAL] unhandledRejection: ${detail}\n`)
+  process.exit(1)
+})
+
 process.stderr.write(`[sidecar] mode=${mode} pid=${process.pid} ready\n`)
