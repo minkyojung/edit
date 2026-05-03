@@ -27,7 +27,14 @@ import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import { ThreadTabs } from '@/chat/ThreadTabs'
 import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
-import type { ChatTurn } from '@/chat/types'
+import type {
+  ChatTurn,
+  MessagePart,
+  ReasoningPart,
+  TextPart,
+  ToolPart,
+  UnknownPart,
+} from '@/chat/types'
 
 interface Props {
   editorView: EditorView | null
@@ -153,34 +160,60 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     setChatStatus('streaming')
     startActivity()
 
-    let acc = ''
-    let thinkingAcc = ''
-    // Throttle streaming-state updates so each commit batches up to ~120ms of
-    // deltas. Streamdown then animates the whole batch as one chunk —
-    // 5–8 Korean morphemes / English words fade in together rather than
-    // word-by-word.
+    // Authoritative ordered list of parts for the in-flight assistant turn.
+    // chat.ts emits an upsert per state change; we maintain this map (id →
+    // part) plus a stable order array, then sync into streaming state behind
+    // a 120ms throttle so multiple deltas land in one Streamdown commit.
+    const partsById = new Map<string, MessagePart>()
+    const partOrder: string[] = []
+    const upsertPart = (part: MessagePart) => {
+      if (!partsById.has(part.id)) partOrder.push(part.id)
+      partsById.set(part.id, part)
+    }
+    const buildParts = (): MessagePart[] => partOrder.map((id) => partsById.get(id)!).filter(Boolean)
+    // Derived (joined) text/reasoning kept for prompt history + legacy compat.
+    const joinByType = (type: 'text' | 'reasoning'): string => {
+      let out = ''
+      for (const id of partOrder) {
+        const p = partsById.get(id)
+        if (p?.type === type) out += p.text
+      }
+      return out
+    }
+
     let pendingFlush: number | null = null
     const scheduleFlush = () => {
       if (pendingFlush != null) return
       pendingFlush = window.setTimeout(() => {
         pendingFlush = null
+        const parts = buildParts()
+        const content = joinByType('text')
+        const thinking = joinByType('reasoning')
         setStreaming((s) =>
           s && s.threadId === threadId
-            ? { ...s, turn: { ...s.turn, content: acc, thinking: thinkingAcc || undefined } }
+            ? {
+                ...s,
+                turn: { ...s.turn, content, thinking: thinking || undefined, parts },
+              }
             : s,
         )
       }, 120)
     }
+
     const commit = (status: ChatTurn['status']) => {
       if (pendingFlush != null) {
         clearTimeout(pendingFlush)
         pendingFlush = null
       }
+      const parts = buildParts()
+      const content = joinByType('text')
+      const thinking = joinByType('reasoning')
       turnsHook.appendTurn({
         id: assistantId,
         role: 'assistant',
-        content: acc,
-        thinking: thinkingAcc || undefined,
+        content,
+        thinking: thinking || undefined,
+        parts,
         ts: Date.now(),
         status,
       })
@@ -193,12 +226,8 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         ydoc: ydoc!,
         threadId,
         history: historyForModel,
-        onTextDelta: (delta) => {
-          acc += delta
-          scheduleFlush()
-        },
-        onThinkingDelta: (delta) => {
-          thinkingAcc += delta
+        onPart: (part) => {
+          upsertPart(part)
           scheduleFlush()
         },
       })
@@ -206,7 +235,17 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       setChatStatus('idle')
     } catch (e) {
       const aborted = e instanceof DOMException && e.name === 'AbortError'
-      if (!aborted) acc = `${acc}\n\n_Error: ${String(e)}_`
+      if (!aborted) {
+        // Surface the failure as an extra text part so the timeline still
+        // tells the story even on error.
+        const errPart: MessagePart = {
+          id: crypto.randomUUID(),
+          ts: Date.now(),
+          type: 'text',
+          text: `\n\n_Error: ${String(e)}_`,
+        }
+        upsertPart(errPart)
+      }
       commit(aborted ? 'stopped' : 'error')
       setChatStatus(aborted ? 'idle' : 'error')
     } finally {
@@ -404,13 +443,38 @@ const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) 
   const isStreaming = turn.status === 'streaming'
   const isStopped = turn.status === 'stopped'
 
+  // "Has anything the user can actually see been produced yet?" — drives
+  // the Thinking spinner. Counts text/reasoning with content, or any tool
+  // invocation. Skips invisible parts (unknown / step-start) so a stray
+  // system-init event doesn't briefly suppress the spinner.
+  const hasVisibleContent =
+    turn.parts && turn.parts.length > 0
+      ? turn.parts.some(
+          (p) =>
+            (p.type === 'text' && p.text.length > 0) ||
+            (p.type === 'reasoning' && p.text.length > 0) ||
+            p.type === 'tool',
+        )
+      : hasText || hasThinking
+  const showSpinner = isStreaming && !hasVisibleContent
+
+  // Two render paths:
+  // - Legacy turns (no `parts`): keep the original text+thinking layout.
+  // - Parts-aware turns: walk the timeline so tool calls / reasoning blocks
+  //   appear inline at the moment they happened.
   const body = (
     <div className="text-sm text-foreground leading-relaxed">
-      {hasThinking && (
-        <ThinkingPanel content={turn.thinking!} streamingNoText={isStreaming && !hasText} />
+      {turn.parts && turn.parts.length > 0 ? (
+        <PartList parts={turn.parts} isStreaming={isStreaming} />
+      ) : (
+        <>
+          {hasThinking && (
+            <ThinkingPanel content={turn.thinking!} streamingNoText={isStreaming && !hasText} />
+          )}
+          {hasText && <StreamingMarkdown content={turn.content} isStreaming={isStreaming} />}
+        </>
       )}
-      {!hasThinking && isStreaming && !hasText && <ThinkingSpinner label="Thinking..." />}
-      {hasText && <StreamingMarkdown content={turn.content} isStreaming={isStreaming} />}
+      {showSpinner && <ThinkingSpinner label="Thinking..." />}
     </div>
   )
 
@@ -428,6 +492,131 @@ const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) 
 
   return body
 })
+
+/** Walks an assistant turn's timeline. Each part type maps to its own
+ * sub-component; unknown types fall through to a debug pill so coverage
+ * gaps stay visible during development. */
+function PartList({ parts, isStreaming }: { parts: MessagePart[]; isStreaming: boolean }) {
+  return (
+    <>
+      {parts.map((part) => {
+        switch (part.type) {
+          case 'text':
+            return <TextPartView key={part.id} part={part} isStreaming={isStreaming} />
+          case 'reasoning':
+            return <ReasoningPartView key={part.id} part={part} isStreaming={isStreaming} />
+          case 'tool':
+            return <ToolPartView key={part.id} part={part} />
+          case 'step-start':
+            return <StepStartView key={part.id} />
+          case 'unknown':
+            return <UnknownPartView key={part.id} part={part} />
+        }
+      })}
+    </>
+  )
+}
+
+function TextPartView({ part, isStreaming }: { part: TextPart; isStreaming: boolean }) {
+  if (!part.text) return null
+  return <StreamingMarkdown content={part.text} isStreaming={isStreaming} />
+}
+
+function ReasoningPartView({ part, isStreaming }: { part: ReasoningPart; isStreaming: boolean }) {
+  if (!part.text) {
+    return isStreaming ? <ThinkingSpinner label="Thinking..." /> : null
+  }
+  // Auto-expand only while this is still the active reasoning during streaming.
+  return <ThinkingPanel content={part.text} streamingNoText={isStreaming} />
+}
+
+/** Tool invocation card. Mirrors the AI Elements `<Tool>` family — a
+ * collapsible wrapper with a header (tool name + state badge) and a
+ * content section showing input and (when available) output. */
+function ToolPartView({ part }: { part: ToolPart }) {
+  const [open, setOpen] = React.useState(false)
+  const stateLabel: Record<ToolPart['state'], string> = {
+    'input-streaming': 'preparing input…',
+    'input-available': 'running…',
+    'output-available': 'done',
+    'output-error': 'error',
+    'approval-requested': 'awaiting approval',
+  }
+  const stateTone: Record<ToolPart['state'], string> = {
+    'input-streaming': 'text-muted-foreground',
+    'input-available': 'text-muted-foreground',
+    'output-available': 'text-emerald-600 dark:text-emerald-400',
+    'output-error': 'text-red-600 dark:text-red-400',
+    'approval-requested': 'text-amber-600 dark:text-amber-400',
+  }
+
+  return (
+    <details
+      open={open}
+      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+      className="my-1 rounded-md border border-border/60 bg-muted/30 text-xs"
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1 select-none">
+        <span className="inline-block transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+          ▸
+        </span>
+        <span className="font-mono">{part.toolName}</span>
+        <span className={`ml-auto ${stateTone[part.state]}`}>{stateLabel[part.state]}</span>
+      </summary>
+      <div className="space-y-2 px-2 pb-2 pt-1">
+        <KeyValueBlock label="input" value={part.input} />
+        {(part.state === 'output-available' || part.state === 'output-error') && (
+          <KeyValueBlock
+            label={part.state === 'output-error' ? 'error' : 'output'}
+            value={part.errorText ?? part.output}
+          />
+        )}
+      </div>
+    </details>
+  )
+}
+
+function StepStartView() {
+  return <hr className="my-2 border-border/40" />
+}
+
+function UnknownPartView({ part }: { part: UnknownPart }) {
+  // Debug-only catch-all. Hidden in prod so the chat surface stays clean;
+  // visible in dev for spotting SDK message types we haven't modeled yet.
+  if (!import.meta.env.DEV) return null
+  const summary =
+    typeof part.raw === 'object' && part.raw && 'type' in part.raw
+      ? String((part.raw as { type?: unknown }).type)
+      : 'unknown'
+  return (
+    <div className="my-1 inline-flex items-center gap-1 rounded-md bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+      <span>▽</span>
+      <span className="font-mono">{summary}</span>
+    </div>
+  )
+}
+
+function KeyValueBlock({ label, value }: { label: string; value: unknown }) {
+  const text = formatValue(value)
+  return (
+    <div>
+      <div className="mb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-background/60 px-2 py-1 font-mono text-[11px]">
+        {text}
+      </pre>
+    </div>
+  )
+}
+
+function formatValue(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
 
 function ThinkingSpinner({ label }: { label: string }) {
   return (

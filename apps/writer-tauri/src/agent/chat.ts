@@ -19,7 +19,14 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { FREE_CHAT_PROMPT } from './skills/freeChat'
 import { applyProposal, type ApplyOutcome } from './applyProposal'
 import type { Proposal } from './proposals'
-import type { ChatTurn } from '@/chat/types'
+import type {
+  ChatTurn,
+  MessagePart,
+  ReasoningPart,
+  TextPart,
+  ToolPart,
+  UnknownPart,
+} from '@/chat/types'
 import { useChatRuns } from '@/stores/chatRuns'
 
 const MODEL = 'claude-sonnet-4-6'
@@ -41,9 +48,15 @@ export interface RunChatArgs {
   /** Prior turns up to AND INCLUDING the user message that triggered this run. */
   history: ChatTurn[]
   signal?: AbortSignal
-  onTextDelta: (delta: string) => void
-  /** Called for every thinking-block text fragment the model emits. */
+  /** Convenience callback fired for raw text deltas. New callers should
+   * prefer `onPart` and derive content from the parts timeline. */
+  onTextDelta?: (delta: string) => void
+  /** Convenience callback for thinking-block fragments. */
   onThinkingDelta?: (delta: string) => void
+  /** Authoritative callback. Receives a part on every state change — new
+   * parts and updated parts come through the same signature. The caller
+   * upserts by `part.id` to maintain its own ordered list. */
+  onPart?: (part: MessagePart) => void
   onToolApplied?: (call: ToolCallRecord) => void
 }
 
@@ -58,28 +71,50 @@ interface ProposalEvent {
 }
 
 /**
- * Subset of the SDK's notification shapes we react to. The SDK can emit ~30
- * different message types; we only render text/thinking deltas today.
+ * Loose typing for the SDK notifications we consume — the SDK ships ~30
+ * message types and we don't strongly type all of them. We pluck the few
+ * fields we read from each shape and let the rest fall through to the
+ * `unknown` part for debug visibility.
  *
- * - `stream_event` carries Anthropic's raw streaming events (token-by-token
- *   content_block_delta), surfaced because the sidecar runs query() with
- *   includePartialMessages: true.
- * - `assistant` is the post-stream summary message (whole reply at once);
- *   we still see it, but the live text already came from stream_event.
+ * Routes:
+ * - `stream_event`        → content_block_start/delta/stop, drives live
+ *                           text/reasoning/tool-input parts.
+ * - `assistant`           → ignored (already covered by stream_event).
+ * - `user` w/ tool_result → resolves the matching tool part to its result.
+ * - everything else       → surfaced as an `unknown` part.
  */
 interface ChatEvent {
   runId: string
   event: {
     type?: string
-    // assistant message
-    message?: { content?: Array<{ type: string; text?: string; thinking?: string }> }
-    // stream_event payload (BetaRawMessageStreamEvent)
+    // assistant / user — message.content is an array of content blocks
+    message?: {
+      content?: Array<{
+        type: string
+        text?: string
+        thinking?: string
+        // tool_result content block (lives on user messages)
+        tool_use_id?: string
+        is_error?: boolean
+        content?: unknown
+      }>
+    }
+    // stream_event payload (Anthropic's BetaRawMessageStreamEvent)
     event?: {
       type?: string
+      index?: number
+      content_block?: {
+        type?: string
+        id?: string
+        name?: string
+        text?: string
+        thinking?: string
+      }
       delta?: {
         type?: string
         text?: string
         thinking?: string
+        partial_json?: string
       }
     }
   }
@@ -94,6 +129,20 @@ interface ErrorEvent {
   runId: string
   code: string
   message: string
+}
+
+/** Best-effort error text extraction from a tool_result content block.
+ * Anthropic returns content as either a plain string, a single text block,
+ * or an array of blocks; we handle all three. */
+function extractErrorText(content: unknown): string | undefined {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    const text = content
+      .map((b) => (typeof b === 'object' && b && 'text' in b ? String((b as { text?: unknown }).text ?? '') : ''))
+      .join('')
+    return text || undefined
+  }
+  return undefined
 }
 
 function buildPrompt(history: ChatTurn[]): string {
@@ -112,7 +161,7 @@ function buildPrompt(history: ChatTurn[]): string {
 }
 
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
-  const { view, ydoc, threadId, history, signal, onTextDelta, onThinkingDelta, onToolApplied } = args
+  const { view, ydoc, threadId, history, signal, onTextDelta, onThinkingDelta, onPart, onToolApplied } = args
 
   const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
   const docForPrompt = docText.length > DOC_CHAR_CAP ? docText.slice(0, DOC_CHAR_CAP) : docText
@@ -132,6 +181,29 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   runs.start(threadId, runId, controller)
 
   const toolCalls: ToolCallRecord[] = []
+
+  // Mutable mirror of the parts timeline — kept locally so we can update an
+  // existing part (e.g. append a text delta) by reading its prior state and
+  // re-emitting the new whole. The caller treats `part.id` as identity and
+  // upserts.
+  const partsById = new Map<string, MessagePart>()
+  // index → partId for the open content_block at that index. Anthropic's
+  // raw stream uses an index per concurrent block; we route deltas via this.
+  const blockIndexToPartId = new Map<number, string>()
+  // Tool input arrives as fragments of JSON via input_json_delta. We keep
+  // the partial string per part until content_block_stop, then JSON.parse.
+  const toolInputFragments = new Map<string, string>()
+
+  const upsertPart = (part: MessagePart) => {
+    partsById.set(part.id, part)
+    onPart?.(part)
+  }
+  const findToolPartByCallId = (toolCallId: string): ToolPart | undefined => {
+    for (const p of partsById.values()) {
+      if (p.type === 'tool' && p.toolCallId === toolCallId) return p
+    }
+    return undefined
+  }
 
   const unlistens: UnlistenFn[] = []
   const cleanup = () => {
@@ -165,21 +237,118 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       listen<ChatEvent>('claude:event', (e) => {
         if (e.payload.runId !== runId) return
         const ev = e.payload.event
-        // Token-by-token streaming. The SDK forwards Anthropic's raw stream
-        // events; we only care about content_block_delta of text or thinking.
+
+        // 1) Live token streaming — Anthropic's raw content_block_* events.
         if (ev?.type === 'stream_event') {
           const inner = ev.event
+          // Block opens — register a part of the right type at this index.
+          if (inner?.type === 'content_block_start') {
+            const idx = inner.index ?? 0
+            const block = inner.content_block ?? {}
+            const partId = crypto.randomUUID()
+            const ts = Date.now()
+            if (block.type === 'text') {
+              const part: TextPart = { id: partId, ts, type: 'text', text: block.text ?? '' }
+              blockIndexToPartId.set(idx, partId)
+              upsertPart(part)
+            } else if (block.type === 'thinking') {
+              const part: ReasoningPart = { id: partId, ts, type: 'reasoning', text: block.thinking ?? '' }
+              blockIndexToPartId.set(idx, partId)
+              upsertPart(part)
+            } else if (block.type === 'tool_use') {
+              const part: ToolPart = {
+                id: partId,
+                ts,
+                type: 'tool',
+                toolName: block.name ?? '<unknown>',
+                toolCallId: block.id ?? partId,
+                input: {},
+                state: 'input-streaming',
+              }
+              blockIndexToPartId.set(idx, partId)
+              toolInputFragments.set(partId, '')
+              upsertPart(part)
+            }
+            return
+          }
+
+          // Deltas — append to whichever block is open at this index.
           if (inner?.type === 'content_block_delta') {
+            const idx = inner.index ?? 0
+            const partId = blockIndexToPartId.get(idx)
             const d = inner.delta
-            if (d?.type === 'text_delta' && d.text) onTextDelta(d.text)
-            else if (d?.type === 'thinking_delta' && d.thinking) onThinkingDelta?.(d.thinking)
+            if (partId && d) {
+              const prev = partsById.get(partId)
+              if (prev?.type === 'text' && d.type === 'text_delta' && d.text) {
+                upsertPart({ ...prev, text: prev.text + d.text })
+                onTextDelta?.(d.text)
+              } else if (prev?.type === 'reasoning' && d.type === 'thinking_delta' && d.thinking) {
+                upsertPart({ ...prev, text: prev.text + d.thinking })
+                onThinkingDelta?.(d.thinking)
+              } else if (prev?.type === 'tool' && d.type === 'input_json_delta' && d.partial_json) {
+                const buf = (toolInputFragments.get(partId) ?? '') + d.partial_json
+                toolInputFragments.set(partId, buf)
+                // Don't try to parse mid-stream; just keep the raw fragment
+                // visible via input until stop.
+                upsertPart({ ...prev, input: buf })
+              }
+            }
+            return
+          }
+
+          // Block closes — for tool_use, parse accumulated JSON and flip state.
+          if (inner?.type === 'content_block_stop') {
+            const idx = inner.index ?? 0
+            const partId = blockIndexToPartId.get(idx)
+            blockIndexToPartId.delete(idx)
+            if (partId) {
+              const prev = partsById.get(partId)
+              if (prev?.type === 'tool') {
+                const buf = toolInputFragments.get(partId) ?? ''
+                toolInputFragments.delete(partId)
+                let parsed: unknown = buf
+                try { parsed = buf ? JSON.parse(buf) : {} } catch { /* leave raw string */ }
+                upsertPart({ ...prev, input: parsed, state: 'input-available' })
+              }
+            }
+            return
           }
           return
         }
-        // The SDK still emits a final `assistant` summary message after the
-        // stream completes. We already accumulated everything via stream_event,
-        // so ignore the duplicate here.
+
+        // 2) Final assistant message — already covered by stream_event.
         if (ev?.type === 'assistant') return
+
+        // 3) User message with tool_result — resolve the matching tool part.
+        if (ev?.type === 'user') {
+          const blocks = ev.message?.content
+          if (Array.isArray(blocks)) {
+            for (const b of blocks) {
+              if (b.type === 'tool_result' && b.tool_use_id) {
+                const tool = findToolPartByCallId(b.tool_use_id)
+                if (tool) {
+                  const isError = !!b.is_error
+                  upsertPart({
+                    ...tool,
+                    state: isError ? 'output-error' : 'output-available',
+                    output: b.content,
+                    errorText: isError ? extractErrorText(b.content) : undefined,
+                  })
+                }
+              }
+            }
+          }
+          return
+        }
+
+        // 4) Anything else — keep visible as an unknown part for debugging.
+        const unknown: UnknownPart = {
+          id: crypto.randomUUID(),
+          ts: Date.now(),
+          type: 'unknown',
+          raw: ev,
+        }
+        upsertPart(unknown)
       }),
       listen<ProposalEvent>('claude:proposal', (e) => {
         if (e.payload.runId !== runId) return
