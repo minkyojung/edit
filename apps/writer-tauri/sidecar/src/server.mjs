@@ -201,6 +201,10 @@ export class Server {
     const options = {
       permissionMode,
       abortController: controller,
+      // Emit `stream_event` notifications token-by-token instead of one
+      // SDKAssistantMessage per turn. The frontend reassembles the live
+      // text from content_block_delta events.
+      includePartialMessages: true,
     }
     if (model) options.model = model
     if (systemPrompt) options.systemPrompt = systemPrompt
