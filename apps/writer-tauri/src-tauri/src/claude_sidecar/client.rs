@@ -95,17 +95,20 @@ impl SidecarClient {
     /// Spawns the sidecar Node process and starts the I/O loops.
     /// `node_path` is the node executable; `script` is the absolute path to
     /// `index.mjs`; `mode` is `"chat"` or `"title"`.
+    /// Spawns a sidecar process. `program` is the executable to run and
+    /// `args` is everything to pass on the command line (including any
+    /// script path in dev mode and the `--mode=...` flag).
     pub async fn spawn(
-        node_path: &Path,
-        script: &Path,
-        mode: &str,
+        program: &Path,
+        args: &[String],
         on_notification: NotificationHandler,
         on_exit: Option<ExitHandler>,
     ) -> Result<Self, SidecarError> {
-        let mut cmd = Command::new(node_path);
-        cmd.arg(script)
-            .arg(format!("--mode={mode}"))
-            .stdin(Stdio::piped())
+        let mut cmd = Command::new(program);
+        for a in args {
+            cmd.arg(a);
+        }
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);

@@ -30,31 +30,40 @@ impl Mode {
     }
 }
 
+/// How a sidecar is launched. Captured at startup so restarts use the same
+/// command without re-resolving paths.
+#[derive(Clone)]
+struct Launcher {
+    program: PathBuf,
+    /// Args that come BEFORE `--mode=...`. In dev that's the .mjs script
+    /// path; in prod it's empty.
+    pre_args: Vec<String>,
+}
+
+impl Launcher {
+    fn args_for(&self, mode: &str) -> Vec<String> {
+        let mut args = self.pre_args.clone();
+        args.push(format!("--mode={mode}"));
+        args
+    }
+}
+
 pub struct SidecarManager {
     chat: RwLock<Arc<SidecarClient>>,
     title: RwLock<Arc<SidecarClient>>,
     self_ref: SelfRef,
     notification_handler: NotificationHandler,
-    node: PathBuf,
-    script: PathBuf,
+    launcher: Launcher,
     app: AppHandle,
 }
 
 impl SidecarManager {
     pub async fn spawn_all(app: &AppHandle) -> Result<Arc<Self>, SidecarError> {
-        let workspace_root = find_workspace_root(app);
-        let script = workspace_root
-            .join("apps")
-            .join("writer-tauri")
-            .join("sidecar")
-            .join("src")
-            .join("index.mjs");
-        let node = which_node().unwrap_or_else(|| PathBuf::from("node"));
-
+        let launcher = resolve_launcher(app)?;
         eprintln!(
-            "[sidecar manager] spawning chat + title sidecars\n  node: {}\n  script: {}",
-            node.display(),
-            script.display(),
+            "[sidecar manager] spawning chat + title sidecars\n  program: {}\n  args: {:?}",
+            launcher.program.display(),
+            launcher.pre_args,
         );
 
         let handler = build_notification_handler(app.clone());
@@ -64,17 +73,15 @@ impl SidecarManager {
         let title_exit = build_exit(self_ref.clone(), app.clone(), Mode::Title);
 
         let chat = SidecarClient::spawn(
-            &node,
-            &script,
-            "chat",
+            &launcher.program,
+            &launcher.args_for("chat"),
             handler.clone(),
             Some(chat_exit),
         )
         .await?;
         let title = SidecarClient::spawn(
-            &node,
-            &script,
-            "title",
+            &launcher.program,
+            &launcher.args_for("title"),
             handler.clone(),
             Some(title_exit),
         )
@@ -94,8 +101,7 @@ impl SidecarManager {
             title: RwLock::new(Arc::new(title)),
             self_ref: self_ref.clone(),
             notification_handler: handler,
-            node,
-            script,
+            launcher,
             app: app.clone(),
         });
 
@@ -158,9 +164,8 @@ impl SidecarManager {
         eprintln!("[sidecar manager] {} sidecar exited; respawning", mode.as_str());
         let exit_handler = build_exit(self.self_ref.clone(), self.app.clone(), mode);
         let client = SidecarClient::spawn(
-            &self.node,
-            &self.script,
-            mode.as_str(),
+            &self.launcher.program,
+            &self.launcher.args_for(mode.as_str()),
             self.notification_handler.clone(),
             Some(exit_handler),
         )
@@ -245,6 +250,75 @@ fn build_exit(self_ref: SelfRef, _app: AppHandle, mode: Mode) -> ExitHandler {
             }
         });
     })
+}
+
+/// Decide how to spawn sidecars on this build.
+///
+/// Dev: run the .mjs source through the system `node` so we can iterate
+/// without rebuilding the Rust crate. Prod: run the compiled, self-contained
+/// binary that Tauri ships next to the app's main executable, with no Node
+/// dependency on the user's machine.
+fn resolve_launcher(app: &AppHandle) -> Result<Launcher, SidecarError> {
+    #[cfg(debug_assertions)]
+    {
+        let _ = app;
+        let workspace_root = find_workspace_root(app);
+        let script = workspace_root
+            .join("apps")
+            .join("writer-tauri")
+            .join("sidecar")
+            .join("src")
+            .join("index.mjs");
+        let node = which_node().unwrap_or_else(|| PathBuf::from("node"));
+        return Ok(Launcher {
+            program: node,
+            pre_args: vec![script.to_string_lossy().to_string()],
+        });
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        // The Tauri bundler copies externalBin entries next to the main
+        // executable and renames them to drop the target-triple suffix —
+        // so on macOS the file inside `Writer.app/Contents/MacOS/` is just
+        // `claude-sidecar`. We resolve relative to the running exe so this
+        // works regardless of where the .app is installed.
+        let exe = std::env::current_exe()
+            .map_err(|e| SidecarError::Io(e))?;
+        let exe_dir = exe.parent().ok_or_else(|| {
+            SidecarError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "current_exe has no parent",
+            ))
+        })?;
+
+        // Try the unsuffixed name first (post-bundle), then fall back to
+        // the suffixed name (e.g. when the binary is run from
+        // src-tauri/binaries/ during local prod testing).
+        let candidates = [
+            exe_dir.join("claude-sidecar"),
+            exe_dir.join(if cfg!(target_os = "windows") {
+                "claude-sidecar.exe"
+            } else {
+                "claude-sidecar-bin"
+            }),
+        ];
+        for path in candidates.iter() {
+            if path.exists() {
+                return Ok(Launcher {
+                    program: path.clone(),
+                    pre_args: vec![],
+                });
+            }
+        }
+        Err(SidecarError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(
+                "bundled sidecar not found near {}",
+                exe_dir.display()
+            ),
+        )))
+    }
 }
 
 fn which_node() -> Option<PathBuf> {
