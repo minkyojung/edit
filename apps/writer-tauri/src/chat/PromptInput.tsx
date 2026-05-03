@@ -8,9 +8,18 @@
 //   error       → last send errored. Same as idle but rendered with an error
 //                 icon hint; the actual error message lives in the turn.
 
-import { useState, type KeyboardEvent } from 'react'
+import { useState, type KeyboardEvent, type ReactNode } from 'react'
 import { IconArrowUp, IconPlayerStop } from '@tabler/icons-react'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+
+// Detect Mac so we render the correct modifier glyph in shortcut hints.
+// navigator.platform is deprecated but still the most reliable signal in
+// Tauri's webview; userAgent fallback covers any future webview shift.
+const IS_MAC =
+  typeof navigator !== 'undefined' &&
+  (/mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent))
+const MOD_KEY = IS_MAC ? '⌘' : 'Ctrl'
 
 export type PromptStatus = 'idle' | 'streaming' | 'error'
 
@@ -99,22 +108,41 @@ export function PromptInput({
       />
 
       <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={handleSubmitClick}
-          disabled={!isStreaming && !canSubmit}
-          aria-label={isStreaming ? 'Stop' : 'Send'}
-          className={cn(
-            'flex h-7 w-7 items-center justify-center rounded-full transition-colors',
-            isStreaming
-              ? 'bg-foreground text-background hover:bg-foreground/90'
-              : canSubmit
-                ? 'bg-foreground text-background hover:bg-foreground/90'
-                : 'bg-muted text-muted-foreground cursor-not-allowed',
-          )}
-        >
-          <SubmitIcon status={status} canSubmit={canSubmit} />
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleSubmitClick}
+              disabled={!isStreaming && !canSubmit}
+              aria-label={isStreaming ? 'Stop' : 'Send'}
+              className={cn(
+                'flex h-7 w-7 items-center justify-center rounded-full transition-colors',
+                isStreaming
+                  ? 'bg-foreground text-background hover:bg-foreground/90'
+                  : canSubmit
+                    ? 'bg-foreground text-background hover:bg-foreground/90'
+                    : 'bg-muted text-muted-foreground cursor-not-allowed',
+              )}
+            >
+              <SubmitIcon status={status} canSubmit={canSubmit} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            {isStreaming ? (
+              <>
+                <span>Stop</span>
+                <Kbd>{MOD_KEY}</Kbd>
+                <Kbd>⇧</Kbd>
+                <Kbd>⌫</Kbd>
+              </>
+            ) : (
+              <>
+                <span>Send</span>
+                <Kbd>⏎</Kbd>
+              </>
+            )}
+          </TooltipContent>
+        </Tooltip>
       </div>
     </div>
   )
@@ -123,4 +151,18 @@ export function PromptInput({
 function SubmitIcon({ status, canSubmit }: { status: PromptStatus; canSubmit: boolean }) {
   if (status === 'streaming') return <IconPlayerStop size={14} stroke={2} />
   return <IconArrowUp size={14} stroke={2} className={cn(!canSubmit && 'opacity-60')} />
+}
+
+/** Inline keyboard glyph used in tooltips. The tooltip CSS auto-styles
+ * anything with `data-slot="kbd"` (rounded corners, inset shadow); we just
+ * supply the muted text + monospace layer. */
+function Kbd({ children }: { children: ReactNode }) {
+  return (
+    <kbd
+      data-slot="kbd"
+      className="bg-muted text-muted-foreground font-mono text-[10px] leading-none px-1 py-0.5"
+    >
+      {children}
+    </kbd>
+  )
 }
