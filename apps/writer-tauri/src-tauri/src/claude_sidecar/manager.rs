@@ -2,8 +2,6 @@
 // and supervises them — when a child exits unexpectedly, we respawn the
 // affected sidecar in place so frontend invocations resume working.
 
-#[cfg(debug_assertions)]
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, Weak};
 
@@ -74,7 +72,7 @@ impl SidecarManager {
         // copy, so we look it up and pass the path through env (children
         // inherit, sidecar reads it back as `pathToClaudeCodeExecutable`).
         #[cfg(debug_assertions)]
-        match resolve_claude_cli(app) {
+        match dev_paths::resolve_claude_cli(app) {
             Some(cli) => {
                 std::env::set_var("CLAUDE_CODE_CLI_PATH", &cli);
                 eprintln!("[sidecar manager] CLAUDE_CODE_CLI_PATH={}", cli.display());
@@ -85,8 +83,8 @@ impl SidecarManager {
         let handler = build_notification_handler(app.clone());
         let self_ref: SelfRef = Arc::new(OnceLock::new());
 
-        let chat_exit = build_exit(self_ref.clone(), app.clone(), Mode::Chat);
-        let title_exit = build_exit(self_ref.clone(), app.clone(), Mode::Title);
+        let chat_exit = build_exit(self_ref.clone(), Mode::Chat);
+        let title_exit = build_exit(self_ref.clone(), Mode::Title);
 
         let chat = SidecarClient::spawn(
             &launcher.program,
@@ -178,7 +176,7 @@ impl SidecarManager {
 
     async fn restart(&self, mode: Mode) -> Result<(), SidecarError> {
         eprintln!("[sidecar manager] {} sidecar exited; respawning", mode.as_str());
-        let exit_handler = build_exit(self.self_ref.clone(), self.app.clone(), mode);
+        let exit_handler = build_exit(self.self_ref.clone(), mode);
         let client = SidecarClient::spawn(
             &self.launcher.program,
             &self.launcher.args_for(mode.as_str()),
@@ -243,7 +241,7 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
     })
 }
 
-fn build_exit(self_ref: SelfRef, _app: AppHandle, mode: Mode) -> ExitHandler {
+fn build_exit(self_ref: SelfRef, mode: Mode) -> ExitHandler {
     Arc::new(move || {
         let self_ref = self_ref.clone();
         tauri::async_runtime::spawn(async move {
@@ -277,14 +275,14 @@ fn build_exit(self_ref: SelfRef, _app: AppHandle, mode: Mode) -> ExitHandler {
 fn resolve_launcher(app: &AppHandle) -> Result<Launcher, SidecarError> {
     #[cfg(debug_assertions)]
     {
-        let workspace_root = find_workspace_root(app);
+        let workspace_root = dev_paths::find_workspace_root(app);
         let script = workspace_root
             .join("apps")
             .join("writer-tauri")
             .join("sidecar")
             .join("src")
             .join("index.mjs");
-        let node = which_node().unwrap_or_else(|| PathBuf::from("node"));
+        let node = dev_paths::which_node().unwrap_or_else(|| PathBuf::from("node"));
         return Ok(Launcher {
             program: node,
             pre_args: vec![script.to_string_lossy().to_string()],
@@ -294,11 +292,10 @@ fn resolve_launcher(app: &AppHandle) -> Result<Launcher, SidecarError> {
     #[cfg(not(debug_assertions))]
     {
         let _ = app;
-        // Run our sidecar source through the bundled bun runtime. bun --compile
-        // had an unsolvable stdin-shim limitation when piping to bun-compile
-        // children (claude-cli), so we ship the runtime + source instead.
-        // Both files come from Tauri's bundle: bun is an externalBin (lives
-        // alongside the main exe), the sidecar is shipped as a Resource.
+        // Same shape as dev — bun runs the sidecar source — but the runtime
+        // and the source come from the .app bundle instead of the user's
+        // PATH and workspace. bun is an externalBin (next to the main exe),
+        // the sidecar is shipped as a Resource.
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
@@ -341,74 +338,81 @@ fn resolve_launcher(app: &AppHandle) -> Result<Launcher, SidecarError> {
     }
 }
 
-/// Dev-only: pull the platform-specific Claude CLI out of the .pnpm store.
-/// Prod doesn't need this — the SDK auto-resolves from our own node_modules.
+/// Dev-only path resolution. In prod the bundled .app contains everything
+/// it needs at known relative locations, but in dev we have to discover the
+/// workspace root + system tools at runtime.
 #[cfg(debug_assertions)]
-fn resolve_claude_cli(app: &AppHandle) -> Option<PathBuf> {
-    let workspace_root = find_workspace_root(app);
-    let pnpm = workspace_root.join("node_modules").join(".pnpm");
-    let pkg_prefix = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-        "@anthropic-ai+claude-agent-sdk-darwin-arm64@"
-    } else if cfg!(target_os = "macos") {
-        "@anthropic-ai+claude-agent-sdk-darwin-x64@"
-    } else if cfg!(target_os = "linux") {
-        "@anthropic-ai+claude-agent-sdk-linux-x64@"
-    } else if cfg!(target_os = "windows") {
-        "@anthropic-ai+claude-agent-sdk-win32-x64@"
-    } else {
-        return None;
-    };
-    let cli_name = if cfg!(target_os = "windows") { "claude.exe" } else { "claude" };
-    let pkg_inner = pkg_prefix.trim_end_matches('@').trim_start_matches("@anthropic-ai+");
-    let entries = std::fs::read_dir(&pnpm).ok()?;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with(pkg_prefix) {
-            let candidate = entry
-                .path()
-                .join("node_modules")
-                .join("@anthropic-ai")
-                .join(pkg_inner)
-                .join(cli_name);
+mod dev_paths {
+    use std::path::{Path, PathBuf};
+    use tauri::{AppHandle, Manager};
+
+    /// Pull the platform-specific Claude CLI out of the .pnpm store. The SDK
+    /// in prod auto-resolves from our bundled node_modules, but in dev the
+    /// sidecar runs from the workspace and the SDK can't see .pnpm.
+    pub fn resolve_claude_cli(app: &AppHandle) -> Option<PathBuf> {
+        let workspace_root = find_workspace_root(app);
+        let pnpm = workspace_root.join("node_modules").join(".pnpm");
+        let pkg_prefix = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+            "@anthropic-ai+claude-agent-sdk-darwin-arm64@"
+        } else if cfg!(target_os = "macos") {
+            "@anthropic-ai+claude-agent-sdk-darwin-x64@"
+        } else if cfg!(target_os = "linux") {
+            "@anthropic-ai+claude-agent-sdk-linux-x64@"
+        } else if cfg!(target_os = "windows") {
+            "@anthropic-ai+claude-agent-sdk-win32-x64@"
+        } else {
+            return None;
+        };
+        let cli_name = if cfg!(target_os = "windows") { "claude.exe" } else { "claude" };
+        let pkg_inner = pkg_prefix.trim_end_matches('@').trim_start_matches("@anthropic-ai+");
+        let entries = std::fs::read_dir(&pnpm).ok()?;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with(pkg_prefix) {
+                let candidate = entry
+                    .path()
+                    .join("node_modules")
+                    .join("@anthropic-ai")
+                    .join(pkg_inner)
+                    .join(cli_name);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn which_node() -> Option<PathBuf> {
+        let path = std::env::var("PATH").ok()?;
+        for dir in path.split(':') {
+            let candidate = Path::new(dir).join("node");
             if candidate.exists() {
                 return Some(candidate);
             }
         }
+        None
     }
-    None
-}
 
-#[cfg(debug_assertions)]
-fn which_node() -> Option<PathBuf> {
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
-        let candidate = Path::new(dir).join("node");
-        if candidate.exists() {
-            return Some(candidate);
+    pub fn find_workspace_root(app: &AppHandle) -> PathBuf {
+        let mut dir = app
+            .path()
+            .resource_dir()
+            .unwrap_or_else(|_| PathBuf::from("."));
+        for _ in 0..10 {
+            if dir
+                .join("apps/writer-tauri/sidecar/src/index.mjs")
+                .exists()
+            {
+                return dir;
+            }
+            if let Some(parent) = dir.parent() {
+                dir = parent.to_path_buf();
+            } else {
+                break;
+            }
         }
+        PathBuf::from(".")
     }
-    None
-}
-
-#[cfg(debug_assertions)]
-fn find_workspace_root(app: &AppHandle) -> PathBuf {
-    let mut dir = app
-        .path()
-        .resource_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
-    for _ in 0..10 {
-        if dir
-            .join("apps/writer-tauri/sidecar/src/index.mjs")
-            .exists()
-        {
-            return dir;
-        }
-        if let Some(parent) = dir.parent() {
-            dir = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-    PathBuf::from(".")
 }

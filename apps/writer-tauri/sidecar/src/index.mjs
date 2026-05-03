@@ -1,6 +1,7 @@
 // Entry. Wires stdin/stdout to the JSON-RPC server.
 //
-// Usage: node src/index.mjs --mode=chat | --mode=title
+// Runtime: bun (prod, bundled in the .app) or system node (dev). Both
+// honor the same stream-event API, so this file is runtime-agnostic.
 
 import { FrameParser, encode } from './jsonrpc.mjs'
 import { Server } from './server.mjs'
