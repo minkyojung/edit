@@ -1,8 +1,7 @@
 // Subscribes to a single thread's turn array (key `thread:<id>`) and
-// exposes append/update helpers.
-//
-// Turn updates (e.g. streaming text deltas) use the same delete+insert
-// pattern as useThreads so that Yjs treats each delta as one change.
+// exposes append helpers. Turn-level mutation (status changes, streaming
+// text) lives in component-local state — Yjs only sees the finished turn,
+// which keeps streaming off the network and out of the observer hot path.
 
 import { useCallback, useEffect, useState } from 'react'
 import * as Y from 'yjs'
@@ -12,7 +11,6 @@ export interface UseThreadTurnsResult {
   ready: boolean
   turns: ChatTurn[]
   appendTurn: (turn: ChatTurn) => void
-  updateTurn: (id: string, patch: Partial<ChatTurn>) => void
 }
 
 function turnsKey(threadId: string) {
@@ -46,20 +44,5 @@ export function useThreadTurns(
     [ydoc, threadId],
   )
 
-  const updateTurn = useCallback<UseThreadTurnsResult['updateTurn']>(
-    (id, patch) => {
-      if (!ydoc || !threadId) return
-      const yTurns = ydoc.getArray<ChatTurn>(turnsKey(threadId))
-      const arr = yTurns.toArray()
-      const i = arr.findIndex((t) => t.id === id)
-      if (i < 0) return
-      ydoc.transact(() => {
-        yTurns.delete(i, 1)
-        yTurns.insert(i, [{ ...arr[i], ...patch }])
-      })
-    },
-    [ydoc, threadId],
-  )
-
-  return { ready: !!ydoc && !!threadId, turns, appendTurn, updateTurn }
+  return { ready: !!ydoc && !!threadId, turns, appendTurn }
 }

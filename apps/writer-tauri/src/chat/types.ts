@@ -42,15 +42,12 @@ export interface ChatTurn {
  *   as the SDK reports progress.
  * - `step-start` marks a boundary between internal model steps within a
  *   single user-visible turn (Vercel emits this between tool-call rounds).
- * - `unknown` is a debug catch-all for SDK message types we haven't modeled
- *   yet — keeps them visible in dev without forcing every type up-front.
  */
 export type MessagePart =
   | TextPart
   | ReasoningPart
   | ToolPart
   | StepStartPart
-  | UnknownPart
 
 export interface TextPart {
   id: string
@@ -91,14 +88,6 @@ export interface StepStartPart {
   id: string
   ts: number
   type: 'step-start'
-}
-
-export interface UnknownPart {
-  id: string
-  ts: number
-  type: 'unknown'
-  /** Original SDK event payload, retained verbatim for debugging. */
-  raw: unknown
 }
 
 export type Attachment =

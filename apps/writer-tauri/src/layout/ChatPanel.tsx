@@ -10,7 +10,17 @@
 // the user is directed back to the body to act on individual highlights.
 
 import React, { useEffect, useRef, useState } from 'react'
-import { IconPlayerStopFilled } from '@tabler/icons-react'
+import {
+  IconPlayerStopFilled,
+  IconChevronRight,
+  IconCheck,
+  IconAlertTriangle,
+  IconLoader2,
+  IconTool,
+  IconPencil,
+  IconMessageCircle,
+  IconQuote,
+} from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
@@ -20,8 +30,8 @@ import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useThreads } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
 import { useActiveThread } from '@/hooks/useActiveThread'
-import { runReview } from '@/agent/runReview'
 import { runChat } from '@/agent/chat'
+import { COPYEDITOR_PROMPT } from '@/agent/skills/copyeditor'
 import { generateThreadTitle } from '@/agent/generateThreadTitle'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
@@ -33,8 +43,13 @@ import type {
   ReasoningPart,
   TextPart,
   ToolPart,
-  UnknownPart,
 } from '@/chat/types'
+
+// Tool registered as `propose_change` on the `writer-relay` MCP server in
+// sidecar/src/server.mjs. The Agent SDK exposes MCP tools to the model — and
+// reports them back in stream events — under the `mcp__<server>__<tool>`
+// canonical id, so that's the value we match on for UI routing.
+const PROPOSE_CHANGE_TOOL = 'mcp__writer-relay__propose_change'
 
 interface Props {
   editorView: EditorView | null
@@ -258,7 +273,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   }
 
   async function handleReview() {
-    if (!ready || runningRef.current) return
+    if (!ready || runningRef.current || chatStatus === 'streaming') return
     const threadId = activeId
     if (!threadId) return
     runningRef.current = true
@@ -282,40 +297,102 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       },
     })
 
+    setChatStatus('streaming')
     startActivity()
-    let thinkingAcc = ''
-    let finalContent = ''
-    let finalStatus: ChatTurn['status'] = 'done'
-    try {
-      const result = await runReview({
-        view: editorView!,
-        ydoc: ydoc!,
-        onThinkingDelta: (delta) => {
-          thinkingAcc += delta
-          setStreaming((s) =>
-            s && s.threadId === threadId
-              ? { ...s, turn: { ...s.turn, thinking: thinkingAcc } }
-              : s,
-          )
-        },
-      })
-      finalContent =
-        result.proposed === 0
-          ? 'No issues to flag — looks clean to me.'
-          : `Found **${result.applied.length}** issue${result.applied.length === 1 ? '' : 's'} — click any highlight in the document to review.`
-    } catch (e) {
-      finalContent = `**Review failed.** ${String(e)}`
-      finalStatus = 'error'
-    } finally {
+
+    // Same parts-timeline machinery as handleSend, just with a different
+    // system prompt + model. Sharing this path means review automatically
+    // gets token streaming, the ActivityStatus indicator, and the propose
+    // change card UI.
+    const partsById = new Map<string, MessagePart>()
+    const partOrder: string[] = []
+    const upsertPart = (part: MessagePart) => {
+      if (!partsById.has(part.id)) partOrder.push(part.id)
+      partsById.set(part.id, part)
+    }
+    const buildParts = (): MessagePart[] => partOrder.map((id) => partsById.get(id)!).filter(Boolean)
+    const joinByType = (type: 'text' | 'reasoning'): string => {
+      let out = ''
+      for (const id of partOrder) {
+        const p = partsById.get(id)
+        if (p?.type === type) out += p.text
+      }
+      return out
+    }
+
+    let pendingFlush: number | null = null
+    const scheduleFlush = () => {
+      if (pendingFlush != null) return
+      pendingFlush = window.setTimeout(() => {
+        pendingFlush = null
+        const parts = buildParts()
+        const content = joinByType('text')
+        const thinking = joinByType('reasoning')
+        setStreaming((s) =>
+          s && s.threadId === threadId
+            ? {
+                ...s,
+                turn: { ...s.turn, content, thinking: thinking || undefined, parts },
+              }
+            : s,
+        )
+      }, 120)
+    }
+
+    let appliedCount = 0
+    let proposedCount = 0
+
+    const commit = (status: ChatTurn['status'], summary: string | null) => {
+      if (pendingFlush != null) {
+        clearTimeout(pendingFlush)
+        pendingFlush = null
+      }
+      const parts = buildParts()
+      const modelText = joinByType('text')
+      const thinking = joinByType('reasoning')
+      const content = summary ?? modelText
       turnsHook.appendTurn({
         id: assistantId,
         role: 'assistant',
-        content: finalContent,
-        thinking: thinkingAcc || undefined,
+        content,
+        thinking: thinking || undefined,
+        parts,
         ts: Date.now(),
-        status: finalStatus,
+        status,
       })
       setStreaming(null)
+    }
+
+    try {
+      await runChat({
+        view: editorView!,
+        ydoc: ydoc!,
+        threadId,
+        prompt: 'Begin your review.',
+        systemPrompt: COPYEDITOR_PROMPT,
+        model: 'claude-haiku-4-5',
+        onPart: (part) => {
+          upsertPart(part)
+          scheduleFlush()
+        },
+        onToolApplied: (call) => {
+          if (call.name !== 'propose_change') return
+          proposedCount += 1
+          if (call.result.ok) appliedCount += 1
+        },
+      })
+      const summary =
+        proposedCount === 0
+          ? 'No issues to flag — looks clean to me.'
+          : `Found **${appliedCount}** issue${appliedCount === 1 ? '' : 's'} — click any highlight in the document to review.`
+      commit('done', summary)
+      setChatStatus('idle')
+    } catch (e) {
+      const aborted = e instanceof DOMException && e.name === 'AbortError'
+      const summary = aborted ? null : `**Review failed.** ${String(e)}`
+      commit(aborted ? 'stopped' : 'error', summary)
+      setChatStatus(aborted ? 'idle' : 'error')
+    } finally {
       runningRef.current = false
       endActivity()
     }
@@ -443,20 +520,22 @@ const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) 
   const isStreaming = turn.status === 'streaming'
   const isStopped = turn.status === 'stopped'
 
-  // "Has anything the user can actually see been produced yet?" — drives
-  // the Thinking spinner. Counts text/reasoning with content, or any tool
-  // invocation. Skips invisible parts (unknown / step-start) so a stray
-  // system-init event doesn't briefly suppress the spinner.
-  const hasVisibleContent =
-    turn.parts && turn.parts.length > 0
-      ? turn.parts.some(
-          (p) =>
-            (p.type === 'text' && p.text.length > 0) ||
-            (p.type === 'reasoning' && p.text.length > 0) ||
-            p.type === 'tool',
-        )
-      : hasText || hasThinking
-  const showSpinner = isStreaming && !hasVisibleContent
+  // The activity line stays up until the user-facing text answer starts —
+  // its label changes (Thinking… → Suggesting an edit… → …) as tools fire,
+  // but it always sits in the same slot. We suppress it when the only
+  // active label would be "Thinking…" AND the reasoning panel is already
+  // visible (which has its own Thinking… spinner) — otherwise the user
+  // sees two identical indicators stacked.
+  const hasTextAnswer = turn.parts
+    ? turn.parts.some((p) => p.type === 'text' && p.text.length > 0)
+    : hasText
+  const reasoningVisible =
+    turn.parts?.some((p) => p.type === 'reasoning' && p.text.length > 0) ?? false
+  const activityCurrentLabel = activityLabel(turn.parts)
+  const showActivity =
+    isStreaming &&
+    !hasTextAnswer &&
+    !(reasoningVisible && activityCurrentLabel === 'Thinking…')
 
   // Two render paths:
   // - Legacy turns (no `parts`): keep the original text+thinking layout.
@@ -464,6 +543,7 @@ const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) 
   //   appear inline at the moment they happened.
   const body = (
     <div className="text-sm text-foreground leading-relaxed">
+      {showActivity && <ActivityStatus parts={turn.parts} />}
       {turn.parts && turn.parts.length > 0 ? (
         <PartList parts={turn.parts} isStreaming={isStreaming} />
       ) : (
@@ -474,7 +554,6 @@ const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) 
           {hasText && <StreamingMarkdown content={turn.content} isStreaming={isStreaming} />}
         </>
       )}
-      {showSpinner && <ThinkingSpinner label="Thinking..." />}
     </div>
   )
 
@@ -506,11 +585,14 @@ function PartList({ parts, isStreaming }: { parts: MessagePart[]; isStreaming: b
           case 'reasoning':
             return <ReasoningPartView key={part.id} part={part} isStreaming={isStreaming} />
           case 'tool':
+            // Built-in MCP tool: render with a domain-aware preview instead
+            // of the generic JSON dump.
+            if (part.toolName === PROPOSE_CHANGE_TOOL) {
+              return <ProposeChangePartView key={part.id} part={part} />
+            }
             return <ToolPartView key={part.id} part={part} />
           case 'step-start':
             return <StepStartView key={part.id} />
-          case 'unknown':
-            return <UnknownPartView key={part.id} part={part} />
         }
       })}
     </>
@@ -523,11 +605,99 @@ function TextPartView({ part, isStreaming }: { part: TextPart; isStreaming: bool
 }
 
 function ReasoningPartView({ part, isStreaming }: { part: ReasoningPart; isStreaming: boolean }) {
-  if (!part.text) {
-    return isStreaming ? <ThinkingSpinner label="Thinking..." /> : null
-  }
-  // Auto-expand only while this is still the active reasoning during streaming.
+  // Empty-state spinner is owned by the top-level ActivityStatus now —
+  // skip rendering until we actually have thoughts to show.
+  if (!part.text) return null
   return <ThinkingPanel content={part.text} streamingNoText={isStreaming} />
+}
+
+/** Top-of-turn activity indicator. Reads the parts timeline to pick a
+ * natural-language label for what the model is currently doing —
+ * "Thinking…" → "Suggesting an edit…" → "Reading the document…" — so the
+ * user gets a human description of progress instead of a generic spinner.
+ * Lives in a stable slot; only the label text changes on re-render. */
+function ActivityStatus({ parts }: { parts?: MessagePart[] }) {
+  return (
+    <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+      <IconLoader2 size={12} className="shrink-0 animate-spin" />
+      <span className="transition-opacity duration-150">{activityLabel(parts)}</span>
+    </div>
+  )
+}
+
+/** Pick the most descriptive label for the currently-active step. We walk
+ * parts from newest to oldest and return the first unfinished tool's label;
+ * fall back to "Thinking…" when the model is in reasoning or just started. */
+function activityLabel(parts: MessagePart[] | undefined): string {
+  if (parts) {
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i]
+      if (p.type === 'tool' && (p.state === 'input-streaming' || p.state === 'input-available')) {
+        return labelForTool(p)
+      }
+    }
+  }
+  return 'Thinking…'
+}
+
+function labelForTool(part: ToolPart): string {
+  if (part.toolName === PROPOSE_CHANGE_TOOL) {
+    const input = (part.input ?? {}) as { kind?: string }
+    return input.kind === 'comment' ? 'Adding a comment…' : 'Suggesting an edit…'
+  }
+  // Friendly labels for the most common Claude built-in tools. Anything
+  // we haven't named falls back to a generic "Using …" string.
+  const map: Record<string, string> = {
+    Read: 'Reading the document…',
+    Edit: 'Editing the document…',
+    Write: 'Writing…',
+    Bash: 'Running a command…',
+    Grep: 'Searching the document…',
+    Glob: 'Looking up files…',
+    WebSearch: 'Searching the web…',
+    WebFetch: 'Fetching from the web…',
+  }
+  return map[part.toolName] ?? `Using ${part.toolName}…`
+}
+
+/** Renders the small status indicator next to a tool's name. Each state
+ * gets its own icon + color so the user can scan progress without
+ * reading the label. */
+function ToolStateBadge({ state }: { state: ToolPart['state'] }) {
+  const meta: Record<ToolPart['state'], { icon: React.ReactNode; label: string; tone: string }> = {
+    'input-streaming': {
+      icon: <IconLoader2 size={12} className="animate-spin" />,
+      label: 'preparing',
+      tone: 'text-muted-foreground',
+    },
+    'input-available': {
+      icon: <IconLoader2 size={12} className="animate-spin" />,
+      label: 'running',
+      tone: 'text-blue-600 dark:text-blue-400',
+    },
+    'output-available': {
+      icon: <IconCheck size={12} />,
+      label: 'done',
+      tone: 'text-emerald-600 dark:text-emerald-400',
+    },
+    'output-error': {
+      icon: <IconAlertTriangle size={12} />,
+      label: 'error',
+      tone: 'text-red-600 dark:text-red-400',
+    },
+    'approval-requested': {
+      icon: <IconAlertTriangle size={12} />,
+      label: 'needs approval',
+      tone: 'text-amber-600 dark:text-amber-400',
+    },
+  }
+  const m = meta[state]
+  return (
+    <span className={`inline-flex items-center gap-1 ${m.tone}`}>
+      {m.icon}
+      <span>{m.label}</span>
+    </span>
+  )
 }
 
 /** Tool invocation card. Mirrors the AI Elements `<Tool>` family — a
@@ -535,21 +705,6 @@ function ReasoningPartView({ part, isStreaming }: { part: ReasoningPart; isStrea
  * content section showing input and (when available) output. */
 function ToolPartView({ part }: { part: ToolPart }) {
   const [open, setOpen] = React.useState(false)
-  const stateLabel: Record<ToolPart['state'], string> = {
-    'input-streaming': 'preparing input…',
-    'input-available': 'running…',
-    'output-available': 'done',
-    'output-error': 'error',
-    'approval-requested': 'awaiting approval',
-  }
-  const stateTone: Record<ToolPart['state'], string> = {
-    'input-streaming': 'text-muted-foreground',
-    'input-available': 'text-muted-foreground',
-    'output-available': 'text-emerald-600 dark:text-emerald-400',
-    'output-error': 'text-red-600 dark:text-red-400',
-    'approval-requested': 'text-amber-600 dark:text-amber-400',
-  }
-
   return (
     <details
       open={open}
@@ -557,11 +712,16 @@ function ToolPartView({ part }: { part: ToolPart }) {
       className="my-1 rounded-md border border-border/60 bg-muted/30 text-xs"
     >
       <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1 select-none">
-        <span className="inline-block transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>
-          ▸
-        </span>
+        <IconChevronRight
+          size={12}
+          className="shrink-0 transition-transform"
+          style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
+        />
+        <IconTool size={12} className="shrink-0 text-muted-foreground" />
         <span className="font-mono">{part.toolName}</span>
-        <span className={`ml-auto ${stateTone[part.state]}`}>{stateLabel[part.state]}</span>
+        <span className="ml-auto">
+          <ToolStateBadge state={part.state} />
+        </span>
       </summary>
       <div className="space-y-2 px-2 pb-2 pt-1">
         <KeyValueBlock label="input" value={part.input} />
@@ -580,18 +740,56 @@ function StepStartView() {
   return <hr className="my-2 border-border/40" />
 }
 
-function UnknownPartView({ part }: { part: UnknownPart }) {
-  // Debug-only catch-all. Hidden in prod so the chat surface stays clean;
-  // visible in dev for spotting SDK message types we haven't modeled yet.
-  if (!import.meta.env.DEV) return null
-  const summary =
-    typeof part.raw === 'object' && part.raw && 'type' in part.raw
-      ? String((part.raw as { type?: unknown }).type)
-      : 'unknown'
+/** Domain-aware card for the writer-relay `propose_change` tool. Pulls the
+ * meaningful fields out of input (kind/quote/content/rationale) so the
+ * user sees the suggestion at a glance rather than raw JSON. */
+function ProposeChangePartView({ part }: { part: ToolPart }) {
+  const input = (part.input ?? {}) as {
+    kind?: 'suggestion' | 'comment'
+    suggestionType?: 'insert' | 'delete' | 'replace'
+    quote?: string
+    content?: string
+    text?: string
+    rationale?: string
+  }
+  const isComment = input.kind === 'comment'
+  const HeaderIcon = isComment ? IconMessageCircle : IconPencil
+  const kindLabel = isComment ? 'Comment' : `Suggestion${input.suggestionType ? ` · ${input.suggestionType}` : ''}`
+  // While input is still streaming the strings may be partial JSON; only
+  // show the structured layout once we have the parsed object.
+  const ready = part.state !== 'input-streaming'
+  const replacement = input.content ?? input.text
+
   return (
-    <div className="my-1 inline-flex items-center gap-1 rounded-md bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
-      <span>▽</span>
-      <span className="font-mono">{summary}</span>
+    <div className="my-1 rounded-md border border-border/60 bg-muted/20 text-xs">
+      <div className="flex items-center gap-2 border-b border-border/50 px-2 py-1">
+        <HeaderIcon size={12} className="shrink-0 text-muted-foreground" />
+        <span className="font-medium text-foreground">{kindLabel}</span>
+        <span className="ml-auto">
+          <ToolStateBadge state={part.state} />
+        </span>
+      </div>
+      {!ready ? (
+        <div className="px-2 py-1 text-muted-foreground italic">preparing…</div>
+      ) : (
+        <div className="space-y-1.5 px-2 py-1.5">
+          {input.quote && (
+            <div className="flex gap-1.5">
+              <IconQuote size={11} className="mt-0.5 shrink-0 text-muted-foreground" />
+              <span className="line-through text-muted-foreground/80">{input.quote}</span>
+            </div>
+          )}
+          {!isComment && replacement && (
+            <div className="pl-[18px] text-foreground">→ {replacement}</div>
+          )}
+          {isComment && replacement && <div className="pl-[18px] text-foreground">{replacement}</div>}
+          {input.rationale && (
+            <div className="border-t border-border/40 pt-1.5 mt-1.5 text-muted-foreground">
+              {input.rationale}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -616,15 +814,6 @@ function formatValue(value: unknown): string {
   } catch {
     return String(value)
   }
-}
-
-function ThinkingSpinner({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-      <span className="inline-block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />
-      <span>{label}</span>
-    </div>
-  )
 }
 
 function ThinkingPanel({
@@ -653,11 +842,13 @@ function ThinkingPanel({
     >
       <summary className="flex cursor-pointer items-center gap-2 list-none px-2 py-1 text-muted-foreground select-none">
         {streamingNoText ? (
-          <span className="inline-block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />
+          <IconLoader2 size={12} className="shrink-0 animate-spin" />
         ) : (
-          <span className="inline-block transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>
-            ▸
-          </span>
+          <IconChevronRight
+            size={12}
+            className="shrink-0 transition-transform"
+            style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
+          />
         )}
         <span>{streamingNoText ? 'Thinking…' : 'Thoughts'}</span>
       </summary>

@@ -25,13 +25,19 @@ import type {
   ReasoningPart,
   TextPart,
   ToolPart,
-  UnknownPart,
 } from '@/chat/types'
 import { useChatRuns } from '@/stores/chatRuns'
 
-const MODEL = 'claude-sonnet-4-6'
-const AGENT_ID = 'ai:claude-sonnet'
+const DEFAULT_MODEL = 'claude-sonnet-4-6'
 const DOC_CHAR_CAP = 60_000
+
+// Maps Anthropic model id → the agent identifier we stamp on marks created
+// from a turn. The agent id is read by mark UI to attribute proposals.
+function agentIdForModel(model: string): string {
+  if (model.includes('haiku')) return 'ai:claude-haiku'
+  if (model.includes('opus')) return 'ai:claude-opus'
+  return 'ai:claude-sonnet'
+}
 
 export interface ToolCallRecord {
   id: string
@@ -45,8 +51,18 @@ export interface RunChatArgs {
   ydoc: Y.Doc
   /** Owning thread — runs are aborted as a group when their thread is archived. */
   threadId: string
-  /** Prior turns up to AND INCLUDING the user message that triggered this run. */
-  history: ChatTurn[]
+  /** Prior turns up to AND INCLUDING the user message that triggered this run.
+   * Ignored when `prompt` is set directly. */
+  history?: ChatTurn[]
+  /** Override the user-message prompt entirely. Use this for one-shot
+   * instructions like "Begin your review." that don't derive from a chat
+   * transcript. */
+  prompt?: string
+  /** System prompt body. The current document text is appended automatically.
+   * Defaults to FREE_CHAT_PROMPT. */
+  systemPrompt?: string
+  /** Anthropic model id. Defaults to claude-sonnet-4-6. */
+  model?: string
   signal?: AbortSignal
   /** Convenience callback fired for raw text deltas. New callers should
    * prefer `onPart` and derive content from the parts timeline. */
@@ -72,16 +88,16 @@ interface ProposalEvent {
 
 /**
  * Loose typing for the SDK notifications we consume — the SDK ships ~30
- * message types and we don't strongly type all of them. We pluck the few
- * fields we read from each shape and let the rest fall through to the
- * `unknown` part for debug visibility.
+ * message types and we only model the few that map onto Vercel-style parts.
  *
  * Routes:
  * - `stream_event`        → content_block_start/delta/stop, drives live
  *                           text/reasoning/tool-input parts.
  * - `assistant`           → ignored (already covered by stream_event).
  * - `user` w/ tool_result → resolves the matching tool part to its result.
- * - everything else       → surfaced as an `unknown` part.
+ * - everything else       → dropped silently (system, rate_limit_event,
+ *                           result, …) — these are SDK transport metadata,
+ *                           not chat content.
  */
 interface ChatEvent {
   runId: string
@@ -161,12 +177,27 @@ function buildPrompt(history: ChatTurn[]): string {
 }
 
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
-  const { view, ydoc, threadId, history, signal, onTextDelta, onThinkingDelta, onPart, onToolApplied } = args
+  const {
+    view,
+    ydoc,
+    threadId,
+    history,
+    prompt: promptOverride,
+    systemPrompt,
+    model = DEFAULT_MODEL,
+    signal,
+    onTextDelta,
+    onThinkingDelta,
+    onPart,
+    onToolApplied,
+  } = args
+  const agentId = agentIdForModel(model)
 
   const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
   const docForPrompt = docText.length > DOC_CHAR_CAP ? docText.slice(0, DOC_CHAR_CAP) : docText
-  const system = `${FREE_CHAT_PROMPT}\n\n--- DOCUMENT ---\n${docForPrompt}`
-  const prompt = buildPrompt(history)
+  const systemBody = systemPrompt ?? FREE_CHAT_PROMPT
+  const system = `${systemBody}\n\n--- DOCUMENT ---\n${docForPrompt}`
+  const prompt = promptOverride ?? buildPrompt(history ?? [])
   const runId = crypto.randomUUID()
 
   // Internal controller is the single source of abort — it bridges the
@@ -341,20 +372,17 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           return
         }
 
-        // 4) Anything else — keep visible as an unknown part for debugging.
-        const unknown: UnknownPart = {
-          id: crypto.randomUUID(),
-          ts: Date.now(),
-          type: 'unknown',
-          raw: ev,
-        }
-        upsertPart(unknown)
+        // 4) Everything else (system, rate_limit_event, result, …) — these
+        // are SDK transport/metadata, not chat content. The Vercel `parts`
+        // model only carries text/reasoning/tool/source/file/step-*, so we
+        // mirror that and drop anything outside the whitelist on the floor.
+        // If we ever need to surface a new content type, add a route above.
       }),
       listen<ProposalEvent>('claude:proposal', (e) => {
         if (e.payload.runId !== runId) return
         const outcome = applyProposal(view, ydoc, e.payload.input, {
           runId,
-          agentId: AGENT_ID,
+          agentId,
         })
         const record: ToolCallRecord = {
           id: crypto.randomUUID(),
@@ -399,7 +427,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     await invoke('claude_chat_start', {
       args: {
         runId,
-        model: MODEL,
+        model,
         systemPrompt: system,
         prompt,
         relayTools: ['propose_change'],

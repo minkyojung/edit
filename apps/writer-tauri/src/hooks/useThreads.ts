@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as Y from 'yjs'
 import { MAX_ACTIVE_THREADS, type ThreadMeta } from '@/chat/types'
+import { useChatRuns } from '@/stores/chatRuns'
 
 const THREADS_KEY = 'threads'
 
@@ -88,6 +89,10 @@ export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
       const yThreads = ydoc!.getArray<ThreadMeta>(THREADS_KEY)
       const cur = yThreads.get(i)
       if (cur.archived) return
+      // Cancel any in-flight runs owned by this thread BEFORE marking it
+      // archived. This is the canonical lifecycle hook — every caller of
+      // archiveThread benefits, regardless of which UI path triggered it.
+      useChatRuns.getState().abortByThread(id)
       replaceAt(i, { ...cur, archived: true, archivedAt: Date.now() })
     },
     [findIndex, ydoc, replaceAt],
