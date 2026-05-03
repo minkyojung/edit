@@ -76,7 +76,7 @@ impl SidecarManager {
         let chat_exit = build_exit(self_ref.clone(), Mode::Chat);
         let title_exit = build_exit(self_ref.clone(), Mode::Title);
 
-        let chat = SidecarClient::spawn(
+        let chat = SidecarClient::spawn_initialized(
             &launcher.program,
             &launcher.args_for("chat"),
             &launcher.env,
@@ -84,7 +84,7 @@ impl SidecarManager {
             Some(chat_exit),
         )
         .await?;
-        let title = SidecarClient::spawn(
+        let title = SidecarClient::spawn_initialized(
             &launcher.program,
             &launcher.args_for("title"),
             &launcher.env,
@@ -92,13 +92,6 @@ impl SidecarManager {
             Some(title_exit),
         )
         .await?;
-
-        let _ = chat
-            .request("initialize", Some(json!({ "clientVersion": "0.1.0" })))
-            .await?;
-        let _ = title
-            .request("initialize", Some(json!({ "clientVersion": "0.1.0" })))
-            .await?;
 
         eprintln!("[sidecar manager] both sidecars initialized");
 
@@ -169,7 +162,7 @@ impl SidecarManager {
     async fn restart(&self, mode: Mode) -> Result<(), SidecarError> {
         eprintln!("[sidecar manager] {} sidecar exited; respawning", mode.as_str());
         let exit_handler = build_exit(self.self_ref.clone(), mode);
-        let client = SidecarClient::spawn(
+        let client = SidecarClient::spawn_initialized(
             &self.launcher.program,
             &self.launcher.args_for(mode.as_str()),
             &self.launcher.env,
@@ -177,9 +170,6 @@ impl SidecarManager {
             Some(exit_handler),
         )
         .await?;
-        let _ = client
-            .request("initialize", Some(json!({ "clientVersion": "0.1.0" })))
-            .await?;
         let new_arc = Arc::new(client);
 
         match mode {

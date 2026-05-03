@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -165,6 +165,22 @@ impl SidecarClient {
             write_tx,
             tasks,
         })
+    }
+
+    /// Spawns the child and performs the JSON-RPC `initialize` handshake.
+    /// Callers get back a client that's ready to handle real requests.
+    pub async fn spawn_initialized(
+        program: &Path,
+        args: &[String],
+        extra_env: &[(&str, OsString)],
+        on_notification: NotificationHandler,
+        on_exit: Option<ExitHandler>,
+    ) -> Result<Self, SidecarError> {
+        let client = Self::spawn(program, args, extra_env, on_notification, on_exit).await?;
+        let _: Value = client
+            .request("initialize", Some(json!({ "clientVersion": "0.1.0" })))
+            .await?;
+        Ok(client)
     }
 
     /// Sends a request and awaits the matching response.
