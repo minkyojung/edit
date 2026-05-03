@@ -25,10 +25,9 @@ fn find_workspace_root(app_handle: &tauri::AppHandle) -> PathBuf {
         .resource_dir()
         .unwrap_or_else(|_| PathBuf::from("."));
     for _ in 0..10 {
-        // Require both tsx and proof-sdk to be present — not just any node_modules.
-        if dir.join("node_modules/.bin/tsx").exists()
-            && dir.join("node_modules/proof-sdk/server/index.ts").exists()
-        {
+        // Anchor on proof-sdk's server entry — that's all we need now that
+        // dev runs through `bun` (which is on PATH, no per-workspace install).
+        if dir.join("node_modules/proof-sdk/server/index.ts").exists() {
             return dir;
         }
         if let Some(parent) = dir.parent() {
@@ -38,6 +37,18 @@ fn find_workspace_root(app_handle: &tauri::AppHandle) -> PathBuf {
         }
     }
     PathBuf::from(".")
+}
+
+#[cfg(debug_assertions)]
+fn which_bun() -> Option<PathBuf> {
+    let path = std::env::var("PATH").ok()?;
+    for dir in path.split(':') {
+        let candidate = std::path::Path::new(dir).join("bun");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn kill_port_holders(port: u16) {
@@ -57,27 +68,110 @@ fn kill_port_holders(port: u16) {
 }
 
 fn spawn_proof_server(workspace_root: &PathBuf) -> Option<Child> {
-    let tsx = workspace_root.join("node_modules/.bin/tsx");
-    let server_entry = workspace_root.join("node_modules/proof-sdk/server/index.ts");
-
-    if !tsx.exists() || !server_entry.exists() {
-        eprintln!("[proof-server] tsx or server entry not found");
-        return None;
-    }
-
-    // Defensive: prior dev sessions can leave a tsx process bound to port 4000.
-    // Without this, the new spawn silently fails (port in use) and the stale
-    // server keeps responding — including with stale CORS config.
+    // Defensive: a stale proof-server (from a prior dev/run) holding port
+    // 4000 will silently keep our new spawn from binding. Kill any
+    // lingering listener before we try.
     kill_port_holders(4000);
 
-    let mut cmd = Command::new(&tsx);
-    cmd.arg(&server_entry)
-        .env("PORT", "4000")
-        .env("PROOF_CORS_ALLOW_ORIGINS", "http://localhost:1420")
+    let (program, pre_args, working_dir): (PathBuf, Vec<PathBuf>, PathBuf);
+
+    #[cfg(debug_assertions)]
+    {
+        // Dev: run the .ts source through bun (so bun:sqlite resolves).
+        let server_entry = workspace_root.join("node_modules/proof-sdk/server/index.ts");
+        if !server_entry.exists() {
+            eprintln!("[proof-server] proof-sdk server entry not found");
+            return None;
+        }
+        let bun = match which_bun() {
+            Some(b) => b,
+            None => {
+                eprintln!("[proof-server] bun not found on PATH; install via https://bun.sh");
+                return None;
+            }
+        };
+        program = bun;
+        pre_args = vec![PathBuf::from("run"), server_entry];
+        working_dir = workspace_root.join("node_modules/proof-sdk");
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        // Prod: use the bundled proof-server binary that Tauri ships next to
+        // the main exe. No Node, no source files, no node_modules required.
+        let exe_dir = match std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        {
+            Some(d) => d,
+            None => {
+                eprintln!("[proof-server] could not resolve current_exe parent");
+                return None;
+            }
+        };
+        let binary = exe_dir.join("proof-server");
+        if !binary.exists() {
+            eprintln!(
+                "[proof-server] bundled binary not found at {}",
+                binary.display()
+            );
+            return None;
+        }
+        program = binary;
+        pre_args = vec![];
+        // Run from the home directory so the bundled binary doesn't try to
+        // write into the read-only .app bundle. The actual DB path is set
+        // explicitly via DATABASE_PATH below.
+        working_dir = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/tmp"));
+    }
+
+    // Resolve writable paths. Dev keeps the legacy in-repo location; prod
+    // tucks them into the user's home dir so the bundled binary doesn't
+    // try to write inside the read-only .app. proof-sdk reads both via
+    // env vars (DATABASE_PATH, SNAPSHOT_DIR) so we just point them.
+    let db_path: PathBuf;
+    let snapshot_dir: PathBuf;
+    #[cfg(debug_assertions)]
+    {
+        let proof_sdk_dir = workspace_root.join("node_modules/proof-sdk");
+        db_path = proof_sdk_dir.join("proof-share.db");
+        snapshot_dir = proof_sdk_dir.join("snapshots");
+        let _ = std::fs::create_dir_all(&snapshot_dir);
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let home = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/tmp"));
+        let writer_data = home
+            .join("Library/Application Support/com.conductor.writer");
+        let _ = std::fs::create_dir_all(&writer_data);
+        db_path = writer_data.join("proof-share.db");
+        snapshot_dir = writer_data.join("snapshots");
+        let _ = std::fs::create_dir_all(&snapshot_dir);
+    }
+
+    let mut cmd = Command::new(&program);
+    for arg in &pre_args {
+        cmd.arg(arg);
+    }
+    cmd.env("PORT", "4000")
+        .env("DATABASE_PATH", &db_path)
+        .env("SNAPSHOT_DIR", &snapshot_dir)
+        // Allow both the dev Vite origin and the prod Tauri webview origins
+        // (which differ between Tauri versions / platforms — list both
+        // common forms so we don't have to rebuild when Tauri changes).
+        .env(
+            "PROOF_CORS_ALLOW_ORIGINS",
+            "http://localhost:1420,tauri://localhost,http://tauri.localhost,https://tauri.localhost",
+        )
         // Collab WS is multiplexed on the same HTTP port (embedded mode).
         // Without this, the server computes collabWsUrl as port+1 (4001) instead of 4000.
         .env("COLLAB_EMBEDDED_WS", "1")
-        .current_dir(workspace_root.join("node_modules/proof-sdk"));
+        .current_dir(&working_dir);
+    let _ = workspace_root; // silence unused-warn in prod builds
 
     // Put child in its own process group so we can kill the whole tree
     // (tsx spawns a Node child; we need both to die together).

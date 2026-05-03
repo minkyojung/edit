@@ -2,7 +2,9 @@
 // and supervises them — when a child exits unexpectedly, we respawn the
 // affected sidecar in place so frontend invocations resume working.
 
-use std::path::{Path, PathBuf};
+#[cfg(debug_assertions)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, Weak};
 
 use serde_json::{json, Value};
@@ -65,6 +67,23 @@ impl SidecarManager {
             launcher.program.display(),
             launcher.pre_args,
         );
+
+        // Tell sidecars where the bundled Claude Code CLI lives. bun --compile
+        // can't embed the SDK's platform-specific native binary, so it ships
+        // alongside as its own externalBin and the sidecar wires it up via
+        // pathToClaudeCodeExecutable. Set on the parent process so child
+        // processes inherit it automatically.
+        // In prod, the Agent SDK's optional native dep is inside the bundled
+        // sidecar's node_modules and the SDK locates it on its own — no env
+        // var needed. In dev, we point at the .pnpm store copy explicitly.
+        if let Some(cli) = resolve_claude_cli(app) {
+            std::env::set_var("CLAUDE_CODE_CLI_PATH", &cli);
+            eprintln!("[sidecar manager] CLAUDE_CODE_CLI_PATH={}", cli.display());
+        } else if cfg!(debug_assertions) {
+            eprintln!("[sidecar manager] WARN: Claude CLI binary not found; chat will fail");
+        } else {
+            eprintln!("[sidecar manager] Claude CLI resolution delegated to bundled SDK");
+        }
 
         let handler = build_notification_handler(app.clone());
         let self_ref: SelfRef = Arc::new(OnceLock::new());
@@ -261,7 +280,6 @@ fn build_exit(self_ref: SelfRef, _app: AppHandle, mode: Mode) -> ExitHandler {
 fn resolve_launcher(app: &AppHandle) -> Result<Launcher, SidecarError> {
     #[cfg(debug_assertions)]
     {
-        let _ = app;
         let workspace_root = find_workspace_root(app);
         let script = workspace_root
             .join("apps")
@@ -278,49 +296,107 @@ fn resolve_launcher(app: &AppHandle) -> Result<Launcher, SidecarError> {
 
     #[cfg(not(debug_assertions))]
     {
-        // The Tauri bundler copies externalBin entries next to the main
-        // executable and renames them to drop the target-triple suffix —
-        // so on macOS the file inside `Writer.app/Contents/MacOS/` is just
-        // `claude-sidecar`. We resolve relative to the running exe so this
-        // works regardless of where the .app is installed.
-        let exe = std::env::current_exe()
-            .map_err(|e| SidecarError::Io(e))?;
-        let exe_dir = exe.parent().ok_or_else(|| {
-            SidecarError::Io(std::io::Error::new(
+        let _ = app;
+        // Run our sidecar source through the bundled bun runtime. bun --compile
+        // had an unsolvable stdin-shim limitation when piping to bun-compile
+        // children (claude-cli), so we ship the runtime + source instead.
+        // Both files come from Tauri's bundle: bun is an externalBin (lives
+        // alongside the main exe), the sidecar is shipped as a Resource.
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .ok_or_else(|| {
+                SidecarError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "current_exe has no parent",
+                ))
+            })?;
+        let bun_name = if cfg!(target_os = "windows") { "bun.exe" } else { "bun" };
+        let bun_path = exe_dir.join(bun_name);
+        if !bun_path.exists() {
+            return Err(SidecarError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                "current_exe has no parent",
-            ))
-        })?;
-
-        // Try the unsuffixed name first (post-bundle), then fall back to
-        // the suffixed name (e.g. when the binary is run from
-        // src-tauri/binaries/ during local prod testing).
-        let candidates = [
-            exe_dir.join("claude-sidecar"),
-            exe_dir.join(if cfg!(target_os = "windows") {
-                "claude-sidecar.exe"
-            } else {
-                "claude-sidecar-bin"
-            }),
-        ];
-        for path in candidates.iter() {
-            if path.exists() {
-                return Ok(Launcher {
-                    program: path.clone(),
-                    pre_args: vec![],
-                });
-            }
+                format!("bundled bun not found at {}", bun_path.display()),
+            )));
         }
-        Err(SidecarError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!(
-                "bundled sidecar not found near {}",
-                exe_dir.display()
-            ),
-        )))
+        // Tauri stages Resources at .app/Contents/Resources on macOS; from
+        // the main exe at .app/Contents/MacOS/<bin>, that's `../Resources`.
+        let resources = exe_dir
+            .parent()
+            .map(|p| p.join("Resources"))
+            .unwrap_or_else(|| exe_dir.clone());
+        // Tauri stages files referenced via parent paths under `_up_/`.
+        let script = resources
+            .join("_up_")
+            .join("sidecar-pkg")
+            .join("src")
+            .join("index.mjs");
+        if !script.exists() {
+            return Err(SidecarError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("sidecar script not found at {}", script.display()),
+            )));
+        }
+        return Ok(Launcher {
+            program: bun_path,
+            pre_args: vec!["run".into(), script.to_string_lossy().into_owned()],
+        });
     }
 }
 
+/// Resolve the Claude Code CLI binary that the Agent SDK needs to spawn.
+///
+/// Dev: pull it out of the .pnpm store, where the platform-specific
+/// `@anthropic-ai/claude-agent-sdk-<arch>` package lives.
+/// Prod: it's bundled next to the main exe via Tauri's externalBin.
+fn resolve_claude_cli(app: &AppHandle) -> Option<PathBuf> {
+    #[cfg(debug_assertions)]
+    {
+        let workspace_root = find_workspace_root(app);
+        let pnpm = workspace_root.join("node_modules").join(".pnpm");
+        let pkg_prefix = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+            "@anthropic-ai+claude-agent-sdk-darwin-arm64@"
+        } else if cfg!(target_os = "macos") {
+            "@anthropic-ai+claude-agent-sdk-darwin-x64@"
+        } else if cfg!(target_os = "linux") {
+            "@anthropic-ai+claude-agent-sdk-linux-x64@"
+        } else if cfg!(target_os = "windows") {
+            "@anthropic-ai+claude-agent-sdk-win32-x64@"
+        } else {
+            return None;
+        };
+        let cli_name = if cfg!(target_os = "windows") { "claude.exe" } else { "claude" };
+        let pkg_inner = pkg_prefix.trim_end_matches('@').trim_start_matches("@anthropic-ai+");
+        let entries = std::fs::read_dir(&pnpm).ok()?;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with(pkg_prefix) {
+                let candidate = entry
+                    .path()
+                    .join("node_modules")
+                    .join("@anthropic-ai")
+                    .join(pkg_inner)
+                    .join(cli_name);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = app;
+        // The Agent SDK's optional dep ships inside the bundled sidecar's
+        // node_modules — it can find the binary on its own, no env needed.
+        // Returning None keeps the sidecar from over-specifying.
+        None
+    }
+}
+
+#[cfg(debug_assertions)]
 fn which_node() -> Option<PathBuf> {
     let path = std::env::var("PATH").ok()?;
     for dir in path.split(':') {
@@ -332,6 +408,7 @@ fn which_node() -> Option<PathBuf> {
     None
 }
 
+#[cfg(debug_assertions)]
 fn find_workspace_root(app: &AppHandle) -> PathBuf {
     let mut dir = app
         .path()

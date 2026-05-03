@@ -204,6 +204,13 @@ export class Server {
     }
     if (model) options.model = model
     if (systemPrompt) options.systemPrompt = systemPrompt
+    // The bundled (compiled) sidecar can't auto-resolve the Agent SDK's
+    // platform-specific CLI binary — the host process passes its location
+    // to us via env. In dev (running source through bun) the SDK auto-finds
+    // it from node_modules and the env may be missing; that's fine.
+    if (process.env.CLAUDE_CODE_CLI_PATH) {
+      options.pathToClaudeCodeExecutable = process.env.CLAUDE_CODE_CLI_PATH
+    }
 
     // Wire relay tools: each one runs inside this sidecar but its handler
     // just forwards args to the host as a `chat/proposal`-shaped event and
