@@ -1,6 +1,25 @@
 // Shared types for the chat surface (threads + turns).
 // Stored in the document's Y.Doc so they sync across devices via Hocuspocus.
 
+/** Models the user can pick from in the PromptInput model selector.
+ * Kept narrow + explicit so the UI can display friendly labels without
+ * round-tripping through agent ids. The sidecar accepts the raw id. */
+export type ChatModel = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-7'
+
+export const CHAT_MODELS: readonly ChatModel[] = [
+  'claude-haiku-4-5',
+  'claude-sonnet-4-6',
+  'claude-opus-4-7',
+] as const
+
+export const CHAT_MODEL_LABELS: Record<ChatModel, string> = {
+  'claude-haiku-4-5': 'Haiku 4.5',
+  'claude-sonnet-4-6': 'Sonnet 4.6',
+  'claude-opus-4-7': 'Opus 4.7',
+}
+
+export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-4-6'
+
 export interface ThreadMeta {
   id: string
   title: string                    // empty until Haiku titler fills it in
@@ -8,6 +27,9 @@ export interface ThreadMeta {
   updatedAt: number
   archived: boolean
   archivedAt?: number              // for archive popover sort (newest first)
+  /** Per-thread model override. Older threads created before this field
+   * existed are missing it; treat absence as DEFAULT_CHAT_MODEL. */
+  model?: ChatModel
 }
 
 export interface ChatTurn {

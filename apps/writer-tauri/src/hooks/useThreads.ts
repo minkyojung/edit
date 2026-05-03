@@ -6,7 +6,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as Y from 'yjs'
-import { MAX_ACTIVE_THREADS, type ThreadMeta } from '@/chat/types'
+import {
+  DEFAULT_CHAT_MODEL,
+  MAX_ACTIVE_THREADS,
+  type ChatModel,
+  type ThreadMeta,
+} from '@/chat/types'
 import { useChatRuns } from '@/stores/chatRuns'
 
 const THREADS_KEY = 'threads'
@@ -20,6 +25,7 @@ export interface UseThreadsResult {
   archiveThread: (id: string) => void
   restoreThread: (id: string) => { ok: true } | { ok: false; reason: 'limit' | 'not-found' }
   renameThread: (id: string, title: string) => void
+  setThreadModel: (id: string, model: ChatModel) => void
 }
 
 export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
@@ -75,6 +81,7 @@ export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
         createdAt: now,
         updatedAt: now,
         archived: false,
+        model: DEFAULT_CHAT_MODEL,
       }
       ydoc.transact(() => yThreads.push([meta]))
       return meta.id
@@ -127,6 +134,18 @@ export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
     [findIndex, ydoc, replaceAt],
   )
 
+  const setThreadModel = useCallback<UseThreadsResult['setThreadModel']>(
+    (id, model) => {
+      const i = findIndex(id)
+      if (i < 0) return
+      const yThreads = ydoc!.getArray<ThreadMeta>(THREADS_KEY)
+      const cur = yThreads.get(i)
+      if (cur.model === model) return
+      replaceAt(i, { ...cur, model, updatedAt: Date.now() })
+    },
+    [findIndex, ydoc, replaceAt],
+  )
+
   const { active, archived } = useMemo(() => {
     const a: ThreadMeta[] = []
     const r: ThreadMeta[] = []
@@ -144,5 +163,6 @@ export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
     archiveThread,
     restoreThread,
     renameThread,
+    setThreadModel,
   }
 }

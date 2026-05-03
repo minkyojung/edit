@@ -11,6 +11,8 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react'
 import { IconArrowUp, IconPlayerStop } from '@tabler/icons-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { ModelSelect } from '@/chat/ModelSelect'
+import type { ChatModel } from '@/chat/types'
 import { cn } from '@/lib/utils'
 
 // Detect Mac so we render the correct modifier glyph in shortcut hints.
@@ -29,6 +31,8 @@ interface Props {
   placeholder?: string
   onSubmit: (text: string) => void
   onStop?: () => void
+  model: ChatModel
+  onModelChange: (model: ChatModel) => void
 }
 
 export function PromptInput({
@@ -37,6 +41,8 @@ export function PromptInput({
   placeholder = 'Ask anything about this document',
   onSubmit,
   onStop,
+  model,
+  onModelChange,
 }: Props) {
   const [value, setValue] = useState('')
   const [isComposing, setIsComposing] = useState(false)
@@ -107,7 +113,15 @@ export function PromptInput({
         )}
       />
 
-      <div className="flex items-center justify-end">
+      {/* Footer: Tools left, model + submit right. The Tools slot fills in
+          on the next phase (effort selector, attachments, etc.); for now it
+          just balances the layout via flex justify-between. */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1">
+          {/* Tools placeholder — populated by EffortButton et al. */}
+        </div>
+        <div className="flex items-center gap-1">
+          <ModelSelect value={model} onChange={onModelChange} disabled={isStreaming} />
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -143,6 +157,7 @@ export function PromptInput({
             )}
           </TooltipContent>
         </Tooltip>
+        </div>
       </div>
     </div>
   )

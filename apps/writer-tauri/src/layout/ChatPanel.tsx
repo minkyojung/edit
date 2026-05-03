@@ -39,12 +39,13 @@ import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import { ThreadTabs } from '@/chat/ThreadTabs'
 import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
-import type {
-  ChatTurn,
-  MessagePart,
-  ReasoningPart,
-  TextPart,
-  ToolPart,
+import {
+  DEFAULT_CHAT_MODEL,
+  type ChatTurn,
+  type MessagePart,
+  type ReasoningPart,
+  type TextPart,
+  type ToolPart,
 } from '@/chat/types'
 
 // Tool registered as `propose_change` on the `writer-relay` MCP server in
@@ -120,6 +121,11 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   }, [turnsHook.turns, streaming])
 
   const ready = !!editorView && !!ydoc && !!activeId
+
+  // Active thread's preferred model. Threads created before the model field
+  // existed return undefined; fall back to the default in that case.
+  const activeThread = threads.threads.find((t) => t.id === activeId)
+  const activeThreadModel = activeThread?.model ?? DEFAULT_CHAT_MODEL
 
   // Merge the in-flight streaming turn (local) with the persisted turns (Yjs)
   // for rendering. Only show the streaming turn if it belongs to the thread
@@ -253,6 +259,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         ydoc: ydoc!,
         threadId,
         history,
+        model: activeThreadModel,
         onPart: (part) => {
           upsertPart(part)
           scheduleFlush()
@@ -545,6 +552,8 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           disabled={!ready || !account.connected}
           onSubmit={handleSend}
           onStop={handleStop}
+          model={activeThreadModel}
+          onModelChange={(m) => activeId && threads.setThreadModel(activeId, m)}
         />
       </div>
     </div>
