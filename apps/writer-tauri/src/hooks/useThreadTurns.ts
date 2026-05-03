@@ -11,6 +11,10 @@ export interface UseThreadTurnsResult {
   ready: boolean
   turns: ChatTurn[]
   appendTurn: (turn: ChatTurn) => void
+  /** Remove a single turn by id. Used by Regenerate, which deletes the last
+   * assistant turn before running a fresh one in its place. No-op if the id
+   * is not found. */
+  removeTurn: (id: string) => void
 }
 
 function turnsKey(threadId: string) {
@@ -44,5 +48,16 @@ export function useThreadTurns(
     [ydoc, threadId],
   )
 
-  return { ready: !!ydoc && !!threadId, turns, appendTurn }
+  const removeTurn = useCallback<UseThreadTurnsResult['removeTurn']>(
+    (id) => {
+      if (!ydoc || !threadId) return
+      const yTurns = ydoc.getArray<ChatTurn>(turnsKey(threadId))
+      const idx = yTurns.toArray().findIndex((t) => t.id === id)
+      if (idx < 0) return
+      ydoc.transact(() => yTurns.delete(idx, 1))
+    },
+    [ydoc, threadId],
+  )
+
+  return { ready: !!ydoc && !!threadId, turns, appendTurn, removeTurn }
 }

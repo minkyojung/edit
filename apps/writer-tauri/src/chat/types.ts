@@ -33,6 +33,10 @@ export interface ChatTurn {
    * submit to settle (done/stopped/error). Surfaced as a small footer under
    * the message. Only set on assistant turns. */
   durationMs?: number
+  /** Anthropic stop_reason (`end_turn`, `max_tokens`, `pause_turn`, …).
+   * Only abnormal values are surfaced in the UI — `end_turn` / `stop_sequence`
+   * stay hidden as routine. */
+  stopReason?: string | null
 }
 
 /**

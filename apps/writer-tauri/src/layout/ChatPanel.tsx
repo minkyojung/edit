@@ -20,6 +20,8 @@ import {
   IconPencil,
   IconMessageCircle,
   IconQuote,
+  IconCopy,
+  IconRefresh,
 } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
@@ -127,37 +129,27 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       ? [...turnsHook.turns, streaming.turn]
       : turnsHook.turns
 
-  async function handleSend(text: string) {
-    if (!ready || chatStatus === 'streaming') return
-    const threadId = activeId
-    if (!threadId) return
+  // Regenerate is only offered on the most-recent settled assistant turn —
+  // rewriting an older one would orphan every later turn's context. Hidden
+  // entirely while a turn is in flight.
+  const regeneratableTurnId = (() => {
+    if (chatStatus === 'streaming' || streaming) return null
+    for (let i = turnsHook.turns.length - 1; i >= 0; i--) {
+      if (turnsHook.turns[i].role === 'assistant') return turnsHook.turns[i].id
+      // Stop at the first non-assistant from the end — only the trailing
+      // assistant turn is regeneratable.
+      return null
+    }
+    return null
+  })()
 
+  /** Drives a single assistant turn end-to-end: seed streaming buffer, run
+   * runChat with the given history, commit on settle. Shared by handleSend
+   * (which prepends a fresh user turn) and handleRegenerate (which deletes
+   * the prior assistant turn and reuses the existing user message). */
+  async function runAssistantTurn(threadId: string, history: ChatTurn[]) {
     const startedAt = Date.now()
-    const userTurn: ChatTurn = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: text,
-      ts: startedAt,
-    }
     const assistantId = crypto.randomUUID()
-    const historyForModel = [...turnsHook.turns, userTurn]
-
-    // First user message in an untitled thread → kick off background title
-    // generation. Fire-and-forget; the slug-style fallback stays in place
-    // until (and unless) Haiku returns something.
-    const isFirstTurn = turnsHook.turns.length === 0
-    if (isFirstTurn && activeId) {
-      const thread = threads.threads.find((t) => t.id === activeId)
-      if (thread && thread.title.trim().length === 0) {
-        const idAtSend = activeId
-        void generateThreadTitle(text).then((title) => {
-          if (title) threads.renameThread(idAtSend, title)
-        })
-      }
-    }
-
-    // The user's turn is finished text — push to Yjs once and let it sync.
-    turnsHook.appendTurn(userTurn)
 
     // Seed the live assistant turn in local state. No Yjs op fires until the
     // turn settles, so streaming deltas don't trigger collab traffic or
@@ -216,7 +208,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       }, 120)
     }
 
-    const commit = (status: ChatTurn['status']) => {
+    const commit = (status: ChatTurn['status'], stopReason: string | null) => {
       if (pendingFlush != null) {
         clearTimeout(pendingFlush)
         pendingFlush = null
@@ -233,22 +225,23 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         ts: Date.now(),
         status,
         durationMs: Date.now() - startedAt,
+        stopReason,
       })
       setStreaming(null)
     }
 
     try {
-      await runChat({
+      const result = await runChat({
         view: editorView!,
         ydoc: ydoc!,
         threadId,
-        history: historyForModel,
+        history,
         onPart: (part) => {
           upsertPart(part)
           scheduleFlush()
         },
       })
-      commit('done')
+      commit('done', result.stopReason)
       setChatStatus('idle')
     } catch (e) {
       const aborted = e instanceof DOMException && e.name === 'AbortError'
@@ -263,11 +256,62 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         }
         upsertPart(errPart)
       }
-      commit(aborted ? 'stopped' : 'error')
+      commit(aborted ? 'stopped' : 'error', null)
       setChatStatus(aborted ? 'idle' : 'error')
     } finally {
       endActivity()
     }
+  }
+
+  async function handleSend(text: string) {
+    if (!ready || chatStatus === 'streaming') return
+    const threadId = activeId
+    if (!threadId) return
+
+    const userTurn: ChatTurn = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: text,
+      ts: Date.now(),
+    }
+
+    // First user message in an untitled thread → kick off background title
+    // generation. Fire-and-forget; the slug-style fallback stays in place
+    // until (and unless) Haiku returns something.
+    const isFirstTurn = turnsHook.turns.length === 0
+    if (isFirstTurn && activeId) {
+      const thread = threads.threads.find((t) => t.id === activeId)
+      if (thread && thread.title.trim().length === 0) {
+        const idAtSend = activeId
+        void generateThreadTitle(text).then((title) => {
+          if (title) threads.renameThread(idAtSend, title)
+        })
+      }
+    }
+
+    // The user's turn is finished text — push to Yjs once and let it sync.
+    turnsHook.appendTurn(userTurn)
+
+    await runAssistantTurn(threadId, [...turnsHook.turns, userTurn])
+  }
+
+  /** Regenerate the assistant turn at `assistantTurnId` — removes it, then
+   * re-runs the model against the history up to (and including) the user
+   * message that prompted it. Only valid for the most recent assistant turn:
+   * earlier rewrites would invalidate every later turn's context. */
+  async function handleRegenerate(assistantTurnId: string) {
+    if (!ready || chatStatus === 'streaming') return
+    const threadId = activeId
+    if (!threadId) return
+
+    const turns = turnsHook.turns
+    const idx = turns.findIndex((t) => t.id === assistantTurnId)
+    if (idx < 0 || turns[idx].role !== 'assistant') return
+    const history = turns.slice(0, idx)
+    if (history.length === 0 || history[history.length - 1].role !== 'user') return
+
+    turnsHook.removeTurn(assistantTurnId)
+    await runAssistantTurn(threadId, history)
   }
 
   function handleStop() {
@@ -345,7 +389,11 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     let appliedCount = 0
     let proposedCount = 0
 
-    const commit = (status: ChatTurn['status'], summary: string | null) => {
+    const commit = (
+      status: ChatTurn['status'],
+      summary: string | null,
+      stopReason: string | null,
+    ) => {
       if (pendingFlush != null) {
         clearTimeout(pendingFlush)
         pendingFlush = null
@@ -363,12 +411,13 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         ts: Date.now(),
         status,
         durationMs: Date.now() - startedAt,
+        stopReason,
       })
       setStreaming(null)
     }
 
     try {
-      await runChat({
+      const result = await runChat({
         view: editorView!,
         ydoc: ydoc!,
         threadId,
@@ -389,12 +438,12 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         proposedCount === 0
           ? 'No issues to flag — looks clean to me.'
           : `Found **${appliedCount}** issue${appliedCount === 1 ? '' : 's'} — click any highlight in the document to review.`
-      commit('done', summary)
+      commit('done', summary, result.stopReason)
       setChatStatus('idle')
     } catch (e) {
       const aborted = e instanceof DOMException && e.name === 'AbortError'
       const summary = aborted ? null : `**Review failed.** ${String(e)}`
-      commit(aborted ? 'stopped' : 'error', summary)
+      commit(aborted ? 'stopped' : 'error', summary, null)
       setChatStatus(aborted ? 'idle' : 'error')
     } finally {
       runningRef.current = false
@@ -447,7 +496,11 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           </p>
         )}
         {renderedTurns.map((turn) => (
-          <MessageRow key={turn.id} turn={turn} />
+          <MessageRow
+            key={turn.id}
+            turn={turn}
+            onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -511,7 +564,15 @@ function StreamingMarkdown({ content, isStreaming }: { content: string; isStream
   )
 }
 
-const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) {
+const MessageRow = React.memo(function MessageRow({
+  turn,
+  onRegenerate,
+}: {
+  turn: ChatTurn
+  /** Provided only when this turn is the latest settled assistant turn —
+   * the only one Regenerate is allowed on. */
+  onRegenerate?: (turnId: string) => void
+}) {
   if (turn.role === 'user') {
     return (
       <div className="flex justify-end">
@@ -565,6 +626,15 @@ const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) 
   // turn settled (avoid a live ticker that fights the streaming animation).
   const durationLabel =
     !isStreaming && typeof turn.durationMs === 'number' ? formatDuration(turn.durationMs) : null
+  // Abnormal stop reasons get surfaced explicitly so the user knows when an
+  // answer was cut off, paused, or refused — `end_turn` / `stop_sequence` /
+  // `tool_use` are routine and stay hidden.
+  const stopReasonLabel = !isStreaming ? describeStopReason(turn.stopReason) : null
+
+  // Copy is offered once the turn has produced final text and is no longer
+  // streaming — copying mid-stream would clip the answer.
+  const canCopy = !isStreaming && hasText
+  const canRegenerate = !isStreaming && !!onRegenerate
 
   if (isStopped) {
     return (
@@ -574,6 +644,8 @@ const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) 
           <IconPlayerStopFilled size={12} stroke={0} className="opacity-70" />
           <span>Stopped</span>
           {durationLabel && <span className="opacity-70">· {durationLabel}</span>}
+          {canCopy && <CopyButton text={turn.content} />}
+          {canRegenerate && <RegenerateButton onClick={() => onRegenerate!(turn.id)} />}
         </div>
       </div>
     )
@@ -582,12 +654,81 @@ const MessageRow = React.memo(function MessageRow({ turn }: { turn: ChatTurn }) 
   return (
     <>
       {body}
-      {durationLabel && (
-        <div className="mt-1 text-[10px] text-muted-foreground/70">{durationLabel}</div>
+      {(durationLabel || stopReasonLabel || canCopy || canRegenerate) && (
+        <div className="mt-1 flex items-center gap-1.5 text-[10px]">
+          {stopReasonLabel && (
+            <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+              <IconAlertTriangle size={10} />
+              <span>{stopReasonLabel}</span>
+            </span>
+          )}
+          {durationLabel && (
+            <span className="text-muted-foreground/70">
+              {stopReasonLabel ? `· ${durationLabel}` : durationLabel}
+            </span>
+          )}
+          {canCopy && <CopyButton text={turn.content} />}
+          {canRegenerate && <RegenerateButton onClick={() => onRegenerate!(turn.id)} />}
+        </div>
       )}
     </>
   )
 })
+
+/** Copy button. Writes the message text to the clipboard and flips to a
+ * checkmark for ~1.5s as confirmation. Errors are swallowed silently —
+ * Tauri's webview clipboard call is reliable enough that surfacing a
+ * failure here would just be noise. */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = React.useState(false)
+  const timerRef = React.useRef<number | null>(null)
+
+  React.useEffect(() => {
+    return () => {
+      if (timerRef.current != null) window.clearTimeout(timerRef.current)
+    }
+  }, [])
+
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      if (timerRef.current != null) window.clearTimeout(timerRef.current)
+      timerRef.current = window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Clipboard denied or unavailable — leave UI unchanged.
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      aria-label={copied ? 'Copied' : 'Copy message'}
+      title={copied ? 'Copied' : 'Copy'}
+      className="inline-flex items-center rounded p-0.5 text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+    >
+      {copied ? <IconCheck size={11} /> : <IconCopy size={11} />}
+    </button>
+  )
+}
+
+/** Regenerate button. Replaces the assistant turn with a fresh run against
+ * the same prior history. Shown only on the most-recent settled assistant
+ * turn — see ChatPanel's `regeneratableTurnId` for why. */
+function RegenerateButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Regenerate response"
+      title="Regenerate"
+      className="inline-flex items-center rounded p-0.5 text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+    >
+      <IconRefresh size={11} />
+    </button>
+  )
+}
 
 /** Human-readable wall-clock duration. Stays terse so it sits unobtrusively
  * under the message — sub-second is shown to one decimal, single-minute uses
@@ -599,6 +740,22 @@ function formatDuration(ms: number): string {
   const min = Math.floor(totalSec / 60)
   const sec = totalSec % 60
   return sec === 0 ? `${min}m` : `${min}m ${sec}s`
+}
+
+/** Map an Anthropic stop_reason to a user-facing message. Returns null for
+ * routine reasons (`end_turn`, `stop_sequence`, `tool_use`, missing) so the
+ * footer stays clean — only abnormal stops surface here. */
+function describeStopReason(reason: string | null | undefined): string | null {
+  switch (reason) {
+    case 'max_tokens':
+      return 'Response cut off (token limit)'
+    case 'pause_turn':
+      return 'Paused'
+    case 'refusal':
+      return 'Refused'
+    default:
+      return null
+  }
 }
 
 /** Walks an assistant turn's timeline. Each part type maps to its own
