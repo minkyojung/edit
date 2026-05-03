@@ -10,7 +10,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::process::{ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 
@@ -69,14 +69,26 @@ struct RpcErrorPayload {
 /// JSON-RPC notification. Spawned as a tokio task; do not block.
 pub type NotificationHandler = Arc<dyn Fn(String, Value) + Send + Sync>;
 
+/// Fires once when the sidecar's child process exits (cleanly or otherwise).
+/// Used by the manager to trigger a restart.
+pub type ExitHandler = Arc<dyn Fn() + Send + Sync>;
+
 pub struct SidecarClient {
     next_id: AtomicI64,
     pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, SidecarError>>>>>,
     write_tx: mpsc::Sender<Vec<u8>>,
-    // Hold tasks so they are dropped (and thus aborted) when the client drops.
-    _tasks: Vec<JoinHandle<()>>,
-    // Hold the child to keep it alive; drop kills the process via tokio.
-    _child: Arc<Mutex<Child>>,
+    // All spawned tasks (writer, reader, stderr drain, child wait). Aborted
+    // on drop so the wait task lets go of Child, which fires kill_on_drop
+    // and tears the subprocess down.
+    tasks: Vec<JoinHandle<()>>,
+}
+
+impl Drop for SidecarClient {
+    fn drop(&mut self) {
+        for task in &self.tasks {
+            task.abort();
+        }
+    }
 }
 
 impl SidecarClient {
@@ -88,6 +100,7 @@ impl SidecarClient {
         script: &Path,
         mode: &str,
         on_notification: NotificationHandler,
+        on_exit: Option<ExitHandler>,
     ) -> Result<Self, SidecarError> {
         let mut cmd = Command::new(node_path);
         cmd.arg(script)
@@ -123,12 +136,29 @@ impl SidecarClient {
             on_notification,
         )));
 
+        // Wait task: owns the Child. When the process exits the callback
+        // fires (manager uses this to restart). When this task is aborted
+        // via Drop, Child drops here and kill_on_drop tears the subprocess
+        // down.
+        let pending_for_exit = pending.clone();
+        tasks.push(tokio::spawn(async move {
+            let _ = child.wait().await;
+            // Fail every still-pending request so callers don't hang.
+            let mut guard = pending_for_exit.lock().await;
+            for (_, tx) in guard.drain() {
+                let _ = tx.send(Err(SidecarError::Exited));
+            }
+            drop(guard);
+            if let Some(handler) = on_exit {
+                handler();
+            }
+        }));
+
         Ok(Self {
             next_id: AtomicI64::new(1),
             pending,
             write_tx,
-            _tasks: tasks,
-            _child: Arc::new(Mutex::new(child)),
+            tasks,
         })
     }
 

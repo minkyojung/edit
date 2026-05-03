@@ -127,7 +127,8 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 match claude_sidecar::manager::SidecarManager::spawn_all(&app_handle).await {
                     Ok(manager) => {
-                        app_handle.manage(Arc::new(manager));
+                        // spawn_all already wraps in Arc.
+                        app_handle.manage(manager);
                     }
                     Err(e) => {
                         eprintln!("[sidecar manager] failed to spawn: {e}");

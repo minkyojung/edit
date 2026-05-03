@@ -80,9 +80,8 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
         params["permissionMode"] = Value::String(mode);
     }
 
-    manager
-        .chat
-        .request("chat", Some(params))
+    let chat = manager.chat_client().await;
+    chat.request("chat", Some(params))
         .await
         .map_err(|e| e.to_string())
 }
@@ -91,9 +90,8 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
 #[tauri::command]
 pub async fn claude_chat_cancel(app: AppHandle, args: ChatCancelArgs) -> Result<(), String> {
     let manager = get_manager(&app)?;
-    manager
-        .chat
-        .notify("chat/cancel", Some(json!({ "runId": args.run_id })))
+    let chat = manager.chat_client().await;
+    chat.notify("chat/cancel", Some(json!({ "runId": args.run_id })))
         .await
         .map_err(|e| e.to_string())
 }
@@ -118,8 +116,8 @@ pub async fn claude_title(app: AppHandle, args: TitleArgs) -> Result<Value, Stri
         params["systemPrompt"] = Value::String(sp);
     }
 
-    manager
-        .title
+    let title = manager.title_client().await;
+    title
         .request("chat", Some(params))
         .await
         .map_err(|e| e.to_string())

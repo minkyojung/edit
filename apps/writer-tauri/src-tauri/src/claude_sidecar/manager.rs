@@ -1,21 +1,47 @@
-// Owns the chat + title sidecar processes for the lifetime of the app.
-// Stored in tauri state via `app.manage(SidecarManager::new())`.
+// Owns the chat + title sidecar processes for the lifetime of the app,
+// and supervises them — when a child exits unexpectedly, we respawn the
+// affected sidecar in place so frontend invocations resume working.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::RwLock;
 
-use super::client::{NotificationHandler, SidecarClient, SidecarError};
+use super::client::{ExitHandler, NotificationHandler, SidecarClient, SidecarError};
+
+// Self-reference handle for exit closures. Set after the SidecarManager Arc
+// is created, so the closures can find their way back to call restart_*.
+type SelfRef = Arc<OnceLock<Weak<SidecarManager>>>;
+
+#[derive(Copy, Clone, Debug)]
+enum Mode {
+    Chat,
+    Title,
+}
+
+impl Mode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Mode::Chat => "chat",
+            Mode::Title => "title",
+        }
+    }
+}
 
 pub struct SidecarManager {
-    pub chat: Arc<SidecarClient>,
-    pub title: Arc<SidecarClient>,
+    chat: RwLock<Arc<SidecarClient>>,
+    title: RwLock<Arc<SidecarClient>>,
+    self_ref: SelfRef,
+    notification_handler: NotificationHandler,
+    node: PathBuf,
+    script: PathBuf,
+    app: AppHandle,
 }
 
 impl SidecarManager {
-    pub async fn spawn_all(app: &AppHandle) -> Result<Self, SidecarError> {
+    pub async fn spawn_all(app: &AppHandle) -> Result<Arc<Self>, SidecarError> {
         let workspace_root = find_workspace_root(app);
         let script = workspace_root
             .join("apps")
@@ -31,46 +57,29 @@ impl SidecarManager {
             script.display(),
         );
 
-        // Forward sidecar notifications as Tauri events so the frontend can
-        // listen with `listen('claude:event', ...)` etc. The frontend gets
-        // raw passthrough — the inner Agent SDK event shape is its concern.
-        let app_for_handler = app.clone();
-        let handler: NotificationHandler = Arc::new(move |method, params| {
-            // auth/refreshNeeded is internal: the sidecar is asking the host
-            // to push a fresh token. Do it asynchronously and don't surface
-            // anything to the frontend — the retry will either succeed
-            // silently or fail with chat/error AUTH.
-            if method == "auth/refreshNeeded" {
-                let app = app_for_handler.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Some(state) = app.try_state::<Arc<SidecarManager>>() {
-                        let manager = state.inner().clone();
-                        match manager.try_inject_token(&app).await {
-                            Ok(true) => eprintln!("[sidecar manager] refreshed token after AUTH"),
-                            Ok(false) => eprintln!("[sidecar manager] AUTH retry: no token available"),
-                            Err(e) => eprintln!("[sidecar manager] AUTH retry inject failed: {e}"),
-                        }
-                    }
-                });
-                return;
-            }
-            let event_name = match method.as_str() {
-                "chat/event" => "claude:event",
-                "chat/done" => "claude:done",
-                "chat/error" => "claude:error",
-                "chat/proposal" => "claude:proposal",
-                _ => return,
-            };
-            if let Err(e) = app_for_handler.emit(event_name, params) {
-                eprintln!("[sidecar manager] emit {event_name} failed: {e}");
-            }
-        });
+        let handler = build_notification_handler(app.clone());
+        let self_ref: SelfRef = Arc::new(OnceLock::new());
 
-        let chat = SidecarClient::spawn(&node, &script, "chat", handler.clone()).await?;
-        let title = SidecarClient::spawn(&node, &script, "title", handler).await?;
+        let chat_exit = build_exit(self_ref.clone(), app.clone(), Mode::Chat);
+        let title_exit = build_exit(self_ref.clone(), app.clone(), Mode::Title);
 
-        // Initialize both. We don't pass any version handshake info we care
-        // about yet; the response is informational.
+        let chat = SidecarClient::spawn(
+            &node,
+            &script,
+            "chat",
+            handler.clone(),
+            Some(chat_exit),
+        )
+        .await?;
+        let title = SidecarClient::spawn(
+            &node,
+            &script,
+            "title",
+            handler.clone(),
+            Some(title_exit),
+        )
+        .await?;
+
         let _ = chat
             .request("initialize", Some(json!({ "clientVersion": "0.1.0" })))
             .await?;
@@ -80,19 +89,38 @@ impl SidecarManager {
 
         eprintln!("[sidecar manager] both sidecars initialized");
 
-        let mgr = Self {
-            chat: Arc::new(chat),
-            title: Arc::new(title),
-        };
-        // Inject the current OAuth token so the first chat doesn't pay the
-        // cost of a key-chain read. Failures here are non-fatal — the user
-        // may not have signed in yet; later chat calls will retry.
+        let mgr = Arc::new(Self {
+            chat: RwLock::new(Arc::new(chat)),
+            title: RwLock::new(Arc::new(title)),
+            self_ref: self_ref.clone(),
+            notification_handler: handler,
+            node,
+            script,
+            app: app.clone(),
+        });
+
+        // Wire the self-ref so the exit closures can find us when they fire.
+        // Setting once is sufficient; the OnceLock is shared across closures.
+        let _ = self_ref.set(Arc::downgrade(&mgr));
+
         match mgr.try_inject_token(app).await {
             Ok(true) => eprintln!("[sidecar manager] token injected at startup"),
-            Ok(false) => eprintln!("[sidecar manager] no OAuth token yet; chat will fail until sign-in"),
+            Ok(false) => {
+                eprintln!("[sidecar manager] no OAuth token yet; chat will fail until sign-in")
+            }
             Err(e) => eprintln!("[sidecar manager] startup token inject failed: {e}"),
         }
         Ok(mgr)
+    }
+
+    /// Snapshots the current chat client. Cheap; just clones an Arc.
+    pub async fn chat_client(&self) -> Arc<SidecarClient> {
+        self.chat.read().await.clone()
+    }
+
+    /// Snapshots the current title client.
+    pub async fn title_client(&self) -> Arc<SidecarClient> {
+        self.title.read().await.clone()
     }
 
     /// Reads the latest OAuth token (auto-refreshing if near expiry) and
@@ -119,10 +147,104 @@ impl SidecarManager {
     /// to rotate the OAuth token without restarting either process.
     pub async fn set_token(&self, token: &str) -> Result<(), SidecarError> {
         let params = Some(json!({ "token": token }));
-        let _: Value = self.chat.request("setToken", params.clone()).await?;
-        let _: Value = self.title.request("setToken", params).await?;
+        let chat = self.chat_client().await;
+        let title = self.title_client().await;
+        let _: Value = chat.request("setToken", params.clone()).await?;
+        let _: Value = title.request("setToken", params).await?;
         Ok(())
     }
+
+    async fn restart(&self, mode: Mode) -> Result<(), SidecarError> {
+        eprintln!("[sidecar manager] {} sidecar exited; respawning", mode.as_str());
+        let exit_handler = build_exit(self.self_ref.clone(), self.app.clone(), mode);
+        let client = SidecarClient::spawn(
+            &self.node,
+            &self.script,
+            mode.as_str(),
+            self.notification_handler.clone(),
+            Some(exit_handler),
+        )
+        .await?;
+        let _ = client
+            .request("initialize", Some(json!({ "clientVersion": "0.1.0" })))
+            .await?;
+        let new_arc = Arc::new(client);
+
+        match mode {
+            Mode::Chat => *self.chat.write().await = new_arc.clone(),
+            Mode::Title => *self.title.write().await = new_arc.clone(),
+        }
+
+        // Push the latest token to the freshly-spawned process.
+        if let Ok(Some(token)) = crate::oauth::get_claude_token(self.app.clone()).await {
+            let _: Value = new_arc
+                .request("setToken", Some(json!({ "token": token })))
+                .await?;
+        }
+
+        eprintln!("[sidecar manager] {} sidecar respawned", mode.as_str());
+        Ok(())
+    }
+}
+
+fn build_notification_handler(app: AppHandle) -> NotificationHandler {
+    Arc::new(move |method, params| {
+        // auth/refreshNeeded is internal: the sidecar is asking the host
+        // to push a fresh token. Do it asynchronously and don't surface
+        // anything to the frontend — the retry will either succeed
+        // silently or fail with chat/error AUTH.
+        if method == "auth/refreshNeeded" {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(state) = app.try_state::<Arc<SidecarManager>>() {
+                    let manager = state.inner().clone();
+                    match manager.try_inject_token(&app).await {
+                        Ok(true) => eprintln!("[sidecar manager] refreshed token after AUTH"),
+                        Ok(false) => {
+                            eprintln!("[sidecar manager] AUTH retry: no token available")
+                        }
+                        Err(e) => eprintln!("[sidecar manager] AUTH retry inject failed: {e}"),
+                    }
+                }
+            });
+            return;
+        }
+        let event_name = match method.as_str() {
+            "chat/event" => "claude:event",
+            "chat/done" => "claude:done",
+            "chat/error" => "claude:error",
+            "chat/proposal" => "claude:proposal",
+            _ => return,
+        };
+        if let Err(e) = app.emit(event_name, params) {
+            eprintln!("[sidecar manager] emit {event_name} failed: {e}");
+        }
+    })
+}
+
+fn build_exit(self_ref: SelfRef, _app: AppHandle, mode: Mode) -> ExitHandler {
+    Arc::new(move || {
+        let self_ref = self_ref.clone();
+        tauri::async_runtime::spawn(async move {
+            let weak = match self_ref.get() {
+                Some(w) => w.clone(),
+                None => {
+                    eprintln!(
+                        "[sidecar manager] {} sidecar exited before manager wired up",
+                        mode.as_str()
+                    );
+                    return;
+                }
+            };
+            let Some(manager) = weak.upgrade() else { return };
+            if let Err(e) = manager.restart(mode).await {
+                eprintln!(
+                    "[sidecar manager] {} sidecar restart failed: {e}",
+                    mode.as_str()
+                );
+            }
+        });
+    })
 }
 
 fn which_node() -> Option<PathBuf> {
@@ -142,8 +264,6 @@ fn find_workspace_root(app: &AppHandle) -> PathBuf {
         .resource_dir()
         .unwrap_or_else(|_| PathBuf::from("."));
     for _ in 0..10 {
-        // Same heuristic as the existing proof-server lookup, plus the
-        // sidecar script's presence as an extra anchor.
         if dir
             .join("apps/writer-tauri/sidecar/src/index.mjs")
             .exists()
