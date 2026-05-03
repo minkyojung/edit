@@ -40,6 +40,7 @@ import { useChatRuns } from '@/stores/chatRuns'
 import { ThreadTabs } from '@/chat/ThreadTabs'
 import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
 import {
+  DEFAULT_CHAT_EFFORT,
   DEFAULT_CHAT_MODEL,
   type ChatTurn,
   type MessagePart,
@@ -126,6 +127,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   // existed return undefined; fall back to the default in that case.
   const activeThread = threads.threads.find((t) => t.id === activeId)
   const activeThreadModel = activeThread?.model ?? DEFAULT_CHAT_MODEL
+  const activeThreadEffort = activeThread?.effort ?? DEFAULT_CHAT_EFFORT
 
   // Merge the in-flight streaming turn (local) with the persisted turns (Yjs)
   // for rendering. Only show the streaming turn if it belongs to the thread
@@ -260,6 +262,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         threadId,
         history,
         model: activeThreadModel,
+        effort: activeThreadEffort,
         onPart: (part) => {
           upsertPart(part)
           scheduleFlush()
@@ -554,6 +557,8 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           onStop={handleStop}
           model={activeThreadModel}
           onModelChange={(m) => activeId && threads.setThreadModel(activeId, m)}
+          effort={activeThreadEffort}
+          onEffortChange={(e) => activeId && threads.setThreadEffort(activeId, e)}
         />
       </div>
     </div>

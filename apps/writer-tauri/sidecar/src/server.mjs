@@ -196,6 +196,7 @@ export class Server {
       systemPrompt,
       relayTools,
       permissionMode = 'bypassPermissions',
+      effort,
     } = params
 
     const options = {
@@ -208,6 +209,11 @@ export class Server {
     }
     if (model) options.model = model
     if (systemPrompt) options.systemPrompt = systemPrompt
+    // First-class SDK option since claude-agent-sdk@0.2.x. Accepts
+    // 'low' | 'medium' | 'high' | 'xhigh' | 'max'. We forward whatever
+    // the host sent without revalidating — the SDK clamps unsupported
+    // levels per model.
+    if (effort) options.effort = effort
     // Dev only: host points us at the .pnpm-store copy of the platform-specific
     // claude binary. Prod ships the binary inside our own node_modules, so the
     // SDK auto-resolves and the env var is intentionally unset.

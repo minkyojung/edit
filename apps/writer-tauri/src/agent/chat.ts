@@ -63,6 +63,9 @@ export interface RunChatArgs {
   systemPrompt?: string
   /** Anthropic model id. Defaults to claude-sonnet-4-6. */
   model?: string
+  /** Reasoning effort level passed straight to the SDK's first-class
+   * `effort` option. Omit to let the SDK pick its default. */
+  effort?: 'low' | 'medium' | 'high'
   signal?: AbortSignal
   /** Convenience callback fired for raw text deltas. New callers should
    * prefer `onPart` and derive content from the parts timeline. */
@@ -185,6 +188,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     prompt: promptOverride,
     systemPrompt,
     model = DEFAULT_MODEL,
+    effort,
     signal,
     onTextDelta,
     onThinkingDelta,
@@ -439,6 +443,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         systemPrompt: system,
         prompt,
         relayTools: ['propose_change'],
+        effort,
       },
     })
   } catch (e) {

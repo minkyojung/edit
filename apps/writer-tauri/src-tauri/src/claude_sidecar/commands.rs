@@ -28,6 +28,11 @@ pub struct ChatStartArgs {
     pub relay_tools: Option<Vec<String>>,
     #[serde(default)]
     pub permission_mode: Option<String>,
+    /// Reasoning effort hint forwarded as-is to the SDK's `effort` option.
+    /// Accepted: "low" / "medium" / "high" / "xhigh" / "max". Sidecar drops
+    /// the field entirely when None, letting the SDK pick its default.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -78,6 +83,9 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     }
     if let Some(mode) = args.permission_mode {
         params["permissionMode"] = Value::String(mode);
+    }
+    if let Some(effort) = args.effort {
+        params["effort"] = Value::String(effort);
     }
 
     let chat = manager.chat_client().await;

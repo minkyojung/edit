@@ -12,7 +12,8 @@ import { useState, type KeyboardEvent, type ReactNode } from 'react'
 import { IconArrowUp, IconPlayerStop } from '@tabler/icons-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ModelSelect } from '@/chat/ModelSelect'
-import type { ChatModel } from '@/chat/types'
+import { EffortButton } from '@/chat/EffortButton'
+import type { ChatEffort, ChatModel } from '@/chat/types'
 import { cn } from '@/lib/utils'
 
 // Detect Mac so we render the correct modifier glyph in shortcut hints.
@@ -33,6 +34,8 @@ interface Props {
   onStop?: () => void
   model: ChatModel
   onModelChange: (model: ChatModel) => void
+  effort: ChatEffort
+  onEffortChange: (effort: ChatEffort) => void
 }
 
 export function PromptInput({
@@ -43,6 +46,8 @@ export function PromptInput({
   onStop,
   model,
   onModelChange,
+  effort,
+  onEffortChange,
 }: Props) {
   const [value, setValue] = useState('')
   const [isComposing, setIsComposing] = useState(false)
@@ -118,7 +123,7 @@ export function PromptInput({
           just balances the layout via flex justify-between. */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1">
-          {/* Tools placeholder — populated by EffortButton et al. */}
+          <EffortButton value={effort} onChange={onEffortChange} disabled={isStreaming} />
         </div>
         <div className="flex items-center gap-1">
           <ModelSelect value={model} onChange={onModelChange} disabled={isStreaming} />

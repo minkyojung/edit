@@ -20,6 +20,30 @@ export const CHAT_MODEL_LABELS: Record<ChatModel, string> = {
 
 export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-4-6'
 
+/** Reasoning effort the model puts into a turn. Mirrors the Claude Agent
+ * SDK's first-class `effort` option (we expose its 3 most common levels;
+ * `xhigh` / `max` are skipped as they're Opus-specific). */
+export type ChatEffort = 'low' | 'medium' | 'high'
+
+export const CHAT_EFFORTS: readonly ChatEffort[] = ['low', 'medium', 'high'] as const
+
+export const CHAT_EFFORT_LABELS: Record<ChatEffort, string> = {
+  low: 'Fast response',
+  medium: 'Balanced',
+  high: 'Deep thinking',
+}
+
+/** Per-ring opacity tuple [inner, middle, outer] for the EffortButton's
+ * concentric-circle target icon — the rings fill outward as effort
+ * increases. */
+export const CHAT_EFFORT_OPACITIES: Record<ChatEffort, [number, number, number]> = {
+  low: [1, 0.2, 0.2],
+  medium: [1, 1, 0.2],
+  high: [1, 1, 1],
+}
+
+export const DEFAULT_CHAT_EFFORT: ChatEffort = 'medium'
+
 export interface ThreadMeta {
   id: string
   title: string                    // empty until Haiku titler fills it in
@@ -30,6 +54,9 @@ export interface ThreadMeta {
   /** Per-thread model override. Older threads created before this field
    * existed are missing it; treat absence as DEFAULT_CHAT_MODEL. */
   model?: ChatModel
+  /** Per-thread reasoning effort. Older threads default to
+   * DEFAULT_CHAT_EFFORT when this field is absent. */
+  effort?: ChatEffort
 }
 
 export interface ChatTurn {
