@@ -7,6 +7,7 @@ import { usePanelRef } from 'react-resizable-panels'
 import { PanelErrorFallback } from '@/components/ErrorFallback'
 import { AppSidebar } from './Sidebar'
 import { ChatPanel } from './ChatPanel'
+import { CloseConfirmDialog } from '@/components/CloseConfirmDialog'
 import { useLayoutStore } from '@/state/layoutStore'
 import type { CollabHandle } from '@/hooks/useCollabDoc'
 
@@ -61,6 +62,7 @@ export function AppShell({ children, bottomLeft, collabHandle, editorView }: App
       onOpenChange={setSidebar}
       style={{ '--sidebar-width': '220px' } as React.CSSProperties}
     >
+      <CloseConfirmDialog />
       <AppSidebar />
       <SidebarInset className="overflow-hidden">
         {!sidebarOpen && (

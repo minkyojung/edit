@@ -24,6 +24,7 @@ import { useActiveThread } from '@/hooks/useActiveThread'
 import { runReview } from '@/agent/runReview'
 import { runChat } from '@/agent/chat'
 import { generateThreadTitle } from '@/agent/generateThreadTitle'
+import { useChatActivity } from '@/stores/chatActivity'
 import { ThreadTabs } from '@/chat/ThreadTabs'
 import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
 import type { ChatTurn } from '@/chat/types'
@@ -44,6 +45,8 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   const runningRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
   const [chatStatus, setChatStatus] = useState<PromptStatus>('idle')
+  const startActivity = useChatActivity((s) => s.start)
+  const endActivity = useChatActivity((s) => s.end)
 
   // Track Hocuspocus initial sync so we don't auto-create a thread before the
   // server has had a chance to send us the existing list — that race produces
@@ -116,6 +119,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     setChatStatus('streaming')
     const controller = new AbortController()
     abortRef.current = controller
+    startActivity()
 
     let acc = ''
     let thinkingAcc = ''
@@ -150,6 +154,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       setChatStatus(aborted ? 'idle' : 'error')
     } finally {
       abortRef.current = null
+      endActivity()
     }
   }
 
@@ -177,6 +182,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       status: 'streaming',
     })
 
+    startActivity()
     let thinkingAcc = ''
     try {
       const result = await runReview({
@@ -204,6 +210,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       })
     } finally {
       runningRef.current = false
+      endActivity()
     }
   }
 

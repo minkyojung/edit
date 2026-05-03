@@ -7,12 +7,17 @@ use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
 struct ProofServerHandle(Arc<Mutex<Option<Child>>>);
+
+#[tauri::command]
+fn app_quit(app: tauri::AppHandle) {
+    app.exit(0);
+}
 
 fn find_workspace_root(app_handle: &tauri::AppHandle) -> PathBuf {
     let mut dir = app_handle
@@ -111,8 +116,79 @@ pub fn run() {
             claude_sidecar::commands::claude_chat_start,
             claude_sidecar::commands::claude_chat_cancel,
             claude_sidecar::commands::claude_title,
+            app_quit,
         ])
         .setup(|app| {
+            // Replace the default macOS Quit menu item with one we control.
+            // The default item calls NSApplication.terminate: directly, which
+            // bypasses Tauri's ExitRequested event — so prevent_exit() never
+            // gets a chance to ask for user confirmation. Owning the menu
+            // item lets us emit `app:close-requested` instead.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{
+                    MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder,
+                };
+
+                // Custom items: emit app:close-requested so the frontend can
+                // confirm before actually exiting / closing the window.
+                let quit_item = MenuItemBuilder::new("Quit Writer")
+                    .id("quit")
+                    .accelerator("CmdOrCtrl+Q")
+                    .build(app)?;
+                let close_window_item = MenuItemBuilder::new("Close Window")
+                    .id("close-window")
+                    .accelerator("CmdOrCtrl+W")
+                    .build(app)?;
+
+                // Writer (app menu)
+                let app_submenu = SubmenuBuilder::new(app, "Writer")
+                    .item(&PredefinedMenuItem::about(app, None, None)?)
+                    .separator()
+                    .item(&PredefinedMenuItem::hide(app, None)?)
+                    .item(&PredefinedMenuItem::hide_others(app, None)?)
+                    .item(&PredefinedMenuItem::show_all(app, None)?)
+                    .separator()
+                    .item(&quit_item)
+                    .build()?;
+
+                // Edit — clipboard + select-all only. Undo/Redo intentionally
+                // omitted so ProseMirror's keymap (Cmd+Z / Cmd+Shift+Z) handles
+                // them; native NSUndoManager would conflict with the editor's
+                // own history stack.
+                let edit_submenu = SubmenuBuilder::new(app, "Edit")
+                    .item(&PredefinedMenuItem::cut(app, None)?)
+                    .item(&PredefinedMenuItem::copy(app, None)?)
+                    .item(&PredefinedMenuItem::paste(app, None)?)
+                    .item(&PredefinedMenuItem::select_all(app, None)?)
+                    .build()?;
+
+                // Window — standard window controls + our custom close.
+                let window_submenu = SubmenuBuilder::new(app, "Window")
+                    .item(&PredefinedMenuItem::minimize(app, None)?)
+                    .item(&PredefinedMenuItem::maximize(app, None)?)
+                    .item(&PredefinedMenuItem::fullscreen(app, None)?)
+                    .separator()
+                    .item(&close_window_item)
+                    .build()?;
+
+                let menu = MenuBuilder::new(app)
+                    .item(&app_submenu)
+                    .item(&edit_submenu)
+                    .item(&window_submenu)
+                    .build()?;
+                app.set_menu(menu)?;
+
+                app.on_menu_event(|app, event| {
+                    let id = event.id().as_ref();
+                    if id == "quit" || id == "close-window" {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.emit("app:close-requested", ());
+                        }
+                    }
+                });
+            }
+
             let workspace_root = find_workspace_root(app.handle());
             println!("[proof-server] workspace root: {}", workspace_root.display());
 
@@ -144,6 +220,19 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Intercept the user's quit attempt and let the frontend decide
+            // whether to confirm (when a chat is streaming) or proceed.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    if let Err(e) = window.emit("app:close-requested", ()) {
+                        eprintln!("[app] emit close-requested failed: {e}");
+                        // If we can't even emit, don't strand the user — just exit.
+                        window.app_handle().exit(0);
+                    }
+                    return;
+                }
+            }
             if let tauri::WindowEvent::Destroyed = event {
                 if window.label() == "main" {
                     // Clone Arc before dropping state borrow
@@ -168,6 +257,43 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            match &event {
+                tauri::RunEvent::Ready => eprintln!("[run] Ready"),
+                tauri::RunEvent::ExitRequested { code, .. } => {
+                    eprintln!("[run] ExitRequested code={code:?}")
+                }
+                tauri::RunEvent::Exit => eprintln!("[run] Exit"),
+                tauri::RunEvent::WindowEvent { label, event, .. } => {
+                    if matches!(
+                        event,
+                        tauri::WindowEvent::CloseRequested { .. }
+                            | tauri::WindowEvent::Destroyed
+                    ) {
+                        eprintln!("[run] WindowEvent label={label} kind={event:?}");
+                    }
+                }
+                _ => {}
+            }
+
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
+                if code.is_some() {
+                    eprintln!("[run] honoring programmatic exit");
+                    return;
+                }
+                api.prevent_exit();
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    if let Err(e) = window.emit("app:close-requested", ()) {
+                        eprintln!("[app] emit close-requested failed: {e}");
+                        app_handle.exit(0);
+                    } else {
+                        eprintln!("[run] emitted app:close-requested");
+                    }
+                } else {
+                    app_handle.exit(0);
+                }
+            }
+        });
 }
