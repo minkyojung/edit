@@ -22,15 +22,29 @@ import { persist } from 'zustand/middleware'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { proofClient, waitUntilReady } from '@/lib/proofClient'
+import { todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
 const DEFAULT_DOC_TITLE = 'My Document'
 
+/** Slim metadata mirrored into localStorage so the sidebar can list
+ * docs (especially closed dailies whose ydoc isn't loaded). The
+ * source of truth still lives in each doc's ydoc.getMap('meta');
+ * this is a cache, refreshed whenever a doc is created or its meta
+ * changes while open. */
+export interface KnownDoc {
+  slug: string
+  type: 'daily' | 'writing'
+  /** YYYY-MM-DD when type === 'daily'. */
+  date?: string
+}
+
 interface DocsState {
   // Persisted
   openSlugs: string[]
   activeSlug: string | null
+  knownDocs: KnownDoc[]
 
   // Runtime — never persisted
   handles: Record<string, CollabHandle>
@@ -43,6 +57,9 @@ interface DocsState {
   setActive: (slug: string) => void
   closeDoc: (slug: string) => void
   createNew: () => Promise<void>
+  /** Find or create the daily entry for the given local date and make
+   * it the active tab. Returns the slug. */
+  openDaily: (date?: string) => Promise<string | null>
   reorder: (slugs: string[]) => void
 }
 
@@ -87,53 +104,91 @@ export const useDocsStore = create<DocsState>()(
     (set, get) => ({
       openSlugs: [],
       activeSlug: null,
+      knownDocs: [],
       handles: {},
       status: {},
       bootstrapping: true,
 
       bootstrap: async () => {
-        // Migrate the old single-slug localStorage entry on first run.
-        // Keep the legacy key in place after reading so users can roll
-        // back if something blows up; we only delete it once the new
-        // store has at least one slug persisted.
+        const today = todayLocalDate()
+
+        // First, migrate the legacy single-slug localStorage entry. We
+        // adopt it as today's daily so the user's existing content is
+        // preserved at the obvious anchor (today). Tomorrow they'll
+        // get a fresh blank daily and yesterday's content stays
+        // accessible at its anchor.
         const legacy = localStorage.getItem(LEGACY_SLUG_KEY)
-        let { openSlugs, activeSlug } = get()
-        if (openSlugs.length === 0 && legacy) {
-          openSlugs = [legacy]
-          activeSlug = legacy
-          set({ openSlugs, activeSlug })
+        let { openSlugs, activeSlug, knownDocs } = get()
+        if (legacy && knownDocs.length === 0) {
+          knownDocs = [{ slug: legacy, type: 'daily', date: today }]
+          if (openSlugs.length === 0) {
+            openSlugs = [legacy]
+            activeSlug = legacy
+          }
+          set({ openSlugs, activeSlug, knownDocs })
         }
 
-        // No docs at all → create one so the editor isn't empty on first
-        // launch. Same default title the legacy code used.
-        if (openSlugs.length === 0) {
+        // Make sure today's daily exists. If knownDocs has one for
+        // today, use it; otherwise create a fresh one.
+        let todaysDaily = knownDocs.find(
+          (d) => d.type === 'daily' && d.date === today,
+        )
+        if (!todaysDaily) {
           try {
-            const created = await proofClient.createDoc(DEFAULT_DOC_TITLE)
-            set({ openSlugs: [created.slug], activeSlug: created.slug })
-            openSlugs = [created.slug]
-            activeSlug = created.slug
+            // Empty markdown — the date appears in the title field, not
+            // duplicated as an H1 inside the body.
+            const created = await proofClient.createDoc(today, '')
+            const meta: KnownDoc = { slug: created.slug, type: 'daily', date: today }
+            todaysDaily = meta
+            set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
           } catch (err) {
-            console.error('[docs] bootstrap createDoc failed', err)
-            set({ bootstrapping: false })
-            return
+            console.error('[docs] failed to create today daily', err)
           }
         }
 
-        // Make sure the active slug actually exists in the open list
-        // (defensive — persisted state could disagree if the user closed
-        // the active tab before we shipped).
-        if (!activeSlug || !openSlugs.includes(activeSlug)) {
-          activeSlug = openSlugs[0] ?? null
-          set({ activeSlug })
+        // Add today to openSlugs if it isn't already there, and make
+        // it the active tab. "Always land on today" is the design
+        // promise of the daily journal.
+        if (todaysDaily) {
+          openSlugs = get().openSlugs
+          if (!openSlugs.includes(todaysDaily.slug)) {
+            openSlugs = [...openSlugs, todaysDaily.slug]
+          }
+          set({ openSlugs, activeSlug: todaysDaily.slug })
         }
 
-        // Eagerly connect the active slug only. Others wait for a switch.
-        if (activeSlug) {
-          await ensureHandle(activeSlug, set, get)
+        // Defensive: ensure activeSlug points at something real.
+        const finalState = get()
+        if (
+          !finalState.activeSlug ||
+          !finalState.openSlugs.includes(finalState.activeSlug)
+        ) {
+          set({ activeSlug: finalState.openSlugs[0] ?? null })
         }
 
-        // Legacy key cleanup once we've migrated successfully.
-        if (legacy && openSlugs.includes(legacy)) {
+        // Eagerly connect the active slug. Once connected, write meta
+        // back to its ydoc if it's a daily that doesn't yet have meta
+        // (covers the legacy migration path). Other tabs stay lazy.
+        const slugToOpen = get().activeSlug
+        if (slugToOpen) {
+          await ensureHandle(slugToOpen, set, get)
+          const handle = get().handles[slugToOpen]
+          const known = get().knownDocs.find((d) => d.slug === slugToOpen)
+          if (handle && known?.type === 'daily' && known.date) {
+            const metaMap = handle.ydoc.getMap('meta')
+            if (!metaMap.get('type')) {
+              writeDocMeta(handle.ydoc, {
+                type: 'daily',
+                date: known.date,
+                createdAt: new Date().toISOString(),
+              })
+            }
+            seedDailyTitleIfEmpty(handle.ydoc, known.date)
+          }
+        }
+
+        // Legacy key cleanup once migration is durable.
+        if (legacy && get().openSlugs.includes(legacy)) {
           localStorage.removeItem(LEGACY_SLUG_KEY)
         }
 
@@ -187,14 +242,60 @@ export const useDocsStore = create<DocsState>()(
       createNew: async () => {
         try {
           const created = await proofClient.createDoc(DEFAULT_DOC_TITLE)
+          const meta: KnownDoc = { slug: created.slug, type: 'writing' }
           set((s) => ({
             openSlugs: [...s.openSlugs, created.slug],
             activeSlug: created.slug,
+            knownDocs: [...s.knownDocs, meta],
           }))
           await ensureHandle(created.slug, set, get)
+          const handle = get().handles[created.slug]
+          if (handle) {
+            writeDocMeta(handle.ydoc, {
+              type: 'writing',
+              createdAt: new Date().toISOString(),
+            })
+          }
         } catch (err) {
           console.error('[docs] createNew failed', err)
         }
+      },
+
+      openDaily: async (date) => {
+        const targetDate = date ?? todayLocalDate()
+        let known = get().knownDocs.find(
+          (d) => d.type === 'daily' && d.date === targetDate,
+        )
+        if (!known) {
+          try {
+            // Empty body — title field carries the date, body stays
+            // clean for the user's actual writing.
+            const created = await proofClient.createDoc(targetDate, '')
+            known = { slug: created.slug, type: 'daily', date: targetDate }
+            set((s) => ({ knownDocs: [...s.knownDocs, known!] }))
+          } catch (err) {
+            console.error('[docs] openDaily createDoc failed', err)
+            return null
+          }
+        }
+        const slug = known.slug
+        if (!get().openSlugs.includes(slug)) {
+          set((s) => ({ openSlugs: [...s.openSlugs, slug] }))
+        }
+        set({ activeSlug: slug })
+        await ensureHandle(slug, set, get)
+        const handle = get().handles[slug]
+        if (handle) {
+          if (!handle.ydoc.getMap('meta').get('type')) {
+            writeDocMeta(handle.ydoc, {
+              type: 'daily',
+              date: targetDate,
+              createdAt: new Date().toISOString(),
+            })
+          }
+          seedDailyTitleIfEmpty(handle.ydoc, targetDate)
+        }
+        return slug
       },
 
       reorder: (slugs) => set({ openSlugs: slugs }),
@@ -205,10 +306,31 @@ export const useDocsStore = create<DocsState>()(
       partialize: (s) => ({
         openSlugs: s.openSlugs,
         activeSlug: s.activeSlug,
+        knownDocs: s.knownDocs,
       }),
     },
   ),
 )
+
+/** Seed a daily entry's title field with its anchor date so the user
+ * sees the date in the title input the moment the doc opens. The
+ * write only fires when the Y.Text is currently empty — once the
+ * user customizes the title (e.g. adds a subtitle), we never
+ * overwrite it. Wait for the provider to sync before checking, so we
+ * don't race the server's existing-title content. */
+function seedDailyTitleIfEmpty(ydoc: Y.Doc, date: string): void {
+  const ytext = ydoc.getText('title')
+  const seed = () => {
+    if (ytext.toString().length > 0) return
+    ydoc.transact(() => {
+      ytext.insert(0, date)
+    })
+  }
+  // The provider may not have replayed history yet on a freshly
+  // created doc; defer one tick so any inbound title state is applied
+  // before we decide it's empty.
+  setTimeout(seed, 50)
+}
 
 /** Internal: lazy-create a handle for `slug`, register it, and route
  * status updates back into the store. Idempotent — a second call for

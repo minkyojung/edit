@@ -1,7 +1,6 @@
-import { useCallback, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
-  IconNote,
   IconBooks,
   IconSettings,
   IconFilter,
@@ -11,6 +10,8 @@ import {
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
+import { DocList } from './DocList'
+import { useDocsStore } from '@/state/docsStore'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useTheme } from '@/components/theme-provider'
@@ -67,7 +68,6 @@ type PaletteOption = {
 }
 
 const NAV_ITEMS = [
-  { title: 'Notes', url: '/notes', icon: IconNote },
   { title: 'Wiki', url: '/wiki', icon: IconBooks },
 ] as const
 
@@ -131,6 +131,25 @@ export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
   }, [account.connected, disconnect])
 
   const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
+  const openDaily = useDocsStore((s) => s.openDaily)
+  const navigate = useNavigate()
+
+  // ⌘T → today's daily journal entry. Lands on the editor route in
+  // case the user is currently looking at /wiki when they press it.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      if (e.shiftKey || e.altKey) return
+      if (e.key !== 't' && e.key !== 'T') return
+      e.preventDefault()
+      openDaily().catch((err) =>
+        console.error('[docs] ⌘T openDaily failed', err),
+      )
+      if (!pathname.startsWith('/notes')) navigate('/notes')
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [openDaily, navigate, pathname])
 
   return (
     <Sidebar
@@ -154,8 +173,9 @@ export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
         <SidebarTrigger />
       </SidebarHeader>
 
-      <SidebarContent className="px-2 pt-1">
-        <SidebarMenu className="gap-0">
+      <SidebarContent className="pt-1">
+        <DocList />
+        <SidebarMenu className="gap-0 px-2 pt-2">
           {NAV_ITEMS.map((item) => (
             <SidebarMenuItem key={item.url}>
               <SidebarMenuButton
