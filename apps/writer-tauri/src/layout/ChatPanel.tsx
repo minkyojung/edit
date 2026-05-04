@@ -6,8 +6,8 @@
 //
 // Per-proposal accept/reject lives in MarkPopover (anchored to the inline
 // mark in the editor body). This panel is the transcript surface only:
-// "Run Review" appends a user/assistant pair to the active thread, and
-// the user is directed back to the body to act on individual highlights.
+// `/review` runs the copyeditor pass and drops inline comment marks; the
+// user is directed back to the body to act on individual highlights.
 
 import React, { useEffect, useRef, useState } from 'react'
 import {
@@ -27,13 +27,11 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { Streamdown } from 'streamdown'
-import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useThreads } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
 import { useActiveThread } from '@/hooks/useActiveThread'
 import { runChat } from '@/agent/chat'
-import { COPYEDITOR_PROMPT } from '@/agent/skills/copyeditor'
 import { generateThreadTitle } from '@/agent/generateThreadTitle'
 import {
   CommandRenderError,
@@ -86,7 +84,6 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   const turnsHook = useThreadTurns(ydoc, activeId)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const runningRef = useRef(false)
   const [chatStatus, setChatStatus] = useState<PromptStatus>('idle')
   // Live streaming buffer — keeps the in-flight assistant turn out of Yjs so
   // every delta is a cheap React state update instead of a doc rewrite. The
@@ -179,6 +176,12 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     model?: string
     effort?: 'low' | 'medium' | 'high'
     relayTools: string[]
+    /** Optional final-content override. Called once the run settles
+     * successfully — receives counts of propose_change calls observed,
+     * and its return value replaces the assistant turn's text content.
+     * Used by /review to render "Found N issues" instead of whatever
+     * stray text the model produced alongside its tool calls. */
+    summarize?: (counts: { proposed: number; applied: number }) => string
   }
 
   /** Drives a single assistant turn end-to-end: seed streaming buffer, run
@@ -262,6 +265,11 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       }, 120)
     }
 
+    // Counters used by `summarize` (review-comments). Only mutated when a
+     // summarize callback is present; otherwise stay at zero and are unused.
+    let proposedCount = 0
+    let appliedCount = 0
+
     const commit = (
       status: ChatTurn['status'],
       stopReason: string | null,
@@ -272,8 +280,17 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         pendingFlush = null
       }
       const parts = buildParts()
-      const content = joinByType('text')
+      const modelText = joinByType('text')
       const thinking = joinByType('reasoning')
+      // Successful runs with a summarize hook get their text replaced. We
+      // keep the original parts timeline intact so the user can still
+      // inspect each propose_change card if curious — only the top-level
+      // `content` (used as the rendered prose + Copy output + history)
+      // becomes the summary line.
+      const content =
+        status === 'done' && overrides?.summarize
+          ? overrides.summarize({ proposed: proposedCount, applied: appliedCount })
+          : modelText
       turnsHook.appendTurn({
         id: assistantId,
         role: 'assistant',
@@ -305,6 +322,13 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           upsertPart(part)
           scheduleFlush()
         },
+        onToolApplied: overrides?.summarize
+          ? (call) => {
+              if (call.name !== 'propose_change') return
+              proposedCount += 1
+              if (call.result.ok) appliedCount += 1
+            }
+          : undefined,
       })
       commit('done', result.stopReason)
       setChatStatus('idle')
@@ -372,6 +396,16 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       model: cmd.model,
       effort: cmd.effort,
       relayTools: kind.relayTools,
+      // review-comments emits many tool calls and any chat text it
+      // produces is incidental — replace the final content with a
+      // human summary so the transcript stays terse.
+      summarize:
+        kind.id === 'review-comments'
+          ? ({ applied }) =>
+              applied === 0
+                ? 'No issues to flag — looks clean to me.'
+                : `Found **${applied}** issue${applied === 1 ? '' : 's'} — click any highlight in the document to review.`
+          : undefined,
     }
     await runAssistantTurn(threadId, [...turnsHook.turns, userTurn], overrides)
   }
@@ -472,145 +506,6 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     if (activeId) useChatRuns.getState().abortByThread(activeId)
   }
 
-  async function handleReview() {
-    if (!ready || runningRef.current || chatStatus === 'streaming') return
-    const threadId = activeId
-    if (!threadId) return
-    runningRef.current = true
-
-    const startedAt = Date.now()
-    const userTurn: ChatTurn = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: 'Run review on this document.',
-      ts: startedAt,
-    }
-    const assistantId = crypto.randomUUID()
-    turnsHook.appendTurn(userTurn)
-    setStreaming({
-      threadId,
-      turn: {
-        id: assistantId,
-        role: 'assistant',
-        content: '',
-        ts: Date.now(),
-        status: 'streaming',
-      },
-    })
-
-    setChatStatus('streaming')
-    startActivity()
-
-    // Same parts-timeline machinery as handleSend, just with a different
-    // system prompt + model. Sharing this path means review automatically
-    // gets token streaming, the ActivityStatus indicator, and the propose
-    // change card UI.
-    const partsById = new Map<string, MessagePart>()
-    const partOrder: string[] = []
-    const upsertPart = (part: MessagePart) => {
-      if (!partsById.has(part.id)) partOrder.push(part.id)
-      partsById.set(part.id, part)
-    }
-    const buildParts = (): MessagePart[] => partOrder.map((id) => partsById.get(id)!).filter(Boolean)
-    const joinByType = (type: 'text' | 'reasoning'): string => {
-      let out = ''
-      for (const id of partOrder) {
-        const p = partsById.get(id)
-        if (p?.type === type) out += p.text
-      }
-      return out
-    }
-
-    let pendingFlush: number | null = null
-    const scheduleFlush = () => {
-      if (pendingFlush != null) return
-      pendingFlush = window.setTimeout(() => {
-        pendingFlush = null
-        const parts = buildParts()
-        const content = joinByType('text')
-        const thinking = joinByType('reasoning')
-        setStreaming((s) =>
-          s && s.threadId === threadId
-            ? {
-                ...s,
-                turn: { ...s.turn, content, thinking: thinking || undefined, parts },
-              }
-            : s,
-        )
-      }, 120)
-    }
-
-    let appliedCount = 0
-    let proposedCount = 0
-
-    const commit = (
-      status: ChatTurn['status'],
-      summary: string | null,
-      stopReason: string | null,
-      errorText: string | null = null,
-    ) => {
-      if (pendingFlush != null) {
-        clearTimeout(pendingFlush)
-        pendingFlush = null
-      }
-      const parts = buildParts()
-      const modelText = joinByType('text')
-      const thinking = joinByType('reasoning')
-      const content = summary ?? modelText
-      turnsHook.appendTurn({
-        id: assistantId,
-        role: 'assistant',
-        content,
-        thinking: thinking || undefined,
-        parts,
-        ts: Date.now(),
-        status,
-        durationMs: Date.now() - startedAt,
-        stopReason,
-        errorText: errorText ?? undefined,
-      })
-      setStreaming(null)
-    }
-
-    try {
-      const result = await runChat({
-        view: editorView!,
-        ydoc: ydoc!,
-        threadId,
-        prompt: 'Begin your review.',
-        systemPrompt: COPYEDITOR_PROMPT,
-        model: 'claude-haiku-4-5',
-        onPart: (part) => {
-          upsertPart(part)
-          scheduleFlush()
-        },
-        onToolApplied: (call) => {
-          if (call.name !== 'propose_change') return
-          proposedCount += 1
-          if (call.result.ok) appliedCount += 1
-        },
-      })
-      const summary =
-        proposedCount === 0
-          ? 'No issues to flag — looks clean to me.'
-          : `Found **${appliedCount}** issue${appliedCount === 1 ? '' : 's'} — click any highlight in the document to review.`
-      commit('done', summary, result.stopReason)
-      setChatStatus('idle')
-    } catch (e) {
-      const aborted = e instanceof DOMException && e.name === 'AbortError'
-      commit(
-        aborted ? 'stopped' : 'error',
-        null,
-        null,
-        aborted ? null : humanizeError(e),
-      )
-      setChatStatus(aborted ? 'idle' : 'error')
-    } finally {
-      runningRef.current = false
-      endActivity()
-    }
-  }
-
   return (
     <div className="relative flex h-full flex-col border-l border-border bg-background">
       {!account.connected && (
@@ -666,15 +561,6 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       </div>
 
       <div className="border-t border-border p-3 space-y-2">
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full"
-          disabled={!ready || !account.connected}
-          onClick={handleReview}
-        >
-          Run Review
-        </Button>
         <PromptInput
           status={chatStatus}
           disabled={!ready || !account.connected}

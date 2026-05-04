@@ -5,13 +5,12 @@
 import type { CommandKind, CommandKindId } from './types'
 import { chatMessageKind } from './kinds/chatMessage'
 import { documentEditKind } from './kinds/documentEdit'
+import { reviewCommentsKind } from './kinds/reviewComments'
 
 export const KINDS: Record<CommandKindId, CommandKind> = {
   'chat-message': chatMessageKind,
   'document-edit': documentEditKind,
-  // review-comments arrives in step 6 — for now points at chat-message
-  // so the loader can still accept the kind id without crashing.
-  'review-comments': chatMessageKind,
+  'review-comments': reviewCommentsKind,
 }
 
 export function resolveKind(id: string | undefined): CommandKind {

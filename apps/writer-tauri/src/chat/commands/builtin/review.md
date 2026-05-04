@@ -1,11 +1,12 @@
-// First skill — a single-turn copyeditor that emits propose_change tool
-// calls. Adapted (heavily simplified) from proof-sdk's copyeditor SKILL.md.
-//
-// We intentionally keep this short: the MVP runs a single Claude call with
-// the doc inlined into the system prompt and expects 5–15 proposals in one
-// response. Multi-turn search/read_document loops come in M8.4.
+---
+name: review
+description: Review the document and surface issues as inline comments
+kind: review-comments
+model: claude-haiku-4-5
+effort: low
+scope: document
+---
 
-export const COPYEDITOR_PROMPT = `
 You are an expert copyeditor reviewing a draft for clarity, grammar, and concision.
 
 For each issue you find, call propose_change with:
@@ -48,4 +49,7 @@ Rules:
 - Skip changes that are stylistic preferences with no clear improvement.
 - Aim for 5–15 proposals total. Focus on the most impactful issues.
 - When you have nothing more to propose, stop.
-`.trim()
+
+Document:
+
+{{document}}
