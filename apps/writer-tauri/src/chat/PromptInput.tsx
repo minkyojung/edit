@@ -14,7 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
 import { SlashPalette } from '@/chat/SlashPalette'
-import { listCommands, type LoadedCommand } from '@/chat/commands'
+import { getCommand, listCommands, type LoadedCommand } from '@/chat/commands'
 import type { ChatEffort, ChatModel } from '@/chat/types'
 import { cn } from '@/lib/utils'
 
@@ -33,6 +33,13 @@ const MOD_KEY = IS_MAC ? '⌘' : 'Ctrl'
 
 export type PromptStatus = 'idle' | 'streaming' | 'error'
 
+/** Result of pre-submit input validation. When `ok` is false, the parent
+ * surfaces `message` as an inline hint and blocks submission. */
+export interface ValidationResult {
+  ok: boolean
+  message?: string
+}
+
 interface Props {
   status: PromptStatus
   disabled?: boolean
@@ -43,6 +50,9 @@ interface Props {
   onModelChange: (model: ChatModel) => void
   effort: ChatEffort
   onEffortChange: (effort: ChatEffort) => void
+  /** Optional pre-submit validator. Runs on every keystroke; an `ok: false`
+   * result both renders an inline hint and prevents Send. */
+  validate?: (text: string) => ValidationResult
 }
 
 export function PromptInput({
@@ -55,6 +65,7 @@ export function PromptInput({
   onModelChange,
   effort,
   onEffortChange,
+  validate,
 }: Props) {
   const [value, setValue] = useState('')
   const [isComposing, setIsComposing] = useState(false)
@@ -62,7 +73,23 @@ export function PromptInput({
 
   const isStreaming = status === 'streaming'
   const trimmed = value.trim()
-  const canSubmit = !disabled && !isStreaming && trimmed.length > 0
+  const validation = useMemo<ValidationResult>(
+    () => (validate && trimmed.length > 0 ? validate(trimmed) : { ok: true }),
+    [validate, trimmed],
+  )
+  const canSubmit =
+    !disabled && !isStreaming && trimmed.length > 0 && validation.ok
+
+  // Argument-hint: when the value is `/<known> ` (palette closed because of
+  // the trailing space, no args yet), surface the command's argument-hint
+  // as a muted inline cue so the user knows what to type next.
+  const argHint = useMemo<string | null>(() => {
+    const m = /^\/([a-z][a-z0-9-]*)\s+(.*)$/s.exec(value)
+    if (!m) return null
+    if (m[2].length > 0) return null
+    const cmd = getCommand(m[1])
+    return cmd?.argumentHint ?? null
+  }, [value])
 
   // Palette opens while the user is typing the command name itself —
   // before any space. Filter is the partial name (everything after `/`).
@@ -182,6 +209,16 @@ export function PromptInput({
           '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
         )}
       />
+
+      {/* Pre-submit hint row. Validation error wins over the muted argument
+          hint; both are suppressed while the palette is open so users aren't
+          shouted at mid-typing. */}
+      {!paletteOpen && !validation.ok && validation.message && (
+        <div className="text-xs text-destructive">{validation.message}</div>
+      )}
+      {!paletteOpen && validation.ok && argHint && (
+        <div className="text-xs text-muted-foreground">{argHint}</div>
+      )}
 
       {/* Footer: Tools left, model + submit right. The Tools slot fills in
           on the next phase (effort selector, attachments, etc.); for now it

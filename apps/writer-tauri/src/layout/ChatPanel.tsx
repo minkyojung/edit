@@ -9,7 +9,7 @@
 // `/review` runs the copyeditor pass and drops inline comment marks; the
 // user is directed back to the body to act on individual highlights.
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   IconPlayerStopFilled,
   IconChevronRight,
@@ -24,6 +24,7 @@ import {
   IconRefresh,
 } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
+import { getFrozenRange } from '@/editor/frozenSelectionPlugin'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { Streamdown } from 'streamdown'
@@ -136,6 +137,37 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   }, [turnsHook.turns, streaming])
 
   const ready = !!editorView && !!ydoc && !!activeId
+
+  // Track whether the editor currently has *something* selectable for slash
+  // commands — either a live non-empty selection or a frozen snapshot taken
+  // when focus moved to the chat input. selectionchange fires on both
+  // caret moves inside the editor and on focus transitions to the textarea
+  // (the latter triggers blur → snapshot in frozenSelectionPlugin), so it
+  // covers both sources without separate plumbing.
+  const [hasSelection, setHasSelection] = useState(false)
+  useEffect(() => {
+    if (!editorView) {
+      setHasSelection(false)
+      return
+    }
+    const update = () => {
+      const live = !editorView.state.selection.empty
+      const frozen = getFrozenRange(editorView) !== null
+      setHasSelection(live || frozen)
+    }
+    update()
+    document.addEventListener('selectionchange', update)
+    // focusout covers the case where the blur dispatch lands a transaction
+    // that updates the frozen state without a corresponding DOM selection
+    // change (e.g., focus moved by a keyboard shortcut).
+    editorView.dom.addEventListener('focusout', update)
+    editorView.dom.addEventListener('focusin', update)
+    return () => {
+      document.removeEventListener('selectionchange', update)
+      editorView.dom.removeEventListener('focusout', update)
+      editorView.dom.removeEventListener('focusin', update)
+    }
+  }, [editorView])
 
   // Active thread's preferred model. Threads created before the model field
   // existed return undefined; fall back to the default in that case.
@@ -375,11 +407,21 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     try {
       const ev = editorView!
       const docText = ev.state.doc.textBetween(0, ev.state.doc.content.size, '\n', '\n')
-      // Selected range: empty string when nothing is selected. render.ts
-      // throws CommandRenderError if scope is "selection" but no text is
-      // highlighted, which we surface as an inline error turn below.
+      // Pull selection text from either the live selection or, if the user
+      // has clicked into the chat input and collapsed it, the frozen range
+      // snapshot left behind by frozenSelectionPlugin. render.ts still
+      // throws CommandRenderError when scope is "selection" and both are
+      // empty — we surface that as an inline error turn below.
       const sel = ev.state.selection
-      const selection = sel.empty ? '' : ev.state.doc.textBetween(sel.from, sel.to, '\n', '\n')
+      let selection = ''
+      if (!sel.empty) {
+        selection = ev.state.doc.textBetween(sel.from, sel.to, '\n', '\n')
+      } else {
+        const frozen = getFrozenRange(ev)
+        if (frozen) {
+          selection = ev.state.doc.textBetween(frozen.from, frozen.to, '\n', '\n')
+        }
+      }
       systemPrompt = renderBody(cmd, { document: docText, selection, args })
     } catch (e) {
       const msg = e instanceof CommandRenderError ? e.message : String(e)
@@ -506,6 +548,33 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     if (activeId) useChatRuns.getState().abortByThread(activeId)
   }
 
+  // Pre-submit validator: blocks unknown commands and selection-scoped
+  // commands invoked without a selection. Free chat (no leading slash) is
+  // always ok. The leading-slash branch returns ok while the user is still
+  // typing the name (no space yet) so the palette — not a red error —
+  // handles the in-progress state.
+  const validatePrompt = useCallback(
+    (text: string) => {
+      const m = /^\/([a-z][a-z0-9-]*)(\s|$)/.exec(text)
+      if (!m) return { ok: true as const }
+      const hasSpace = m[2].length > 0
+      const cmd = getCommand(m[1])
+      if (!cmd) {
+        return hasSpace
+          ? { ok: false as const, message: `Unknown command: /${m[1]}` }
+          : { ok: true as const }
+      }
+      if (cmd.scope === 'selection' && !hasSelection) {
+        return {
+          ok: false as const,
+          message: `Select text in the editor to use /${cmd.name}.`,
+        }
+      }
+      return { ok: true as const }
+    },
+    [hasSelection],
+  )
+
   return (
     <div className="relative flex h-full flex-col border-l border-border bg-background">
       {!account.connected && (
@@ -570,6 +639,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           onModelChange={(m) => activeId && threads.setThreadModel(activeId, m)}
           effort={activeThreadEffort}
           onEffortChange={(e) => activeId && threads.setThreadEffort(activeId, e)}
+          validate={validatePrompt}
         />
       </div>
     </div>

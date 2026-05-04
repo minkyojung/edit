@@ -12,6 +12,7 @@ import { createMarkCleanupPlugin } from './markCleanupPlugin'
 import { createMarkClickPlugin } from './markClickPlugin'
 import { createDocVersionPlugin } from './docVersionPlugin'
 import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
+import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
 import { MarkToolbar } from './MarkToolbar'
 import { proofMarkPlugins } from './proofMarkSchemas'
 
@@ -52,6 +53,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(createMarkClickPlugin())
       .use(createDocVersionPlugin())
       .use(createSelectionPlugin(setSelection))
+      .use(createFrozenSelectionPlugin())
       .create()
       .then((editor) => {
         if (!mounted) {
