@@ -19,8 +19,14 @@ import {
   type WikilinkPaletteInfo,
   type WikilinkPaletteKey,
 } from './wikilinkPalettePlugin'
+import {
+  createWikilinkBrokenPlugin,
+  wikilinkBrokenKey,
+} from './wikilinkBrokenPlugin'
+import { useDocsStore } from '@/state/docsStore'
 import { WikilinkPalette } from './WikilinkPalette'
 import { UnlinkedNotes } from './UnlinkedNotes'
+import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { useDocTitle } from '../hooks/useDocTitle'
 import { MarkToolbar } from './MarkToolbar'
 import { proofMarkPlugins } from './proofMarkSchemas'
@@ -45,6 +51,24 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   // its own purposes (e.g. mark popovers).
   const [pmView, setPmView] = useState<EditorView | null>(null)
   const { title, setTitle } = useDocTitle(handle?.ydoc ?? null)
+
+  // Live-rewrite wikilinks in this body whenever the referenced
+  // child's title changes, so anchor text never drifts from the
+  // truth.
+  useWikilinkTitleSync(pmView, handle?.slug ?? null)
+
+  // Refresh broken-wikilink decorations whenever the docs registry
+  // changes — adding or removing a doc moves the boundary between
+  // valid and broken links. The plugin handles docChanged on its
+  // own; this effect covers everything else.
+  useEffect(() => {
+    if (!pmView) return
+    const unsubscribe = useDocsStore.subscribe((state, prev) => {
+      if (state.knownDocs === prev.knownDocs) return
+      pmView.dispatch(pmView.state.tr.setMeta(wikilinkBrokenKey, 'rebuild'))
+    })
+    return unsubscribe
+  }, [pmView])
 
   // Bridge between the wikilink-palette plugin (lives inside the
   // Milkdown editor instance) and the React palette popup. The
@@ -83,6 +107,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(createSelectionPlugin(setSelection))
       .use(createFrozenSelectionPlugin())
       .use(createWikilinkClickPlugin())
+      .use(createWikilinkBrokenPlugin())
       .use(
         createWikilinkPalettePlugin({
           onChange: (info: WikilinkPaletteInfo | null) => {

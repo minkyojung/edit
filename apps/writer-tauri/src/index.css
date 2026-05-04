@@ -167,6 +167,17 @@
     background-color: color-mix(in oklch, var(--info) 22%, transparent);
   }
 
+  /* Broken wikilink — slug isn't (or no longer is) in the docs
+     registry. Decoration overrides the bright info tone with a muted
+     destructive treatment + strikethrough so the reader can tell the
+     jump won't go anywhere. The link mark stays attached so the slug
+     survives a future sync that could revive the target. */
+  .ProseMirror .wikilink-broken {
+    color: var(--muted-foreground);
+    background-color: color-mix(in oklch, var(--destructive) 8%, transparent);
+    text-decoration: line-through;
+  }
+
   .ProseMirror:focus,
   .ProseMirror:focus-visible,
   .milkdown:focus,
