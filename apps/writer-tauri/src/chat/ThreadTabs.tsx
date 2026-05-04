@@ -82,7 +82,8 @@ export function ThreadTabs({
       <TabsPrimitive.Root
         value={activeId ?? ''}
         onValueChange={onSelect}
-        className="flex items-center gap-1 border-b border-border bg-background px-2 py-1.5 min-h-[36px]"
+        className="flex shrink-0 items-center gap-1 border-b border-border bg-background px-2"
+        style={{ height: 'var(--header-h)' }}
       >
         <TabsPrimitive.List
           aria-label="Chat threads"

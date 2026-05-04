@@ -13,6 +13,7 @@ import { createMarkClickPlugin } from './markClickPlugin'
 import { createDocVersionPlugin } from './docVersionPlugin'
 import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
+import { useDocTitle } from '../hooks/useDocTitle'
 import { MarkToolbar } from './MarkToolbar'
 import { proofMarkPlugins } from './proofMarkSchemas'
 
@@ -30,6 +31,11 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   onChangeRef.current = onMarkdownChange
 
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
+  const { title, setTitle } = useDocTitle(handle?.ydoc ?? null)
+  // Status is consumed by AppSidebar's header now — keep the prop in
+  // the public surface (callers still pass it) but suppress the lint
+  // for the deliberately-unused symbol.
+  void status
 
   useEffect(() => {
     if (!rootRef.current || !handle) return
@@ -91,15 +97,16 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
 
   return (
     <div className="relative h-full w-full">
-      {status !== 'connected' && (
-        <div className="absolute inset-x-0 top-0 z-sticky flex items-center justify-center py-1 text-xs text-muted-foreground">
-          {status === 'initializing' && 'Starting proof-server…'}
-          {status === 'connecting' && 'Connecting WebSocket…'}
-          {status === 'error' && 'proof-server connection failed — restart the app'}
-        </div>
-      )}
       <div className="h-full w-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="mx-auto max-w-2xl px-8 py-12">
+        <div className="mx-auto max-w-2xl px-8 pt-12 pb-12">
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Untitled"
+            aria-label="Document title"
+            className="mb-6 w-full bg-transparent text-3xl font-semibold leading-tight outline-none placeholder:text-muted-foreground/50"
+          />
           <div ref={rootRef} />
         </div>
       </div>

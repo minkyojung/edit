@@ -10,6 +10,7 @@ import {
   IconSparkles,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { cn } from '@/lib/utils'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useTheme } from '@/components/theme-provider'
@@ -103,7 +104,21 @@ function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
   )
 }
 
-export function AppSidebar() {
+interface AppSidebarProps {
+  /** Collab status surfaced as small text in the header — only rendered
+   * while the doc is mid-handshake or in error so a connected doc reads
+   * as a clean header. */
+  collabStatus?: 'initializing' | 'connecting' | 'connected' | 'error'
+}
+
+const STATUS_LABEL: Record<NonNullable<AppSidebarProps['collabStatus']>, string | null> = {
+  initializing: 'Starting…',
+  connecting: 'Connecting…',
+  connected: null,
+  error: 'Offline',
+}
+
+export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
   const { palette, setPalette } = useTheme()
   const { pathname } = useLocation()
   const [connectOpen, setConnectOpen] = useState(false)
@@ -115,15 +130,27 @@ export function AppSidebar() {
     }
   }, [account.connected, disconnect])
 
+  const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
+
   return (
     <Sidebar
       className="border-r"
     >
       <SidebarHeader
-        className="flex flex-row items-center p-0"
-        style={{ height: '31px' }}
+        className="flex flex-row items-center gap-2 p-0 px-2"
+        style={{ height: 'var(--header-h)' }}
       >
         <div data-tauri-drag-region className="flex-1 h-full" />
+        {statusLabel && (
+          <span
+            className={cn(
+              'text-xs',
+              collabStatus === 'error' ? 'text-destructive' : 'text-muted-foreground',
+            )}
+          >
+            {statusLabel}
+          </span>
+        )}
         <SidebarTrigger />
       </SidebarHeader>
 

@@ -23,7 +23,7 @@ export function App() {
           onError={(error, info) => console.error('[app] uncaught render error', error, info)}
         >
           <HashRouter>
-            <AppShell oauthStatus="unauthenticated" collabHandle={handle} editorView={view}>
+            <AppShell oauthStatus="unauthenticated" collabHandle={handle} collabStatus={status} editorView={view}>
               <Routes>
                 <Route path="/" element={<Navigate to="/notes" replace />} />
                 <Route

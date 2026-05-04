@@ -472,4 +472,12 @@
   --z-overlay: 30;
   --z-popover: 50;
   --z-modal: 50;
+
+  /* Column header rhythm. Every top-of-column band — sidebar header,
+     editor header, chat panel tabs — uses --header-h so the three
+     start at the same Y. --traffic-light-w reserves the macOS
+     stoplight zone on whichever surface owns the window's left edge
+     (sidebar when open, editor when sidebar is collapsed). */
+  --header-h: 2.25rem;
+  --traffic-light-w: 5rem;
 }

@@ -1,15 +1,16 @@
 import React, { useEffect } from 'react'
 import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar'
+import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 import { usePanelRef } from 'react-resizable-panels'
 import { PanelErrorFallback } from '@/components/ErrorFallback'
 import { AppSidebar } from './Sidebar'
 import { ChatPanel } from './ChatPanel'
+import { EditorHeader } from './EditorHeader'
 import { CloseConfirmDialog } from '@/components/CloseConfirmDialog'
 import { useLayoutStore } from '@/state/layoutStore'
-import type { CollabHandle } from '@/hooks/useCollabDoc'
+import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 
 interface AppShellProps {
   children: React.ReactNode
@@ -17,10 +18,11 @@ interface AppShellProps {
   documentContext?: string | null
   oauthStatus?: 'authenticated' | 'unauthenticated' | 'checking'
   collabHandle?: CollabHandle | null
+  collabStatus?: CollabStatus
   editorView?: EditorView | null
 }
 
-export function AppShell({ children, bottomLeft, collabHandle, editorView }: AppShellProps) {
+export function AppShell({ children, bottomLeft, collabHandle, collabStatus, editorView }: AppShellProps) {
   const { sidebarOpen, contextPanelOpen, setSidebar, toggleContextPanel, setContextPanel } =
     useLayoutStore()
   const contextPanelRef = usePanelRef()
@@ -63,27 +65,23 @@ export function AppShell({ children, bottomLeft, collabHandle, editorView }: App
       style={{ '--sidebar-width': '220px' } as React.CSSProperties}
     >
       <CloseConfirmDialog />
-      <AppSidebar />
+      <AppSidebar collabStatus={collabStatus} />
       <SidebarInset className="overflow-hidden">
-        {!sidebarOpen && (
-          <div
-            className="absolute inset-x-0 top-0 z-sticky flex items-center"
-            style={{ height: '31px' }}
-          >
-            <div data-tauri-drag-region className="w-[88px] h-full shrink-0" />
-            <SidebarTrigger />
-            <div data-tauri-drag-region className="flex-1 h-full" />
-          </div>
-        )}
         <ResizablePanelGroup orientation="horizontal" className="h-full">
           <ResizablePanel defaultSize={75} minSize={30}>
-            <div className="relative h-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {children}
-              {bottomLeft && (
-                <div className="absolute bottom-3 left-3 z-overlay">
-                  {bottomLeft}
-                </div>
-              )}
+            <div className="relative flex h-full flex-col">
+              <EditorHeader
+                ydoc={collabHandle?.ydoc ?? null}
+                showSidebarTrigger={!sidebarOpen}
+              />
+              <div className="relative flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {children}
+                {bottomLeft && (
+                  <div className="absolute bottom-3 left-3 z-overlay">
+                    {bottomLeft}
+                  </div>
+                )}
+              </div>
             </div>
           </ResizablePanel>
 
