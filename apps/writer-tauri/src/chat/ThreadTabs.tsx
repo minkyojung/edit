@@ -1,14 +1,24 @@
 // Horizontal tab strip at the top of the chat panel.
 //
+// Built on Radix's Tabs primitive (TabsPrimitive.Root) so we get the full
+// tablist semantics, ←/→/Home/End keyboard nav, and proper focus
+// management for free. The visual is bespoke — Radix is unstyled, we
+// supply the slim flat-strip look ourselves. We deliberately do NOT
+// render TabsPrimitive.Content here: the chat panel below is the
+// de-facto tabpanel, but it's a single shared scroll area swapped by
+// activeId rather than N siblings, so wiring full aria-controls would
+// add DOM gymnastics for no real screen-reader gain.
+//
 // - At most 5 active threads. The [+] button is disabled past that with
 //   a tooltip nudging the user to archive one first.
-// - Hovering a tab reveals an [×] button that soft-archives the thread.
+// - Each tab has an [×] button that soft-archives the thread. Visible
+//   at low opacity by default so touch users can find it without hover.
 // - Double-clicking a tab title swaps it for an inline editor.
-// - The clock button on the far right opens the archive popover (rendered
-//   by the parent — we just emit onOpenArchive when it's clicked).
+// - The clock button on the far right opens the archive popover.
 
 import { useEffect, useRef, useState } from 'react'
 import { IconSparkles, IconPlus, IconX } from '@tabler/icons-react'
+import { Tabs as TabsPrimitive } from 'radix-ui'
 import {
   Tooltip,
   TooltipContent,
@@ -44,22 +54,52 @@ export function ThreadTabs({
 }: Props) {
   const atLimit = active.length >= MAX_ACTIVE_THREADS
 
+  // Global tab-switch shortcuts: ⌘⇧[ previous, ⌘⇧] next (Ctrl on
+  // non-Mac). Radix's arrow-key tablist nav only kicks in once the
+  // tablist has focus, which it almost never does in practice — these
+  // chords let the user cycle without leaving the textarea.
+  useEffect(() => {
+    if (active.length <= 1) return
+    const handler = (e: KeyboardEvent) => {
+      if (!e.shiftKey || !(e.metaKey || e.ctrlKey)) return
+      const isPrev = e.key === '[' || e.code === 'BracketLeft'
+      const isNext = e.key === ']' || e.code === 'BracketRight'
+      if (!isPrev && !isNext) return
+      e.preventDefault()
+      const idx = active.findIndex((t) => t.id === activeId)
+      const cur = idx < 0 ? 0 : idx
+      const next = isPrev
+        ? (cur - 1 + active.length) % active.length
+        : (cur + 1) % active.length
+      onSelect(active[next].id)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [active, activeId, onSelect])
+
   return (
     <TooltipProvider>
-      <div className="flex items-center gap-1 border-b border-border bg-background px-2 py-1.5 min-h-[36px]">
-        <div className="flex flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <TabsPrimitive.Root
+        value={activeId ?? ''}
+        onValueChange={onSelect}
+        className="flex items-center gap-1 border-b border-border bg-background px-2 py-1.5 min-h-[36px]"
+      >
+        <TabsPrimitive.List
+          aria-label="Chat threads"
+          className="flex flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           {active.map((t) => (
             <Tab
               key={t.id}
               meta={t}
               isActive={t.id === activeId}
-              onSelect={() => onSelect(t.id)}
               onArchive={() => onArchive(t.id)}
               onRename={(title) => onRename(t.id, title)}
             />
           ))}
 
-          {/* [+] new thread */}
+          {/* [+] new thread — sits inside the list visually but isn't a
+              tablist member, so render outside any TabsTrigger. */}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -87,7 +127,7 @@ export function ThreadTabs({
               </TooltipContent>
             )}
           </Tooltip>
-        </div>
+        </TabsPrimitive.List>
 
         <ArchivedThreadsPopover
           archived={archived}
@@ -95,7 +135,7 @@ export function ThreadTabs({
           onRestore={onRestore}
           onLimitReached={onRestoreLimitReached}
         />
-      </div>
+      </TabsPrimitive.Root>
     </TooltipProvider>
   )
 }
@@ -103,12 +143,11 @@ export function ThreadTabs({
 interface TabProps {
   meta: ThreadMeta
   isActive: boolean
-  onSelect: () => void
   onArchive: () => void
   onRename: (title: string) => void
 }
 
-function Tab({ meta, isActive, onSelect, onArchive, onRename }: TabProps) {
+function Tab({ meta, isActive, onArchive, onRename }: TabProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(meta.title)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -132,13 +171,12 @@ function Tab({ meta, isActive, onSelect, onArchive, onRename }: TabProps) {
   }
 
   return (
-    <div
-      role="tab"
-      aria-selected={isActive}
-      onClick={() => !editing && onSelect()}
+    <TabsPrimitive.Trigger
+      value={meta.id}
       onDoubleClick={() => setEditing(true)}
       className={cn(
         'group flex h-7 max-w-[180px] shrink-0 items-center gap-1.5 rounded-md px-2 text-xs transition-colors',
+        'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
         isActive
           ? 'bg-accent text-foreground'
           : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
@@ -154,6 +192,9 @@ function Tab({ meta, isActive, onSelect, onArchive, onRename }: TabProps) {
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
+            // Prevent Radix's tablist arrow-key navigation from stealing
+            // input keystrokes while we're renaming.
+            e.stopPropagation()
             if (e.key === 'Enter') commit()
             else if (e.key === 'Escape') {
               setDraft(meta.title)
@@ -169,11 +210,19 @@ function Tab({ meta, isActive, onSelect, onArchive, onRename }: TabProps) {
         </span>
       )}
 
-      <button
-        type="button"
+      <span
+        role="button"
+        tabIndex={0}
         onClick={(e) => {
           e.stopPropagation()
           onArchive()
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            e.stopPropagation()
+            onArchive()
+          }
         }}
         aria-label="Archive chat"
         className={cn(
@@ -183,7 +232,7 @@ function Tab({ meta, isActive, onSelect, onArchive, onRename }: TabProps) {
         )}
       >
         <IconX size={12} stroke={2} />
-      </button>
-    </div>
+      </span>
+    </TabsPrimitive.Trigger>
   )
 }
