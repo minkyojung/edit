@@ -117,7 +117,18 @@ function DocTab({
   onClose: () => void
 }) {
   const handle = useDocsStore((s) => s.handles[slug])
+  const knownDoc = useDocsStore((s) =>
+    s.knownDocs.find((d) => d.slug === slug),
+  )
   const { title } = useDocTitle(handle?.ydoc ?? null)
+  // Daily entries are the day's anchor; the design doc forbids
+  // archiving/deleting them. Closing the tab isn't quite either
+  // (knownDocs survives, the tab just leaves openSlugs), but it
+  // makes "today" disappear from the strip — confusing, since the
+  // bootstrap promise is "you always land on today". Hide the X
+  // for daily tabs and let users close writing tabs only.
+  const isDaily = knownDoc?.type === 'daily'
+  const showClose = canClose && !isDaily
 
   return (
     <TabsPrimitive.Trigger
@@ -133,7 +144,7 @@ function DocTab({
     >
       <IconTarget size={12} stroke={1.75} className="shrink-0" />
       <span className="min-w-0 flex-1 truncate">{title || 'Untitled'}</span>
-      {canClose && (
+      {showClose && (
         <span
           role="button"
           tabIndex={0}

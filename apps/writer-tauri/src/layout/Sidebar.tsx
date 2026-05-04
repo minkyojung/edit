@@ -132,24 +132,40 @@ export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
 
   const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
   const openDaily = useDocsStore((s) => s.openDaily)
+  const createChildNote = useDocsStore((s) => s.createChildNote)
   const navigate = useNavigate()
 
-  // ⌘T → today's daily journal entry. Lands on the editor route in
-  // case the user is currently looking at /wiki when they press it.
+  // Global doc shortcuts:
+  //   ⌘T → today's daily entry (always reachable, even from /wiki).
+  //   ⌘N → new child note under whatever's currently active. Mirrors
+  //         Linear / Notion: "make a new thing inside this thing".
+  // Both pop the user back to /notes if they were on a side route
+  // since that's where the result becomes visible.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
       if (e.shiftKey || e.altKey) return
-      if (e.key !== 't' && e.key !== 'T') return
-      e.preventDefault()
-      openDaily().catch((err) =>
-        console.error('[docs] ⌘T openDaily failed', err),
-      )
-      if (!pathname.startsWith('/notes')) navigate('/notes')
+      if (e.key === 't' || e.key === 'T') {
+        e.preventDefault()
+        openDaily().catch((err) =>
+          console.error('[docs] ⌘T openDaily failed', err),
+        )
+        if (!pathname.startsWith('/notes')) navigate('/notes')
+        return
+      }
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault()
+        const activeSlug = useDocsStore.getState().activeSlug
+        if (!activeSlug) return
+        createChildNote(activeSlug).catch((err) =>
+          console.error('[docs] ⌘N createChildNote failed', err),
+        )
+        if (!pathname.startsWith('/notes')) navigate('/notes')
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [openDaily, navigate, pathname])
+  }, [openDaily, createChildNote, navigate, pathname])
 
   return (
     <Sidebar
