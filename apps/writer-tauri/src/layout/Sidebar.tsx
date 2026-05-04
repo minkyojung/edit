@@ -181,7 +181,7 @@ export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
               <SidebarMenuButton
                 asChild
                 isActive={pathname.startsWith(item.url)}
-                className="h-auto py-2 font-medium"
+                className="h-auto py-2 text-[13px] font-medium"
               >
                 <Link to={item.url}>
                   <item.icon size={16} stroke={1.5} />
@@ -206,10 +206,10 @@ export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium truncate">
+                    <p className="text-[13px] font-medium truncate">
                       {accountDisplayName(account.email) ?? 'Guest'}
                     </p>
-                    <p className="text-xs text-muted-foreground truncate">
+                    <p className="text-[13px] font-medium text-muted-foreground truncate">
                       {account.connected ? (account.email ?? 'Connected') : 'Not connected'}
                     </p>
                   </div>

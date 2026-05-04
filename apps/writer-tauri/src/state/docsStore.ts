@@ -48,6 +48,12 @@ interface DocsState {
   openSlugs: string[]
   activeSlug: string | null
   knownDocs: KnownDoc[]
+  /** Slugs of docs whose tree row is currently expanded in the
+   * sidebar — daily and writing alike. Persisted so the user's
+   * fold layout survives a reload. Today's daily is force-added
+   * during bootstrap so the writing surface always greets them
+   * with their day's notes already in view. */
+  expandedDocSlugs: string[]
 
   // Runtime — never persisted
   handles: Record<string, CollabHandle>
@@ -73,6 +79,8 @@ interface DocsState {
    * the provided label so sidebar listings stop showing "Untitled"
    * for nodes the user explicitly named. Returns the new slug. */
   createWritingChild: (parentSlug: string, title: string) => Promise<string | null>
+  /** Toggle the sidebar fold for a given doc. */
+  toggleExpanded: (slug: string) => void
   reorder: (slugs: string[]) => void
 }
 
@@ -118,6 +126,7 @@ export const useDocsStore = create<DocsState>()(
       openSlugs: [],
       activeSlug: null,
       knownDocs: [],
+      expandedDocSlugs: [],
       handles: {},
       status: {},
       bootstrapping: true,
@@ -164,13 +173,21 @@ export const useDocsStore = create<DocsState>()(
 
         // Add today to openSlugs if it isn't already there, and make
         // it the active tab. "Always land on today" is the design
-        // promise of the daily journal.
+        // promise of the daily journal. Also force-add today's slug
+        // to expandedDocSlugs so the sidebar greets the user with
+        // the day's notes already visible (yesterday becomes its own
+        // slug tomorrow, so this auto-rolls).
         if (todaysDaily) {
           openSlugs = get().openSlugs
           if (!openSlugs.includes(todaysDaily.slug)) {
             openSlugs = [...openSlugs, todaysDaily.slug]
           }
           set({ openSlugs, activeSlug: todaysDaily.slug })
+          set((s) => ({
+            expandedDocSlugs: s.expandedDocSlugs.includes(todaysDaily!.slug)
+              ? s.expandedDocSlugs
+              : [...s.expandedDocSlugs, todaysDaily!.slug],
+          }))
         }
 
         // Defensive: ensure activeSlug points at something real.
@@ -387,6 +404,13 @@ export const useDocsStore = create<DocsState>()(
         }
       },
 
+      toggleExpanded: (slug) =>
+        set((s) => ({
+          expandedDocSlugs: s.expandedDocSlugs.includes(slug)
+            ? s.expandedDocSlugs.filter((x) => x !== slug)
+            : [...s.expandedDocSlugs, slug],
+        })),
+
       reorder: (slugs) => set({ openSlugs: slugs }),
     }),
     {
@@ -396,6 +420,7 @@ export const useDocsStore = create<DocsState>()(
         openSlugs: s.openSlugs,
         activeSlug: s.activeSlug,
         knownDocs: s.knownDocs,
+        expandedDocSlugs: s.expandedDocSlugs,
       }),
     },
   ),

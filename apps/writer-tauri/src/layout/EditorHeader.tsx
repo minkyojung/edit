@@ -20,6 +20,7 @@
 // row instead, matching Cursor / VS Code.
 
 import { IconLayoutSidebarRightFilled } from '@tabler/icons-react'
+import type { EditorView } from '@milkdown/kit/prose/view'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Button } from '@/components/ui/button'
 import {
@@ -31,12 +32,14 @@ import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useDocsStore } from '@/state/docsStore'
 import { Breadcrumb } from '@/editor/Breadcrumb'
+import { DocMenu } from './DocMenu'
 
 interface EditorHeaderProps {
   showSidebarTrigger: boolean
+  editorView: EditorView | null
 }
 
-export function EditorHeader({ showSidebarTrigger }: EditorHeaderProps) {
+export function EditorHeader({ showSidebarTrigger, editorView }: EditorHeaderProps) {
   const activeSlug = useDocsStore((s) => s.activeSlug)
   return (
     <div
@@ -57,7 +60,8 @@ export function EditorHeader({ showSidebarTrigger }: EditorHeaderProps) {
         <Breadcrumb slug={activeSlug} />
       </div>
       <div data-tauri-drag-region className="h-full flex-1" />
-      <div className="flex items-center pr-2">
+      <div className="flex items-center gap-0.5 pr-2">
+        <DocMenu editorView={editorView} />
         <ContextPanelTrigger />
       </div>
     </div>

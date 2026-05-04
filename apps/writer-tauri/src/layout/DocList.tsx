@@ -9,7 +9,7 @@
 // backfill, matching the "every date is a slot" model from the
 // design doc.
 
-import { useMemo, useState, type MouseEvent } from 'react'
+import { useMemo, type MouseEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { IconCalendar, IconChevronRight, IconFileDescription, IconPlus } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
@@ -25,16 +25,10 @@ export function DocList() {
   const openDaily = useDocsStore((s) => s.openDaily)
   const setActive = useDocsStore((s) => s.setActive)
   const createChildNote = useDocsStore((s) => s.createChildNote)
+  const expandedDocSlugs = useDocsStore((s) => s.expandedDocSlugs)
+  const toggleExpanded = useDocsStore((s) => s.toggleExpanded)
   const navigate = useNavigate()
   const { pathname } = useLocation()
-
-  const today = todayLocalDate()
-  // Track which daily rows are expanded. Today defaults to expanded;
-  // the rest collapse so the sidebar stays scannable. The state lives
-  // in component-local React state — refreshing the app starts every
-  // day folded again except today, which the design accepts as a
-  // visual quiet default.
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set([today]))
 
   const rows = useMemo(() => buildDailyRows(knownDocs), [knownDocs])
   const childrenByParent = useMemo(() => indexChildren(knownDocs), [knownDocs])
@@ -43,25 +37,25 @@ export function DocList() {
     if (!pathname.startsWith('/notes')) navigate('/notes')
   }
 
-  const toggleExpand = (date: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(date)) next.delete(date)
-      else next.add(date)
-      return next
-    })
-  }
+  // Expansion state lives in the docs store (persisted), keyed by
+  // slug. Today's slug is force-added during bootstrap so the
+  // current day always greets the user expanded; everything else
+  // remembers the user's last fold state.
+  const expandedSet = useMemo(
+    () => new Set(expandedDocSlugs),
+    [expandedDocSlugs],
+  )
 
   return (
     <div className="px-2 py-2">
-      <div className="px-2 pb-1 text-xs font-medium text-muted-foreground/70">
+      <div className="px-2 pb-1 text-[13px] font-medium text-muted-foreground">
         Daily
       </div>
       <ul className="flex flex-col gap-0.5">
         {rows.map((row) => {
           const dailySlug = row.slug
           const isActive = dailySlug ? dailySlug === activeSlug : false
-          const isExpanded = expanded.has(row.date)
+          const isExpanded = dailySlug ? expandedSet.has(dailySlug) : false
           const children = dailySlug ? childrenByParent.get(dailySlug) ?? [] : []
           const hasChildren = children.length > 0
 
@@ -72,13 +66,13 @@ export function DocList() {
                 isActive={isActive}
                 isExpanded={isExpanded}
                 hasChildren={hasChildren}
-                onToggleExpand={() => toggleExpand(row.date)}
+                onToggleExpand={() => {
+                  if (dailySlug) toggleExpanded(dailySlug)
+                }}
                 onSelect={async () => {
                   const slug = await openDaily(row.date)
                   // Expand on open so the user sees what's inside.
-                  if (slug) {
-                    setExpanded((prev) => new Set(prev).add(row.date))
-                  }
+                  if (slug && !expandedSet.has(slug)) toggleExpanded(slug)
                   ensureNotesRoute()
                 }}
                 onAddChild={async () => {
@@ -86,7 +80,7 @@ export function DocList() {
                   const parent = await openDaily(row.date)
                   if (!parent) return
                   await createChildNote(parent)
-                  setExpanded((prev) => new Set(prev).add(row.date))
+                  if (!expandedSet.has(parent)) toggleExpanded(parent)
                   ensureNotesRoute()
                 }}
               />
@@ -142,12 +136,10 @@ function DailyRow({
   return (
     <div
       className={cn(
-        'group flex w-full items-center gap-1 rounded-md px-1.5 py-1.5 text-xs transition-colors',
+        'group flex w-full items-center gap-1 rounded-md px-1.5 py-1.5 text-[13px] font-medium transition-colors',
         isActive
           ? 'bg-accent text-foreground'
-          : row.hasEntry
-            ? 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
-            : 'text-muted-foreground/60 hover:bg-accent/40 hover:text-foreground',
+          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
       )}
     >
       {/* Expand chevron — only meaningful when there are children. We
@@ -235,19 +227,21 @@ function DocTreeNode({
 }) {
   const handle = useDocsStore((s) => s.handles[doc.slug])
   const { title } = useDocTitle(handle?.ydoc ?? null)
+  const expandedDocSlugs = useDocsStore((s) => s.expandedDocSlugs)
+  const toggleExpanded = useDocsStore((s) => s.toggleExpanded)
   const children = childrenByParent.get(doc.slug) ?? []
   const hasChildren = children.length > 0
-  const [isExpanded, setIsExpanded] = useState(false)
+  const isExpanded = expandedDocSlugs.includes(doc.slug)
   const isActive = doc.slug === activeSlug
 
   return (
     <li>
       <div
         className={cn(
-          'group flex w-full items-center gap-1 rounded-md px-1.5 py-1.5 text-xs transition-colors',
+          'group flex w-full items-center gap-1 rounded-md px-1.5 py-1.5 text-[13px] font-medium transition-colors',
           isActive
             ? 'bg-accent text-foreground'
-            : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground',
+            : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
         )}
         // Indent by depth — each level adds a small step so the tree
         // structure reads at a glance without dominating row width.
@@ -257,7 +251,7 @@ function DocTreeNode({
           type="button"
           onClick={(e: MouseEvent) => {
             e.stopPropagation()
-            if (hasChildren) setIsExpanded((v) => !v)
+            if (hasChildren) toggleExpanded(doc.slug)
           }}
           aria-label={hasChildren ? (isExpanded ? 'Collapse' : 'Expand') : undefined}
           tabIndex={hasChildren ? 0 : -1}
@@ -295,7 +289,7 @@ function DocTreeNode({
           onClick={(e: MouseEvent) => {
             e.stopPropagation()
             onAddChild(doc.slug)
-            setIsExpanded(true)
+            if (!isExpanded) toggleExpanded(doc.slug)
           }}
           aria-label="Add note"
           className={cn(
