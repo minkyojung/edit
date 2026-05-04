@@ -4,13 +4,13 @@
 
 import type { CommandKind, CommandKindId } from './types'
 import { chatMessageKind } from './kinds/chatMessage'
+import { documentEditKind } from './kinds/documentEdit'
 
 export const KINDS: Record<CommandKindId, CommandKind> = {
   'chat-message': chatMessageKind,
-  // document-edit and review-comments arrive in steps 5/6 — for now
-  // these slots point at the safe default so loader validation can
-  // still accept their ids without crashing.
-  'document-edit': chatMessageKind,
+  'document-edit': documentEditKind,
+  // review-comments arrives in step 6 — for now points at chat-message
+  // so the loader can still accept the kind id without crashing.
   'review-comments': chatMessageKind,
 }
 
