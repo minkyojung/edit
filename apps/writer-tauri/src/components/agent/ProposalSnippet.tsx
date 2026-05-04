@@ -17,10 +17,10 @@ const KIND_LABEL: Record<string, string> = {
 }
 
 const KIND_DOT: Record<string, string> = {
-  replace: 'bg-yellow-400',
-  insert: 'bg-green-400',
-  delete: 'bg-red-400',
-  comment: 'bg-blue-400',
+  replace: 'bg-warning',
+  insert: 'bg-success',
+  delete: 'bg-destructive',
+  comment: 'bg-info',
 }
 
 export type ProposalCardStatus = 'pending' | 'accepted' | 'rejected'
@@ -60,7 +60,7 @@ export function ProposalSnippet({ markId, proposal, by, status, onAccept, onReje
         </span>
         <span className="text-muted-foreground truncate">{by}</span>
         {resolved && (
-          <span className="ml-auto text-[10px] uppercase tracking-wide text-muted-foreground">
+          <span className="ml-auto text-xs uppercase tracking-wide text-muted-foreground">
             {status === 'accepted' ? 'Accepted' : 'Rejected'}
           </span>
         )}
@@ -99,13 +99,13 @@ export function ProposalSnippet({ markId, proposal, by, status, onAccept, onReje
 
       {!resolved && (
         <div className="flex gap-1.5 pt-0.5">
-          <Button size="sm" className="h-6 flex-1 text-[11px]" onClick={onAccept}>
+          <Button size="sm" className="h-6 flex-1 text-xs" onClick={onAccept}>
             Accept
           </Button>
           <Button
             size="sm"
             variant="outline"
-            className="h-6 flex-1 text-[11px]"
+            className="h-6 flex-1 text-xs"
             onClick={onReject}
           >
             Reject
@@ -126,15 +126,15 @@ function DiffBlock({
   kind: 'insert' | 'delete' | 'replace'
 }) {
   return (
-    <div className="font-mono text-[11px] space-y-0.5">
+    <div className="font-mono text-xs space-y-0.5">
       {kind !== 'insert' && (
-        <div className="rounded bg-red-500/10 px-2 py-1 text-red-700 dark:text-red-400 break-words">
+        <div className="rounded bg-destructive/10 px-2 py-1 text-destructive break-words">
           <span className="select-none opacity-60">− </span>
           {quote}
         </div>
       )}
       {kind !== 'delete' && content && (
-        <div className="rounded bg-green-500/10 px-2 py-1 text-green-700 dark:text-green-400 break-words">
+        <div className="rounded bg-success/10 px-2 py-1 text-success break-words">
           <span className="select-none opacity-60">+ </span>
           {content}
         </div>

@@ -8,7 +8,7 @@ const statusLabel: Record<ServerStatus, string> = {
 
 const statusColor: Record<ServerStatus, string> = {
   connecting: 'text-muted-foreground',
-  ready: 'text-green-500',
+  ready: 'text-success',
   error: 'text-destructive',
 }
 

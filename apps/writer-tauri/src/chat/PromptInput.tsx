@@ -270,7 +270,7 @@ export function PromptInput({
               aria-disabled={!isStreaming && !canSubmit}
               aria-label={isStreaming ? 'Stop' : 'Send'}
               className={cn(
-                'flex h-7 w-7 items-center justify-center rounded-full transition-colors',
+                'flex size-8 items-center justify-center rounded-full transition-colors',
                 isStreaming
                   ? 'bg-foreground text-background hover:bg-foreground/90'
                   : canSubmit
@@ -317,7 +317,7 @@ function Kbd({ children }: { children: ReactNode }) {
   return (
     <kbd
       data-slot="kbd"
-      className="bg-muted text-muted-foreground font-mono text-[10px] leading-none px-1 py-0.5"
+      className="bg-muted text-muted-foreground font-mono text-xs leading-none px-1 py-0.5"
     >
       {children}
     </kbd>

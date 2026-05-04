@@ -70,7 +70,7 @@ export function ThreadTabs({
                   onCreate()
                 }}
                 className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors',
+                  'flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors',
                   atLimit
                     ? 'cursor-not-allowed opacity-40'
                     : 'hover:bg-accent hover:text-foreground',

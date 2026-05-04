@@ -51,7 +51,7 @@ export function ArchivedThreadsPopover({
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 aria-label="Archived chats"
               >
                 <IconHistory size={14} stroke={1.75} />
@@ -91,7 +91,7 @@ export function ArchivedThreadsPopover({
             ))}
           </ul>
           {activeCount >= MAX_ACTIVE_THREADS && (
-            <div className="px-2.5 py-1.5 text-[11px] text-muted-foreground">
+            <div className="px-2.5 py-1.5 text-xs text-muted-foreground">
               Already at {MAX_ACTIVE_THREADS} active chats. Archive one to restore.
             </div>
           )}

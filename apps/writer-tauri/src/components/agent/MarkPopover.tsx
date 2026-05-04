@@ -116,14 +116,14 @@ export function MarkPopover({ open, rect, proposal, preview, onAccept, onReject,
 function PreviewRow({ preview }: { preview: Preview }) {
   return (
     <div className="relative w-fit max-w-full overflow-hidden">
-      <div className="whitespace-nowrap text-[13px] leading-snug">
+      <div className="whitespace-nowrap text-sm leading-snug">
         <span className="text-muted-foreground">{preview.left}</span>
         {preview.mode === 'add' ? (
-          <span className="rounded bg-green-500/15 px-1 text-green-700 dark:text-green-400">
+          <span className="rounded bg-success/15 px-1 text-success">
             {preview.middle}
           </span>
         ) : (
-          <span className="rounded bg-red-500/15 px-1 text-red-700 line-through dark:text-red-400">
+          <span className="rounded bg-destructive/15 px-1 text-destructive line-through">
             {preview.middle}
           </span>
         )}
@@ -147,13 +147,13 @@ function PreviewRow({ preview }: { preview: Preview }) {
 
 function FallbackDiff({ proposal }: { proposal: Extract<Proposal, { kind: 'suggestion' }> }) {
   return (
-    <div className="text-[13px]">
+    <div className="text-sm">
       {proposal.suggestionType === 'delete' ? (
-        <span className="rounded bg-red-500/15 px-1 text-red-700 line-through dark:text-red-400">
+        <span className="rounded bg-destructive/15 px-1 text-destructive line-through">
           {proposal.quote}
         </span>
       ) : (
-        <span className="rounded bg-green-500/15 px-1 text-green-700 dark:text-green-400">
+        <span className="rounded bg-success/15 px-1 text-success">
           {proposal.content}
         </span>
       )}
@@ -170,7 +170,7 @@ function ActionPill({ onAccept, onReject }: { onAccept: () => void; onReject: ()
           <button
             type="button"
             onClick={onReject}
-            className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             aria-label="Undo"
           >
             <IconX size={14} stroke={1.75} />

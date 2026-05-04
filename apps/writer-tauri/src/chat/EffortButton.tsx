@@ -39,7 +39,7 @@ export function EffortButton({ value, onChange, disabled }: Props) {
           disabled={disabled}
           aria-label={`Reasoning effort: ${CHAT_EFFORT_LABELS[value]}`}
           className={cn(
-            'flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors',
+            'flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors',
             'hover:bg-accent hover:text-foreground',
             'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent',
           )}

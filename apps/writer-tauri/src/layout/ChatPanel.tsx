@@ -845,9 +845,9 @@ const MessageRow = React.memo(function MessageRow({
     <>
       {body}
       {(durationLabel || stopReasonLabel || canCopy || canRegenerate) && (
-        <div className="mt-1 flex items-center gap-1.5 text-[10px]">
+        <div className="mt-1 flex items-center gap-1.5 text-xs">
           {stopReasonLabel && (
-            <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+            <span className="inline-flex items-center gap-1 text-warning">
               <IconAlertTriangle size={10} />
               <span>{stopReasonLabel}</span>
             </span>
@@ -1075,22 +1075,22 @@ function ToolStateBadge({ state }: { state: ToolPart['state'] }) {
     'input-available': {
       icon: <IconLoader2 size={12} className="animate-spin" />,
       label: 'running',
-      tone: 'text-blue-600 dark:text-blue-400',
+      tone: 'text-info',
     },
     'output-available': {
       icon: <IconCheck size={12} />,
       label: 'done',
-      tone: 'text-emerald-600 dark:text-emerald-400',
+      tone: 'text-success',
     },
     'output-error': {
       icon: <IconAlertTriangle size={12} />,
       label: 'error',
-      tone: 'text-red-600 dark:text-red-400',
+      tone: 'text-destructive',
     },
     'approval-requested': {
       icon: <IconAlertTriangle size={12} />,
       label: 'needs approval',
-      tone: 'text-amber-600 dark:text-amber-400',
+      tone: 'text-warning',
     },
   }
   const m = meta[state]
@@ -1200,8 +1200,8 @@ function KeyValueBlock({ label, value }: { label: string; value: unknown }) {
   const text = formatValue(value)
   return (
     <div>
-      <div className="mb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-background/60 px-2 py-1 font-mono text-[11px]">
+      <div className="mb-0.5 text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-background/60 px-2 py-1 font-mono text-xs">
         {text}
       </pre>
     </div>
