@@ -44,6 +44,18 @@ export function getFrozenRange(view: EditorView): { from: number; to: number } |
   return frozenRangeKey.getState(view.state)?.range ?? null
 }
 
+/** Drop the frozen snapshot. Used by the chat-input chip's X button so
+ * the user can explicitly detach a selection without going back to the
+ * editor. Doesn't touch the live PM selection — callers handle that
+ * when they also need to collapse it. */
+export function clearFrozenRange(view: EditorView): void {
+  const cur = frozenRangeKey.getState(view.state)
+  if (!cur?.range) return
+  view.dispatch(
+    view.state.tr.setMeta(frozenRangeKey, { type: 'clear' } satisfies FrozenMeta),
+  )
+}
+
 export function createFrozenSelectionPlugin() {
   return $prose(
     () =>

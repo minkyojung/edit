@@ -9,12 +9,12 @@
 //                 icon hint; the actual error message lives in the turn.
 
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { IconArrowUp, IconPlayerStop } from '@tabler/icons-react'
+import { IconArrowUp, IconPlayerStop, IconQuote, IconX } from '@tabler/icons-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
 import { SlashPalette } from '@/chat/SlashPalette'
-import { getCommand, listCommands, type LoadedCommand } from '@/chat/commands'
+import { listCommands, type LoadedCommand } from '@/chat/commands'
 import type { ChatEffort, ChatModel } from '@/chat/types'
 import { cn } from '@/lib/utils'
 
@@ -53,6 +53,21 @@ interface Props {
   /** Optional pre-submit validator. Runs on every keystroke; an `ok: false`
    * result both renders an inline hint and prevents Send. */
   validate?: (text: string) => ValidationResult
+  /** Currently attached selection text (live or frozen). When set, a
+   * preview chip renders above the textarea; null hides the chip. */
+  selectionText?: string | null
+  /** Detach the selection from this run. Called by the chip's X button. */
+  onClearSelection?: () => void
+}
+
+// Chip label: first ~24 chars of the selection on a single line, with an
+// ellipsis when truncated. Newlines collapse to spaces so the chip stays
+// to a single row.
+const CHIP_MAX = 24
+function chipLabel(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  if (flat.length <= CHIP_MAX) return flat
+  return flat.slice(0, CHIP_MAX).trimEnd() + '…'
 }
 
 export function PromptInput({
@@ -66,6 +81,8 @@ export function PromptInput({
   effort,
   onEffortChange,
   validate,
+  selectionText,
+  onClearSelection,
 }: Props) {
   const [value, setValue] = useState('')
   const [isComposing, setIsComposing] = useState(false)
@@ -79,17 +96,6 @@ export function PromptInput({
   )
   const canSubmit =
     !disabled && !isStreaming && trimmed.length > 0 && validation.ok
-
-  // Argument-hint: when the value is `/<known> ` (palette closed because of
-  // the trailing space, no args yet), surface the command's argument-hint
-  // as a muted inline cue so the user knows what to type next.
-  const argHint = useMemo<string | null>(() => {
-    const m = /^\/([a-z][a-z0-9-]*)\s+(.*)$/s.exec(value)
-    if (!m) return null
-    if (m[2].length > 0) return null
-    const cmd = getCommand(m[1])
-    return cmd?.argumentHint ?? null
-  }, [value])
 
   // Palette opens while the user is typing the command name itself —
   // before any space. Filter is the partial name (everything after `/`).
@@ -193,6 +199,38 @@ export function PromptInput({
           onHover={setSelectedIndex}
         />
       )}
+      {selectionText && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              className={cn(
+                'inline-flex w-fit items-center gap-1 rounded-full border border-border',
+                'bg-muted/60 px-2 py-0.5 text-xs text-muted-foreground',
+              )}
+            >
+              <IconQuote size={12} stroke={2} className="shrink-0" />
+              <span className="font-mono">{chipLabel(selectionText)}</span>
+              {onClearSelection && (
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    // mousedown so the textarea keeps focus.
+                    e.preventDefault()
+                    onClearSelection()
+                  }}
+                  aria-label="Detach selection"
+                  className="ml-0.5 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <IconX size={12} stroke={2} />
+                </button>
+              )}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" align="start" className="max-w-sm whitespace-pre-wrap text-left">
+            {selectionText}
+          </TooltipContent>
+        </Tooltip>
+      )}
       <textarea
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -210,16 +248,6 @@ export function PromptInput({
         )}
       />
 
-      {/* Pre-submit hint row. Validation error wins over the muted argument
-          hint; both are suppressed while the palette is open so users aren't
-          shouted at mid-typing. */}
-      {!paletteOpen && !validation.ok && validation.message && (
-        <div className="text-xs text-destructive">{validation.message}</div>
-      )}
-      {!paletteOpen && validation.ok && argHint && (
-        <div className="text-xs text-muted-foreground">{argHint}</div>
-      )}
-
       {/* Footer: Tools left, model + submit right. The Tools slot fills in
           on the next phase (effort selector, attachments, etc.); for now it
           just balances the layout via flex justify-between. */}
@@ -234,7 +262,12 @@ export function PromptInput({
             <button
               type="button"
               onClick={handleSubmitClick}
-              disabled={!isStreaming && !canSubmit}
+              // aria-disabled (not disabled) so the button still fires
+              // hover/focus events — that's what makes the tooltip
+              // discoverable when validation blocks Send. handleSubmitClick
+              // short-circuits via canSubmit, so semantically it's still
+              // disabled to clicks.
+              aria-disabled={!isStreaming && !canSubmit}
               aria-label={isStreaming ? 'Stop' : 'Send'}
               className={cn(
                 'flex h-7 w-7 items-center justify-center rounded-full transition-colors',
@@ -256,6 +289,8 @@ export function PromptInput({
                 <Kbd>⇧</Kbd>
                 <Kbd>⌫</Kbd>
               </>
+            ) : !validation.ok && validation.message ? (
+              <span>{validation.message}</span>
             ) : (
               <>
                 <span>Send</span>

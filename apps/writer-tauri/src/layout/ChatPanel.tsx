@@ -24,7 +24,8 @@ import {
   IconRefresh,
 } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { getFrozenRange } from '@/editor/frozenSelectionPlugin'
+import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
+import { TextSelection } from '@milkdown/kit/prose/state'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { Streamdown } from 'streamdown'
@@ -144,22 +145,35 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   // caret moves inside the editor and on focus transitions to the textarea
   // (the latter triggers blur → snapshot in frozenSelectionPlugin), so it
   // covers both sources without separate plumbing.
-  const [hasSelection, setHasSelection] = useState(false)
+  // Mirror the editor's "what's attached?" state into React. We track
+  // both a boolean (used by the validator to gate Send) and the full
+  // selected text (used by the chip preview). selectionchange fires on
+  // every caret move and on focus transitions to/from the textarea, so
+  // it covers live selections and the blur-snapshot path together;
+  // focusout/focusin add coverage for keyboard-driven focus shifts.
+  const [selectionPreview, setSelectionPreview] = useState<string | null>(null)
+  const hasSelection = selectionPreview !== null
   useEffect(() => {
     if (!editorView) {
-      setHasSelection(false)
+      setSelectionPreview(null)
       return
     }
     const update = () => {
-      const live = !editorView.state.selection.empty
-      const frozen = getFrozenRange(editorView) !== null
-      setHasSelection(live || frozen)
+      const ev = editorView
+      const sel = ev.state.selection
+      if (!sel.empty) {
+        setSelectionPreview(ev.state.doc.textBetween(sel.from, sel.to, '\n', '\n'))
+        return
+      }
+      const frozen = getFrozenRange(ev)
+      if (frozen) {
+        setSelectionPreview(ev.state.doc.textBetween(frozen.from, frozen.to, '\n', '\n'))
+        return
+      }
+      setSelectionPreview(null)
     }
     update()
     document.addEventListener('selectionchange', update)
-    // focusout covers the case where the blur dispatch lands a transaction
-    // that updates the frozen state without a corresponding DOM selection
-    // change (e.g., focus moved by a keyboard shortcut).
     editorView.dom.addEventListener('focusout', update)
     editorView.dom.addEventListener('focusin', update)
     return () => {
@@ -167,6 +181,28 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       editorView.dom.removeEventListener('focusout', update)
       editorView.dom.removeEventListener('focusin', update)
     }
+  }, [editorView])
+
+  // X-button on the chip detaches the selection from the run. Clears both
+  // the frozen snapshot and any live PM selection so the chip disappears
+  // immediately whether the editor has focus or not. Collapsing live
+  // selection uses TextSelection.create at the current head — no caret
+  // jump, just collapse-in-place.
+  const handleClearSelection = useCallback(() => {
+    if (!editorView) return
+    clearFrozenRange(editorView)
+    const sel = editorView.state.selection
+    if (!sel.empty) {
+      editorView.dispatch(
+        editorView.state.tr.setSelection(
+          TextSelection.create(editorView.state.doc, sel.head),
+        ),
+      )
+    }
+    // PM transactions don't fire DOM selectionchange, so the listener that
+    // mirrors selection state into React doesn't run on its own here.
+    // Push the cleared state directly.
+    setSelectionPreview(null)
   }, [editorView])
 
   // Active thread's preferred model. Threads created before the model field
@@ -640,6 +676,8 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           effort={activeThreadEffort}
           onEffortChange={(e) => activeId && threads.setThreadEffort(activeId, e)}
           validate={validatePrompt}
+          selectionText={selectionPreview}
+          onClearSelection={handleClearSelection}
         />
       </div>
     </div>
