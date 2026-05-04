@@ -66,6 +66,16 @@ export interface RunChatArgs {
   /** Reasoning effort level passed straight to the SDK's first-class
    * `effort` option. Omit to let the SDK pick its default. */
   effort?: 'low' | 'medium' | 'high'
+  /** Relay-tool names the sidecar should expose for this run. Defaults to
+   * `['propose_change']` so existing callers (free chat, review) keep
+   * inline mark editing. Slash commands pass an empty list (or a kind-
+   * specific list) to scope the toolset. */
+  relayTools?: string[]
+  /** When true (default) the document text is appended to the system
+   * prompt under a `--- DOCUMENT ---` header. Slash commands that already
+   * embed `{{document}}` in their body should pass false to avoid the
+   * document showing up twice. */
+  appendDocument?: boolean
   signal?: AbortSignal
   /** Convenience callback fired for raw text deltas. New callers should
    * prefer `onPart` and derive content from the parts timeline. */
@@ -189,6 +199,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     systemPrompt,
     model = DEFAULT_MODEL,
     effort,
+    relayTools = ['propose_change'],
+    appendDocument = true,
     signal,
     onTextDelta,
     onThinkingDelta,
@@ -200,7 +212,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
   const docForPrompt = docText.length > DOC_CHAR_CAP ? docText.slice(0, DOC_CHAR_CAP) : docText
   const systemBody = systemPrompt ?? FREE_CHAT_PROMPT
-  const system = `${systemBody}\n\n--- DOCUMENT ---\n${docForPrompt}`
+  const system = appendDocument
+    ? `${systemBody}\n\n--- DOCUMENT ---\n${docForPrompt}`
+    : systemBody
   const prompt = promptOverride ?? buildPrompt(history ?? [])
   const runId = crypto.randomUUID()
 
@@ -442,7 +456,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         model,
         systemPrompt: system,
         prompt,
-        relayTools: ['propose_change'],
+        relayTools,
         effort,
       },
     })

@@ -35,6 +35,13 @@ import { useActiveThread } from '@/hooks/useActiveThread'
 import { runChat } from '@/agent/chat'
 import { COPYEDITOR_PROMPT } from '@/agent/skills/copyeditor'
 import { generateThreadTitle } from '@/agent/generateThreadTitle'
+import {
+  CommandRenderError,
+  getCommand,
+  renderBody,
+  resolveKind,
+  type LoadedCommand,
+} from '@/chat/commands'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import { ThreadTabs } from '@/chat/ThreadTabs'
@@ -48,6 +55,16 @@ import {
   type TextPart,
   type ToolPart,
 } from '@/chat/types'
+
+/** Parse a submitted prompt string for a leading slash invocation.
+ * Matches `/<name>` optionally followed by whitespace + args. Returns
+ * null when the text doesn't start with a valid command name — callers
+ * fall back to a normal free-text turn. */
+function parseSlashInvocation(text: string): { name: string; args: string } | null {
+  const m = /^\/([a-z][a-z0-9-]*)(?:\s+(.*))?$/s.exec(text.trim())
+  if (!m) return null
+  return { name: m[1], args: (m[2] ?? '').trim() }
+}
 
 // Tool registered as `propose_change` on the `writer-relay` MCP server in
 // sidecar/src/server.mjs. The Agent SDK exposes MCP tools to the model — and
@@ -151,11 +168,28 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     return null
   })()
 
+  /** Optional per-run overrides for slash commands. When provided, the
+   * command's rendered body becomes the system prompt, and chat.ts skips
+   * its automatic `--- DOCUMENT ---` append (the body owns substitution).
+   * `prompt` overrides the history-derived user message — needed because
+   * a slash submit is the user message, not a free-text question. */
+  type RunOverrides = {
+    systemPrompt: string
+    prompt: string
+    model?: string
+    effort?: 'low' | 'medium' | 'high'
+    relayTools: string[]
+  }
+
   /** Drives a single assistant turn end-to-end: seed streaming buffer, run
    * runChat with the given history, commit on settle. Shared by handleSend
    * (which prepends a fresh user turn) and handleRegenerate (which deletes
    * the prior assistant turn and reuses the existing user message). */
-  async function runAssistantTurn(threadId: string, history: ChatTurn[]) {
+  async function runAssistantTurn(
+    threadId: string,
+    history: ChatTurn[],
+    overrides?: RunOverrides,
+  ) {
     const startedAt = Date.now()
     const assistantId = crypto.randomUUID()
 
@@ -261,8 +295,12 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         ydoc: ydoc!,
         threadId,
         history,
-        model: activeThreadModel,
-        effort: activeThreadEffort,
+        prompt: overrides?.prompt,
+        systemPrompt: overrides?.systemPrompt,
+        appendDocument: overrides ? false : undefined,
+        relayTools: overrides?.relayTools,
+        model: overrides?.model ?? activeThreadModel,
+        effort: overrides?.effort ?? activeThreadEffort,
         onPart: (part) => {
           upsertPart(part)
           scheduleFlush()
@@ -292,10 +330,97 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     }
   }
 
+  /** Renders a command body and kicks off a single assistant turn against
+   * its system prompt. The user message in the transcript is the literal
+   * `/<name> args` text — same as Claude Code, keeps intent visible. */
+  async function executeCommand(
+    threadId: string,
+    cmd: LoadedCommand,
+    args: string,
+    userText: string,
+  ) {
+    const userTurn: ChatTurn = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: userText,
+      ts: Date.now(),
+    }
+    turnsHook.appendTurn(userTurn)
+
+    let systemPrompt: string
+    try {
+      const ev = editorView!
+      const docText = ev.state.doc.textBetween(0, ev.state.doc.content.size, '\n', '\n')
+      // Selected range: empty string when nothing is selected. render.ts
+      // throws CommandRenderError if scope is "selection" but no text is
+      // highlighted, which we surface as an inline error turn below.
+      const sel = ev.state.selection
+      const selection = sel.empty ? '' : ev.state.doc.textBetween(sel.from, sel.to, '\n', '\n')
+      systemPrompt = renderBody(cmd, { document: docText, selection, args })
+    } catch (e) {
+      const msg = e instanceof CommandRenderError ? e.message : String(e)
+      appendInlineError(threadId, userText, msg, /* alreadyAppendedUser */ true)
+      return
+    }
+
+    const kind = resolveKind(cmd.kind)
+    const overrides: RunOverrides = {
+      systemPrompt,
+      // Need a non-empty user message — the SDK won't accept ''. Args go
+      // straight through; otherwise a synthetic kickoff line.
+      prompt: args.trim() || `Run /${cmd.name}.`,
+      model: cmd.model,
+      effort: cmd.effort,
+      relayTools: kind.relayTools,
+    }
+    await runAssistantTurn(threadId, [...turnsHook.turns, userTurn], overrides)
+  }
+
+  /** Append a finished error turn without invoking the model. Used for
+   * slash invocations that fail before the run starts (unknown name,
+   * missing selection). `alreadyAppendedUser` skips re-adding the user
+   * message when the caller already pushed it. */
+  function appendInlineError(
+    _threadId: string,
+    userText: string,
+    message: string,
+    alreadyAppendedUser = false,
+  ) {
+    if (!alreadyAppendedUser) {
+      turnsHook.appendTurn({
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: userText,
+        ts: Date.now(),
+      })
+    }
+    turnsHook.appendTurn({
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: '',
+      ts: Date.now(),
+      status: 'error',
+      errorText: message,
+    })
+  }
+
   async function handleSend(text: string) {
     if (!ready || chatStatus === 'streaming') return
     const threadId = activeId
     if (!threadId) return
+
+    // Slash command? Route through executeCommand so the .md body becomes
+    // the system prompt and any kind-specific tools are wired in.
+    const slash = parseSlashInvocation(text)
+    if (slash) {
+      const cmd = getCommand(slash.name)
+      if (!cmd) {
+        appendInlineError(threadId, text, `Unknown command: /${slash.name}`)
+        return
+      }
+      await executeCommand(threadId, cmd, slash.args, text)
+      return
+    }
 
     const userTurn: ChatTurn = {
       id: crypto.randomUUID(),
