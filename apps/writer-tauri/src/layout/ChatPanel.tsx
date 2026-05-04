@@ -614,7 +614,10 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   )
 
   return (
-    <div className="relative flex h-full flex-col border-l border-border bg-background">
+    <div
+      data-chat-panel
+      className="relative flex h-full flex-col border-l border-border bg-background"
+    >
       {!account.connected && (
         <div className="absolute inset-0 z-overlay flex flex-col items-center justify-center gap-3 backdrop-blur-[2px] bg-background/60">
           <p className="text-sm text-muted-foreground text-center px-4">

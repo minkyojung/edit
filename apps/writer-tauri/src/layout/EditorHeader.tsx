@@ -16,18 +16,14 @@
 //   4. Actions slot — empty for now; reserved for share / export /
 //      doc-level menu when those land.
 
-import type * as Y from 'yjs'
 import { SidebarTrigger } from '@/components/ui/sidebar'
-import { useDocTitle } from '@/hooks/useDocTitle'
+import { EditorTabs } from '@/editor/EditorTabs'
 
 interface EditorHeaderProps {
-  ydoc: Y.Doc | null
   showSidebarTrigger: boolean
 }
 
-export function EditorHeader({ ydoc, showSidebarTrigger }: EditorHeaderProps) {
-  const { title } = useDocTitle(ydoc)
-
+export function EditorHeader({ showSidebarTrigger }: EditorHeaderProps) {
   return (
     <div
       className="flex shrink-0 items-center border-b border-border bg-background"
@@ -47,11 +43,8 @@ export function EditorHeader({ ydoc, showSidebarTrigger }: EditorHeaderProps) {
           <SidebarTrigger />
         </>
       )}
-      <div
-        data-tauri-drag-region
-        className="flex flex-1 items-center px-3 text-xs text-foreground/80 truncate"
-      >
-        <span className="truncate">{title || 'Untitled'}</span>
+      <div className="flex flex-1 items-center px-2">
+        <EditorTabs />
       </div>
       <div className="flex items-center pr-2" />
     </div>

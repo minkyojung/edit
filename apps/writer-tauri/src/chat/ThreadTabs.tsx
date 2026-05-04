@@ -53,11 +53,14 @@ export function ThreadTabs({
   onRestoreLimitReached,
 }: Props) {
   const atLimit = active.length >= MAX_ACTIVE_THREADS
+  const rootRef = useRef<HTMLDivElement>(null)
 
-  // Global tab-switch shortcuts: ⌘⇧[ previous, ⌘⇧] next (Ctrl on
-  // non-Mac). Radix's arrow-key tablist nav only kicks in once the
-  // tablist has focus, which it almost never does in practice — these
-  // chords let the user cycle without leaving the textarea.
+  // Tab-switch shortcuts: ⌘⇧[ previous, ⌘⇧] next (Ctrl on non-Mac).
+  // Cursor-style focus scoping — the same chord swaps editor docs
+  // when focus is in the editor, so we only fire when something
+  // inside the chat panel currently has focus. The chat panel
+  // marks itself with data-chat-panel; we walk up from the tablist
+  // to find that boundary and gate on it.
   useEffect(() => {
     if (active.length <= 1) return
     const handler = (e: KeyboardEvent) => {
@@ -65,6 +68,8 @@ export function ThreadTabs({
       const isPrev = e.key === '[' || e.code === 'BracketLeft'
       const isNext = e.key === ']' || e.code === 'BracketRight'
       if (!isPrev && !isNext) return
+      const chatPanel = rootRef.current?.closest('[data-chat-panel]')
+      if (!chatPanel || !chatPanel.contains(document.activeElement)) return
       e.preventDefault()
       const idx = active.findIndex((t) => t.id === activeId)
       const cur = idx < 0 ? 0 : idx
@@ -80,6 +85,7 @@ export function ThreadTabs({
   return (
     <TooltipProvider>
       <TabsPrimitive.Root
+        ref={rootRef}
         value={activeId ?? ''}
         onValueChange={onSelect}
         className="flex shrink-0 items-center gap-1 border-b border-border bg-background px-2"

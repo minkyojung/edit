@@ -69,11 +69,8 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
       <SidebarInset className="overflow-hidden">
         <ResizablePanelGroup orientation="horizontal" className="h-full">
           <ResizablePanel defaultSize={75} minSize={30}>
-            <div className="relative flex h-full flex-col">
-              <EditorHeader
-                ydoc={collabHandle?.ydoc ?? null}
-                showSidebarTrigger={!sidebarOpen}
-              />
+            <div data-editor-panel className="relative flex h-full flex-col">
+              <EditorHeader showSidebarTrigger={!sidebarOpen} />
               <div className="relative flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {children}
                 {bottomLeft && (
