@@ -8,13 +8,20 @@
 //   error       → last send errored. Same as idle but rendered with an error
 //                 icon hint; the actual error message lives in the turn.
 
-import { useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { IconArrowUp, IconPlayerStop } from '@tabler/icons-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
+import { SlashPalette } from '@/chat/SlashPalette'
+import { listCommands, type LoadedCommand } from '@/chat/commands'
 import type { ChatEffort, ChatModel } from '@/chat/types'
 import { cn } from '@/lib/utils'
+
+// Matches a slash command at the start of input — `/`, then optional
+// kebab-case name, with no whitespace yet. As soon as the user types a
+// space the palette closes and we treat the rest as args.
+const SLASH_RE = /^\/([a-z][a-z0-9-]*)?$/
 
 // Detect Mac so we render the correct modifier glyph in shortcut hints.
 // navigator.platform is deprecated but still the most reliable signal in
@@ -51,10 +58,36 @@ export function PromptInput({
 }: Props) {
   const [value, setValue] = useState('')
   const [isComposing, setIsComposing] = useState(false)
+  const [selectedIndex, setSelectedIndex] = useState(0)
 
   const isStreaming = status === 'streaming'
   const trimmed = value.trim()
   const canSubmit = !disabled && !isStreaming && trimmed.length > 0
+
+  // Palette opens while the user is typing the command name itself —
+  // before any space. Filter is the partial name (everything after `/`).
+  const slashMatch = !isStreaming ? SLASH_RE.exec(value) : null
+  const slashQuery = slashMatch?.[1] ?? ''
+  const allCommands = useMemo(() => listCommands(), [])
+  const filteredCommands = useMemo<LoadedCommand[]>(() => {
+    if (!slashMatch) return []
+    if (!slashQuery) return allCommands
+    return allCommands.filter((c) => c.name.startsWith(slashQuery))
+  }, [allCommands, slashMatch, slashQuery])
+  const paletteOpen = slashMatch !== null
+
+  // Clamp the highlighted row when the filter shrinks the list.
+  const safeIndex = filteredCommands.length === 0
+    ? 0
+    : Math.min(selectedIndex, filteredCommands.length - 1)
+
+  function pickCommand(cmd: LoadedCommand) {
+    // Drop user back into the textarea with `/<name> ` prefilled so they
+    // can keep typing args. argument-hint is shown as placeholder via
+    // a future polish step (#47).
+    setValue(`/${cmd.name} `)
+    setSelectedIndex(0)
+  }
 
   function submit() {
     if (!canSubmit) return
@@ -77,6 +110,30 @@ export function PromptInput({
       onStop?.()
       return
     }
+
+    // Slash palette navigation. We intercept before the textarea sees
+    // the keys so cursor/selection inside the input stays put.
+    if (paletteOpen && filteredCommands.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSelectedIndex((i) => (i + 1) % filteredCommands.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSelectedIndex(
+          (i) => (i - 1 + filteredCommands.length) % filteredCommands.length,
+        )
+        return
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        if (isComposing || e.nativeEvent.isComposing) return
+        e.preventDefault()
+        pickCommand(filteredCommands[safeIndex])
+        return
+      }
+    }
+
     // IME-safe: don't submit while composing (e.g. Korean/Japanese input).
     if (e.key !== 'Enter') return
     if (isComposing || e.nativeEvent.isComposing) return
@@ -96,11 +153,19 @@ export function PromptInput({
   return (
     <div
       className={cn(
-        'flex flex-col gap-2 rounded-2xl border border-border bg-background px-3 py-2.5 transition-colors',
+        'relative flex flex-col gap-2 rounded-2xl border border-border bg-background px-3 py-2.5 transition-colors',
         'focus-within:border-foreground/20',
         disabled && 'opacity-60',
       )}
     >
+      {paletteOpen && (
+        <SlashPalette
+          commands={filteredCommands}
+          selectedIndex={safeIndex}
+          onSelect={pickCommand}
+          onHover={setSelectedIndex}
+        />
+      )}
       <textarea
         value={value}
         onChange={(e) => setValue(e.target.value)}
