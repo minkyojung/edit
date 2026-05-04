@@ -23,6 +23,7 @@ import {
   createWikilinkBrokenPlugin,
   wikilinkBrokenKey,
 } from './wikilinkBrokenPlugin'
+import { createPlaceholderPlugin } from './placeholderPlugin'
 import { useDocsStore } from '@/state/docsStore'
 import { WikilinkPalette } from './WikilinkPalette'
 import { UnlinkedNotes } from './UnlinkedNotes'
@@ -149,6 +150,13 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(createFrozenSelectionPlugin())
       .use(createWikilinkClickPlugin())
       .use(createWikilinkBrokenPlugin())
+      .use(
+        createPlaceholderPlugin({
+          text: isDaily
+            ? "What happened today? — type / for commands"
+            : "Start writing… — type [[ to link, / for commands",
+        }),
+      )
       .use(
         createWikilinkPalettePlugin({
           onChange: (info: WikilinkPaletteInfo | null) => {

@@ -194,6 +194,20 @@
     background-color: transparent;
   }
 
+  /* Empty-body placeholder — the placeholderPlugin tags the first
+     block with data-placeholder=<hint> when the doc is effectively
+     empty (one block, no text or just a ZWS). ::before paints the
+     hint inline at the caret so the user sees a clear starting
+     prompt without affecting cursor or selection. The hint vanishes
+     the moment the block has any real content. */
+  .ProseMirror [data-placeholder]::before {
+    content: attr(data-placeholder);
+    color: var(--muted-foreground);
+    pointer-events: none;
+    position: absolute;
+    opacity: 0.6;
+  }
+
   .ProseMirror:focus,
   .ProseMirror:focus-visible,
   .milkdown:focus,
