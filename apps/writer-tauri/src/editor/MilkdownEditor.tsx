@@ -13,8 +13,16 @@ import { createMarkClickPlugin } from './markClickPlugin'
 import { createDocVersionPlugin } from './docVersionPlugin'
 import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
+import { createWikilinkClickPlugin } from './wikilinkClickPlugin'
+import {
+  createWikilinkPalettePlugin,
+  type WikilinkPaletteInfo,
+  type WikilinkPaletteKey,
+} from './wikilinkPalettePlugin'
+import { WikilinkPalette } from './WikilinkPalette'
 import { useDocTitle } from '../hooks/useDocTitle'
 import { MarkToolbar } from './MarkToolbar'
+import { Breadcrumb } from './Breadcrumb'
 import { proofMarkPlugins } from './proofMarkSchemas'
 
 interface Props {
@@ -32,6 +40,15 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
 
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
   const { title, setTitle } = useDocTitle(handle?.ydoc ?? null)
+
+  // Bridge between the wikilink-palette plugin (lives inside the
+  // Milkdown editor instance) and the React palette popup. The
+  // plugin emits state via a window-scoped CustomEvent, the React
+  // popup listens. The keyHandlerRef goes the other way — React
+  // installs a keydown handler the plugin invokes for arrow / enter
+  // / escape so the popup can drive its highlight without the
+  // editor swallowing the keys.
+  const wikilinkKeyHandler = useRef<((key: WikilinkPaletteKey) => boolean) | null>(null)
   // Status is consumed by AppSidebar's header now — keep the prop in
   // the public surface (callers still pass it) but suppress the lint
   // for the deliberately-unused symbol.
@@ -60,6 +77,18 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(createDocVersionPlugin())
       .use(createSelectionPlugin(setSelection))
       .use(createFrozenSelectionPlugin())
+      .use(createWikilinkClickPlugin())
+      .use(
+        createWikilinkPalettePlugin({
+          onChange: (info: WikilinkPaletteInfo | null) => {
+            window.dispatchEvent(
+              new CustomEvent('writer:wikilink-palette', { detail: info }),
+            )
+          },
+          onKey: (key: WikilinkPaletteKey) =>
+            wikilinkKeyHandler.current?.(key) ?? false,
+        }),
+      )
       .create()
       .then((editor) => {
         if (!mounted) {
@@ -99,6 +128,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     <div className="relative h-full w-full">
       <div className="h-full w-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="mx-auto max-w-2xl px-8 pt-12 pb-12">
+          <Breadcrumb slug={handle?.slug ?? null} />
           <input
             type="text"
             value={title}
@@ -111,6 +141,10 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
         </div>
       </div>
       {handle && <MarkToolbar selection={selection} ydoc={handle.ydoc} onDismiss={() => setSelection(null)} />}
+      <WikilinkPalette
+        parentSlug={handle?.slug ?? null}
+        keyHandlerRef={wikilinkKeyHandler}
+      />
     </div>
   )
 }

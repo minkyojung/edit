@@ -11,7 +11,7 @@
 
 import { useMemo, useState, type MouseEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { IconCalendar, IconChevronRight, IconFileText, IconPlus } from '@tabler/icons-react'
+import { IconCalendar, IconChevronRight, IconFileDescription, IconPlus } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocTitle } from '@/hooks/useDocTitle'
@@ -282,7 +282,7 @@ function DocTreeNode({
             'focus-visible:ring-2 focus-visible:ring-ring/40 rounded',
           )}
         >
-          <IconFileText
+          <IconFileDescription
             size={12}
             stroke={1.75}
             className="shrink-0 text-muted-foreground"

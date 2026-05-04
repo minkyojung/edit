@@ -149,6 +149,24 @@
     text-underline-offset: 2px;
   }
 
+  /* Wikilink — link mark with a `note:{slug}` href, treated as an
+     internal jump rather than an external URL. Targets the href
+     pattern instead of a class because we ride on commonmark's
+     `link` mark (so server round-trip preserves it); the click
+     plugin intercepts these by href prefix. */
+  .ProseMirror a[href^="note:"] {
+    color: var(--info);
+    background-color: color-mix(in oklch, var(--info) 12%, transparent);
+    padding: 0.05em 0.3em;
+    border-radius: 0.25em;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 120ms ease;
+  }
+  .ProseMirror a[href^="note:"]:hover {
+    background-color: color-mix(in oklch, var(--info) 22%, transparent);
+  }
+
   .ProseMirror:focus,
   .ProseMirror:focus-visible,
   .milkdown:focus,

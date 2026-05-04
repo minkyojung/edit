@@ -19,7 +19,16 @@
 // continuation of the window chrome — the divider sits under the tab
 // row instead, matching Cursor / VS Code.
 
+import { IconLayoutSidebarRightFilled } from '@tabler/icons-react'
 import { SidebarTrigger } from '@/components/ui/sidebar'
+import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
+import { useLayoutStore } from '@/state/layoutStore'
 
 interface EditorHeaderProps {
   showSidebarTrigger: boolean
@@ -42,7 +51,34 @@ export function EditorHeader({ showSidebarTrigger }: EditorHeaderProps) {
         </>
       )}
       <div data-tauri-drag-region className="h-full flex-1" />
-      <div className="flex items-center pr-2" />
+      <div className="flex items-center pr-2">
+        <ContextPanelTrigger />
+      </div>
     </div>
+  )
+}
+
+function ContextPanelTrigger() {
+  const open = useLayoutStore((s) => s.contextPanelOpen)
+  const toggle = useLayoutStore((s) => s.toggleContextPanel)
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={toggle}
+          className={cn(
+            'cursor-pointer transition-colors',
+            open ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+          )}
+          aria-label={open ? 'Hide chat panel' : 'Show chat panel'}
+          aria-pressed={open}
+        >
+          <IconLayoutSidebarRightFilled size={16} />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{open ? 'Hide chat panel' : 'Show chat panel'} ⌘.</TooltipContent>
+    </Tooltip>
   )
 }
