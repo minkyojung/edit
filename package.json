@@ -2,9 +2,8 @@
   "name": "montpellier",
   "private": true,
   "scripts": {
-    "setup": "pnpm install && pnpm rebuild electron",
-    "dev": "pnpm --filter writer dev",
-    "build": "pnpm --filter writer build"
+    "dev": "pnpm --filter writer-tauri tauri dev",
+    "build": "pnpm --filter writer-tauri tauri build"
   },
   "dependencies": {
     "@milkdown/core": "^7.20.0",
@@ -20,10 +19,7 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "electron",
-      "esbuild",
-      "better-sqlite3",
-      "@resvg/resvg-js"
+      "esbuild"
     ]
   },
   "devDependencies": {
