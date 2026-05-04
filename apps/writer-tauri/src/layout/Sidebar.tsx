@@ -11,6 +11,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { DocList } from './DocList'
+import { ArchivedDocsPopover } from './ArchivedDocsPopover'
 import { useDocsStore } from '@/state/docsStore'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
@@ -211,6 +212,9 @@ export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
 
       <SidebarFooter>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <ArchivedDocsPopover />
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

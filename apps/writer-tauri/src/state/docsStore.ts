@@ -50,17 +50,18 @@ export interface KnownDoc {
    * brand-new docs aren't briefly "Untitled". Daily entries don't
    * use this — their label derives from `date`. */
   title?: string
-  /** Soft-delete timestamp (ms since epoch). Set when the user
-   * trashes the doc; cleared when restored. Trashed docs stay in
-   * knownDocs so they can be restored, but are filtered out of
-   * sidebar tree, wikilink palette, and search. A cascade-soft
-   * delete writes the same timestamp to a parent and all its
-   * descendants so the group can be restored together. */
-  deletedAt?: number
-  /** Snapshot of `parentId` taken at trash time so restore can put
-   * the doc back where it was. While trashed, `parentId` is left
+  /** Archive timestamp (ms since epoch). Set when the user archives
+   * the doc; cleared when restored. Archived docs stay in knownDocs
+   * so they can be restored, but are filtered out of sidebar tree,
+   * wikilink palette, and search. A cascade-archive writes the same
+   * timestamp to a parent and all its descendants so the group can
+   * be restored together. Mirrors the threads-archive pattern from
+   * useThreads — same word, same shape. */
+  archivedAt?: number
+  /** Snapshot of `parentId` taken at archive time so restore can put
+   * the doc back where it was. While archived, `parentId` is left
    * undefined so the doc doesn't pollute the live tree index. */
-  deletedFromParent?: string
+  archivedFromParent?: string
 }
 
 interface DocsState {
@@ -102,23 +103,22 @@ interface DocsState {
   /** Toggle the sidebar fold for a given doc. */
   toggleExpanded: (slug: string) => void
   reorder: (slugs: string[]) => void
-  /** Soft-delete: move `slug` and all its descendants into the trash
-   * (cascade). Closes any open tabs in the group, tears down their
-   * handles, and reassigns activeSlug if needed. The group is tagged
-   * with a single timestamp so restore can move them back together.
-   * Refuses to act on daily entries. Returns true on success. */
-  trashDoc: (slug: string) => boolean
-  /** Restore a trashed group identified by `slug` (any group member
-   * works). Walks up via `deletedFromParent` to ensure the parent
-   * chain is also brought back if it shares the same trash batch,
-   * then re-points each parentId to its pre-trash value. */
-  restoreFromTrash: (slug: string) => void
-  /** Permanently delete a trashed group: hits the sidecar DELETE for
-   * each member, removes them from knownDocs / openSlugs / handles.
-   * No-op if the slug isn't trashed. */
+  /** Archive `slug` and all its descendants (cascade). Closes any
+   * open tabs in the group, tears down their handles, and reassigns
+   * activeSlug if needed. The group is tagged with a single
+   * timestamp so restore can move them back together. Refuses to
+   * act on daily entries. Returns true on success. */
+  archiveDoc: (slug: string) => boolean
+  /** Restore an archived group identified by `slug` (any group
+   * member works). Re-points each parentId to its pre-archive
+   * value via `archivedFromParent`. */
+  unarchiveDoc: (slug: string) => void
+  /** Permanently delete an archived group: hits the sidecar DELETE
+   * for each member, removes them from knownDocs / openSlugs /
+   * handles. No-op if the slug isn't archived. */
   deleteForever: (slug: string) => Promise<void>
-  /** Permanently delete every trashed doc (sidecar + local state). */
-  emptyTrash: () => Promise<void>
+  /** Permanently delete every archived doc (sidecar + local state). */
+  emptyArchive: () => Promise<void>
 }
 
 async function buildHandle(
@@ -456,14 +456,14 @@ export const useDocsStore = create<DocsState>()(
 
       reorder: (slugs) => set({ openSlugs: slugs }),
 
-      trashDoc: (slug) => {
+      archiveDoc: (slug) => {
         const state = get()
         const target = state.knownDocs.find((d) => d.slug === slug)
         if (!target) return false
         // Daily entries are time-axis spine, not user-authored docs.
         // Refuse so the sidebar/breadcrumb invariants stay intact.
         if (target.type === 'daily') return false
-        if (target.deletedAt) return false
+        if (target.archivedAt) return false
 
         const groupSlugs = collectDescendantSlugs(state.knownDocs, slug)
         const stamp = Date.now()
@@ -497,8 +497,8 @@ export const useDocsStore = create<DocsState>()(
           groupSet.has(d.slug)
             ? {
                 ...d,
-                deletedAt: stamp,
-                deletedFromParent: d.parentId,
+                archivedAt: stamp,
+                archivedFromParent: d.parentId,
                 parentId: undefined,
               }
             : d,
@@ -516,26 +516,26 @@ export const useDocsStore = create<DocsState>()(
         // up so the editor doesn't sit on a stale handle.
         if (nextActive && !nextHandles[nextActive]) {
           ensureHandle(nextActive, set, get).catch((err) =>
-            console.error('[docs] post-trash ensureHandle failed', err),
+            console.error('[docs] post-archive ensureHandle failed', err),
           )
         }
         return true
       },
 
-      restoreFromTrash: (slug) => {
+      unarchiveDoc: (slug) => {
         const state = get()
         const target = state.knownDocs.find((d) => d.slug === slug)
-        if (!target?.deletedAt) return
-        const stamp = target.deletedAt
-        // Restore everything trashed in the same batch (same timestamp)
-        // so a cascade is undone as a unit.
+        if (!target?.archivedAt) return
+        const stamp = target.archivedAt
+        // Restore everything archived in the same batch (same
+        // timestamp) so a cascade is undone as a unit.
         const nextKnown = state.knownDocs.map((d) =>
-          d.deletedAt === stamp
+          d.archivedAt === stamp
             ? {
                 ...d,
-                parentId: d.deletedFromParent,
-                deletedAt: undefined,
-                deletedFromParent: undefined,
+                parentId: d.archivedFromParent,
+                archivedAt: undefined,
+                archivedFromParent: undefined,
               }
             : d,
         )
@@ -545,10 +545,10 @@ export const useDocsStore = create<DocsState>()(
       deleteForever: async (slug) => {
         const state = get()
         const target = state.knownDocs.find((d) => d.slug === slug)
-        if (!target?.deletedAt) return
-        const stamp = target.deletedAt
+        if (!target?.archivedAt) return
+        const stamp = target.archivedAt
         const groupSlugs = state.knownDocs
-          .filter((d) => d.deletedAt === stamp)
+          .filter((d) => d.archivedAt === stamp)
           .map((d) => d.slug)
         // Best-effort sidecar deletion. If a slug fails (already gone,
         // 404, network blip), keep going so the user isn't stuck with
@@ -568,21 +568,21 @@ export const useDocsStore = create<DocsState>()(
         }))
       },
 
-      emptyTrash: async () => {
-        const trashed = get().knownDocs.filter((d) => d.deletedAt)
-        if (trashed.length === 0) return
-        for (const d of trashed) {
+      emptyArchive: async () => {
+        const archived = get().knownDocs.filter((d) => d.archivedAt)
+        if (archived.length === 0) return
+        for (const d of archived) {
           try {
             await proofClient.deleteDocForever(d.slug)
           } catch (err) {
-            console.error('[docs] emptyTrash item failed', d.slug, err)
+            console.error('[docs] emptyArchive item failed', d.slug, err)
           }
         }
-        const trashedSet = new Set(trashed.map((d) => d.slug))
+        const archivedSet = new Set(archived.map((d) => d.slug))
         set((s) => ({
-          knownDocs: s.knownDocs.filter((d) => !trashedSet.has(d.slug)),
-          openSlugs: s.openSlugs.filter((sl) => !trashedSet.has(sl)),
-          expandedDocSlugs: s.expandedDocSlugs.filter((sl) => !trashedSet.has(sl)),
+          knownDocs: s.knownDocs.filter((d) => !archivedSet.has(d.slug)),
+          openSlugs: s.openSlugs.filter((sl) => !archivedSet.has(sl)),
+          expandedDocSlugs: s.expandedDocSlugs.filter((sl) => !archivedSet.has(sl)),
         }))
       },
     }),
@@ -596,10 +596,10 @@ export const useDocsStore = create<DocsState>()(
         expandedDocSlugs: s.expandedDocSlugs,
       }),
       migrate: (persisted, version) => {
-        // v1 → v2: KnownDoc gains optional deletedAt / deletedFromParent
-        // for soft-delete. Pre-v2 entries are all live; absence of these
-        // fields already encodes that, so this migration is a no-op
-        // version bump that exists for traceability.
+        // v1 → v2: KnownDoc gains optional archivedAt /
+        // archivedFromParent. Pre-v2 entries are all live; absence of
+        // these fields already encodes that, so this migration is a
+        // no-op version bump that exists for traceability.
         if (version < 2) return persisted as DocsState
         return persisted as DocsState
       },
@@ -608,8 +608,8 @@ export const useDocsStore = create<DocsState>()(
 )
 
 /** BFS over knownDocs to collect `root` plus every descendant via
- * parentId. Used by trashDoc to assemble the cascade group in one
- * pass. Skips already-trashed entries so a re-trash of a subtree
+ * parentId. Used by archiveDoc to assemble the cascade group in one
+ * pass. Skips already-archived entries so a re-archive of a subtree
  * doesn't double-batch. */
 function collectDescendantSlugs(docs: KnownDoc[], root: string): string[] {
   const out: string[] = [root]
@@ -617,7 +617,7 @@ function collectDescendantSlugs(docs: KnownDoc[], root: string): string[] {
   while (queue.length) {
     const parent = queue.shift()!
     for (const d of docs) {
-      if (d.parentId === parent && !d.deletedAt && !out.includes(d.slug)) {
+      if (d.parentId === parent && !d.archivedAt && !out.includes(d.slug)) {
         out.push(d.slug)
         queue.push(d.slug)
       }

@@ -33,7 +33,10 @@ export function useWikilinkTitleSync(
     // Only watch children of the active parent. Other docs' titles
     // can change too but they don't affect this body.
     const children = knownDocs.filter(
-      (d) => d.parentId === parentSlug && d.type === 'writing',
+      (d) =>
+        d.parentId === parentSlug &&
+        d.type === 'writing' &&
+        !d.archivedAt,
     )
 
     const cleanups: Array<() => void> = []

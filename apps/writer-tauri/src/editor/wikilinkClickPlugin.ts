@@ -28,8 +28,14 @@ export function createWikilinkClickPlugin() {
               event.preventDefault()
               const slug = slugFromWikilinkHref(href!)
               const store = useDocsStore.getState()
-              if (!store.knownDocs.find((d) => d.slug === slug)) {
+              const target = store.knownDocs.find((d) => d.slug === slug)
+              if (!target) {
                 // Broken link — slug isn't in the registry.
+                return true
+              }
+              if (target.archivedAt) {
+                // Archived — link looks disabled and clicking is a
+                // no-op. User has to restore from Archive first.
                 return true
               }
               if (!store.openSlugs.includes(slug)) {

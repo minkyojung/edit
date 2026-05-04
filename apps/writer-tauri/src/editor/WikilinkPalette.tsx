@@ -68,7 +68,9 @@ export function WikilinkPalette({ parentSlug, keyHandlerRef }: Props) {
     // resolves against. Filter by title prefix when a query is set;
     // the title cache lives in knownDocs once the child has had its
     // ydoc opened at least once.
-    const children = knownDocs.filter((d) => d.parentId === parentSlug)
+    const children = knownDocs.filter(
+      (d) => d.parentId === parentSlug && !d.archivedAt,
+    )
     const matches = children
       .map((doc) => ({ doc, title: titleFor(doc) }))
       .filter(({ title }) => !q || title.toLowerCase().includes(q))

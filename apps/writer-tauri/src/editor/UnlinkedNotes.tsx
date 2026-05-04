@@ -55,7 +55,10 @@ export function UnlinkedNotes({ view, parentSlug }: Props) {
   const children = useMemo(
     () =>
       knownDocs.filter(
-        (d) => d.parentId === parentSlug && d.type === 'writing',
+        (d) =>
+          d.parentId === parentSlug &&
+          d.type === 'writing' &&
+          !d.archivedAt,
       ),
     [knownDocs, parentSlug],
   )

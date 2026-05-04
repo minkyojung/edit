@@ -21,6 +21,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
+import { todayLocalDate } from '@/hooks/useDocMeta'
 
 export function EditorTabs() {
   const openSlugs = useDocsStore((s) => s.openSlugs)
@@ -120,14 +121,14 @@ function DocTab({
     s.knownDocs.find((d) => d.slug === slug),
   )
   const label = useDocLabel(slug)
-  // Daily entries are the day's anchor; the design doc forbids
-  // archiving/deleting them. Closing the tab isn't quite either
-  // (knownDocs survives, the tab just leaves openSlugs), but it
-  // makes "today" disappear from the strip — confusing, since the
-  // bootstrap promise is "you always land on today". Hide the X
-  // for daily tabs and let users close writing tabs only.
-  const isDaily = knownDoc?.type === 'daily'
-  const showClose = canClose && !isDaily
+  // Today's daily is the bootstrap anchor — "you always land on
+  // today" is a design promise, so its tab can't leave the strip.
+  // Past dailies are just history the user opened; they're closeable
+  // like any other tab (knownDocs survives, so the sidebar still
+  // lists them).
+  const isTodaysDaily =
+    knownDoc?.type === 'daily' && knownDoc.date === todayLocalDate()
+  const showClose = canClose && !isTodaysDaily
 
   return (
     <TabsPrimitive.Trigger

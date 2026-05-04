@@ -11,7 +11,13 @@
 
 import { useMemo, type MouseEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { IconCalendar, IconChevronRight, IconFileDescription, IconPlus } from '@tabler/icons-react'
+import {
+  IconArchive,
+  IconCalendar,
+  IconChevronRight,
+  IconFileDescription,
+  IconPlus,
+} from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
@@ -30,8 +36,16 @@ export function DocList() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
-  const rows = useMemo(() => buildDailyRows(knownDocs), [knownDocs])
-  const childrenByParent = useMemo(() => indexChildren(knownDocs), [knownDocs])
+  // Archived docs live in knownDocs but are pulled out of the live
+  // tree so the sidebar reflects only what the user is actively
+  // working with. They reappear via the Archived popover above the
+  // profile button.
+  const liveDocs = useMemo(
+    () => knownDocs.filter((d) => !d.archivedAt),
+    [knownDocs],
+  )
+  const rows = useMemo(() => buildDailyRows(liveDocs), [liveDocs])
+  const childrenByParent = useMemo(() => indexChildren(liveDocs), [liveDocs])
 
   const ensureNotesRoute = () => {
     if (!pathname.startsWith('/notes')) navigate('/notes')
@@ -101,6 +115,9 @@ export function DocList() {
                       onAddChild={async (parentSlug) => {
                         await createChildNote(parentSlug)
                         ensureNotesRoute()
+                      }}
+                      onArchive={(slug) => {
+                        useDocsStore.getState().archiveDoc(slug)
                       }}
                     />
                   ))}
@@ -217,6 +234,7 @@ function DocTreeNode({
   activeSlug,
   onSelect,
   onAddChild,
+  onArchive,
 }: {
   doc: KnownDoc
   depth: number
@@ -224,6 +242,7 @@ function DocTreeNode({
   activeSlug: string | null
   onSelect: (slug: string) => void
   onAddChild: (parentSlug: string) => void
+  onArchive: (slug: string) => void
 }) {
   const label = useDocLabel(doc.slug)
   const expandedDocSlugs = useDocsStore((s) => s.expandedDocSlugs)
@@ -287,6 +306,24 @@ function DocTreeNode({
           type="button"
           onClick={(e: MouseEvent) => {
             e.stopPropagation()
+            onArchive(doc.slug)
+          }}
+          aria-label="Archive note"
+          title="Archive"
+          className={cn(
+            'flex h-4 w-4 shrink-0 items-center justify-center rounded',
+            'opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground',
+            'group-hover:opacity-60 focus-visible:opacity-100',
+            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+          )}
+        >
+          <IconArchive size={10} stroke={1.75} />
+        </button>
+
+        <button
+          type="button"
+          onClick={(e: MouseEvent) => {
+            e.stopPropagation()
             onAddChild(doc.slug)
             if (!isExpanded) toggleExpanded(doc.slug)
           }}
@@ -313,6 +350,7 @@ function DocTreeNode({
               activeSlug={activeSlug}
               onSelect={onSelect}
               onAddChild={onAddChild}
+              onArchive={onArchive}
             />
           ))}
         </ul>
