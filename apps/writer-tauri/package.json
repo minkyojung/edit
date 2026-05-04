@@ -30,6 +30,7 @@
     "@tailwindcss/vite": "^4.2.4",
     "@tauri-apps/api": "^2.10.1",
     "ai": "^6.0.169",
+    "chrono-node": "^2.9.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
