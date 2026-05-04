@@ -8,6 +8,7 @@ import { PanelErrorFallback } from '@/components/ErrorFallback'
 import { AppSidebar } from './Sidebar'
 import { ChatPanel } from './ChatPanel'
 import { EditorHeader } from './EditorHeader'
+import { EditorTabs } from '@/editor/EditorTabs'
 import { CloseConfirmDialog } from '@/components/CloseConfirmDialog'
 import { useLayoutStore } from '@/state/layoutStore'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
@@ -71,6 +72,12 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
           <ResizablePanel defaultSize={75} minSize={30}>
             <div data-editor-panel className="relative flex h-full flex-col">
               <EditorHeader showSidebarTrigger={!sidebarOpen} />
+              <div
+                className="flex shrink-0 items-stretch bg-background px-2 shadow-[inset_0_-1px_0_var(--border)]"
+                style={{ height: 'var(--header-h)' }}
+              >
+                <EditorTabs />
+              </div>
               <div className="relative flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {children}
                 {bottomLeft && (

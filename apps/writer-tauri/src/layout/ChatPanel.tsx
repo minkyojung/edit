@@ -626,8 +626,16 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         </div>
       )}
 
+      {/* Window-chrome row — mirrors EditorHeader so the two columns
+          align at --header-h. Empty for now; reserved for model /
+          account / right-sidebar toggle once those land. */}
       <div
-        className="flex shrink-0 items-center border-b border-border bg-background px-2"
+        className="flex shrink-0 items-center border-b border-border bg-background"
+        style={{ height: 'var(--header-h)' }}
+      />
+
+      <div
+        className="flex shrink-0 items-stretch bg-background px-2 shadow-[inset_0_-1px_0_var(--border)]"
         style={{ height: 'var(--header-h)' }}
       >
         <ThreadTabs

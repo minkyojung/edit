@@ -88,11 +88,11 @@ export function ThreadTabs({
         ref={rootRef}
         value={activeId ?? ''}
         onValueChange={onSelect}
-        className="flex h-full flex-1 items-center gap-1 overflow-hidden"
+        className="flex flex-1 items-stretch gap-1 overflow-hidden"
       >
         <TabsPrimitive.List
           aria-label="Chat threads"
-          className="flex flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex flex-1 items-stretch gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {active.map((t) => (
             <Tab
@@ -116,7 +116,7 @@ export function ThreadTabs({
                   onCreate()
                 }}
                 className={cn(
-                  'flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors',
+                  'flex size-7 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors',
                   'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
                   atLimit
                     ? 'cursor-not-allowed opacity-40'
@@ -181,8 +181,8 @@ function Tab({ meta, isActive, onArchive, onRename }: TabProps) {
       value={meta.id}
       onDoubleClick={() => setEditing(true)}
       className={cn(
-        'group flex h-full max-w-[180px] shrink-0 items-center gap-1.5 px-3 text-xs font-medium transition-colors',
-        'border-b-2 -mb-px',
+        'group flex max-w-[180px] shrink-0 items-center gap-1.5 px-1.5 text-[13px] font-medium transition-colors',
+        'border-b',
         'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
         isActive
           ? 'border-foreground text-foreground'
@@ -235,7 +235,8 @@ function Tab({ meta, isActive, onArchive, onRename }: TabProps) {
         className={cn(
           'flex h-4 w-4 shrink-0 items-center justify-center rounded transition-opacity hover:bg-foreground/10',
           'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          isActive ? 'opacity-60 hover:opacity-100' : 'opacity-30 hover:opacity-100',
+          'opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60 hover:!opacity-100',
+          isActive && 'opacity-60',
         )}
       >
         <IconX size={12} stroke={2} />

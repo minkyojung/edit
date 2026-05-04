@@ -11,7 +11,7 @@
 // connection.
 
 import { useEffect, useRef } from 'react'
-import { IconFileText, IconPlus, IconX } from '@tabler/icons-react'
+import { IconTarget, IconPlus, IconX } from '@tabler/icons-react'
 import { Tabs as TabsPrimitive } from 'radix-ui'
 import {
   Tooltip,
@@ -63,11 +63,11 @@ export function EditorTabs() {
       ref={rootRef}
       value={activeSlug ?? ''}
       onValueChange={setActive}
-      className="flex flex-1 items-center gap-1 overflow-hidden"
+      className="flex flex-1 items-stretch gap-1 overflow-hidden"
     >
       <TabsPrimitive.List
         aria-label="Documents"
-        className="flex flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex flex-1 items-stretch gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {openSlugs.map((slug) => (
           <DocTab
@@ -89,7 +89,7 @@ export function EditorTabs() {
                 )
               }}
               className={cn(
-                'flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors',
+                'flex size-7 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors',
                 'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
                 'hover:bg-accent hover:text-foreground',
               )}
@@ -123,15 +123,15 @@ function DocTab({
     <TabsPrimitive.Trigger
       value={slug}
       className={cn(
-        'group flex h-full max-w-[200px] shrink-0 items-center gap-1.5 px-3 text-xs font-medium transition-colors',
-        'border-b-2 -mb-px',
+        'group flex max-w-[200px] shrink-0 items-center gap-1.5 px-1.5 text-[13px] font-medium transition-colors',
+        'border-b',
         'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
         isActive
           ? 'border-foreground text-foreground'
           : 'border-transparent text-muted-foreground hover:text-foreground',
       )}
     >
-      <IconFileText size={12} stroke={1.75} className="shrink-0" />
+      <IconTarget size={12} stroke={1.75} className="shrink-0" />
       <span className="min-w-0 flex-1 truncate">{title || 'Untitled'}</span>
       {canClose && (
         <span
@@ -152,7 +152,8 @@ function DocTab({
           className={cn(
             'flex h-4 w-4 shrink-0 items-center justify-center rounded transition-opacity hover:bg-foreground/10',
             'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-            isActive ? 'opacity-60 hover:opacity-100' : 'opacity-30 hover:opacity-100',
+            'opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60 hover:!opacity-100',
+            isActive && 'opacity-60',
           )}
         >
           <IconX size={12} stroke={2} />

@@ -51,7 +51,7 @@ export function ArchivedThreadsPopover({
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30"
+                className="flex size-7 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30"
                 aria-label="Archived chats"
               >
                 <IconHistory size={14} stroke={1.75} />
