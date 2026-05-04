@@ -21,9 +21,12 @@ import {
 import { SidebarMenuButton } from '@/components/ui/sidebar'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { cn } from '@/lib/utils'
+import { ConfirmDeleteForeverDialog } from './ConfirmDeleteForeverDialog'
 
 export function ArchivedDocsPopover() {
   const [open, setOpen] = useState(false)
+  const [pendingDeleteSlug, setPendingDeleteSlug] = useState<string | null>(null)
+  const [emptyConfirmOpen, setEmptyConfirmOpen] = useState(false)
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const unarchiveDoc = useDocsStore((s) => s.unarchiveDoc)
   const deleteForever = useDocsStore((s) => s.deleteForever)
@@ -52,6 +55,9 @@ export function ArchivedDocsPopover() {
   )
 
   const count = archived.length
+
+  const pendingDeleteLabel =
+    archived.find((d) => d.slug === pendingDeleteSlug)?.title || 'Untitled'
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -89,12 +95,7 @@ export function ArchivedDocsPopover() {
           <button
             type="button"
             disabled={count === 0}
-            onClick={() => {
-              emptyArchive().catch((err) =>
-                console.error('[archive] emptyArchive failed', err),
-              )
-              setOpen(false)
-            }}
+            onClick={() => setEmptyConfirmOpen(true)}
             aria-label="Empty archive"
             title="Empty archive"
             className={cn(
@@ -121,16 +122,46 @@ export function ArchivedDocsPopover() {
                   unarchiveDoc(d.slug)
                   if (archived.length === 1) setOpen(false)
                 }}
-                onDelete={() => {
-                  deleteForever(d.slug).catch((err) =>
-                    console.error('[archive] deleteForever failed', err),
-                  )
-                }}
+                onDelete={() => setPendingDeleteSlug(d.slug)}
               />
             ))}
           </ul>
         )}
       </PopoverContent>
+
+      <ConfirmDeleteForeverDialog
+        open={pendingDeleteSlug !== null}
+        onOpenChange={(o) => {
+          if (!o) setPendingDeleteSlug(null)
+        }}
+        title="Delete forever?"
+        description={`"${pendingDeleteLabel}" will be permanently removed. This can't be undone.`}
+        confirmLabel="Delete forever"
+        onConfirm={async () => {
+          if (!pendingDeleteSlug) return
+          await deleteForever(pendingDeleteSlug).catch((err) =>
+            console.error('[archive] deleteForever failed', err),
+          )
+        }}
+      />
+
+      <ConfirmDeleteForeverDialog
+        open={emptyConfirmOpen}
+        onOpenChange={setEmptyConfirmOpen}
+        title="Empty archive?"
+        description={
+          count === 1
+            ? '1 archived note will be permanently removed. This can’t be undone.'
+            : `${count} archived notes will be permanently removed. This can’t be undone.`
+        }
+        confirmLabel="Empty archive"
+        onConfirm={async () => {
+          await emptyArchive().catch((err) =>
+            console.error('[archive] emptyArchive failed', err),
+          )
+          setOpen(false)
+        }}
+      />
     </Popover>
   )
 }
