@@ -463,4 +463,13 @@
   --color-sidebar-trigger: var(--sidebar-trigger);
   --font-heading: var(--font-sans);
   --font-sans: 'Geist Variable', sans-serif;
+
+  /* z-index scale. shadcn primitives bake z-50 into their styles for both
+     popovers and modals (they coexist via portal structure, not stacking
+     order), so popover and modal map to the same numeric value here —
+     names diverge only to capture intent at the call site. */
+  --z-sticky: 10;
+  --z-overlay: 30;
+  --z-popover: 50;
+  --z-modal: 50;
 }

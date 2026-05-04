@@ -92,7 +92,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   return (
     <div className="relative h-full w-full">
       {status !== 'connected' && (
-        <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-center py-1 text-xs text-muted-foreground">
+        <div className="absolute inset-x-0 top-0 z-sticky flex items-center justify-center py-1 text-xs text-muted-foreground">
           {status === 'initializing' && 'Starting proof-server…'}
           {status === 'connecting' && 'Connecting WebSocket…'}
           {status === 'error' && 'proof-server connection failed — restart the app'}

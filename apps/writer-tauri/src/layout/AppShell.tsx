@@ -67,7 +67,7 @@ export function AppShell({ children, bottomLeft, collabHandle, editorView }: App
       <SidebarInset className="overflow-hidden">
         {!sidebarOpen && (
           <div
-            className="absolute inset-x-0 top-0 z-10 flex items-center"
+            className="absolute inset-x-0 top-0 z-sticky flex items-center"
             style={{ height: '31px' }}
           >
             <div data-tauri-drag-region className="w-[88px] h-full shrink-0" />
@@ -80,7 +80,7 @@ export function AppShell({ children, bottomLeft, collabHandle, editorView }: App
             <div className="relative h-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {children}
               {bottomLeft && (
-                <div className="absolute bottom-3 left-3 z-30">
+                <div className="absolute bottom-3 left-3 z-overlay">
                   {bottomLeft}
                 </div>
               )}
