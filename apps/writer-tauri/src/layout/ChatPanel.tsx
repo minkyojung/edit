@@ -29,6 +29,8 @@ import { TextSelection } from '@milkdown/kit/prose/state'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { Streamdown } from 'streamdown'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useThreads } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
@@ -797,16 +799,16 @@ const MessageRow = React.memo(function MessageRow({
 
   if (isStopped) {
     return (
-      <div className="rounded-md border border-border/60 bg-muted/20 overflow-hidden">
+      <InlineCard>
         <div className="px-3 py-2">{body}</div>
-        <div className="border-t border-border/60 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground flex items-center gap-1.5">
+        <InlineCardFooter>
           <IconPlayerStopFilled size={12} stroke={0} className="opacity-70" />
           <span>Stopped</span>
           {durationLabel && <span className="opacity-70">· {durationLabel}</span>}
           {canCopy && <CopyButton text={turn.content} />}
           {canRegenerate && <RegenerateButton onClick={() => onRegenerate!(turn.id)} />}
-        </div>
-      </div>
+        </InlineCardFooter>
+      </InlineCard>
     )
   }
 
@@ -817,9 +819,9 @@ const MessageRow = React.memo(function MessageRow({
     // footer.
     const hasBody = (turn.parts && turn.parts.length > 0) || hasText || hasThinking
     return (
-      <div className="rounded-md border border-destructive/40 bg-destructive/5 overflow-hidden">
+      <InlineCard tone="destructive">
         {hasBody && <div className="px-3 py-2">{body}</div>}
-        <div className="border-t border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs text-destructive flex items-center gap-1.5">
+        <InlineCardFooter tone="destructive">
           <IconAlertTriangle size={12} className="shrink-0 opacity-80" />
           <span className="flex-1 min-w-0 truncate" title={turn.errorText ?? undefined}>
             {turn.errorText ?? "Couldn't complete response"}
@@ -836,8 +838,8 @@ const MessageRow = React.memo(function MessageRow({
               <span className="font-medium">Retry</span>
             </button>
           )}
-        </div>
-      </div>
+        </InlineCardFooter>
+      </InlineCard>
     )
   }
 
@@ -1062,43 +1064,107 @@ function labelForTool(part: ToolPart): string {
   return map[part.toolName] ?? `Using ${part.toolName}…`
 }
 
-/** Renders the small status indicator next to a tool's name. Each state
- * gets its own icon + color so the user can scan progress without
- * reading the label. */
+/** Shared container for the small inline cards that show inside an
+ * assistant turn — tool calls, thinking, propose_change, plus the
+ * stopped / error wrappers around the whole turn body. Single
+ * border / radius / background pattern so the chat surface reads as
+ * one family instead of seven near-identical custom divs. */
+function InlineCard({
+  tone = 'default',
+  className,
+  children,
+}: {
+  tone?: 'default' | 'destructive'
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      className={cn(
+        'overflow-hidden rounded-lg border',
+        tone === 'destructive'
+          ? 'border-destructive/40 bg-destructive/5'
+          : 'border-border bg-muted/30',
+        className,
+      )}
+    >
+      {children}
+    </div>
+  )
+}
+
+/** Footer row for InlineCard — used by stopped / error wrappers. The
+ * tone follows the parent card so destructive cards keep the red
+ * gradient through to the action row. */
+function InlineCardFooter({
+  tone = 'default',
+  className,
+  children,
+}: {
+  tone?: 'default' | 'destructive'
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      className={cn(
+        'flex items-center gap-1.5 border-t px-3 py-1.5 text-xs',
+        tone === 'destructive'
+          ? 'border-destructive/30 bg-destructive/10 text-destructive'
+          : 'border-border bg-muted/40 text-muted-foreground',
+        className,
+      )}
+    >
+      {children}
+    </div>
+  )
+}
+
+/** Renders the small status indicator next to a tool's name. Maps each
+ * tool state to a Badge variant so the chat surface picks up its
+ * info / success / warning / destructive tones from the theme tokens
+ * rather than hand-rolled tailwind utilities. */
 function ToolStateBadge({ state }: { state: ToolPart['state'] }) {
-  const meta: Record<ToolPart['state'], { icon: React.ReactNode; label: string; tone: string }> = {
+  const meta: Record<
+    ToolPart['state'],
+    {
+      icon: React.ReactNode
+      label: string
+      variant: React.ComponentProps<typeof Badge>['variant']
+    }
+  > = {
     'input-streaming': {
       icon: <IconLoader2 size={12} className="animate-spin" />,
       label: 'preparing',
-      tone: 'text-muted-foreground',
+      variant: 'secondary',
     },
     'input-available': {
       icon: <IconLoader2 size={12} className="animate-spin" />,
       label: 'running',
-      tone: 'text-info',
+      variant: 'info',
     },
     'output-available': {
       icon: <IconCheck size={12} />,
       label: 'done',
-      tone: 'text-success',
+      variant: 'success',
     },
     'output-error': {
       icon: <IconAlertTriangle size={12} />,
       label: 'error',
-      tone: 'text-destructive',
+      variant: 'destructive',
     },
     'approval-requested': {
       icon: <IconAlertTriangle size={12} />,
       label: 'needs approval',
-      tone: 'text-warning',
+      variant: 'warning',
     },
   }
   const m = meta[state]
   return (
-    <span className={`inline-flex items-center gap-1 ${m.tone}`}>
+    <Badge variant={m.variant}>
       {m.icon}
-      <span>{m.label}</span>
-    </span>
+      {m.label}
+    </Badge>
   )
 }
 
@@ -1108,33 +1174,34 @@ function ToolStateBadge({ state }: { state: ToolPart['state'] }) {
 function ToolPartView({ part }: { part: ToolPart }) {
   const [open, setOpen] = React.useState(false)
   return (
-    <details
-      open={open}
-      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      className="my-1 rounded-md border border-border/60 bg-muted/30 text-xs"
-    >
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1 select-none">
-        <IconChevronRight
-          size={12}
-          className="shrink-0 transition-transform"
-          style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
-        />
-        <IconTool size={12} className="shrink-0 text-muted-foreground" />
-        <span className="font-mono">{part.toolName}</span>
-        <span className="ml-auto">
-          <ToolStateBadge state={part.state} />
-        </span>
-      </summary>
-      <div className="space-y-2 px-2 pb-2 pt-1">
-        <KeyValueBlock label="input" value={part.input} />
-        {(part.state === 'output-available' || part.state === 'output-error') && (
-          <KeyValueBlock
-            label={part.state === 'output-error' ? 'error' : 'output'}
-            value={part.errorText ?? part.output}
+    <InlineCard className="my-1 text-xs">
+      <details
+        open={open}
+        onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+      >
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 select-none">
+          <IconChevronRight
+            size={12}
+            className="shrink-0 transition-transform"
+            style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
           />
-        )}
-      </div>
-    </details>
+          <IconTool size={12} className="shrink-0 text-muted-foreground" />
+          <span className="font-mono">{part.toolName}</span>
+          <span className="ml-auto">
+            <ToolStateBadge state={part.state} />
+          </span>
+        </summary>
+        <div className="space-y-2 px-3 pb-2 pt-1">
+          <KeyValueBlock label="input" value={part.input} />
+          {(part.state === 'output-available' || part.state === 'output-error') && (
+            <KeyValueBlock
+              label={part.state === 'output-error' ? 'error' : 'output'}
+              value={part.errorText ?? part.output}
+            />
+          )}
+        </div>
+      </details>
+    </InlineCard>
   )
 }
 
@@ -1163,8 +1230,8 @@ function ProposeChangePartView({ part }: { part: ToolPart }) {
   const replacement = input.content ?? input.text
 
   return (
-    <div className="my-1 rounded-md border border-border/60 bg-muted/20 text-xs">
-      <div className="flex items-center gap-2 border-b border-border/50 px-2 py-1">
+    <InlineCard className="my-1 text-xs">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
         <HeaderIcon size={12} className="shrink-0 text-muted-foreground" />
         <span className="font-medium text-foreground">{kindLabel}</span>
         <span className="ml-auto">
@@ -1172,9 +1239,9 @@ function ProposeChangePartView({ part }: { part: ToolPart }) {
         </span>
       </div>
       {!ready ? (
-        <div className="px-2 py-1 text-muted-foreground italic">preparing…</div>
+        <div className="px-3 py-1.5 text-muted-foreground italic">preparing…</div>
       ) : (
-        <div className="space-y-1.5 px-2 py-1.5">
+        <div className="space-y-1.5 px-3 py-2">
           {input.quote && (
             <div className="flex gap-1.5">
               <IconQuote size={11} className="mt-0.5 shrink-0 text-muted-foreground" />
@@ -1186,13 +1253,13 @@ function ProposeChangePartView({ part }: { part: ToolPart }) {
           )}
           {isComment && replacement && <div className="pl-[18px] text-foreground">{replacement}</div>}
           {input.rationale && (
-            <div className="border-t border-border/40 pt-1.5 mt-1.5 text-muted-foreground">
+            <div className="border-t border-border pt-1.5 mt-1.5 text-muted-foreground">
               {input.rationale}
             </div>
           )}
         </div>
       )}
-    </div>
+    </InlineCard>
   )
 }
 
@@ -1200,8 +1267,8 @@ function KeyValueBlock({ label, value }: { label: string; value: unknown }) {
   const text = formatValue(value)
   return (
     <div>
-      <div className="mb-0.5 text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
-      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-background/60 px-2 py-1 font-mono text-xs">
+      <div className="mb-1 text-xs font-medium text-muted-foreground">{label}</div>
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-background px-2 py-1.5 font-mono text-xs text-foreground/80">
         {text}
       </pre>
     </div>
@@ -1237,26 +1304,27 @@ function ThinkingPanel({
   }, [streamingNoText])
 
   return (
-    <details
-      open={open}
-      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      className="mb-2 rounded-md border border-border/60 bg-muted/30 text-xs"
-    >
-      <summary className="flex cursor-pointer items-center gap-2 list-none px-2 py-1 text-muted-foreground select-none">
-        {streamingNoText ? (
-          <IconLoader2 size={12} className="shrink-0 animate-spin" />
-        ) : (
-          <IconChevronRight
-            size={12}
-            className="shrink-0 transition-transform"
-            style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
-          />
-        )}
-        <span>{streamingNoText ? 'Thinking…' : 'Thoughts'}</span>
-      </summary>
-      <div className="px-2 pb-2 pt-1 whitespace-pre-wrap text-muted-foreground/90">
-        {content}
-      </div>
-    </details>
+    <InlineCard className="mb-2 text-xs">
+      <details
+        open={open}
+        onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+      >
+        <summary className="flex cursor-pointer items-center gap-2 list-none px-3 py-1.5 text-muted-foreground select-none">
+          {streamingNoText ? (
+            <IconLoader2 size={12} className="shrink-0 animate-spin" />
+          ) : (
+            <IconChevronRight
+              size={12}
+              className="shrink-0 transition-transform"
+              style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
+            />
+          )}
+          <span>{streamingNoText ? 'Thinking…' : 'Thoughts'}</span>
+        </summary>
+        <div className="px-3 pb-2 pt-1 whitespace-pre-wrap text-muted-foreground/90">
+          {content}
+        </div>
+      </details>
+    </InlineCard>
   )
 }
