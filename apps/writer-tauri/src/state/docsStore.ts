@@ -38,6 +38,9 @@ export interface KnownDoc {
   type: 'daily' | 'writing'
   /** YYYY-MM-DD when type === 'daily'. */
   date?: string
+  /** Parent doc's slug for tree-nested writing notes. Undefined for
+   * roots (daily entries and any independent writing docs). */
+  parentId?: string
 }
 
 interface DocsState {
@@ -60,6 +63,10 @@ interface DocsState {
   /** Find or create the daily entry for the given local date and make
    * it the active tab. Returns the slug. */
   openDaily: (date?: string) => Promise<string | null>
+  /** Create a new writing-type note nested under `parentSlug`,
+   * register it in knownDocs with parentId set, open its tab, and
+   * activate. Returns the new slug. */
+  createChildNote: (parentSlug: string) => Promise<string | null>
   reorder: (slugs: string[]) => void
 }
 
@@ -135,9 +142,12 @@ export const useDocsStore = create<DocsState>()(
         )
         if (!todaysDaily) {
           try {
-            // Empty markdown — the date appears in the title field, not
-            // duplicated as an H1 inside the body.
-            const created = await proofClient.createDoc(today, '')
+            // Zero-width space markdown — proof-server rejects blank
+            // bodies (markdown.trim() check), but we don't want a body
+            // H1 duplicating the date that the title field already
+            // shows. ZWS passes the trim guard while rendering as an
+            // empty paragraph in the editor.
+            const created = await proofClient.createDoc(today, '​')
             const meta: KnownDoc = { slug: created.slug, type: 'daily', date: today }
             todaysDaily = meta
             set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
@@ -268,9 +278,10 @@ export const useDocsStore = create<DocsState>()(
         )
         if (!known) {
           try {
-            // Empty body — title field carries the date, body stays
-            // clean for the user's actual writing.
-            const created = await proofClient.createDoc(targetDate, '')
+            // ZWS body — see the bootstrap comment above for the
+            // proof-server blank-markdown guard. Title field carries
+            // the date, body stays visually clean.
+            const created = await proofClient.createDoc(targetDate, '​')
             known = { slug: created.slug, type: 'daily', date: targetDate }
             set((s) => ({ knownDocs: [...s.knownDocs, known!] }))
           } catch (err) {
@@ -296,6 +307,43 @@ export const useDocsStore = create<DocsState>()(
           seedDailyTitleIfEmpty(handle.ydoc, targetDate)
         }
         return slug
+      },
+
+      createChildNote: async (parentSlug) => {
+        // Refuse to nest under something we don't know about — keeps
+        // the tree from sprouting orphan branches if we get a stale
+        // slug from the UI.
+        if (!get().knownDocs.find((d) => d.slug === parentSlug)) return null
+        try {
+          // ZWS body — non-blank for the proof-server validator while
+          // not seeding an H1 the user would have to clean up.
+          const created = await proofClient.createDoc(DEFAULT_DOC_TITLE, '​')
+          const meta: KnownDoc = {
+            slug: created.slug,
+            type: 'writing',
+            parentId: parentSlug,
+          }
+          set((s) => ({
+            knownDocs: [...s.knownDocs, meta],
+            openSlugs: s.openSlugs.includes(created.slug)
+              ? s.openSlugs
+              : [...s.openSlugs, created.slug],
+            activeSlug: created.slug,
+          }))
+          await ensureHandle(created.slug, set, get)
+          const handle = get().handles[created.slug]
+          if (handle) {
+            writeDocMeta(handle.ydoc, {
+              type: 'writing',
+              parentId: parentSlug,
+              createdAt: new Date().toISOString(),
+            })
+          }
+          return created.slug
+        } catch (err) {
+          console.error('[docs] createChildNote failed', err)
+          return null
+        }
       },
 
       reorder: (slugs) => set({ openSlugs: slugs }),

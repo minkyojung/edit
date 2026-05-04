@@ -88,8 +88,7 @@ export function ThreadTabs({
         ref={rootRef}
         value={activeId ?? ''}
         onValueChange={onSelect}
-        className="flex shrink-0 items-center gap-1 border-b border-border bg-background px-2"
-        style={{ height: 'var(--header-h)' }}
+        className="flex h-full flex-1 items-center gap-1 overflow-hidden"
       >
         <TabsPrimitive.List
           aria-label="Chat threads"
@@ -182,11 +181,12 @@ function Tab({ meta, isActive, onArchive, onRename }: TabProps) {
       value={meta.id}
       onDoubleClick={() => setEditing(true)}
       className={cn(
-        'group flex h-7 max-w-[180px] shrink-0 items-center gap-1.5 rounded-md px-2 text-xs transition-colors',
+        'group flex h-full max-w-[180px] shrink-0 items-center gap-1.5 px-3 text-xs font-medium transition-colors',
+        'border-b-2 -mb-px',
         'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
         isActive
-          ? 'bg-accent text-foreground'
-          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+          ? 'border-foreground text-foreground'
+          : 'border-transparent text-muted-foreground hover:text-foreground',
         !editing && 'cursor-pointer',
       )}
     >

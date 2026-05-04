@@ -16,6 +16,10 @@ export interface DocMeta {
   type: DocType
   /** YYYY-MM-DD when type === 'daily'. Undefined otherwise. */
   date?: string
+  /** Parent doc's slug for tree-nested writing notes. Undefined =
+   * root (a daily, or an independent writing doc that isn't filed
+   * under any parent yet). */
+  parentId?: string
   createdAt?: string
 }
 
@@ -25,8 +29,9 @@ function readMeta(ydoc: Y.Doc): DocMeta {
   const map = ydoc.getMap(META_KEY)
   const type = (map.get('type') as DocType | undefined) ?? 'writing'
   const date = map.get('date') as string | undefined
+  const parentId = map.get('parentId') as string | undefined
   const createdAt = map.get('createdAt') as string | undefined
-  return { type, date, createdAt }
+  return { type, date, parentId, createdAt }
 }
 
 export function useDocMeta(ydoc: Y.Doc | null): {
@@ -53,6 +58,7 @@ export function useDocMeta(ydoc: Y.Doc | null): {
     ydoc.transact(() => {
       if (next.type !== undefined) map.set('type', next.type)
       if (next.date !== undefined) map.set('date', next.date)
+      if (next.parentId !== undefined) map.set('parentId', next.parentId)
       if (next.createdAt !== undefined) map.set('createdAt', next.createdAt)
     })
   }

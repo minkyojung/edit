@@ -626,30 +626,35 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         </div>
       )}
 
-      <ThreadTabs
-        active={threads.active}
-        archived={threads.archived}
-        activeId={activeId}
-        onSelect={setActiveId}
-        onCreate={() => {
-          const id = threads.createThread()
-          if (id) setActiveId(id)
-        }}
-        onArchive={(id) => {
-          threads.archiveThread(id)
-          // Active thread reconciles in useActiveThread when active list shifts.
-        }}
-        onRename={threads.renameThread}
-        onRestore={(id) => {
-          const r = threads.restoreThread(id)
-          if (r.ok) setActiveId(id)
-          return r
-        }}
-        onRestoreLimitReached={() => {
-          // TODO: replace with a real toast once we add a toaster.
-          console.warn('[threads] cannot restore — active limit reached')
-        }}
-      />
+      <div
+        className="flex shrink-0 items-center border-b border-border bg-background px-2"
+        style={{ height: 'var(--header-h)' }}
+      >
+        <ThreadTabs
+          active={threads.active}
+          archived={threads.archived}
+          activeId={activeId}
+          onSelect={setActiveId}
+          onCreate={() => {
+            const id = threads.createThread()
+            if (id) setActiveId(id)
+          }}
+          onArchive={(id) => {
+            threads.archiveThread(id)
+            // Active thread reconciles in useActiveThread when active list shifts.
+          }}
+          onRename={threads.renameThread}
+          onRestore={(id) => {
+            const r = threads.restoreThread(id)
+            if (r.ok) setActiveId(id)
+            return r
+          }}
+          onRestoreLimitReached={() => {
+            // TODO: replace with a real toast once we add a toaster.
+            console.warn('[threads] cannot restore — active limit reached')
+          }}
+        />
+      </div>
 
       <div
         ref={scrollRef}

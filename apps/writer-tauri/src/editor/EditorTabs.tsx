@@ -123,11 +123,12 @@ function DocTab({
     <TabsPrimitive.Trigger
       value={slug}
       className={cn(
-        'group flex h-7 max-w-[200px] shrink-0 items-center gap-1.5 rounded-md px-2 text-xs transition-colors',
+        'group flex h-full max-w-[200px] shrink-0 items-center gap-1.5 px-3 text-xs font-medium transition-colors',
+        'border-b-2 -mb-px',
         'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
         isActive
-          ? 'bg-accent text-foreground'
-          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+          ? 'border-foreground text-foreground'
+          : 'border-transparent text-muted-foreground hover:text-foreground',
       )}
     >
       <IconFileText size={12} stroke={1.75} className="shrink-0" />
