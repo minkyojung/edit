@@ -178,6 +178,22 @@
     text-decoration: line-through;
   }
 
+  /* Archived wikilink — slug is in the registry but the user
+     archived the target. Render as disabled (muted + no hover
+     affordance + not-allowed cursor) so the reader can tell at a
+     glance the jump is unavailable, without the alarm of a broken
+     link. Restoring from Archive flips this back to the live style
+     automatically since the decoration rebuilds on knownDocs change. */
+  .ProseMirror .wikilink-archived {
+    color: var(--muted-foreground);
+    background-color: transparent;
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+  .ProseMirror .wikilink-archived:hover {
+    background-color: transparent;
+  }
+
   .ProseMirror:focus,
   .ProseMirror:focus-visible,
   .milkdown:focus,
