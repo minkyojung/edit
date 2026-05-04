@@ -9,11 +9,12 @@
 // backfill, matching the "every date is a slot" model from the
 // design doc.
 
-import { useMemo, type MouseEvent } from 'react'
+import { useMemo, useState, type MouseEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   IconArchive,
   IconCalendar,
+  IconChevronDown,
   IconChevronRight,
   IconFileDescription,
   IconPlus,
@@ -23,7 +24,12 @@ import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { todayLocalDate, formatLocalDate } from '@/hooks/useDocMeta'
 
+/** Initial size of the rolling daily window. The user can grow it
+ * 7-at-a-time via the Earlier button; that state is local to the
+ * component (re-resets on reload, which is fine — the user clicks
+ * Earlier again or jumps via ⌘G). */
 const RECENT_DAYS = 7
+const LOAD_MORE_STEP = 7
 
 export function DocList() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
@@ -44,7 +50,12 @@ export function DocList() {
     () => knownDocs.filter((d) => !d.archivedAt),
     [knownDocs],
   )
-  const rows = useMemo(() => buildDailyRows(liveDocs), [liveDocs])
+
+  const [windowDays, setWindowDays] = useState(RECENT_DAYS)
+  const rows = useMemo(
+    () => buildDailyRows(liveDocs, windowDays),
+    [liveDocs, windowDays],
+  )
   const childrenByParent = useMemo(() => indexChildren(liveDocs), [liveDocs])
 
   const ensureNotesRoute = () => {
@@ -127,6 +138,19 @@ export function DocList() {
           )
         })}
       </ul>
+      <button
+        type="button"
+        onClick={() => setWindowDays((n) => n + LOAD_MORE_STEP)}
+        className={cn(
+          'mt-1 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] text-muted-foreground/70 transition-colors',
+          'outline-none hover:bg-accent/40 hover:text-foreground',
+          'focus-visible:ring-2 focus-visible:ring-ring/40',
+        )}
+        aria-label="Show earlier days"
+      >
+        <IconChevronDown size={12} stroke={1.75} className="shrink-0" />
+        <span>Earlier</span>
+      </button>
     </div>
   )
 }
@@ -367,7 +391,10 @@ interface DailyRowMeta {
   slug: string | null
 }
 
-function buildDailyRows(knownDocs: KnownDoc[]): DailyRowMeta[] {
+function buildDailyRows(
+  knownDocs: KnownDoc[],
+  windowDays: number,
+): DailyRowMeta[] {
   const today = todayLocalDate()
   const dailies = new Map<string, string>()
   for (const d of knownDocs) {
@@ -376,7 +403,7 @@ function buildDailyRows(knownDocs: KnownDoc[]): DailyRowMeta[] {
 
   const windowDates: string[] = []
   const base = new Date()
-  for (let i = 0; i < RECENT_DAYS; i += 1) {
+  for (let i = 0; i < windowDays; i += 1) {
     const dt = new Date(base)
     dt.setDate(base.getDate() - i)
     windowDates.push(formatLocalDate(dt))

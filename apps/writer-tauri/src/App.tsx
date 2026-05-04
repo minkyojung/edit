@@ -9,6 +9,7 @@ import { MarkPopoverLayer } from '@/components/agent/MarkPopoverLayer'
 import { AppShell } from '@/layout/AppShell'
 import { MilkdownEditor } from '@/editor/MilkdownEditor'
 import { WikiView } from '@/views/WikiView'
+import { JumpToDateDialog } from '@/layout/JumpToDateDialog'
 import { useDocsStore } from '@/state/docsStore'
 
 export function App() {
@@ -56,6 +57,7 @@ export function App() {
               </Routes>
             </AppShell>
             <MarkPopoverLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
+            <JumpToDateDialog />
           </HashRouter>
         </ErrorBoundary>
       </TooltipProvider>
