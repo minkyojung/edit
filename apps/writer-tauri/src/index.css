@@ -44,9 +44,9 @@
 @layer base {
   .milkdown,
   .ProseMirror {
-    font-family: system-ui, sans-serif;
-    font-size: 16px;
-    line-height: 1.7;
+    font-family: var(--font-sans);
+    font-size: var(--prose-base);
+    line-height: var(--prose-lh-body);
     color: var(--foreground);
     outline: none;
     width: 100%;
@@ -60,19 +60,93 @@
   }
 
   .ProseMirror p {
-    margin-bottom: 12px;
+    margin-bottom: var(--prose-gap-block);
   }
 
-  .ProseMirror h1 {
-    font-size: 1.6em;
+  .ProseMirror h1,
+  .ProseMirror h2,
+  .ProseMirror h3,
+  .ProseMirror h4,
+  .ProseMirror h5,
+  .ProseMirror h6 {
     font-weight: 600;
-    margin: 0 0 16px;
+    line-height: var(--prose-lh-heading);
+    /* Headings sit closer to the block above only when at the very top
+       of the doc — the parent input handles that. Otherwise breathe. */
+    margin-top: var(--prose-gap-heading);
+    margin-bottom: var(--prose-gap-block);
   }
 
-  .ProseMirror h2 {
-    font-size: 1.3em;
-    font-weight: 600;
-    margin: 16px 0 12px;
+  .ProseMirror :is(h1, h2, h3, h4, h5, h6):first-child {
+    margin-top: 0;
+  }
+
+  .ProseMirror h1 { font-size: var(--prose-h1); }
+  .ProseMirror h2 { font-size: var(--prose-h2); }
+  .ProseMirror h3 { font-size: var(--prose-h3); }
+  .ProseMirror h4 { font-size: var(--prose-h4); }
+  .ProseMirror h5 { font-size: var(--prose-h5); text-transform: uppercase; letter-spacing: 0.04em; }
+  .ProseMirror h6 { font-size: var(--prose-h6); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); }
+
+  .ProseMirror ul,
+  .ProseMirror ol {
+    padding-left: 1.5rem;
+    margin-bottom: var(--prose-gap-block);
+  }
+
+  .ProseMirror ul { list-style: disc; }
+  .ProseMirror ol { list-style: decimal; }
+
+  .ProseMirror li {
+    margin-bottom: 0.25rem;
+  }
+
+  .ProseMirror li > p {
+    margin-bottom: 0.25rem;
+  }
+
+  .ProseMirror blockquote {
+    border-left: 2px solid var(--border);
+    padding-left: 1rem;
+    margin-bottom: var(--prose-gap-block);
+    color: var(--muted-foreground);
+    font-style: italic;
+  }
+
+  .ProseMirror code {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.9em;
+    background: var(--muted);
+    padding: 0.125rem 0.3rem;
+    border-radius: 0.25rem;
+  }
+
+  .ProseMirror pre {
+    background: var(--muted);
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    overflow-x: auto;
+    margin-bottom: var(--prose-gap-block);
+    font-size: 0.9em;
+    line-height: 1.5;
+  }
+
+  .ProseMirror pre code {
+    background: transparent;
+    padding: 0;
+    font-size: inherit;
+  }
+
+  .ProseMirror hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: var(--prose-gap-heading) 0;
+  }
+
+  .ProseMirror a {
+    color: var(--info);
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   .ProseMirror:focus,
@@ -480,4 +554,21 @@
      (sidebar when open, editor when sidebar is collapsed). */
   --header-h: 2.25rem;
   --traffic-light-w: 5rem;
+
+  /* Editor prose scale. Body holds at 16px so writing surfaces stay
+     comfortable even though UI is 14px; headings use a clean six-step
+     ladder rather than the old em-based 1.6em / 1.3em that drifted
+     when root size moved. line-height splits between body (loose,
+     1.7) and headings (tight, 1.25). */
+  --prose-base: 16px;
+  --prose-h1: 28px;
+  --prose-h2: 22px;
+  --prose-h3: 18px;
+  --prose-h4: 16px;
+  --prose-h5: 14px;
+  --prose-h6: 13px;
+  --prose-lh-body: 1.7;
+  --prose-lh-heading: 1.25;
+  --prose-gap-block: 14px;
+  --prose-gap-heading: 28px;
 }
