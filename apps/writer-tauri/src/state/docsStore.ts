@@ -751,6 +751,17 @@ function installTitleMirror(
   const ytext = handle.ydoc.getText('title')
   const sync = () => {
     const next = ytext.toString()
+    // Never overwrite the cached title with an empty value. Two
+    // different scenarios produce next === '' and we can't tell
+    // them apart from this side:
+    //   (a) Legitimate: the user emptied the title field
+    //   (b) Pre-cache: the doc was created before the title-cache
+    //       feature shipped, so Y.Text was never seeded
+    // Treating both as "clear the cache" loses (b)'s real label —
+    // older docs go to Untitled the moment the user warms them.
+    // Preserve the last known good value instead; (a) accepts a
+    // tiny staleness on close, while (b) keeps its label.
+    if (next.length === 0) return
     set((s) => {
       const idx = s.knownDocs.findIndex((d) => d.slug === slug)
       if (idx < 0) return s
