@@ -160,7 +160,7 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
               if (e.key === 'Escape') reset()
             }}
             placeholder={mode === 'comment' ? 'Add a comment…' : 'Replacement text…'}
-            className="h-7 w-48 rounded border border-border bg-background px-2 text-xs outline-none"
+            className="h-7 w-48 rounded border border-border bg-background px-2 text-xs outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
           />
           <ToolbarBtn onClick={submit} disabled={loading || (mode === 'replace' && !input.trim())}>
             Confirm
@@ -185,7 +185,7 @@ function ToolbarBtn({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="rounded px-2 py-1 text-xs text-foreground hover:bg-accent disabled:opacity-40"
+      className="rounded px-2 py-1 text-xs text-foreground transition-colors outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-40"
     >
       {children}
     </button>

@@ -71,6 +71,7 @@ export function ThreadTabs({
                 }}
                 className={cn(
                   'flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors',
+                  'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
                   atLimit
                     ? 'cursor-not-allowed opacity-40'
                     : 'hover:bg-accent hover:text-foreground',
@@ -160,7 +161,7 @@ function Tab({ meta, isActive, onSelect, onArchive, onRename }: TabProps) {
             }
           }}
           onClick={(e) => e.stopPropagation()}
-          className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+          className="min-w-0 flex-1 rounded bg-transparent text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
         />
       ) : (
         <span className="min-w-0 flex-1 truncate">
@@ -177,6 +178,7 @@ function Tab({ meta, isActive, onSelect, onArchive, onRename }: TabProps) {
         aria-label="Archive chat"
         className={cn(
           'flex h-4 w-4 shrink-0 items-center justify-center rounded transition-opacity hover:bg-foreground/10',
+          'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
           isActive ? 'opacity-60 hover:opacity-100' : 'opacity-0 group-hover:opacity-60 hover:!opacity-100',
         )}
       >

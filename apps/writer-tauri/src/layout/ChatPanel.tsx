@@ -829,7 +829,7 @@ const MessageRow = React.memo(function MessageRow({
             <button
               type="button"
               onClick={() => onRegenerate(turn.id)}
-              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-destructive hover:bg-destructive/15 transition-colors shrink-0"
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-destructive transition-colors shrink-0 outline-none hover:bg-destructive/15 focus-visible:ring-2 focus-visible:ring-ring/40"
               title="Retry"
             >
               <IconRefresh size={11} />
@@ -896,7 +896,7 @@ function CopyButton({ text }: { text: string }) {
       onClick={onCopy}
       aria-label={copied ? 'Copied' : 'Copy message'}
       title={copied ? 'Copied' : 'Copy'}
-      className="inline-flex items-center rounded p-0.5 text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+      className="inline-flex items-center rounded p-0.5 text-muted-foreground/70 transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
     >
       {copied ? <IconCheck size={11} /> : <IconCopy size={11} />}
     </button>
@@ -913,7 +913,7 @@ function RegenerateButton({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       aria-label="Regenerate response"
       title="Regenerate"
-      className="inline-flex items-center rounded p-0.5 text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+      className="inline-flex items-center rounded p-0.5 text-muted-foreground/70 transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
     >
       <IconRefresh size={11} />
     </button>

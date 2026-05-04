@@ -170,7 +170,7 @@ function ActionPill({ onAccept, onReject }: { onAccept: () => void; onReject: ()
           <button
             type="button"
             onClick={onReject}
-            className="flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground active:scale-95 focus-visible:ring-3 focus-visible:ring-ring/30"
             aria-label="Undo"
           >
             <IconX size={14} stroke={1.75} />
@@ -185,7 +185,7 @@ function ActionPill({ onAccept, onReject }: { onAccept: () => void; onReject: ()
           <button
             type="button"
             onClick={onAccept}
-            className="inline-flex h-7 items-center rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:scale-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="inline-flex h-7 items-center rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors outline-none hover:bg-primary/90 active:scale-95 focus-visible:ring-3 focus-visible:ring-ring/30"
           >
             Keep
           </button>

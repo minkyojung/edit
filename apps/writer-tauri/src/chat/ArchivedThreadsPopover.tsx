@@ -51,7 +51,7 @@ export function ArchivedThreadsPopover({
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30"
                 aria-label="Archived chats"
               >
                 <IconHistory size={14} stroke={1.75} />
@@ -73,7 +73,7 @@ export function ArchivedThreadsPopover({
                   type="button"
                   onClick={() => handleRestore(t.id)}
                   disabled={activeCount >= MAX_ACTIVE_THREADS}
-                  className="group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  className="group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-50"
                 >
                   <span className="min-w-0 flex-1 truncate text-foreground">
                     {t.title || 'New chat'}

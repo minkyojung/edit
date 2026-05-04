@@ -219,7 +219,7 @@ export function PromptInput({
                     onClearSelection()
                   }}
                   aria-label="Detach selection"
-                  className="ml-0.5 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  className="ml-0.5 rounded-full p-0.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
                 >
                   <IconX size={12} stroke={2} />
                 </button>
@@ -271,6 +271,7 @@ export function PromptInput({
               aria-label={isStreaming ? 'Stop' : 'Send'}
               className={cn(
                 'flex size-8 items-center justify-center rounded-full transition-colors',
+                'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
                 isStreaming
                   ? 'bg-foreground text-background hover:bg-foreground/90'
                   : canSubmit

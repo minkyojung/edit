@@ -40,8 +40,9 @@ export function EffortButton({ value, onChange, disabled }: Props) {
           aria-label={`Reasoning effort: ${CHAT_EFFORT_LABELS[value]}`}
           className={cn(
             'flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors',
+            'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
             'hover:bg-accent hover:text-foreground',
-            'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent',
+            'disabled:pointer-events-none disabled:opacity-50',
           )}
         >
           <svg

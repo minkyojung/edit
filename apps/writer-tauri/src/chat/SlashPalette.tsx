@@ -64,6 +64,7 @@ export function SlashPalette({ commands, selectedIndex, onSelect, onHover }: Pro
               onMouseEnter={() => onHover(i)}
               className={cn(
                 'flex w-full items-baseline gap-2 rounded-lg px-3 py-2 text-left transition-colors',
+                'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
                 selected ? 'bg-muted' : 'hover:bg-muted/50',
               )}
             >

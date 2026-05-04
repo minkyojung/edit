@@ -28,8 +28,8 @@ export function ModelSelect({ value, onChange, disabled }: Props) {
         className={cn(
           'inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-xs text-muted-foreground transition-colors',
           'hover:bg-accent hover:text-foreground',
-          'outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-          'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent',
+          'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
+          'disabled:pointer-events-none disabled:opacity-50',
         )}
       >
         {CHAT_MODEL_LABELS[value]}
