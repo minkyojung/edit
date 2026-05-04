@@ -60,49 +60,58 @@ export function ArchivedDocsPopover() {
         side="top"
         align="start"
         sideOffset={6}
-        className="w-72 gap-0 rounded-xl p-1.5"
+        // Width pinned to the sidebar (--sidebar-width: 220px) so the
+        // popover reads as an extension of the same column rather
+        // than a free-floating element.
+        className="w-(--sidebar-width) gap-0 rounded-xl p-1.5"
       >
+        <div className="flex items-center gap-1 px-2 py-1">
+          <span className="flex-1 text-xs font-medium uppercase tracking-wide text-muted-foreground/80">
+            Archived
+          </span>
+          <button
+            type="button"
+            disabled={count === 0}
+            onClick={() => {
+              emptyArchive().catch((err) =>
+                console.error('[archive] emptyArchive failed', err),
+              )
+              setOpen(false)
+            }}
+            aria-label="Empty archive"
+            title="Empty archive"
+            className={cn(
+              'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors',
+              'outline-none hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring/40',
+              'disabled:pointer-events-none disabled:opacity-40',
+            )}
+          >
+            <IconTrash size={14} stroke={1.75} />
+          </button>
+        </div>
+
         {count === 0 ? (
           <div className="px-2.5 py-3 text-xs text-muted-foreground">
             No archived notes.
           </div>
         ) : (
-          <>
-            <ul className="flex max-h-72 flex-col gap-0.5 overflow-y-auto">
-              {archived.map((d) => (
-                <ArchivedRow
-                  key={d.slug}
-                  doc={d}
-                  onRestore={() => {
-                    unarchiveDoc(d.slug)
-                    if (archived.length === 1) setOpen(false)
-                  }}
-                  onDelete={() => {
-                    deleteForever(d.slug).catch((err) =>
-                      console.error('[archive] deleteForever failed', err),
-                    )
-                  }}
-                />
-              ))}
-            </ul>
-            <div className="mt-1 flex items-center justify-end border-t pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  emptyArchive().catch((err) =>
-                    console.error('[archive] emptyArchive failed', err),
-                  )
-                  setOpen(false)
+          <ul className="flex max-h-72 flex-col gap-0.5 overflow-y-auto">
+            {archived.map((d) => (
+              <ArchivedRow
+                key={d.slug}
+                doc={d}
+                onRestore={() => {
+                  unarchiveDoc(d.slug)
+                  if (archived.length === 1) setOpen(false)
                 }}
-                className={cn(
-                  'rounded-md px-2 py-1 text-xs font-medium text-destructive transition-colors',
-                  'outline-none hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-ring/40',
-                )}
-              >
-                Empty archive
-              </button>
-            </div>
-          </>
+                onDelete={() => {
+                  deleteForever(d.slug).catch((err) =>
+                    console.error('[archive] deleteForever failed', err),
+                  )
+                }}
+              />
+            ))}
+          </ul>
         )}
       </PopoverContent>
     </Popover>
@@ -117,39 +126,44 @@ interface RowProps {
 
 function ArchivedRow({ doc, onRestore, onDelete }: RowProps) {
   return (
-    <li className="group flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-accent">
+    <li className="group relative flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-accent">
       <span className="min-w-0 flex-1 truncate text-foreground">
         {doc.title || 'Untitled'}
       </span>
-      <span className="shrink-0 text-xs text-muted-foreground">
+      {/* Time and hover-actions occupy the same right slot — time
+          fades out under the row's hover so the buttons can take
+          over without shifting the layout. */}
+      <span className="shrink-0 text-right text-xs tabular-nums text-muted-foreground transition-opacity group-hover:opacity-0">
         {formatRelative(doc.archivedAt)}
       </span>
-      <button
-        type="button"
-        onClick={onRestore}
-        aria-label="Restore"
-        title="Restore"
-        className={cn(
-          'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors',
-          'opacity-0 group-hover:opacity-100 hover:bg-foreground/10 hover:text-foreground',
-          'outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40',
-        )}
-      >
-        <IconRestore size={14} stroke={1.75} />
-      </button>
-      <button
-        type="button"
-        onClick={onDelete}
-        aria-label="Delete forever"
-        title="Delete forever"
-        className={cn(
-          'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors',
-          'opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive',
-          'outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40',
-        )}
-      >
-        <IconTrash size={14} stroke={1.75} />
-      </button>
+      <div className="absolute inset-y-0 right-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <button
+          type="button"
+          onClick={onRestore}
+          aria-label="Restore"
+          title="Restore"
+          className={cn(
+            'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors',
+            'outline-none hover:bg-foreground/10 hover:text-foreground',
+            'focus-visible:ring-2 focus-visible:ring-ring/40',
+          )}
+        >
+          <IconRestore size={14} stroke={1.75} />
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          aria-label="Delete forever"
+          title="Delete forever"
+          className={cn(
+            'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors',
+            'outline-none hover:bg-destructive/10 hover:text-destructive',
+            'focus-visible:ring-2 focus-visible:ring-ring/40',
+          )}
+        >
+          <IconTrash size={14} stroke={1.75} />
+        </button>
+      </div>
     </li>
   )
 }
