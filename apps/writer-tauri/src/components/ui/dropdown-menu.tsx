@@ -1,5 +1,3 @@
-"use client"
-
 import * as React from "react"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 
@@ -106,7 +104,8 @@ function DropdownMenuCheckboxItem({
         data-slot="dropdown-menu-checkbox-item-indicator"
       >
         <DropdownMenuPrimitive.ItemIndicator>
-          <IconCheck size={16} stroke={2} />
+          <IconCheck
+          />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
       {children}
@@ -148,7 +147,8 @@ function DropdownMenuRadioItem({
         data-slot="dropdown-menu-radio-item-indicator"
       >
         <DropdownMenuPrimitive.ItemIndicator>
-          <IconCheck size={16} stroke={2} />
+          <IconCheck
+          />
         </DropdownMenuPrimitive.ItemIndicator>
       </span>
       {children}
@@ -230,7 +230,7 @@ function DropdownMenuSubTrigger({
       {...props}
     >
       {children}
-      <IconChevronRight size={16} stroke={2} className="ml-auto" />
+      <IconChevronRight className="ml-auto" />
     </DropdownMenuPrimitive.SubTrigger>
   )
 }
