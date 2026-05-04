@@ -67,6 +67,12 @@ interface DocsState {
    * register it in knownDocs with parentId set, open its tab, and
    * activate. Returns the new slug. */
   createChildNote: (parentSlug: string) => Promise<string | null>
+  /** Create a writing child without activating its tab. Used by the
+   * wikilink palette so creating a link doesn't yank the user out of
+   * the parent doc mid-sentence. Seeds the child's Y.Text title with
+   * the provided label so sidebar listings stop showing "Untitled"
+   * for nodes the user explicitly named. Returns the new slug. */
+  createWritingChild: (parentSlug: string, title: string) => Promise<string | null>
   reorder: (slugs: string[]) => void
 }
 
@@ -342,6 +348,41 @@ export const useDocsStore = create<DocsState>()(
           return created.slug
         } catch (err) {
           console.error('[docs] createChildNote failed', err)
+          return null
+        }
+      },
+
+      createWritingChild: async (parentSlug, title) => {
+        if (!get().knownDocs.find((d) => d.slug === parentSlug)) return null
+        try {
+          // ZWS body for the same reason daily / writing creates use
+          // it: proof-server rejects blank markdown but we don't want
+          // a default H1 in the body.
+          const created = await proofClient.createDoc(title, '​')
+          const meta: KnownDoc = {
+            slug: created.slug,
+            type: 'writing',
+            parentId: parentSlug,
+          }
+          set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+          await ensureHandle(created.slug, set, get)
+          const handle = get().handles[created.slug]
+          if (handle) {
+            writeDocMeta(handle.ydoc, {
+              type: 'writing',
+              parentId: parentSlug,
+              createdAt: new Date().toISOString(),
+            })
+            const ytext = handle.ydoc.getText('title')
+            if (ytext.toString().length === 0) {
+              handle.ydoc.transact(() => {
+                ytext.insert(0, title)
+              })
+            }
+          }
+          return created.slug
+        } catch (err) {
+          console.error('[docs] createWritingChild failed', err)
           return null
         }
       },

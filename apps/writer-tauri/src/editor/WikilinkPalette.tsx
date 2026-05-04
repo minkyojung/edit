@@ -20,11 +20,7 @@ import {
 } from './wikilinkPalettePlugin'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocTitle } from '@/hooks/useDocTitle'
-import { proofClient } from '@/lib/proofClient'
-import { writeDocMeta } from '@/hooks/useDocMeta'
 import { cn } from '@/lib/utils'
-
-const DEFAULT_DOC_TITLE = 'My Document'
 
 interface Props {
   /** Current doc whose children become the candidate set for the
@@ -217,41 +213,20 @@ async function commit(info: WikilinkPaletteInfo, pick: Candidate) {
       cancelWikilink(info.view)
       return
     }
-    try {
-      const created = await proofClient.createDoc(pick.label, '​')
-      const meta: KnownDoc = {
-        slug: created.slug,
-        type: 'writing',
-        parentId: parentSlug,
-      }
-      useDocsStore.setState((s) => ({
-        knownDocs: [...s.knownDocs, meta],
-        // Don't auto-open the new child as a tab here — the user is
-        // mid-sentence and clicking the link later is what activates
-        // the tab. Keeping it out of openSlugs keeps the tab strip
-        // tight while still letting the link resolve.
-      }))
-      // Best-effort write of meta into the new ydoc once a handle
-      // exists. We don't await ensureHandle here; the bootstrap
-      // path on first activation will fill in any missing fields.
-      const handle = useDocsStore.getState().handles[created.slug]
-      if (handle) {
-        writeDocMeta(handle.ydoc, {
-          type: 'writing',
-          parentId: parentSlug,
-          createdAt: new Date().toISOString(),
-        })
-      }
-      commitWikilink(
-        info.view,
-        { from: info.from, to: info.to },
-        created.slug,
-        pick.label,
-      )
-    } catch (err) {
-      console.error('[wikilink] create failed', err)
+    // Goes through the store action so the title field gets seeded
+    // and the handle is warmed; otherwise sidebar / tab labels
+    // would render "Untitled" until the user opened the child.
+    const slug = await store.createWritingChild(parentSlug, pick.label)
+    if (!slug) {
       cancelWikilink(info.view)
+      return
     }
+    commitWikilink(
+      info.view,
+      { from: info.from, to: info.to },
+      slug,
+      pick.label,
+    )
   }
 }
 
