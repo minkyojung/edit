@@ -57,7 +57,7 @@ export function useCollabDoc(): { handle: CollabHandle | null; status: CollabSta
       let slug = localStorage.getItem(DOC_SLUG_KEY)
       if (!slug) {
         try {
-          const created = await proofClient.createDoc(DOC_TITLE)
+          const created = await proofClient.createDoc(DOC_TITLE, '​')
           slug = created.slug
           localStorage.setItem(DOC_SLUG_KEY, slug)
         } catch (err) {

@@ -25,8 +25,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { useDocTitle } from '@/hooks/useDocTitle'
+import { useDocLabel } from '@/hooks/useDocLabel'
 import { readDocMeta } from '@/hooks/useDocMeta'
+import { useDocsStore } from '@/state/docsStore'
 
 interface Props {
   open: boolean
@@ -55,7 +56,8 @@ interface StoredMark {
 }
 
 export function DocumentInfoDialog({ open, onOpenChange, ydoc, editorView }: Props) {
-  const { title } = useDocTitle(ydoc)
+  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const label = useDocLabel(activeSlug)
   const meta = useMemo(() => (ydoc ? readDocMeta(ydoc) : null), [ydoc, open])
 
   // Snapshot stats when the dialog opens. Don't subscribe — these are
@@ -71,7 +73,7 @@ export function DocumentInfoDialog({ open, onOpenChange, ydoc, editorView }: Pro
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="truncate">{title || 'Untitled'}</DialogTitle>
+          <DialogTitle className="truncate">{label}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3 text-sm">

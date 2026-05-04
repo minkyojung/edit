@@ -14,7 +14,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { IconCalendar, IconChevronRight, IconFileDescription, IconPlus } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
-import { useDocTitle } from '@/hooks/useDocTitle'
+import { useDocLabel } from '@/hooks/useDocLabel'
 import { todayLocalDate, formatLocalDate } from '@/hooks/useDocMeta'
 
 const RECENT_DAYS = 7
@@ -225,8 +225,7 @@ function DocTreeNode({
   onSelect: (slug: string) => void
   onAddChild: (parentSlug: string) => void
 }) {
-  const handle = useDocsStore((s) => s.handles[doc.slug])
-  const { title } = useDocTitle(handle?.ydoc ?? null)
+  const label = useDocLabel(doc.slug)
   const expandedDocSlugs = useDocsStore((s) => s.expandedDocSlugs)
   const toggleExpanded = useDocsStore((s) => s.toggleExpanded)
   const children = childrenByParent.get(doc.slug) ?? []
@@ -281,7 +280,7 @@ function DocTreeNode({
             stroke={1.75}
             className="shrink-0 text-muted-foreground"
           />
-          <span className="truncate">{title || 'Untitled'}</span>
+          <span className="truncate">{label}</span>
         </button>
 
         <button

@@ -35,8 +35,12 @@ export interface CollabSession {
 // /api/documents ops surface anymore.
 
 export const proofClient = {
-  // Uses the agent path (/documents without /api prefix) which skips client version headers
-  async createDoc(title: string, markdown = '# ' + title + '\n\n'): Promise<{ slug: string }> {
+  // Uses the agent path (/documents without /api prefix) which skips client version headers.
+  // markdown is required (no default) — proof-server rejects blank bodies, but we don't want
+  // a default '# title' template either, since dailies derive their label from meta.date and
+  // would otherwise duplicate it in the body. Callsites pass ZWS (​) for "intentionally
+  // empty" bodies; writing-with-template paths can pass a literal markdown string.
+  async createDoc(title: string, markdown: string): Promise<{ slug: string }> {
     return request('/documents', {
       method: 'POST',
       body: JSON.stringify({ title, markdown }),
@@ -44,5 +48,14 @@ export const proofClient = {
   },
   async getCollabSession(slug: string): Promise<{ session: CollabSession }> {
     return request(`/documents/${slug}/collab-session`)
+  },
+  // Hard delete on the sidecar — used only when emptying the trash or
+  // permanently removing a single trashed doc. Soft-delete is purely a
+  // frontend concern (knownDocs.deletedAt); the server keeps the doc
+  // intact until this call. The sidecar treats this as destructive:
+  // the row stays with share_state='DELETED' but is unreadable, and
+  // the y-state is dropped.
+  async deleteDocForever(slug: string): Promise<{ success: true }> {
+    return request(`/documents/${slug}`, { method: 'DELETE' })
   },
 }

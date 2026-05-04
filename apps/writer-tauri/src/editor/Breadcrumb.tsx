@@ -17,7 +17,7 @@ import { Fragment } from 'react'
 import { IconDots } from '@tabler/icons-react'
 import { useDocAncestry, type AncestorEntry } from '@/hooks/useDocAncestry'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
-import { useDocTitle } from '@/hooks/useDocTitle'
+import { useDocLabel } from '@/hooks/useDocLabel'
 import { todayLocalDate, formatLocalDate } from '@/hooks/useDocMeta'
 import {
   Popover,
@@ -118,10 +118,9 @@ function CollapsedSegments({ hidden }: { hidden: AncestorEntry[] }) {
 }
 
 function CollapsedSegmentRow({ entry }: { entry: AncestorEntry }) {
-  const handle = useDocsStore((s) => s.handles[entry.slug])
-  const { title } = useDocTitle(handle?.ydoc ?? null)
+  const writingLabel = useDocLabel(entry.slug)
   const onActivate = useActivateAncestor(entry)
-  const label = labelFor(entry.meta, title)
+  const label = labelFor(entry.meta, writingLabel)
   return (
     <button
       type="button"
@@ -134,10 +133,9 @@ function CollapsedSegmentRow({ entry }: { entry: AncestorEntry }) {
 }
 
 function BreadcrumbSegment({ entry }: { entry: AncestorEntry }) {
-  const handle = useDocsStore((s) => s.handles[entry.slug])
-  const { title } = useDocTitle(handle?.ydoc ?? null)
+  const writingLabel = useDocLabel(entry.slug)
   const onActivate = useActivateAncestor(entry)
-  const label = labelFor(entry.meta, title)
+  const label = labelFor(entry.meta, writingLabel)
 
   return (
     <button

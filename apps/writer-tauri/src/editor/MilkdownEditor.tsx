@@ -28,6 +28,7 @@ import { WikilinkPalette } from './WikilinkPalette'
 import { UnlinkedNotes } from './UnlinkedNotes'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { useDocTitle } from '../hooks/useDocTitle'
+import { useDocLabel } from '../hooks/useDocLabel'
 import { MarkToolbar } from './MarkToolbar'
 import { proofMarkPlugins } from './proofMarkSchemas'
 
@@ -51,6 +52,14 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   // its own purposes (e.g. mark popovers).
   const [pmView, setPmView] = useState<EditorView | null>(null)
   const { title, setTitle } = useDocTitle(handle?.ydoc ?? null)
+  // Daily entries: the date is the title, derived from meta.date
+  // (mirrored on knownDocs). Title field becomes a readonly label.
+  // Writing entries: title is user content, editable.
+  const knownDoc = useDocsStore((s) =>
+    handle ? s.knownDocs.find((d) => d.slug === handle.slug) : undefined,
+  )
+  const isDaily = knownDoc?.type === 'daily'
+  const dailyLabel = useDocLabel(handle?.slug ?? null)
 
   // Live-rewrite wikilinks in this body whenever the referenced
   // child's title changes, so anchor text never drifts from the
@@ -69,6 +78,38 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     })
     return unsubscribe
   }, [pmView])
+
+  // One-time migration for daily entries created before the
+  // date-as-meta rework. Older builds seeded "# YYYY-MM-DD" into the
+  // body via proofClient.createDoc's default markdown, sometimes
+  // multiple times under racing bootstraps. Now that the date lives
+  // only in meta, those leading H1 nodes are pure duplication. After
+  // the first sync (so we see the canonical body) we walk the doc,
+  // remove any H1 at the very top whose plain text is the daily's
+  // date or a concatenation of it ("2026-05-042026-05-04"), and
+  // stamp meta.titleCleanedV1 so we never re-run.
+  useEffect(() => {
+    if (!pmView || !handle || !isDaily || !knownDoc?.date) return
+    const ydoc = handle.ydoc
+    const provider = handle.provider
+    const date = knownDoc.date
+    let ran = false
+    const run = () => {
+      if (ran) return
+      ran = true
+      const meta = ydoc.getMap('meta')
+      if (meta.get('titleCleanedV1')) return
+      cleanupDailyBodyDateHeading(pmView, date)
+      ydoc.transact(() => {
+        meta.set('titleCleanedV1', true)
+      })
+    }
+    if (provider.isSynced) run()
+    else provider.on('synced', run)
+    return () => {
+      provider.off('synced', run)
+    }
+  }, [pmView, handle, isDaily, knownDoc?.date])
 
   // Bridge between the wikilink-palette plugin (lives inside the
   // Milkdown editor instance) and the React palette popup. The
@@ -160,14 +201,23 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     <div className="relative h-full w-full">
       <div className="h-full w-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="mx-auto max-w-2xl px-8 pt-12 pb-12">
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Untitled"
-            aria-label="Document title"
-            className="mb-6 w-full bg-transparent text-3xl font-semibold leading-tight outline-none placeholder:text-muted-foreground/50"
-          />
+          {isDaily ? (
+            <div
+              aria-label="Daily date"
+              className="mb-6 w-full text-3xl font-semibold leading-tight text-foreground"
+            >
+              {dailyLabel}
+            </div>
+          ) : (
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Untitled"
+              aria-label="Document title"
+              className="mb-6 w-full bg-transparent text-3xl font-semibold leading-tight outline-none placeholder:text-muted-foreground/50"
+            />
+          )}
           <div ref={rootRef} />
           <UnlinkedNotes view={pmView} parentSlug={handle?.slug ?? null} />
         </div>
@@ -179,4 +229,39 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       />
     </div>
   )
+}
+
+/** Strip leading H1 nodes whose plain text is the daily's date or a
+ * concatenation of repeats of it (legacy artifact). Stops at the
+ * first non-matching block so we never delete a heading the user
+ * intentionally wrote. Date format is the same YYYY-MM-DD that
+ * meta.date stores; we tolerate any whole-number repeat
+ * ("2026-05-04", "2026-05-042026-05-04", …) so duplications from
+ * pre-fix multi-bootstrap races also get cleaned up. */
+function cleanupDailyBodyDateHeading(view: EditorView, date: string): void {
+  const doc = view.state.doc
+  let pos = 0
+  let endRemovePos = 0
+  for (let i = 0; i < doc.childCount; i += 1) {
+    const child = doc.child(i)
+    if (child.type.name !== 'heading') break
+    if (child.attrs.level !== 1) break
+    if (!isRepeatedDate(child.textContent, date)) break
+    endRemovePos = pos + child.nodeSize
+    pos += child.nodeSize
+  }
+  if (endRemovePos === 0) return
+  const tr = view.state.tr.delete(0, endRemovePos)
+  tr.setMeta('addToHistory', false)
+  view.dispatch(tr)
+}
+
+function isRepeatedDate(text: string, date: string): boolean {
+  if (text.length === 0 || date.length === 0) return false
+  if (text.length % date.length !== 0) return false
+  const repeats = text.length / date.length
+  for (let i = 0; i < repeats; i += 1) {
+    if (text.slice(i * date.length, (i + 1) * date.length) !== date) return false
+  }
+  return true
 }

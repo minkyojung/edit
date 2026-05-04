@@ -239,14 +239,13 @@ function titleFor(doc: KnownDoc): string {
 }
 
 function TitleResolver(doc: KnownDoc): string {
-  // useDocTitle is a hook so we can't call it from a plain helper.
-  // Instead, read directly from the live store. When a handle
-  // exists we peek at the ydoc; otherwise we accept that the title
-  // is unknown until activation. v2 will cache titles in knownDocs
-  // proper.
+  // Live ydoc title wins when the handle is warm (reflects edits in
+  // real time). Otherwise fall back to the cached mirror in
+  // knownDocs.title — set at create time and kept in sync by the
+  // per-handle observer installed in docsStore.ensureHandle.
   const handle = useDocsStore.getState().handles[doc.slug]
-  if (!handle) return ''
-  return handle.ydoc.getText('title').toString()
+  if (handle) return handle.ydoc.getText('title').toString()
+  return doc.title ?? ''
 }
 
 // Re-export so the editor wiring file can import the hook from one

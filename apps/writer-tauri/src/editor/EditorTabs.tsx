@@ -11,7 +11,7 @@
 // connection.
 
 import { useEffect, useRef } from 'react'
-import { IconTarget, IconPlus, IconX } from '@tabler/icons-react'
+import { IconPlus, IconX } from '@tabler/icons-react'
 import { Tabs as TabsPrimitive } from 'radix-ui'
 import {
   Tooltip,
@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
-import { useDocTitle } from '@/hooks/useDocTitle'
+import { useDocLabel } from '@/hooks/useDocLabel'
 
 export function EditorTabs() {
   const openSlugs = useDocsStore((s) => s.openSlugs)
@@ -116,11 +116,10 @@ function DocTab({
   canClose: boolean
   onClose: () => void
 }) {
-  const handle = useDocsStore((s) => s.handles[slug])
   const knownDoc = useDocsStore((s) =>
     s.knownDocs.find((d) => d.slug === slug),
   )
-  const { title } = useDocTitle(handle?.ydoc ?? null)
+  const label = useDocLabel(slug)
   // Daily entries are the day's anchor; the design doc forbids
   // archiving/deleting them. Closing the tab isn't quite either
   // (knownDocs survives, the tab just leaves openSlugs), but it
@@ -142,8 +141,7 @@ function DocTab({
           : 'border-transparent text-muted-foreground hover:text-foreground',
       )}
     >
-      <IconTarget size={12} stroke={1.75} className="shrink-0" />
-      <span className="min-w-0 flex-1 truncate">{title || 'Untitled'}</span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
       {showClose && (
         <span
           role="button"

@@ -41,6 +41,26 @@ export interface KnownDoc {
   /** Parent doc's slug for tree-nested writing notes. Undefined for
    * roots (daily entries and any independent writing docs). */
   parentId?: string
+  /** Cached mirror of the doc's Y.Text('title') for writing-type
+   * entries. Lets the sidebar / palette / breadcrumb show the right
+   * label even when the doc's collab handle hasn't been opened yet
+   * (lazy-load strategy). Source of truth is still the Y.Text;
+   * this is a snapshot kept in sync via a per-handle observer (set
+   * up in ensureHandle) and bumped immediately at create time so
+   * brand-new docs aren't briefly "Untitled". Daily entries don't
+   * use this — their label derives from `date`. */
+  title?: string
+  /** Soft-delete timestamp (ms since epoch). Set when the user
+   * trashes the doc; cleared when restored. Trashed docs stay in
+   * knownDocs so they can be restored, but are filtered out of
+   * sidebar tree, wikilink palette, and search. A cascade-soft
+   * delete writes the same timestamp to a parent and all its
+   * descendants so the group can be restored together. */
+  deletedAt?: number
+  /** Snapshot of `parentId` taken at trash time so restore can put
+   * the doc back where it was. While trashed, `parentId` is left
+   * undefined so the doc doesn't pollute the live tree index. */
+  deletedFromParent?: string
 }
 
 interface DocsState {
@@ -82,6 +102,23 @@ interface DocsState {
   /** Toggle the sidebar fold for a given doc. */
   toggleExpanded: (slug: string) => void
   reorder: (slugs: string[]) => void
+  /** Soft-delete: move `slug` and all its descendants into the trash
+   * (cascade). Closes any open tabs in the group, tears down their
+   * handles, and reassigns activeSlug if needed. The group is tagged
+   * with a single timestamp so restore can move them back together.
+   * Refuses to act on daily entries. Returns true on success. */
+  trashDoc: (slug: string) => boolean
+  /** Restore a trashed group identified by `slug` (any group member
+   * works). Walks up via `deletedFromParent` to ensure the parent
+   * chain is also brought back if it shares the same trash batch,
+   * then re-points each parentId to its pre-trash value. */
+  restoreFromTrash: (slug: string) => void
+  /** Permanently delete a trashed group: hits the sidecar DELETE for
+   * each member, removes them from knownDocs / openSlugs / handles.
+   * No-op if the slug isn't trashed. */
+  deleteForever: (slug: string) => Promise<void>
+  /** Permanently delete every trashed doc (sidecar + local state). */
+  emptyTrash: () => Promise<void>
 }
 
 async function buildHandle(
@@ -216,7 +253,7 @@ export const useDocsStore = create<DocsState>()(
                 createdAt: new Date().toISOString(),
               })
             }
-            seedDailyTitleIfEmpty(handle.ydoc, known.date)
+            scrubDailyTitleArtifacts(handle.ydoc)
           }
         }
 
@@ -274,8 +311,12 @@ export const useDocsStore = create<DocsState>()(
 
       createNew: async () => {
         try {
-          const created = await proofClient.createDoc(DEFAULT_DOC_TITLE)
-          const meta: KnownDoc = { slug: created.slug, type: 'writing' }
+          const created = await proofClient.createDoc(DEFAULT_DOC_TITLE, '​')
+          const meta: KnownDoc = {
+            slug: created.slug,
+            type: 'writing',
+            title: DEFAULT_DOC_TITLE,
+          }
           set((s) => ({
             openSlugs: [...s.openSlugs, created.slug],
             activeSlug: created.slug,
@@ -327,7 +368,7 @@ export const useDocsStore = create<DocsState>()(
               createdAt: new Date().toISOString(),
             })
           }
-          seedDailyTitleIfEmpty(handle.ydoc, targetDate)
+          scrubDailyTitleArtifacts(handle.ydoc)
         }
         return slug
       },
@@ -345,6 +386,7 @@ export const useDocsStore = create<DocsState>()(
             slug: created.slug,
             type: 'writing',
             parentId: parentSlug,
+            title: DEFAULT_DOC_TITLE,
           }
           set((s) => ({
             knownDocs: [...s.knownDocs, meta],
@@ -380,6 +422,7 @@ export const useDocsStore = create<DocsState>()(
             slug: created.slug,
             type: 'writing',
             parentId: parentSlug,
+            title,
           }
           set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
           await ensureHandle(created.slug, set, get)
@@ -412,38 +455,191 @@ export const useDocsStore = create<DocsState>()(
         })),
 
       reorder: (slugs) => set({ openSlugs: slugs }),
+
+      trashDoc: (slug) => {
+        const state = get()
+        const target = state.knownDocs.find((d) => d.slug === slug)
+        if (!target) return false
+        // Daily entries are time-axis spine, not user-authored docs.
+        // Refuse so the sidebar/breadcrumb invariants stay intact.
+        if (target.type === 'daily') return false
+        if (target.deletedAt) return false
+
+        const groupSlugs = collectDescendantSlugs(state.knownDocs, slug)
+        const stamp = Date.now()
+        const groupSet = new Set(groupSlugs)
+
+        // Close any open tabs in the group, destroy their handles, and
+        // pick a sensible new activeSlug if the active was inside.
+        const nextOpen = state.openSlugs.filter((s) => !groupSet.has(s))
+        let nextActive = state.activeSlug
+        if (state.activeSlug && groupSet.has(state.activeSlug)) {
+          const idx = state.openSlugs.indexOf(state.activeSlug)
+          // First non-group slug at or after idx; else most recent before.
+          nextActive =
+            state.openSlugs.slice(idx + 1).find((s) => !groupSet.has(s)) ??
+            [...state.openSlugs.slice(0, idx)].reverse().find((s) => !groupSet.has(s)) ??
+            null
+        }
+        const nextHandles = { ...state.handles }
+        const nextStatus = { ...state.status }
+        for (const s of groupSlugs) {
+          const h = nextHandles[s]
+          if (h) {
+            h.provider.destroy()
+            h.ydoc.destroy()
+          }
+          delete nextHandles[s]
+          delete nextStatus[s]
+        }
+
+        const nextKnown = state.knownDocs.map((d) =>
+          groupSet.has(d.slug)
+            ? {
+                ...d,
+                deletedAt: stamp,
+                deletedFromParent: d.parentId,
+                parentId: undefined,
+              }
+            : d,
+        )
+
+        set({
+          knownDocs: nextKnown,
+          openSlugs: nextOpen,
+          activeSlug: nextActive,
+          handles: nextHandles,
+          status: nextStatus,
+        })
+
+        // If we shifted activeSlug to a known but unloaded tab, warm it
+        // up so the editor doesn't sit on a stale handle.
+        if (nextActive && !nextHandles[nextActive]) {
+          ensureHandle(nextActive, set, get).catch((err) =>
+            console.error('[docs] post-trash ensureHandle failed', err),
+          )
+        }
+        return true
+      },
+
+      restoreFromTrash: (slug) => {
+        const state = get()
+        const target = state.knownDocs.find((d) => d.slug === slug)
+        if (!target?.deletedAt) return
+        const stamp = target.deletedAt
+        // Restore everything trashed in the same batch (same timestamp)
+        // so a cascade is undone as a unit.
+        const nextKnown = state.knownDocs.map((d) =>
+          d.deletedAt === stamp
+            ? {
+                ...d,
+                parentId: d.deletedFromParent,
+                deletedAt: undefined,
+                deletedFromParent: undefined,
+              }
+            : d,
+        )
+        set({ knownDocs: nextKnown })
+      },
+
+      deleteForever: async (slug) => {
+        const state = get()
+        const target = state.knownDocs.find((d) => d.slug === slug)
+        if (!target?.deletedAt) return
+        const stamp = target.deletedAt
+        const groupSlugs = state.knownDocs
+          .filter((d) => d.deletedAt === stamp)
+          .map((d) => d.slug)
+        // Best-effort sidecar deletion. If a slug fails (already gone,
+        // 404, network blip), keep going so the user isn't stuck with
+        // orphaned trash entries.
+        for (const s of groupSlugs) {
+          try {
+            await proofClient.deleteDocForever(s)
+          } catch (err) {
+            console.error('[docs] deleteDocForever failed', s, err)
+          }
+        }
+        const groupSet = new Set(groupSlugs)
+        set((s) => ({
+          knownDocs: s.knownDocs.filter((d) => !groupSet.has(d.slug)),
+          openSlugs: s.openSlugs.filter((sl) => !groupSet.has(sl)),
+          expandedDocSlugs: s.expandedDocSlugs.filter((sl) => !groupSet.has(sl)),
+        }))
+      },
+
+      emptyTrash: async () => {
+        const trashed = get().knownDocs.filter((d) => d.deletedAt)
+        if (trashed.length === 0) return
+        for (const d of trashed) {
+          try {
+            await proofClient.deleteDocForever(d.slug)
+          } catch (err) {
+            console.error('[docs] emptyTrash item failed', d.slug, err)
+          }
+        }
+        const trashedSet = new Set(trashed.map((d) => d.slug))
+        set((s) => ({
+          knownDocs: s.knownDocs.filter((d) => !trashedSet.has(d.slug)),
+          openSlugs: s.openSlugs.filter((sl) => !trashedSet.has(sl)),
+          expandedDocSlugs: s.expandedDocSlugs.filter((sl) => !trashedSet.has(sl)),
+        }))
+      },
     }),
     {
       name: 'writer-tauri:docs',
-      version: 1,
+      version: 2,
       partialize: (s) => ({
         openSlugs: s.openSlugs,
         activeSlug: s.activeSlug,
         knownDocs: s.knownDocs,
         expandedDocSlugs: s.expandedDocSlugs,
       }),
+      migrate: (persisted, version) => {
+        // v1 → v2: KnownDoc gains optional deletedAt / deletedFromParent
+        // for soft-delete. Pre-v2 entries are all live; absence of these
+        // fields already encodes that, so this migration is a no-op
+        // version bump that exists for traceability.
+        if (version < 2) return persisted as DocsState
+        return persisted as DocsState
+      },
     },
   ),
 )
 
-/** Seed a daily entry's title field with its anchor date so the user
- * sees the date in the title input the moment the doc opens. The
- * write only fires when the Y.Text is currently empty — once the
- * user customizes the title (e.g. adds a subtitle), we never
- * overwrite it. Wait for the provider to sync before checking, so we
- * don't race the server's existing-title content. */
-function seedDailyTitleIfEmpty(ydoc: Y.Doc, date: string): void {
-  const ytext = ydoc.getText('title')
-  const seed = () => {
-    if (ytext.toString().length > 0) return
-    ydoc.transact(() => {
-      ytext.insert(0, date)
-    })
+/** BFS over knownDocs to collect `root` plus every descendant via
+ * parentId. Used by trashDoc to assemble the cascade group in one
+ * pass. Skips already-trashed entries so a re-trash of a subtree
+ * doesn't double-batch. */
+function collectDescendantSlugs(docs: KnownDoc[], root: string): string[] {
+  const out: string[] = [root]
+  const queue: string[] = [root]
+  while (queue.length) {
+    const parent = queue.shift()!
+    for (const d of docs) {
+      if (d.parentId === parent && !d.deletedAt && !out.includes(d.slug)) {
+        out.push(d.slug)
+        queue.push(d.slug)
+      }
+    }
   }
-  // The provider may not have replayed history yet on a freshly
-  // created doc; defer one tick so any inbound title state is applied
-  // before we decide it's empty.
-  setTimeout(seed, 50)
+  return out
+}
+
+/** Daily entries derive their displayed title from meta.date — they
+ * have no editable title of their own. Earlier versions seeded the
+ * date into Y.Text('title'), which raced with collab sync and
+ * sometimes produced duplicated values like "2026-05-042026-05-04".
+ * This scrubber clears any leftover Y.Text('title') content for a
+ * daily; the label everywhere (tabs, sidebar, breadcrumb, header)
+ * now reads from meta.date instead, so clearing the Y.Text is safe
+ * and removes the legacy artifact in one shot. */
+function scrubDailyTitleArtifacts(ydoc: Y.Doc): void {
+  const ytext = ydoc.getText('title')
+  if (ytext.length === 0) return
+  ydoc.transact(() => {
+    ytext.delete(0, ytext.length)
+  })
 }
 
 /** Internal: lazy-create a handle for `slug`, register it, and route
@@ -465,4 +661,60 @@ async function ensureHandle(
   })
   if (!handle) return
   set((s) => ({ handles: { ...s.handles, [slug]: handle } }))
+  installTitleMirror(slug, handle, set, get)
+}
+
+/** Mirror Y.Text('title') changes back into knownDocs.title so closed
+ * docs still show their real label in the sidebar / palette / etc.
+ * Gated by provider sync — before the first sync, Y.Text is local-
+ * only and reading "" would clobber the persisted cache (which often
+ * holds the title set at create time). After sync, the ydoc state is
+ * authoritative and we mirror every change.
+ *
+ * Daily entries are skipped: their label comes from `meta.date`, not
+ * a Y.Text. Cleanup happens implicitly when handle.ydoc.destroy() in
+ * closeDoc tears down all observers. */
+function installTitleMirror(
+  slug: string,
+  handle: CollabHandle,
+  set: (
+    fn:
+      | Partial<DocsState>
+      | ((s: DocsState) => Partial<DocsState>),
+  ) => void,
+  get: () => DocsState,
+): void {
+  const known = get().knownDocs.find((d) => d.slug === slug)
+  if (known?.type === 'daily') return
+
+  const ytext = handle.ydoc.getText('title')
+  const sync = () => {
+    const next = ytext.toString()
+    set((s) => {
+      const idx = s.knownDocs.findIndex((d) => d.slug === slug)
+      if (idx < 0) return s
+      const cur = s.knownDocs[idx]
+      if (cur.type === 'daily') return s
+      if (cur.title === next) return s
+      const list = [...s.knownDocs]
+      list[idx] = { ...cur, title: next }
+      return { knownDocs: list }
+    })
+  }
+  const start = () => {
+    sync()
+    ytext.observe(sync)
+  }
+  if (handle.provider.isSynced) {
+    start()
+    return
+  }
+  let started = false
+  const onceSynced = () => {
+    if (started) return
+    started = true
+    handle.provider.off('synced', onceSynced)
+    start()
+  }
+  handle.provider.on('synced', onceSynced)
 }

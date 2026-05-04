@@ -21,7 +21,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { IconFileDescription } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
-import { useDocTitle } from '@/hooks/useDocTitle'
+import { useDocLabel } from '@/hooks/useDocLabel'
 import { usePmDocVersion } from '@/hooks/usePmDocVersion'
 import { isWikilinkHref, slugFromWikilinkHref } from './wikilinkPalettePlugin'
 
@@ -85,10 +85,9 @@ export function UnlinkedNotes({ view, parentSlug }: Props) {
 }
 
 function UnlinkedRow({ doc }: { doc: KnownDoc }) {
-  const handle = useDocsStore((s) => s.handles[doc.slug])
   const setActive = useDocsStore((s) => s.setActive)
   const openSlugs = useDocsStore((s) => s.openSlugs)
-  const { title } = useDocTitle(handle?.ydoc ?? null)
+  const label = useDocLabel(doc.slug)
 
   const onClick = () => {
     if (!openSlugs.includes(doc.slug)) {
@@ -117,7 +116,7 @@ function UnlinkedRow({ doc }: { doc: KnownDoc }) {
           stroke={1.75}
           className="shrink-0 text-muted-foreground"
         />
-        <span className="truncate">{title || 'Untitled'}</span>
+        <span className="truncate">{label}</span>
       </button>
     </li>
   )
