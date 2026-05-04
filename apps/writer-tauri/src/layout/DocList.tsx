@@ -137,12 +137,11 @@ export function DocList() {
                           }}
                         />
                         {dailySlug && isExpanded && hasChildren && (
-                          <ul className="flex flex-col gap-0.5 pt-0.5">
+                          <ul className="ml-3.5 flex flex-col gap-0.5 border-l border-border/40 pt-0.5">
                             {children.map((child) => (
                               <DocTreeNode
                                 key={child.slug}
                                 doc={child}
-                                depth={1}
                                 childrenByParent={childrenByParent}
                                 activeSlug={activeSlug}
                                 onSelect={(slug) => {
@@ -365,7 +364,6 @@ function DailyRow({
 
 function DocTreeNode({
   doc,
-  depth,
   childrenByParent,
   activeSlug,
   onSelect,
@@ -373,7 +371,6 @@ function DocTreeNode({
   onArchive,
 }: {
   doc: KnownDoc
-  depth: number
   childrenByParent: Map<string, KnownDoc[]>
   activeSlug: string | null
   onSelect: (slug: string) => void
@@ -397,9 +394,6 @@ function DocTreeNode({
             ? 'bg-accent text-foreground'
             : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
         )}
-        // Indent by depth — each level adds a small step so the tree
-        // structure reads at a glance without dominating row width.
-        style={{ paddingLeft: `${0.375 + depth * 0.875}rem` }}
       >
         <button
           type="button"
@@ -476,12 +470,11 @@ function DocTreeNode({
       </div>
 
       {isExpanded && hasChildren && (
-        <ul className="flex flex-col gap-0.5 pt-0.5">
+        <ul className="ml-3.5 flex flex-col gap-0.5 border-l border-border/40 pt-0.5">
           {children.map((child) => (
             <DocTreeNode
               key={child.slug}
               doc={child}
-              depth={depth + 1}
               childrenByParent={childrenByParent}
               activeSlug={activeSlug}
               onSelect={onSelect}
