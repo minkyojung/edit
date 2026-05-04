@@ -31,6 +31,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
 import { DocumentInfoDialog } from './DocumentInfoDialog'
+import { ConfirmArchiveDialog } from './ConfirmArchiveDialog'
 
 interface Props {
   editorView: EditorView | null
@@ -39,9 +40,17 @@ interface Props {
 export function DocMenu({ editorView }: Props) {
   const activeSlug = useDocsStore((s) => s.activeSlug)
   const handle = useDocsStore((s) => (activeSlug ? s.handles[activeSlug] : null))
+  const activeDoc = useDocsStore((s) =>
+    activeSlug ? s.knownDocs.find((d) => d.slug === activeSlug) : null,
+  )
   const [infoOpen, setInfoOpen] = useState(false)
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
 
   const disabled = !activeSlug
+  // Daily entries are the time-axis spine; archiving them would tear
+  // the breadcrumb anchor out from under their child notes. The
+  // store also refuses, but keep the menu honest.
+  const archiveDisabled = !activeDoc || activeDoc.type === 'daily'
 
   return (
     <>
@@ -86,11 +95,11 @@ export function DocMenu({ editorView }: Props) {
           <DropdownMenuSeparator />
 
           <DropdownMenuItem
-            disabled
-            className={cn(comingSoonClass, 'text-destructive focus:text-destructive')}
+            disabled={archiveDisabled}
+            onSelect={() => setArchiveConfirmOpen(true)}
+            className={cn('text-destructive focus:text-destructive')}
           >
-            Delete
-            <ComingSoon />
+            Archive
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -100,6 +109,12 @@ export function DocMenu({ editorView }: Props) {
         onOpenChange={setInfoOpen}
         ydoc={handle?.ydoc ?? null}
         editorView={editorView}
+      />
+
+      <ConfirmArchiveDialog
+        open={archiveConfirmOpen}
+        onOpenChange={setArchiveConfirmOpen}
+        slug={activeSlug}
       />
     </>
   )

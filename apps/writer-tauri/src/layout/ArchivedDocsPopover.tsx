@@ -7,7 +7,7 @@
 // `archivedAt` timestamp; restoring any member restores the whole
 // batch via unarchiveDoc.
 
-import { useMemo, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   IconArchive,
   IconRestore,
@@ -29,6 +29,20 @@ export function ArchivedDocsPopover() {
   const deleteForever = useDocsStore((s) => s.deleteForever)
   const emptyArchive = useDocsStore((s) => s.emptyArchive)
 
+  // Match the sidebar's live width. We can't just use w-(--sidebar-width)
+  // because Radix portals the popover to <body>, where the CSS var
+  // isn't in scope. Read the actual sidebar element's offsetWidth at
+  // open time so a resized / collapsed sidebar still matches.
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    if (!open) return
+    const sidebar = triggerRef.current?.closest<HTMLElement>(
+      '[data-slot="sidebar"]',
+    )
+    if (sidebar) setSidebarWidth(sidebar.offsetWidth)
+  }, [open])
+
   const archived = useMemo(
     () =>
       knownDocs
@@ -43,6 +57,7 @@ export function ArchivedDocsPopover() {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <SidebarMenuButton
+          ref={triggerRef}
           className="h-8 px-2 text-[13px] font-medium text-muted-foreground hover:text-foreground"
           aria-label="Archived"
         >
@@ -60,10 +75,12 @@ export function ArchivedDocsPopover() {
         side="top"
         align="start"
         sideOffset={6}
-        // Width pinned to the sidebar (--sidebar-width: 220px) so the
-        // popover reads as an extension of the same column rather
-        // than a free-floating element.
-        className="w-(--sidebar-width) gap-0 rounded-xl p-1.5"
+        // Width matches the live sidebar element. Radix portals the
+        // popover to <body> so a CSS var would fall out of scope —
+        // we read the actual sidebar offsetWidth at open time and
+        // apply it inline so resized / themed sidebars still match.
+        style={sidebarWidth ? { width: sidebarWidth } : undefined}
+        className="gap-0 rounded-xl p-1.5"
       >
         <div className="flex items-center gap-1 px-2 py-1">
           <span className="flex-1 text-xs font-medium uppercase tracking-wide text-muted-foreground/80">
