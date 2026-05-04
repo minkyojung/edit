@@ -14,8 +14,7 @@
     "@milkdown/preset-commonmark": "^7.20.0",
     "@milkdown/preset-gfm": "^7.20.0",
     "@milkdown/prose": "^7.20.0",
-    "proof-sdk": "link:../proof-sdk",
-    "tsx": "^4.21.0"
+    "proof-sdk": "link:../proof-sdk"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
