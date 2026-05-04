@@ -1,35 +1,31 @@
-// Sidebar list of daily journal entries with their nested writing
-// children. Daily rows are the time-axis spine; under each daily,
-// any note whose parentId points at it (or, recursively, at one of
-// its descendants) hangs as a tree branch.
+// Sidebar list of daily journal entries, grouped by calendar week.
+// Daily rows are the time-axis spine; under each daily, any note
+// whose parentId points at it hangs as a tree branch.
 //
-// Today is always pinned at the top and expanded by default. Other
-// days collapse for visual quiet — the user opens them on demand.
-// Empty days still show in the rolling window so the user can
-// backfill, matching the "every date is a slot" model from the
-// design doc.
+// The current week ("This week") gets all 7 day slots — empty days
+// included — so the user can backfill at any time. Past weeks show
+// only days that actually have entries; empty past days are visual
+// noise and the past path is now ⌘G + the persisted activity, not
+// a calendar-roll. This matches the "Capture (today) vs Review
+// (past)" mode separation.
+//
+// Past weeks default to collapsed; This week defaults to expanded.
+// User toggle state lives in docsStore.expandedWeekStarts and is
+// persisted, so the user's fold layout survives a reload.
 
-import { useMemo, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, type MouseEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   IconArchive,
   IconCalendar,
-  IconChevronDown,
   IconChevronRight,
   IconFileDescription,
   IconPlus,
 } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
-import { useDocsStore, type KnownDoc } from '@/state/docsStore'
+import { useDocsStore, weekStartFor, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { todayLocalDate, formatLocalDate } from '@/hooks/useDocMeta'
-
-/** Initial size of the rolling daily window. The user can grow it
- * 7-at-a-time via the Earlier button; that state is local to the
- * component (re-resets on reload, which is fine — the user clicks
- * Earlier again or jumps via ⌘G). */
-const RECENT_DAYS = 7
-const LOAD_MORE_STEP = 7
 
 export function DocList() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
@@ -51,12 +47,15 @@ export function DocList() {
     [knownDocs],
   )
 
-  const [windowDays, setWindowDays] = useState(RECENT_DAYS)
-  const rows = useMemo(
-    () => buildDailyRows(liveDocs, windowDays),
-    [liveDocs, windowDays],
-  )
+  const expandedWeekStarts = useDocsStore((s) => s.expandedWeekStarts)
+  const toggleWeekExpanded = useDocsStore((s) => s.toggleWeekExpanded)
+
+  const weekGroups = useMemo(() => buildWeekGroups(liveDocs), [liveDocs])
   const childrenByParent = useMemo(() => indexChildren(liveDocs), [liveDocs])
+  const expandedWeekSet = useMemo(
+    () => new Set(expandedWeekStarts),
+    [expandedWeekStarts],
+  )
 
   const ensureNotesRoute = () => {
     if (!pathname.startsWith('/notes')) navigate('/notes')
@@ -71,88 +70,183 @@ export function DocList() {
     [expandedDocSlugs],
   )
 
+  // After the active doc changes (e.g. ⌘G jumped to a date in a
+  // collapsed week), bring its row into view. Use a containing-list
+  // ref + querySelector so we don't have to manage a ref per row.
+  const listRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!activeSlug) return
+    const el = listRef.current?.querySelector<HTMLElement>(
+      `[data-slug="${CSS.escape(activeSlug)}"]`,
+    )
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [activeSlug])
+
   return (
-    <div className="px-2 py-2">
+    <div ref={listRef} className="px-2 py-2">
       <div className="px-2 pb-1 text-[13px] font-medium text-muted-foreground">
         Daily
       </div>
-      <ul className="flex flex-col gap-0.5">
-        {rows.map((row) => {
-          const dailySlug = row.slug
-          const isActive = dailySlug ? dailySlug === activeSlug : false
-          const isExpanded = dailySlug ? expandedSet.has(dailySlug) : false
-          const children = dailySlug ? childrenByParent.get(dailySlug) ?? [] : []
-          const hasChildren = children.length > 0
-
+      <ul className="flex flex-col gap-1">
+        {weekGroups.map((group) => {
+          const isWeekExpanded = expandedWeekSet.has(group.weekStart)
           return (
-            <li key={row.date}>
-              <DailyRow
-                row={row}
-                isActive={isActive}
-                isExpanded={isExpanded}
-                hasChildren={hasChildren}
-                onToggleExpand={() => {
-                  if (dailySlug) toggleExpanded(dailySlug)
-                }}
-                onSelect={async () => {
-                  const slug = await openDaily(row.date)
-                  // Expand on open so the user sees what's inside.
-                  if (slug && !expandedSet.has(slug)) toggleExpanded(slug)
-                  ensureNotesRoute()
-                }}
-                onAddChild={async () => {
-                  // Make sure the daily exists before nesting under it.
-                  const parent = await openDaily(row.date)
-                  if (!parent) return
-                  await createChildNote(parent)
-                  if (!expandedSet.has(parent)) toggleExpanded(parent)
-                  ensureNotesRoute()
-                }}
+            <li key={group.weekStart}>
+              <WeekHeader
+                group={group}
+                isExpanded={isWeekExpanded}
+                onToggle={() => toggleWeekExpanded(group.weekStart)}
               />
-
-              {dailySlug && isExpanded && hasChildren && (
+              {isWeekExpanded && (
                 <ul className="flex flex-col gap-0.5 pt-0.5">
-                  {children.map((child) => (
-                    <DocTreeNode
-                      key={child.slug}
-                      doc={child}
-                      depth={1}
-                      childrenByParent={childrenByParent}
-                      activeSlug={activeSlug}
-                      onSelect={(slug) => {
-                        setActive(slug)
-                        ensureNotesRoute()
-                      }}
-                      onAddChild={async (parentSlug) => {
-                        await createChildNote(parentSlug)
-                        ensureNotesRoute()
-                      }}
-                      onArchive={(slug) => {
-                        useDocsStore.getState().archiveDoc(slug)
-                      }}
-                    />
-                  ))}
+                  {group.rows.map((row) => {
+                    const dailySlug = row.slug
+                    const isActive = dailySlug
+                      ? dailySlug === activeSlug
+                      : false
+                    const isExpanded = dailySlug
+                      ? expandedSet.has(dailySlug)
+                      : false
+                    const children = dailySlug
+                      ? childrenByParent.get(dailySlug) ?? []
+                      : []
+                    const hasChildren = children.length > 0
+                    return (
+                      <li key={row.date} data-slug={dailySlug ?? ''}>
+                        <DailyRow
+                          row={row}
+                          isActive={isActive}
+                          isExpanded={isExpanded}
+                          hasChildren={hasChildren}
+                          onToggleExpand={() => {
+                            if (dailySlug) toggleExpanded(dailySlug)
+                          }}
+                          onSelect={async () => {
+                            const slug = await openDaily(row.date)
+                            if (slug && !expandedSet.has(slug))
+                              toggleExpanded(slug)
+                            ensureNotesRoute()
+                          }}
+                          onAddChild={async () => {
+                            const parent = await openDaily(row.date)
+                            if (!parent) return
+                            await createChildNote(parent)
+                            if (!expandedSet.has(parent))
+                              toggleExpanded(parent)
+                            ensureNotesRoute()
+                          }}
+                        />
+                        {dailySlug && isExpanded && hasChildren && (
+                          <ul className="flex flex-col gap-0.5 pt-0.5">
+                            {children.map((child) => (
+                              <DocTreeNode
+                                key={child.slug}
+                                doc={child}
+                                depth={1}
+                                childrenByParent={childrenByParent}
+                                activeSlug={activeSlug}
+                                onSelect={(slug) => {
+                                  setActive(slug)
+                                  ensureNotesRoute()
+                                }}
+                                onAddChild={async (parentSlug) => {
+                                  await createChildNote(parentSlug)
+                                  ensureNotesRoute()
+                                }}
+                                onArchive={(slug) => {
+                                  useDocsStore.getState().archiveDoc(slug)
+                                }}
+                              />
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    )
+                  })}
                 </ul>
               )}
             </li>
           )
         })}
       </ul>
-      <button
-        type="button"
-        onClick={() => setWindowDays((n) => n + LOAD_MORE_STEP)}
-        className={cn(
-          'mt-1 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] text-muted-foreground/70 transition-colors',
-          'outline-none hover:bg-accent/40 hover:text-foreground',
-          'focus-visible:ring-2 focus-visible:ring-ring/40',
-        )}
-        aria-label="Show earlier days"
-      >
-        <IconChevronDown size={12} stroke={1.75} className="shrink-0" />
-        <span>Earlier</span>
-      </button>
     </div>
   )
+}
+
+interface WeekGroup {
+  weekStart: string
+  weekEnd: string
+  /** True iff the week contains today. */
+  isCurrent: boolean
+  /** True iff the week is exactly the one before the current. */
+  isLastWeek: boolean
+  /** Daily rows to render. Current week has all 7 slots; past weeks
+   * have only days that actually have entries. */
+  rows: DailyRowMeta[]
+  /** How many days in the week have a real daily entry. */
+  entryCount: number
+}
+
+function WeekHeader({
+  group,
+  isExpanded,
+  onToggle,
+}: {
+  group: WeekGroup
+  isExpanded: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={isExpanded}
+      className={cn(
+        'flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[12px] font-medium uppercase tracking-wide text-muted-foreground/80 transition-colors',
+        'outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40',
+      )}
+    >
+      <IconChevronRight
+        size={10}
+        stroke={1.75}
+        className="shrink-0 transition-transform"
+        style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+      />
+      <span className="flex-1 truncate normal-case tracking-normal">
+        {weekHeaderLabel(group)}
+      </span>
+      {group.entryCount > 0 && (
+        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/60">
+          {group.entryCount}
+        </span>
+      )}
+    </button>
+  )
+}
+
+function weekHeaderLabel(group: WeekGroup): string {
+  if (group.isCurrent) return 'This week'
+  if (group.isLastWeek) return 'Last week'
+  return `${formatRange(group.weekStart, group.weekEnd)}`
+}
+
+function formatRange(startISO: string, endISO: string): string {
+  const start = new Date(startISO)
+  const end = new Date(endISO)
+  const today = new Date(todayLocalDate())
+  const sameYearAsToday =
+    start.getFullYear() === today.getFullYear() &&
+    end.getFullYear() === today.getFullYear()
+  const startLabel = start.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  })
+  const endLabel = end.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYearAsToday ? {} : { year: 'numeric' }),
+  })
+  return `${startLabel} — ${endLabel}`
 }
 
 interface DailyRowProps {
@@ -391,36 +485,95 @@ interface DailyRowMeta {
   slug: string | null
 }
 
-function buildDailyRows(
-  knownDocs: KnownDoc[],
-  windowDays: number,
-): DailyRowMeta[] {
+/** Group dailies by calendar week (Sunday-anchored). The current
+ * week always renders all 7 day slots so the user can backfill;
+ * past weeks include only days that actually have an entry — empty
+ * past days are visual noise and the past-day path is ⌘G now.
+ *
+ * Weeks are sorted newest-first. Past weeks with zero entries are
+ * dropped entirely (they'd be an infinite tail of nothing). */
+function buildWeekGroups(knownDocs: KnownDoc[]): WeekGroup[] {
   const today = todayLocalDate()
+  const currentWeekStart = weekStartFor(today)
+  const lastWeekStart = shiftWeek(currentWeekStart, -1)
+
+  // Map date → slug for daily entries (writing entries are filed by
+  // parentId, not date).
   const dailies = new Map<string, string>()
   for (const d of knownDocs) {
     if (d.type === 'daily' && d.date) dailies.set(d.date, d.slug)
   }
 
-  const windowDates: string[] = []
-  const base = new Date()
-  for (let i = 0; i < windowDays; i += 1) {
-    const dt = new Date(base)
-    dt.setDate(base.getDate() - i)
-    windowDates.push(formatLocalDate(dt))
+  // Group entry dates by their week-start.
+  const entriesByWeek = new Map<string, string[]>()
+  for (const date of dailies.keys()) {
+    const ws = weekStartFor(date)
+    const list = entriesByWeek.get(ws)
+    if (list) list.push(date)
+    else entriesByWeek.set(ws, [date])
   }
+  // Make sure the current week shows even if it has no entry yet.
+  if (!entriesByWeek.has(currentWeekStart))
+    entriesByWeek.set(currentWeekStart, [])
 
-  const olderDates = Array.from(dailies.keys())
-    .filter((d) => !windowDates.includes(d))
-    .sort()
-    .reverse()
+  const weekStarts = Array.from(entriesByWeek.keys()).sort().reverse()
 
-  return [...windowDates, ...olderDates].map((date) => ({
+  return weekStarts.map((weekStart) => {
+    const weekEnd = addDays(weekStart, 6)
+    const isCurrent = weekStart === currentWeekStart
+    const isLastWeek = weekStart === lastWeekStart
+    const entryDates = entriesByWeek.get(weekStart) ?? []
+
+    let rows: DailyRowMeta[]
+    if (isCurrent) {
+      // All 7 slots, today first (descending order within the week).
+      const dates: string[] = []
+      for (let i = 0; i < 7; i += 1) dates.push(addDays(weekStart, 6 - i))
+      // Filter out dates after today (future days inside this week
+      // shouldn't appear — you don't journal next Friday).
+      const visible = dates.filter((d) => d <= today)
+      rows = visible.map((date) => buildDailyRow(date, today, dailies))
+    } else {
+      // Past week: only days with entries, newest-first.
+      rows = [...entryDates]
+        .sort()
+        .reverse()
+        .map((date) => buildDailyRow(date, today, dailies))
+    }
+
+    return {
+      weekStart,
+      weekEnd,
+      isCurrent,
+      isLastWeek,
+      rows,
+      entryCount: entryDates.length,
+    }
+  })
+}
+
+function buildDailyRow(
+  date: string,
+  today: string,
+  dailies: Map<string, string>,
+): DailyRowMeta {
+  return {
     date,
     label: labelForDate(date, today),
     isToday: date === today,
     hasEntry: dailies.has(date),
     slug: dailies.get(date) ?? null,
-  }))
+  }
+}
+
+function addDays(dateISO: string, n: number): string {
+  const d = new Date(dateISO)
+  d.setDate(d.getDate() + n)
+  return formatLocalDate(d)
+}
+
+function shiftWeek(weekStartISO: string, weeks: number): string {
+  return addDays(weekStartISO, weeks * 7)
 }
 
 /** Group writing-type docs by their parentId so each daily / writing

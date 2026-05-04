@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { useDocsStore } from '@/state/docsStore'
+import { useDocsStore, weekStartFor } from '@/state/docsStore'
 import {
   formatLocalDate,
   todayLocalDate,
@@ -47,6 +47,7 @@ export function JumpToDateDialog() {
   const [open, setOpen] = useState(false)
   const [value, setValue] = useState(todayLocalDate())
   const openDaily = useDocsStore((s) => s.openDaily)
+  const expandWeek = useDocsStore((s) => s.expandWeek)
   const navigate = useNavigate()
   const picks = useMemo(quickPicks, [])
 
@@ -69,6 +70,10 @@ export function JumpToDateDialog() {
 
   const jump = async (date: string) => {
     setOpen(false)
+    // Make sure the target week section is open before openDaily
+    // resolves, so the sidebar's scrollIntoView effect lands the
+    // row in view rather than into a folded section.
+    expandWeek(weekStartFor(date))
     const slug = await openDaily(date)
     if (slug) navigate('/notes')
   }
