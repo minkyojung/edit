@@ -318,7 +318,7 @@ function Kbd({ children }: { children: ReactNode }) {
   return (
     <kbd
       data-slot="kbd"
-      className="bg-muted text-muted-foreground font-mono text-xs leading-none px-1 py-0.5"
+      className="bg-foreground/10 text-foreground/80 font-mono text-xs leading-none px-1 py-0.5"
     >
       {children}
     </kbd>

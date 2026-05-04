@@ -179,7 +179,7 @@ function Tab({ meta, isActive, onSelect, onArchive, onRename }: TabProps) {
         className={cn(
           'flex h-4 w-4 shrink-0 items-center justify-center rounded transition-opacity hover:bg-foreground/10',
           'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          isActive ? 'opacity-60 hover:opacity-100' : 'opacity-0 group-hover:opacity-60 hover:!opacity-100',
+          isActive ? 'opacity-60 hover:opacity-100' : 'opacity-30 hover:opacity-100',
         )}
       >
         <IconX size={12} stroke={2} />

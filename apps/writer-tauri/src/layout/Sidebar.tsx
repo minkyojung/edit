@@ -34,6 +34,31 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 
+/** Pull initials from an email's local part, splitting on .+_- so
+ * william.jung@x.com → WJ. Falls back to the first letter, then "?" so
+ * the avatar always renders something. */
+function accountInitials(email: string | null): string {
+  if (!email) return '?'
+  const local = email.split('@')[0] ?? ''
+  const parts = local.split(/[._-]+/).filter(Boolean)
+  if (parts.length === 0) return (local[0] ?? '?').toUpperCase()
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[1][0]).toUpperCase()
+}
+
+/** Capitalize the email's local part for a friendly-but-honest display
+ * name. Returns null when there's no email so callers can render a
+ * generic placeholder. */
+function accountDisplayName(email: string | null): string | null {
+  if (!email) return null
+  const local = email.split('@')[0] ?? ''
+  return local
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((p) => p[0].toUpperCase() + p.slice(1))
+    .join(' ')
+}
+
 type PaletteOption = {
   value: 'charcoal' | 'olive' | 'paper'
   label: string
@@ -129,10 +154,14 @@ export function AppSidebar() {
                 <SidebarMenuButton size="lg" className="px-2 h-11">
                   <Avatar className="size-7 shrink-0">
                     <AvatarImage src="" />
-                    <AvatarFallback className="avatar-luma text-xs text-white font-medium">WJ</AvatarFallback>
+                    <AvatarFallback className="avatar-luma text-xs text-primary-foreground font-medium">
+                      {accountInitials(account.email)}
+                    </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium truncate">William Jung</p>
+                    <p className="text-xs font-medium truncate">
+                      {accountDisplayName(account.email) ?? 'Guest'}
+                    </p>
                     <p className="text-xs text-muted-foreground truncate">
                       {account.connected ? (account.email ?? 'Connected') : 'Not connected'}
                     </p>
