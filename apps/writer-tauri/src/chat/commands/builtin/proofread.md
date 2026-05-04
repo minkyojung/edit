@@ -1,6 +1,6 @@
 ---
-name: review
-description: Review the document and surface issues as inline comments
+name: proofread
+description: Proofread the document and surface issues as inline comments
 kind: review-comments
 model: claude-haiku-4-5
 effort: low
