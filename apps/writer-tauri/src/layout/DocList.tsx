@@ -268,13 +268,21 @@ function DailyRow({
   onSelect,
   onAddChild,
 }: DailyRowProps) {
+  // Empty day in This week is a real slot the user can fill, but it
+  // shouldn't read as the same weight as a day with content. Drop
+  // the row's text tone a step so "yesterday I wrote, day before I
+  // didn't" is legible at a glance. Today and active rows always
+  // win — they keep their full emphasis no matter what.
+  const isEmpty = !row.hasEntry && !row.isToday
   return (
     <div
       className={cn(
         'group flex w-full items-center gap-1 rounded-md px-1.5 py-1.5 text-[13px] font-medium transition-colors',
         isActive
           ? 'bg-accent text-foreground'
-          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+          : isEmpty
+            ? 'text-muted-foreground/45 hover:bg-accent/40 hover:text-muted-foreground'
+            : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
       )}
     >
       {/* Expand chevron — only meaningful when there are children. We
@@ -312,10 +320,20 @@ function DailyRow({
         <IconCalendar
           size={12}
           stroke={1.75}
-          className="shrink-0"
+          className={cn('shrink-0', isEmpty && 'opacity-60')}
           aria-hidden
         />
         <span className="truncate">{row.label}</span>
+        {/* Small filled dot when the day actually has an entry —
+            positive marker that pairs with the muted treatment of
+            empty days. Today's "TODAY" badge sits in the same slot,
+            so we suppress the dot there to avoid double-signal. */}
+        {row.hasEntry && !row.isToday && (
+          <span
+            aria-hidden
+            className="ml-1 inline-block size-1 shrink-0 rounded-full bg-foreground/40"
+          />
+        )}
         {row.isToday && (
           <span className="ml-auto shrink-0 text-[0.65rem] uppercase tracking-wide text-muted-foreground">
             Today
