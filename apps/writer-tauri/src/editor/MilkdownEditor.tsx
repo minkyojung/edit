@@ -20,9 +20,9 @@ import {
   type WikilinkPaletteKey,
 } from './wikilinkPalettePlugin'
 import { WikilinkPalette } from './WikilinkPalette'
+import { UnlinkedNotes } from './UnlinkedNotes'
 import { useDocTitle } from '../hooks/useDocTitle'
 import { MarkToolbar } from './MarkToolbar'
-import { Breadcrumb } from './Breadcrumb'
 import { proofMarkPlugins } from './proofMarkSchemas'
 
 interface Props {
@@ -39,6 +39,11 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   onChangeRef.current = onMarkdownChange
 
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
+  // Local view state — UnlinkedNotes needs to walk the PM doc for
+  // wikilink references, so it needs the live view. The parent App
+  // also gets a view via onViewReady; that's separate and kept for
+  // its own purposes (e.g. mark popovers).
+  const [pmView, setPmView] = useState<EditorView | null>(null)
   const { title, setTitle } = useDocTitle(handle?.ydoc ?? null)
 
   // Bridge between the wikilink-palette plugin (lives inside the
@@ -106,6 +111,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
 
         editor.action((ctx) => {
           const view = ctx.get(editorViewCtx)
+          setPmView(view)
           onViewReady?.(view)
         })
       })
@@ -120,6 +126,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
         editorRef.current = null
       }
       setSelection(null)
+      setPmView(null)
       onViewReady?.(null)
     }
   }, [handle])
@@ -128,7 +135,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     <div className="relative h-full w-full">
       <div className="h-full w-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="mx-auto max-w-2xl px-8 pt-12 pb-12">
-          <Breadcrumb slug={handle?.slug ?? null} />
           <input
             type="text"
             value={title}
@@ -138,6 +144,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
             className="mb-6 w-full bg-transparent text-3xl font-semibold leading-tight outline-none placeholder:text-muted-foreground/50"
           />
           <div ref={rootRef} />
+          <UnlinkedNotes view={pmView} parentSlug={handle?.slug ?? null} />
         </div>
       </div>
       {handle && <MarkToolbar selection={selection} ydoc={handle.ydoc} onDismiss={() => setSelection(null)} />}

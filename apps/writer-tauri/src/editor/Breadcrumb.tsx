@@ -21,7 +21,7 @@ export function Breadcrumb({ slug }: { slug: string | null }) {
   return (
     <nav
       aria-label="Document path"
-      className="mb-3 flex items-center gap-1 text-xs text-muted-foreground"
+      className="flex min-w-0 items-center gap-1 text-[13px] font-medium text-muted-foreground"
     >
       {ancestors.map((entry, i) => (
         <Fragment key={entry.slug}>

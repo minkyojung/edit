@@ -29,12 +29,15 @@ import {
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/state/layoutStore'
+import { useDocsStore } from '@/state/docsStore'
+import { Breadcrumb } from '@/editor/Breadcrumb'
 
 interface EditorHeaderProps {
   showSidebarTrigger: boolean
 }
 
 export function EditorHeader({ showSidebarTrigger }: EditorHeaderProps) {
+  const activeSlug = useDocsStore((s) => s.activeSlug)
   return (
     <div
       className="flex shrink-0 items-center border-b border-border bg-background"
@@ -50,6 +53,9 @@ export function EditorHeader({ showSidebarTrigger }: EditorHeaderProps) {
           <SidebarTrigger />
         </>
       )}
+      <div className="flex min-w-0 items-center pl-2 pr-1">
+        <Breadcrumb slug={activeSlug} />
+      </div>
       <div data-tauri-drag-region className="h-full flex-1" />
       <div className="flex items-center pr-2">
         <ContextPanelTrigger />
