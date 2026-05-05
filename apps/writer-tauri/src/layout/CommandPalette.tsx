@@ -20,6 +20,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as chrono from 'chrono-node'
 import {
+  IconArchive,
   IconCalendar,
   IconCalendarTime,
   IconFileDescription,
@@ -64,10 +65,20 @@ export function CommandPalette() {
   const [query, setQuery] = useState('')
 
   const knownDocs = useDocsStore((s) => s.knownDocs)
+  const activeSlug = useDocsStore((s) => s.activeSlug)
   const openDaily = useDocsStore((s) => s.openDaily)
   const setActive = useDocsStore((s) => s.setActive)
   const expandWeek = useDocsStore((s) => s.expandWeek)
+  const archiveDoc = useDocsStore((s) => s.archiveDoc)
   const navigate = useNavigate()
+
+  // Active doc — used by the "Archive current note" action. Only
+  // writing-type counts; archiveDoc refuses dailies anyway.
+  const activeDoc = useMemo(() => {
+    if (!activeSlug) return null
+    const d = knownDocs.find((x) => x.slug === activeSlug)
+    return d && d.type === 'writing' && !d.archivedAt ? d : null
+  }, [knownDocs, activeSlug])
 
   // Global shortcuts. ⌘K opens in any-mode, ⌘G opens in date-mode.
   // Browsers use ⌘G as "find next" by default — preventDefault keeps
@@ -195,6 +206,26 @@ export function CommandPalette() {
         onValueChange={setQuery}
       />
       <CommandList>
+        {/* Actions on the active note. Only surfaces when there's a
+            writing-type active doc — dailies aren't archivable and
+            blank state has nothing to act on. */}
+        {activeDoc && (
+          <CommandGroup heading="Actions">
+            <CommandItem
+              value="action:archive-active"
+              onSelect={() => {
+                archiveDoc(activeDoc.slug)
+                setOpen(false)
+              }}
+              className="text-destructive data-[selected=true]:text-destructive"
+            >
+              <IconArchive size={16} stroke={1.75} />
+              <span className="flex-1 truncate">
+                Archive “{activeDoc.title || 'Untitled'}”
+              </span>
+            </CommandItem>
+          </CommandGroup>
+        )}
         {dateResult && (
           <CommandGroup heading="Jump to date">
             <ResultRow
