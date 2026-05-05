@@ -249,6 +249,35 @@ export const useDocsStore = create<DocsState>()(
             : { expandedWeekStarts: [...s.expandedWeekStarts, currentWeekStart] },
         )
 
+        // Backfill: ensure every day in the current week (Mon–Sun)
+        // has a real daily entry. Includes future days so all 7 slots
+        // are present. Fire-and-forget so the editor opens at full
+        // speed; the sidebar reacts as each create lands.
+        void (async () => {
+          const cursor = new Date(currentWeekStart)
+          const weekEnd = new Date(currentWeekStart)
+          weekEnd.setDate(weekEnd.getDate() + 6)
+          while (cursor <= weekEnd) {
+            const yyyy = cursor.getFullYear()
+            const mm = String(cursor.getMonth() + 1).padStart(2, '0')
+            const dd = String(cursor.getDate()).padStart(2, '0')
+            const date = `${yyyy}-${mm}-${dd}`
+            const exists = get().knownDocs.some(
+              (k) => k.type === 'daily' && k.date === date,
+            )
+            if (!exists) {
+              try {
+                const created = await proofClient.createDoc(date, '​')
+                const meta: KnownDoc = { slug: created.slug, type: 'daily', date }
+                set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+              } catch (err) {
+                console.error('[docs] backfill daily failed', date, err)
+              }
+            }
+            cursor.setDate(cursor.getDate() + 1)
+          }
+        })()
+
         // Defensive: ensure activeSlug points at something real.
         const finalState = get()
         if (
@@ -654,14 +683,14 @@ export const useDocsStore = create<DocsState>()(
   ),
 )
 
-/** Compute the Sunday-anchored start of the calendar week
- * containing `date` (YYYY-MM-DD). Locale-fixed to Sunday for v1;
- * if we ship locales that prefer Monday this becomes derived from
- * Intl.Locale().weekInfo.firstDay. */
+/** Compute the Monday-anchored start of the calendar week
+ * containing `date` (YYYY-MM-DD). ISO-week convention. */
 export function weekStartFor(date: string): string {
   const d = new Date(date)
   const day = d.getDay() // 0=Sun … 6=Sat
-  d.setDate(d.getDate() - day)
+  // Distance back to Monday: Sun→6, Mon→0, Tue→1, … Sat→5.
+  const back = day === 0 ? 6 : day - 1
+  d.setDate(d.getDate() - back)
   const yyyy = d.getFullYear()
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')

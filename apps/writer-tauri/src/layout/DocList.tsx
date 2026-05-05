@@ -137,7 +137,7 @@ export function DocList() {
                           }}
                         />
                         {dailySlug && isExpanded && hasChildren && (
-                          <ul className="ml-3.5 flex flex-col gap-0.5 border-l border-border/40 pt-0.5">
+                          <ul className="ml-3.5 flex flex-col gap-0.5 border-l border-border pt-0.5">
                             {children.map((child) => (
                               <DocTreeNode
                                 key={child.slug}
@@ -323,21 +323,9 @@ function DailyRow({
           aria-hidden
         />
         <span className="truncate">{row.label}</span>
-        {/* Small filled dot when the day actually has an entry —
-            positive marker that pairs with the muted treatment of
-            empty days. Today's "TODAY" badge sits in the same slot,
-            so we suppress the dot there to avoid double-signal. */}
-        {row.hasEntry && !row.isToday && (
-          <span
-            aria-hidden
-            className="ml-1 inline-block size-1 shrink-0 rounded-full bg-foreground/40"
-          />
-        )}
-        {row.isToday && (
-          <span className="ml-auto shrink-0 text-[0.65rem] uppercase tracking-wide text-muted-foreground">
-            Today
-          </span>
-        )}
+        <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
+          {row.weekday}
+        </span>
       </button>
 
       {/* Add-child button reveals on hover so the resting state stays
@@ -470,7 +458,7 @@ function DocTreeNode({
       </div>
 
       {isExpanded && hasChildren && (
-        <ul className="ml-3.5 flex flex-col gap-0.5 border-l border-border/40 pt-0.5">
+        <ul className="ml-3.5 flex flex-col gap-0.5 border-l border-border pt-0.5">
           {children.map((child) => (
             <DocTreeNode
               key={child.slug}
@@ -490,7 +478,10 @@ function DocTreeNode({
 
 interface DailyRowMeta {
   date: string
+  /** Numeric date label for the leading column (e.g. "May 5"). */
   label: string
+  /** Weekday abbreviation for the trailing column (e.g. "Tue"). */
+  weekday: string
   isToday: boolean
   hasEntry: boolean
   slug: string | null
@@ -515,10 +506,12 @@ function buildWeekGroups(knownDocs: KnownDoc[]): WeekGroup[] {
     if (d.type === 'daily' && d.date) dailies.set(d.date, d.slug)
   }
 
-  // Group entry dates by their week-start.
+  // Group entry dates by their week-start. Skip future weeks —
+  // sidebar is past+present only.
   const entriesByWeek = new Map<string, string[]>()
   for (const date of dailies.keys()) {
     const ws = weekStartFor(date)
+    if (ws > currentWeekStart) continue
     const list = entriesByWeek.get(ws)
     if (list) list.push(date)
     else entriesByWeek.set(ws, [date])
@@ -537,13 +530,12 @@ function buildWeekGroups(knownDocs: KnownDoc[]): WeekGroup[] {
 
     let rows: DailyRowMeta[]
     if (isCurrent) {
-      // All 7 slots, today first (descending order within the week).
+      // All 7 slots, Sun → Mon top-to-bottom (newest-first within
+      // a Mon-anchored week). Backfill seeds every day so the row
+      // always represents a real doc.
       const dates: string[] = []
-      for (let i = 0; i < 7; i += 1) dates.push(addDays(weekStart, 6 - i))
-      // Filter out dates after today (future days inside this week
-      // shouldn't appear — you don't journal next Friday).
-      const visible = dates.filter((d) => d <= today)
-      rows = visible.map((date) => buildDailyRow(date, today, dailies))
+      for (let i = 6; i >= 0; i -= 1) dates.push(addDays(weekStart, i))
+      rows = dates.map((date) => buildDailyRow(date, today, dailies))
     } else {
       // Past week: only days with entries, newest-first.
       rows = [...entryDates]
@@ -568,9 +560,11 @@ function buildDailyRow(
   today: string,
   dailies: Map<string, string>,
 ): DailyRowMeta {
+  const d = new Date(date)
   return {
     date,
-    label: labelForDate(date, today),
+    label: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+    weekday: d.toLocaleDateString(undefined, { weekday: 'short' }),
     isToday: date === today,
     hasEntry: dailies.has(date),
     slug: dailies.get(date) ?? null,
@@ -603,23 +597,3 @@ function indexChildren(knownDocs: KnownDoc[]): Map<string, KnownDoc[]> {
   return out
 }
 
-function labelForDate(date: string, today: string): string {
-  if (date === today) {
-    return new Date(date).toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric',
-    })
-  }
-  const d = new Date(date)
-  const t = new Date(today)
-  const diffDays = Math.round((t.getTime() - d.getTime()) / 86_400_000)
-  if (diffDays === 1) return 'Yesterday'
-  if (diffDays > 0 && diffDays < 7) {
-    return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
-  }
-  return d.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(d.getFullYear() !== t.getFullYear() ? { year: 'numeric' } : {}),
-  })
-}
