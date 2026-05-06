@@ -328,15 +328,15 @@ export const useDocsStore = create<DocsState>()(
           localStorage.removeItem(LEGACY_SLUG_KEY)
         }
 
-        // Ensure the user's belief wiki page exists. Fire-and-forget
-        // so first paint isn't blocked on this round-trip. The chat
-        // runner reads belief lazily before each turn, so even if the
-        // create lands a moment after bootstrap, the next chat picks
-        // it up automatically.
-        void import('./wikiService').then(({ ensureBeliefDoc }) =>
-          ensureBeliefDoc(),
+        // Ensure the user's wiki pages (belief / entity / episode)
+        // exist. Fire-and-forget so first paint isn't blocked on
+        // these round-trips. The chat runner reads wiki content
+        // lazily before each turn, so even if a create lands a
+        // moment after bootstrap, the next chat picks it up.
+        void import('./wikiService').then(({ ensureWikiDocs }) =>
+          ensureWikiDocs(),
         ).catch((err) =>
-          console.error('[wiki] bootstrap belief failed', err),
+          console.error('[wiki] bootstrap wiki failed', err),
         )
 
         set({ bootstrapping: false })

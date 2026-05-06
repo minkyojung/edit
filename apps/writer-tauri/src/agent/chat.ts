@@ -19,7 +19,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { FREE_CHAT_PROMPT } from './skills/freeChat'
 import { applyProposal, type ApplyOutcome } from './applyProposal'
 import type { Proposal } from './proposals'
-import { readBeliefMarkdown } from '@/state/wikiService'
+import { readWikiContext } from '@/state/wikiService'
 
 // Sentinel string the Claude Agent SDK uses to split a multi-block
 // system prompt into a cacheable static prefix vs a session-specific
@@ -251,31 +251,31 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const docForPrompt = docText.length > DOC_CHAR_CAP ? docText.slice(0, DOC_CHAR_CAP) : docText
   const systemBody = systemPrompt ?? FREE_CHAT_PROMPT
 
-  // Read the user's belief wiki page so it can be prepended to the
-  // system prompt as the cacheable prefix. Empty when belief hasn't
-  // been written yet — assembly handles that cleanly. Read errors
-  // collapse to '' (proof-server unreachable) so a chat is never
-  // blocked on the wiki round-trip.
-  const beliefMd = await readBeliefMarkdown()
+  // Read the user's wiki context (belief + entity + episode) so it
+  // can be prepended to the system prompt as the cacheable prefix.
+  // Empty when no wiki page has content yet — assembly handles that
+  // cleanly. Read errors collapse to '' (proof-server unreachable)
+  // so a chat is never blocked on the wiki round-trip.
+  const wikiContext = await readWikiContext()
 
   // System prompt assembly — the SDK accepts either a single string
   // or string[] with a boundary marker. We prefer the array form
   // when there's a meaningful split between cacheable prefix
-  // (belief, role) and dynamic suffix (current document text).
-  // No belief + no document → fall back to a single string.
+  // (wiki context, role) and dynamic suffix (current document text).
+  // No wiki + no document → fall back to a single string.
   let system: string | string[]
-  if (beliefMd && appendDocument) {
+  if (wikiContext && appendDocument) {
     system = [
-      `[USER BELIEFS]\n${beliefMd}`,
+      wikiContext,
       systemBody,
       SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
       `--- DOCUMENT ---\n${docForPrompt}`,
     ]
-  } else if (beliefMd) {
-    // Belief but no document (slash commands that bake doc into the body).
-    system = [`[USER BELIEFS]\n${beliefMd}`, systemBody]
+  } else if (wikiContext) {
+    // Wiki context but no document (slash commands that bake doc into the body).
+    system = [wikiContext, systemBody]
   } else if (appendDocument) {
-    // No belief yet, but document follows the role prompt.
+    // No wiki content yet, but document follows the role prompt.
     system = [
       systemBody,
       SYSTEM_PROMPT_DYNAMIC_BOUNDARY,

@@ -1,70 +1,87 @@
 // Wiki bootstrap — Karpathy LLM Wiki structure on top of proof-sdk.
 //
-// v1 scope: a single belief doc that captures the user's preferences /
-// style / recurring opinions. The chat runner prepends its body to
-// every system prompt so Claude can answer in the user's voice rather
-// than as a generic assistant.
+// v1 scope: three wiki pages — belief / entity / episode — that
+// capture the user's preferences, the people / orgs / concepts they
+// reference, and the events worth remembering. The chat runner reads
+// all three before each turn and prepends them as the cacheable
+// prefix of the system prompt so Claude can answer with the user's
+// context loaded.
 //
-// Future (P3 / Memory-writer) will add entity + episode pages and let
-// a background agent edit them with provenance. For now, the user
-// edits belief by hand from the sidebar Wiki section.
+// Future (P3 / Memory-writer) will let a background agent edit these
+// pages with provenance. For now, the user edits them by hand from
+// the sidebar Wiki section.
 
 import { proofClient } from '@/lib/proofClient'
 import { useDocsStore, type KnownDoc } from './docsStore'
 
-const BELIEF_TYPE = 'wiki:belief' as const
-const BELIEF_TITLE = 'belief'
 const PROOF_BASE_URL = 'http://localhost:4000'
 
-/** Ensure a single wiki:belief doc exists in the catalog. Idempotent.
+/** Wiki types we bootstrap on first launch and keep in sync with the
+ * sidebar. Order is meaningful — it's the order in which sections
+ * appear in the chat system prompt and (today) in the sidebar list. */
+const WIKI_TYPES = [
+  { type: 'wiki:belief', title: 'belief', heading: 'BELIEFS' },
+  { type: 'wiki:entity', title: 'entity', heading: 'ENTITIES' },
+  { type: 'wiki:episode', title: 'episode', heading: 'EPISODES' },
+] as const
+
+type WikiType = (typeof WIKI_TYPES)[number]['type']
+
+/** Ensure each wiki type has a doc in the catalog. Idempotent.
  * Called from docsStore.bootstrap as fire-and-forget — chat reads
- * belief lazily so the first paint isn't blocked on this round-trip. */
-export async function ensureBeliefDoc(): Promise<string | null> {
+ * wiki content lazily so the first paint isn't blocked on these
+ * round-trips. */
+export async function ensureWikiDocs(): Promise<void> {
+  for (const def of WIKI_TYPES) {
+    await ensureWikiDoc(def.type, def.title).catch((err) =>
+      console.error(`[wiki] ensure ${def.type} failed`, err),
+    )
+  }
+}
+
+async function ensureWikiDoc(
+  type: WikiType,
+  title: string,
+): Promise<string | null> {
   const existing = useDocsStore
     .getState()
-    .knownDocs.find((d) => d.type === BELIEF_TYPE)
+    .knownDocs.find((d) => d.type === type)
   if (existing) return existing.slug
   try {
     // ZWS body so the proof-server's blank-markdown guard accepts it.
-    // The user's belief grows from here — empty until they write.
-    const created = await proofClient.createDoc(BELIEF_TITLE, '​')
-    const meta: KnownDoc = {
-      slug: created.slug,
-      type: BELIEF_TYPE,
-      title: BELIEF_TITLE,
-    }
+    // The user's content grows from here — empty until they write.
+    const created = await proofClient.createDoc(title, '​')
+    const meta: KnownDoc = { slug: created.slug, type, title }
     useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
     return created.slug
   } catch (err) {
-    console.error('[wiki] ensureBeliefDoc failed', err)
+    console.error(`[wiki] ensureWikiDoc(${type}) failed`, err)
     return null
   }
 }
 
-/** Slug of the current belief doc, if any. Synchronous — pulls from
- * the catalog mirror. Returns null before bootstrap finishes or if
- * ensureBeliefDoc hasn't run. */
-export function getBeliefSlug(): string | null {
-  const doc = useDocsStore
-    .getState()
-    .knownDocs.find((d) => d.type === BELIEF_TYPE)
+/** Slug of the wiki doc with the given type, if any. Synchronous —
+ * pulls from the catalog mirror. */
+export function getWikiSlug(type: WikiType): string | null {
+  const doc = useDocsStore.getState().knownDocs.find((d) => d.type === type)
   return doc?.slug ?? null
 }
 
-/** Fetch the belief markdown body. Returns empty string when no belief
- * doc exists yet, the body is just the ZWS placeholder, or the
- * proof-server is unreachable. The chat runner uses this to populate
- * the cacheable prefix of the system prompt — empty result means
- * "no belief context", which the prompt assembly handles cleanly.
+/** Backwards-compatible accessor used by older callers; prefer
+ * getWikiSlug('wiki:belief') in new code. */
+export function getBeliefSlug(): string | null {
+  return getWikiSlug('wiki:belief')
+}
+
+/** Fetch the markdown body of a wiki doc by slug. Returns '' when the
+ * doc is empty (or just the ZWS placeholder), the slug is unknown,
+ * or the proof-server is unreachable.
  *
- * Endpoint is `GET /documents/:slug` (canonical doc resource, served
- * by proof-sdk's apiRoutes — both `/api/documents/:slug` and the
- * un-prefixed `/documents/:slug` are mounted to the same handler).
- * The response body has `markdown: string`. The bridge sub-route
- * `/documents/:slug/state` is a metadata-only revision/updatedAt
- * probe and intentionally does NOT include markdown. */
-export async function readBeliefMarkdown(): Promise<string> {
-  const slug = getBeliefSlug()
+ * Endpoint is `GET /documents/:slug` (canonical doc resource served
+ * by proof-sdk's apiRoutes). Response body has `markdown: string`.
+ * The bridge sub-route `/documents/:slug/state` is metadata-only and
+ * intentionally does NOT include markdown. */
+async function readWikiMarkdown(slug: string | null): Promise<string> {
   if (!slug) return ''
   try {
     const res = await fetch(
@@ -78,7 +95,30 @@ export async function readBeliefMarkdown(): Promise<string> {
     if (!md || md.replace(/[​\s]/g, '') === '') return ''
     return md
   } catch (err) {
-    console.warn('[wiki] readBeliefMarkdown failed', err)
+    console.warn('[wiki] readWikiMarkdown failed', slug, err)
     return ''
   }
+}
+
+/** Backwards-compatible accessor for belief alone. */
+export async function readBeliefMarkdown(): Promise<string> {
+  return readWikiMarkdown(getBeliefSlug())
+}
+
+/** Read all wiki pages and return a single cacheable context block,
+ * already shaped for the chat system prompt. Each non-empty section
+ * is wrapped with a heading; empty sections are skipped entirely so
+ * the prefix stays compact. Returns '' when no wiki content exists
+ * yet — chat assembly takes the empty-belief path in that case.
+ *
+ * Sections appear in WIKI_TYPES order so the cache prefix is stable
+ * across runs (rearranging would invalidate prompt cache hits). */
+export async function readWikiContext(): Promise<string> {
+  const sections = await Promise.all(
+    WIKI_TYPES.map(async (def) => {
+      const md = await readWikiMarkdown(getWikiSlug(def.type))
+      return md ? `[USER ${def.heading}]\n${md}` : ''
+    }),
+  )
+  return sections.filter(Boolean).join('\n\n')
 }
