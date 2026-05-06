@@ -1,6 +1,6 @@
 // Document metadata stored alongside the body in the same Y.Doc.
-// Currently captures `type` (daily / writing — wiki types come later)
-// and, for daily entries, the ISO date the entry anchors to.
+// Captures `type` (daily / writing / wiki:*) and, for daily
+// entries, the ISO date the entry anchors to.
 //
 // Lives in ydoc.getMap('meta') so it syncs over Hocuspocus next to
 // the body and title; the docsStore mirrors a slim copy in
@@ -10,7 +10,15 @@
 import { useEffect, useState } from 'react'
 import * as Y from 'yjs'
 
-export type DocType = 'daily' | 'writing'
+// `wiki:*` = LLM-synthesized memory pages (Karpathy split: Sources
+// vs Wiki). Distinct from `writing` so archive/delete guards and
+// sidebar grouping can branch on a single field.
+export type DocType =
+  | 'daily'
+  | 'writing'
+  | 'wiki:belief'
+  | 'wiki:entity'
+  | 'wiki:episode'
 
 export interface DocMeta {
   type: DocType

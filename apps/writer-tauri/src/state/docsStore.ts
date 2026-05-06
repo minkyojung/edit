@@ -35,7 +35,12 @@ const DEFAULT_DOC_TITLE = 'My Document'
  * changes while open. */
 export interface KnownDoc {
   slug: string
-  type: 'daily' | 'writing'
+  type:
+    | 'daily'
+    | 'writing'
+    | 'wiki:belief'
+    | 'wiki:entity'
+    | 'wiki:episode'
   /** YYYY-MM-DD when type === 'daily'. */
   date?: string
   /** Parent doc's slug for tree-nested writing notes. Undefined for
@@ -62,6 +67,16 @@ export interface KnownDoc {
    * the doc back where it was. While archived, `parentId` is left
    * undefined so the doc doesn't pollute the live tree index. */
   archivedFromParent?: string
+}
+
+/** Karpathy-style write-ownership split: `wiki:*` docs are LLM-
+ * synthesized memory pages (belief / entity / episode). They live
+ * in the same catalog as user notes but are protected from archive
+ * and hard-delete so the user can't accidentally wipe the agent's
+ * memory. Single field, single predicate — every guard branches
+ * off this one helper. */
+export function isWikiDoc(doc: Pick<KnownDoc, 'type'>): boolean {
+  return doc.type.startsWith('wiki:')
 }
 
 interface DocsState {
@@ -438,7 +453,10 @@ export const useDocsStore = create<DocsState>()(
         // Refuse to nest under something we don't know about — keeps
         // the tree from sprouting orphan branches if we get a stale
         // slug from the UI.
-        if (!get().knownDocs.find((d) => d.slug === parentSlug)) return null
+        const parent = get().knownDocs.find((d) => d.slug === parentSlug)
+        if (!parent) return null
+        // Wiki pages are roots; user notes don't hang off them.
+        if (isWikiDoc(parent)) return null
         try {
           // ZWS body — non-blank for the proof-server validator while
           // not seeding an H1 the user would have to clean up.
@@ -473,7 +491,9 @@ export const useDocsStore = create<DocsState>()(
       },
 
       createWritingChild: async (parentSlug, title) => {
-        if (!get().knownDocs.find((d) => d.slug === parentSlug)) return null
+        const parent = get().knownDocs.find((d) => d.slug === parentSlug)
+        if (!parent) return null
+        if (isWikiDoc(parent)) return null
         try {
           // ZWS body for the same reason daily / writing creates use
           // it: proof-server rejects blank markdown but we don't want
@@ -538,6 +558,9 @@ export const useDocsStore = create<DocsState>()(
         // Daily entries are time-axis spine, not user-authored docs.
         // Refuse so the sidebar/breadcrumb invariants stay intact.
         if (target.type === 'daily') return false
+        // Wiki docs are agent memory — protected from accidental
+        // wipe (Karpathy write-ownership invariant).
+        if (isWikiDoc(target)) return false
         if (target.archivedAt) return false
 
         const groupSlugs = collectDescendantSlugs(state.knownDocs, slug)
@@ -621,6 +644,10 @@ export const useDocsStore = create<DocsState>()(
         const state = get()
         const target = state.knownDocs.find((d) => d.slug === slug)
         if (!target?.archivedAt) return
+        // Wiki docs can't reach this code path today (archive is
+        // refused above) but assert it anyway so a future regression
+        // can't silently wipe agent memory.
+        if (isWikiDoc(target)) return
         const stamp = target.archivedAt
         const groupSlugs = state.knownDocs
           .filter((d) => d.archivedAt === stamp)
@@ -663,7 +690,7 @@ export const useDocsStore = create<DocsState>()(
     }),
     {
       name: 'writer-tauri:docs',
-      version: 2,
+      version: 3,
       partialize: (s) => ({
         openSlugs: s.openSlugs,
         activeSlug: s.activeSlug,
@@ -676,7 +703,11 @@ export const useDocsStore = create<DocsState>()(
         // archivedFromParent. Pre-v2 entries are all live; absence of
         // these fields already encodes that, so this migration is a
         // no-op version bump that exists for traceability.
-        if (version < 2) return persisted as DocsState
+        // v2 → v3: KnownDoc.type union widens to include
+        // wiki:belief / wiki:entity / wiki:episode. Existing
+        // 'daily' / 'writing' entries remain valid — also a no-op
+        // bump, present for traceability.
+        if (version < 3) return persisted as DocsState
         return persisted as DocsState
       },
     },

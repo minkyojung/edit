@@ -23,7 +23,7 @@ import {
   IconPlus,
 } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
-import { useDocsStore, weekStartFor, type KnownDoc } from '@/state/docsStore'
+import { useDocsStore, isWikiDoc, weekStartFor, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { todayLocalDate, formatLocalDate } from '@/hooks/useDocMeta'
 
@@ -42,8 +42,15 @@ export function DocList() {
   // tree so the sidebar reflects only what the user is actively
   // working with. They reappear via the Archived popover above the
   // profile button.
+  // Wiki docs (belief / entity / episode) are pulled out too — they
+  // render under their own section below so the daily tree stays
+  // a pure timeline of user-authored notes.
   const liveDocs = useMemo(
-    () => knownDocs.filter((d) => !d.archivedAt),
+    () => knownDocs.filter((d) => !d.archivedAt && !isWikiDoc(d)),
+    [knownDocs],
+  )
+  const wikiDocs = useMemo(
+    () => knownDocs.filter((d) => !d.archivedAt && isWikiDoc(d)),
     [knownDocs],
   )
 
@@ -168,7 +175,65 @@ export function DocList() {
           )
         })}
       </ul>
+
+      {wikiDocs.length > 0 && (
+        <div className="pt-3">
+          <div className="px-2 pb-1 text-[13px] font-medium text-muted-foreground">
+            Wiki
+          </div>
+          <ul className="flex flex-col gap-0.5">
+            {wikiDocs.map((doc) => (
+              <li key={doc.slug} data-slug={doc.slug}>
+                <WikiRow
+                  doc={doc}
+                  isActive={doc.slug === activeSlug}
+                  onSelect={() => {
+                    setActive(doc.slug)
+                    ensureNotesRoute()
+                  }}
+                />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
+  )
+}
+
+function WikiRow({
+  doc,
+  isActive,
+  onSelect,
+}: {
+  doc: KnownDoc
+  isActive: boolean
+  onSelect: () => void
+}) {
+  const label = useDocLabel(doc.slug)
+  // Strip the `wiki:` prefix for a tidy default when the doc has no
+  // user-set title yet ("belief" reads better than "wiki:belief").
+  const fallback = doc.type.replace(/^wiki:/, '')
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        'group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[13px] font-medium transition-colors',
+        'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+        isActive
+          ? 'bg-accent text-foreground'
+          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+      )}
+    >
+      <span
+        className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground"
+        aria-hidden
+      >
+        <IconFileDescription size={12} stroke={1.75} />
+      </span>
+      <span className="truncate">{label || fallback}</span>
+    </button>
   )
 }
 
