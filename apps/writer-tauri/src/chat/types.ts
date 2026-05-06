@@ -95,6 +95,11 @@ export interface ChatTurn {
    * `AUTH`). Mirrors the `^([A-Z_]+):` codes the sidecar emits — `AUTH`,
    * `RATE_LIMIT`, `NETWORK`, `IDLE_TIMEOUT`, `SIDECAR_DIED`. */
   errorCode?: string
+  /** For `errorCode === 'RATE_LIMIT'` only: ms-epoch when the user's quota
+   * window resets. Captured from the SDK's `rate_limit_event`; drives the
+   * countdown shown in the error card. Absent when the SDK didn't emit a
+   * snapshot before the failure. */
+  resetsAt?: number
 }
 
 /**

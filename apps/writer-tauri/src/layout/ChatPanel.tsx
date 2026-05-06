@@ -347,6 +347,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       stopReason: string | null,
       errorText: string | null = null,
       errorCode: string | undefined = undefined,
+      resetsAt: number | undefined = undefined,
     ) => {
       if (pendingFlush != null) {
         clearTimeout(pendingFlush)
@@ -376,6 +377,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         stopReason,
         errorText: errorText ?? undefined,
         errorCode,
+        resetsAt,
       })
       setStreaming(null)
     }
@@ -422,10 +424,15 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         : offlineAborted
           ? 'NETWORK'
           : undefined
+      // RATE_LIMIT errors carry a `rateLimit.resetsAt` (ms epoch) attached
+      // by `runChat` from the SDK's most recent rate_limit_event. The
+      // error card uses it to drive a countdown and gate Retry.
+      const rateLimit = (e as Error & { rateLimit?: { resetsAt?: number } })?.rateLimit
+      const resetsAt = errCode === 'RATE_LIMIT' ? rateLimit?.resetsAt : undefined
       // Errors live on a dedicated turn field, not in the parts timeline —
       // that keeps prompt history (`buildPrompt`) and Copy output clean, and
       // lets the renderer surface the failure with proper error chrome.
-      commit(isError ? 'error' : 'stopped', null, errMsg, errCode)
+      commit(isError ? 'error' : 'stopped', null, errMsg, errCode, resetsAt)
       setChatStatus(isError ? 'error' : 'idle')
     } finally {
       window.removeEventListener('offline', onOffline)
@@ -841,35 +848,15 @@ const MessageRow = React.memo(function MessageRow({
   }
 
   if (isError) {
-    // Errored turn: distinct red-tinted card. Anything that streamed before
-    // the failure (text, tool calls, reasoning) stays in the body so the user
-    // can see how far the model got. The error message + Retry sit in the
-    // footer.
-    const hasBody = (turn.parts && turn.parts.length > 0) || hasText || hasThinking
-    const isAuthError = turn.errorCode === 'AUTH'
     return (
-      <InlineCard tone="destructive">
-        {hasBody && <div className="px-3 py-2">{body}</div>}
-        <InlineCardFooter tone="destructive">
-          <IconAlertTriangle size={12} className="shrink-0 opacity-80" />
-          <span className="flex-1 min-w-0 truncate" title={turn.errorText ?? undefined}>
-            {turn.errorText ?? "Couldn't complete response"}
-          </span>
-          {durationLabel && <span className="opacity-70 shrink-0">{durationLabel}</span>}
-          {isAuthError && <ReconnectButton />}
-          {onRegenerate && (
-            <button
-              type="button"
-              onClick={() => onRegenerate(turn.id)}
-              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-destructive transition-colors shrink-0 outline-none hover:bg-destructive/15 focus-visible:ring-2 focus-visible:ring-ring/40"
-              title="Retry"
-            >
-              <IconRefresh size={11} />
-              <span className="font-medium">Retry</span>
-            </button>
-          )}
-        </InlineCardFooter>
-      </InlineCard>
+      <ErrorCard
+        turn={turn}
+        body={body}
+        hasText={hasText}
+        hasThinking={hasThinking}
+        durationLabel={durationLabel}
+        onRegenerate={onRegenerate}
+      />
     )
   }
 
@@ -932,6 +919,103 @@ function CopyButton({ text }: { text: string }) {
     >
       {copied ? <IconCheck size={11} /> : <IconCopy size={11} />}
     </button>
+  )
+}
+
+/** Re-renders once per second while a target ms-epoch is in the future,
+ * returning seconds remaining (rounded up). Returns 0 once the target
+ * passes (or when no target is set), and tears down its interval as
+ * soon as the countdown reaches zero so we're not heating CPU forever
+ * on a settled error card. */
+function useCountdown(targetMs: number | undefined): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (typeof targetMs !== 'number') return
+    if (targetMs <= Date.now()) return
+    const id = window.setInterval(() => {
+      const t = Date.now()
+      setNow(t)
+      if (t >= targetMs) window.clearInterval(id)
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [targetMs])
+  if (typeof targetMs !== 'number') return 0
+  return Math.max(0, Math.ceil((targetMs - now) / 1000))
+}
+
+/** Format a positive seconds count for the rate-limit countdown. Sub-minute
+ * stays as `12s`; longer waits split into `Xm Ys` so a 2-hour reset doesn't
+ * show as "7384s". The rendered widths stay small so the error footer
+ * doesn't reflow as the count ticks. */
+function formatCountdown(sec: number): string {
+  if (sec < 60) return `${sec}s`
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  if (m < 60) return s === 0 ? `${m}m` : `${m}m ${s}s`
+  const h = Math.floor(m / 60)
+  const mm = m % 60
+  return mm === 0 ? `${h}h` : `${h}h ${mm}m`
+}
+
+/** Destructive error card for a failed assistant turn. Branches on
+ * `turn.errorCode` to surface a `Reconnect` button (AUTH) or a precise
+ * countdown that gates `Retry` (RATE_LIMIT). Anything that streamed
+ * before the failure stays in the body so the user can see how far the
+ * model got. */
+function ErrorCard({
+  turn,
+  body,
+  hasText,
+  hasThinking,
+  durationLabel,
+  onRegenerate,
+}: {
+  turn: ChatTurn
+  body: React.ReactNode
+  hasText: boolean
+  hasThinking: boolean
+  durationLabel: string | null
+  onRegenerate?: (turnId: string) => void
+}) {
+  const isAuthError = turn.errorCode === 'AUTH'
+  const isRateLimited = turn.errorCode === 'RATE_LIMIT'
+  // Only feed the countdown a target when this card is RATE_LIMIT and we
+  // actually have a reset timestamp — otherwise the hook's interval would
+  // run for non-rate-limit cards too.
+  const remaining = useCountdown(isRateLimited ? turn.resetsAt : undefined)
+  const retryDisabled = remaining > 0
+  // While the countdown ticks, swap the static error message for a live
+  // "retry in 28s" label. Once it hits zero we fall back to the original
+  // (the SDK's own message) so the user can still copy/inspect it.
+  const message =
+    isRateLimited && remaining > 0
+      ? `Rate limited — retry in ${formatCountdown(remaining)}`
+      : turn.errorText ?? "Couldn't complete response"
+  const hasBody = (turn.parts && turn.parts.length > 0) || hasText || hasThinking
+  return (
+    <InlineCard tone="destructive">
+      {hasBody && <div className="px-3 py-2">{body}</div>}
+      <InlineCardFooter tone="destructive">
+        <IconAlertTriangle size={12} className="shrink-0 opacity-80" />
+        <span className="flex-1 min-w-0 truncate" title={turn.errorText ?? undefined}>
+          {message}
+        </span>
+        {durationLabel && <span className="opacity-70 shrink-0">{durationLabel}</span>}
+        {isAuthError && <ReconnectButton />}
+        {onRegenerate && (
+          <button
+            type="button"
+            onClick={() => onRegenerate(turn.id)}
+            disabled={retryDisabled}
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-destructive transition-colors shrink-0 outline-none hover:bg-destructive/15 focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed"
+            title={retryDisabled ? `Retry available in ${formatCountdown(remaining)}` : 'Retry'}
+          >
+            <IconRefresh size={11} />
+            <span className="font-medium">Retry</span>
+          </button>
+        )}
+      </InlineCardFooter>
+    </InlineCard>
   )
 }
 

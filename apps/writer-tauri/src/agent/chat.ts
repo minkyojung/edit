@@ -146,7 +146,26 @@ interface ChatEvent {
         partial_json?: string
       }
     }
+    // rate_limit_event — Agent SDK emits this whenever rate-limit state
+    // changes (e.g. utilization crosses a threshold, or a request is
+    // about to be rejected). Status `'rejected'` means the next chat
+    // call will fail with an error code we classify as `RATE_LIMIT`.
+    rate_limit_info?: {
+      status?: 'allowed' | 'allowed_warning' | 'rejected'
+      resetsAt?: number
+      rateLimitType?: 'five_hour' | 'seven_day' | 'seven_day_opus' | 'seven_day_sonnet' | 'overage'
+      utilization?: number
+    }
   }
+}
+
+/** Snapshot of the most recent SDK rate_limit_event seen during a run.
+ * Captured in `runChat`'s closure and re-attached to the rejected Error
+ * when the chat fails with code `RATE_LIMIT`, so the UI can render a
+ * precise "retry in Ns" countdown instead of a vague "try again". */
+export interface ChatErrorRateLimit {
+  resetsAt?: number
+  rateLimitType?: string
 }
 
 interface DoneEvent {
@@ -242,6 +261,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // Tool input arrives as fragments of JSON via input_json_delta. We keep
   // the partial string per part until content_block_stop, then JSON.parse.
   const toolInputFragments = new Map<string, string>()
+  // Most recent SDK rate_limit_event observed during the run. Re-attached
+  // to a rejected Error if the run fails with `RATE_LIMIT` so the UI can
+  // render a precise countdown (`resetsAt`).
+  let lastRateLimitInfo: ChatEvent['event']['rate_limit_info'] | undefined
 
   const upsertPart = (part: MessagePart) => {
     partsById.set(part.id, part)
@@ -390,11 +413,20 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           return
         }
 
-        // 4) Everything else (system, rate_limit_event, result, …) — these
-        // are SDK transport/metadata, not chat content. The Vercel `parts`
-        // model only carries text/reasoning/tool/source/file/step-*, so we
-        // mirror that and drop anything outside the whitelist on the floor.
-        // If we ever need to surface a new content type, add a route above.
+        // 4) Rate-limit info — the SDK fires this whenever its view of
+        // the user's rate-limit state changes. We snapshot the latest one
+        // so the eventual error path can attach a precise `resetsAt` to
+        // the rejected Error (UI uses it to drive a countdown).
+        if (ev?.type === 'rate_limit_event' && ev.rate_limit_info) {
+          lastRateLimitInfo = ev.rate_limit_info
+          return
+        }
+
+        // 5) Everything else (system, result, …) — SDK transport metadata,
+        // not chat content. The Vercel `parts` model only carries
+        // text/reasoning/tool/source/file/step-*, so we mirror that and
+        // drop anything outside the whitelist on the floor. If we ever
+        // need to surface a new content type, add a route above.
       }),
       listen<ProposalEvent>('claude:proposal', (e) => {
         if (e.payload.runId !== runId) return
@@ -421,6 +453,19 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           settleErr(new DOMException(e.payload.message, 'AbortError'))
         } else {
           const err = new Error(`${e.payload.code}: ${e.payload.message}`)
+          // For rate-limit failures, attach the most recent SDK rate_limit
+          // snapshot so the renderer can drive a precise countdown. The
+          // info travels as a non-enumerable property to keep `Error`
+          // serialization predictable.
+          if (e.payload.code === 'RATE_LIMIT' && lastRateLimitInfo) {
+            // SDK reports `resetsAt` in seconds since epoch. The UI side
+            // works in ms (Date.now() math) so we normalize at the boundary.
+            const resetsAtSec = lastRateLimitInfo.resetsAt
+            ;(err as Error & { rateLimit?: ChatErrorRateLimit }).rateLimit = {
+              resetsAt: typeof resetsAtSec === 'number' ? resetsAtSec * 1000 : undefined,
+              rateLimitType: lastRateLimitInfo.rateLimitType,
+            }
+          }
           settleErr(err)
         }
       }),
