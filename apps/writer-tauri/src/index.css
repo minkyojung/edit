@@ -15,6 +15,11 @@
 @custom-variant hover (&:hover);
 
 @layer base {
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
   html {
     font-size: 14px;
   }

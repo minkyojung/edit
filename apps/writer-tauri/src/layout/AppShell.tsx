@@ -63,6 +63,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
     <SidebarProvider
       open={sidebarOpen}
       onOpenChange={setSidebar}
+      className="h-svh overflow-hidden"
       style={{ '--sidebar-width': '220px' } as React.CSSProperties}
     >
       <CloseConfirmDialog />
@@ -78,7 +79,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
               >
                 <EditorTabs />
               </div>
-              <div className="relative flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="relative min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {children}
                 {bottomLeft && (
                   <div className="absolute bottom-3 left-3 z-overlay">

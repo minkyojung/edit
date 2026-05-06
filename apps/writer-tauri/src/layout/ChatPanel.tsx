@@ -32,6 +32,7 @@ import { Streamdown } from 'streamdown'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
+import { useMarks } from '@/hooks/useMarks'
 import { useThreads } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
 import { useActiveThread } from '@/hooks/useActiveThread'
@@ -627,12 +628,15 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       )}
 
       {/* Window-chrome row — mirrors EditorHeader so the two columns
-          align at --header-h. Empty for now; reserved for model /
-          account / right-sidebar toggle once those land. */}
+          align at --header-h. Hosts the review-progress badge on the
+          left; reserved for model / account / right-sidebar toggle on
+          the right once those land. */}
       <div
-        className="flex shrink-0 items-center border-b border-border bg-background"
+        className="flex shrink-0 items-center gap-2 border-b border-border bg-background px-3"
         style={{ height: 'var(--header-h)' }}
-      />
+      >
+        <ReviewProgressBadge ydoc={ydoc} />
+      </div>
 
       <div
         className="flex shrink-0 items-stretch bg-background px-2 shadow-[inset_0_-1px_0_var(--border)]"
@@ -666,7 +670,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
 
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto p-3 space-y-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {renderedTurns.length === 0 && (
           <p className="text-xs text-muted-foreground text-center py-8">
@@ -683,7 +687,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      <div className="border-t border-border p-3 space-y-2">
+      <div className="shrink-0 border-t border-border p-3 space-y-2">
         <PromptInput
           status={chatStatus}
           disabled={!ready || !account.connected}
@@ -1342,5 +1346,16 @@ function ThinkingPanel({
         </div>
       </details>
     </InlineCard>
+  )
+}
+
+/** Header-row badge: "Reviewing…" while the active doc has open
+ *  marks. No counts — just a presence signal that there's pending
+ *  AI feedback to act on. Disappears when all marks are resolved. */
+function ReviewProgressBadge({ ydoc }: { ydoc: Y.Doc | null }) {
+  const marks = useMarks(ydoc)
+  if (Object.keys(marks).length === 0) return null
+  return (
+    <span className="text-xs text-muted-foreground">Reviewing…</span>
   )
 }
