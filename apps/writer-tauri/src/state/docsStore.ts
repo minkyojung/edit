@@ -343,8 +343,17 @@ export const useDocsStore = create<DocsState>()(
       },
 
       setActive: (slug) => {
-        if (!get().openSlugs.includes(slug)) return
-        set({ activeSlug: slug })
+        // Bring any known doc to the foreground. If it isn't yet a
+        // tab (e.g. wiki entries that live in the catalog without
+        // ever having been opened), promote it to one. Unknown
+        // slugs no-op so a stale UI handle can't corrupt activeSlug.
+        if (!get().knownDocs.some((d) => d.slug === slug)) return
+        set((s) => ({
+          activeSlug: slug,
+          openSlugs: s.openSlugs.includes(slug)
+            ? s.openSlugs
+            : [...s.openSlugs, slug],
+        }))
         // Lazy-create the handle if this tab hasn't been touched yet.
         if (!get().handles[slug]) {
           ensureHandle(slug, set, get).catch((err) =>
