@@ -90,6 +90,12 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   const turnsHook = useThreadTurns(ydoc, activeId)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Synchronous send-in-flight latch. Flipping `chatStatus` to 'streaming'
+  // only takes effect on the *next* render, so a fast double-Enter could
+  // squeeze a second handleSend in before the React state caught up. The
+  // ref flips immediately on the same tick, so the second call short-
+  // circuits before any side effects (turn append, sidecar request).
+  const sendInFlightRef = useRef(false)
   const [chatStatus, setChatStatus] = useState<PromptStatus>('idle')
   // Live streaming buffer — keeps the in-flight assistant turn out of Yjs so
   // every delta is a cheap React state update instead of a doc rewrite. The
@@ -536,47 +542,56 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
 
   async function handleSend(text: string) {
     if (!ready || chatStatus === 'streaming') return
-    const threadId = activeId
-    if (!threadId) return
+    // Latch BEFORE any await / state set so a fast double-Enter can't
+    // smuggle a duplicate request through while React is still committing
+    // the streaming state.
+    if (sendInFlightRef.current) return
+    sendInFlightRef.current = true
+    try {
+      const threadId = activeId
+      if (!threadId) return
 
-    // Slash command? Route through executeCommand so the .md body becomes
-    // the system prompt and any kind-specific tools are wired in.
-    const slash = parseSlashInvocation(text)
-    if (slash) {
-      const cmd = getCommand(slash.name)
-      if (!cmd) {
-        appendInlineError(threadId, text, `Unknown command: /${slash.name}`)
+      // Slash command? Route through executeCommand so the .md body becomes
+      // the system prompt and any kind-specific tools are wired in.
+      const slash = parseSlashInvocation(text)
+      if (slash) {
+        const cmd = getCommand(slash.name)
+        if (!cmd) {
+          appendInlineError(threadId, text, `Unknown command: /${slash.name}`)
+          return
+        }
+        await executeCommand(threadId, cmd, slash.args, text)
         return
       }
-      await executeCommand(threadId, cmd, slash.args, text)
-      return
-    }
 
-    const userTurn: ChatTurn = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: text,
-      ts: Date.now(),
-    }
-
-    // First user message in an untitled thread → kick off background title
-    // generation. Fire-and-forget; the slug-style fallback stays in place
-    // until (and unless) Haiku returns something.
-    const isFirstTurn = turnsHook.turns.length === 0
-    if (isFirstTurn && activeId) {
-      const thread = threads.threads.find((t) => t.id === activeId)
-      if (thread && thread.title.trim().length === 0) {
-        const idAtSend = activeId
-        void generateThreadTitle(text).then((title) => {
-          if (title) threads.renameThread(idAtSend, title)
-        })
+      const userTurn: ChatTurn = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: text,
+        ts: Date.now(),
       }
+
+      // First user message in an untitled thread → kick off background title
+      // generation. Fire-and-forget; the slug-style fallback stays in place
+      // until (and unless) Haiku returns something.
+      const isFirstTurn = turnsHook.turns.length === 0
+      if (isFirstTurn && activeId) {
+        const thread = threads.threads.find((t) => t.id === activeId)
+        if (thread && thread.title.trim().length === 0) {
+          const idAtSend = activeId
+          void generateThreadTitle(text).then((title) => {
+            if (title) threads.renameThread(idAtSend, title)
+          })
+        }
+      }
+
+      // The user's turn is finished text — push to Yjs once and let it sync.
+      turnsHook.appendTurn(userTurn)
+
+      await runAssistantTurn(threadId, [...turnsHook.turns, userTurn])
+    } finally {
+      sendInFlightRef.current = false
     }
-
-    // The user's turn is finished text — push to Yjs once and let it sync.
-    turnsHook.appendTurn(userTurn)
-
-    await runAssistantTurn(threadId, [...turnsHook.turns, userTurn])
   }
 
   /** Regenerate the assistant turn at `assistantTurnId` — removes it, then
@@ -585,17 +600,23 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
    * earlier rewrites would invalidate every later turn's context. */
   async function handleRegenerate(assistantTurnId: string) {
     if (!ready || chatStatus === 'streaming') return
-    const threadId = activeId
-    if (!threadId) return
+    if (sendInFlightRef.current) return
+    sendInFlightRef.current = true
+    try {
+      const threadId = activeId
+      if (!threadId) return
 
-    const turns = turnsHook.turns
-    const idx = turns.findIndex((t) => t.id === assistantTurnId)
-    if (idx < 0 || turns[idx].role !== 'assistant') return
-    const history = turns.slice(0, idx)
-    if (history.length === 0 || history[history.length - 1].role !== 'user') return
+      const turns = turnsHook.turns
+      const idx = turns.findIndex((t) => t.id === assistantTurnId)
+      if (idx < 0 || turns[idx].role !== 'assistant') return
+      const history = turns.slice(0, idx)
+      if (history.length === 0 || history[history.length - 1].role !== 'user') return
 
-    turnsHook.removeTurn(assistantTurnId)
-    await runAssistantTurn(threadId, history)
+      turnsHook.removeTurn(assistantTurnId)
+      await runAssistantTurn(threadId, history)
+    } finally {
+      sendInFlightRef.current = false
+    }
   }
 
   function handleStop() {
