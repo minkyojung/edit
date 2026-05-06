@@ -137,7 +137,11 @@ function SidebarProvider({
           } as React.CSSProperties
         }
         className={cn(
-          "group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar",
+          // App-shell usage: lock to viewport height so internal panes
+          // (editor, chat) own their own scroll regions instead of
+          // pushing the whole page taller than the window. Was
+          // `min-h-svh` upstream — that's a marketing-page default.
+          "group/sidebar-wrapper flex h-svh w-full overflow-hidden has-data-[variant=inset]:bg-sidebar",
           className
         )}
         {...props}

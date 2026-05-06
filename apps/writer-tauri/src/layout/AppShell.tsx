@@ -63,7 +63,6 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
     <SidebarProvider
       open={sidebarOpen}
       onOpenChange={setSidebar}
-      className="h-svh overflow-hidden"
       style={{ '--sidebar-width': '220px' } as React.CSSProperties}
     >
       <CloseConfirmDialog />
