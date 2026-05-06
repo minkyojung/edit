@@ -20,8 +20,12 @@ pub struct ChatStartArgs {
     pub run_id: String,
     pub model: String,
     pub prompt: String,
+    /// Either a single string or an array of strings (with
+    /// SYSTEM_PROMPT_DYNAMIC_BOUNDARY sentinel). The frontend chooses
+    /// the shape; we pass it through to the SDK verbatim, which
+    /// accepts both forms.
     #[serde(default)]
-    pub system_prompt: Option<String>,
+    pub system_prompt: Option<Value>,
     /// Names of relay tools to enable for this chat (e.g. ["propose_change"]).
     /// Sidecar handles the registration; frontend does not pass tool schemas.
     #[serde(default)]
@@ -76,7 +80,7 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
         "prompt": args.prompt,
     });
     if let Some(sp) = args.system_prompt {
-        params["systemPrompt"] = Value::String(sp);
+        params["systemPrompt"] = sp;
     }
     if let Some(tools) = args.relay_tools {
         params["relayTools"] = json!(tools);

@@ -19,6 +19,15 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { FREE_CHAT_PROMPT } from './skills/freeChat'
 import { applyProposal, type ApplyOutcome } from './applyProposal'
 import type { Proposal } from './proposals'
+import { readBeliefMarkdown } from '@/state/wikiService'
+
+// Sentinel string the Claude Agent SDK uses to split a multi-block
+// system prompt into a cacheable static prefix vs a session-specific
+// dynamic suffix. Mirrors `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` in
+// @anthropic-ai/claude-agent-sdk (sdk.d.ts:5300). Hardcoded here
+// because the frontend doesn't depend on the SDK; the sidecar passes
+// the array through verbatim.
+const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__'
 import type {
   ChatTurn,
   MessagePart,
@@ -231,9 +240,40 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
   const docForPrompt = docText.length > DOC_CHAR_CAP ? docText.slice(0, DOC_CHAR_CAP) : docText
   const systemBody = systemPrompt ?? FREE_CHAT_PROMPT
-  const system = appendDocument
-    ? `${systemBody}\n\n--- DOCUMENT ---\n${docForPrompt}`
-    : systemBody
+
+  // Read the user's belief wiki page so it can be prepended to the
+  // system prompt as the cacheable prefix. Empty when belief hasn't
+  // been written yet — assembly handles that cleanly. Read errors
+  // collapse to '' (proof-server unreachable) so a chat is never
+  // blocked on the wiki round-trip.
+  const beliefMd = await readBeliefMarkdown()
+
+  // System prompt assembly — the SDK accepts either a single string
+  // or string[] with a boundary marker. We prefer the array form
+  // when there's a meaningful split between cacheable prefix
+  // (belief, role) and dynamic suffix (current document text).
+  // No belief + no document → fall back to a single string.
+  let system: string | string[]
+  if (beliefMd && appendDocument) {
+    system = [
+      `[USER BELIEFS]\n${beliefMd}`,
+      systemBody,
+      SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+      `--- DOCUMENT ---\n${docForPrompt}`,
+    ]
+  } else if (beliefMd) {
+    // Belief but no document (slash commands that bake doc into the body).
+    system = [`[USER BELIEFS]\n${beliefMd}`, systemBody]
+  } else if (appendDocument) {
+    // No belief yet, but document follows the role prompt.
+    system = [
+      systemBody,
+      SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+      `--- DOCUMENT ---\n${docForPrompt}`,
+    ]
+  } else {
+    system = systemBody
+  }
   const prompt = promptOverride ?? buildPrompt(history ?? [])
   const runId = crypto.randomUUID()
 
