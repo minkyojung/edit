@@ -284,29 +284,40 @@ function DailyRow({
             : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
       )}
     >
-      {/* Expand chevron — only meaningful when there are children. We
-          render a fixed-width spacer otherwise so daily rows align
-          column-wise regardless of child count. */}
-      <button
-        type="button"
-        onClick={(e: MouseEvent) => {
-          e.stopPropagation()
-          if (hasChildren) onToggleExpand()
-        }}
-        aria-label={hasChildren ? (isExpanded ? 'Collapse' : 'Expand') : undefined}
-        tabIndex={hasChildren ? 0 : -1}
-        className={cn(
-          'flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/70',
-          'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          hasChildren ? 'hover:text-foreground' : 'opacity-0',
-        )}
-      >
-        <IconChevronRight
-          size={10}
-          className="transition-transform"
-          style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-        />
-      </button>
+      {/* Leading slot: chevron when expandable, calendar icon otherwise.
+          Chevron replaces the icon so each row has exactly one symbol
+          before the label. */}
+      {hasChildren ? (
+        <button
+          type="button"
+          onClick={(e: MouseEvent) => {
+            e.stopPropagation()
+            onToggleExpand()
+          }}
+          aria-label={isExpanded ? 'Collapse' : 'Expand'}
+          className={cn(
+            'flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:text-foreground',
+            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+          )}
+        >
+          <IconChevronRight
+            size={12}
+            stroke={1.75}
+            className="transition-transform"
+            style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+          />
+        </button>
+      ) : (
+        <span
+          className={cn(
+            'flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground/70',
+            isEmpty && 'opacity-60',
+          )}
+          aria-hidden
+        >
+          <IconCalendar size={12} stroke={1.75} />
+        </span>
+      )}
 
       <button
         type="button"
@@ -316,12 +327,6 @@ function DailyRow({
           'focus-visible:ring-2 focus-visible:ring-ring/40 rounded',
         )}
       >
-        <IconCalendar
-          size={12}
-          stroke={1.75}
-          className={cn('shrink-0', isEmpty && 'opacity-60')}
-          aria-hidden
-        />
         <span className="truncate">{row.label}</span>
         <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
           {row.weekday}
@@ -383,26 +388,34 @@ function DocTreeNode({
             : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
         )}
       >
-        <button
-          type="button"
-          onClick={(e: MouseEvent) => {
-            e.stopPropagation()
-            if (hasChildren) toggleExpanded(doc.slug)
-          }}
-          aria-label={hasChildren ? (isExpanded ? 'Collapse' : 'Expand') : undefined}
-          tabIndex={hasChildren ? 0 : -1}
-          className={cn(
-            'flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/70',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-            hasChildren ? 'hover:text-foreground' : 'opacity-0',
-          )}
-        >
-          <IconChevronRight
-            size={10}
-            className="transition-transform"
-            style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-          />
-        </button>
+        {hasChildren ? (
+          <button
+            type="button"
+            onClick={(e: MouseEvent) => {
+              e.stopPropagation()
+              toggleExpanded(doc.slug)
+            }}
+            aria-label={isExpanded ? 'Collapse' : 'Expand'}
+            className={cn(
+              'flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:text-foreground',
+              'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+            )}
+          >
+            <IconChevronRight
+              size={12}
+              stroke={1.75}
+              className="transition-transform"
+              style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+            />
+          </button>
+        ) : (
+          <span
+            className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground"
+            aria-hidden
+          >
+            <IconFileDescription size={12} stroke={1.75} />
+          </span>
+        )}
 
         <button
           type="button"
@@ -412,11 +425,6 @@ function DocTreeNode({
             'focus-visible:ring-2 focus-visible:ring-ring/40 rounded',
           )}
         >
-          <IconFileDescription
-            size={12}
-            stroke={1.75}
-            className="shrink-0 text-muted-foreground"
-          />
           <span className="truncate">{label}</span>
         </button>
 
