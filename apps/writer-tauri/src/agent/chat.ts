@@ -205,16 +205,20 @@ function extractErrorText(content: unknown): string | undefined {
 function buildPrompt(history: ChatTurn[]): string {
   const turns = history.filter((t) => t.content.trim().length > 0)
   if (turns.length === 0) return ''
-  const last = turns[turns.length - 1]
-  const prior = turns.slice(0, -1)
-  if (prior.length === 0) return last.content
+  // SDK session resume keeps prior turns server-side — we only send
+  // the latest user message. Older revisions concatenated a
+  // transcript here; that broke prompt-cache reuse and was
+  // explicitly flagged as a temporary bridge.
+  return turns[turns.length - 1].content
+}
 
-  // Concatenate prior conversation as a transcript. This is a V1 bridge
-  // until we plumb Agent SDK session resumption.
-  const transcript = prior
-    .map((t) => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content}`)
-    .join('\n\n')
-  return `Prior conversation:\n${transcript}\n\n---\n\nLatest user message:\n${last.content}`
+/** True when the conversation has at least one assistant turn already.
+ * Used to pick between the `sessionId` (first turn) and `resume`
+ * (subsequent) SDK options so we don't try to resume a session that
+ * doesn't exist yet, and don't try to create one that does. */
+function shouldResumeSession(history: ChatTurn[] | undefined): boolean {
+  if (!history) return false
+  return history.some((t) => t.role === 'assistant')
 }
 
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
@@ -226,7 +230,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     prompt: promptOverride,
     systemPrompt,
     model = DEFAULT_MODEL,
-    effort,
+    effort: effortOverride,
     relayTools = ['propose_change'],
     appendDocument = true,
     signal,
@@ -236,6 +240,12 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     onToolApplied,
   } = args
   const agentId = agentIdForModel(model)
+
+  // Effort default: Haiku is the copyeditor lane (short, latency-
+  // sensitive turns) → 'low'. Sonnet/Opus are the chat lane → 'medium'.
+  // Caller's explicit choice always wins.
+  const effort: 'low' | 'medium' | 'high' =
+    effortOverride ?? (model.includes('haiku') ? 'low' : 'medium')
 
   const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
   const docForPrompt = docText.length > DOC_CHAR_CAP ? docText.slice(0, DOC_CHAR_CAP) : docText
@@ -534,6 +544,13 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     })
   })
 
+  // Map our threadId 1:1 to the SDK's session UUID. First turn of a
+  // thread creates the session via `sessionId`; later turns load it
+  // via `resume`. Doing both at once is invalid (without forkSession)
+  // so we pick exactly one based on whether an assistant has spoken
+  // yet. Persisted server-side under ~/.claude/projects/ so the
+  // session survives app restarts.
+  const isResume = shouldResumeSession(history)
   try {
     await invoke('claude_chat_start', {
       args: {
@@ -543,6 +560,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         prompt,
         relayTools,
         effort,
+        sessionId: isResume ? undefined : threadId,
+        resume: isResume ? threadId : undefined,
       },
     })
   } catch (e) {

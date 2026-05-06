@@ -37,6 +37,17 @@ pub struct ChatStartArgs {
     /// the field entirely when None, letting the SDK pick its default.
     #[serde(default)]
     pub effort: Option<String>,
+    /// SDK session UUID to create with this run. Set on the first turn
+    /// of a thread; the SDK persists the session under
+    /// ~/.claude/projects/ so subsequent turns can resume it.
+    /// Mutually exclusive with `resume`.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// SDK session UUID to resume. Set on every turn after the first
+    /// in a thread. Loads prior conversation server-side so the
+    /// frontend doesn't have to ship a transcript in the prompt.
+    #[serde(default)]
+    pub resume: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -90,6 +101,12 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     }
     if let Some(effort) = args.effort {
         params["effort"] = Value::String(effort);
+    }
+    if let Some(sid) = args.session_id {
+        params["sessionId"] = Value::String(sid);
+    }
+    if let Some(r) = args.resume {
+        params["resume"] = Value::String(r);
     }
 
     let chat = manager.chat_client().await;

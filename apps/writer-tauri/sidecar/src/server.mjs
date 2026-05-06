@@ -197,6 +197,8 @@ export class Server {
       relayTools,
       permissionMode = 'bypassPermissions',
       effort,
+      sessionId,
+      resume,
     } = params
 
     const options = {
@@ -206,6 +208,13 @@ export class Server {
       // SDKAssistantMessage per turn. The frontend reassembles the live
       // text from content_block_delta events.
       includePartialMessages: true,
+      // Auto-summarize older turns once context approaches the model
+      // limit, instead of erroring out. autoCompactEnabled lives in
+      // Settings (sdk.d.ts:5073) — surfaced via the `settings` flag
+      // layer, which has higher precedence than user settings.json.
+      // The cacheable system-prompt prefix (belief + role) is preserved
+      // across compaction; only mid-conversation turns get summarized.
+      settings: { autoCompactEnabled: true },
     }
     if (model) options.model = model
     if (systemPrompt) options.systemPrompt = systemPrompt
@@ -214,6 +223,12 @@ export class Server {
     // the host sent without revalidating — the SDK clamps unsupported
     // levels per model.
     if (effort) options.effort = effort
+    // Session lifecycle: at most one of sessionId/resume per run.
+    // Frontend picks based on whether the thread has any prior assistant
+    // turn. SDK persists sessions to ~/.claude/projects/ by default so
+    // resume works across app restarts.
+    if (sessionId) options.sessionId = sessionId
+    if (resume) options.resume = resume
     // Dev only: host points us at the .pnpm-store copy of the platform-specific
     // claude binary. Prod ships the binary inside our own node_modules, so the
     // SDK auto-resolves and the env var is intentionally unset.
