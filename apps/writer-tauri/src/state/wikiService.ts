@@ -55,17 +55,24 @@ export function getBeliefSlug(): string | null {
  * doc exists yet, the body is just the ZWS placeholder, or the
  * proof-server is unreachable. The chat runner uses this to populate
  * the cacheable prefix of the system prompt — empty result means
- * "no belief context", which the prompt assembly handles cleanly. */
+ * "no belief context", which the prompt assembly handles cleanly.
+ *
+ * Endpoint is `GET /documents/:slug` (canonical doc resource, served
+ * by proof-sdk's apiRoutes — both `/api/documents/:slug` and the
+ * un-prefixed `/documents/:slug` are mounted to the same handler).
+ * The response body has `markdown: string`. The bridge sub-route
+ * `/documents/:slug/state` is a metadata-only revision/updatedAt
+ * probe and intentionally does NOT include markdown. */
 export async function readBeliefMarkdown(): Promise<string> {
   const slug = getBeliefSlug()
   if (!slug) return ''
   try {
     const res = await fetch(
-      `${PROOF_BASE_URL}/documents/${encodeURIComponent(slug)}/state`,
+      `${PROOF_BASE_URL}/documents/${encodeURIComponent(slug)}`,
     )
     if (!res.ok) return ''
-    const json = (await res.json()) as { content?: string }
-    const md = (json.content ?? '').trim()
+    const json = (await res.json()) as { markdown?: string }
+    const md = (json.markdown ?? '').trim()
     // ZWS-only or whitespace-only counts as empty — we don't want a
     // stray invisible char polluting the cacheable prefix.
     if (!md || md.replace(/[​\s]/g, '') === '') return ''
