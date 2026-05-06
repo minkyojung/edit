@@ -47,6 +47,7 @@ import {
 } from '@/chat/commands'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
+import { useConnectDialog } from '@/stores/connectDialog'
 import { ThreadTabs } from '@/chat/ThreadTabs'
 import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
 import {
@@ -345,6 +346,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       status: ChatTurn['status'],
       stopReason: string | null,
       errorText: string | null = null,
+      errorCode: string | undefined = undefined,
     ) => {
       if (pendingFlush != null) {
         clearTimeout(pendingFlush)
@@ -373,6 +375,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         durationMs: Date.now() - startedAt,
         stopReason,
         errorText: errorText ?? undefined,
+        errorCode,
       })
       setStreaming(null)
     }
@@ -414,10 +417,15 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         : offlineAborted
           ? 'Lost network connection'
           : null
+      const errCode = !aborted
+        ? extractErrorCode(e)
+        : offlineAborted
+          ? 'NETWORK'
+          : undefined
       // Errors live on a dedicated turn field, not in the parts timeline —
       // that keeps prompt history (`buildPrompt`) and Copy output clean, and
       // lets the renderer surface the failure with proper error chrome.
-      commit(isError ? 'error' : 'stopped', null, errMsg)
+      commit(isError ? 'error' : 'stopped', null, errMsg, errCode)
       setChatStatus(isError ? 'error' : 'idle')
     } finally {
       window.removeEventListener('offline', onOffline)
@@ -838,6 +846,7 @@ const MessageRow = React.memo(function MessageRow({
     // can see how far the model got. The error message + Retry sit in the
     // footer.
     const hasBody = (turn.parts && turn.parts.length > 0) || hasText || hasThinking
+    const isAuthError = turn.errorCode === 'AUTH'
     return (
       <InlineCard tone="destructive">
         {hasBody && <div className="px-3 py-2">{body}</div>}
@@ -847,6 +856,7 @@ const MessageRow = React.memo(function MessageRow({
             {turn.errorText ?? "Couldn't complete response"}
           </span>
           {durationLabel && <span className="opacity-70 shrink-0">{durationLabel}</span>}
+          {isAuthError && <ReconnectButton />}
           {onRegenerate && (
             <button
               type="button"
@@ -925,6 +935,24 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
+/** Reconnect button. Surfaced inside the destructive footer when a chat
+ * turn fails with `errorCode === 'AUTH'` — clicking opens the Claude OAuth
+ * dialog (same one the sidebar account menu uses) so the user can re-auth
+ * without leaving the conversation. */
+function ReconnectButton() {
+  const setOpen = useConnectDialog((s) => s.setOpen)
+  return (
+    <button
+      type="button"
+      onClick={() => setOpen(true)}
+      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-destructive transition-colors shrink-0 outline-none hover:bg-destructive/15 focus-visible:ring-2 focus-visible:ring-ring/40"
+      title="Reconnect to Claude"
+    >
+      <span className="font-medium">Reconnect</span>
+    </button>
+  )
+}
+
 /** Regenerate button. Replaces the assistant turn with a fresh run against
  * the same prior history. Shown only on the most-recent settled assistant
  * turn — see ChatPanel's `regeneratableTurnId` for why. */
@@ -959,6 +987,14 @@ function formatDuration(ms: number): string {
  * sidecar (NETWORK / IDLE_TIMEOUT / SIDECAR_DIED / AUTH / RATE_LIMIT) and
  * maps them to user-friendly copy; falls through to message cleanup for
  * everything else. */
+/** Pull the leading `^([A-Z_]+):` classifier from an error so the renderer
+ * can branch on it (e.g. show a Reconnect button only for AUTH). Returns
+ * undefined for errors that don't carry one. */
+function extractErrorCode(e: unknown): string | undefined {
+  const raw = e instanceof Error ? e.message : String(e)
+  return raw.match(/^([A-Z_]+):/)?.[1]
+}
+
 function humanizeError(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e)
   const code = raw.match(/^([A-Z_]+):/)?.[1]

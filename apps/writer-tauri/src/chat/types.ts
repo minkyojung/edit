@@ -90,6 +90,11 @@ export interface ChatTurn {
    * a separate field (not as a synthetic text part) so it stays out of the
    * prompt history and out of Copy output. */
   errorText?: string
+  /** Coarse failure classification preserved separately from `errorText` so
+   * the renderer can branch on it (e.g. show a `Reconnect` button only for
+   * `AUTH`). Mirrors the `^([A-Z_]+):` codes the sidecar emits — `AUTH`,
+   * `RATE_LIMIT`, `NETWORK`, `IDLE_TIMEOUT`, `SIDECAR_DIED`. */
+  errorCode?: string
 }
 
 /**

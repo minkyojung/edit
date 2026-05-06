@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   IconBooks,
@@ -15,6 +15,7 @@ import { ArchivedDocsPopover } from './ArchivedDocsPopover'
 import { useDocsStore } from '@/state/docsStore'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
+import { useConnectDialog } from '@/stores/connectDialog'
 import { useTheme } from '@/components/theme-provider'
 import {
   DropdownMenu,
@@ -122,7 +123,8 @@ const STATUS_LABEL: Record<NonNullable<AppSidebarProps['collabStatus']>, string 
 export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
   const { palette, setPalette } = useTheme()
   const { pathname } = useLocation()
-  const [connectOpen, setConnectOpen] = useState(false)
+  const connectOpen = useConnectDialog((s) => s.open)
+  const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const { account, refresh, disconnect } = useClaudeAuth()
 
   const handleSignOut = useCallback(async () => {
