@@ -1,204 +1,160 @@
-# 자고 일어나서 할 것 — M8.3 이어서
+# 다음에 할 것 — Live next-steps
 
-작성: 2026-05-01
-상태: 진행 중 (Phase 4-A 검증 직전 멈춤)
-
----
-
-## 지금까지 한 것 (참고)
-
-- ✅ M8.0 Claude OAuth (PKCE + 암호화 파일 저장)
-- ✅ M8.1 Anthropic SDK 통합 (Rust 프록시 경유)
-- ✅ M8.2 AI Review (copyeditor skill, single-turn, propose_change)
-- ✅ M8.3 Phase 1 — ChatPanel 골격
-- ✅ M8.3 Phase 3 — ProposalSnippet diff 카드 + 액션
-- 🟡 M8.3 Phase 4-A — `jumpToMark` 구현했으나 **검증 전에 다른 버그 발견되어 멈춤**
+작성: 2026-05-01 (초기) / 갱신: 2026-05-06
+상태: M7 완료 후 노트앱 폴리싱/확장 단계
 
 ---
 
-## 발견된 두 가지 구조적 버그
+## 지금까지 한 것 (요약)
 
-### 버그 1. 데코가 한 칸씩 어긋남 (drift)
+### M0–M7 (Tauri 재구축, 자세한 진척: `path-b-rewrite-plan.md` §8)
+- ✅ Tauri 셸 + Rust sidecar (proof-server) + Milkdown + Yjs collab
+- ✅ Mark schema + hydration + cleanup plugin (단일 앵커 통일)
+- ✅ Mark popover accept/reject
+- ✅ Claude OAuth (PKCE + Rust keychain) + Anthropic SDK via Rust proxy
 
-타이핑할 때마다 노란 deco가 좌측으로 1칸씩 밀림.
+### M8 — Chat Panel & 슬래시 커맨드
+- ✅ M8.3 ChatPanel + ProposalSnippet (M8.3 Phase 1-4 완료)
+- ✅ Phase 5 자유 채팅 (Step 1–6 완료, Step 7 일부)
+  - Y.Doc 안 multi-thread (max 5 active + soft archive)
+  - Streaming + Streamdown 마크다운 렌더
+  - propose_change tool 시각화 + 인라인 마크 자동 생성
+  - selection chip + frozen selection
+- ✅ 슬래시 커맨드 프레임워크 (3 kinds: chat-message / document-edit / review-comments)
+  - `/proofread` (구 review), `/polish` `/shorten` `/expand`, `/outline`
+- ✅ Run Review 버튼 제거 → `/review` 슬래시로 통합
 
-**원인**: 이중 앵커 시스템
-- inline `proofSuggestion` mark (PM 자동 추적) — 제대로 따라감
-- `Y.Map`의 startRel/endRel char offset (수동 갱신, stale)
-- `markDecoPlugin`이 Y.Map 좌표로 deco → 텍스트보다 한 칸 옆에 그림
+### 노트 제품 골격 (`note-product-design.md` Q1–Q12 매핑)
+- ✅ 멀티 문서 탭 (writing 노트 다중)
+- ✅ 일별 노트 (Daily journal, Mon-anchored 7-day backfill)
+- ✅ 노트 트리 (parent-child, indent guide lines)
+- ✅ Wikilink (autocomplete palette, broken-link decoration, live label sync)
+- ✅ Archive UX (confirm dialog, popover, sidebar-width tracking)
+- ✅ ⌘K 통합 Command Palette (Actions: Archive active note)
+- ✅ 3-pane 레이아웃 스크롤 격리 (shadcn sidebar.tsx 소스 수정)
 
-### 버그 2. UI 전체 사라짐 (cascade failure)
-
-오타 → AI Review → 화면 빈 페이지.
-
-**원인**:
-- `ProposalSnippet`이 Radix `Tooltip` 사용 — 그런데 `TooltipProvider` 없음
-- Error Boundary 없음 → 한 컴포넌트 에러 = 전체 unmount
-
-### 버그 3. 마크 잔재 (orphan)
-
-마크된 텍스트 삭제됐는데 카드/Y.Map 엔트리 그대로.
-
-**원인**: cleanup 메커니즘 없음
-- inline mark는 PM이 자동 정리
-- Y.Map은 명시적 `delete()` 안 부르면 영구
-- 사용자가 본문 직접 편집 시 Y.Map 정리 코드 어디에도 없음
-
----
-
-## 작업 순서 (이 순서대로!)
-
-### 🔴 1순위: 즉시 안정화 (필수, ~1.5h)
-
-다음 작업의 토대. 이 안 풀면 계속 사고남.
-
-**1-A. TooltipProvider 추가** (10m)
-- `App.tsx` 또는 `ThemeProvider` 안에 `<TooltipProvider>` 추가
-- 다른 Radix 컴포넌트(Popover, Dialog)도 같이 점검
-- 검증: ProposalSnippet [↗️] 호버 시 tooltip 정상
-
-**1-B. ErrorBoundary 도입** (20m)
-- 최소 라우트 레벨 + ChatPanel 래핑
-- fallback UI: "문제 발생, 다시 시도해주세요"
-- 한 컴포넌트 죽어도 다른 부분 살아있게
-
-**1-C. 단일 앵커로 통일** (1h)
-- `markDecoPlugin` 제거 또는 변경
-- 옵션 A (추천): 제거. inline mark의 toDOM(`data-proof` attr)에 CSS 스타일 직접 적용해서 시각화
-- 옵션 B: markDecoPlugin이 Y.Map 안 보고 inline mark의 PM position을 직접 사용
-- 검증: 타이핑해도 deco 안 어긋남
+### Theme / UI 폴리싱
+- ✅ Luma neutral preset + semantic tokens (z-index, state)
+- ✅ Radix-luma UI primitives 6종
+- ✅ Geist 타이포그래피, 통일된 헤더 높이
 
 ---
 
-### 🟡 2순위: Cleanup 자동화 (~30m)
+## 미커밋 상태
 
-버그 3 (잔재) 해결. 1순위 완료 후.
-
-**2. PM transaction hook으로 Y.Map 자동 정리**
-- 새 plugin: 매 doc 변경 후 inline mark id 모아서 Y.Map과 비교
-- inline mark에 없는 Y.Map 엔트리 → 자동 delete
-- 검증: 마크된 텍스트 삭제 시 카드도 자동 사라짐 (또는 'rejected' 표시)
-
-```typescript
-// 핵심 코드 스케치
-new Plugin({
-  appendTransaction(trs, oldState, newState) {
-    if (!trs.some(tr => tr.docChanged)) return null
-    const liveIds = new Set<string>()
-    newState.doc.descendants(node => {
-      for (const m of node.marks) {
-        if (['proofSuggestion', 'proofComment'].includes(m.type.name) && m.attrs.id) {
-          liveIds.add(m.attrs.id)
-        }
-      }
-    })
-    const marksMap = ydoc.getMap('marks')
-    marksMap.forEach((_, id) => {
-      if (!liveIds.has(id)) marksMap.delete(id)
-    })
-    return null
-  }
-})
+```
+M apps/writer-tauri/src/components/ui/sidebar.tsx
+M apps/writer-tauri/src/layout/AppShell.tsx
 ```
 
----
-
-### 🟢 3순위: Phase 4-A 검증 (10m)
-
-위 안정화 끝나면 이전에 못 한 검증.
-
-**3. snippet → 본문 점프 검증**
-- AI Review 실행 → 카드 [↗️] 클릭 → 본문 스크롤 + 1초 flash 깜빡 확인
-- 잘 되면 Phase 4-A 완료 마킹
+shadcn-friendly 레이아웃 수정 (SidebarProvider `min-h-svh` → `h-svh overflow-hidden`).
+→ 다음 작업 시작 전 커밋 푸시 권장.
 
 ---
 
-### 🟢 4순위: Phase 4-B — 본문 → snippet 점프 (~45m)
+## 다음 후보 (우선순위 순)
 
-**4-B. inline mark 클릭 → chat snippet 스크롤**
-- MilkdownEditor에 `handleClick` plugin 추가
-- 클릭한 위치의 mark에서 markId 추출
-- 글로벌 이벤트 dispatch (또는 콜백 체인)
-- ChatPanel에서 listen → `data-mark-id` 가진 snippet 찾아 scrollIntoView + flash
+### 🔴 1순위 — 즉시 마무리 (≈30m)
+
+**1-A. 미커밋 변경 커밋 푸시**
+- shadcn sidebar 소스 수정 1건. PR/커밋 1개.
+
+**1-B. 채팅 reliability 마감 (Phase 5 Step 7 잔여)**
+- 네트워크 / rate limit / OAuth 만료 에러 메시지 분기
+- 매우 긴 문서 truncation 경고
+- 빈 user 메시지 / 연속 전송 방지
+
+**1-C. 디자인 폴리싱 (Task #40, #47)**
+- 슬래시 커맨드 UX polish (icons, spacing, code preview)
+
+### 🟡 2순위 — 마크 인터랙션 보완 (M6 잔여, ≈1d)
+
+**2-A. Bulk Actions** (roadmap PR1-B)
+- `acceptAllMarks(view)` / `rejectAllMarks(view)`
+- 헤더 카운터 chip + ⇧⌘A / ⇧⌘R
+- 0개일 때 자동 숨김 — 현재 "Reviewing…" 배지 자리에 통합 가능
+
+**2-B. 호버 액션 바** (roadmap PR3)
+- 마크 위 호버 시 부유 [✓][✕] 버튼
+- React Portal + view.coordsAtPos
+- 키보드 못 쓰는 사용자용
+
+### 🟢 3순위 — Comment 마크 (≈2d)
+
+**3-A. proofComment schema + 플러그인**
+- 옅은 노란색 decoration
+- Y.Map('marks') 의 comment 종류 인식
+
+**3-B. 코멘트 UI**
+- 호버 popover 에 텍스트
+- 텍스트 선택 → 단축키로 코멘트 추가
+- resolve / 답글 (단순)
+
+### 🟢 4순위 — Wiki 가시성 (note-product-design Q12 PR F, ≈1d)
+
+- 사이드바 Wiki 섹션 (현재 Notes/Daily만 보임)
+- belief 노트 클릭 → 메인 에디터 (writing과 동일 흐름)
+- WikiView 연결 (현재 `views/WikiView.tsx` 미연결 추정)
+
+### 🔵 5순위 — Reliability 후속 (Post-M8)
+
+본 문서 하단 "Post-M8" 섹션 그대로 유지. 토스트 / 텔레메트리 / 자동 복구.
+
+### 🔵 6순위 — 백업 + 라이프사이클 (note-product-design Q4, Q6)
+
+- 마크다운 git 자동 백업 (5분 idle, 디바운스)
+- Archive 30일 자동 hard delete
+- Cascade delete confirm dialog (자식 N개)
+
+### 🔵 7순위 — Author stats (proofAuthored, roadmap PR4)
+
+- 사람/AI 글자 비중 사이드 패널
+- proofAuthored 마크 글자 수 집계
+- 시각화 토글
+
+### 🟣 미정 — M8 Cutover
+
+- DMG 빌드 + 코드 사이닝 + 공증
+- Tauri auto-updater
+- 베타 5–10명 배포
+- 1주 모니터링 → `apps/writer/` archive (※ 이미 Electron 앱은 retired됨, 코드 정리만 남음)
 
 ---
 
-### 🔵 5순위: 커밋 + 잔재 정리 (~30m)
-
-**5-A. 그동안 작업 커밋푸시**
-**5-B. 더는 안 쓰는 코드 정리**:
-- `ContextPanel.tsx` (대체됨)
-- `proofClient.createMark/acceptMark/rejectMark` (안 씀)
-- `markDecoPlugin.ts` (1-C에서 제거했으면)
-- 임시 디버그 로그
-
----
-
-## 결정 안 한 것 (지금 안 정함)
-
-### Phase 5 (자유 채팅)
-- M8.3 마지막 큰 단계
-- "Run Review" 외에 임의 텍스트 입력 → AI 답변
-- 4시간 정도. 1~5순위 끝나고 결정.
-
-### M8.4 (multi-turn tools)
-- search, read_document 등 추가
-- 긴 문서/반복 검토에서 정확도 ↑
-- 우선순위 낮음. 사용 중 약점 발견되면.
-
----
-
-## M8 완료 후 — proof-sdk 비교에서 빠진 안전망 (Post-M8)
-
-ErrorBoundary는 1차 방어선. proof-sdk가 추가로 가지고 있는 패턴들 중 우리도 도입할 가치 있는 것들:
+## Post-M8 — proof-sdk 비교에서 빠진 안전망 (참조용 유지)
 
 ### Post-M8.1 — 작업 단위 try/catch 강화 (~1h)
-- `markActions.acceptMark/rejectMark/jumpToMark` — 본문 anchor 못 찾을 때 silent return 대신 로그 + 토스트
-- `runReview` — 이미 try/catch 있지만 실패 시점/원인 더 자세히 (네트워크 vs 401 vs 파싱 등)
-- `complete_claude_oauth` — 토큰 교환 실패 시 fallback UI
+- `markActions.acceptMark/rejectMark/jumpToMark` — silent return 대신 로그 + 토스트
+- `runChat` / 슬래시 커맨드 실패 시 사용자 가시 메시지
 
-### Post-M8.2 — 토스트 알림 시스템 (~1.5h)
-- `sonner` 도입 (shadcn 호환)
-- 사용 시나리오:
-  - Claude 연결 성공/실패
-  - AI 검토 완료 ("3 suggestions added")
-  - 마크 수락/거절 후 피드백
-  - 네트워크 에러 안내
-- ErrorBoundary fallback과 역할 분리: 토스트 = 비치명적 알림, fallback = 컴포넌트 죽음
+### Post-M8.2 — 토스트 시스템 (~1.5h)
+- `sonner` (shadcn 호환)
+- Claude 연결 / AI 검토 완료 / 마크 액션 / 네트워크
 
-### Post-M8.3 — 자동 복구 패턴 (~2h)
-- proof-sdk의 `share-mark-mutation` 스타일
+### Post-M8.3 — 자동 복구 (~2h)
 - mark 액션 실패 시 → 서버 상태 refetch → Y.Doc 동기화
-- 단일 사용자 데스크톱 앱이라 우선순위 낮지만, 향후 멀티 디바이스 동기화 시 필수
+- 단일 사용자 단계는 우선 낮음
 
-### Post-M8.4 — 텔레메트리 hook (~1h)
-- `captureEvent(name, props)` 헬퍼 (no-op으로 시작)
-- 핵심 이벤트만:
-  - `review_run_started` / `review_run_completed` / `review_run_rejected`
-  - `mark_accepted` / `mark_rejected`
-  - `oauth_completed` / `oauth_failed`
-- 출시 전 Sentry 같은 실제 backend로 hook 교체
+### Post-M8.4 — 텔레메트리 (~1h)
+- `captureEvent(name, props)` no-op 헬퍼
+- 핵심 이벤트만, 출시 전 Sentry hook
 
-### 우선순위 (post-M8)
-```
-1. 토스트 (사용자 피드백 즉시 개선) — 중
-2. try/catch 강화 (안정성) — 중
-3. 텔레메트리 (출시 전 필수) — 출시 직전
-4. 자동 복구 (멀티 디바이스 시 필수) — 낮 (단일 사용자 단계)
-```
+---
+
+## 결정 안 한 것
+
+- 채팅 토큰 사용량 표시 (usage 데이터는 보존됨)
+- 멀티 디바이스 (proof-sdk 서버 원격화) — note-product-design Q4 deferred
+- Memory-writer 정식 (P3) — 위키 자동 갱신 흐름
 
 ---
 
 ## 시작할 때 체크리스트
 
-- [ ] 이 문서 다시 읽기 (5분)
-- [ ] 1-A 시작 (TooltipProvider)
-- [ ] 1-B (ErrorBoundary)
-- [ ] 1-C (단일 앵커) — 가장 큰 변경
-- [ ] 1순위 끝나면 검증 + 커밋
-- [ ] 2 (cleanup hook)
-- [ ] 3 (Phase 4-A 검증)
-- [ ] 4-B (반대 방향)
-- [ ] 5 (정리)
-
-총 예상: **3~4시간**.
+- [ ] 1-A 커밋 푸시
+- [ ] 1-B 채팅 reliability
+- [ ] 1-C 디자인 폴리싱
+- [ ] 2-A Bulk Actions
+- [ ] 2-B 호버 액션 바
+- [ ] 3 Comment 마크
+- [ ] 4 Wiki 사이드바 섹션

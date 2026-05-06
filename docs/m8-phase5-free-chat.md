@@ -290,43 +290,42 @@ cache_control 붙여서 같은 문서 연속 질의 시 토큰 90% 절감.
 - [x] `lib/anthropic.ts` — SDK singleton
 - [x] `runReview.ts` → SDK API 마이그레이션 + 검증
 
-### Step 2 — Thread 데이터 모델 + tab switcher + archive (1.5h)
-- [ ] `hooks/useThreads.ts` — Y.Array 구독 + create/archive/restore/rename
-- [ ] `hooks/useThreadTurns.ts` — thread별 turn array 구독 + append/update
-- [ ] `hooks/useActiveThread.ts` — localStorage 기반 활성 thread id
-- [ ] `agent/generateThreadTitle.ts` — Haiku 비동기 호출 (입력 언어 추적, 30자 fallback)
-- [ ] `chat/ThreadTabs.tsx` — 가로 탭 (max 5 active) + `[+]` (5개 시 disabled+툴팁) + 시계 버튼
-- [ ] `chat/ArchivedThreadsPopover.tsx` — 시계 버튼 아래 popover, archived 목록 + ↻ restore
-- [ ] 빈 문서 첫 진입 시 자동 thread 1개 생성
-- [ ] `ChatPanel.tsx` 통합 — useState 제거, useThreadTurns 사용, runReview 결과를 active thread에 append
-- [ ] 검증: 새로고침/다른 문서 이동/돌아오기/archive/restore/5개 한도/탭 더블클릭 rename
+### Step 2 — Thread 데이터 모델 + tab switcher + archive (1.5h) ✅ 완료
+- [x] `hooks/useThreads.ts` — Y.Array 구독 + create/archive/restore/rename
+- [x] `hooks/useThreadTurns.ts` — thread별 turn array 구독 + append/update
+- [x] `hooks/useActiveThread.ts` — localStorage 기반 활성 thread id
+- [x] `agent/generateThreadTitle.ts` — Haiku 비동기 호출
+- [x] `chat/ThreadTabs.tsx` — 가로 탭 (Radix Tabs primitive)
+- [x] `chat/ArchivedThreadsPopover.tsx` — popover, archived 목록 + ↻ restore
+- [x] 빈 문서 첫 진입 시 자동 thread 1개 생성
+- [x] `ChatPanel.tsx` 통합 — useThreadTurns 사용
 
-### Step 3 — PromptInput + 자유 입력 (1h)
-- [ ] `chat/PromptInput.tsx` (textarea + Cmd+Enter 전송 + Stop)
-- [ ] electron 쪽 PromptInput에서 디자인 차용, Tabler 아이콘으로 교체
-- [ ] empty state — 안내 메시지
+### Step 3 — PromptInput + 자유 입력 (1h) ✅ 완료
+- [x] `chat/PromptInput.tsx` (textarea + Cmd+Enter 전송 + Stop)
+- [x] Tabler 아이콘 교체
 
-### Step 4 — Streaming + chat entry (1.5h)
-- [ ] `agent/chat.ts` — runChat 함수 + tool loop
-- [ ] `agent/skills/freechat.ts`
-- [ ] `hooks/useClaudeStream.ts`
-- [ ] `chat/ThreadView.tsx`, `MessageList.tsx`, `MessageRow.tsx`
-- [ ] 텍스트 streaming 토큰 누적 + Y.Array sync 충돌 없음 확인
+### Step 4 — Streaming + chat entry (1.5h) ✅ 완료
+- [x] `agent/chat.ts` — runChat 함수 + tool loop, `includePartialMessages` 활성
+- [x] `agent/skills/freeChat.ts`
+- [x] 토큰별 streaming + Y.Array sync 안정화 (Streamdown)
+- [x] MessagePart (text/reasoning/tool) 모델로 통합 렌더
 
-### Step 5 — Selection + Cmd+L (45m)
-- [ ] `hooks/useSelectionAttach.ts`
-- [ ] `chat/SelectionChip.tsx`
-- [ ] PromptInput attachment 영역 통합
-- [ ] system prompt에 `<selection>` 태그 주입
+### Step 5 — Selection + Cmd+L ✅ 완료
+- [x] frozenSelectionPlugin 으로 selection 캡처
+- [x] selection chip + send-button hint
+- [x] pre-submit slash validation
 
-### Step 6 — Tool 호출 시각화 (45m)
-- [ ] `chat/ToolCallChip.tsx` — "🔧 propose_change…" / "✅ 마크 생성됨"
-- [ ] propose_change 호출 시 `applyProposal` 통해 인라인 마크 생성
-- [ ] tool_result로 모델에 markId 회신 → loop 계속
+### Step 6 — Tool 호출 시각화 ✅ 완료
+- [x] propose_change tool part special-casing (Tool/ToolHeader/ToolContent)
+- [x] applyProposal → 인라인 마크 생성 + tool_result 회신
+- [x] /review (review-comments kind) — Run Review 버튼 제거, slash로 통합
+- [x] /polish, /shorten, /expand (document-edit kind)
+- [x] /outline (chat-message kind)
 
-### Step 7 — Reliability + edge cases (30m)
-- [ ] 네트워크 실패 / OAuth 만료 / rate limit 에러 메시지 분기
-- [ ] Stop 중간 abort
+### Step 7 — Reliability + edge cases (30m) 🟡 진행 중
+- [x] Stop 중간 abort
+- [x] OAuth 흐름 (PKCE + Rust keychain)
+- [ ] 네트워크 실패 / rate limit 에러 메시지 분기 — 미세 조정 필요
 - [ ] 매우 긴 문서 truncation 경고
 - [ ] 빈 user 메시지 / 연속 전송 방지
 

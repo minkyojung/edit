@@ -371,14 +371,18 @@ apps/writer/                      ← Electron, 동결 대상
 
 ## 8. 진척 추적
 
-각 마일스톤이 닫힐 때 본 문서 상단에 한 줄 추가:
-
-```
-## 진척
-- 2026-04-30 M0 Accepted
-- 2026-MM-DD M1 완료 (PR #N)
-- ...
-```
+- 2026-04-30 M0 Accepted — 본 문서 합의, writer-tauri workspace 시드
+- 2026-04-30 M1 완료 — Tauri 빈 셸 + shadcn 이식
+- 2026-04-30 M2 완료 — proof-server sidecar (Rust `SidecarClient::spawn_initialized`, dev/prod 경로 자동)
+- 2026-04-30 M3 완료 — Milkdown 기본 에디터 (스탠드얼론)
+- 2026-04-30 M4 완료 — Yjs ↔ proof-server collab (HocuspocusProvider)
+- 2026-05-01 M5 완료 — 마크 스키마 + hydration, 단일 앵커 통일, cleanup plugin
+- 2026-05-01 M6 부분 완료 — 마크 popover accept/reject ✅, Bulk Actions ✗, hover bar ✗
+- 2026-05-02 M7 완료 — Claude OAuth (PKCE + 암호화 keychain) + Anthropic SDK via Rust proxy + Copyeditor (`/proofread`)
+- 2026-05-04 — 슬래시 커맨드 프레임워크 (chat-message / document-edit / review-comments kinds), `/outline /polish /shorten /expand /review`
+- 2026-05-05 — 멀티 문서 탭, 일별 노트 트리 (Mon-anchored, 7-day backfill), Wikilink (autocomplete + broken-link deco), Archive UX
+- 2026-05-06 — 레이아웃: 3-pane 스크롤 격리 (shadcn `sidebar.tsx` 소스 수정), 트리 가이드라인, ⌘K Archive action
+- M8 Cutover — 미실행 (베타 배포 + 코드 사이닝 단계 남음)
 
 ---
 
