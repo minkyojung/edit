@@ -21,11 +21,28 @@ const PROOF_BASE_URL = 'http://localhost:4000'
 /** Seed wiki pages that bootstrap on first launch. Order is meaningful
  * — these appear first in the chat system prompt and at the top of
  * the sidebar wiki section. Custom pages (created via the + button)
- * follow them in creation order. */
+ * follow them in creation order.
+ *
+ * `pinToEnd` seeds (today: just `wiki:log`) live at the very end of
+ * the prompt regardless of order here — they hold high-churn content
+ * (Karpathy's append-only timeline) that would invalidate cache hits
+ * for everything below it if placed earlier.
+ *
+ * `tailLines` caps the per-section body to the last N non-empty
+ * lines. log.md grows unbounded over time; without this cap the
+ * prompt would slowly bloat and the cache prefix above it would
+ * still get invalidated on every append. */
 const WIKI_SEEDS = [
   { type: 'wiki:belief', title: 'belief', heading: 'BELIEFS' },
   { type: 'wiki:entity', title: 'entity', heading: 'ENTITIES' },
   { type: 'wiki:episode', title: 'episode', heading: 'EPISODES' },
+  {
+    type: 'wiki:log',
+    title: 'log',
+    heading: 'TIMELINE',
+    pinToEnd: true,
+    tailLines: 30,
+  },
 ] as const
 
 type SeedType = (typeof WIKI_SEEDS)[number]['type']
@@ -144,30 +161,61 @@ export async function readBeliefMarkdown(): Promise<string> {
  * Returns '' when no wiki content exists yet — chat assembly takes
  * the empty path in that case.
  *
- * Order is stable: seeds first (in WIKI_SEEDS order), then custom
- * pages in catalog order. Stable order matters because reordering
- * would invalidate Anthropic prompt-cache hits across turns. */
+ * Order is stable and tuned for Anthropic prompt-cache hits:
+ *   1. Regular seeds in WIKI_SEEDS order (lowest-churn identity)
+ *   2. Custom user pages in catalog order
+ *   3. pinToEnd seeds last (highest-churn — log.md changes most often)
+ * Putting the timeline at the bottom means a log append only
+ * invalidates its own section, not the cached identity above it. */
 export async function readWikiContext(): Promise<string> {
   const docs = useDocsStore
     .getState()
     .knownDocs.filter((d) => d.type.startsWith('wiki:') && !d.archivedAt)
 
   const seedTypes = WIKI_SEEDS.map((s) => s.type) as readonly string[]
-  const seeds = WIKI_SEEDS.flatMap((def) => {
+  const seedsHead = WIKI_SEEDS.filter((s) => !('pinToEnd' in s && s.pinToEnd))
+  const seedsTail = WIKI_SEEDS.filter((s) => 'pinToEnd' in s && s.pinToEnd)
+
+  const head = seedsHead.flatMap((def) => {
     const d = docs.find((doc) => doc.type === def.type)
-    return d ? [{ doc: d, heading: def.heading }] : []
+    return d ? [{ doc: d, def }] : []
   })
   const customs = docs
     .filter((d) => !seedTypes.includes(d.type))
-    .map((d) => ({ doc: d, heading: headingFor(d) }))
+    .map((d) => ({ doc: d, def: undefined as undefined }))
+  const tail = seedsTail.flatMap((def) => {
+    const d = docs.find((doc) => doc.type === def.type)
+    return d ? [{ doc: d, def }] : []
+  })
 
   const sections = await Promise.all(
-    [...seeds, ...customs].map(async ({ doc, heading }) => {
+    [...head, ...customs, ...tail].map(async ({ doc, def }) => {
       const md = await readWikiMarkdown(doc.slug)
-      return md ? `[USER ${heading}]\n${md}` : ''
+      if (!md) return ''
+      const heading = def?.heading ?? headingFor(doc)
+      const tailLines =
+        def && 'tailLines' in def ? def.tailLines : undefined
+      const body = tailLines ? takeLastLines(md, tailLines) : md
+      return `[USER ${heading}]\n${body}`
     }),
   )
   return sections.filter(Boolean).join('\n\n')
+}
+
+/** Keep only the last N non-empty lines of a markdown body. Used by
+ * sections like the timeline log whose body grows unbounded — older
+ * entries fall off the prompt rather than ballooning each turn's
+ * input. Empty/whitespace lines are excluded from the count so a
+ * gap in the file doesn't shift real content out of view. */
+function takeLastLines(md: string, n: number): string {
+  const lines = md.split('\n')
+  const kept: string[] = []
+  let count = 0
+  for (let i = lines.length - 1; i >= 0 && count < n; i -= 1) {
+    kept.unshift(lines[i])
+    if (lines[i].trim().length > 0) count += 1
+  }
+  return kept.join('\n')
 }
 
 /** Heading used in the chat system prompt for a custom wiki page.
