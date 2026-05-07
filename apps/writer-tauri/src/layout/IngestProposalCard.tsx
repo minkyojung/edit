@@ -8,13 +8,19 @@
 // dismiss, so a new batch always wakes the card even if the user
 // closed an earlier one.
 //
-// PR 3-2 step 3 of 5: card only — clicking Review currently logs
-// to the console. The next step swaps the console hook for a real
-// review modal that can apply / skip individual proposals.
+// Review action: navigates to the first target wiki page. The
+// useApplyPendingMarks hook (mounted at App root) sees the active
+// page change, materializes the queued proposals as proofSuggestion
+// marks in that page's editor, and removes them from the queue. The
+// user reviews via the existing MarkPopoverLayer (accept / reject
+// inline), same affordance as AI suggestions in chat. Other targets
+// stay queued — the card persists with a smaller count until the
+// user navigates to those pages too.
 
-import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { IconX } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
+import { useDocsStore } from '@/state/docsStore'
 import { useIngestStore, type PendingProposal } from '@/state/ingestStore'
 
 /** Pull a short, readable noun phrase out of a proposal's markdown
@@ -52,21 +58,34 @@ export function IngestProposalCard() {
   const proposals = useIngestStore((s) => s.pendingProposals)
   const dismissed = useIngestStore((s) => s.dismissed)
   const dismiss = useIngestStore((s) => s.dismiss)
-  // Local-only modal toggle. The review modal lives in the next PR
-  // step; for now Review just logs the queue so we can verify the
-  // wiring end-to-end without blocking on the modal UI.
-  const [reviewOpen, setReviewOpen] = useState(false)
+  const setActive = useDocsStore((s) => s.setActive)
+  const navigate = useNavigate()
 
   if (proposals.length === 0 || dismissed) return null
 
   const onReview = () => {
-    setReviewOpen(true)
-    // Stub for PR 3-2 step 4 — surfaces the queue so a tester can
-    // confirm the card-to-data pipeline before the modal exists.
-    console.info('[ingest] review requested', {
-      proposals,
-      pendingLogs: useIngestStore.getState().pendingLogs,
-    })
+    // Find the first target type that has a wiki page in the
+    // catalog, then navigate to it. useApplyPendingMarks (App root)
+    // takes over from there: when the editor mounts for that doc,
+    // it stamps the queued proposals as marks. We don't materialize
+    // here because the apply flow needs an EditorView, which only
+    // exists once the doc is active and Milkdown has mounted.
+    const docs = useDocsStore.getState().knownDocs
+    for (const proposal of proposals) {
+      const doc = docs.find(
+        (d) => d.type === proposal.target && !d.archivedAt,
+      )
+      if (doc) {
+        setActive(doc.slug)
+        navigate('/notes')
+        return
+      }
+    }
+    // No matching wiki page in the catalog (proposal targets a doc
+    // that was archived between ingest and review). Surface this
+    // softly rather than silently no-oping; future polish can rerun
+    // ingest or drop the orphan proposal.
+    console.warn('[ingest] no live target for queued proposals')
   }
 
   return (
@@ -117,11 +136,6 @@ export function IngestProposalCard() {
           Review →
         </span>
       </button>
-
-      {/* Modal placeholder — wired in PR 3-2 step 4. Keeping the
-          state hook here lets that step plug a component in without
-          touching the card again. */}
-      {reviewOpen && null}
     </div>
   )
 }

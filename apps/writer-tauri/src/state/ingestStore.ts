@@ -127,6 +127,13 @@ export const useIngestStore = create<IngestState>()(
           sourceLabel,
           proposedAt: now,
         }))
+        // Log lines queue alongside proposals and apply lazily when
+        // the user navigates to wiki:log — same lazy-on-active
+        // pattern marks use. We tried auto-applying via direct ydoc
+        // writes earlier; the server's projection guardrail repaired
+        // them away because raw XmlFragment inserts don't match the
+        // shape PM transactions produce. Funneling through the
+        // editor view is the only durable path.
         const newLogs: PendingLogEntry[] = logEntry
           ? [
               {
@@ -137,12 +144,12 @@ export const useIngestStore = create<IngestState>()(
               },
             ]
           : []
+        if (newProposals.length === 0 && newLogs.length === 0) return
         set((s) => ({
           pendingProposals: [...s.pendingProposals, ...newProposals],
           pendingLogs: [...s.pendingLogs, ...newLogs],
-          // Wake the card on every fresh batch — even an empty one
-          // counts as "we did work, here's the log line", because
-          // the user benefits from seeing that ingest is alive.
+          // Wake the card on every fresh batch so the user notices
+          // the new wiki additions waiting for review.
           dismissed: false,
         }))
       },

@@ -11,7 +11,9 @@ import { MilkdownEditor } from '@/editor/MilkdownEditor'
 import { WikiView } from '@/views/WikiView'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { useDocsStore } from '@/state/docsStore'
+import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
+import { useApplyPendingMarks } from '@/hooks/useApplyPendingMarks'
 
 export function App() {
   const bootstrap = useDocsStore((s) => s.bootstrap)
@@ -28,6 +30,11 @@ export function App() {
   // after the user has been quiet for `idleMinutes`. Mounted once
   // here at the root so a single timer covers the whole session.
   useIdleTrigger()
+  // Lazily materializes queued ingest proposals as proofSuggestion
+  // marks the moment the user navigates to a target wiki page.
+  // Pairs with the Review action on IngestProposalCard, which is
+  // itself just "navigate to the first target — marks appear there".
+  useApplyPendingMarks()
 
   const activeHandle = activeSlug ? handles[activeSlug] ?? null : null
   const activeStatus = activeSlug ? statusMap[activeSlug] ?? 'initializing' : 'initializing'
@@ -55,7 +62,15 @@ export function App() {
                       key={activeSlug ?? 'no-doc'}
                       handle={activeHandle}
                       status={activeStatus}
-                      onViewReady={setView}
+                      onViewReady={(v) => {
+                        // Mirror into the global store so non-React
+                        // consumers (ingest apply, future palette
+                        // commands) can reach the live view without
+                        // prop drilling. Local state stays the source
+                        // of truth for sibling renders below.
+                        setView(v)
+                        useEditorViewStore.getState().setView(v)
+                      }}
                     />
                   }
                 />
