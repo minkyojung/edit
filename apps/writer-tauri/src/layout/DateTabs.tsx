@@ -16,6 +16,7 @@
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDocsStore } from '@/state/docsStore'
+import { DayView } from './views/DayView'
 
 export function DateTabs() {
   const tab = useDocsStore((s) => s.sidebarTab)
@@ -49,7 +50,7 @@ export function DateTabs() {
       </TabsList>
 
       <TabsContent value="day" className="pt-2">
-        <ViewPlaceholder label="Day view" />
+        <DayView />
       </TabsContent>
       <TabsContent value="week" className="pt-2">
         <ViewPlaceholder label="Week view" />
