@@ -72,7 +72,7 @@ export function EditorHeader({
           <SidebarTrigger />
         </>
       )}
-      <div className="flex min-w-0 items-center gap-2 pl-2 pr-1">
+      <div className="flex min-w-0 items-center gap-1 px-2">
         <Breadcrumb slug={activeSlug} />
         {statusLabel && (
           <span
@@ -86,7 +86,7 @@ export function EditorHeader({
         )}
       </div>
       <div data-tauri-drag-region className="h-full flex-1" />
-      <div className="flex items-center gap-0.5 pr-2">
+      <div className="flex items-center gap-1 pr-2">
         <DocMenu editorView={editorView} />
         <ContextPanelTrigger />
       </div>
