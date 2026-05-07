@@ -173,7 +173,7 @@ export function AppSidebar() {
       className="border-r"
     >
       <SidebarHeader
-        className="flex flex-row items-center gap-1 p-0 px-2 border-b border-sidebar-border"
+        className="flex flex-row items-center gap-0.5 p-0 pl-2 pr-1"
         style={{ height: 'var(--header-h)' }}
       >
         <div data-tauri-drag-region className="flex-1 h-full" />

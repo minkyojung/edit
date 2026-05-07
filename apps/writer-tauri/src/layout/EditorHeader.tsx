@@ -86,7 +86,7 @@ export function EditorHeader({
         )}
       </div>
       <div data-tauri-drag-region className="h-full flex-1" />
-      <div className="flex items-center gap-1 pr-2">
+      <div className="flex items-center gap-0.5 pr-1">
         <DocMenu editorView={editorView} />
         <ContextPanelTrigger />
       </div>
