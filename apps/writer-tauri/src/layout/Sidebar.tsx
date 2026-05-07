@@ -178,7 +178,7 @@ export function AppSidebar() {
       >
         <div data-tauri-drag-region className="flex-1 h-full" />
         <SidebarDateMenu />
-        <SidebarTrigger />
+        <SidebarTrigger className="text-foreground" />
       </SidebarHeader>
 
       <SidebarContent className="pt-1">

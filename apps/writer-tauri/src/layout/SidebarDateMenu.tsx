@@ -39,7 +39,7 @@ export function SidebarDateMenu() {
           )}
         >
           <span>{VIEW_LABELS[tab]}</span>
-          <IconChevronDown size={12} stroke={1.75} className="text-muted-foreground" />
+          <IconChevronDown size={12} stroke={1.75} />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-28">
