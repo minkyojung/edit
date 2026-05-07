@@ -36,7 +36,6 @@ import {
 } from '@/components/ui/command'
 import {
   useDocsStore,
-  weekStartFor,
   type KnownDoc,
 } from '@/state/docsStore'
 import {
@@ -68,7 +67,7 @@ export function CommandPalette() {
   const activeSlug = useDocsStore((s) => s.activeSlug)
   const openDaily = useDocsStore((s) => s.openDaily)
   const setActive = useDocsStore((s) => s.setActive)
-  const expandWeek = useDocsStore((s) => s.expandWeek)
+  const setSidebarTab = useDocsStore((s) => s.setSidebarTab)
   const archiveDoc = useDocsStore((s) => s.archiveDoc)
   const navigate = useNavigate()
 
@@ -169,9 +168,14 @@ export function CommandPalette() {
   const onSelect = async (r: Result) => {
     setOpen(false)
     if (r.kind === 'date') {
-      expandWeek(weekStartFor(r.date))
       const slug = await openDaily(r.date)
-      if (slug) navigate('/notes')
+      if (slug) {
+        // ⌘G reads as "I want to work this date" — drop into Day view
+        // so the user lands on the daily's working surface, not a list
+        // they'd have to interpret.
+        setSidebarTab('day')
+        navigate('/notes')
+      }
       return
     }
     // doc

@@ -85,12 +85,6 @@ interface DocsState {
    * during bootstrap so the writing surface always greets them
    * with their day's notes already in view. */
   expandedDocSlugs: string[]
-  /** Week-start dates (YYYY-MM-DD, Sunday) whose week section is
-   * expanded in the daily sidebar. Tracked separately from
-   * expandedDocSlugs because the week scope is calendar-level, not
-   * per-doc. The current week is force-added on bootstrap so the
-   * user always lands with this-week open. */
-  expandedWeekStarts: string[]
 
   // Runtime — never persisted
   handles: Record<string, CollabHandle>
@@ -124,11 +118,6 @@ interface DocsState {
   createWritingChild: (parentSlug: string, title: string) => Promise<string | null>
   /** Toggle the sidebar fold for a given doc. */
   toggleExpanded: (slug: string) => void
-  /** Toggle a calendar-week section in the daily sidebar. */
-  toggleWeekExpanded: (weekStart: string) => void
-  /** Idempotent expand — used after ⌘G jump so the target week
-   * section is open even if the user had it folded. */
-  expandWeek: (weekStart: string) => void
   reorder: (slugs: string[]) => void
   /** Archive `slug` and all its descendants (cascade). Closes any
    * open tabs in the group, tears down their handles, and reassigns
@@ -197,7 +186,6 @@ export const useDocsStore = create<DocsState>()(
       activeSlug: null,
       knownDocs: [],
       expandedDocSlugs: [],
-      expandedWeekStarts: [],
       handles: {},
       status: {},
       bootstrapping: true,
@@ -263,20 +251,13 @@ export const useDocsStore = create<DocsState>()(
           }))
         }
 
-        // Force-expand the current calendar week so the user always
-        // lands with this-week open. Past-week sections stay folded
-        // unless the user opens them.
+        // Backfill: ensure every day in the current calendar week
+        // has a real daily entry, so the Week view (sliding 7 days
+        // from today) and the Month view both render with their
+        // markers populated rather than blooming in slowly. Fire-and-
+        // forget so the editor opens at full speed; the sidebar
+        // reacts as each create lands.
         const currentWeekStart = weekStartFor(today)
-        set((s) =>
-          s.expandedWeekStarts.includes(currentWeekStart)
-            ? s
-            : { expandedWeekStarts: [...s.expandedWeekStarts, currentWeekStart] },
-        )
-
-        // Backfill: ensure every day in the current week (Mon–Sun)
-        // has a real daily entry. Includes future days so all 7 slots
-        // are present. Fire-and-forget so the editor opens at full
-        // speed; the sidebar reacts as each create lands.
         void (async () => {
           const cursor = new Date(currentWeekStart)
           const weekEnd = new Date(currentWeekStart)
@@ -452,16 +433,6 @@ export const useDocsStore = create<DocsState>()(
         if (!get().openSlugs.includes(slug)) {
           set((s) => ({ openSlugs: [...s.openSlugs, slug] }))
         }
-        // Auto-expand the target week so the sidebar's row is
-        // visible (and DocList's scrollIntoView effect can land
-        // it in viewport) regardless of how the caller arrived
-        // here — ⌘G, ⌘T, sidebar click, or breadcrumb.
-        const targetWeekStart = weekStartFor(targetDate)
-        set((s) =>
-          s.expandedWeekStarts.includes(targetWeekStart)
-            ? s
-            : { expandedWeekStarts: [...s.expandedWeekStarts, targetWeekStart] },
-        )
         set({ activeSlug: slug })
         await ensureHandle(slug, set, get)
         const handle = get().handles[slug]
@@ -563,20 +534,6 @@ export const useDocsStore = create<DocsState>()(
             ? s.expandedDocSlugs.filter((x) => x !== slug)
             : [...s.expandedDocSlugs, slug],
         })),
-
-      toggleWeekExpanded: (weekStart) =>
-        set((s) => ({
-          expandedWeekStarts: s.expandedWeekStarts.includes(weekStart)
-            ? s.expandedWeekStarts.filter((x) => x !== weekStart)
-            : [...s.expandedWeekStarts, weekStart],
-        })),
-
-      expandWeek: (weekStart) =>
-        set((s) =>
-          s.expandedWeekStarts.includes(weekStart)
-            ? s
-            : { expandedWeekStarts: [...s.expandedWeekStarts, weekStart] },
-        ),
 
       reorder: (slugs) => set({ openSlugs: slugs }),
 
@@ -726,13 +683,12 @@ export const useDocsStore = create<DocsState>()(
     }),
     {
       name: 'writer-tauri:docs',
-      version: 4,
+      version: 5,
       partialize: (s) => ({
         openSlugs: s.openSlugs,
         activeSlug: s.activeSlug,
         knownDocs: s.knownDocs,
         expandedDocSlugs: s.expandedDocSlugs,
-        expandedWeekStarts: s.expandedWeekStarts,
       }),
       migrate: (persisted, version) => {
         // v1 → v2: KnownDoc gains optional archivedAt /
@@ -746,7 +702,17 @@ export const useDocsStore = create<DocsState>()(
         // v3 → v4: KnownDoc.type wiki branch widens to template
         // literal `wiki:${string}` so the user can spawn custom
         // wiki pages alongside the seeds. No data migration needed.
-        if (version < 4) return persisted as DocsState
+        // v4 → v5: drop expandedWeekStarts. The week-grouped DocList
+        // sidebar was replaced by the Day/Week/Month dropdown views,
+        // so the week-fold state has no reader. Strip the key from
+        // any persisted blob so the rehydrated state matches the new
+        // shape (silently ignored fields are fine; explicit removal
+        // is cleaner).
+        if (version < 5) {
+          const { expandedWeekStarts: _drop, ...rest } =
+            (persisted as { expandedWeekStarts?: unknown }) ?? {}
+          return rest as DocsState
+        }
         return persisted as DocsState
       },
     },

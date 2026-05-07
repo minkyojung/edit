@@ -140,9 +140,13 @@ export function AppSidebar() {
       if (e.shiftKey || e.altKey) return
       if (e.key === 't' || e.key === 'T') {
         e.preventDefault()
+        // ⌘T jumps to today and lands the user on Day view so the
+        // shortcut reads as "take me to today's work surface,"
+        // regardless of which date view they had open.
         openDaily().catch((err) =>
           console.error('[docs] ⌘T openDaily failed', err),
         )
+        useDocsStore.getState().setSidebarTab('day')
         if (!pathname.startsWith('/notes')) navigate('/notes')
         return
       }
