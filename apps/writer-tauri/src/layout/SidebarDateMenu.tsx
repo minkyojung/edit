@@ -34,7 +34,7 @@ export function SidebarDateMenu() {
           type="button"
           className={cn(
             'flex h-7 items-center gap-1 rounded-md px-2 text-[12px] font-medium',
-            'text-sidebar-trigger transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+            'text-sidebar-trigger transition-colors hover:text-sidebar-accent-foreground',
             'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
           )}
         >
