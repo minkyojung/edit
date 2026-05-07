@@ -160,8 +160,12 @@ export function AppSidebar() {
         if (!pathname.startsWith('/notes')) navigate('/notes')
       }
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+    // Capture phase so the editor / chat input / any descendant that
+    // calls stopPropagation in its own keydown can't swallow these
+    // shortcuts. ⌘T and ⌘N are global doc actions; they need to win
+    // over local input handling.
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
   }, [openDaily, createChildNote, navigate, pathname])
 
   return (
