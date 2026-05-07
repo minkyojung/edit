@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDocsStore } from '@/state/docsStore'
 import { DayView } from './views/DayView'
 import { WeekView } from './views/WeekView'
+import { MonthView } from './views/MonthView'
 
 export function DateTabs() {
   const tab = useDocsStore((s) => s.sidebarTab)
@@ -57,16 +58,8 @@ export function DateTabs() {
         <WeekView />
       </TabsContent>
       <TabsContent value="month" className="pt-2">
-        <ViewPlaceholder label="Month view" />
+        <MonthView />
       </TabsContent>
     </Tabs>
-  )
-}
-
-function ViewPlaceholder({ label }: { label: string }) {
-  return (
-    <div className="px-2 py-6 text-center text-[12px] text-muted-foreground/60">
-      {label}
-    </div>
   )
 }
