@@ -12,13 +12,10 @@ import * as Y from 'yjs'
 
 // `wiki:*` = LLM-synthesized memory pages (Karpathy split: Sources
 // vs Wiki). Distinct from `writing` so archive/delete guards and
-// sidebar grouping can branch on a single field.
-export type DocType =
-  | 'daily'
-  | 'writing'
-  | 'wiki:belief'
-  | 'wiki:entity'
-  | 'wiki:episode'
+// sidebar grouping can branch on a single field. The wiki branch is
+// open-ended (`wiki:${string}`) so users can spawn custom pages
+// alongside the bootstrapped seeds (belief / entity / episode).
+export type DocType = 'daily' | 'writing' | `wiki:${string}`
 
 export interface DocMeta {
   type: DocType

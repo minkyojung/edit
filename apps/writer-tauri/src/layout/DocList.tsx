@@ -13,7 +13,14 @@
 // User toggle state lives in docsStore.expandedWeekStarts and is
 // persisted, so the user's fold layout survives a reload.
 
-import { useEffect, useMemo, useRef, type MouseEvent } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+} from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   IconArchive,
@@ -26,6 +33,7 @@ import { cn } from '@/lib/utils'
 import { useDocsStore, isWikiDoc, weekStartFor, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { todayLocalDate, formatLocalDate } from '@/hooks/useDocMeta'
+import { createCustomWikiPage } from '@/state/wikiService'
 
 export function DocList() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
@@ -176,28 +184,130 @@ export function DocList() {
         })}
       </ul>
 
-      {wikiDocs.length > 0 && (
-        <div className="pt-3">
-          <div className="px-2 pb-1 text-[13px] font-medium text-muted-foreground">
-            Wiki
-          </div>
-          <ul className="flex flex-col gap-0.5">
-            {wikiDocs.map((doc) => (
-              <li key={doc.slug} data-slug={doc.slug}>
-                <WikiRow
-                  doc={doc}
-                  isActive={doc.slug === activeSlug}
-                  onSelect={() => {
-                    setActive(doc.slug)
-                    ensureNotesRoute()
-                  }}
-                />
-              </li>
-            ))}
-          </ul>
+      <div className="pt-3">
+        <div className="px-2 pb-1 text-[13px] font-medium text-muted-foreground">
+          Wiki
         </div>
-      )}
+        <ul className="flex flex-col gap-0.5">
+          {wikiDocs.map((doc) => (
+            <li key={doc.slug} data-slug={doc.slug}>
+              <WikiRow
+                doc={doc}
+                isActive={doc.slug === activeSlug}
+                onSelect={() => {
+                  setActive(doc.slug)
+                  ensureNotesRoute()
+                }}
+              />
+            </li>
+          ))}
+        </ul>
+        <NewWikiPageButton
+          onCreate={async (name) => {
+            const slug = await createCustomWikiPage(name)
+            if (slug) {
+              setActive(slug)
+              ensureNotesRoute()
+            }
+          }}
+        />
+      </div>
     </div>
+  )
+}
+
+function NewWikiPageButton({
+  onCreate,
+}: {
+  onCreate: (name: string) => Promise<void>
+}) {
+  // Idle: shows a quiet "+ New wiki page" button. Click flips into
+  // editing: an inline input replaces the button. Enter submits,
+  // Escape cancels — keeping the action lightweight enough that
+  // creating a custom page feels as cheap as creating a daily note.
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus()
+  }, [editing])
+
+  const reset = () => {
+    setName('')
+    setEditing(false)
+    setBusy(false)
+  }
+
+  const submit = async () => {
+    const trimmed = name.trim()
+    if (!trimmed || busy) {
+      reset()
+      return
+    }
+    setBusy(true)
+    try {
+      await onCreate(trimmed)
+    } finally {
+      reset()
+    }
+  }
+
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      void submit()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      reset()
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="px-1.5 pt-0.5">
+        <input
+          ref={inputRef}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={onKey}
+          onBlur={() => {
+            // Submit on blur if the user typed something; otherwise
+            // collapse silently. Avoids stranding an empty editing
+            // state on the screen if the user clicks away.
+            void submit()
+          }}
+          placeholder="page name"
+          disabled={busy}
+          className={cn(
+            'w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-[13px]',
+            'outline-none focus:ring-2 focus:ring-ring/40',
+            busy && 'opacity-60',
+          )}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      className={cn(
+        'mt-0.5 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[13px] font-medium transition-colors',
+        'text-muted-foreground/70 hover:bg-accent/50 hover:text-foreground',
+        'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+      )}
+    >
+      <span
+        className="flex h-4 w-4 shrink-0 items-center justify-center"
+        aria-hidden
+      >
+        <IconPlus size={12} stroke={1.75} />
+      </span>
+      <span className="truncate">New wiki page</span>
+    </button>
   )
 }
 

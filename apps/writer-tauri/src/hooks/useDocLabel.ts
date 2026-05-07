@@ -5,9 +5,12 @@
 // Resolution order:
 //   1. Daily entry  → meta.date (anchor; no editable title at all).
 //   2. Wiki entry   → live Y.Text('title') if non-empty, else the
-//      type-derived name ('belief' / 'entity' / 'episode'). Wiki
-//      docs are bootstrapped without a ydoc title, so without this
-//      branch they'd all read as 'Untitled'.
+//      cached knownDocs.title (set at create time for both seeds and
+//      custom pages), else a type-derived label. Wiki docs are
+//      bootstrapped without a ydoc title, so without this branch
+//      they'd all read as 'Untitled'. The cached-title fallback is
+//      what lets a custom 'wiki:custom-<id>' page show its real
+//      user-given name ('people') instead of the opaque suffix.
 //   3. Warm writing → Y.Text('title') from the live ydoc. Reflects
 //      every keystroke, including across collab peers.
 //   4. Cold writing → knownDocs.title, the persisted mirror set at
@@ -30,9 +33,13 @@ export function useDocLabel(slug: string | null): string {
   if (known?.type?.startsWith('wiki:')) {
     const live = title.trim()
     if (live) return live
-    // Fall back to the type-derived label rather than 'Untitled'
-    // so the sidebar reads as a meaningful wiki section even
-    // before the user touches the title field.
+    const cached = known.title?.trim()
+    if (cached) return cached
+    // Fall back to the type-derived label rather than 'Untitled' so
+    // the sidebar reads as a meaningful wiki section even before
+    // the user touches the title field. For custom pages the
+    // cached title above wins, so this branch only fires for
+    // seed types (belief / entity / episode).
     return known.type.replace(/^wiki:/, '')
   }
   if (handle) return title || 'Untitled'

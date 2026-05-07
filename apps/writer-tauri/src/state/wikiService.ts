@@ -1,11 +1,13 @@
 // Wiki bootstrap — Karpathy LLM Wiki structure on top of proof-sdk.
 //
-// v1 scope: three wiki pages — belief / entity / episode — that
-// capture the user's preferences, the people / orgs / concepts they
-// reference, and the events worth remembering. The chat runner reads
-// all three before each turn and prepends them as the cacheable
-// prefix of the system prompt so Claude can answer with the user's
-// context loaded.
+// Karpathy's pattern is "schema comes from the user" — the agent
+// maintains pages but doesn't dictate their categories. We translate
+// that here as a hybrid: three opinionated seeds (belief / entity /
+// episode) ship on first launch so a new user has somewhere to start,
+// and `createCustomWikiPage` lets them grow the wiki with arbitrary
+// pages of their own (`wiki:custom-<id>`). The chat runner reads
+// every wiki:* doc in the catalog and prepends them as the cacheable
+// prefix of the system prompt.
 //
 // Future (P3 / Memory-writer) will let a background agent edit these
 // pages with provenance. For now, the user edits them by hand from
@@ -16,31 +18,33 @@ import { useDocsStore, type KnownDoc } from './docsStore'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
 
-/** Wiki types we bootstrap on first launch and keep in sync with the
- * sidebar. Order is meaningful — it's the order in which sections
- * appear in the chat system prompt and (today) in the sidebar list. */
-const WIKI_TYPES = [
+/** Seed wiki pages that bootstrap on first launch. Order is meaningful
+ * — these appear first in the chat system prompt and at the top of
+ * the sidebar wiki section. Custom pages (created via the + button)
+ * follow them in creation order. */
+const WIKI_SEEDS = [
   { type: 'wiki:belief', title: 'belief', heading: 'BELIEFS' },
   { type: 'wiki:entity', title: 'entity', heading: 'ENTITIES' },
   { type: 'wiki:episode', title: 'episode', heading: 'EPISODES' },
 ] as const
 
-type WikiType = (typeof WIKI_TYPES)[number]['type']
+type SeedType = (typeof WIKI_SEEDS)[number]['type']
 
-/** Ensure each wiki type has a doc in the catalog. Idempotent.
+/** Ensure each seed wiki type has a doc in the catalog. Idempotent.
  * Called from docsStore.bootstrap as fire-and-forget — chat reads
  * wiki content lazily so the first paint isn't blocked on these
- * round-trips. */
+ * round-trips. Custom user-created pages are NOT recreated here;
+ * those live solely off of explicit createCustomWikiPage calls. */
 export async function ensureWikiDocs(): Promise<void> {
-  for (const def of WIKI_TYPES) {
-    await ensureWikiDoc(def.type, def.title).catch((err) =>
+  for (const def of WIKI_SEEDS) {
+    await ensureSeedDoc(def.type, def.title).catch((err) =>
       console.error(`[wiki] ensure ${def.type} failed`, err),
     )
   }
 }
 
-async function ensureWikiDoc(
-  type: WikiType,
+async function ensureSeedDoc(
+  type: SeedType,
   title: string,
 ): Promise<string | null> {
   const existing = useDocsStore
@@ -55,14 +59,42 @@ async function ensureWikiDoc(
     useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
     return created.slug
   } catch (err) {
-    console.error(`[wiki] ensureWikiDoc(${type}) failed`, err)
+    console.error(`[wiki] ensureSeedDoc(${type}) failed`, err)
     return null
   }
 }
 
-/** Slug of the wiki doc with the given type, if any. Synchronous —
- * pulls from the catalog mirror. */
-export function getWikiSlug(type: WikiType): string | null {
+/** Create a user-defined wiki page with the given display name.
+ * Type is `wiki:custom-<id>` — the random suffix avoids collisions
+ * if the user picks the same name twice and decouples the type
+ * (immutable identity) from the title (renameable label).
+ *
+ * Returns the new doc's slug, or null on failure (empty name or
+ * proof-server error). The created doc is registered in the catalog
+ * but NOT auto-opened — the caller decides whether to navigate. */
+export async function createCustomWikiPage(
+  name: string,
+): Promise<string | null> {
+  const trimmed = name.trim()
+  if (!trimmed) return null
+  // 8 hex chars = 32 bits. Collision probability is negligible at the
+  // scale of one user's wiki — even a thousand pages stays well below
+  // the birthday-collision threshold.
+  const id = Math.random().toString(36).slice(2, 10)
+  const type = `wiki:custom-${id}` as `wiki:${string}`
+  try {
+    const created = await proofClient.createDoc(trimmed, '​')
+    const meta: KnownDoc = { slug: created.slug, type, title: trimmed }
+    useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+    return created.slug
+  } catch (err) {
+    console.error('[wiki] createCustomWikiPage failed', err)
+    return null
+  }
+}
+
+/** Slug of the (seed) wiki doc with the given type, if any. */
+export function getWikiSlug(type: SeedType): string | null {
   const doc = useDocsStore.getState().knownDocs.find((d) => d.type === type)
   return doc?.slug ?? null
 }
@@ -105,20 +137,46 @@ export async function readBeliefMarkdown(): Promise<string> {
   return readWikiMarkdown(getBeliefSlug())
 }
 
-/** Read all wiki pages and return a single cacheable context block,
- * already shaped for the chat system prompt. Each non-empty section
- * is wrapped with a heading; empty sections are skipped entirely so
- * the prefix stays compact. Returns '' when no wiki content exists
- * yet — chat assembly takes the empty-belief path in that case.
+/** Read every wiki:* page in the catalog and return a single
+ * cacheable context block, already shaped for the chat system
+ * prompt. Each non-empty section is wrapped with a heading; empty
+ * sections are skipped entirely so the prefix stays compact.
+ * Returns '' when no wiki content exists yet — chat assembly takes
+ * the empty path in that case.
  *
- * Sections appear in WIKI_TYPES order so the cache prefix is stable
- * across runs (rearranging would invalidate prompt cache hits). */
+ * Order is stable: seeds first (in WIKI_SEEDS order), then custom
+ * pages in catalog order. Stable order matters because reordering
+ * would invalidate Anthropic prompt-cache hits across turns. */
 export async function readWikiContext(): Promise<string> {
+  const docs = useDocsStore
+    .getState()
+    .knownDocs.filter((d) => d.type.startsWith('wiki:') && !d.archivedAt)
+
+  const seedTypes = WIKI_SEEDS.map((s) => s.type) as readonly string[]
+  const seeds = WIKI_SEEDS.flatMap((def) => {
+    const d = docs.find((doc) => doc.type === def.type)
+    return d ? [{ doc: d, heading: def.heading }] : []
+  })
+  const customs = docs
+    .filter((d) => !seedTypes.includes(d.type))
+    .map((d) => ({ doc: d, heading: headingFor(d) }))
+
   const sections = await Promise.all(
-    WIKI_TYPES.map(async (def) => {
-      const md = await readWikiMarkdown(getWikiSlug(def.type))
-      return md ? `[USER ${def.heading}]\n${md}` : ''
+    [...seeds, ...customs].map(async ({ doc, heading }) => {
+      const md = await readWikiMarkdown(doc.slug)
+      return md ? `[USER ${heading}]\n${md}` : ''
     }),
   )
   return sections.filter(Boolean).join('\n\n')
+}
+
+/** Heading used in the chat system prompt for a custom wiki page.
+ * Uses the user-set title uppercased, falling back to a generic
+ * label so an unnamed page still parses cleanly. Stripping non-
+ * alphanumerics keeps the heading visually consistent with seed
+ * headings (BELIEFS / ENTITIES / EPISODES). */
+function headingFor(doc: KnownDoc): string {
+  const raw = (doc.title ?? '').trim()
+  if (!raw) return 'WIKI'
+  return raw.toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ').trim() || 'WIKI'
 }

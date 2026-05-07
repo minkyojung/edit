@@ -35,12 +35,7 @@ const DEFAULT_DOC_TITLE = 'My Document'
  * changes while open. */
 export interface KnownDoc {
   slug: string
-  type:
-    | 'daily'
-    | 'writing'
-    | 'wiki:belief'
-    | 'wiki:entity'
-    | 'wiki:episode'
+  type: 'daily' | 'writing' | `wiki:${string}`
   /** YYYY-MM-DD when type === 'daily'. */
   date?: string
   /** Parent doc's slug for tree-nested writing notes. Undefined for
@@ -710,7 +705,7 @@ export const useDocsStore = create<DocsState>()(
     }),
     {
       name: 'writer-tauri:docs',
-      version: 3,
+      version: 4,
       partialize: (s) => ({
         openSlugs: s.openSlugs,
         activeSlug: s.activeSlug,
@@ -727,7 +722,10 @@ export const useDocsStore = create<DocsState>()(
         // wiki:belief / wiki:entity / wiki:episode. Existing
         // 'daily' / 'writing' entries remain valid — also a no-op
         // bump, present for traceability.
-        if (version < 3) return persisted as DocsState
+        // v3 → v4: KnownDoc.type wiki branch widens to template
+        // literal `wiki:${string}` so the user can spawn custom
+        // wiki pages alongside the seeds. No data migration needed.
+        if (version < 4) return persisted as DocsState
         return persisted as DocsState
       },
     },
