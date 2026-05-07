@@ -11,6 +11,7 @@ import { MilkdownEditor } from '@/editor/MilkdownEditor'
 import { WikiView } from '@/views/WikiView'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { useDocsStore } from '@/state/docsStore'
+import { useIdleTrigger } from '@/hooks/useIdleTrigger'
 
 export function App() {
   const bootstrap = useDocsStore((s) => s.bootstrap)
@@ -22,6 +23,11 @@ export function App() {
   useEffect(() => {
     bootstrap()
   }, [bootstrap])
+
+  // Karpathy "Memories" idle pass — runs ingest in the background
+  // after the user has been quiet for `idleMinutes`. Mounted once
+  // here at the root so a single timer covers the whole session.
+  useIdleTrigger()
 
   const activeHandle = activeSlug ? handles[activeSlug] ?? null : null
   const activeStatus = activeSlug ? statusMap[activeSlug] ?? 'initializing' : 'initializing'
