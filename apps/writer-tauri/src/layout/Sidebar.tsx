@@ -10,8 +10,10 @@ import {
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
-import { DocList } from './DocList'
+import { DateTabs } from './DateTabs'
+import { WikiSection } from './WikiSection'
 import { ArchivedDocsPopover } from './ArchivedDocsPopover'
+import { IngestProposalCard } from './IngestProposalCard'
 import { useDocsStore } from '@/state/docsStore'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
@@ -193,7 +195,8 @@ export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
       </SidebarHeader>
 
       <SidebarContent className="pt-1">
-        <DocList />
+        <DateTabs />
+        <WikiSection />
         <SidebarMenu className="gap-0 px-2 pt-2">
           {NAV_ITEMS.map((item) => (
             <SidebarMenuItem key={item.url}>
@@ -213,6 +216,10 @@ export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
       </SidebarContent>
 
       <SidebarFooter>
+        {/* Karpathy Memories card — surfaces the queued ingest
+            proposals above the archive button so they're easy to
+            notice without crowding the doc tree above. */}
+        <IngestProposalCard />
         <SidebarMenu>
           <SidebarMenuItem>
             <ArchivedDocsPopover />
