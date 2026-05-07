@@ -32,15 +32,31 @@ import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useDocsStore } from '@/state/docsStore'
 import { Breadcrumb } from '@/editor/Breadcrumb'
+import type { CollabStatus } from '@/hooks/useCollabDoc'
 import { DocMenu } from './DocMenu'
 
 interface EditorHeaderProps {
   showSidebarTrigger: boolean
   editorView: EditorView | null
+  /** Collab status surfaced next to the breadcrumb. Connected docs
+   * render no label so a healthy connection reads as a clean header. */
+  collabStatus?: CollabStatus
 }
 
-export function EditorHeader({ showSidebarTrigger, editorView }: EditorHeaderProps) {
+const STATUS_LABEL: Record<CollabStatus, string | null> = {
+  initializing: 'Starting…',
+  connecting: 'Connecting…',
+  connected: null,
+  error: 'Offline',
+}
+
+export function EditorHeader({
+  showSidebarTrigger,
+  editorView,
+  collabStatus,
+}: EditorHeaderProps) {
   const activeSlug = useDocsStore((s) => s.activeSlug)
+  const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
   return (
     <div
       className="flex shrink-0 items-center border-b border-border bg-background"
@@ -56,8 +72,18 @@ export function EditorHeader({ showSidebarTrigger, editorView }: EditorHeaderPro
           <SidebarTrigger />
         </>
       )}
-      <div className="flex min-w-0 items-center pl-2 pr-1">
+      <div className="flex min-w-0 items-center gap-2 pl-2 pr-1">
         <Breadcrumb slug={activeSlug} />
+        {statusLabel && (
+          <span
+            className={cn(
+              'shrink-0 text-xs',
+              collabStatus === 'error' ? 'text-destructive' : 'text-muted-foreground',
+            )}
+          >
+            {statusLabel}
+          </span>
+        )}
       </div>
       <div data-tauri-drag-region className="h-full flex-1" />
       <div className="flex items-center gap-0.5 pr-2">

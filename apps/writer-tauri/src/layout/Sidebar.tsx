@@ -9,8 +9,10 @@ import {
   IconSparkles,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { cn } from '@/lib/utils'
-import { DateTabs } from './DateTabs'
+import { SidebarDateMenu } from './SidebarDateMenu'
+import { DayView } from './views/DayView'
+import { WeekView } from './views/WeekView'
+import { MonthView } from './views/MonthView'
 import { WikiSection } from './WikiSection'
 import { ArchivedDocsPopover } from './ArchivedDocsPopover'
 import { IngestProposalCard } from './IngestProposalCard'
@@ -108,26 +110,13 @@ function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
   )
 }
 
-interface AppSidebarProps {
-  /** Collab status surfaced as small text in the header — only rendered
-   * while the doc is mid-handshake or in error so a connected doc reads
-   * as a clean header. */
-  collabStatus?: 'initializing' | 'connecting' | 'connected' | 'error'
-}
-
-const STATUS_LABEL: Record<NonNullable<AppSidebarProps['collabStatus']>, string | null> = {
-  initializing: 'Starting…',
-  connecting: 'Connecting…',
-  connected: null,
-  error: 'Offline',
-}
-
-export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
+export function AppSidebar() {
   const { palette, setPalette } = useTheme()
   const { pathname } = useLocation()
   const connectOpen = useConnectDialog((s) => s.open)
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const { account, refresh, disconnect } = useClaudeAuth()
+  const sidebarTab = useDocsStore((s) => s.sidebarTab)
 
   const handleSignOut = useCallback(async () => {
     if (account.connected) {
@@ -135,7 +124,6 @@ export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
     }
   }, [account.connected, disconnect])
 
-  const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
   const openDaily = useDocsStore((s) => s.openDaily)
   const createChildNote = useDocsStore((s) => s.createChildNote)
   const navigate = useNavigate()
@@ -177,25 +165,20 @@ export function AppSidebar({ collabStatus }: AppSidebarProps = {}) {
       className="border-r"
     >
       <SidebarHeader
-        className="flex flex-row items-center gap-2 p-0 px-2"
+        className="flex flex-row items-center gap-1 p-0 px-2"
         style={{ height: 'var(--header-h)' }}
       >
         <div data-tauri-drag-region className="flex-1 h-full" />
-        {statusLabel && (
-          <span
-            className={cn(
-              'text-xs',
-              collabStatus === 'error' ? 'text-destructive' : 'text-muted-foreground',
-            )}
-          >
-            {statusLabel}
-          </span>
-        )}
+        <SidebarDateMenu />
         <SidebarTrigger />
       </SidebarHeader>
 
       <SidebarContent className="pt-1">
-        <DateTabs />
+        <div className="px-2 pt-1">
+          {sidebarTab === 'day' && <DayView />}
+          {sidebarTab === 'week' && <WeekView />}
+          {sidebarTab === 'month' && <MonthView />}
+        </div>
         <WikiSection />
         <SidebarMenu className="gap-0 px-2 pt-2">
           {NAV_ITEMS.map((item) => (

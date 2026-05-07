@@ -1,6 +1,6 @@
 // Wiki pages section for the sidebar — belief / entity / episode
 // docs and any user-defined wiki pages. Lives below the date-axis
-// view (DateTabs) because wiki content is agent-synthesized memory,
+// date view because wiki content is agent-synthesized memory,
 // not user-authored notes on the time spine; mixing them blurs the
 // write-ownership split (see isWikiDoc in docsStore).
 

@@ -66,12 +66,16 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
       style={{ '--sidebar-width': '220px' } as React.CSSProperties}
     >
       <CloseConfirmDialog />
-      <AppSidebar collabStatus={collabStatus} />
+      <AppSidebar />
       <SidebarInset className="overflow-hidden">
         <ResizablePanelGroup orientation="horizontal" className="h-full">
           <ResizablePanel defaultSize={75} minSize={30}>
             <div data-editor-panel className="relative flex h-full flex-col">
-              <EditorHeader showSidebarTrigger={!sidebarOpen} editorView={editorView ?? null} />
+              <EditorHeader
+                showSidebarTrigger={!sidebarOpen}
+                editorView={editorView ?? null}
+                collabStatus={collabStatus}
+              />
               <div
                 className="flex shrink-0 items-stretch bg-background px-2 shadow-[inset_0_-1px_0_var(--border)]"
                 style={{ height: 'var(--header-h)' }}
