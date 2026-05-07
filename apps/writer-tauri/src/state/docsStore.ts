@@ -97,6 +97,12 @@ interface DocsState {
   status: Record<string, CollabStatus>
   /** Set during bootstrap; turns to false when initial restore is done. */
   bootstrapping: boolean
+  /** Which sidebar date view is showing. Runtime-only — every session
+   * starts on 'day' so the app reads as "you're here, now" on launch. */
+  sidebarTab: 'day' | 'week' | 'month'
+  /** Month the Month view is currently showing (YYYY-MM). Runtime-only —
+   * the natural anchor on each launch is the current month. */
+  monthAnchor: string
 
   // Actions
   bootstrap: () => Promise<void>
@@ -140,6 +146,12 @@ interface DocsState {
   deleteForever: (slug: string) => Promise<void>
   /** Permanently delete every archived doc (sidecar + local state). */
   emptyArchive: () => Promise<void>
+  /** Switch the sidebar date view. */
+  setSidebarTab: (tab: 'day' | 'week' | 'month') => void
+  /** Set the Month view's anchor month (YYYY-MM). */
+  setMonthAnchor: (anchor: string) => void
+  /** Step the Month view's anchor by `delta` months (-1 / +1). */
+  shiftMonth: (delta: number) => void
 }
 
 async function buildHandle(
@@ -189,6 +201,8 @@ export const useDocsStore = create<DocsState>()(
       handles: {},
       status: {},
       bootstrapping: true,
+      sidebarTab: 'day',
+      monthAnchor: monthAnchorOf(todayLocalDate()),
 
       bootstrap: async () => {
         const today = todayLocalDate()
@@ -685,6 +699,13 @@ export const useDocsStore = create<DocsState>()(
         }))
       },
 
+      setSidebarTab: (tab) => set({ sidebarTab: tab }),
+
+      setMonthAnchor: (anchor) => set({ monthAnchor: anchor }),
+
+      shiftMonth: (delta) =>
+        set((s) => ({ monthAnchor: shiftMonthAnchor(s.monthAnchor, delta) })),
+
       emptyArchive: async () => {
         const archived = get().knownDocs.filter((d) => d.archivedAt)
         if (archived.length === 0) return
@@ -731,6 +752,23 @@ export const useDocsStore = create<DocsState>()(
     },
   ),
 )
+
+/** Extract the YYYY-MM anchor from a YYYY-MM-DD date string. */
+export function monthAnchorOf(date: string): string {
+  return date.slice(0, 7)
+}
+
+/** Step a YYYY-MM anchor by `delta` months (negative for past). */
+export function shiftMonthAnchor(anchor: string, delta: number): string {
+  const [yStr, mStr] = anchor.split('-')
+  const y = Number(yStr)
+  const m = Number(mStr) // 1-12
+  // JS Date math: month is 0-indexed and auto-rolls year boundaries.
+  const d = new Date(y, m - 1 + delta, 1)
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  return `${yyyy}-${mm}`
+}
 
 /** Compute the Monday-anchored start of the calendar week
  * containing `date` (YYYY-MM-DD). ISO-week convention. */
