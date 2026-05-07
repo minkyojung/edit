@@ -18,6 +18,10 @@ if (import.meta.env.DEV) {
     invoke,
     listen,
   }
+  // Side-effect import: registers window.__ingest so the ingest engine
+  // can be exercised from the dev console while we tune the prompt.
+  // Production builds skip this block entirely.
+  void import('./agent/ingest')
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
