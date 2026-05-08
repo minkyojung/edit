@@ -22,6 +22,21 @@
 import { useDocsStore } from '@/state/docsStore'
 import { useDocTitle } from './useDocTitle'
 
+const DAILY_LABEL_FMT = new Intl.DateTimeFormat('en-US', {
+  weekday: 'long',
+  month: 'long',
+  day: 'numeric',
+})
+
+function formatDailyLabel(date: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  if (!m) return date
+  const [, y, mo, d] = m
+  const dt = new Date(Number(y), Number(mo) - 1, Number(d))
+  if (Number.isNaN(dt.getTime())) return date
+  return DAILY_LABEL_FMT.format(dt)
+}
+
 export function useDocLabel(slug: string | null): string {
   const handle = useDocsStore((s) => (slug ? s.handles[slug] : undefined))
   const known = useDocsStore((s) =>
@@ -29,7 +44,7 @@ export function useDocLabel(slug: string | null): string {
   )
   const { title } = useDocTitle(handle?.ydoc ?? null)
 
-  if (known?.type === 'daily' && known.date) return known.date
+  if (known?.type === 'daily' && known.date) return formatDailyLabel(known.date)
   if (known?.type?.startsWith('wiki:')) {
     const live = title.trim()
     if (live) return live
