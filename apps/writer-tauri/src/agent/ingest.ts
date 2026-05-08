@@ -18,7 +18,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useDocsStore } from '@/state/docsStore'
-import { readWikiContext } from '@/state/wikiService'
+import {
+  readWikiContext,
+  readConventions,
+  ensureConventionsWikiSlug,
+} from '@/state/wikiService'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
 const INGEST_MODEL = 'claude-haiku-4-5-20251001'
@@ -67,23 +71,21 @@ export interface IngestResult {
   malformed: boolean
 }
 
-const SYSTEM_PROMPT = `You maintain a personal wiki on the user's behalf. The user just wrote a note. Your job: identify any information in the note that should be reflected in the wiki, and propose append-only edits to the relevant wiki pages.
+/** Static, system-owned rules that never move into the user's
+ * conventions page: safety invariants (append-only), the wire
+ * format (JSON shape, target-id semantics, anchor field), and the
+ * job description. Stylistic / shape conventions are NOT here —
+ * those live in the user's `wiki:conventions` page and get
+ * prepended to this prompt at call time, so the user can co-evolve
+ * them without touching code. */
+const SYSTEM_PROMPT_STATIC = `You maintain a personal wiki on the user's behalf. The user just wrote a note. Your job: identify any information in the note that should be reflected in the wiki, and propose append-only edits to the relevant wiki pages.
 
-Hard rules:
+Invariants (do not violate):
 - APPEND ONLY. Never propose modifying or deleting existing lines.
-- Only propose edits when the note contains genuinely new, durable information (people, decisions, facts about the user, project state). Skip transient mood, weather, small talk.
-- Each proposal targets ONE wiki page by its type id (e.g. "wiki:entity"). Use the "Available wiki pages" list below — do not invent targets.
-- Be concise. Each proposal's "content" is one bullet line or short paragraph — not a wall of text.
-- If nothing in the note merits a wiki update, return an empty proposals array.
+- Each proposal "target" is the wiki page's full \`type\` id (e.g. "wiki:custom-7nt..."). Take it verbatim from the WIKI block headers — do not invent ids.
+- Each WIKI block header looks like \`[<type-id> — <title> — <shape>]\`. The shape label is a hint detected from the page body.
+- Be concise. Each proposal's "content" is one bullet line or short block — not a wall of text.
 - Always include a log entry summarizing what you did (or "nothing notable today" if proposals is empty).
-
-Each wiki page header carries a shape label, e.g. "[USER PEOPLE — entity]". Match the page's existing convention so it stays scannable:
-- entity: page is organized as "### Name" blocks with bullets underneath.
-    * New subject  → content is the full block, e.g. "### Mike\\n- AI researcher\\n- First met 2026-05-07".
-    * Existing subject → content is bullet(s) only, e.g. "- Direct report".
-- list: page is flat bullets, no H3 sections. Content is one or more bullets ("- ..."). Never introduce "### " here.
-- timeline: append-only date log. Content follows "## [YYYY-MM-DD] kind | summary" exactly.
-- prose / empty: page hasn't settled into a shape yet. Pick the most natural shape for the content type (entity for people/things, list for preferences, etc.) and start it.
 
 When the new content belongs *after* a specific existing line (e.g. a new bullet under "Sarah", or a new date entry after the last one), set "anchorAfterText" to that exact line, copied verbatim from the page body. Omit anchorAfterText when the content stands on its own (new "### Name" block, first content on an empty page, etc.).
 
@@ -91,41 +93,43 @@ Output strictly this JSON shape, with no surrounding prose, code fences, or comm
 
 {
   "proposals": [
-    { "target": "wiki:custom-people", "content": "- Direct report", "anchorAfterText": "- AI team", "rationale": "added detail to existing entity" }
+    { "target": "wiki:custom-7ntdvj41", "content": "- Direct report", "anchorAfterText": "- AI team", "rationale": "added detail to existing entity" }
   ],
   "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role"
 }
 
 If proposals is empty, logEntry should still be a single line summarizing the ingest pass (e.g. "## [2026-05-07] ingest | daily/2026-05-07: nothing notable").`
 
-interface AvailableTarget {
-  type: string
-  label: string
+/** Compose the full system prompt. The user-editable conventions
+ * page (Karpathy's CLAUDE.md pattern) is prepended so it shadows
+ * any stylistic defaults — the user always has the last word on
+ * how their wiki should grow. The static rules follow because they
+ * encode wire-format invariants the model must not ignore even if
+ * the user wrote something contradictory in conventions. */
+function composeSystemPrompt(conventions: string): string {
+  const trimmed = conventions.trim()
+  if (!trimmed) return SYSTEM_PROMPT_STATIC
+  return `User-defined wiki conventions (read carefully — these reflect how the user wants their wiki to grow):\n\n${trimmed}\n\n---\n\n${SYSTEM_PROMPT_STATIC}`
 }
 
-/** Build the user-facing prompt body: today's date, the available
- * wiki targets, the current wiki snapshot, and the new note text. */
+/** Build the user-facing prompt body: today's date, the wiki context
+ * (each page as a `[type — title — shape]` block with body), and the
+ * new note text. The wiki block carries both "what targets exist"
+ * and "what's already in each" — see readWikiContext for the format. */
 function buildPrompt(args: {
   date: string
   noteLabel: string
   noteMarkdown: string
-  availableTargets: AvailableTarget[]
   wikiSnapshot: string
 }): string {
-  const targets = args.availableTargets
-    .map((t) => `- ${t.type} (${t.label})`)
-    .join('\n')
-  const snapshot = args.wikiSnapshot.trim().length
+  const wiki = args.wikiSnapshot.trim().length
     ? args.wikiSnapshot
-    : '(wiki is empty)'
+    : '(no wiki pages yet — propose targets only if a clearly-named one is needed)'
   return [
     `DATE: ${args.date}`,
     '',
-    'AVAILABLE WIKI PAGES:',
-    targets,
-    '',
-    'CURRENT WIKI SNAPSHOT:',
-    snapshot,
+    'WIKI:',
+    wiki,
     '',
     `NEW NOTE (${args.noteLabel}):`,
     args.noteMarkdown,
@@ -324,20 +328,6 @@ function awaitChatRun(runId: string): Promise<string> {
   })
 }
 
-/** List every wiki:* doc currently in the catalog so the prompt
- * knows which targets are valid. The label is the user-visible name
- * the LLM should refer to (so it picks the right one out of a list
- * of opaque custom-<id> types). */
-function listAvailableTargets(): AvailableTarget[] {
-  return useDocsStore
-    .getState()
-    .knownDocs.filter((d) => d.type.startsWith('wiki:') && !d.archivedAt)
-    .map((d) => ({
-      type: d.type,
-      label: d.title?.trim() || d.type.replace(/^wiki:/, ''),
-    }))
-}
-
 /** Run one ingest pass against the given note slug. Reads the note,
  * snapshots the wiki, calls Haiku, returns proposals (no apply).
  * Throws on transport / SDK errors. Returns malformed=true when the
@@ -366,7 +356,12 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     }
   }
   const wikiSnapshot = await readWikiContext()
-  const availableTargets = listAvailableTargets()
+  // Seed the conventions page on first need so the user has
+  // something to edit, then read its body to prepend onto the
+  // system prompt. Failures degrade gracefully — empty conventions
+  // means the static rules take over alone.
+  await ensureConventionsWikiSlug()
+  const conventions = await readConventions()
   const noteLabel =
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
@@ -376,7 +371,6 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     date: todayLocalDate(),
     noteLabel,
     noteMarkdown,
-    availableTargets,
     wikiSnapshot,
   })
 
@@ -387,7 +381,7 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     args: {
       runId,
       model: INGEST_MODEL,
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: composeSystemPrompt(conventions),
       prompt,
       relayTools: [],
       effort: 'low',

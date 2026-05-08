@@ -29,10 +29,41 @@ const LOG_TYPE = 'wiki:log' as const
  * slowly bloat every prompt. */
 const LOG_TAIL_LINES = 30
 
+/** User-editable conventions page. Karpathy's CLAUDE.md pattern:
+ * the rules for how the wiki is organized live in the wiki itself,
+ * the user co-evolves them, and ingest prepends the page body to
+ * its system prompt every call. We special-case it the same way as
+ * `wiki:log` — known type id + lazy created on first need + filtered
+ * out of the regular catalog snapshot (it's an instruction
+ * surface, not a content surface). */
+const CONVENTIONS_TYPE = 'wiki:conventions' as const
+
+/** Default body seeded into the conventions page on first creation.
+ * The user is expected to edit this freely — that's the whole
+ * point. We pick a minimal starting set so the LLM has *some*
+ * guidance even before the user customizes anything. */
+const DEFAULT_CONVENTIONS = `## Conventions
+
+These are the rules I follow when adding to my wiki. Edit this page to teach the LLM how my wiki should grow.
+
+### Page shapes
+
+- **entity** — pages of distinct subjects (people, orgs, tools). Use \`### Name\` headings with bullets underneath. New subject → write the full block. Existing subject → bullet only.
+- **list** — flat bullets, no \`###\` headings. One bullet per item.
+- **timeline** — append-only date log. Lines look like \`## [YYYY-MM-DD] kind | short summary\`.
+- **prose** — free-form paragraphs.
+
+### How to decide
+
+- Look at each page's existing body. Match its shape. Don't introduce a new shape mid-page.
+- If a fact doesn't clearly belong on any existing page, leave \`proposals\` empty and note it in the \`logEntry\` so I can decide where to put it later.
+- Skip transient stuff (mood, weather, small talk). Only durable info belongs in the wiki.
+`
+
 /** Ensure the wiki:log doc exists. Lazy: created on first call.
  * Returns the slug, or null if proof-server is unreachable. The
- * timeline is the only "system-owned" wiki page; everything else is
- * user-created. */
+ * timeline is one of two "system-owned" wiki pages (the other is
+ * conventions); everything else is user-created. */
 export async function ensureLogWikiSlug(): Promise<string | null> {
   const existing = useDocsStore
     .getState()
@@ -48,6 +79,41 @@ export async function ensureLogWikiSlug(): Promise<string | null> {
     console.error('[wiki] ensureLogWikiSlug failed', err)
     return null
   }
+}
+
+/** Ensure the wiki:conventions doc exists, seeded with default
+ * rules on first creation. Lazy: called from runIngest right
+ * before the LLM call. Returns the slug, or null on failure (in
+ * which case ingest falls back to the static system prompt only). */
+export async function ensureConventionsWikiSlug(): Promise<string | null> {
+  const existing = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.type === CONVENTIONS_TYPE && !d.archivedAt)
+  if (existing) return existing.slug
+  try {
+    const created = await proofClient.createDoc('Conventions', DEFAULT_CONVENTIONS)
+    const meta: KnownDoc = {
+      slug: created.slug,
+      type: CONVENTIONS_TYPE,
+      title: 'Conventions',
+    }
+    useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+    return created.slug
+  } catch (err) {
+    console.error('[wiki] ensureConventionsWikiSlug failed', err)
+    return null
+  }
+}
+
+/** Read the user's conventions page body. Returns '' when the page
+ * doesn't exist or fetch fails — caller should treat that as "use
+ * the static fallback rules in the system prompt". */
+export async function readConventions(): Promise<string> {
+  const doc = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.type === CONVENTIONS_TYPE && !d.archivedAt)
+  if (!doc) return ''
+  return readWikiMarkdown(doc.slug)
 }
 
 /** No-op placeholder kept so the docsStore bootstrap call site
@@ -114,12 +180,19 @@ async function readWikiMarkdown(slug: string | null): Promise<string> {
   }
 }
 
-/** Read every wiki:* page in the catalog and return a single
- * cacheable context block, already shaped for the chat system
- * prompt. Each non-empty section is wrapped with a heading; empty
- * sections are skipped entirely so the prefix stays compact.
- * Returns '' when no wiki content exists yet — chat assembly takes
- * the empty path in that case.
+/** Read every wiki:* page in the catalog and return one cacheable
+ * context block: each page becomes a `[type — title — shape]` block
+ * followed by its body. Empty pages emit `(empty)` so the LLM knows
+ * the page exists but has no content to anchor on yet — important
+ * for routing decisions ("does this fact belong here? the page is
+ * empty, so the only signal is the title").
+ *
+ * The block header carries the wiki page's `type` id directly, so
+ * the LLM has one place to read both "what targets exist" and
+ * "what's already in each". This used to be split across an
+ * AVAILABLE-PAGES list and a separate body snapshot; merging them
+ * removes a label-vs-id matching step the model had to do
+ * implicitly.
  *
  * Order: catalog order, with `wiki:log` (the agent's append-only
  * timeline) pinned to the very end. Putting the timeline last means
@@ -129,7 +202,15 @@ async function readWikiMarkdown(slug: string | null): Promise<string> {
 export async function readWikiContext(): Promise<string> {
   const docs = useDocsStore
     .getState()
-    .knownDocs.filter((d) => d.type.startsWith('wiki:') && !d.archivedAt)
+    .knownDocs.filter(
+      (d) =>
+        d.type.startsWith('wiki:') &&
+        !d.archivedAt &&
+        // The conventions page is fed to the LLM separately as
+        // system-prompt context, not as a target the LLM can route
+        // proposals to. Excluding it here keeps the catalog clean.
+        d.type !== CONVENTIONS_TYPE,
+    )
 
   const head = docs.filter((d) => d.type !== LOG_TYPE)
   const tail = docs.filter((d) => d.type === LOG_TYPE)
@@ -137,8 +218,13 @@ export async function readWikiContext(): Promise<string> {
   const sections = await Promise.all(
     [...head, ...tail].map(async (doc) => {
       const md = await readWikiMarkdown(doc.slug)
-      if (!md) return ''
-      const heading = headingFor(doc)
+      const title = (doc.title ?? '').trim() || doc.type.replace(/^wiki:/, '')
+      if (!md) {
+        // Empty pages still appear in the catalog so the LLM can
+        // route to them by name — but we mark them empty rather
+        // than hallucinating content.
+        return `[${doc.type} — ${title} — empty]\n(empty)`
+      }
       const body = doc.type === LOG_TYPE ? takeLastLines(md, LOG_TAIL_LINES) : md
       // Shape hint tells the ingest LLM which convention to follow when
       // proposing additions — entity pages get `### Name` blocks, list
@@ -146,7 +232,7 @@ export async function readWikiContext(): Promise<string> {
       // Detected from the live body so the page can drift over time
       // and the next ingest adapts automatically.
       const shape = detectShape(body)
-      return `[USER ${heading} — ${shape}]\n${body}`
+      return `[${doc.type} — ${title} — ${shape}]\n${body}`
     }),
   )
   return sections.filter(Boolean).join('\n\n')
@@ -168,13 +254,3 @@ function takeLastLines(md: string, n: number): string {
   return kept.join('\n')
 }
 
-/** Heading used in the chat system prompt for a custom wiki page.
- * Uses the user-set title uppercased, falling back to a generic
- * label so an unnamed page still parses cleanly. Stripping non-
- * alphanumerics keeps the heading visually consistent with seed
- * headings (BELIEFS / ENTITIES / EPISODES). */
-function headingFor(doc: KnownDoc): string {
-  const raw = (doc.title ?? '').trim()
-  if (!raw) return 'WIKI'
-  return raw.toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ').trim() || 'WIKI'
-}
