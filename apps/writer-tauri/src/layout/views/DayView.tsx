@@ -92,25 +92,23 @@ export function DayView() {
   }
 
   const dateLabel = formatDayLabel(dayAnchor)
-  const isAnchorActive = anchoredDaily?.slug === activeSlug
 
   return (
     <div>
       <div
         className={cn(
           'group flex items-center gap-0.5 pr-1 transition-colors',
-          isAnchorActive
-            ? 'bg-accent text-foreground'
-            : anchoredDaily
-              ? 'text-foreground hover:bg-accent/50'
-              : 'text-muted-foreground/70 hover:bg-accent/50 hover:text-foreground',
+          anchoredDaily
+            ? 'text-foreground hover:bg-accent/50'
+            : 'text-muted-foreground/70 hover:bg-accent/50 hover:text-foreground',
         )}
+        style={{ height: 'var(--header-h)' }}
       >
         <button
           type="button"
           onClick={onLabelClick}
           className={cn(
-            'flex min-w-0 flex-1 items-center px-2 py-1.5 text-left text-[13px] font-medium',
+            'flex min-w-0 flex-1 items-center self-stretch px-2 text-left text-[13px] font-medium',
             'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
           )}
         >
@@ -143,13 +141,18 @@ export function DayView() {
       </div>
 
       {anchoredDaily && children.length > 0 && (
-        <ul className="ml-2 flex flex-col gap-0.5 border-l border-border pt-0.5 pl-1.5">
+        <ul className="relative flex flex-col gap-0.5 pt-0.5">
+          <span
+            aria-hidden
+            className="absolute left-2 top-0.5 bottom-0 w-px bg-border"
+          />
           {children.map((child) => (
             <DocTreeNode
               key={child.slug}
               doc={child}
               childrenByParent={childrenByParent}
               activeSlug={activeSlug}
+              depth={1}
               onSelect={(slug) => {
                 setActive(slug)
                 ensureNotesRoute()

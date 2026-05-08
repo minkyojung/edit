@@ -109,13 +109,18 @@ export function WeekView() {
               }}
             />
             {isExpanded && children.length > 0 && (
-              <ul className="ml-5 flex flex-col gap-0.5 border-l border-border pt-0.5 pl-1.5">
+              <ul className="relative flex flex-col gap-0.5 pt-0.5">
+                <span
+                  aria-hidden
+                  className="absolute left-2 top-0.5 bottom-0 w-px bg-border"
+                />
                 {children.map((child) => (
                   <DocTreeNode
                     key={child.slug}
                     doc={child}
                     childrenByParent={childrenByParent}
                     activeSlug={activeSlug}
+                    depth={1}
                     onSelect={(slug) => {
                       setActive(slug)
                       ensureNotesRoute()

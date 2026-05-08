@@ -187,8 +187,8 @@ export function AppSidebar() {
         <SidebarTrigger />
       </SidebarHeader>
 
-      <SidebarContent className="pt-1">
-        <div className="pt-1">
+      <SidebarContent>
+        <div>
           {sidebarTab === 'day' && <DayView />}
           {sidebarTab === 'week' && <WeekView />}
           {sidebarTab === 'month' && <MonthView />}
@@ -196,7 +196,7 @@ export function AppSidebar() {
         <WikiSection />
       </SidebarContent>
 
-      <SidebarFooter>
+      <SidebarFooter className="px-0">
         {/* Karpathy Memories card — surfaces the queued ingest
             proposals above the archive button so they're easy to
             notice without crowding the doc tree above. */}

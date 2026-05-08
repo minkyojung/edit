@@ -54,7 +54,7 @@ export function WikiSection() {
           <IconPlus size={13} stroke={1.75} />
         </button>
       </div>
-      <ul className="flex flex-col gap-0.5">
+      <ul className="flex flex-col">
         {wikiDocs.map((doc) => (
           <li key={doc.slug} data-slug={doc.slug}>
             <WikiRow

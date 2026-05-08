@@ -25,15 +25,25 @@ interface DocTreeNodeProps {
    * once per render so each node lookup is O(1). */
   childrenByParent: Map<string, KnownDoc[]>
   activeSlug: string | null
+  /** Tree depth from the topmost row in the wrapping list. Used to
+   * indent the row content while keeping each row full-width so the
+   * hover background bleeds wall-to-wall. The vertical guide line is
+   * drawn separately in the parent <ul> at `depth*INDENT_PX + LINE_PX`. */
+  depth: number
   onSelect: (slug: string) => void
   onAddChild: (parentSlug: string) => void
   onArchive: (slug: string) => void
 }
 
+const INDENT_PX = 14
+const LINE_PX = 8
+const ROW_BASE_PAD_LEFT = 6
+
 export function DocTreeNode({
   doc,
   childrenByParent,
   activeSlug,
+  depth,
   onSelect,
   onAddChild,
   onArchive,
@@ -50,11 +60,12 @@ export function DocTreeNode({
     <li>
       <div
         className={cn(
-          'group flex w-full items-center gap-1 px-1.5 py-1.5 text-[13px] font-medium transition-colors',
+          'group flex w-full items-center gap-1 pr-1.5 py-1.5 text-[13px] font-medium transition-colors',
           isActive
             ? 'bg-accent text-foreground'
             : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
         )}
+        style={{ paddingLeft: `${depth * INDENT_PX + ROW_BASE_PAD_LEFT}px` }}
       >
         {hasChildren ? (
           <button
@@ -134,13 +145,22 @@ export function DocTreeNode({
       </div>
 
       {isExpanded && hasChildren && (
-        <ul className="ml-3.5 flex flex-col gap-0.5 border-l border-border pt-0.5">
+        <ul className="relative flex flex-col gap-0.5 pt-0.5">
+          {/* Vertical guide line for this node's children. Drawn as an
+              absolute span so each child <li> can keep full sidebar
+              width and its hover background bleeds wall-to-wall. */}
+          <span
+            aria-hidden
+            className="absolute top-0.5 bottom-0 w-px bg-border"
+            style={{ left: `${depth * INDENT_PX + LINE_PX}px` }}
+          />
           {children.map((child) => (
             <DocTreeNode
               key={child.slug}
               doc={child}
               childrenByParent={childrenByParent}
               activeSlug={activeSlug}
+              depth={depth + 1}
               onSelect={onSelect}
               onAddChild={onAddChild}
               onArchive={onArchive}
