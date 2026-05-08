@@ -6,10 +6,11 @@
 
 import { useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { IconFileDescription } from '@tabler/icons-react'
+import { IconFileDescription, IconPlus } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { useDocsStore, isWikiDoc, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
+import { createCustomWikiPage } from '@/state/wikiService'
 
 export function WikiSection() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
@@ -23,16 +24,35 @@ export function WikiSection() {
     [knownDocs],
   )
 
-  if (wikiDocs.length === 0) return null
-
   const ensureNotesRoute = () => {
     if (!pathname.startsWith('/notes')) navigate('/notes')
   }
 
+  const handleNew = async () => {
+    // Untitled by design: the new doc gets a title input the user
+    // fills in immediately. Notion-style — no modal, no prompt, the
+    // empty title field IS the prompt. Custom-* slug ensures it
+    // never collides with a seed wiki type.
+    const slug = await createCustomWikiPage('Untitled')
+    if (!slug) return
+    setActive(slug)
+    ensureNotesRoute()
+  }
+
   return (
     <div className="px-2 pt-3">
-      <div className="px-2 pb-1 text-[13px] font-medium text-muted-foreground">
-        Wiki
+      <div className="flex items-center justify-between px-2 pb-1">
+        <span className="text-[13px] font-medium text-muted-foreground">
+          Wiki
+        </span>
+        <button
+          type="button"
+          onClick={handleNew}
+          aria-label="New wiki page"
+          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          <IconPlus size={13} stroke={1.75} />
+        </button>
       </div>
       <ul className="flex flex-col gap-0.5">
         {wikiDocs.map((doc) => (

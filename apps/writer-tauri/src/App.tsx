@@ -8,7 +8,6 @@ import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { MarkPopoverLayer } from '@/components/agent/MarkPopoverLayer'
 import { AppShell } from '@/layout/AppShell'
 import { MilkdownEditor } from '@/editor/MilkdownEditor'
-import { WikiView } from '@/views/WikiView'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
@@ -74,7 +73,6 @@ export function App() {
                     />
                   }
                 />
-                <Route path="/wiki" element={<WikiView />} />
               </Routes>
             </AppShell>
             <MarkPopoverLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />

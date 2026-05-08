@@ -1,7 +1,6 @@
 import { useCallback, useEffect } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
-  IconBooks,
   IconSettings,
   IconFilter,
   IconSelector,
@@ -72,10 +71,6 @@ type PaletteOption = {
   label: string
   swatch: { bg: string; fg: string; accent: string; border: string }
 }
-
-const NAV_ITEMS = [
-  { title: 'Wiki', url: '/wiki', icon: IconBooks },
-] as const
 
 const PALETTE_OPTIONS: PaletteOption[] = [
   {
@@ -188,22 +183,6 @@ export function AppSidebar() {
           {sidebarTab === 'month' && <MonthView />}
         </div>
         <WikiSection />
-        <SidebarMenu className="gap-0 px-2 pt-2">
-          {NAV_ITEMS.map((item) => (
-            <SidebarMenuItem key={item.url}>
-              <SidebarMenuButton
-                asChild
-                isActive={pathname.startsWith(item.url)}
-                className="h-auto py-2 text-[13px] font-medium"
-              >
-                <Link to={item.url}>
-                  <item.icon size={16} stroke={1.5} />
-                  <span>{item.title}</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
       </SidebarContent>
 
       <SidebarFooter>
