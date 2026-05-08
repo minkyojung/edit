@@ -59,12 +59,8 @@ import {
 } from '@/chat/utils/errorMessage'
 import { InlineCard, InlineCardFooter } from '@/chat/ui/InlineCard'
 import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
-import { StepStart } from '@/chat/parts/StepStart'
-import { TextPart as TextPartView } from '@/chat/parts/TextPart'
-import { ReasoningPart as ReasoningPartView, ThinkingPanel } from '@/chat/parts/ReasoningPart'
-import { ToolPart as ToolPartView } from '@/chat/parts/ToolPart'
-import { ProposeChangePart as ProposeChangePartView } from '@/chat/parts/ProposeChangePart'
-import { PROPOSE_CHANGE_TOOL } from '@/chat/parts/proposeChangeTool'
+import { ThinkingPanel } from '@/chat/parts/ReasoningPart'
+import { PartList } from '@/chat/parts/PartList'
 import { ActivityStatus, activityLabel } from '@/chat/parts/ActivityStatus'
 
 /** Parse a submitted prompt string for a leading slash invocation.
@@ -1014,33 +1010,6 @@ function RegenerateButton({ onClick }: { onClick: () => void }) {
     >
       <IconRefresh size={11} />
     </button>
-  )
-}
-
-/** Walks an assistant turn's timeline. Each part type maps to its own
- * sub-component; unknown types fall through to a debug pill so coverage
- * gaps stay visible during development. */
-function PartList({ parts, isStreaming }: { parts: MessagePart[]; isStreaming: boolean }) {
-  return (
-    <>
-      {parts.map((part) => {
-        switch (part.type) {
-          case 'text':
-            return <TextPartView key={part.id} part={part} isStreaming={isStreaming} />
-          case 'reasoning':
-            return <ReasoningPartView key={part.id} part={part} isStreaming={isStreaming} />
-          case 'tool':
-            // Built-in MCP tool: render with a domain-aware preview instead
-            // of the generic JSON dump.
-            if (part.toolName === PROPOSE_CHANGE_TOOL) {
-              return <ProposeChangePartView key={part.id} part={part} />
-            }
-            return <ToolPartView key={part.id} part={part} />
-          case 'step-start':
-            return <StepStart key={part.id} />
-        }
-      })}
-    </>
   )
 }
 
