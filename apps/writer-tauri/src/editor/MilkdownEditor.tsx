@@ -10,6 +10,7 @@ import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
 import { createMarkDecoPlugin } from './markDecoPlugin'
 import { createMarkCleanupPlugin } from './markCleanupPlugin'
 import { createMarkClickPlugin } from './markClickPlugin'
+import { createMarkHoverPlugin } from './markHoverPlugin'
 import { createDocVersionPlugin } from './docVersionPlugin'
 import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
@@ -113,6 +114,37 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     }
   }, [pmView, handle, isDaily, knownDoc?.date])
 
+  // Seed the per-doc Y.Text('title') from the catalog title on
+  // first sync when it's still empty. proofClient.createDoc takes a
+  // title argument and stores it in the server's metadata column,
+  // but it doesn't write into the ydoc's title stream — so the
+  // first time the user opens a freshly-created wiki page the
+  // header input is blank ("Untitled" placeholder) even though the
+  // sidebar already shows the right name. One-shot transactional
+  // insert here keeps both surfaces consistent without changing
+  // the createDoc protocol. Daily entries skip this — they don't
+  // expose the title input.
+  useEffect(() => {
+    if (!handle || isDaily) return
+    const seed = knownDoc?.title?.trim()
+    if (!seed) return
+    const ydoc = handle.ydoc
+    const provider = handle.provider
+    let ran = false
+    const run = () => {
+      if (ran) return
+      ran = true
+      const ytext = ydoc.getText('title')
+      if (ytext.length > 0) return
+      ydoc.transact(() => ytext.insert(0, seed))
+    }
+    if (provider.isSynced) run()
+    else provider.on('synced', run)
+    return () => {
+      provider.off('synced', run)
+    }
+  }, [handle, isDaily, knownDoc?.title])
+
   // Bridge between the wikilink-palette plugin (lives inside the
   // Milkdown editor instance) and the React palette popup. The
   // plugin emits state via a window-scoped CustomEvent, the React
@@ -146,6 +178,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(createMarkDecoPlugin())
       .use(createMarkCleanupPlugin(ydoc))
       .use(createMarkClickPlugin())
+      .use(createMarkHoverPlugin())
       .use(createDocVersionPlugin())
       .use(createSelectionPlugin(setSelection))
       .use(createFrozenSelectionPlugin())
