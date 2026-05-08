@@ -34,17 +34,71 @@ function classForMark(typeName: string, kind: unknown): string | null {
 
 function buildDecos(doc: Node): DecorationSet {
   const decos: Decoration[] = []
+
+  // A single proofSuggestion mark can span multiple text nodes (the schema
+  // is `spanning: true`). To avoid emitting one ghost per fragment, we
+  // first compute the max `to` per markId, then emit exactly one widget
+  // anchored at the end of the last fragment.
+  const lastTo = new Map<string, number>()
+  doc.descendants((node, pos) => {
+    if (!node.isText) return
+    for (const mark of node.marks) {
+      if (mark.type.name !== 'proofSuggestion') continue
+      const id = mark.attrs.id
+      if (typeof id !== 'string') continue
+      const to = pos + node.nodeSize
+      const cur = lastTo.get(id)
+      if (cur === undefined || to > cur) lastTo.set(id, to)
+    }
+  })
+
+  const ghostEmitted = new Set<string>()
   doc.descendants((node, pos) => {
     if (!node.isText) return
     for (const mark of node.marks) {
       const className = classForMark(mark.type.name, mark.attrs.kind)
-      if (!className) continue
-      decos.push(
-        Decoration.inline(pos, pos + node.nodeSize, {
-          class: className,
-          'data-mark-id': mark.attrs.id ?? '',
-        }),
-      )
+      if (className) {
+        decos.push(
+          Decoration.inline(pos, pos + node.nodeSize, {
+            class: className,
+            'data-mark-id': mark.attrs.id ?? '',
+          }),
+        )
+      }
+
+      if (mark.type.name === 'proofSuggestion') {
+        const id = mark.attrs.id
+        const kind = mark.attrs.kind
+        const content = mark.attrs.content
+        if (
+          typeof id === 'string' &&
+          (kind === 'replace' || kind === 'insert') &&
+          typeof content === 'string' &&
+          content.length > 0 &&
+          !ghostEmitted.has(id)
+        ) {
+          const anchorPos = lastTo.get(id) ?? pos + node.nodeSize
+          decos.push(
+            Decoration.widget(
+              anchorPos,
+              () => {
+                const span = document.createElement('span')
+                span.className = `mark-ghost mark-ghost--${kind}`
+                span.dataset.markId = id
+                span.contentEditable = 'false'
+                span.textContent = content
+                return span
+              },
+              {
+                side: 1,
+                ignoreSelection: true,
+                key: `ghost:${id}`,
+              },
+            ),
+          )
+          ghostEmitted.add(id)
+        }
+      }
     }
   })
   return DecorationSet.create(doc, decos)

@@ -1,7 +1,7 @@
 // Tiny doc-revision broadcaster.
 //
 // React components that need to derive state from the live ProseMirror doc
-// (e.g. MarkPopover's context preview) subscribe via usePmDocVersion. The
+// (e.g. UnlinkedNotes' link scan) subscribe via usePmDocVersion. The
 // plugin bumps the version on every doc-changing transaction; subscribers
 // re-read the doc on the next render.
 //
