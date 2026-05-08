@@ -22,7 +22,7 @@ import { persist } from 'zustand/middleware'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { proofClient, waitUntilReady } from '@/lib/proofClient'
-import { todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
+import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
@@ -97,6 +97,10 @@ interface DocsState {
   /** Month the Month view is currently showing (YYYY-MM). Runtime-only —
    * the natural anchor on each launch is the current month. */
   monthAnchor: string
+  /** Date the Day view is currently showing (YYYY-MM-DD). Runtime-only —
+   * resets to today on each launch so the app reads as "you're here, now"
+   * regardless of where the user wandered last session. */
+  dayAnchor: string
 
   // Actions
   bootstrap: () => Promise<void>
@@ -141,6 +145,10 @@ interface DocsState {
   setMonthAnchor: (anchor: string) => void
   /** Step the Month view's anchor by `delta` months (-1 / +1). */
   shiftMonth: (delta: number) => void
+  /** Set the Day view's anchor date (YYYY-MM-DD). */
+  setDayAnchor: (anchor: string) => void
+  /** Step the Day view's anchor by `delta` days (-1 / +1). */
+  shiftDay: (delta: number) => void
 }
 
 async function buildHandle(
@@ -191,6 +199,7 @@ export const useDocsStore = create<DocsState>()(
       bootstrapping: true,
       sidebarTab: 'day',
       monthAnchor: monthAnchorOf(todayLocalDate()),
+      dayAnchor: todayLocalDate(),
 
       bootstrap: async () => {
         const today = todayLocalDate()
@@ -663,6 +672,11 @@ export const useDocsStore = create<DocsState>()(
       shiftMonth: (delta) =>
         set((s) => ({ monthAnchor: shiftMonthAnchor(s.monthAnchor, delta) })),
 
+      setDayAnchor: (anchor) => set({ dayAnchor: anchor }),
+
+      shiftDay: (delta) =>
+        set((s) => ({ dayAnchor: shiftDayAnchor(s.dayAnchor, delta) })),
+
       emptyArchive: async () => {
         const archived = get().knownDocs.filter((d) => d.archivedAt)
         if (archived.length === 0) return
@@ -722,6 +736,15 @@ export const useDocsStore = create<DocsState>()(
 /** Extract the YYYY-MM anchor from a YYYY-MM-DD date string. */
 export function monthAnchorOf(date: string): string {
   return date.slice(0, 7)
+}
+
+/** Step a YYYY-MM-DD date by `delta` days (negative for past). Mirrors
+ * shiftMonthAnchor — UTC-free local-time arithmetic so day boundaries
+ * follow the user's wall clock. */
+export function shiftDayAnchor(date: string, delta: number): string {
+  const d = new Date(date)
+  d.setDate(d.getDate() + delta)
+  return formatLocalDate(d)
 }
 
 /** Step a YYYY-MM anchor by `delta` months (negative for past). */

@@ -137,7 +137,18 @@ export function AppSidebar() {
         e.preventDefault()
         // ⌘T jumps to today and lands the user on Day view so the
         // shortcut reads as "take me to today's work surface,"
-        // regardless of which date view they had open.
+        // regardless of which date view they had open. Reset the Day
+        // view's anchor too so a stepped-away anchor doesn't linger
+        // after a "go home" gesture.
+        const today = useDocsStore.getState().dayAnchor
+        const realToday = new Date()
+        const yyyy = realToday.getFullYear()
+        const mm = String(realToday.getMonth() + 1).padStart(2, '0')
+        const dd = String(realToday.getDate()).padStart(2, '0')
+        const todayISO = `${yyyy}-${mm}-${dd}`
+        if (today !== todayISO) {
+          useDocsStore.getState().setDayAnchor(todayISO)
+        }
         openDaily().catch((err) =>
           console.error('[docs] ⌘T openDaily failed', err),
         )
@@ -177,7 +188,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="pt-1">
-        <div className="px-2 pt-1">
+        <div className="pl-2 pr-1 pt-1">
           {sidebarTab === 'day' && <DayView />}
           {sidebarTab === 'week' && <WeekView />}
           {sidebarTab === 'month' && <MonthView />}
