@@ -65,6 +65,7 @@ interface RunOptions {
  * existing target). */
 async function materializeNewPageProposals(
   proposals: IngestProposal[],
+  sourceLabel: string,
 ): Promise<IngestProposal[]> {
   const out: IngestProposal[] = []
   for (const p of proposals) {
@@ -74,7 +75,15 @@ async function materializeNewPageProposals(
     }
     const name = p.suggestNewPage?.trim()
     if (!name) continue
-    const newSlug = await createCustomWikiPage(name, p.content)
+    // Append a provenance footer so the page is born showing where
+    // its content came from. The user can verify the routing at a
+    // glance (e.g. "this is Alex's career — why is it on a Chris
+    // page?") and either keep the page or archive it. They can
+    // delete the footer themselves once they've confirmed.
+    const body = p.sourceQuote
+      ? `${p.content}\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
+      : p.content
+    const newSlug = await createCustomWikiPage(name, body)
     if (!newSlug) {
       console.warn(
         '[ingest] suggestNewPage failed; dropping proposal',
@@ -178,17 +187,18 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
   // Materialize any `suggestNewPage` proposals into real wiki pages
   // before enqueue, so by the time the user clicks the sidebar
   // entry the doc is already in the catalog (and the pending
-  // proposal already points at it via target). createdNewPage
-  // travels with the proposal so the mark layer can flag the
-  // resulting StoredMark as "this came from a brand-new page".
+  // proposal already points at it via target).
   // Failures (e.g. proof-server unreachable) drop the proposal
   // rather than silently re-routing it elsewhere.
-  const proposalsForQueue = await materializeNewPageProposals(result.proposals)
-
   const sourceLabel =
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
       : known.title?.trim() || slug
+  const proposalsForQueue = await materializeNewPageProposals(
+    result.proposals,
+    sourceLabel,
+  )
+
   useIngestStore.getState().enqueue({
     proposals: proposalsForQueue,
     logEntry: result.logEntry,

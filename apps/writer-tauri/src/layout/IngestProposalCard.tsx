@@ -54,6 +54,18 @@ function previewText(proposals: PendingProposal[]): string {
   return `${proposals.length} ${noun} ${sourceLabel} — ${titlesText}`
 }
 
+/** Pull a sample sourceQuote from the queue so the card hints at
+ * provenance — "where in my note did this come from?". Single
+ * proposal: that proposal's quote. Multiple: the first one with a
+ * quote, capped to a readable length. Returns null when no
+ * proposal carried a quote. */
+function sourceQuotePreview(proposals: PendingProposal[]): string | null {
+  const withQuote = proposals.find((p) => p.sourceQuote?.trim())
+  const q = withQuote?.sourceQuote?.trim()
+  if (!q) return null
+  return q.length > 80 ? `${q.slice(0, 80)}…` : q
+}
+
 export function IngestProposalCard() {
   const proposals = useIngestStore((s) => s.pendingProposals)
   const dismissed = useIngestStore((s) => s.dismissed)
@@ -127,6 +139,11 @@ export function IngestProposalCard() {
         <p className="text-[12px] leading-snug text-muted-foreground">
           {previewText(proposals)}
         </p>
+        {sourceQuotePreview(proposals) && (
+          <p className="border-l-2 border-border/60 pl-2 text-[11.5px] italic leading-snug text-muted-foreground/80">
+            “{sourceQuotePreview(proposals)}”
+          </p>
+        )}
         <span
           className={cn(
             'mt-1 text-[12px] font-medium text-foreground/80',

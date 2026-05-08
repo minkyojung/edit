@@ -51,6 +51,14 @@ export interface IngestProposal {
   content: string
   /** Short reason the LLM gave for proposing this. Optional. */
   rationale?: string
+  /** The exact daily-line snippet this content was derived from,
+   * echoed verbatim. Provenance: lets the user (and the review
+   * card) see "where in my note did this fact come from?" — so
+   * mis-routes (e.g. Alex content sent to a Chris page because
+   * the LLM mismapped a name) are visible at a glance instead of
+   * buried inside the wiki body. Optional because some proposals
+   * legitimately stand on aggregated context, not a single line. */
+  sourceQuote?: string
   /** A short snippet of existing text in the target page that this
    * content should be appended *after*. Echoed verbatim from the
    * page body so the apply layer can find it with a plain string
@@ -101,12 +109,14 @@ Invariants (do not violate):
 
 When the new content belongs *after* a specific existing line (e.g. a new bullet under "Sarah", or a new date entry after the last one), set "anchorAfterText" to that exact line, copied verbatim from the page body. Omit anchorAfterText when the content stands on its own (new "### Name" block, first content on an empty page, etc.).
 
+Always include "sourceQuote": the exact sentence (or short clause) from the new note that this proposal was derived from. Echo it verbatim — it's the user's audit trail for verifying the proposal landed in the right page. If the proposal aggregates several lines, quote the most representative one.
+
 Output strictly this JSON shape, with no surrounding prose, code fences, or commentary. Each proposal uses *either* \`target\` (existing page) *or* \`suggestNewPage\` (create a new page) — never both.
 
 {
   "proposals": [
-    { "target": "wiki:custom-7ntdvj41", "content": "- Direct report", "anchorAfterText": "- AI team", "rationale": "added detail to existing entity" },
-    { "suggestNewPage": "Books", "content": "### The Pragmatic Programmer\\n- Software craftsmanship", "rationale": "no existing page hosts books" }
+    { "target": "wiki:custom-7ntdvj41", "content": "- Direct report", "anchorAfterText": "- AI team", "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
+    { "suggestNewPage": "Books", "content": "### The Pragmatic Programmer\\n- Software craftsmanship", "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "no existing page hosts books" }
   ],
   "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; created Books page"
 }
@@ -248,11 +258,16 @@ function validateParsed(value: unknown): ParsedIngest {
       typeof rec.anchorAfterText === 'string' && rec.anchorAfterText.trim()
         ? rec.anchorAfterText.trim()
         : undefined
+    const sourceQuote =
+      typeof rec.sourceQuote === 'string' && rec.sourceQuote.trim()
+        ? rec.sourceQuote.trim()
+        : undefined
     proposals.push({
       ...(target ? { target } : { suggestNewPage: suggestNewPage! }),
       content,
       rationale,
       anchorAfterText,
+      sourceQuote,
     })
   }
   const logEntry =
