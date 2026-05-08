@@ -15,7 +15,6 @@
 // `ensureLogWikiSlug` below.
 
 import { proofClient } from '@/lib/proofClient'
-import { detectShape } from '@/agent/wikiShape'
 import { useDocsStore, type KnownDoc } from './docsStore'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
@@ -223,16 +222,14 @@ export async function readWikiContext(): Promise<string> {
         // Empty pages still appear in the catalog so the LLM can
         // route to them by name — but we mark them empty rather
         // than hallucinating content.
-        return `[${doc.type} — ${title} — empty]\n(empty)`
+        return `[${doc.type} — ${title}]\n(empty)`
       }
       const body = doc.type === LOG_TYPE ? takeLastLines(md, LOG_TAIL_LINES) : md
-      // Shape hint tells the ingest LLM which convention to follow when
-      // proposing additions — entity pages get `### Name` blocks, list
-      // pages stay flat bullets, timelines get `## [date]` lines, etc.
-      // Detected from the live body so the page can drift over time
-      // and the next ingest adapts automatically.
-      const shape = detectShape(body)
-      return `[${doc.type} — ${title} — ${shape}]\n${body}`
+      // No shape label — the LLM reads the body and infers the
+      // page's pattern itself, guided by the user's conventions
+      // page. Karpathy: "the model sees what you see; it doesn't
+      // need your enum."
+      return `[${doc.type} — ${title}]\n${body}`
     }),
   )
   return sections.filter(Boolean).join('\n\n')
