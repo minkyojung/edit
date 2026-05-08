@@ -35,6 +35,13 @@ export interface IngestProposal {
   content: string
   /** Short reason the LLM gave for proposing this. Optional. */
   rationale?: string
+  /** For entity-shaped pages: the existing H3 heading (without the
+   * leading `### `) under which this content should be appended.
+   * Omitted when the proposal introduces a new H3 itself, or when the
+   * target page isn't entity-shaped. The apply layer (Step 4) uses
+   * this to slot bullets into the right entity section instead of
+   * always appending at the end. */
+  anchorH3?: string
 }
 
 export interface IngestResult {
@@ -63,13 +70,21 @@ Hard rules:
 - If nothing in the note merits a wiki update, return an empty proposals array.
 - Always include a log entry summarizing what you did (or "nothing notable today" if proposals is empty).
 
+Each wiki page header carries a shape label, e.g. "[USER PEOPLE — entity]". Match the page's existing convention so it stays scannable:
+- entity: page is organized as "### Name" blocks with bullets underneath.
+    * New subject  → content is the full block, e.g. "### Mike\\n- AI researcher\\n- First met 2026-05-07". Omit anchorH3.
+    * Existing subject → content is bullet(s) only, e.g. "- Direct report". Set anchorH3 to that subject's exact heading text (e.g. "Sarah").
+- list: page is flat bullets, no H3 sections. Content is one or more bullets ("- ..."). Never introduce "### " here.
+- timeline: append-only date log. Content follows "## [YYYY-MM-DD] kind | summary" exactly.
+- prose / empty: page hasn't settled into a shape yet. Pick the most natural shape for the content type (entity for people/things, list for preferences, etc.) and start it.
+
 Output strictly this JSON shape, with no surrounding prose, code fences, or commentary:
 
 {
   "proposals": [
-    { "target": "wiki:entity", "content": "- Sarah — direct report. First met 2026-05-07.", "rationale": "new person mentioned" }
+    { "target": "wiki:custom-people", "content": "- Direct report", "anchorH3": "Sarah", "rationale": "added detail to existing entity" }
   ],
-  "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah"
+  "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role"
 }
 
 If proposals is empty, logEntry should still be a single line summarizing the ingest pass (e.g. "## [2026-05-07] ingest | daily/2026-05-07: nothing notable").`
@@ -192,7 +207,11 @@ function validateParsed(value: unknown): ParsedIngest {
     if (!target || !content) continue
     const rationale =
       typeof rec.rationale === 'string' ? rec.rationale : undefined
-    proposals.push({ target, content, rationale })
+    const anchorH3 =
+      typeof rec.anchorH3 === 'string' && rec.anchorH3.trim()
+        ? rec.anchorH3.trim()
+        : undefined
+    proposals.push({ target, content, rationale, anchorH3 })
   }
   const logEntry =
     typeof obj.logEntry === 'string' && obj.logEntry.trim()

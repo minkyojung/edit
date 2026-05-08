@@ -14,6 +14,7 @@
 // the sidebar Wiki section.
 
 import { proofClient } from '@/lib/proofClient'
+import { detectShape } from '@/agent/wikiShape'
 import { useDocsStore, type KnownDoc } from './docsStore'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
@@ -196,7 +197,13 @@ export async function readWikiContext(): Promise<string> {
       const tailLines =
         def && 'tailLines' in def ? def.tailLines : undefined
       const body = tailLines ? takeLastLines(md, tailLines) : md
-      return `[USER ${heading}]\n${body}`
+      // Shape hint tells the ingest LLM which convention to follow when
+      // proposing additions — entity pages get `### Name` blocks, list
+      // pages stay flat bullets, timelines get `## [date]` lines, etc.
+      // Detected from the live body so the page can drift over time
+      // and the next ingest adapts automatically.
+      const shape = detectShape(body)
+      return `[USER ${heading} — ${shape}]\n${body}`
     }),
   )
   return sections.filter(Boolean).join('\n\n')

@@ -22,6 +22,8 @@ if (import.meta.env.DEV) {
   // can be exercised from the dev console while we tune the prompt.
   // Production builds skip this block entirely.
   void import('./agent/ingest')
+  // Same: __detectShape for ad-hoc shape-detection checks.
+  void import('./agent/wikiShape')
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
