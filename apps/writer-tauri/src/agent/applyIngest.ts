@@ -130,16 +130,47 @@ function lastWordAnchor(view: EditorView): string | null {
   return match ? match[0] : null
 }
 
+/** Resolve the proposal's anchor against the live doc. Preferred
+ * path: the LLM emitted `anchorAfterText` and that snippet is present
+ * in the doc — we anchor on it directly so accept lands the new
+ * content right after that line. Fallback: use the doc's last word,
+ * which appends to the very end of the page (the previous default).
+ *
+ * Trim before matching so trivial whitespace differences in the LLM
+ * echo don't void the anchor; PM's textBetween normalizes block
+ * separators to '\n' so a single leading "- " bullet match still
+ * works. The string is consumed by applyProposal as `quote`, which
+ * runs its own resolveQuoteRange — so an empty/missing anchor here
+ * means "fall back," never "fail." */
+function resolveAnchor(
+  view: EditorView,
+  proposal: PendingProposal,
+): string | null {
+  const wanted = proposal.anchorAfterText?.trim()
+  if (wanted) {
+    const docText = view.state.doc
+      .textBetween(0, view.state.doc.content.size, '\n', ' ')
+      .replace(/[​]/g, '')
+    if (docText.includes(wanted)) return wanted
+    // LLM-suggested anchor isn't in the doc (rare — typically a tiny
+    // whitespace/punctuation drift, or the page changed since ingest
+    // ran). Fall through to the page-end fallback rather than
+    // failing the apply outright.
+  }
+  return lastWordAnchor(view)
+}
+
 /** Convert one queued ingest proposal into a Proposal shape the
  * existing applyProposal helper accepts, then stamp it as a mark.
- * Anchor is the doc's last word; content keeps the anchor (so accept
+ * Anchor comes from `anchorAfterText` when the LLM specified one;
+ * otherwise the doc's last word. Content keeps the anchor (so accept
  * = "anchor + new content") and adds the new line on a fresh line. */
 function applyOneAsMark(
   view: EditorView,
   ydoc: Y.Doc,
   proposal: PendingProposal,
 ): { ok: true; markId: string } | { ok: false; reason: string } {
-  const anchor = lastWordAnchor(view)
+  const anchor = resolveAnchor(view, proposal)
   if (!anchor) return { ok: false, reason: 'no_anchor' }
 
   const proposalShape: Proposal = {

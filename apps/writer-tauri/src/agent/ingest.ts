@@ -35,13 +35,20 @@ export interface IngestProposal {
   content: string
   /** Short reason the LLM gave for proposing this. Optional. */
   rationale?: string
-  /** For entity-shaped pages: the existing H3 heading (without the
-   * leading `### `) under which this content should be appended.
-   * Omitted when the proposal introduces a new H3 itself, or when the
-   * target page isn't entity-shaped. The apply layer (Step 4) uses
-   * this to slot bullets into the right entity section instead of
-   * always appending at the end. */
-  anchorH3?: string
+  /** A short snippet of existing text in the target page that this
+   * content should be appended *after*. Echoed verbatim from the
+   * page body so the apply layer can find it with a plain string
+   * match — typically a single bullet line, a short heading, or a
+   * date marker. Omitted when the proposal stands alone (new
+   * section, or page is empty/prose). The apply layer falls back
+   * to "page end" when this is missing or doesn't match.
+   *
+   * Why a quoted snippet instead of a structural address (H3 name,
+   * line number): the LLM already has the page body in context, so
+   * echoing a real line is a natural, low-failure operation. The
+   * apply path is then a one-liner string match — one mechanism
+   * works for entity, list, timeline alike. */
+  anchorAfterText?: string
 }
 
 export interface IngestResult {
@@ -72,17 +79,19 @@ Hard rules:
 
 Each wiki page header carries a shape label, e.g. "[USER PEOPLE — entity]". Match the page's existing convention so it stays scannable:
 - entity: page is organized as "### Name" blocks with bullets underneath.
-    * New subject  → content is the full block, e.g. "### Mike\\n- AI researcher\\n- First met 2026-05-07". Omit anchorH3.
-    * Existing subject → content is bullet(s) only, e.g. "- Direct report". Set anchorH3 to that subject's exact heading text (e.g. "Sarah").
+    * New subject  → content is the full block, e.g. "### Mike\\n- AI researcher\\n- First met 2026-05-07".
+    * Existing subject → content is bullet(s) only, e.g. "- Direct report".
 - list: page is flat bullets, no H3 sections. Content is one or more bullets ("- ..."). Never introduce "### " here.
 - timeline: append-only date log. Content follows "## [YYYY-MM-DD] kind | summary" exactly.
 - prose / empty: page hasn't settled into a shape yet. Pick the most natural shape for the content type (entity for people/things, list for preferences, etc.) and start it.
+
+When the new content belongs *after* a specific existing line (e.g. a new bullet under "Sarah", or a new date entry after the last one), set "anchorAfterText" to that exact line, copied verbatim from the page body. Omit anchorAfterText when the content stands on its own (new "### Name" block, first content on an empty page, etc.).
 
 Output strictly this JSON shape, with no surrounding prose, code fences, or commentary:
 
 {
   "proposals": [
-    { "target": "wiki:custom-people", "content": "- Direct report", "anchorH3": "Sarah", "rationale": "added detail to existing entity" }
+    { "target": "wiki:custom-people", "content": "- Direct report", "anchorAfterText": "- AI team", "rationale": "added detail to existing entity" }
   ],
   "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role"
 }
@@ -207,11 +216,11 @@ function validateParsed(value: unknown): ParsedIngest {
     if (!target || !content) continue
     const rationale =
       typeof rec.rationale === 'string' ? rec.rationale : undefined
-    const anchorH3 =
-      typeof rec.anchorH3 === 'string' && rec.anchorH3.trim()
-        ? rec.anchorH3.trim()
+    const anchorAfterText =
+      typeof rec.anchorAfterText === 'string' && rec.anchorAfterText.trim()
+        ? rec.anchorAfterText.trim()
         : undefined
-    proposals.push({ target, content, rationale, anchorH3 })
+    proposals.push({ target, content, rationale, anchorAfterText })
   }
   const logEntry =
     typeof obj.logEntry === 'string' && obj.logEntry.trim()
