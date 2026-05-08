@@ -40,7 +40,7 @@ export function WikiSection() {
   }
 
   return (
-    <div className="px-2 pt-3">
+    <div className="pt-3">
       <div className="flex items-center justify-between px-2 pb-1">
         <span className="text-[13px] font-medium text-muted-foreground">
           Wiki
@@ -90,7 +90,7 @@ function WikiRow({
       type="button"
       onClick={onSelect}
       className={cn(
-        'group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[13px] font-medium transition-colors',
+        'group flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[13px] font-medium transition-colors',
         'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
         isActive
           ? 'bg-accent text-foreground'

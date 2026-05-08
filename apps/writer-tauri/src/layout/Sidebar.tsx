@@ -188,7 +188,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="pt-1">
-        <div className="pl-2 pr-1 pt-1">
+        <div className="pt-1">
           {sidebarTab === 'day' && <DayView />}
           {sidebarTab === 'week' && <WeekView />}
           {sidebarTab === 'month' && <MonthView />}
@@ -208,7 +208,7 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg" className="px-2 h-11">
+                <SidebarMenuButton size="lg" className="px-2 h-11 !rounded-none">
                   <Avatar className="size-7 shrink-0">
                     <AvatarImage src="" />
                     <AvatarFallback className="avatar-luma text-xs text-primary-foreground font-medium">

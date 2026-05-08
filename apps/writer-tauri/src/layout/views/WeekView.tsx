@@ -82,7 +82,7 @@ export function WeekView() {
   }
 
   return (
-    <ul className="flex flex-col gap-0.5 px-1">
+    <ul className="flex flex-col gap-0.5">
       {rows.map((row) => {
         const isExpanded = expandedDates.has(row.date)
         const children = row.slug
@@ -188,7 +188,7 @@ function DayRow({
   return (
     <div
       className={cn(
-        'group flex w-full items-center gap-1 rounded-md px-1 py-1.5 text-[13px] font-medium transition-colors',
+        'group flex w-full items-center gap-1 px-1.5 py-1.5 text-[13px] font-medium transition-colors',
         'outline-none',
         row.isToday
           ? 'bg-accent text-foreground'

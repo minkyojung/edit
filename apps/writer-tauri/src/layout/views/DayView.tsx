@@ -98,21 +98,20 @@ export function DayView() {
     <div>
       <div
         className={cn(
-          'flex items-center rounded-md transition-colors',
+          'group flex items-center gap-0.5 pr-1 transition-colors',
           isAnchorActive
             ? 'bg-accent text-foreground'
             : anchoredDaily
-              ? 'text-foreground'
-              : 'text-muted-foreground/70',
+              ? 'text-foreground hover:bg-accent/50'
+              : 'text-muted-foreground/70 hover:bg-accent/50 hover:text-foreground',
         )}
       >
         <button
           type="button"
           onClick={onLabelClick}
           className={cn(
-            'flex min-w-0 flex-1 items-center px-2 py-1.5 text-left text-[13px] font-medium rounded-l-md',
+            'flex min-w-0 flex-1 items-center px-2 py-1.5 text-left text-[13px] font-medium',
             'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-            !isAnchorActive && 'hover:bg-accent/50 hover:text-foreground',
           )}
         >
           <span className="truncate">{dateLabel}</span>
@@ -122,26 +121,24 @@ export function DayView() {
           onClick={() => handleShift(-1)}
           aria-label="Previous day"
           className={cn(
-            'flex h-7 w-7 shrink-0 items-center justify-center',
-            'text-muted-foreground/70 hover:text-foreground',
-            !isAnchorActive && 'hover:bg-accent/50',
+            'flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors',
+            'text-muted-foreground/70 hover:bg-foreground/10 hover:text-foreground',
             'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
           )}
         >
-          <IconChevronLeft size={14} stroke={1.75} />
+          <IconChevronLeft size={12} stroke={1.75} />
         </button>
         <button
           type="button"
           onClick={() => handleShift(1)}
           aria-label="Next day"
           className={cn(
-            'flex h-7 w-7 shrink-0 items-center justify-center rounded-r-md',
-            'text-muted-foreground/70 hover:text-foreground',
-            !isAnchorActive && 'hover:bg-accent/50',
+            'flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors',
+            'text-muted-foreground/70 hover:bg-foreground/10 hover:text-foreground',
             'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
           )}
         >
-          <IconChevronRight size={14} stroke={1.75} />
+          <IconChevronRight size={12} stroke={1.75} />
         </button>
       </div>
 
@@ -175,7 +172,7 @@ export function DayView() {
             ensureNotesRoute()
           }}
           className={cn(
-            'mt-1 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[12px]',
+            'mt-1 flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[12px]',
             'text-muted-foreground/70 transition-colors hover:bg-accent/40 hover:text-foreground',
             'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
           )}

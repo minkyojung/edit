@@ -50,7 +50,7 @@ export function DocTreeNode({
     <li>
       <div
         className={cn(
-          'group flex w-full items-center gap-1 rounded-md px-1.5 py-1.5 text-[13px] font-medium transition-colors',
+          'group flex w-full items-center gap-1 px-1.5 py-1.5 text-[13px] font-medium transition-colors',
           isActive
             ? 'bg-accent text-foreground'
             : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
