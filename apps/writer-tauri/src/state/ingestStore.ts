@@ -24,6 +24,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { IngestProposal } from '@/agent/ingest'
+import { useDocsStore } from './docsStore'
 
 /** A proposal waiting for the user to accept or skip. Adds a stable
  * id (so the review modal's checkbox state is keyed reliably) and
@@ -93,6 +94,14 @@ interface IngestState {
    * the apply path treats it like any other proposal. No-op if the
    * id isn't found. */
   patchProposal: (id: string, patch: Partial<PendingProposal>) => void
+  /** Drop proposals whose target type isn't in the live catalog
+   * (page archived since enqueue, legacy seed-page targets like
+   * `wiki:people` left over from before the seed pages were
+   * removed, etc.). Without this, dead proposals sit in the queue
+   * forever — applyPendingForActive's knownByType check just
+   * silently no-ops them. Idempotent; safe to call on every idle
+   * pass. */
+  pruneDeadProposals: () => void
   /** Hide the card without touching the queue. Reopens automatically
    * the next time enqueue lands new content. */
   dismiss: () => void
@@ -178,6 +187,25 @@ export const useIngestStore = create<IngestState>()(
             p.id === id ? { ...p, ...patch } : p,
           ),
         }))
+      },
+
+      pruneDeadProposals: () => {
+        const validTypes = new Set<string>(
+          useDocsStore
+            .getState()
+            .knownDocs.filter((d) => !d.archivedAt)
+            .map((d) => d.type as string),
+        )
+        set((s) => {
+          const next = s.pendingProposals.filter(
+            (p) => !!p.target && validTypes.has(p.target),
+          )
+          if (next.length === s.pendingProposals.length) return s
+          console.log(
+            `[ingest] pruned ${s.pendingProposals.length - next.length} dead proposals`,
+          )
+          return { ...s, pendingProposals: next }
+        })
       },
 
       dismiss: () => set({ dismissed: true }),

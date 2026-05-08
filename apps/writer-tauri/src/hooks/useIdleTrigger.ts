@@ -169,6 +169,10 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
   // judged nothing notable", and re-asking on the same content
   // would be wasted tokens.
   useIngestStore.getState().markIngested(slug, length)
+  // Sweep out any proposals that target archived / no-longer-extant
+  // pages. Cheap, idempotent, and keeps the queue from accumulating
+  // legacy targets across schema changes.
+  useIngestStore.getState().pruneDeadProposals()
 
   if (result.malformed) {
     console.warn('[ingest] malformed response, skipping enqueue', result.raw)
@@ -227,6 +231,12 @@ export function useIdleTrigger(): void {
   const lastMoveRef = useRef(0)
 
   useEffect(() => {
+    // One-time sweep at app start so any persisted proposals
+    // pointing at types that no longer exist (archived pages,
+    // legacy seeds) drop out of the queue before the user sees a
+    // stale review card.
+    useIngestStore.getState().pruneDeadProposals()
+
     const reset = () => {
       if (timerRef.current) clearTimeout(timerRef.current)
       const minutes = useIngestStore.getState().idleMinutes
