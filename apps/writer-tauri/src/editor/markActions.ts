@@ -92,9 +92,13 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
   }
   const { from, to, mark } = anchor
   const kind = mark.attrs.kind as 'replace' | 'insert' | 'delete'
-  const content = mark.attrs.content as string | null
+  // Pull content from the Y.Map StoredMark, not the PM mark attrs. The
+  // server's markdown projection can strip mark.attrs.content during a
+  // reconciliation round-trip; the Y.Map metadata syncs through Yjs binary
+  // and survives that path intact.
   const marksMap = ydoc.getMap<StoredMark>('marks')
   const stored = marksMap.get(markId)
+  const content = stored?.content ?? null
 
   const tr = view.state.tr
   // Track the inserted-content range so the insert path can stamp a

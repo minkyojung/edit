@@ -175,7 +175,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(clipboard)
       .use(collab)
       .use(proofMarkPlugins)
-      .use(createMarkDecoPlugin())
+      .use(createMarkDecoPlugin(ydoc))
       .use(createMarkCleanupPlugin(ydoc))
       .use(createMarkClickPlugin())
       .use(createMarkHoverPlugin())

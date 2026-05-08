@@ -85,6 +85,26 @@ export function applyProposal(
   const markId = crypto.randomUUID()
   const now = new Date().toISOString()
 
+  // Y.Map metadata first (proof-sdk's StoredMark shape) so the decoration
+  // plugin's first buildDecos pass — triggered by the PM transaction below
+  // — finds `content` already in place. Reversing the order would race the
+  // ghost-preview render against the metadata write.
+  const marksMap = ydoc.getMap<StoredMark>('marks')
+  const stored: StoredMark = {
+    kind: proposal.kind === 'comment' ? 'comment' : (proposal.suggestionType ?? 'replace'),
+    by: meta.agentId,
+    quote: proposal.quote,
+    startRel: `char:${startChar}`,
+    endRel: `char:${endChar}`,
+    at: now,
+    ...(proposal.kind === 'suggestion'
+      ? { content: proposal.content, status: 'pending' as const }
+      : {}),
+    ...(proposal.kind === 'comment' ? { text: proposal.text } : {}),
+    ...(proposal.rationale ? { note: proposal.rationale } : {}),
+  } as StoredMark
+  marksMap.set(markId, stored)
+
   // Inline mark stamp.
   if (proposal.kind === 'suggestion') {
     const markType = view.state.schema.marks.proofSuggestion
@@ -114,23 +134,6 @@ export function applyProposal(
       ),
     )
   }
-
-  // Y.Map metadata (mirrors proof-sdk's StoredMark shape).
-  const marksMap = ydoc.getMap<StoredMark>('marks')
-  const stored: StoredMark = {
-    kind: proposal.kind === 'comment' ? 'comment' : (proposal.suggestionType ?? 'replace'),
-    by: meta.agentId,
-    quote: proposal.quote,
-    startRel: `char:${startChar}`,
-    endRel: `char:${endChar}`,
-    at: now,
-    ...(proposal.kind === 'suggestion'
-      ? { content: proposal.content, status: 'pending' as const }
-      : {}),
-    ...(proposal.kind === 'comment' ? { text: proposal.text } : {}),
-    ...(proposal.rationale ? { note: proposal.rationale } : {}),
-  } as StoredMark
-  marksMap.set(markId, stored)
 
   return { ok: true, markId }
 }

@@ -15,6 +15,8 @@ import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view'
 import type { Node } from '@milkdown/kit/prose/model'
+import * as Y from 'yjs'
+import type { StoredMark } from '../hooks/useCollabDoc'
 import { topLevelSiblingAfter } from './topLevelSibling'
 
 const key = new PluginKey<DecorationSet>('markDecoration')
@@ -33,8 +35,9 @@ function classForMark(typeName: string, kind: unknown): string | null {
   return null
 }
 
-function buildDecos(doc: Node): DecorationSet {
+function buildDecos(doc: Node, ydoc: Y.Doc): DecorationSet {
   const decos: Decoration[] = []
+  const marksMap = ydoc.getMap<StoredMark>('marks')
 
   // A single proofSuggestion mark can span multiple text nodes (the schema
   // is `spanning: true`). To avoid emitting one ghost per fragment, we
@@ -70,7 +73,12 @@ function buildDecos(doc: Node): DecorationSet {
       if (mark.type.name === 'proofSuggestion') {
         const id = mark.attrs.id
         const kind = mark.attrs.kind
-        const content = mark.attrs.content
+        // Source of truth for ghost text is the Y.Map StoredMark, not the
+        // PM mark.attrs. PM mark stays a pure anchor (id + kind); the
+        // suggestion content lives in metadata that survives the server's
+        // markdown projection round-trip without getting stripped.
+        const stored = typeof id === 'string' ? marksMap.get(id) : undefined
+        const content = stored?.content ?? null
         if (
           typeof id === 'string' &&
           (kind === 'replace' || kind === 'insert') &&
@@ -78,15 +86,18 @@ function buildDecos(doc: Node): DecorationSet {
           content.length > 0 &&
           !ghostEmitted.has(id)
         ) {
-          // Pin the ghost to the top-level sibling slot, not the
-          // anchor's inline position. If we used the inline pos and
-          // the anchor sits inside a blockquote / list / heading,
-          // PM renders the widget DOM inside that wrapper — the
-          // preview looks nested even though acceptMark inserts at
-          // top level. Same helper both sides use, so the pre-accept
-          // visual matches the post-accept structure exactly.
+          // Anchor depends on the suggestion kind so the ghost mirrors
+          // where acceptMark will actually land the text:
+          //  - replace: in-place rewrite. Pin the ghost to the inline
+          //    slot right after the marked word so it reads as an
+          //    "edit-here" preview.
+          //  - insert: block-level addition (ingest path). Pin to the
+          //    top-level sibling slot so the preview lives outside any
+          //    blockquote / list wrapper, matching where the accepted
+          //    content gets inserted.
           const rawEnd = lastTo.get(id) ?? pos + node.nodeSize
-          const anchorPos = topLevelSiblingAfter(doc, rawEnd)
+          const anchorPos =
+            kind === 'insert' ? topLevelSiblingAfter(doc, rawEnd) : rawEnd
           decos.push(
             Decoration.widget(
               anchorPos,
@@ -113,17 +124,17 @@ function buildDecos(doc: Node): DecorationSet {
   return DecorationSet.create(doc, decos)
 }
 
-export function createMarkDecoPlugin() {
+export function createMarkDecoPlugin(ydoc: Y.Doc) {
   return $prose(
     () =>
       new Plugin({
         key,
         state: {
           init(_, { doc }) {
-            return buildDecos(doc)
+            return buildDecos(doc, ydoc)
           },
           apply(tr, decoSet) {
-            if (tr.docChanged) return buildDecos(tr.doc)
+            if (tr.docChanged) return buildDecos(tr.doc, ydoc)
             return decoSet
           },
         },
