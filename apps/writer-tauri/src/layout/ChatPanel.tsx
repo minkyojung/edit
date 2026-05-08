@@ -12,14 +12,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   IconPlayerStopFilled,
-  IconChevronRight,
   IconCheck,
   IconAlertTriangle,
   IconLoader2,
-  IconTool,
-  IconPencil,
-  IconMessageCircle,
-  IconQuote,
   IconCopy,
   IconRefresh,
   IconChevronDown,
@@ -65,12 +60,13 @@ import {
   humanizeError,
 } from '@/chat/utils/errorMessage'
 import { InlineCard, InlineCardFooter } from '@/chat/ui/InlineCard'
-import { ToolStateBadge } from '@/chat/ui/ToolStateBadge'
-import { KeyValueBlock } from '@/chat/ui/KeyValueBlock'
 import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
 import { StepStart } from '@/chat/parts/StepStart'
 import { TextPart as TextPartView } from '@/chat/parts/TextPart'
 import { ReasoningPart as ReasoningPartView, ThinkingPanel } from '@/chat/parts/ReasoningPart'
+import { ToolPart as ToolPartView } from '@/chat/parts/ToolPart'
+import { ProposeChangePart as ProposeChangePartView } from '@/chat/parts/ProposeChangePart'
+import { PROPOSE_CHANGE_TOOL } from '@/chat/parts/proposeChangeTool'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -81,12 +77,6 @@ function parseSlashInvocation(text: string): { name: string; args: string } | nu
   if (!m) return null
   return { name: m[1], args: (m[2] ?? '').trim() }
 }
-
-// Tool registered as `propose_change` on the `writer-relay` MCP server in
-// sidecar/src/server.mjs. The Agent SDK exposes MCP tools to the model — and
-// reports them back in stream events — under the `mcp__<server>__<tool>`
-// canonical id, so that's the value we match on for UI routing.
-const PROPOSE_CHANGE_TOOL = 'mcp__writer-relay__propose_change'
 
 interface Props {
   editorView: EditorView | null
@@ -1102,97 +1092,6 @@ function labelForTool(part: ToolPart): string {
     WebFetch: 'Fetching from the web…',
   }
   return map[part.toolName] ?? `Using ${part.toolName}…`
-}
-
-/** Tool invocation card. Mirrors the AI Elements `<Tool>` family — a
- * collapsible wrapper with a header (tool name + state badge) and a
- * content section showing input and (when available) output. */
-function ToolPartView({ part }: { part: ToolPart }) {
-  const [open, setOpen] = React.useState(false)
-  return (
-    <InlineCard className="my-1 text-xs">
-      <details
-        open={open}
-        onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      >
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 select-none">
-          <IconChevronRight
-            size={12}
-            className="shrink-0 transition-transform"
-            style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
-          />
-          <IconTool size={12} className="shrink-0 text-muted-foreground" />
-          <span className="font-mono">{part.toolName}</span>
-          <span className="ml-auto">
-            <ToolStateBadge state={part.state} />
-          </span>
-        </summary>
-        <div className="space-y-2 px-3 pb-2 pt-1">
-          <KeyValueBlock label="input" value={part.input} />
-          {(part.state === 'output-available' || part.state === 'output-error') && (
-            <KeyValueBlock
-              label={part.state === 'output-error' ? 'error' : 'output'}
-              value={part.errorText ?? part.output}
-            />
-          )}
-        </div>
-      </details>
-    </InlineCard>
-  )
-}
-
-/** Domain-aware card for the writer-relay `propose_change` tool. Pulls the
- * meaningful fields out of input (kind/quote/content/rationale) so the
- * user sees the suggestion at a glance rather than raw JSON. */
-function ProposeChangePartView({ part }: { part: ToolPart }) {
-  const input = (part.input ?? {}) as {
-    kind?: 'suggestion' | 'comment'
-    suggestionType?: 'insert' | 'delete' | 'replace'
-    quote?: string
-    content?: string
-    text?: string
-    rationale?: string
-  }
-  const isComment = input.kind === 'comment'
-  const HeaderIcon = isComment ? IconMessageCircle : IconPencil
-  const kindLabel = isComment ? 'Comment' : `Suggestion${input.suggestionType ? ` · ${input.suggestionType}` : ''}`
-  // While input is still streaming the strings may be partial JSON; only
-  // show the structured layout once we have the parsed object.
-  const ready = part.state !== 'input-streaming'
-  const replacement = input.content ?? input.text
-
-  return (
-    <InlineCard className="my-1 text-xs">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
-        <HeaderIcon size={12} className="shrink-0 text-muted-foreground" />
-        <span className="font-medium text-foreground">{kindLabel}</span>
-        <span className="ml-auto">
-          <ToolStateBadge state={part.state} />
-        </span>
-      </div>
-      {!ready ? (
-        <div className="px-3 py-1.5 text-muted-foreground italic">preparing…</div>
-      ) : (
-        <div className="space-y-1.5 px-3 py-2">
-          {input.quote && (
-            <div className="flex gap-1.5">
-              <IconQuote size={11} className="mt-0.5 shrink-0 text-muted-foreground" />
-              <span className="line-through text-muted-foreground/80">{input.quote}</span>
-            </div>
-          )}
-          {!isComment && replacement && (
-            <div className="pl-[18px] text-foreground">→ {replacement}</div>
-          )}
-          {isComment && replacement && <div className="pl-[18px] text-foreground">{replacement}</div>}
-          {input.rationale && (
-            <div className="border-t border-border pt-1.5 mt-1.5 text-muted-foreground">
-              {input.rationale}
-            </div>
-          )}
-        </div>
-      )}
-    </InlineCard>
-  )
 }
 
 /** Floating "jump to latest" affordance. Sits inside the PromptInput's
