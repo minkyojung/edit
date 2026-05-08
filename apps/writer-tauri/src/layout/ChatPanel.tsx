@@ -723,7 +723,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      <div className="shrink-0 border-t border-border p-3 space-y-2">
+      <div className="shrink-0 p-3 space-y-2">
         <PromptInput
           status={chatStatus}
           disabled={!ready || !account.connected}
