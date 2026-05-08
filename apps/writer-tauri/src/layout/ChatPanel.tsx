@@ -29,8 +29,6 @@ import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin
 import { TextSelection } from '@milkdown/kit/prose/state'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
-import { Streamdown } from 'streamdown'
-import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useMarks } from '@/hooks/useMarks'
@@ -68,6 +66,10 @@ import {
   extractErrorCode,
   humanizeError,
 } from '@/chat/utils/errorMessage'
+import { InlineCard, InlineCardFooter } from '@/chat/ui/InlineCard'
+import { ToolStateBadge } from '@/chat/ui/ToolStateBadge'
+import { KeyValueBlock } from '@/chat/ui/KeyValueBlock'
+import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -765,44 +767,6 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   )
 }
 
-// Streamdown renders raw markdown progressively (handles incomplete blocks
-// during streaming) and memoizes per-block, so we don't need to gate
-// markdown rendering on stream-vs-done. The component overrides below align
-// inline element styling with the rest of the chat surface.
-const markdownComponents: React.ComponentProps<typeof Streamdown>['components'] = {
-  p: ({ children }) => <p className="leading-relaxed">{children}</p>,
-  strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
-  em: ({ children }) => <em className="italic">{children}</em>,
-  code: ({ children }) => (
-    <code className="bg-muted text-foreground text-xs rounded px-1 py-0.5 font-mono">{children}</code>
-  ),
-}
-
-// Streamdown's documented streaming pattern: pass content straight through,
-// let it word-wrap each new chunk in animated spans, and rely on blur+opacity
-// duration to mask token-arrival bursts (no client-side throttling needed).
-// `isAnimating` toggles the animation rehype pass off entirely once the
-// stream settles, so finished messages render with no leftover span markup.
-const STREAM_ANIMATE = {
-  animation: 'blurIn' as const,
-  duration: 200,
-  sep: 'word' as const,
-}
-
-function StreamingMarkdown({ content, isStreaming }: { content: string; isStreaming: boolean }) {
-  return (
-    <div className="leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-      <Streamdown
-        animated={STREAM_ANIMATE}
-        isAnimating={isStreaming}
-        components={markdownComponents}
-      >
-        {content}
-      </Streamdown>
-    </div>
-  )
-}
-
 const MessageRow = React.memo(function MessageRow({
   turn,
   onRegenerate,
@@ -1151,110 +1115,6 @@ function labelForTool(part: ToolPart): string {
   return map[part.toolName] ?? `Using ${part.toolName}…`
 }
 
-/** Shared container for the small inline cards that show inside an
- * assistant turn — tool calls, thinking, propose_change, plus the
- * stopped / error wrappers around the whole turn body. Single
- * border / radius / background pattern so the chat surface reads as
- * one family instead of seven near-identical custom divs. */
-function InlineCard({
-  tone = 'default',
-  className,
-  children,
-}: {
-  tone?: 'default' | 'destructive'
-  className?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div
-      className={cn(
-        'overflow-hidden rounded-xl border',
-        tone === 'destructive'
-          ? 'border-destructive/40 bg-destructive/10'
-          : 'border-border/60 bg-muted/60',
-        className,
-      )}
-    >
-      {children}
-    </div>
-  )
-}
-
-/** Footer row for InlineCard — used by stopped / error wrappers. The
- * tone follows the parent card so destructive cards keep the red
- * gradient through to the action row. */
-function InlineCardFooter({
-  tone = 'default',
-  className,
-  children,
-}: {
-  tone?: 'default' | 'destructive'
-  className?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div
-      className={cn(
-        'flex items-center gap-1.5 border-t px-3 py-1.5 text-xs',
-        tone === 'destructive'
-          ? 'border-destructive/30 bg-destructive/15 text-destructive'
-          : 'border-border/60 bg-muted/70 text-muted-foreground',
-        className,
-      )}
-    >
-      {children}
-    </div>
-  )
-}
-
-/** Renders the small status indicator next to a tool's name. Maps each
- * tool state to a Badge variant so the chat surface picks up its
- * info / success / warning / destructive tones from the theme tokens
- * rather than hand-rolled tailwind utilities. */
-function ToolStateBadge({ state }: { state: ToolPart['state'] }) {
-  const meta: Record<
-    ToolPart['state'],
-    {
-      icon: React.ReactNode
-      label: string
-      variant: React.ComponentProps<typeof Badge>['variant']
-    }
-  > = {
-    'input-streaming': {
-      icon: <IconLoader2 size={12} className="animate-spin" />,
-      label: 'preparing',
-      variant: 'secondary',
-    },
-    'input-available': {
-      icon: <IconLoader2 size={12} className="animate-spin" />,
-      label: 'running',
-      variant: 'info',
-    },
-    'output-available': {
-      icon: <IconCheck size={12} />,
-      label: 'done',
-      variant: 'success',
-    },
-    'output-error': {
-      icon: <IconAlertTriangle size={12} />,
-      label: 'error',
-      variant: 'destructive',
-    },
-    'approval-requested': {
-      icon: <IconAlertTriangle size={12} />,
-      label: 'needs approval',
-      variant: 'warning',
-    },
-  }
-  const m = meta[state]
-  return (
-    <Badge variant={m.variant}>
-      {m.icon}
-      {m.label}
-    </Badge>
-  )
-}
-
 /** Tool invocation card. Mirrors the AI Elements `<Tool>` family — a
  * collapsible wrapper with a header (tool name + state badge) and a
  * content section showing input and (when available) output. */
@@ -1348,28 +1208,6 @@ function ProposeChangePartView({ part }: { part: ToolPart }) {
       )}
     </InlineCard>
   )
-}
-
-function KeyValueBlock({ label, value }: { label: string; value: unknown }) {
-  const text = formatValue(value)
-  return (
-    <div>
-      <div className="mb-1 text-xs font-medium text-muted-foreground">{label}</div>
-      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-background px-2 py-1.5 font-mono text-xs text-foreground/80">
-        {text}
-      </pre>
-    </div>
-  )
-}
-
-function formatValue(value: unknown): string {
-  if (value == null) return ''
-  if (typeof value === 'string') return value
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
 }
 
 function ThinkingPanel({
