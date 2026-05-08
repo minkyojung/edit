@@ -14,7 +14,6 @@ import {
   IconPlayerStopFilled,
   IconCheck,
   IconAlertTriangle,
-  IconLoader2,
   IconCopy,
   IconRefresh,
   IconChevronDown,
@@ -49,7 +48,6 @@ import {
   DEFAULT_CHAT_MODEL,
   type ChatTurn,
   type MessagePart,
-  type ToolPart,
 } from '@/chat/types'
 import { formatDuration } from '@/chat/utils/formatDuration'
 import { formatCountdown } from '@/chat/utils/formatCountdown'
@@ -67,6 +65,7 @@ import { ReasoningPart as ReasoningPartView, ThinkingPanel } from '@/chat/parts/
 import { ToolPart as ToolPartView } from '@/chat/parts/ToolPart'
 import { ProposeChangePart as ProposeChangePartView } from '@/chat/parts/ProposeChangePart'
 import { PROPOSE_CHANGE_TOOL } from '@/chat/parts/proposeChangeTool'
+import { ActivityStatus, activityLabel } from '@/chat/parts/ActivityStatus'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -1043,55 +1042,6 @@ function PartList({ parts, isStreaming }: { parts: MessagePart[]; isStreaming: b
       })}
     </>
   )
-}
-
-/** Top-of-turn activity indicator. Reads the parts timeline to pick a
- * natural-language label for what the model is currently doing —
- * "Thinking…" → "Suggesting an edit…" → "Reading the document…" — so the
- * user gets a human description of progress instead of a generic spinner.
- * Lives in a stable slot; only the label text changes on re-render. */
-function ActivityStatus({ parts }: { parts?: MessagePart[] }) {
-  return (
-    <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-      <IconLoader2 size={12} className="shrink-0 animate-spin" />
-      <span className="transition-opacity duration-150">{activityLabel(parts)}</span>
-    </div>
-  )
-}
-
-/** Pick the most descriptive label for the currently-active step. We walk
- * parts from newest to oldest and return the first unfinished tool's label;
- * fall back to "Thinking…" when the model is in reasoning or just started. */
-function activityLabel(parts: MessagePart[] | undefined): string {
-  if (parts) {
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const p = parts[i]
-      if (p.type === 'tool' && (p.state === 'input-streaming' || p.state === 'input-available')) {
-        return labelForTool(p)
-      }
-    }
-  }
-  return 'Thinking…'
-}
-
-function labelForTool(part: ToolPart): string {
-  if (part.toolName === PROPOSE_CHANGE_TOOL) {
-    const input = (part.input ?? {}) as { kind?: string }
-    return input.kind === 'comment' ? 'Adding a comment…' : 'Suggesting an edit…'
-  }
-  // Friendly labels for the most common Claude built-in tools. Anything
-  // we haven't named falls back to a generic "Using …" string.
-  const map: Record<string, string> = {
-    Read: 'Reading the document…',
-    Edit: 'Editing the document…',
-    Write: 'Writing…',
-    Bash: 'Running a command…',
-    Grep: 'Searching the document…',
-    Glob: 'Looking up files…',
-    WebSearch: 'Searching the web…',
-    WebFetch: 'Fetching from the web…',
-  }
-  return map[part.toolName] ?? `Using ${part.toolName}…`
 }
 
 /** Floating "jump to latest" affordance. Sits inside the PromptInput's
