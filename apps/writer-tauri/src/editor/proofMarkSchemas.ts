@@ -61,13 +61,14 @@ export const proofSuggestionAttr = $markAttr('proofSuggestion', () => ({
 }))
 
 export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
+  // The PM mark is a pure anchor — only id / kind / by ride here.
+  // content / status / createdAt all live on the Y.Map StoredMark so a
+  // server markdown round-trip can't strip them; readers look them up
+  // there instead of off mark.attrs.
   attrs: {
     id: { default: null },
     kind: { default: 'replace' },
     by: { default: 'unknown' },
-    content: { default: null },
-    status: { default: null },
-    createdAt: { default: null },
   },
   inclusive: false,
   spanning: true,
@@ -79,9 +80,6 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
         return {
           ...common,
           kind: normalizeSuggestionKind(dom.getAttribute('data-kind')),
-          content: dom.getAttribute('data-content'),
-          status: dom.getAttribute('data-status'),
-          createdAt: dom.getAttribute('data-created-at'),
         }
       },
     },
@@ -92,9 +90,6 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
       'data-kind': normalizeSuggestionKind(mark.attrs.kind),
       ...buildCommonDomAttrs(mark),
     }
-    if (mark.attrs.content) domAttrs['data-content'] = String(mark.attrs.content)
-    if (mark.attrs.status) domAttrs['data-status'] = String(mark.attrs.status)
-    if (mark.attrs.createdAt) domAttrs['data-created-at'] = String(mark.attrs.createdAt)
     return ['span', domAttrs, 0]
   },
   parseMarkdown: {
@@ -106,9 +101,6 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
         id: attrs.id ?? null,
         kind: normalizeSuggestionKind(attrs.kind),
         by: attrs.by ?? 'unknown',
-        content: attrs.content ?? null,
-        status: attrs.status ?? null,
-        createdAt: attrs.createdAt ?? null,
       })
       state.next(proofNode.children || [])
       state.closeMark(markType)
