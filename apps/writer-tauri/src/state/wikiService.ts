@@ -55,7 +55,8 @@ These are the rules I follow when adding to my wiki. Edit this page to teach the
 ### How to decide
 
 - Look at each page's existing body. Match its shape. Don't introduce a new shape mid-page.
-- If a fact doesn't clearly belong on any existing page, leave \`proposals\` empty and note it in the \`logEntry\` so I can decide where to put it later.
+- If a fact doesn't clearly belong on any existing page, emit \`suggestNewPage: "PageName"\` instead of \`target\`. Pick a short, descriptive name. The system will create that page and stamp the content there as a mark for me to review.
+- Only fall back to leaving \`proposals\` empty (with a \`logEntry\` note) if you genuinely can't tell what the content is about — \`suggestNewPage\` is preferred over silence.
 - Skip transient stuff (mood, weather, small talk). Only durable info belongs in the wiki.
 `
 
@@ -128,11 +129,21 @@ export async function ensureWikiDocs(): Promise<void> {
  * if the user picks the same name twice and decouples the type
  * (immutable identity) from the title (renameable label).
  *
+ * `body` is the initial markdown content. Default is a ZWS so the
+ * server's blank-body guard accepts the doc; callers that already
+ * know what should live on the page (the ingest layer materializing
+ * a `suggestNewPage` proposal) pass real markdown so the page is
+ * "born" with content. Seeding via `body` here, instead of stamping
+ * the content as a mark afterwards, keeps the create path and the
+ * inline-review path on disjoint surfaces — the mark system never
+ * has to deal with empty-page placeholder scaffolding.
+ *
  * Returns the new doc's slug, or null on failure (empty name or
  * proof-server error). The created doc is registered in the catalog
  * but NOT auto-opened — the caller decides whether to navigate. */
 export async function createCustomWikiPage(
   name: string,
+  body?: string,
 ): Promise<string | null> {
   const trimmed = name.trim()
   if (!trimmed) return null
@@ -141,8 +152,9 @@ export async function createCustomWikiPage(
   // the birthday-collision threshold.
   const id = Math.random().toString(36).slice(2, 10)
   const type = `wiki:custom-${id}` as `wiki:${string}`
+  const initialBody = body && body.trim().length > 0 ? body : '​'
   try {
-    const created = await proofClient.createDoc(trimmed, '​')
+    const created = await proofClient.createDoc(trimmed, initialBody)
     const meta: KnownDoc = { slug: created.slug, type, title: trimmed }
     useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
     return created.slug

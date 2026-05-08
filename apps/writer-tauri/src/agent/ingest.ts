@@ -28,13 +28,25 @@ const PROOF_BASE_URL = 'http://localhost:4000'
 const INGEST_MODEL = 'claude-haiku-4-5-20251001'
 
 /** A single proposed wiki edit. v1 = append-only (the LLM may not
- * modify or delete existing lines). The renderer uses `target` to
- * route the append to the right wiki:* doc and `content` as the raw
- * markdown to add. Format of `content` is whatever the LLM emits —
- * usually a single bullet line or short paragraph. */
+ * modify or delete existing lines). Routing has two flavors:
+ *
+ *   • `target` — append to an existing wiki page by its type id.
+ *   • `suggestNewPage` — no existing page fits; ask the system to
+ *     create a new one with the given display name and stamp the
+ *     content there. The apply layer creates the page eagerly and
+ *     rewrites the proposal's target to the new doc's type id, so
+ *     downstream code only ever sees `target`.
+ *
+ * Exactly one of `target` or `suggestNewPage` is expected. If both
+ * are present validateParsed prefers `target` (less destructive
+ * fallback); if neither, the proposal is rejected. */
 export interface IngestProposal {
   /** wiki:* type id (e.g. 'wiki:entity', 'wiki:custom-7nt...'). */
-  target: string
+  target?: string
+  /** Display name for a brand-new page the LLM wants to create
+   * because no existing page is a good home for this content. The
+   * apply layer turns this into a real `wiki:custom-<id>` page. */
+  suggestNewPage?: string
   /** Markdown to append to the target page's body. */
   content: string
   /** Short reason the LLM gave for proposing this. Optional. */
@@ -89,13 +101,14 @@ Invariants (do not violate):
 
 When the new content belongs *after* a specific existing line (e.g. a new bullet under "Sarah", or a new date entry after the last one), set "anchorAfterText" to that exact line, copied verbatim from the page body. Omit anchorAfterText when the content stands on its own (new "### Name" block, first content on an empty page, etc.).
 
-Output strictly this JSON shape, with no surrounding prose, code fences, or commentary:
+Output strictly this JSON shape, with no surrounding prose, code fences, or commentary. Each proposal uses *either* \`target\` (existing page) *or* \`suggestNewPage\` (create a new page) — never both.
 
 {
   "proposals": [
-    { "target": "wiki:custom-7ntdvj41", "content": "- Direct report", "anchorAfterText": "- AI team", "rationale": "added detail to existing entity" }
+    { "target": "wiki:custom-7ntdvj41", "content": "- Direct report", "anchorAfterText": "- AI team", "rationale": "added detail to existing entity" },
+    { "suggestNewPage": "Books", "content": "### The Pragmatic Programmer\\n- Software craftsmanship", "rationale": "no existing page hosts books" }
   ],
-  "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role"
+  "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; created Books page"
 }
 
 If proposals is empty, logEntry should still be a single line summarizing the ingest pass (e.g. "## [2026-05-07] ingest | daily/2026-05-07: nothing notable").`
@@ -215,16 +228,32 @@ function validateParsed(value: unknown): ParsedIngest {
   for (const p of rawProposals) {
     if (!p || typeof p !== 'object') continue
     const rec = p as Record<string, unknown>
-    const target = typeof rec.target === 'string' ? rec.target : null
+    const target = typeof rec.target === 'string' && rec.target.trim()
+      ? rec.target.trim()
+      : null
+    const suggestNewPage =
+      typeof rec.suggestNewPage === 'string' && rec.suggestNewPage.trim()
+        ? rec.suggestNewPage.trim()
+        : null
     const content = typeof rec.content === 'string' ? rec.content : null
-    if (!target || !content) continue
+    if (!content) continue
+    // Routing must specify exactly one of target / suggestNewPage.
+    // If both are present we keep target (less destructive — uses an
+    // existing page rather than spawning a new one). If neither, the
+    // proposal has nowhere to land and we drop it.
+    if (!target && !suggestNewPage) continue
     const rationale =
       typeof rec.rationale === 'string' ? rec.rationale : undefined
     const anchorAfterText =
       typeof rec.anchorAfterText === 'string' && rec.anchorAfterText.trim()
         ? rec.anchorAfterText.trim()
         : undefined
-    proposals.push({ target, content, rationale, anchorAfterText })
+    proposals.push({
+      ...(target ? { target } : { suggestNewPage: suggestNewPage! }),
+      content,
+      rationale,
+      anchorAfterText,
+    })
   }
   const logEntry =
     typeof obj.logEntry === 'string' && obj.logEntry.trim()

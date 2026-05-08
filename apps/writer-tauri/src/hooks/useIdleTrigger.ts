@@ -19,7 +19,11 @@ import { useEffect, useRef } from 'react'
 import { runIngest } from '@/agent/ingest'
 import { useDocsStore } from '@/state/docsStore'
 import { useIngestStore } from '@/state/ingestStore'
-import { ensureLogWikiSlug } from '@/state/wikiService'
+import {
+  ensureLogWikiSlug,
+  createCustomWikiPage,
+} from '@/state/wikiService'
+import type { IngestProposal } from '@/agent/ingest'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
@@ -39,6 +43,51 @@ interface RunOptions {
    * `__triggerIdle()` so a tester can force a pass without typing
    * 200 chars first. */
   force?: boolean
+}
+
+/** Split an ingest pass into "create a new page with this content"
+ * vs "stamp this content as a mark on an existing page". The former
+ * goes through createCustomWikiPage(name, body) — the page is born
+ * with the content already in its body, no mark is created, no
+ * placeholder scaffolding is needed. The latter is just the existing
+ * target-based proposals passed straight through to the queue.
+ *
+ * Why the asymmetry: marks are a review surface for *inline*
+ * suggestions on top of existing content. A brand-new page has
+ * nothing to review against — there is no surrounding text to
+ * disambiguate from. Forcing it through the mark system meant
+ * stamping a placeholder anchor, which left visible cruft and
+ * triggered a server/client sync race when the mark's content
+ * leaked into the doc body. Creating the page with content
+ * directly keeps the create and review paths on disjoint surfaces.
+ * Proposals whose page creation fails are dropped (better to lose
+ * one than send the LLM's "make a Books page" content to a random
+ * existing target). */
+async function materializeNewPageProposals(
+  proposals: IngestProposal[],
+): Promise<IngestProposal[]> {
+  const out: IngestProposal[] = []
+  for (const p of proposals) {
+    if (p.target) {
+      out.push(p)
+      continue
+    }
+    const name = p.suggestNewPage?.trim()
+    if (!name) continue
+    const newSlug = await createCustomWikiPage(name, p.content)
+    if (!newSlug) {
+      console.warn(
+        '[ingest] suggestNewPage failed; dropping proposal',
+        name,
+      )
+      continue
+    }
+    // Page is now in the catalog with its content already in the
+    // body. No queue entry — there's no mark to apply. The user
+    // sees the new page in the sidebar; if they don't like it,
+    // archiving is a one-click rejection.
+  }
+  return out
 }
 
 /** Read a doc's markdown via the canonical proof-server route.
@@ -126,12 +175,22 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
     await ensureLogWikiSlug()
   }
 
+  // Materialize any `suggestNewPage` proposals into real wiki pages
+  // before enqueue, so by the time the user clicks the sidebar
+  // entry the doc is already in the catalog (and the pending
+  // proposal already points at it via target). createdNewPage
+  // travels with the proposal so the mark layer can flag the
+  // resulting StoredMark as "this came from a brand-new page".
+  // Failures (e.g. proof-server unreachable) drop the proposal
+  // rather than silently re-routing it elsewhere.
+  const proposalsForQueue = await materializeNewPageProposals(result.proposals)
+
   const sourceLabel =
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
       : known.title?.trim() || slug
   useIngestStore.getState().enqueue({
-    proposals: result.proposals,
+    proposals: proposalsForQueue,
     logEntry: result.logEntry,
     sourceSlug: slug,
     sourceLabel,

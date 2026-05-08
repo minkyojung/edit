@@ -86,6 +86,13 @@ interface IngestState {
    * been applied OR explicitly skipped — same operation either way).
    * `appliedLogId`, if given, also clears that log entry. */
   remove: (args: { proposalIds: string[]; logIds?: string[] }) => void
+  /** Update a single proposal in place. Used by the apply layer
+   * when it materializes a `suggestNewPage` proposal — it creates
+   * the new wiki page, then patches the proposal's `target` to the
+   * new doc's type id and clears `suggestNewPage` so the rest of
+   * the apply path treats it like any other proposal. No-op if the
+   * id isn't found. */
+  patchProposal: (id: string, patch: Partial<PendingProposal>) => void
   /** Hide the card without touching the queue. Reopens automatically
    * the next time enqueue lands new content. */
   dismiss: () => void
@@ -162,6 +169,14 @@ export const useIngestStore = create<IngestState>()(
             (p) => !propSet.has(p.id),
           ),
           pendingLogs: s.pendingLogs.filter((l) => !logSet.has(l.id)),
+        }))
+      },
+
+      patchProposal: (id, patch) => {
+        set((s) => ({
+          pendingProposals: s.pendingProposals.map((p) =>
+            p.id === id ? { ...p, ...patch } : p,
+          ),
         }))
       },
 
