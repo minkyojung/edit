@@ -12,15 +12,17 @@
  */
 
 import { $markSchema, $markAttr } from '@milkdown/kit/utils'
-import type { Attrs } from '@milkdown/kit/prose/model'
+import type { Attrs, Mark } from '@milkdown/kit/prose/model'
+import type { MarkdownNode, SerializerState } from '@milkdown/transformer'
 
 type ProofSuggestionKind = 'insert' | 'delete' | 'replace'
 
-type ProofNode = {
-  type?: string
+// Loose shape for incoming markdown AST nodes — proof marks land as
+// `proofMark` nodes with arbitrary string attrs; we narrow at use sites.
+// `children` is typed as MarkdownNode[] so `state.next()` accepts it.
+type ProofNode = MarkdownNode & {
   proof?: string
   attrs?: Record<string, string | null | undefined>
-  children?: unknown[]
 }
 
 function normalizeSuggestionKind(kind: string | null | undefined): ProofSuggestionKind {
@@ -43,10 +45,10 @@ function buildCommonDomAttrs(mark: { attrs: { id?: string | null; by?: string | 
 }
 
 function serializeProofMark(
-  state: { withMark: (mark: unknown, type: string, value?: string, props?: Record<string, unknown>) => void },
-  mark: { attrs: Record<string, string | null | undefined> },
+  state: SerializerState,
+  mark: Mark,
   proof: string,
-  attrs: Record<string, string | null | undefined>,
+  attrs: Record<string, string | null>,
 ): void {
   state.withMark(mark, 'proofMark', undefined, { proof, attrs })
 }
@@ -330,15 +332,18 @@ export const proofAuthoredSchema = $markSchema('proofAuthored', () => ({
   },
 }))
 
+// $markSchema returns a tuple `[$Ctx, $Mark]` (both MilkdownPlugin) plus
+// extra accessor props. Spreading the tuples here flattens the array to a
+// plain MilkdownPlugin[] so it satisfies Editor.use() without casts.
 export const proofMarkPlugins = [
   proofSuggestionAttr,
-  proofSuggestionSchema,
+  ...proofSuggestionSchema,
   proofCommentAttr,
-  proofCommentSchema,
+  ...proofCommentSchema,
   proofFlaggedAttr,
-  proofFlaggedSchema,
+  ...proofFlaggedSchema,
   proofApprovedAttr,
-  proofApprovedSchema,
+  ...proofApprovedSchema,
   proofAuthoredAttr,
-  proofAuthoredSchema,
+  ...proofAuthoredSchema,
 ]

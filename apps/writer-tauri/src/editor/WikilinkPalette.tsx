@@ -10,8 +10,7 @@
 // commits via mousedown so the editor's contenteditable doesn't
 // lose focus before the insert dispatches.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { EditorView } from '@milkdown/kit/prose/view'
+import { useEffect, useMemo, useState } from 'react'
 import {
   cancelWikilink,
   commitWikilink,
