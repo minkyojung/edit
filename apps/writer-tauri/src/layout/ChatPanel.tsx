@@ -54,8 +54,6 @@ import {
   DEFAULT_CHAT_MODEL,
   type ChatTurn,
   type MessagePart,
-  type ReasoningPart,
-  type TextPart,
   type ToolPart,
 } from '@/chat/types'
 import { formatDuration } from '@/chat/utils/formatDuration'
@@ -70,6 +68,9 @@ import { InlineCard, InlineCardFooter } from '@/chat/ui/InlineCard'
 import { ToolStateBadge } from '@/chat/ui/ToolStateBadge'
 import { KeyValueBlock } from '@/chat/ui/KeyValueBlock'
 import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
+import { StepStart } from '@/chat/parts/StepStart'
+import { TextPart as TextPartView } from '@/chat/parts/TextPart'
+import { ReasoningPart as ReasoningPartView, ThinkingPanel } from '@/chat/parts/ReasoningPart'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -1047,23 +1048,11 @@ function PartList({ parts, isStreaming }: { parts: MessagePart[]; isStreaming: b
             }
             return <ToolPartView key={part.id} part={part} />
           case 'step-start':
-            return <StepStartView key={part.id} />
+            return <StepStart key={part.id} />
         }
       })}
     </>
   )
-}
-
-function TextPartView({ part, isStreaming }: { part: TextPart; isStreaming: boolean }) {
-  if (!part.text) return null
-  return <StreamingMarkdown content={part.text} isStreaming={isStreaming} />
-}
-
-function ReasoningPartView({ part, isStreaming }: { part: ReasoningPart; isStreaming: boolean }) {
-  // Empty-state spinner is owned by the top-level ActivityStatus now —
-  // skip rendering until we actually have thoughts to show.
-  if (!part.text) return null
-  return <ThinkingPanel content={part.text} streamingNoText={isStreaming} />
 }
 
 /** Top-of-turn activity indicator. Reads the parts timeline to pick a
@@ -1152,10 +1141,6 @@ function ToolPartView({ part }: { part: ToolPart }) {
   )
 }
 
-function StepStartView() {
-  return <hr className="my-2 border-border/40" />
-}
-
 /** Domain-aware card for the writer-relay `propose_change` tool. Pulls the
  * meaningful fields out of input (kind/quote/content/rationale) so the
  * user sees the suggestion at a glance rather than raw JSON. */
@@ -1206,50 +1191,6 @@ function ProposeChangePartView({ part }: { part: ToolPart }) {
           )}
         </div>
       )}
-    </InlineCard>
-  )
-}
-
-function ThinkingPanel({
-  content,
-  streamingNoText,
-}: {
-  content: string
-  streamingNoText: boolean
-}) {
-  // While the model is mid-stream and hasn't produced any text yet, render an
-  // open spinner-style panel so the user can see the chain of thought live.
-  // Once text starts flowing (or the turn finished), collapse to a small
-  // toggleable capsule so it doesn't dominate the conversation.
-  const [open, setOpen] = React.useState(streamingNoText)
-
-  React.useEffect(() => {
-    if (streamingNoText) setOpen(true)
-    else setOpen(false)
-  }, [streamingNoText])
-
-  return (
-    <InlineCard className="mb-2 text-xs">
-      <details
-        open={open}
-        onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      >
-        <summary className="flex cursor-pointer items-center gap-2 list-none px-3 py-1.5 text-muted-foreground select-none">
-          {streamingNoText ? (
-            <IconLoader2 size={12} className="shrink-0 animate-spin" />
-          ) : (
-            <IconChevronRight
-              size={12}
-              className="shrink-0 transition-transform"
-              style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
-            />
-          )}
-          <span>{streamingNoText ? 'Thinking…' : 'Thoughts'}</span>
-        </summary>
-        <div className="px-3 pb-2 pt-1 whitespace-pre-wrap text-muted-foreground/90">
-          {content}
-        </div>
-      </details>
     </InlineCard>
   )
 }
