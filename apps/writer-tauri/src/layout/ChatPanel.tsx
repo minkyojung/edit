@@ -60,6 +60,14 @@ import {
   type TextPart,
   type ToolPart,
 } from '@/chat/types'
+import { formatDuration } from '@/chat/utils/formatDuration'
+import { formatCountdown } from '@/chat/utils/formatCountdown'
+import { useCountdown } from '@/chat/utils/useCountdown'
+import {
+  describeStopReason,
+  extractErrorCode,
+  humanizeError,
+} from '@/chat/utils/errorMessage'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -958,41 +966,6 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-/** Re-renders once per second while a target ms-epoch is in the future,
- * returning seconds remaining (rounded up). Returns 0 once the target
- * passes (or when no target is set), and tears down its interval as
- * soon as the countdown reaches zero so we're not heating CPU forever
- * on a settled error card. */
-function useCountdown(targetMs: number | undefined): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (typeof targetMs !== 'number') return
-    if (targetMs <= Date.now()) return
-    const id = window.setInterval(() => {
-      const t = Date.now()
-      setNow(t)
-      if (t >= targetMs) window.clearInterval(id)
-    }, 1000)
-    return () => window.clearInterval(id)
-  }, [targetMs])
-  if (typeof targetMs !== 'number') return 0
-  return Math.max(0, Math.ceil((targetMs - now) / 1000))
-}
-
-/** Format a positive seconds count for the rate-limit countdown. Sub-minute
- * stays as `12s`; longer waits split into `Xm Ys` so a 2-hour reset doesn't
- * show as "7384s". The rendered widths stay small so the error footer
- * doesn't reflow as the count ticks. */
-function formatCountdown(sec: number): string {
-  if (sec < 60) return `${sec}s`
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  if (m < 60) return s === 0 ? `${m}m` : `${m}m ${s}s`
-  const h = Math.floor(m / 60)
-  const mm = m % 60
-  return mm === 0 ? `${h}h` : `${h}h ${mm}m`
-}
-
 /** Destructive error card for a failed assistant turn. Branches on
  * `turn.errorCode` to surface a `Reconnect` button (AUTH) or a precise
  * countdown that gates `Retry` (RATE_LIMIT). Anything that streamed
@@ -1088,68 +1061,6 @@ function RegenerateButton({ onClick }: { onClick: () => void }) {
       <IconRefresh size={11} />
     </button>
   )
-}
-
-/** Human-readable wall-clock duration. Stays terse so it sits unobtrusively
- * under the message — sub-second is shown to one decimal, single-minute uses
- * a single integer minute, and longer waits split into m+s. */
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${(ms / 1000).toFixed(1)}s`
-  const totalSec = Math.round(ms / 1000)
-  if (totalSec < 60) return `${totalSec}s`
-  const min = Math.floor(totalSec / 60)
-  const sec = totalSec % 60
-  return sec === 0 ? `${min}m` : `${min}m ${sec}s`
-}
-
-/** Coerce whatever the SDK / fetch / our own code threw into a single
- * readable line. Recognises a small set of well-known codes from the
- * sidecar (NETWORK / IDLE_TIMEOUT / SIDECAR_DIED / AUTH / RATE_LIMIT) and
- * maps them to user-friendly copy; falls through to message cleanup for
- * everything else. */
-/** Pull the leading `^([A-Z_]+):` classifier from an error so the renderer
- * can branch on it (e.g. show a Reconnect button only for AUTH). Returns
- * undefined for errors that don't carry one. */
-function extractErrorCode(e: unknown): string | undefined {
-  const raw = e instanceof Error ? e.message : String(e)
-  return raw.match(/^([A-Z_]+):/)?.[1]
-}
-
-function humanizeError(e: unknown): string {
-  const raw = e instanceof Error ? e.message : String(e)
-  const code = raw.match(/^([A-Z_]+):/)?.[1]
-  switch (code) {
-    case 'SIDECAR_DIED':
-      return 'Backend service crashed and is restarting — please try again'
-    case 'IDLE_TIMEOUT':
-      return 'No response — check your network connection'
-    case 'NETWORK':
-      return 'Network error — check your connection'
-    case 'AUTH':
-      return 'Authentication failed — please sign in again'
-    case 'RATE_LIMIT':
-      return 'Rate limited — try again in a moment'
-  }
-  let msg = raw.replace(/^Error:\s*/i, '').trim()
-  if (msg.length === 0) return 'Something went wrong'
-  if (msg.length > 240) msg = msg.slice(0, 237) + '…'
-  return msg
-}
-
-/** Map an Anthropic stop_reason to a user-facing message. Returns null for
- * routine reasons (`end_turn`, `stop_sequence`, `tool_use`, missing) so the
- * footer stays clean — only abnormal stops surface here. */
-function describeStopReason(reason: string | null | undefined): string | null {
-  switch (reason) {
-    case 'max_tokens':
-      return 'Response cut off (token limit)'
-    case 'pause_turn':
-      return 'Paused'
-    case 'refusal':
-      return 'Refused'
-    default:
-      return null
-  }
 }
 
 /** Walks an assistant turn's timeline. Each part type maps to its own
