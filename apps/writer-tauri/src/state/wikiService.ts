@@ -1,17 +1,18 @@
-// Wiki bootstrap — Karpathy LLM Wiki structure on top of proof-sdk.
+// Wiki bootstrap — Karpathy "wiki grows from use" structure on top of
+// proof-sdk.
 //
-// Karpathy's pattern is "schema comes from the user" — the agent
-// maintains pages but doesn't dictate their categories. We translate
-// that here as a hybrid: three opinionated seeds (belief / entity /
-// episode) ship on first launch so a new user has somewhere to start,
-// and `createCustomWikiPage` lets them grow the wiki with arbitrary
-// pages of their own (`wiki:custom-<id>`). The chat runner reads
-// every wiki:* doc in the catalog and prepends them as the cacheable
-// prefix of the system prompt.
+// We do NOT pre-seed any wiki pages on first launch. Empty seed pages
+// with abstract names (belief / entity / episode) just confused the
+// LLM about where to route new info, and confused the user about
+// what to put in them. The wiki starts empty; pages come into
+// existence the moment they have something to put in them — either
+// via the sidebar `+` button (createCustomWikiPage) or, in a later
+// step, via the agent itself proposing "make a new page for X".
 //
-// Future (P3 / Memory-writer) will let a background agent edit these
-// pages with provenance. For now, the user edits them by hand from
-// the sidebar Wiki section.
+// `wiki:log` is the one exception: it's the agent's append-only
+// timeline of ingest passes (one line per pass). It's lazily created
+// the first time an ingest produces a logEntry — see
+// `ensureLogWikiSlug` below.
 
 import { proofClient } from '@/lib/proofClient'
 import { detectShape } from '@/agent/wikiShape'
@@ -19,67 +20,42 @@ import { useDocsStore, type KnownDoc } from './docsStore'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
 
-/** Seed wiki pages that bootstrap on first launch. Order is meaningful
- * — these appear first in the chat system prompt and at the top of
- * the sidebar wiki section. Custom pages (created via the + button)
- * follow them in creation order.
- *
- * `pinToEnd` seeds (today: just `wiki:log`) live at the very end of
- * the prompt regardless of order here — they hold high-churn content
- * (Karpathy's append-only timeline) that would invalidate cache hits
- * for everything below it if placed earlier.
- *
- * `tailLines` caps the per-section body to the last N non-empty
- * lines. log.md grows unbounded over time; without this cap the
- * prompt would slowly bloat and the cache prefix above it would
- * still get invalidated on every append. */
-const WIKI_SEEDS = [
-  { type: 'wiki:belief', title: 'belief', heading: 'BELIEFS' },
-  { type: 'wiki:entity', title: 'entity', heading: 'ENTITIES' },
-  { type: 'wiki:episode', title: 'episode', heading: 'EPISODES' },
-  {
-    type: 'wiki:log',
-    title: 'log',
-    heading: 'TIMELINE',
-    pinToEnd: true,
-    tailLines: 30,
-  },
-] as const
+/** The agent's append-only timeline. Held in a constant so the
+ * lazy-create path (`ensureLogWikiSlug`) and the read path
+ * (`readWikiContext`) agree on the type id. */
+const LOG_TYPE = 'wiki:log' as const
+/** Cap the log body to the last N non-empty lines when it gets fed
+ * to the LLM. The timeline grows unbounded otherwise and would
+ * slowly bloat every prompt. */
+const LOG_TAIL_LINES = 30
 
-type SeedType = (typeof WIKI_SEEDS)[number]['type']
-
-/** Ensure each seed wiki type has a doc in the catalog. Idempotent.
- * Called from docsStore.bootstrap as fire-and-forget — chat reads
- * wiki content lazily so the first paint isn't blocked on these
- * round-trips. Custom user-created pages are NOT recreated here;
- * those live solely off of explicit createCustomWikiPage calls. */
-export async function ensureWikiDocs(): Promise<void> {
-  for (const def of WIKI_SEEDS) {
-    await ensureSeedDoc(def.type, def.title).catch((err) =>
-      console.error(`[wiki] ensure ${def.type} failed`, err),
-    )
-  }
-}
-
-async function ensureSeedDoc(
-  type: SeedType,
-  title: string,
-): Promise<string | null> {
+/** Ensure the wiki:log doc exists. Lazy: created on first call.
+ * Returns the slug, or null if proof-server is unreachable. The
+ * timeline is the only "system-owned" wiki page; everything else is
+ * user-created. */
+export async function ensureLogWikiSlug(): Promise<string | null> {
   const existing = useDocsStore
     .getState()
-    .knownDocs.find((d) => d.type === type)
+    .knownDocs.find((d) => d.type === LOG_TYPE && !d.archivedAt)
   if (existing) return existing.slug
   try {
     // ZWS body so the proof-server's blank-markdown guard accepts it.
-    // The user's content grows from here — empty until they write.
-    const created = await proofClient.createDoc(title, '​')
-    const meta: KnownDoc = { slug: created.slug, type, title }
+    const created = await proofClient.createDoc('log', '​')
+    const meta: KnownDoc = { slug: created.slug, type: LOG_TYPE, title: 'log' }
     useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
     return created.slug
   } catch (err) {
-    console.error(`[wiki] ensureSeedDoc(${type}) failed`, err)
+    console.error('[wiki] ensureLogWikiSlug failed', err)
     return null
   }
+}
+
+/** No-op placeholder kept so the docsStore bootstrap call site
+ * doesn't have to special-case the new lazy model. The wiki used to
+ * pre-seed three pages here; now it stays empty until something
+ * actually needs to live in it. */
+export async function ensureWikiDocs(): Promise<void> {
+  // Intentionally empty — see file header.
 }
 
 /** Create a user-defined wiki page with the given display name.
@@ -111,18 +87,6 @@ export async function createCustomWikiPage(
   }
 }
 
-/** Slug of the (seed) wiki doc with the given type, if any. */
-export function getWikiSlug(type: SeedType): string | null {
-  const doc = useDocsStore.getState().knownDocs.find((d) => d.type === type)
-  return doc?.slug ?? null
-}
-
-/** Backwards-compatible accessor used by older callers; prefer
- * getWikiSlug('wiki:belief') in new code. */
-export function getBeliefSlug(): string | null {
-  return getWikiSlug('wiki:belief')
-}
-
 /** Fetch the markdown body of a wiki doc by slug. Returns '' when the
  * doc is empty (or just the ZWS placeholder), the slug is unknown,
  * or the proof-server is unreachable.
@@ -150,11 +114,6 @@ async function readWikiMarkdown(slug: string | null): Promise<string> {
   }
 }
 
-/** Backwards-compatible accessor for belief alone. */
-export async function readBeliefMarkdown(): Promise<string> {
-  return readWikiMarkdown(getBeliefSlug())
-}
-
 /** Read every wiki:* page in the catalog and return a single
  * cacheable context block, already shaped for the chat system
  * prompt. Each non-empty section is wrapped with a heading; empty
@@ -162,41 +121,25 @@ export async function readBeliefMarkdown(): Promise<string> {
  * Returns '' when no wiki content exists yet — chat assembly takes
  * the empty path in that case.
  *
- * Order is stable and tuned for Anthropic prompt-cache hits:
- *   1. Regular seeds in WIKI_SEEDS order (lowest-churn identity)
- *   2. Custom user pages in catalog order
- *   3. pinToEnd seeds last (highest-churn — log.md changes most often)
- * Putting the timeline at the bottom means a log append only
- * invalidates its own section, not the cached identity above it. */
+ * Order: catalog order, with `wiki:log` (the agent's append-only
+ * timeline) pinned to the very end. Putting the timeline last means
+ * a log append only invalidates its own section in the prompt
+ * cache, not the more-stable identity sections above it. The log
+ * body is also tail-truncated since it grows unbounded. */
 export async function readWikiContext(): Promise<string> {
   const docs = useDocsStore
     .getState()
     .knownDocs.filter((d) => d.type.startsWith('wiki:') && !d.archivedAt)
 
-  const seedTypes = WIKI_SEEDS.map((s) => s.type) as readonly string[]
-  const seedsHead = WIKI_SEEDS.filter((s) => !('pinToEnd' in s && s.pinToEnd))
-  const seedsTail = WIKI_SEEDS.filter((s) => 'pinToEnd' in s && s.pinToEnd)
-
-  const head = seedsHead.flatMap((def) => {
-    const d = docs.find((doc) => doc.type === def.type)
-    return d ? [{ doc: d, def }] : []
-  })
-  const customs = docs
-    .filter((d) => !seedTypes.includes(d.type))
-    .map((d) => ({ doc: d, def: undefined as undefined }))
-  const tail = seedsTail.flatMap((def) => {
-    const d = docs.find((doc) => doc.type === def.type)
-    return d ? [{ doc: d, def }] : []
-  })
+  const head = docs.filter((d) => d.type !== LOG_TYPE)
+  const tail = docs.filter((d) => d.type === LOG_TYPE)
 
   const sections = await Promise.all(
-    [...head, ...customs, ...tail].map(async ({ doc, def }) => {
+    [...head, ...tail].map(async (doc) => {
       const md = await readWikiMarkdown(doc.slug)
       if (!md) return ''
-      const heading = def?.heading ?? headingFor(doc)
-      const tailLines =
-        def && 'tailLines' in def ? def.tailLines : undefined
-      const body = tailLines ? takeLastLines(md, tailLines) : md
+      const heading = headingFor(doc)
+      const body = doc.type === LOG_TYPE ? takeLastLines(md, LOG_TAIL_LINES) : md
       // Shape hint tells the ingest LLM which convention to follow when
       // proposing additions — entity pages get `### Name` blocks, list
       // pages stay flat bullets, timelines get `## [date]` lines, etc.

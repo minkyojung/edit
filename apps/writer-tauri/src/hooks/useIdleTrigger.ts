@@ -19,6 +19,8 @@ import { useEffect, useRef } from 'react'
 import { runIngest } from '@/agent/ingest'
 import { useDocsStore } from '@/state/docsStore'
 import { useIngestStore } from '@/state/ingestStore'
+import { ensureLogWikiSlug } from '@/state/wikiService'
+import { todayLocalDate } from '@/hooks/useDocMeta'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
 /** Minimum new chars since last ingest before the trigger will run
@@ -62,14 +64,30 @@ async function readDocLength(slug: string): Promise<number> {
  * concurrent passes on the same doc. */
 async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
   const docs = useDocsStore.getState()
-  const slug = docs.activeSlug
-  if (!slug) return 0
-  const known = docs.knownDocs.find((d) => d.slug === slug)
-  if (!known) return 0
-  // Wiki pages are the agent's output, not its input. Refusing
-  // here also matches runIngest's own guard, but checking up-front
-  // skips the doc-fetch round-trip.
-  if (known.type.startsWith('wiki:')) return 0
+  const activeSlug = docs.activeSlug
+  if (!activeSlug) return 0
+  const activeKnown = docs.knownDocs.find((d) => d.slug === activeSlug)
+  if (!activeKnown) return 0
+
+  // Pick the doc to ingest FROM. Active doc is the user's most
+  // recent focus, so it's the natural default — except wiki pages,
+  // which are the agent's output: ingesting one would feed the
+  // wiki's own content back into itself. Falling back to today's
+  // daily covers the common pattern where the user writes in the
+  // daily, opens a wiki page to review the result, then walks away;
+  // without this fallback the idle trigger would silently no-op on
+  // their daily's new content.
+  let slug = activeSlug
+  let known = activeKnown
+  if (activeKnown.type.startsWith('wiki:')) {
+    const today = todayLocalDate()
+    const todayDaily = docs.knownDocs.find(
+      (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
+    )
+    if (!todayDaily) return 0
+    slug = todayDaily.slug
+    known = todayDaily
+  }
   if (known.archivedAt) return 0
 
   const length = await readDocLength(slug)
@@ -99,6 +117,14 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
     return 0
   }
   if (result.proposals.length === 0 && !result.logEntry) return 0
+
+  // wiki:log is the only system-owned wiki page and is created
+  // lazily on first need. Without this, a logEntry would queue but
+  // never drain because the target doc wouldn't exist in the
+  // catalog for the user to navigate to.
+  if (result.logEntry) {
+    await ensureLogWikiSlug()
+  }
 
   const sourceLabel =
     known.type === 'daily' && known.date
