@@ -6,13 +6,28 @@
 // This is the SINGLE surface for suggestions: rationale + [Keep] / [Reject]
 // live here together. The older click → popover flow is reserved for
 // comments only (see MarkPopoverLayer).
+//
+// Positioning: handed off entirely to Floating UI. We feed it a virtual
+// reference whose `getBoundingClientRect` queries the live mark geometry
+// (from markHoverGeometry) every time, so window resize, scroll, font
+// loading, and content reflow all keep the bar attached without extra
+// listeners on our side. `autoUpdate` covers the trigger plumbing.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as Y from 'yjs'
 import { IconCheck, IconX } from '@tabler/icons-react'
+import {
+  autoUpdate,
+  flip,
+  offset,
+  shift,
+  useFloating,
+  type VirtualElement,
+} from '@floating-ui/react-dom'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { acceptMark, rejectMark } from '@/editor/markActions'
 import { MARK_HOVER_EVENT, type MarkHoverDetail } from '@/editor/markHoverPlugin'
+import { getMarkEndRect } from '@/editor/markHoverGeometry'
 import { useMarks } from '@/hooks/useMarks'
 
 interface Props {
@@ -20,16 +35,16 @@ interface Props {
   ydoc: Y.Doc | null
 }
 
-interface Active {
-  markId: string
-  rect: NonNullable<MarkHoverDetail['rect']>
-}
-
 const LEAVE_DELAY_MS = 150
 const BAR_GAP_PX = 6
+// When the live mark has been removed (just accepted/rejected, doc edited
+// past it, etc.) we can't return null — Floating UI expects a rect — so
+// we hand it an off-screen rect and the layer separately decides to
+// unmount the bar.
+const OFFSCREEN_RECT: DOMRect = new DOMRect(-9999, -9999, 0, 0)
 
 export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
-  const [active, setActive] = useState<Active | null>(null)
+  const [activeMarkId, setActiveMarkId] = useState<string | null>(null)
   const leaveTimer = useRef<number | null>(null)
   const marks = useMarks(ydoc)
 
@@ -43,7 +58,7 @@ export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
   function scheduleClose() {
     cancelClose()
     leaveTimer.current = window.setTimeout(() => {
-      setActive(null)
+      setActiveMarkId(null)
       leaveTimer.current = null
     }, LEAVE_DELAY_MS)
   }
@@ -57,7 +72,7 @@ export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
         return
       }
       cancelClose()
-      setActive({ markId: detail.markId, rect: detail.rect! })
+      setActiveMarkId(detail.markId)
     }
     window.addEventListener(MARK_HOVER_EVENT, onHover)
     return () => {
@@ -66,74 +81,58 @@ export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
     }
   }, [])
 
-  if (!active || !editorView || !ydoc) return null
+  // Virtual reference that always reads the LIVE mark rect. Stable identity
+  // keyed on (view, markId) so Floating UI's autoUpdate keeps a single
+  // subscription instead of churning on every render.
+  const virtualReference = useMemo<VirtualElement | null>(() => {
+    if (!editorView || !activeMarkId) return null
+    return {
+      getBoundingClientRect() {
+        return getMarkEndRect(editorView, activeMarkId) ?? OFFSCREEN_RECT
+      },
+    }
+  }, [editorView, activeMarkId])
 
-  const stored = marks[active.markId]
-  // Pull rationale only — comment text and other meta belong on the
-  // (separate) comment popover surface.
-  const rationale = stored?.note?.trim() || null
+  const { refs, floatingStyles } = useFloating({
+    elements: { reference: virtualReference ?? undefined },
+    // Default below the suggestion (footnote-style — matches GitHub PR
+    // review, Notion comments, VS Code lightbulb). Flip above when the
+    // mark sits near the viewport bottom; only fall back to the right of
+    // the suggestion as a last resort. shift keeps the bar in viewport.
+    placement: 'bottom-start',
+    middleware: [
+      offset(BAR_GAP_PX),
+      flip({ fallbackPlacements: ['top-start', 'right-start'] }),
+      shift({ padding: 8 }),
+    ],
+    whileElementsMounted: autoUpdate,
+  })
+
+  if (!activeMarkId || !editorView || !ydoc) return null
+  const stored = marks[activeMarkId]
+  if (!stored) return null
+  const rationale = stored.note?.trim() || null
 
   function handleAccept() {
-    if (!editorView || !ydoc || !active) return
-    acceptMark(editorView, ydoc, active.markId)
+    if (!editorView || !ydoc || !activeMarkId) return
+    acceptMark(editorView, ydoc, activeMarkId)
     cancelClose()
-    setActive(null)
+    setActiveMarkId(null)
   }
 
   function handleReject() {
-    if (!editorView || !ydoc || !active) return
-    rejectMark(editorView, ydoc, active.markId)
+    if (!editorView || !ydoc || !activeMarkId) return
+    rejectMark(editorView, ydoc, activeMarkId)
     cancelClose()
-    setActive(null)
+    setActiveMarkId(null)
   }
 
   return (
-    <Bar
-      rect={active.rect}
-      rationale={rationale}
-      editorEl={editorView.dom}
+    <div
+      ref={refs.setFloating}
       onMouseEnter={cancelClose}
       onMouseLeave={scheduleClose}
-      onAccept={handleAccept}
-      onReject={handleReject}
-    />
-  )
-}
-
-interface BarProps {
-  rect: NonNullable<MarkHoverDetail['rect']>
-  rationale: string | null
-  editorEl: HTMLElement
-  onMouseEnter: () => void
-  onMouseLeave: () => void
-  onAccept: () => void
-  onReject: () => void
-}
-
-function Bar({ rect, rationale, editorEl, onMouseEnter, onMouseLeave, onAccept, onReject }: BarProps) {
-  // Vertical stack: rationale on top, action row below. The container
-  // auto-sizes to the text (no truncation, no morphing) and always sits
-  // below the suggestion so it never overlaps the next line of body text.
-  const APPROX_W = 320
-  const APPROX_H = rationale ? 72 : 36
-
-  const editorRight = editorEl.getBoundingClientRect().right
-  const wantLeft = rect.right + BAR_GAP_PX
-  const overflowsColumn = wantLeft + APPROX_W > editorRight - 8
-
-  const left = overflowsColumn
-    ? Math.max(8, Math.min(rect.right - APPROX_W, window.innerWidth - APPROX_W - 8))
-    : wantLeft
-
-  const top = overflowsColumn
-    ? rect.bottom + BAR_GAP_PX
-    : rect.top + rect.height / 2 - APPROX_H / 2
-
-  return (
-    <div
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
-      style={{ position: 'fixed', top, left, zIndex: 50 }}
+      style={{ ...floatingStyles, zIndex: 50 }}
       className="flex max-w-80 flex-col gap-2 rounded-2xl border border-border bg-popover px-3 pt-2.5 pb-2 shadow-md"
     >
       {rationale && (
@@ -143,7 +142,7 @@ function Bar({ rect, rationale, editorEl, onMouseEnter, onMouseLeave, onAccept, 
         <button
           type="button"
           onMouseDown={(e) => e.preventDefault()}
-          onClick={onReject}
+          onClick={handleReject}
           aria-label="Discard"
           className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring/30"
         >
@@ -155,7 +154,7 @@ function Bar({ rect, rationale, editorEl, onMouseEnter, onMouseLeave, onAccept, 
           // the click hits the button (otherwise the doc loses focus and
           // the next typed key goes nowhere).
           onMouseDown={(e) => e.preventDefault()}
-          onClick={onAccept}
+          onClick={handleAccept}
           className="inline-flex h-6 items-center gap-1 rounded-full bg-primary px-2.5 text-[11px] font-medium text-primary-foreground transition-colors outline-none hover:bg-primary/90 active:scale-95 focus-visible:ring-2 focus-visible:ring-ring/30"
         >
           <IconCheck size={12} stroke={2.25} />
