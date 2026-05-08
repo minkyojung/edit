@@ -792,7 +792,7 @@ const MessageRow = React.memo(function MessageRow({
   if (turn.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl bg-accent px-3 py-2 text-sm">{turn.content}</div>
+        <div className="max-w-[85%] rounded-3xl bg-accent px-3.5 py-2 text-sm">{turn.content}</div>
       </div>
     )
   }
@@ -1242,10 +1242,10 @@ function InlineCard({
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-lg border',
+        'overflow-hidden rounded-xl border',
         tone === 'destructive'
-          ? 'border-destructive/40 bg-destructive/5'
-          : 'border-border bg-muted/30',
+          ? 'border-destructive/40 bg-destructive/10'
+          : 'border-border/60 bg-muted/60',
         className,
       )}
     >
@@ -1271,8 +1271,8 @@ function InlineCardFooter({
       className={cn(
         'flex items-center gap-1.5 border-t px-3 py-1.5 text-xs',
         tone === 'destructive'
-          ? 'border-destructive/30 bg-destructive/10 text-destructive'
-          : 'border-border bg-muted/40 text-muted-foreground',
+          ? 'border-destructive/30 bg-destructive/15 text-destructive'
+          : 'border-border/60 bg-muted/70 text-muted-foreground',
         className,
       )}
     >

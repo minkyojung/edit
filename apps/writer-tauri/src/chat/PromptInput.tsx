@@ -8,7 +8,7 @@
 //   error       → last send errored. Same as idle but rendered with an error
 //                 icon hint; the actual error message lives in the turn.
 
-import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { IconArrowUp, IconPlayerStop, IconQuote, IconX } from '@tabler/icons-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ModelSelect } from '@/chat/ModelSelect'
@@ -87,36 +87,6 @@ export function PromptInput({
   const [value, setValue] = useState('')
   const [isComposing, setIsComposing] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [isMultiLine, setIsMultiLine] = useState(false)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-
-  // Switch between horizontal (single-line) and stacked (multi-line) layouts.
-  // Hysteresis prevents jitter at the transition boundary: enter multi-line
-  // when content visibly wraps past ~1.5 lines; exit only when the user has
-  // cleared the field or shrunk it below a length that can't wrap in the
-  // single-line layout (otherwise switching back would re-trigger wrap).
-  useLayoutEffect(() => {
-    const el = textareaRef.current
-    if (!el) return
-    if (value.length === 0) {
-      setIsMultiLine(false)
-      return
-    }
-    if (value.includes('\n')) {
-      setIsMultiLine(true)
-      return
-    }
-    const cs = getComputedStyle(el)
-    const lineHeight = parseFloat(cs.lineHeight) || 22
-    const padding =
-      parseFloat(cs.paddingTop || '0') + parseFloat(cs.paddingBottom || '0')
-    const lines = (el.scrollHeight - padding) / lineHeight
-    setIsMultiLine((prev) => {
-      if (!prev && lines > 1.5) return true
-      if (prev && value.length < 30) return false
-      return prev
-    })
-  }, [value])
 
   const isStreaming = status === 'streaming'
   const trimmed = value.trim()
@@ -216,7 +186,7 @@ export function PromptInput({
   return (
     <div
       className={cn(
-        'relative flex flex-col gap-1.5 rounded-[28px] border border-border/40 bg-muted p-2 transition-colors',
+        'relative flex flex-col gap-1.5 rounded-3xl border border-border/40 bg-muted p-2.5 transition-colors',
         'focus-within:border-foreground/20',
         disabled && 'opacity-60',
       )}
@@ -261,93 +231,69 @@ export function PromptInput({
           </TooltipContent>
         </Tooltip>
       )}
-      {/* Single-line: [effort] [textarea flex-1] [model + submit] inline.
-          Multi-line: textarea takes the full row (w-full forces wrap), then
-          effort sits bottom-left and model + submit float to the right via
-          ml-auto. DOM order is preserved across modes so the textarea node
-          isn't unmounted — keeps focus and IME composition state intact. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div
-          className={cn(
-            'flex items-center gap-1',
-            isMultiLine ? 'order-2' : 'order-1',
-          )}
-        >
-          <EffortButton value={effort} onChange={onEffortChange} disabled={isStreaming} />
-        </div>
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onCompositionStart={() => setIsComposing(true)}
-          onCompositionEnd={() => setIsComposing(false)}
-          placeholder={placeholder}
-          disabled={disabled}
-          rows={1}
-          className={cn(
-            'resize-none bg-transparent text-sm text-foreground outline-none',
-            'placeholder:text-muted-foreground',
-            '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
-            // Single-line mode: lock textarea to the 32px button row height
-            // (h-8 + leading-8) so placeholder/text baseline aligns with the
-            // effort and submit icons. Multi-line mode reverts to natural
-            // line-height so wrapped lines breathe.
-            isMultiLine
-              ? 'order-1 w-full field-sizing-content max-h-48 min-h-[24px] leading-relaxed'
-              : 'order-2 flex-1 min-w-0 h-8 leading-8',
-          )}
-        />
-        <div
-          className={cn(
-            'flex items-center gap-1',
-            isMultiLine ? 'order-3 ml-auto' : 'order-3',
-          )}
-        >
+      <textarea
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onCompositionStart={() => setIsComposing(true)}
+        onCompositionEnd={() => setIsComposing(false)}
+        placeholder={placeholder}
+        disabled={disabled}
+        rows={1}
+        className={cn(
+          'w-full resize-none bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none',
+          'placeholder:text-muted-foreground',
+          'field-sizing-content max-h-48 min-h-8',
+          '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+        )}
+      />
+      <div className="flex items-center justify-between gap-2">
+        <EffortButton value={effort} onChange={onEffortChange} disabled={isStreaming} />
+        <div className="flex items-center gap-1">
           <ModelSelect value={model} onChange={onModelChange} disabled={isStreaming} />
           <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={handleSubmitClick}
-                // aria-disabled (not disabled) so the button still fires
-                // hover/focus events — that's what makes the tooltip
-                // discoverable when validation blocks Send. handleSubmitClick
-                // short-circuits via canSubmit, so semantically it's still
-                // disabled to clicks.
-                aria-disabled={!isStreaming && !canSubmit}
-                aria-label={isStreaming ? 'Stop' : 'Send'}
-                className={cn(
-                  'flex size-8 items-center justify-center rounded-full transition-colors',
-                  'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
-                  isStreaming
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleSubmitClick}
+              // aria-disabled (not disabled) so the button still fires
+              // hover/focus events — that's what makes the tooltip
+              // discoverable when validation blocks Send. handleSubmitClick
+              // short-circuits via canSubmit, so semantically it's still
+              // disabled to clicks.
+              aria-disabled={!isStreaming && !canSubmit}
+              aria-label={isStreaming ? 'Stop' : 'Send'}
+              className={cn(
+                'flex size-7 items-center justify-center rounded-full transition-colors',
+                'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
+                isStreaming
+                  ? 'bg-foreground text-background hover:bg-foreground/90'
+                  : canSubmit
                     ? 'bg-foreground text-background hover:bg-foreground/90'
-                    : canSubmit
-                      ? 'bg-foreground text-background hover:bg-foreground/90'
-                      : 'bg-muted text-muted-foreground cursor-not-allowed',
-                )}
-              >
-                <SubmitIcon status={status} canSubmit={canSubmit} />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              {isStreaming ? (
-                <>
-                  <span>Stop</span>
-                  <Kbd>{MOD_KEY}</Kbd>
-                  <Kbd>⇧</Kbd>
-                  <Kbd>⌫</Kbd>
-                </>
-              ) : !validation.ok && validation.message ? (
-                <span>{validation.message}</span>
-              ) : (
-                <>
-                  <span>Send</span>
-                  <Kbd>⏎</Kbd>
-                </>
+                    : 'bg-muted text-muted-foreground cursor-not-allowed',
               )}
-            </TooltipContent>
-          </Tooltip>
+            >
+              <SubmitIcon status={status} canSubmit={canSubmit} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            {isStreaming ? (
+              <>
+                <span>Stop</span>
+                <Kbd>{MOD_KEY}</Kbd>
+                <Kbd>⇧</Kbd>
+                <Kbd>⌫</Kbd>
+              </>
+            ) : !validation.ok && validation.message ? (
+              <span>{validation.message}</span>
+            ) : (
+              <>
+                <span>Send</span>
+                <Kbd>⏎</Kbd>
+              </>
+            )}
+          </TooltipContent>
+        </Tooltip>
         </div>
       </div>
     </div>

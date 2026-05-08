@@ -67,15 +67,15 @@ export function EffortButton({ value, onChange, disabled }: Props) {
           disabled={disabled}
           aria-label={`Reasoning effort: ${CHAT_EFFORT_LABELS[value]}`}
           className={cn(
-            'flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors',
+            'flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors',
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
             'hover:bg-accent hover:text-foreground',
             'disabled:pointer-events-none disabled:opacity-50',
           )}
         >
           <svg
-            width="20"
-            height="20"
+            width="16"
+            height="16"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
