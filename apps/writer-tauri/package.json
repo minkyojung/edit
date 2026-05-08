@@ -19,6 +19,7 @@
     "vite": "^6.4.2"
   },
   "dependencies": {
+    "@floating-ui/react-dom": "^2.1.8",
     "@fontsource-variable/geist": "^5.2.8",
     "@hocuspocus/provider": "^2.15.3",
     "@milkdown/core": "^7.20.0",

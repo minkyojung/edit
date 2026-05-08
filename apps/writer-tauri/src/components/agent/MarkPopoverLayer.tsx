@@ -2,9 +2,10 @@
 // clicked range. Reads the current proposal shape from Y.Map so it works
 // independently of whatever proposed it (chat history, manual mark, etc.).
 //
-// The diff itself is rendered inline in the document body (red strikethrough
-// for the original + green ghost widget for the replacement), so the popover
-// here only carries the action surface and any rationale/comment text.
+// Scope: this surface now handles **comments only**. proofSuggestion marks
+// (replace / insert / delete) carry their rationale + Keep/Reject inside
+// the hover-driven floating bar (MarkHoverActionsLayer); rendering the
+// popover for them too would duplicate the action UI on a single click.
 
 import { useEffect, useState } from 'react'
 import * as Y from 'yjs'
@@ -66,6 +67,9 @@ export function MarkPopoverLayer({ editorView, ydoc }: Props) {
   if (!active) return null
   const stored = marks[active.markId]
   if (!stored) return null
+  // Suggestions are owned by the hover bar surface (rationale + actions
+  // there). Click on a suggestion body is intentionally a no-op here.
+  if (stored.kind !== 'comment') return null
   const proposal = storedMarkToProposal(stored)
   if (!proposal) return null
 

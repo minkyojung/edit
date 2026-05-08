@@ -6,6 +6,7 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { MarkPopoverLayer } from '@/components/agent/MarkPopoverLayer'
+import { MarkHoverActionsLayer } from '@/components/agent/MarkHoverActionsLayer'
 import { AppShell } from '@/layout/AppShell'
 import { MilkdownEditor } from '@/editor/MilkdownEditor'
 import { CommandPalette } from '@/layout/CommandPalette'
@@ -75,6 +76,7 @@ export function App() {
                 />
               </Routes>
             </AppShell>
+            <MarkHoverActionsLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
             <MarkPopoverLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
             <CommandPalette />
           </HashRouter>
