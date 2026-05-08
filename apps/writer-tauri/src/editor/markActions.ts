@@ -12,6 +12,7 @@ import type { Mark } from '@milkdown/kit/prose/model'
 import { TextSelection } from '@milkdown/kit/prose/state'
 import * as Y from 'yjs'
 import type { StoredMark } from '../hooks/useCollabDoc'
+import { useEditorViewStore } from '@/state/editorViewStore'
 
 interface FoundAnchor {
   from: number
@@ -100,8 +101,27 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     tr.replaceWith(from, to, view.state.schema.text(content))
   } else if (kind === 'insert') {
     if (content === null || content === undefined) return false
-    // Insert text at the anchor position; mark wraps a placeholder we now replace.
-    tr.replaceWith(from, to, view.state.schema.text(content))
+    // Ingest proposals: `content` is a markdown string from the LLM
+    // (e.g. "### Sarah\n- Workplace colleague"). Parse it through
+    // Milkdown's own commonmark+gfm pipeline so it becomes real
+    // heading / list nodes, then insert those blocks after the block
+    // that holds the anchor word. The anchor itself stays put — we
+    // just strip its proofSuggestion mark — so the visible result is
+    // the original line followed by the new structured content.
+    const parser = useEditorViewStore.getState().parser
+    if (!parser) {
+      console.error('[markActions] accept(insert): parser not ready')
+      return false
+    }
+    const parsed = parser(content)
+    if (!parsed || parsed.content.size === 0) {
+      console.error('[markActions] accept(insert): parser produced empty doc', content)
+      return false
+    }
+    const markType = view.state.schema.marks.proofSuggestion
+    if (markType) tr.removeMark(from, to, markType)
+    const blockEnd = view.state.doc.resolve(to).after()
+    tr.insert(blockEnd, parsed.content)
   } else {
     return false
   }

@@ -177,9 +177,12 @@ function applyOneAsMark(
     kind: 'suggestion',
     suggestionType: 'insert',
     quote: anchor,
-    // Two newlines so the addition reads as its own paragraph rather
-    // than glomming onto the anchor word's line.
-    content: `${anchor}\n\n${proposal.content}`,
+    // Just the new content (markdown). Accept will parse this into
+    // real heading / list nodes via Milkdown's parser and insert
+    // them as block(s) after the anchor's containing block, so the
+    // anchor word stays in place and the addition lands on its own
+    // line(s) below it.
+    content: proposal.content,
     rationale: proposal.rationale,
   }
   const out = applyProposal(view, ydoc, proposalShape, {

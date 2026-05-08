@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Editor, rootCtx, editorViewOptionsCtx, editorViewCtx } from '@milkdown/kit/core'
+import { Editor, rootCtx, editorViewOptionsCtx, editorViewCtx, parserCtx } from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { history } from '@milkdown/kit/plugin/history'
@@ -32,6 +32,7 @@ import { useDocTitle } from '../hooks/useDocTitle'
 import { useDocLabel } from '../hooks/useDocLabel'
 import { MarkToolbar } from './MarkToolbar'
 import { proofMarkPlugins } from './proofMarkSchemas'
+import { useEditorViewStore } from '@/state/editorViewStore'
 
 interface Props {
   handle: CollabHandle | null
@@ -188,6 +189,15 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
           setPmView(view)
           onViewReady?.(view)
         })
+
+        // Expose the markdown parser so non-React consumers (mark
+        // accept, ingest seed) can turn LLM-emitted markdown into
+        // real PM nodes instead of plain text. Cleared on unmount
+        // alongside the view.
+        editor.action((ctx) => {
+          const parser = ctx.get(parserCtx)
+          useEditorViewStore.getState().setParser(parser)
+        })
       })
 
     return () => {
@@ -202,6 +212,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       setSelection(null)
       setPmView(null)
       onViewReady?.(null)
+      useEditorViewStore.getState().setParser(null)
     }
   }, [handle])
 
