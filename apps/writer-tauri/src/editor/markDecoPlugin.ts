@@ -15,6 +15,7 @@ import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view'
 import type { Node } from '@milkdown/kit/prose/model'
+import { topLevelSiblingAfter } from './topLevelSibling'
 
 const key = new PluginKey<DecorationSet>('markDecoration')
 
@@ -77,7 +78,15 @@ function buildDecos(doc: Node): DecorationSet {
           content.length > 0 &&
           !ghostEmitted.has(id)
         ) {
-          const anchorPos = lastTo.get(id) ?? pos + node.nodeSize
+          // Pin the ghost to the top-level sibling slot, not the
+          // anchor's inline position. If we used the inline pos and
+          // the anchor sits inside a blockquote / list / heading,
+          // PM renders the widget DOM inside that wrapper — the
+          // preview looks nested even though acceptMark inserts at
+          // top level. Same helper both sides use, so the pre-accept
+          // visual matches the post-accept structure exactly.
+          const rawEnd = lastTo.get(id) ?? pos + node.nodeSize
+          const anchorPos = topLevelSiblingAfter(doc, rawEnd)
           decos.push(
             Decoration.widget(
               anchorPos,

@@ -13,6 +13,7 @@ import { TextSelection } from '@milkdown/kit/prose/state'
 import * as Y from 'yjs'
 import type { StoredMark } from '../hooks/useCollabDoc'
 import { useEditorViewStore } from '@/state/editorViewStore'
+import { topLevelSiblingAfter } from './topLevelSibling'
 
 interface FoundAnchor {
   from: number
@@ -92,8 +93,15 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
   const { from, to, mark } = anchor
   const kind = mark.attrs.kind as 'replace' | 'insert' | 'delete'
   const content = mark.attrs.content as string | null
+  const marksMap = ydoc.getMap<StoredMark>('marks')
+  const stored = marksMap.get(markId)
 
   const tr = view.state.tr
+  // Track the inserted-content range so the insert path can stamp a
+  // proofProvenance mark on the new text. Other kinds don't need this
+  // (delete = nothing left, replace = anchor word becomes the content
+  // and provenance there is a Phase 2.5 nice-to-have, not in scope).
+  let provenanceRange: { from: number; to: number } | null = null
   if (kind === 'delete') {
     tr.delete(from, to)
   } else if (kind === 'replace') {
@@ -118,16 +126,54 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
       console.error('[markActions] accept(insert): parser produced empty doc', content)
       return false
     }
-    const markType = view.state.schema.marks.proofSuggestion
-    if (markType) tr.removeMark(from, to, markType)
-    const blockEnd = view.state.doc.resolve(to).after()
+    const suggestionType = view.state.schema.marks.proofSuggestion
+    if (suggestionType) tr.removeMark(from, to, suggestionType)
+    // Insert at the top-level sibling slot. Same helper the deco
+    // plugin's ghost preview uses, so the visual position pre-accept
+    // matches the actual insert position post-accept.
+    const blockEnd = topLevelSiblingAfter(view.state.doc, to)
     tr.insert(blockEnd, parsed.content)
+    provenanceRange = { from: blockEnd, to: blockEnd + parsed.content.size }
   } else {
     return false
   }
+
+  // Stamp proofProvenance on the inserted range in the same transaction
+  // so the mark appears atomically with the inserted text. Skipped if
+  // the schema lacks the mark (older client) — we fall through to the
+  // delete-StoredMark path below, which preserves prior behavior.
+  const provenanceType = view.state.schema.marks.proofProvenance
+  if (provenanceRange && provenanceType && stored) {
+    tr.addMark(
+      provenanceRange.from,
+      provenanceRange.to,
+      provenanceType.create({
+        id: markId,
+        sourceSlug: stored.sourceSlug ?? null,
+        sourceLabel: stored.sourceLabel ?? null,
+        sourceQuote: stored.sourceQuote ?? null,
+        proposedAt: stored.proposedAt ?? stored.at ?? null,
+        acceptedAt: new Date().toISOString(),
+        model: stored.model ?? null,
+      }),
+    )
+  }
   view.dispatch(tr)
 
-  ydoc.getMap<StoredMark>('marks').delete(markId)
+  // For insert kind, transform the StoredMark in place: same id, new
+  // kind='provenance', acceptedAt added. The Y.Map entry now describes
+  // a permanent breadcrumb instead of a pending suggestion. For other
+  // kinds, keep prior behavior (delete the entry).
+  if (provenanceRange && stored) {
+    marksMap.set(markId, {
+      ...stored,
+      kind: 'provenance',
+      status: 'accepted',
+      acceptedAt: new Date().toISOString(),
+    })
+  } else {
+    marksMap.delete(markId)
+  }
   return true
 }
 

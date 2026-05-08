@@ -35,6 +35,7 @@ import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useIngestStore, type PendingProposal } from '@/state/ingestStore'
 import { applyProposal } from '@/agent/applyProposal'
 import type { Proposal } from '@/agent/proposals'
+import type { StoredMark } from '@/hooks/useCollabDoc'
 
 const AGENT_ID = 'ai:wiki-ingest'
 
@@ -189,6 +190,24 @@ function applyOneAsMark(
     runId: proposal.id,
     agentId: AGENT_ID,
   })
+  // Enrich the freshly-created StoredMark with provenance metadata
+  // pulled from the queued proposal. acceptMark reads these on accept
+  // and copies them onto the new proofProvenance mark so the breadcrumb
+  // points back at the source daily / note. applyProposal doesn't know
+  // about ingest-domain fields, so we patch the entry in-place here.
+  if (out.ok) {
+    const marksMap = ydoc.getMap<StoredMark>('marks')
+    const existing = marksMap.get(out.markId)
+    if (existing) {
+      marksMap.set(out.markId, {
+        ...existing,
+        sourceSlug: proposal.sourceSlug,
+        sourceLabel: proposal.sourceLabel,
+        sourceQuote: proposal.sourceQuote,
+        proposedAt: new Date(proposal.proposedAt).toISOString(),
+      })
+    }
+  }
   return out
 }
 

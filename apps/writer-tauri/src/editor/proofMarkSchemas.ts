@@ -332,6 +332,87 @@ export const proofAuthoredSchema = $markSchema('proofAuthored', () => ({
   },
 }))
 
+// ── Provenance ───────────────────────────────────────────────────────────
+// Permanent breadcrumb left on LLM-origin text after the user accepts it.
+// Visually invisible (no styling in toDOM beyond a data attr) so the page
+// reads as plain prose; hover plugin uses the data attrs to surface a
+// "where did this come from?" popover. Carries the source metadata that
+// was on the proofSuggestion at accept time, plus an acceptedAt stamp.
+export const proofProvenanceAttr = $markAttr('proofProvenance', () => ({
+  id: {},
+}))
+
+export const proofProvenanceSchema = $markSchema('proofProvenance', () => ({
+  attrs: {
+    id: { default: null },
+    sourceSlug: { default: null },
+    sourceLabel: { default: null },
+    sourceQuote: { default: null },
+    proposedAt: { default: null },
+    acceptedAt: { default: null },
+    model: { default: null },
+  },
+  inclusive: false,
+  spanning: true,
+  parseDOM: [
+    {
+      tag: 'span[data-proof="provenance"]',
+      getAttrs: (dom: HTMLElement): Attrs => ({
+        id: dom.getAttribute('data-id'),
+        sourceSlug: dom.getAttribute('data-source-slug'),
+        sourceLabel: dom.getAttribute('data-source-label'),
+        sourceQuote: dom.getAttribute('data-source-quote'),
+        proposedAt: dom.getAttribute('data-proposed-at'),
+        acceptedAt: dom.getAttribute('data-accepted-at'),
+        model: dom.getAttribute('data-model'),
+      }),
+    },
+  ],
+  toDOM: (mark) => {
+    const domAttrs: Record<string, string> = { 'data-proof': 'provenance' }
+    if (mark.attrs.id) domAttrs['data-id'] = String(mark.attrs.id)
+    if (mark.attrs.sourceSlug) domAttrs['data-source-slug'] = String(mark.attrs.sourceSlug)
+    if (mark.attrs.sourceLabel) domAttrs['data-source-label'] = String(mark.attrs.sourceLabel)
+    if (mark.attrs.sourceQuote) domAttrs['data-source-quote'] = String(mark.attrs.sourceQuote)
+    if (mark.attrs.proposedAt) domAttrs['data-proposed-at'] = String(mark.attrs.proposedAt)
+    if (mark.attrs.acceptedAt) domAttrs['data-accepted-at'] = String(mark.attrs.acceptedAt)
+    if (mark.attrs.model) domAttrs['data-model'] = String(mark.attrs.model)
+    return ['span', domAttrs, 0]
+  },
+  parseMarkdown: {
+    match: (node) => (node as ProofNode).type === 'proofMark' && (node as ProofNode).proof === 'provenance',
+    runner: (state, node, markType) => {
+      const proofNode = node as ProofNode
+      const attrs = proofNode.attrs || {}
+      state.openMark(markType, {
+        id: attrs.id ?? null,
+        sourceSlug: attrs.sourceSlug ?? null,
+        sourceLabel: attrs.sourceLabel ?? null,
+        sourceQuote: attrs.sourceQuote ?? null,
+        proposedAt: attrs.proposedAt ?? null,
+        acceptedAt: attrs.acceptedAt ?? null,
+        model: attrs.model ?? null,
+      })
+      state.next(proofNode.children || [])
+      state.closeMark(markType)
+    },
+  },
+  toMarkdown: {
+    match: (mark) => mark.type.name === 'proofProvenance',
+    runner: (state, mark) => {
+      serializeProofMark(state, mark, 'provenance', {
+        id: mark.attrs.id ?? null,
+        sourceSlug: mark.attrs.sourceSlug ?? null,
+        sourceLabel: mark.attrs.sourceLabel ?? null,
+        sourceQuote: mark.attrs.sourceQuote ?? null,
+        proposedAt: mark.attrs.proposedAt ?? null,
+        acceptedAt: mark.attrs.acceptedAt ?? null,
+        model: mark.attrs.model ?? null,
+      })
+    },
+  },
+}))
+
 // $markSchema returns a tuple `[$Ctx, $Mark]` (both MilkdownPlugin) plus
 // extra accessor props. Spreading the tuples here flattens the array to a
 // plain MilkdownPlugin[] so it satisfies Editor.use() without casts.
@@ -346,4 +427,6 @@ export const proofMarkPlugins = [
   ...proofApprovedSchema,
   proofAuthoredAttr,
   ...proofAuthoredSchema,
+  proofProvenanceAttr,
+  ...proofProvenanceSchema,
 ]
