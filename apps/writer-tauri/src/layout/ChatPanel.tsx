@@ -22,6 +22,7 @@ import {
   IconQuote,
   IconCopy,
   IconRefresh,
+  IconChevronDown,
 } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
@@ -103,8 +104,21 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   // its owning threadId so a thread switch mid-stream doesn't bleed text into
   // the wrong conversation.
   const [streaming, setStreaming] = useState<{ threadId: string; turn: ChatTurn } | null>(null)
+  // Whether the user is currently pinned to the bottom of the transcript.
+  // Single source of truth shared by the auto-scroll effect (which only
+  // chases new content while pinned) and the scroll-to-bottom button (which
+  // only shows when *not* pinned). 80px threshold matches the pre-existing
+  // auto-scroll behavior so the two never disagree.
+  const [pinned, setPinned] = useState(true)
   const startActivity = useChatActivity((s) => s.start)
   const endActivity = useChatActivity((s) => s.end)
+
+  const handleScroll = useCallback(() => {
+    const c = scrollRef.current
+    if (!c) return
+    const distance = c.scrollHeight - c.scrollTop - c.clientHeight
+    setPinned(distance < 80)
+  }, [])
 
   // Track Hocuspocus initial sync so we don't auto-create a thread before the
   // server has had a chance to send us the existing list — that race produces
@@ -137,15 +151,11 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   // scrolled up to read history, leave them alone. Streaming uses 'auto' (no
   // animation) so rapid token deltas don't fight an in-flight smooth scroll.
   useEffect(() => {
-    const c = scrollRef.current
-    if (!c) return
-    const distanceFromBottom = c.scrollHeight - c.scrollTop - c.clientHeight
-    const pinned = distanceFromBottom < 80 // px
     if (!pinned) return
     bottomRef.current?.scrollIntoView({
       behavior: streaming ? 'auto' : 'smooth',
     })
-  }, [turnsHook.turns, streaming])
+  }, [turnsHook.turns, streaming, pinned])
 
   const ready = !!editorView && !!ydoc && !!activeId
 
@@ -706,6 +716,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
 
       <div
         ref={scrollRef}
+        onScroll={handleScroll}
         className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {renderedTurns.length === 0 && (
@@ -723,7 +734,11 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      <div className="shrink-0 p-3 space-y-2">
+      <div className="relative shrink-0 px-3 pb-3 space-y-2">
+        <ScrollToBottomButton
+          visible={!pinned && renderedTurns.length > 0}
+          onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
+        />
         <PromptInput
           status={chatStatus}
           disabled={!ready || !account.connected}
@@ -1487,6 +1502,39 @@ function ThinkingPanel({
         </div>
       </details>
     </InlineCard>
+  )
+}
+
+/** Floating "jump to latest" affordance. Sits inside the PromptInput's
+ * wrapper as an absolute sibling — `bottom-full` anchors it to the wrapper's
+ * top edge, so the button rides up naturally as the input grows. Visibility
+ * is fully driven by the parent (`pinned` + non-empty transcript). */
+function ScrollToBottomButton({
+  visible,
+  onClick,
+}: {
+  visible: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Scroll to latest"
+      tabIndex={visible ? 0 : -1}
+      className={cn(
+        'absolute left-1/2 bottom-full z-10 mb-2 -translate-x-1/2',
+        'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5',
+        'border border-border/40 bg-muted text-xs font-medium text-muted-foreground shadow-sm',
+        'transition-opacity duration-150',
+        'hover:bg-accent hover:text-foreground',
+        'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
+        visible ? 'opacity-100' : 'pointer-events-none opacity-0',
+      )}
+    >
+      <IconChevronDown size={14} stroke={2} />
+      <span>Scroll to bottom</span>
+    </button>
   )
 }
 
