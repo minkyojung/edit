@@ -6,7 +6,15 @@ import { proofClient, waitUntilReady } from '../lib/proofClient'
 export type CollabStatus = 'initializing' | 'connecting' | 'connected' | 'error'
 
 export type StoredMarkStatus = 'pending' | 'accepted' | 'rejected'
-export type MarkKind = 'authored' | 'approved' | 'flagged' | 'comment' | 'insert' | 'delete' | 'replace'
+export type MarkKind =
+  | 'authored'
+  | 'approved'
+  | 'flagged'
+  | 'comment'
+  | 'insert'
+  | 'delete'
+  | 'replace'
+  | 'provenance'
 
 export interface StoredMark {
   id?: string
@@ -23,6 +31,18 @@ export interface StoredMark {
   resolved?: boolean
   orphaned?: boolean
   note?: string
+  // Provenance fields — populated when kind === 'provenance'. The
+  // mark is a permanent breadcrumb for LLM-origin text that the user
+  // accepted (proofSuggestion → provenance on accept) or that was
+  // seeded directly into a freshly-created wiki page. Hover UI reads
+  // these to answer "where did this sentence come from?" without the
+  // text needing a visible underline.
+  sourceQuote?: string
+  sourceSlug?: string
+  sourceLabel?: string
+  proposedAt?: string
+  acceptedAt?: string
+  model?: string
 }
 
 export interface CollabHandle {
