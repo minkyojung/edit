@@ -105,7 +105,12 @@ export function applyProposal(
   } as StoredMark
   marksMap.set(markId, stored)
 
-  // Inline mark stamp.
+  // Inline mark stamp. The PM mark is a pure anchor — only id / kind / by
+  // ride along here. content / status / createdAt all live on the Y.Map
+  // StoredMark we wrote above; readers (markDecoPlugin, markActions) look
+  // them up there. Keeping the inline mark thin avoids the dual-source bug
+  // where a server markdown round-trip strips PM attrs and the ghost goes
+  // blank even though the metadata is intact.
   if (proposal.kind === 'suggestion') {
     const markType = view.state.schema.marks.proofSuggestion
     if (!markType) return { ok: false, reason: 'schema_proof_suggestion_missing' }
@@ -117,9 +122,6 @@ export function applyProposal(
           id: markId,
           kind: proposal.suggestionType,
           by: meta.agentId,
-          content: proposal.content ?? null,
-          status: 'pending',
-          createdAt: now,
         }),
       ),
     )
