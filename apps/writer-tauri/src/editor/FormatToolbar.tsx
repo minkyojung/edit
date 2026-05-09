@@ -95,7 +95,7 @@ export function FormatToolbar() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Separator orientation="vertical" className="!h-4 mx-1" />
+      <Separator orientation="vertical" className="!h-4 mx-1 self-center" />
 
       <Button
         variant="ghost"
