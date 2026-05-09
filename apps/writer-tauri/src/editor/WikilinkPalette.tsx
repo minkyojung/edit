@@ -20,6 +20,7 @@ import {
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocTitle } from '@/hooks/useDocTitle'
 import { cn } from '@/lib/utils'
+import { notify } from '@/lib/notify'
 
 interface Props {
   /** Current doc whose children become the candidate set for the
@@ -120,9 +121,10 @@ export function WikilinkPalette({ parentSlug, keyHandlerRef }: Props) {
       if (key === 'Enter' || key === 'Tab') {
         if (candidates.length === 0) return false
         const pick = candidates[safeIndex]
-        commit(info, pick).catch((err) =>
-          console.error('[wikilink] commit failed', err),
-        )
+        commit(info, pick).catch((err) => {
+          console.error('[wikilink] commit failed', err)
+          notify.wikilinkCreateFailed()
+        })
         return true
       }
       return false
@@ -170,9 +172,10 @@ export function WikilinkPalette({ parentSlug, keyHandlerRef }: Props) {
               // mousedown so editor focus is preserved when we
               // dispatch the insert.
               e.preventDefault()
-              commit(info, cand).catch((err) =>
-                console.error('[wikilink] commit failed', err),
-              )
+              commit(info, cand).catch((err) => {
+                console.error('[wikilink] commit failed', err)
+                notify.wikilinkCreateFailed()
+              })
             }}
             onMouseEnter={() => setSelectedIndex(i)}
             className={cn(

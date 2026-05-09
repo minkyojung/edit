@@ -46,6 +46,9 @@ import {
   humanizeError,
 } from '@/chat/utils/errorMessage'
 import { MessageRow } from '@/chat/messages/MessageRow'
+import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
+import { ReviewProgressBadge } from '@/chat/ReviewProgressBadge'
+import { notify } from '@/lib/notify'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -688,8 +691,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
             return r
           }}
           onRestoreLimitReached={() => {
-            // TODO: replace with a real toast once we add a toaster.
-            console.warn('[threads] cannot restore — active limit reached')
+            notify.threadLimitReached()
           }}
         />
       </div>
