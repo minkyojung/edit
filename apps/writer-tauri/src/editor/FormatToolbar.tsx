@@ -16,7 +16,7 @@
 import { setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands'
 import { wrapInList } from '@milkdown/kit/prose/schema-list'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { IconChevronDown } from '@tabler/icons-react'
+import { IconBold, IconChevronDown, IconItalic } from '@tabler/icons-react'
 
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -95,7 +95,7 @@ export function FormatToolbar() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Separator orientation="vertical" className="!h-4" />
+      <Separator orientation="vertical" className="!h-4 mx-1" />
 
       <Button
         variant="ghost"
@@ -105,7 +105,7 @@ export function FormatToolbar() {
         aria-label="Bold"
         className="h-7 w-7"
       >
-        <span className="font-bold">B</span>
+        <IconBold size={14} stroke={2.25} />
       </Button>
       <Button
         variant="ghost"
@@ -115,7 +115,7 @@ export function FormatToolbar() {
         aria-label="Italic"
         className="h-7 w-7"
       >
-        <span className="italic">I</span>
+        <IconItalic size={14} stroke={2.25} />
       </Button>
     </div>
   )
