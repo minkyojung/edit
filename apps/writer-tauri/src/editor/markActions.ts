@@ -214,3 +214,21 @@ export function resolveComment(view: EditorView, ydoc: Y.Doc, markId: string): b
   ydoc.getMap<StoredMark>('marks').delete(markId)
   return true
 }
+
+/** Silently remove a propose_change-produced mark (suggestion or comment).
+ * Used when the assistant turn that owns the mark is being discarded —
+ * e.g. handleRegenerate clearing the prior run's marks before the rerun
+ * stamps fresh ones. Same effect as rejectMark / resolveComment but
+ * without the user-facing notify side effect on missing anchors. */
+export function cleanupMark(view: EditorView, ydoc: Y.Doc, markId: string): void {
+  const stored = ydoc.getMap<StoredMark>('marks').get(markId)
+  const schemaName = stored?.kind === 'comment' ? 'proofComment' : 'proofSuggestion'
+  const anchor = findInlineAnchor(view, markId, schemaName)
+  if (anchor) {
+    const markType = view.state.schema.marks[schemaName]
+    if (markType) {
+      view.dispatch(view.state.tr.removeMark(anchor.from, anchor.to, markType))
+    }
+  }
+  ydoc.getMap<StoredMark>('marks').delete(markId)
+}

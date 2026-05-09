@@ -100,6 +100,17 @@ export interface ChatTurn {
    * countdown shown in the error card. Absent when the SDK didn't emit a
    * snapshot before the failure. */
   resetsAt?: number
+  /** Set on a user turn when the message originated as a slash command
+   * (e.g. `/proofread`). Lets handleRegenerate route the rerun back through
+   * executeCommand's path — same system prompt, same relayTools, same
+   * summarize hook — instead of replaying the literal text as plain chat. */
+  slashInvocation?: { name: string; args: string }
+  /** Mark ids that propose_change produced during this assistant turn.
+   * handleRegenerate reads these on the turn it's about to discard so it
+   * can clear the matching marks from the editor before the rerun stamps
+   * fresh ones — pressing Regenerate means "throw out the prior output",
+   * and unowned marks accumulating across reruns would violate that. */
+  appliedMarkIds?: string[]
 }
 
 /**

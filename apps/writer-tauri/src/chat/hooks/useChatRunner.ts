@@ -116,6 +116,10 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       // a summarize callback is present; otherwise stay at zero and unused.
       let proposedCount = 0
       let appliedCount = 0
+      // Mark ids the run produces via propose_change. Always collected (not
+      // gated on `summarize`) so handleRegenerate can clear stale marks
+      // when re-running any slash command, not just review-comments.
+      const appliedMarkIds: string[] = []
 
       const commit = (
         finalStatus: ChatTurn['status'],
@@ -149,6 +153,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           errorText: errorText ?? undefined,
           errorCode,
           resetsAt,
+          appliedMarkIds: appliedMarkIds.length > 0 ? [...appliedMarkIds] : undefined,
         })
         setStreaming(null)
       }
@@ -169,13 +174,14 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
             buffer.upsert(part)
             flusher.schedule()
           },
-          onToolApplied: overrides?.summarize
-            ? (call) => {
-                if (call.name !== 'propose_change') return
-                proposedCount += 1
-                if (call.result.ok) appliedCount += 1
-              }
-            : undefined,
+          onToolApplied: (call) => {
+            if (call.name !== 'propose_change') return
+            proposedCount += 1
+            if (call.result.ok) {
+              appliedCount += 1
+              appliedMarkIds.push(call.result.markId)
+            }
+          },
         })
         commit('done', result.stopReason)
         setStatus('idle')

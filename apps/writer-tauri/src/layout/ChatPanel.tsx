@@ -36,6 +36,7 @@ import {
   type ChatTurn,
 } from '@/chat/types'
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
+import { cleanupMark } from '@/editor/markActions'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
 import { ReviewProgressBadge } from '@/chat/ReviewProgressBadge'
@@ -235,20 +236,19 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   /** Renders a command body and kicks off a single assistant turn against
    * its system prompt. The user message in the transcript is the literal
    * `/<name> args` text — same as Claude Code, keeps intent visible. */
-  async function executeCommand(
+  /** Execute a slash command's run lifecycle for a user turn that's already
+   * sitting in the thread. Renders the system prompt against the *current*
+   * editor state (doc + selection) so a regenerate after a doc edit picks
+   * up the latest text, builds the kind-specific RunOverrides, and dispatches
+   * through the runner. Caller is responsible for putting `userTurn` into
+   * `history` and turnsHook before calling. */
+  async function runSlashCommand(
     threadId: string,
     cmd: LoadedCommand,
     args: string,
-    userText: string,
+    userTurn: ChatTurn,
+    history: ChatTurn[],
   ) {
-    const userTurn: ChatTurn = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: userText,
-      ts: Date.now(),
-    }
-    turnsHook.appendTurn(userTurn)
-
     let systemPrompt: string
     try {
       const ev = editorView!
@@ -271,7 +271,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       systemPrompt = renderBody(cmd, { document: docText, selection, args })
     } catch (e) {
       const msg = e instanceof CommandRenderError ? e.message : String(e)
-      appendInlineError(threadId, userText, msg, /* alreadyAppendedUser */ true)
+      appendInlineError(threadId, userTurn.content, msg, /* alreadyAppendedUser */ true)
       return
     }
 
@@ -295,7 +295,27 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
                 : `Found **${applied}** issue${applied === 1 ? '' : 's'} — click any highlight in the document to review.`
           : undefined,
     }
-    await runner.run(threadId, [...turnsHook.turns, userTurn], overrides)
+    await runner.run(threadId, history, overrides)
+  }
+
+  async function executeCommand(
+    threadId: string,
+    cmd: LoadedCommand,
+    args: string,
+    userText: string,
+  ) {
+    const userTurn: ChatTurn = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: userText,
+      ts: Date.now(),
+      // Stamp so handleRegenerate can rerun this turn through the same
+      // command path (system prompt + relayTools + summarize) instead of
+      // replaying the literal "/proofread" text as plain chat.
+      slashInvocation: { name: cmd.name, args },
+    }
+    turnsHook.appendTurn(userTurn)
+    await runSlashCommand(threadId, cmd, args, userTurn, [...turnsHook.turns, userTurn])
   }
 
   /** Append a finished error turn without invoking the model. Used for
@@ -385,11 +405,10 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
    * message that prompted it. Only valid for the most recent assistant turn:
    * earlier rewrites would invalidate every later turn's context.
    *
-   * Known limitation: slash-command turns (e.g. /proofread) re-run as plain
-   * chat without their original RunOverrides — no system prompt, no relay
-   * tools, no summarize hook — so the regenerated answer is usually empty.
-   * Fix lives in a separate change: stamp the slash invocation onto the
-   * user turn so this handler can route back through executeCommand. */
+   * Slash-command turns (`slashInvocation` stamped on the user turn) route
+   * back through runSlashCommand so the rerun gets the same system prompt,
+   * relayTools, and summarize hook as the original — without that branch
+   * the rerun would replay the literal `/proofread` text as plain chat. */
   async function handleRegenerate(assistantTurnId: string) {
     if (!ready || chatStatus === 'streaming') return
     if (sendInFlightRef.current) return
@@ -404,7 +423,34 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       const history = turns.slice(0, idx)
       if (history.length === 0 || history[history.length - 1].role !== 'user') return
 
+      const lastUser = history[history.length - 1]
+      const targetTurn = turns[idx]
+      // Discard the prior run's propose_change marks before the rerun
+      // stamps fresh ones — pressing Regenerate means "throw out what
+      // I just got". Without this, a re-`/proofread` would leave stale
+      // marks layered under the new ones on the same words.
+      if (targetTurn.appliedMarkIds && editorView && ydoc) {
+        for (const markId of targetTurn.appliedMarkIds) {
+          cleanupMark(editorView, ydoc, markId)
+        }
+      }
       turnsHook.removeTurn(assistantTurnId)
+
+      if (lastUser.slashInvocation) {
+        const cmd = getCommand(lastUser.slashInvocation.name)
+        if (cmd) {
+          await runSlashCommand(
+            threadId,
+            cmd,
+            lastUser.slashInvocation.args,
+            lastUser,
+            history,
+          )
+          return
+        }
+        // Command was renamed / removed since the original send; fall back
+        // to plain chat so the rerun at least produces something.
+      }
       await runner.run(threadId, history)
     } finally {
       sendInFlightRef.current = false
