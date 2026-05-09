@@ -1,9 +1,9 @@
 // Static formatting toolbar that lives in the editor's Row 2 slot.
 //
-// Phase 1 minimum: Style dropdown (block transforms) + Bold + Italic.
-// Active-state visualization (this commit) reflects the live cursor
-// position so the user sees what's "on" before clicking. The Link
-// button arrives in Step 12.
+// Phase 1 minimum: Style dropdown (block transforms) + Bold + Italic
+// + Link. The toolbar mirrors the cursor's active block and inline
+// marks via formatStateStore so toggles read as on/off without the
+// user having to click to discover state.
 //
 // Why call ProseMirror commands directly instead of going through
 // Milkdown's commandsCtx: the rest of writer-tauri (markActions.ts,
@@ -13,10 +13,16 @@
 // preset registered the marks/nodes by the names we look up below, no
 // Milkdown ctx is needed to run setBlockType / wrapIn / wrapInList.
 
+import { useEffect, useRef, useState } from 'react'
 import { setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands'
 import { wrapInList } from '@milkdown/kit/prose/schema-list'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { IconBold, IconChevronDown, IconItalic } from '@tabler/icons-react'
+import {
+  IconBold,
+  IconChevronDown,
+  IconItalic,
+  IconLink,
+} from '@tabler/icons-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -26,6 +32,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import {
   useFormatStateStore,
@@ -56,6 +68,7 @@ export function FormatToolbar() {
 
   const isBold = activeMarks.has('strong')
   const isItalic = activeMarks.has('emphasis')
+  const isLink = activeMarks.has('link')
 
   const runMark = (markName: string) => () => {
     if (!view) return
@@ -92,8 +105,6 @@ export function FormatToolbar() {
     if (t) wrapIn(t)(v.state, v.dispatch)
   }
 
-  /** Highlight the dropdown row that matches the current block so
-   * the user sees "this is what I'm in" alongside the trigger label. */
   const itemActive = (target: FormatBlockType) =>
     blockType === target ? 'bg-accent text-accent-foreground' : undefined
 
@@ -187,6 +198,151 @@ export function FormatToolbar() {
       >
         <IconItalic size={14} stroke={2.25} />
       </Button>
+
+      <div aria-hidden className="mx-1 h-4 w-px shrink-0 self-center bg-border" />
+
+      <LinkButton view={view} active={isLink} disabled={disabled} />
     </div>
+  )
+}
+
+// ── Link ──────────────────────────────────────────────────────────────
+
+/** Walk left and right from the cursor to the surrounding word's
+ * boundaries (whitespace or text-block edge). Returns null when the
+ * cursor sits on whitespace and there's no word to expand to —
+ * callers treat that as "do nothing." Unicode-aware so words in
+ * Korean / emoji / Latin all behave the same way. */
+function expandToWord(view: EditorView): { from: number; to: number } | null {
+  const sel = view.state.selection
+  if (!sel.empty) return { from: sel.from, to: sel.to }
+
+  const $pos = sel.$from
+  const parent = $pos.parent
+  if (!parent.isTextblock) return null
+
+  const text = parent.textContent
+  const offset = $pos.parentOffset
+  const wordChar = /[\p{L}\p{N}_]/u
+
+  let start = offset
+  let end = offset
+  while (start > 0 && wordChar.test(text[start - 1])) start--
+  while (end < text.length && wordChar.test(text[end])) end++
+
+  if (start === end) return null
+
+  const blockStart = $pos.start()
+  return { from: blockStart + start, to: blockStart + end }
+}
+
+/** Read the existing link href that covers (any part of) the range,
+ * if any. Used to pre-fill the popover so editing an existing link
+ * shows its current URL instead of an empty field. */
+function readExistingHref(
+  view: EditorView,
+  range: { from: number; to: number },
+): string {
+  const linkType = view.state.schema.marks.link
+  if (!linkType) return ''
+  let href = ''
+  view.state.doc.nodesBetween(range.from, range.to, (node) => {
+    if (href) return false
+    const link = linkType.isInSet(node.marks)
+    if (link) {
+      href = (link.attrs.href as string) ?? ''
+      return false
+    }
+    return undefined
+  })
+  return href
+}
+
+interface LinkButtonProps {
+  view: EditorView | null
+  active: boolean
+  disabled: boolean
+}
+
+function LinkButton({ view, active, disabled }: LinkButtonProps) {
+  const [open, setOpen] = useState(false)
+  const [url, setUrl] = useState('')
+  const rangeRef = useRef<{ from: number; to: number } | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  // Autofocus the input when the popover opens. Radix's Popover steals
+  // focus on open, so we delay one tick to win the focus race.
+  useEffect(() => {
+    if (!open) return
+    const t = window.setTimeout(() => inputRef.current?.focus(), 0)
+    return () => window.clearTimeout(t)
+  }, [open])
+
+  const handleOpenChange = (next: boolean) => {
+    if (next) {
+      if (!view) return
+      const range = expandToWord(view)
+      if (!range) return // cursor on whitespace with no word — silent no-op
+      rangeRef.current = range
+      setUrl(readExistingHref(view, range))
+      setOpen(true)
+    } else {
+      setOpen(false)
+      setUrl('')
+      rangeRef.current = null
+      view?.focus()
+    }
+  }
+
+  const apply = () => {
+    if (!view) return
+    const range = rangeRef.current
+    if (!range) return
+    const linkType = view.state.schema.marks.link
+    if (!linkType) return
+
+    const href = url.trim()
+    const tr = view.state.tr.removeMark(range.from, range.to, linkType)
+    if (href) {
+      tr.addMark(range.from, range.to, linkType.create({ href }))
+    }
+    view.dispatch(tr)
+    handleOpenChange(false)
+  }
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          disabled={disabled}
+          aria-label="Link"
+          aria-pressed={active}
+          className={cn('h-7 w-7', active && 'bg-accent text-accent-foreground')}
+        >
+          <IconLink size={14} stroke={2.25} />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" sideOffset={6} className="w-72 p-2">
+        <Input
+          ref={inputRef}
+          type="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              apply()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              handleOpenChange(false)
+            }
+          }}
+          placeholder="https://…"
+          className="h-8 px-3 text-sm"
+        />
+      </PopoverContent>
+    </Popover>
   )
 }
