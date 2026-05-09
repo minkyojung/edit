@@ -10,11 +10,7 @@
 // user is directed back to the body to act on individual highlights.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  IconPlayerStopFilled,
-  IconAlertTriangle,
-  IconChevronDown,
-} from '@tabler/icons-react'
+import { IconAlertTriangle, IconChevronDown } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
 import { TextSelection } from '@milkdown/kit/prose/state'
@@ -51,7 +47,6 @@ import {
   extractErrorCode,
   humanizeError,
 } from '@/chat/utils/errorMessage'
-import { InlineCard, InlineCardFooter } from '@/chat/ui/InlineCard'
 import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
 import { ThinkingPanel } from '@/chat/parts/ReasoningPart'
 import { PartList } from '@/chat/parts/PartList'
@@ -59,6 +54,7 @@ import { ActivityStatus, activityLabel } from '@/chat/parts/ActivityStatus'
 import { CopyButton } from '@/chat/messages/CopyButton'
 import { RegenerateButton } from '@/chat/messages/RegenerateButton'
 import { ErrorCard } from '@/chat/messages/ErrorCard'
+import { StoppedCard } from '@/chat/messages/StoppedCard'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -825,16 +821,13 @@ const MessageRow = React.memo(function MessageRow({
 
   if (isStopped) {
     return (
-      <InlineCard>
-        <div className="px-3 py-2">{body}</div>
-        <InlineCardFooter>
-          <IconPlayerStopFilled size={12} stroke={0} className="opacity-70" />
-          <span>Stopped</span>
-          {durationLabel && <span className="opacity-70">· {durationLabel}</span>}
-          {canCopy && <CopyButton text={turn.content} />}
-          {canRegenerate && <RegenerateButton onClick={() => onRegenerate!(turn.id)} />}
-        </InlineCardFooter>
-      </InlineCard>
+      <StoppedCard
+        turn={turn}
+        body={body}
+        hasText={hasText}
+        durationLabel={durationLabel}
+        onRegenerate={onRegenerate}
+      />
     )
   }
 
