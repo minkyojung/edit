@@ -24,7 +24,7 @@ interface AppShellProps {
 }
 
 export function AppShell({ children, bottomLeft, collabHandle, collabStatus, editorView }: AppShellProps) {
-  const { sidebarOpen, contextPanelOpen, setSidebar, toggleContextPanel, setContextPanel } =
+  const { sidebarOpen, contextPanelOpen, setSidebar, togglePanels, setContextPanel } =
     useLayoutStore()
   const contextPanelRef = usePanelRef()
 
@@ -41,23 +41,14 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (!e.metaKey) return
-
-      if (e.key === '1') {
-        e.preventDefault()
-        setSidebar(!sidebarOpen)
-      } else if (e.key === '.') {
-        e.preventDefault()
-        toggleContextPanel()
-      } else if (e.key === '\\') {
-        e.preventDefault()
-        setSidebar(false)
-        setContextPanel(false)
-      }
+      if (e.key !== '.') return
+      e.preventDefault()
+      togglePanels()
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [sidebarOpen, setSidebar, toggleContextPanel, setContextPanel])
+  }, [togglePanels])
 
   return (
     <SidebarProvider
