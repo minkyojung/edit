@@ -12,9 +12,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   IconPlayerStopFilled,
-  IconCheck,
   IconAlertTriangle,
-  IconCopy,
   IconRefresh,
   IconChevronDown,
 } from '@tabler/icons-react'
@@ -40,7 +38,6 @@ import {
 } from '@/chat/commands'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
-import { useConnectDialog } from '@/stores/connectDialog'
 import { ThreadTabs } from '@/chat/ThreadTabs'
 import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
 import {
@@ -62,6 +59,9 @@ import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
 import { ThinkingPanel } from '@/chat/parts/ReasoningPart'
 import { PartList } from '@/chat/parts/PartList'
 import { ActivityStatus, activityLabel } from '@/chat/parts/ActivityStatus'
+import { CopyButton } from '@/chat/messages/CopyButton'
+import { RegenerateButton } from '@/chat/messages/RegenerateButton'
+import { ReconnectButton } from '@/chat/messages/ReconnectButton'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -878,44 +878,6 @@ const MessageRow = React.memo(function MessageRow({
   )
 })
 
-/** Copy button. Writes the message text to the clipboard and flips to a
- * checkmark for ~1.5s as confirmation. Errors are swallowed silently —
- * Tauri's webview clipboard call is reliable enough that surfacing a
- * failure here would just be noise. */
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = React.useState(false)
-  const timerRef = React.useRef<number | null>(null)
-
-  React.useEffect(() => {
-    return () => {
-      if (timerRef.current != null) window.clearTimeout(timerRef.current)
-    }
-  }, [])
-
-  const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      if (timerRef.current != null) window.clearTimeout(timerRef.current)
-      timerRef.current = window.setTimeout(() => setCopied(false), 1500)
-    } catch {
-      // Clipboard denied or unavailable — leave UI unchanged.
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={onCopy}
-      aria-label={copied ? 'Copied' : 'Copy message'}
-      title={copied ? 'Copied' : 'Copy'}
-      className="inline-flex items-center rounded p-0.5 text-muted-foreground/70 transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
-    >
-      {copied ? <IconCheck size={11} /> : <IconCopy size={11} />}
-    </button>
-  )
-}
-
 /** Destructive error card for a failed assistant turn. Branches on
  * `turn.errorCode` to surface a `Reconnect` button (AUTH) or a precise
  * countdown that gates `Retry` (RATE_LIMIT). Anything that streamed
@@ -975,41 +937,6 @@ function ErrorCard({
         )}
       </InlineCardFooter>
     </InlineCard>
-  )
-}
-
-/** Reconnect button. Surfaced inside the destructive footer when a chat
- * turn fails with `errorCode === 'AUTH'` — clicking opens the Claude OAuth
- * dialog (same one the sidebar account menu uses) so the user can re-auth
- * without leaving the conversation. */
-function ReconnectButton() {
-  const setOpen = useConnectDialog((s) => s.setOpen)
-  return (
-    <button
-      type="button"
-      onClick={() => setOpen(true)}
-      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-destructive transition-colors shrink-0 outline-none hover:bg-destructive/15 focus-visible:ring-2 focus-visible:ring-ring/40"
-      title="Reconnect to Claude"
-    >
-      <span className="font-medium">Reconnect</span>
-    </button>
-  )
-}
-
-/** Regenerate button. Replaces the assistant turn with a fresh run against
- * the same prior history. Shown only on the most-recent settled assistant
- * turn — see ChatPanel's `regeneratableTurnId` for why. */
-function RegenerateButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label="Regenerate response"
-      title="Regenerate"
-      className="inline-flex items-center rounded p-0.5 text-muted-foreground/70 transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
-    >
-      <IconRefresh size={11} />
-    </button>
   )
 }
 
