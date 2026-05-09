@@ -4,20 +4,18 @@
 // Layout zones, left to right:
 //   1. Traffic-light spacer (--traffic-light-w). Drag region — gives
 //      macOS room to paint the stoplight buttons over our content.
-//      Renders even when the sidebar is open so the editor's content
-//      stays at a stable x-coordinate regardless of sidebar state.
+//      Only rendered when the sidebar is collapsed; otherwise the
+//      sidebar paints over this region.
 //   2. Sidebar trigger — only when the sidebar is collapsed; sits
 //      right next to the stoplights, matching how Linear / Cursor
 //      tuck their reveal-sidebar control.
-//   3. Center slot — drag region. Reserved for breadcrumb / doc
-//      context once we land that.
-//   4. Actions slot — reserved for export / share / right-sidebar
-//      toggle. Empty for now.
-//
-// Document tabs live in their own row below this one (see AppShell).
-// We deliberately omit a bottom divider here so the header reads as a
-// continuation of the window chrome — the divider sits under the tab
-// row instead, matching Cursor / VS Code.
+//   3. Document tabs — pulled up from their own row so the second
+//      header row can host the formatting toolbar. The strip is the
+//      flexible slot, and the macOS window-drag area collapses to
+//      the traffic-light spacer (sufficient for normal use).
+//   4. Collab status label — surfaced just before actions when the
+//      doc isn't connected; hidden during a healthy connection.
+//   5. Actions — DocMenu + chat-panel toggle.
 
 import { IconLayoutSidebarRightFilled } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
@@ -30,16 +28,16 @@ import {
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/state/layoutStore'
-import { useDocsStore } from '@/state/docsStore'
-import { Breadcrumb } from '@/editor/Breadcrumb'
+import { EditorTabs } from '@/editor/EditorTabs'
 import type { CollabStatus } from '@/hooks/useCollabDoc'
 import { DocMenu } from './DocMenu'
 
 interface EditorHeaderProps {
   showSidebarTrigger: boolean
   editorView: EditorView | null
-  /** Collab status surfaced next to the breadcrumb. Connected docs
-   * render no label so a healthy connection reads as a clean header. */
+  /** Collab status surfaced next to the actions cluster. Connected
+   * docs render no label so a healthy connection reads as a clean
+   * header. */
   collabStatus?: CollabStatus
 }
 
@@ -55,7 +53,6 @@ export function EditorHeader({
   editorView,
   collabStatus,
 }: EditorHeaderProps) {
-  const activeSlug = useDocsStore((s) => s.activeSlug)
   const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
   return (
     <div
@@ -72,21 +69,20 @@ export function EditorHeader({
           <SidebarTrigger />
         </>
       )}
-      <div className="flex min-w-0 items-center gap-1 px-2">
-        <Breadcrumb slug={activeSlug} />
-        {statusLabel && (
-          <span
-            className={cn(
-              'shrink-0 text-xs',
-              collabStatus === 'error' ? 'text-destructive' : 'text-muted-foreground',
-            )}
-          >
-            {statusLabel}
-          </span>
-        )}
+      <div className="flex min-w-0 flex-1 items-stretch px-2">
+        <EditorTabs />
       </div>
-      <div data-tauri-drag-region className="h-full flex-1" />
-      <div className="flex items-center gap-0.5 pr-1">
+      {statusLabel && (
+        <span
+          className={cn(
+            'shrink-0 px-2 text-xs',
+            collabStatus === 'error' ? 'text-destructive' : 'text-muted-foreground',
+          )}
+        >
+          {statusLabel}
+        </span>
+      )}
+      <div className="flex shrink-0 items-center gap-0.5 pr-1">
         <DocMenu editorView={editorView} />
         <ContextPanelTrigger />
       </div>

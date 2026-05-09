@@ -8,7 +8,6 @@ import { PanelErrorFallback } from '@/components/ErrorFallback'
 import { AppSidebar } from './Sidebar'
 import { ChatPanel } from './ChatPanel'
 import { EditorHeader } from './EditorHeader'
-import { EditorTabs } from '@/editor/EditorTabs'
 import { CloseConfirmDialog } from '@/components/CloseConfirmDialog'
 import { useLayoutStore } from '@/state/layoutStore'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
@@ -67,12 +66,14 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
                 editorView={editorView ?? null}
                 collabStatus={collabStatus}
               />
+              {/* Row 2 placeholder. Doc tabs moved up into EditorHeader;
+                  FormatToolbar mounts here in the next phase. The empty
+                  row keeps --header-h reserved so the canvas doesn't
+                  shift when the toolbar lands. */}
               <div
-                className="flex shrink-0 items-stretch bg-background px-2 shadow-[inset_0_-1px_0_var(--border)]"
+                className="flex shrink-0 items-stretch bg-background shadow-[inset_0_-1px_0_var(--border)]"
                 style={{ height: 'var(--header-h)' }}
-              >
-                <EditorTabs />
-              </div>
+              />
               <div className="relative min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {children}
                 {bottomLeft && (
