@@ -19,7 +19,6 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { IconBold, IconChevronDown, IconItalic } from '@tabler/icons-react'
 
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -95,7 +94,11 @@ export function FormatToolbar() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Separator orientation="vertical" className="!h-4 mx-1 self-center" />
+      {/* Vertical divider — drawn directly instead of using shadcn's
+          Separator because the primitive hardcodes data-vertical:self-
+          stretch, which beats both items-center on the parent and any
+          self-center we add (variant selectors win on specificity). */}
+      <div aria-hidden className="mx-1 h-4 w-px shrink-0 self-center bg-border" />
 
       <Button
         variant="ghost"
