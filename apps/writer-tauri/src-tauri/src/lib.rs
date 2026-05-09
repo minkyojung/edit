@@ -4,7 +4,7 @@ mod secure_storage;
 
 use std::path::PathBuf;
 use std::process::{Child, Command};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread;
 use std::time::Duration;
 use tauri::{Emitter, Manager};
@@ -12,7 +12,33 @@ use tauri::{Emitter, Manager};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-struct ProofServerHandle(Arc<Mutex<Option<Child>>>);
+// Holds only the proof-server's process group id, not the Child handle.
+// Spawn writes; shutdown reads. An atomic int can't be poisoned the way a
+// Mutex can if a panic happens mid-lock, so the cleanup path is always
+// reachable. The Child is dropped immediately after spawn —
+// std::process::Child::drop is a no-op on Unix, so the OS process keeps
+// running and we shoot the whole group via SIGTERM at shutdown.
+struct ProofServerPgid(AtomicI32);
+
+// Idempotent: swap(0) means whichever shutdown path fires first does the
+// kill, the rest are no-ops. Cmd+Q routes through RunEvent::Exit, the X
+// button routes through WindowEvent::Destroyed — both call this so a
+// proof-server zombie can't be left holding port 4000 between launches.
+fn shutdown_proof_server(app: &tauri::AppHandle) {
+    let pgid = app
+        .state::<ProofServerPgid>()
+        .0
+        .swap(0, Ordering::SeqCst);
+    if pgid > 0 {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-pgid, libc::SIGTERM);
+        }
+        // Belt-and-suspenders: catches grandchildren that escaped the group.
+        kill_port_holders(4000);
+        println!("[proof-server] killed at shutdown (pgid={pgid})");
+    }
+}
 
 #[tauri::command]
 fn app_quit(app: tauri::AppHandle) {
@@ -213,7 +239,7 @@ fn spawn_proof_server(workspace_root: &PathBuf) -> Option<Child> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .manage(ProofServerHandle(Arc::new(Mutex::new(None))))
+        .manage(ProofServerPgid(AtomicI32::new(0)))
         .manage(oauth::PendingOAuth::default())
         .invoke_handler(tauri::generate_handler![
             oauth::start_claude_oauth,
@@ -300,9 +326,16 @@ pub fn run() {
             let workspace_root = find_workspace_root(app.handle());
             println!("[proof-server] workspace root: {}", workspace_root.display());
 
-            let child = spawn_proof_server(&workspace_root);
-            let state = app.state::<ProofServerHandle>();
-            *state.0.lock().unwrap() = child;
+            // Capture the spawned child's pid (== pgid because we setsid in
+            // pre_exec). The Child handle itself is dropped at end of scope —
+            // the OS process keeps running, and shutdown uses pgid to SIGTERM
+            // the whole group.
+            let pgid = spawn_proof_server(&workspace_root)
+                .map(|child| child.id() as i32)
+                .unwrap_or(0);
+            app.state::<ProofServerPgid>()
+                .0
+                .store(pgid, Ordering::SeqCst);
 
             // Spawn the Claude sidecars (chat + title). Run on the Tauri
             // async runtime; if it fails, log and let the app keep running
@@ -339,25 +372,7 @@ pub fn run() {
             }
             if let tauri::WindowEvent::Destroyed = event {
                 if window.label() == "main" {
-                    // Clone Arc before dropping state borrow
-                    let child_holder = {
-                        let app = window.app_handle();
-                        let state = app.state::<ProofServerHandle>();
-                        Arc::clone(&state.0)
-                    };
-                    let child = child_holder.lock().unwrap().take();
-                    if let Some(mut child) = child {
-                        // Kill the whole process group (negative pid)
-                        #[cfg(unix)]
-                        unsafe {
-                            libc::kill(-(child.id() as i32), libc::SIGTERM);
-                        }
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        // Belt-and-suspenders: clean up anything still on the port
-                        kill_port_holders(4000);
-                        println!("[proof-server] killed on window destroy");
-                    }
+                    shutdown_proof_server(window.app_handle());
                 }
             }
         })
@@ -369,7 +384,13 @@ pub fn run() {
                 tauri::RunEvent::ExitRequested { code, .. } => {
                     eprintln!("[run] ExitRequested code={code:?}")
                 }
-                tauri::RunEvent::Exit => eprintln!("[run] Exit"),
+                tauri::RunEvent::Exit => {
+                    eprintln!("[run] Exit");
+                    // Cmd+Q / dock quit / programmatic exit route here without
+                    // firing WindowEvent::Destroyed, so this is the only
+                    // reliable hook for proof-server cleanup on those paths.
+                    shutdown_proof_server(app_handle);
+                }
                 tauri::RunEvent::WindowEvent { label, event, .. } => {
                     if matches!(
                         event,
