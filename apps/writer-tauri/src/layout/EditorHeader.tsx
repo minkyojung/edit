@@ -114,7 +114,7 @@ function ContextPanelTrigger() {
           <IconLayoutSidebarRightFilled size={16} />
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="bottom">{open ? 'Hide chat panel' : 'Show chat panel'} ⌘.</TooltipContent>
+      <TooltipContent side="bottom">{open ? 'Hide chat panel' : 'Show chat panel'}</TooltipContent>
     </Tooltip>
   )
 }
