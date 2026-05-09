@@ -34,7 +34,7 @@
 - [ ] `WikiModal` → shadcn `Dialog`
 - [ ] `SignInPanel` → shadcn `Card` + `Button` + `Input`
 - [ ] `AccountIndicator` → shadcn `DropdownMenu`
-- [ ] 에이전트 에러 토스트 → shadcn `Toast` (또는 `Sonner`)
+- [x] 에이전트 에러 토스트 → `Sonner` (2026-05-09: `lib/notify.ts` 단일 헬퍼 + 14자리 wired)
 
 ### 1-D. 정리
 - [ ] 안 쓰는 인라인 스타일/CSS 제거
