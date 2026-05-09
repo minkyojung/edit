@@ -38,10 +38,7 @@ import {
   type ChatTurn,
   type MessagePart,
 } from '@/chat/types'
-import {
-  extractErrorCode,
-  humanizeError,
-} from '@/chat/utils/errorMessage'
+import { classifyRunError } from '@/chat/utils/errorMessage'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
 import { ReviewProgressBadge } from '@/chat/ReviewProgressBadge'
@@ -405,31 +402,12 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       commit('done', result.stopReason)
       setChatStatus('idle')
     } catch (e) {
-      const aborted = e instanceof DOMException && e.name === 'AbortError'
-      // An offline-triggered abort looks like AbortError too, but it should
-      // render as a real error (with Retry) — not the muted "Stopped" card
-      // that user-pressed Stop produces.
-      const isError = !aborted || offlineAborted
-      const errMsg = !aborted
-        ? humanizeError(e)
-        : offlineAborted
-          ? 'Lost network connection'
-          : null
-      const errCode = !aborted
-        ? extractErrorCode(e)
-        : offlineAborted
-          ? 'NETWORK'
-          : undefined
-      // RATE_LIMIT errors carry a `rateLimit.resetsAt` (ms epoch) attached
-      // by `runChat` from the SDK's most recent rate_limit_event. The
-      // error card uses it to drive a countdown and gate Retry.
-      const rateLimit = (e as Error & { rateLimit?: { resetsAt?: number } })?.rateLimit
-      const resetsAt = errCode === 'RATE_LIMIT' ? rateLimit?.resetsAt : undefined
       // Errors live on a dedicated turn field, not in the parts timeline —
       // that keeps prompt history (`buildPrompt`) and Copy output clean, and
       // lets the renderer surface the failure with proper error chrome.
-      commit(isError ? 'error' : 'stopped', null, errMsg, errCode, resetsAt)
-      setChatStatus(isError ? 'error' : 'idle')
+      const outcome = classifyRunError(e, { offlineAborted })
+      commit(outcome.terminal, null, outcome.errorText, outcome.errorCode, outcome.resetsAt)
+      setChatStatus(outcome.chatStatus)
     } finally {
       window.removeEventListener('offline', onOffline)
       endActivity()

@@ -32,6 +32,60 @@ export function humanizeError(e: unknown): string {
   return msg
 }
 
+/** Outcome of a finished assistant run from the catch path's point of view —
+ * what status the turn settles to, what error UI (if any) to render, and the
+ * chat-level status the input row should reflect. Captures the three branches
+ * (user-pressed stop / offline abort / real error) in one shape so the caller
+ * doesn't have to re-derive them from the raw error every time. */
+export type RunOutcome = {
+  /** Status to commit on the assistant turn — drives StoppedCard vs ErrorCard. */
+  terminal: 'error' | 'stopped'
+  /** Status the PromptInput uses to decide whether to re-enable Send. */
+  chatStatus: 'error' | 'idle'
+  /** Human-facing error message; `null` for the muted "Stopped" path. */
+  errorText: string | null
+  /** Coarse classifier from the error's `^([A-Z_]+):` prefix; consumed by
+   * ErrorCard to branch on AUTH (Reconnect button) and RATE_LIMIT (countdown). */
+  errorCode: string | undefined
+  /** ms-epoch when the rate-limit window resets — only set for RATE_LIMIT. */
+  resetsAt: number | undefined
+}
+
+/** Classify an error thrown by `runChat`. Mirrors three branches:
+ * - User pressed Stop → AbortError without offlineAborted → "stopped" card.
+ * - OS reported offline mid-stream → AbortError + offlineAborted → "error"
+ *   card with NETWORK code so the user sees a Retry, not a muted Stop.
+ * - Anything else → "error" card with a humanized message + classifier code. */
+export function classifyRunError(
+  error: unknown,
+  opts: { offlineAborted: boolean },
+): RunOutcome {
+  const aborted = error instanceof DOMException && error.name === 'AbortError'
+  const isError = !aborted || opts.offlineAborted
+  const errorText = !aborted
+    ? humanizeError(error)
+    : opts.offlineAborted
+      ? 'Lost network connection'
+      : null
+  const errorCode = !aborted
+    ? extractErrorCode(error)
+    : opts.offlineAborted
+      ? 'NETWORK'
+      : undefined
+  // RATE_LIMIT errors carry a `rateLimit.resetsAt` (ms epoch) attached by
+  // `runChat` from the SDK's most recent rate_limit_event. The error card
+  // uses it to drive a countdown and gate Retry.
+  const rateLimit = (error as Error & { rateLimit?: { resetsAt?: number } })?.rateLimit
+  const resetsAt = errorCode === 'RATE_LIMIT' ? rateLimit?.resetsAt : undefined
+  return {
+    terminal: isError ? 'error' : 'stopped',
+    chatStatus: isError ? 'error' : 'idle',
+    errorText,
+    errorCode,
+    resetsAt,
+  }
+}
+
 /** Map an Anthropic stop_reason to a user-facing message. Returns null for
  * routine reasons (`end_turn`, `stop_sequence`, `tool_use`, missing) so the
  * footer stays clean — only abnormal stops surface here. */
