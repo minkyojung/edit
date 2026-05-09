@@ -39,6 +39,8 @@ import {
 } from '@/chat/types'
 import { classifyRunError } from '@/chat/utils/errorMessage'
 import { createStreamingBuffer } from '@/chat/utils/streamingBuffer'
+import { createThrottledFlusher } from '@/chat/utils/throttledFlusher'
+import { watchOffline } from '@/chat/utils/watchOffline'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
 import { ReviewProgressBadge } from '@/chat/ReviewProgressBadge'
@@ -281,14 +283,11 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     // OS-level "offline" event: fires the moment the user disables Wi-Fi or
     // ethernet drops. We don't wait for the sidecar's 45s idle watchdog in
     // this case — abort immediately so the failure surfaces within a beat.
-    // `offlineAborted` lets the catch distinguish this from a user-pressed
+    // `offline.aborted` lets the catch distinguish this from a user-pressed
     // Stop (which should render as the muted "Stopped" card, not as an error).
-    let offlineAborted = false
-    const onOffline = () => {
-      offlineAborted = true
+    const offline = watchOffline(() => {
       if (activeId) useChatRuns.getState().abortByThread(activeId)
-    }
-    window.addEventListener('offline', onOffline)
+    })
 
     // Authoritative ordered list of parts for the in-flight assistant turn.
     // chat.ts emits an upsert per state change; we maintain this map (id →
@@ -296,24 +295,19 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     // a 120ms throttle so multiple deltas land in one Streamdown commit.
     const buffer = createStreamingBuffer()
 
-    let pendingFlush: number | null = null
-    const scheduleFlush = () => {
-      if (pendingFlush != null) return
-      pendingFlush = window.setTimeout(() => {
-        pendingFlush = null
-        const parts = buffer.buildParts()
-        const content = buffer.joinByType('text')
-        const thinking = buffer.joinByType('reasoning')
-        setStreaming((s) =>
-          s && s.threadId === threadId
-            ? {
-                ...s,
-                turn: { ...s.turn, content, thinking: thinking || undefined, parts },
-              }
-            : s,
-        )
-      }, 120)
-    }
+    const flusher = createThrottledFlusher(120, () => {
+      const parts = buffer.buildParts()
+      const content = buffer.joinByType('text')
+      const thinking = buffer.joinByType('reasoning')
+      setStreaming((s) =>
+        s && s.threadId === threadId
+          ? {
+              ...s,
+              turn: { ...s.turn, content, thinking: thinking || undefined, parts },
+            }
+          : s,
+      )
+    })
 
     // Counters used by `summarize` (review-comments). Only mutated when a
      // summarize callback is present; otherwise stay at zero and are unused.
@@ -327,10 +321,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       errorCode: string | undefined = undefined,
       resetsAt: number | undefined = undefined,
     ) => {
-      if (pendingFlush != null) {
-        clearTimeout(pendingFlush)
-        pendingFlush = null
-      }
+      flusher.cancel()
       const parts = buffer.buildParts()
       const modelText = buffer.joinByType('text')
       const thinking = buffer.joinByType('reasoning')
@@ -374,7 +365,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         effort: overrides?.effort ?? activeThreadEffort,
         onPart: (part) => {
           buffer.upsert(part)
-          scheduleFlush()
+          flusher.schedule()
         },
         onToolApplied: overrides?.summarize
           ? (call) => {
@@ -390,11 +381,11 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       // Errors live on a dedicated turn field, not in the parts timeline —
       // that keeps prompt history (`buildPrompt`) and Copy output clean, and
       // lets the renderer surface the failure with proper error chrome.
-      const outcome = classifyRunError(e, { offlineAborted })
+      const outcome = classifyRunError(e, { offlineAborted: offline.aborted })
       commit(outcome.terminal, null, outcome.errorText, outcome.errorCode, outcome.resetsAt)
       setChatStatus(outcome.chatStatus)
     } finally {
-      window.removeEventListener('offline', onOffline)
+      offline.dispose()
       endActivity()
     }
   }
