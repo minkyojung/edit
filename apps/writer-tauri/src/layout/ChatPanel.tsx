@@ -19,7 +19,6 @@ import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useThreads } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
 import { useActiveThread } from '@/hooks/useActiveThread'
-import { runChat } from '@/agent/chat'
 import { generateThreadTitle } from '@/agent/generateThreadTitle'
 import {
   CommandRenderError,
@@ -28,19 +27,15 @@ import {
   resolveKind,
   type LoadedCommand,
 } from '@/chat/commands'
-import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import { ThreadTabs } from '@/chat/ThreadTabs'
-import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
+import { PromptInput } from '@/chat/PromptInput'
 import {
   DEFAULT_CHAT_EFFORT,
   DEFAULT_CHAT_MODEL,
   type ChatTurn,
 } from '@/chat/types'
-import { classifyRunError } from '@/chat/utils/errorMessage'
-import { createStreamingBuffer } from '@/chat/utils/streamingBuffer'
-import { createThrottledFlusher } from '@/chat/utils/throttledFlusher'
-import { watchOffline } from '@/chat/utils/watchOffline'
+import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
 import { ReviewProgressBadge } from '@/chat/ReviewProgressBadge'
@@ -76,21 +71,32 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   // ref flips immediately on the same tick, so the second call short-
   // circuits before any side effects (turn append, sidecar request).
   const sendInFlightRef = useRef(false)
-  const [chatStatus, setChatStatus] = useState<PromptStatus>('idle')
-  // Live streaming buffer — keeps the in-flight assistant turn out of Yjs so
-  // every delta is a cheap React state update instead of a doc rewrite. The
-  // committed turn lands in Yjs only on done / stopped / error. Tagged with
-  // its owning threadId so a thread switch mid-stream doesn't bleed text into
-  // the wrong conversation.
-  const [streaming, setStreaming] = useState<{ threadId: string; turn: ChatTurn } | null>(null)
   // Whether the user is currently pinned to the bottom of the transcript.
   // Single source of truth shared by the auto-scroll effect (which only
   // chases new content while pinned) and the scroll-to-bottom button (which
   // only shows when *not* pinned). 80px threshold matches the pre-existing
   // auto-scroll behavior so the two never disagree.
   const [pinned, setPinned] = useState(true)
-  const startActivity = useChatActivity((s) => s.start)
-  const endActivity = useChatActivity((s) => s.end)
+
+  // Active thread's preferred model / effort. Threads created before these
+  // fields existed return undefined; fall back to the defaults in that case.
+  const activeThread = threads.threads.find((t) => t.id === activeId)
+  const activeThreadModel = activeThread?.model ?? DEFAULT_CHAT_MODEL
+  const activeThreadEffort = activeThread?.effort ?? DEFAULT_CHAT_EFFORT
+
+  // Single hook owns the streaming buffer state, the chat-level status, and
+  // the run() dispatcher. Handlers below (handleSend / handleRegenerate /
+  // executeCommand) just call `runner.run(...)` instead of duplicating the
+  // run lifecycle.
+  const runner = useChatRunner({
+    editorView,
+    ydoc,
+    activeId,
+    activeThreadModel,
+    activeThreadEffort,
+    appendTurn: turnsHook.appendTurn,
+  })
+  const { status: chatStatus, streaming } = runner
 
   const handleScroll = useCallback(() => {
     const c = scrollRef.current
@@ -204,12 +210,6 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     setSelectionPreview(null)
   }, [editorView])
 
-  // Active thread's preferred model. Threads created before the model field
-  // existed return undefined; fall back to the default in that case.
-  const activeThread = threads.threads.find((t) => t.id === activeId)
-  const activeThreadModel = activeThread?.model ?? DEFAULT_CHAT_MODEL
-  const activeThreadEffort = activeThread?.effort ?? DEFAULT_CHAT_EFFORT
-
   // Merge the in-flight streaming turn (local) with the persisted turns (Yjs)
   // for rendering. Only show the streaming turn if it belongs to the thread
   // we're currently viewing — protects against thread-switch mid-stream.
@@ -231,164 +231,6 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     }
     return null
   })()
-
-  /** Optional per-run overrides for slash commands. When provided, the
-   * command's rendered body becomes the system prompt, and chat.ts skips
-   * its automatic `--- DOCUMENT ---` append (the body owns substitution).
-   * `prompt` overrides the history-derived user message — needed because
-   * a slash submit is the user message, not a free-text question. */
-  type RunOverrides = {
-    systemPrompt: string
-    prompt: string
-    model?: string
-    effort?: 'low' | 'medium' | 'high'
-    relayTools: string[]
-    /** Optional final-content override. Called once the run settles
-     * successfully — receives counts of propose_change calls observed,
-     * and its return value replaces the assistant turn's text content.
-     * Used by /review to render "Found N issues" instead of whatever
-     * stray text the model produced alongside its tool calls. */
-    summarize?: (counts: { proposed: number; applied: number }) => string
-  }
-
-  /** Drives a single assistant turn end-to-end: seed streaming buffer, run
-   * runChat with the given history, commit on settle. Shared by handleSend
-   * (which prepends a fresh user turn) and handleRegenerate (which deletes
-   * the prior assistant turn and reuses the existing user message). */
-  async function runAssistantTurn(
-    threadId: string,
-    history: ChatTurn[],
-    overrides?: RunOverrides,
-  ) {
-    const startedAt = Date.now()
-    const assistantId = crypto.randomUUID()
-
-    // Seed the live assistant turn in local state. No Yjs op fires until the
-    // turn settles, so streaming deltas don't trigger collab traffic or
-    // whole-list re-renders.
-    setStreaming({
-      threadId,
-      turn: {
-        id: assistantId,
-        role: 'assistant',
-        content: '',
-        ts: Date.now(),
-        status: 'streaming',
-      },
-    })
-
-    setChatStatus('streaming')
-    startActivity()
-
-    // OS-level "offline" event: fires the moment the user disables Wi-Fi or
-    // ethernet drops. We don't wait for the sidecar's 45s idle watchdog in
-    // this case — abort immediately so the failure surfaces within a beat.
-    // `offline.aborted` lets the catch distinguish this from a user-pressed
-    // Stop (which should render as the muted "Stopped" card, not as an error).
-    const offline = watchOffline(() => {
-      if (activeId) useChatRuns.getState().abortByThread(activeId)
-    })
-
-    // Authoritative ordered list of parts for the in-flight assistant turn.
-    // chat.ts emits an upsert per state change; we maintain this map (id →
-    // part) plus a stable order array, then sync into streaming state behind
-    // a 120ms throttle so multiple deltas land in one Streamdown commit.
-    const buffer = createStreamingBuffer()
-
-    const flusher = createThrottledFlusher(120, () => {
-      const parts = buffer.buildParts()
-      const content = buffer.joinByType('text')
-      const thinking = buffer.joinByType('reasoning')
-      setStreaming((s) =>
-        s && s.threadId === threadId
-          ? {
-              ...s,
-              turn: { ...s.turn, content, thinking: thinking || undefined, parts },
-            }
-          : s,
-      )
-    })
-
-    // Counters used by `summarize` (review-comments). Only mutated when a
-     // summarize callback is present; otherwise stay at zero and are unused.
-    let proposedCount = 0
-    let appliedCount = 0
-
-    const commit = (
-      status: ChatTurn['status'],
-      stopReason: string | null,
-      errorText: string | null = null,
-      errorCode: string | undefined = undefined,
-      resetsAt: number | undefined = undefined,
-    ) => {
-      flusher.cancel()
-      const parts = buffer.buildParts()
-      const modelText = buffer.joinByType('text')
-      const thinking = buffer.joinByType('reasoning')
-      // Successful runs with a summarize hook get their text replaced. We
-      // keep the original parts timeline intact so the user can still
-      // inspect each propose_change card if curious — only the top-level
-      // `content` (used as the rendered prose + Copy output + history)
-      // becomes the summary line.
-      const content =
-        status === 'done' && overrides?.summarize
-          ? overrides.summarize({ proposed: proposedCount, applied: appliedCount })
-          : modelText
-      turnsHook.appendTurn({
-        id: assistantId,
-        role: 'assistant',
-        content,
-        thinking: thinking || undefined,
-        parts,
-        ts: Date.now(),
-        status,
-        durationMs: Date.now() - startedAt,
-        stopReason,
-        errorText: errorText ?? undefined,
-        errorCode,
-        resetsAt,
-      })
-      setStreaming(null)
-    }
-
-    try {
-      const result = await runChat({
-        view: editorView!,
-        ydoc: ydoc!,
-        threadId,
-        history,
-        prompt: overrides?.prompt,
-        systemPrompt: overrides?.systemPrompt,
-        appendDocument: overrides ? false : undefined,
-        relayTools: overrides?.relayTools,
-        model: overrides?.model ?? activeThreadModel,
-        effort: overrides?.effort ?? activeThreadEffort,
-        onPart: (part) => {
-          buffer.upsert(part)
-          flusher.schedule()
-        },
-        onToolApplied: overrides?.summarize
-          ? (call) => {
-              if (call.name !== 'propose_change') return
-              proposedCount += 1
-              if (call.result.ok) appliedCount += 1
-            }
-          : undefined,
-      })
-      commit('done', result.stopReason)
-      setChatStatus('idle')
-    } catch (e) {
-      // Errors live on a dedicated turn field, not in the parts timeline —
-      // that keeps prompt history (`buildPrompt`) and Copy output clean, and
-      // lets the renderer surface the failure with proper error chrome.
-      const outcome = classifyRunError(e, { offlineAborted: offline.aborted })
-      commit(outcome.terminal, null, outcome.errorText, outcome.errorCode, outcome.resetsAt)
-      setChatStatus(outcome.chatStatus)
-    } finally {
-      offline.dispose()
-      endActivity()
-    }
-  }
 
   /** Renders a command body and kicks off a single assistant turn against
    * its system prompt. The user message in the transcript is the literal
@@ -453,7 +295,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
                 : `Found **${applied}** issue${applied === 1 ? '' : 's'} — click any highlight in the document to review.`
           : undefined,
     }
-    await runAssistantTurn(threadId, [...turnsHook.turns, userTurn], overrides)
+    await runner.run(threadId, [...turnsHook.turns, userTurn], overrides)
   }
 
   /** Append a finished error turn without invoking the model. Used for
@@ -532,7 +374,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       // The user's turn is finished text — push to Yjs once and let it sync.
       turnsHook.appendTurn(userTurn)
 
-      await runAssistantTurn(threadId, [...turnsHook.turns, userTurn])
+      await runner.run(threadId, [...turnsHook.turns, userTurn])
     } finally {
       sendInFlightRef.current = false
     }
@@ -541,7 +383,13 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   /** Regenerate the assistant turn at `assistantTurnId` — removes it, then
    * re-runs the model against the history up to (and including) the user
    * message that prompted it. Only valid for the most recent assistant turn:
-   * earlier rewrites would invalidate every later turn's context. */
+   * earlier rewrites would invalidate every later turn's context.
+   *
+   * Known limitation: slash-command turns (e.g. /proofread) re-run as plain
+   * chat without their original RunOverrides — no system prompt, no relay
+   * tools, no summarize hook — so the regenerated answer is usually empty.
+   * Fix lives in a separate change: stamp the slash invocation onto the
+   * user turn so this handler can route back through executeCommand. */
   async function handleRegenerate(assistantTurnId: string) {
     if (!ready || chatStatus === 'streaming') return
     if (sendInFlightRef.current) return
@@ -557,7 +405,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       if (history.length === 0 || history[history.length - 1].role !== 'user') return
 
       turnsHook.removeTurn(assistantTurnId)
-      await runAssistantTurn(threadId, history)
+      await runner.run(threadId, history)
     } finally {
       sendInFlightRef.current = false
     }
