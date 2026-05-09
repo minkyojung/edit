@@ -67,9 +67,6 @@ export const notify = {
       action: retryAction(opts.onRetry),
     })
   },
-  cantOpenNextNote() {
-    toast.error("Couldn't open the next note")
-  },
 
   // ── Auth ──────────────────────────────────────────────────────
   claudeSessionExpired(opts: { onReconnect?: () => void } = {}) {

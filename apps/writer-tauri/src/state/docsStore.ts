@@ -24,6 +24,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider'
 import { proofClient, waitUntilReady } from '@/lib/proofClient'
 import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
+import { notify } from '@/lib/notify'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
 const DEFAULT_DOC_TITLE = 'My Document'
@@ -238,6 +239,7 @@ export const useDocsStore = create<DocsState>()(
             set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
           } catch (err) {
             console.error('[docs] failed to create today daily', err)
+            notify.cantOpenJournal()
           }
         }
 
@@ -417,6 +419,7 @@ export const useDocsStore = create<DocsState>()(
           }
         } catch (err) {
           console.error('[docs] createNew failed', err)
+          notify.cantCreateNote({ onRetry: () => get().createNew() })
         }
       },
 
@@ -435,6 +438,7 @@ export const useDocsStore = create<DocsState>()(
             set((s) => ({ knownDocs: [...s.knownDocs, known!] }))
           } catch (err) {
             console.error('[docs] openDaily createDoc failed', err)
+            notify.cantOpenJournal({ onRetry: () => get().openDaily(targetDate) })
             return null
           }
         }
@@ -495,6 +499,7 @@ export const useDocsStore = create<DocsState>()(
           return created.slug
         } catch (err) {
           console.error('[docs] createChildNote failed', err)
+          notify.cantCreateNote({ onRetry: () => get().createChildNote(parentSlug) })
           return null
         }
       },
@@ -533,6 +538,9 @@ export const useDocsStore = create<DocsState>()(
           return created.slug
         } catch (err) {
           console.error('[docs] createWritingChild failed', err)
+          notify.cantCreateNote({
+            onRetry: () => get().createWritingChild(parentSlug, title),
+          })
           return null
         }
       },
@@ -650,11 +658,13 @@ export const useDocsStore = create<DocsState>()(
         // Best-effort sidecar deletion. If a slug fails (already gone,
         // 404, network blip), keep going so the user isn't stuck with
         // orphaned trash entries.
+        let failed = 0
         for (const s of groupSlugs) {
           try {
             await proofClient.deleteDocForever(s)
           } catch (err) {
             console.error('[docs] deleteDocForever failed', s, err)
+            failed += 1
           }
         }
         const groupSet = new Set(groupSlugs)
@@ -663,6 +673,9 @@ export const useDocsStore = create<DocsState>()(
           openSlugs: s.openSlugs.filter((sl) => !groupSet.has(sl)),
           expandedDocSlugs: s.expandedDocSlugs.filter((sl) => !groupSet.has(sl)),
         }))
+        if (failed > 0) {
+          notify.cantDeleteNote({ onRetry: () => get().deleteForever(slug) })
+        }
       },
 
       setSidebarTab: (tab) => set({ sidebarTab: tab }),
@@ -680,11 +693,13 @@ export const useDocsStore = create<DocsState>()(
       emptyArchive: async () => {
         const archived = get().knownDocs.filter((d) => d.archivedAt)
         if (archived.length === 0) return
+        let failed = 0
         for (const d of archived) {
           try {
             await proofClient.deleteDocForever(d.slug)
           } catch (err) {
             console.error('[docs] emptyArchive item failed', d.slug, err)
+            failed += 1
           }
         }
         const archivedSet = new Set(archived.map((d) => d.slug))
@@ -693,6 +708,9 @@ export const useDocsStore = create<DocsState>()(
           openSlugs: s.openSlugs.filter((sl) => !archivedSet.has(sl)),
           expandedDocSlugs: s.expandedDocSlugs.filter((sl) => !archivedSet.has(sl)),
         }))
+        if (failed > 0) {
+          notify.cantEmptyTrash({ onRetry: () => get().emptyArchive() })
+        }
       },
     }),
     {
@@ -825,7 +843,13 @@ async function ensureHandle(
   const handle = await buildHandle(slug, (status) => {
     set((s) => ({ status: { ...s.status, [slug]: status } }))
   })
-  if (!handle) return
+  if (!handle) {
+    // proof-server unreachable or session denied. Toast once so the user
+    // knows their tab is dead instead of silently sitting on the editor's
+    // 'error' status banner. Retry re-runs the same setup.
+    notify.cantOpenNote({ onRetry: () => ensureHandle(slug, set, get) })
+    return
+  }
   set((s) => ({ handles: { ...s.handles, [slug]: handle } }))
   installTitleMirror(slug, handle, set, get)
 }
