@@ -36,9 +36,9 @@ import {
   DEFAULT_CHAT_EFFORT,
   DEFAULT_CHAT_MODEL,
   type ChatTurn,
-  type MessagePart,
 } from '@/chat/types'
 import { classifyRunError } from '@/chat/utils/errorMessage'
+import { createStreamingBuffer } from '@/chat/utils/streamingBuffer'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
 import { ReviewProgressBadge } from '@/chat/ReviewProgressBadge'
@@ -294,31 +294,16 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     // chat.ts emits an upsert per state change; we maintain this map (id →
     // part) plus a stable order array, then sync into streaming state behind
     // a 120ms throttle so multiple deltas land in one Streamdown commit.
-    const partsById = new Map<string, MessagePart>()
-    const partOrder: string[] = []
-    const upsertPart = (part: MessagePart) => {
-      if (!partsById.has(part.id)) partOrder.push(part.id)
-      partsById.set(part.id, part)
-    }
-    const buildParts = (): MessagePart[] => partOrder.map((id) => partsById.get(id)!).filter(Boolean)
-    // Derived (joined) text/reasoning kept for prompt history + legacy compat.
-    const joinByType = (type: 'text' | 'reasoning'): string => {
-      let out = ''
-      for (const id of partOrder) {
-        const p = partsById.get(id)
-        if (p?.type === type) out += p.text
-      }
-      return out
-    }
+    const buffer = createStreamingBuffer()
 
     let pendingFlush: number | null = null
     const scheduleFlush = () => {
       if (pendingFlush != null) return
       pendingFlush = window.setTimeout(() => {
         pendingFlush = null
-        const parts = buildParts()
-        const content = joinByType('text')
-        const thinking = joinByType('reasoning')
+        const parts = buffer.buildParts()
+        const content = buffer.joinByType('text')
+        const thinking = buffer.joinByType('reasoning')
         setStreaming((s) =>
           s && s.threadId === threadId
             ? {
@@ -346,9 +331,9 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         clearTimeout(pendingFlush)
         pendingFlush = null
       }
-      const parts = buildParts()
-      const modelText = joinByType('text')
-      const thinking = joinByType('reasoning')
+      const parts = buffer.buildParts()
+      const modelText = buffer.joinByType('text')
+      const thinking = buffer.joinByType('reasoning')
       // Successful runs with a summarize hook get their text replaced. We
       // keep the original parts timeline intact so the user can still
       // inspect each propose_change card if curious — only the top-level
@@ -388,7 +373,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
         model: overrides?.model ?? activeThreadModel,
         effort: overrides?.effort ?? activeThreadEffort,
         onPart: (part) => {
-          upsertPart(part)
+          buffer.upsert(part)
           scheduleFlush()
         },
         onToolApplied: overrides?.summarize
