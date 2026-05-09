@@ -14,6 +14,7 @@ import { createMarkHoverPlugin } from './markHoverPlugin'
 import { createDocVersionPlugin } from './docVersionPlugin'
 import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
+import { formatStatePlugin } from './formatStatePlugin'
 import { createWikilinkClickPlugin } from './wikilinkClickPlugin'
 import {
   createWikilinkPalettePlugin,
@@ -182,6 +183,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(createDocVersionPlugin())
       .use(createSelectionPlugin(setSelection))
       .use(createFrozenSelectionPlugin())
+      .use(formatStatePlugin)
       .use(createWikilinkClickPlugin())
       .use(createWikilinkBrokenPlugin())
       .use(
