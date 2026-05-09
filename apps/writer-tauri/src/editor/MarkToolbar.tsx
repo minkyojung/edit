@@ -3,6 +3,7 @@ import * as Y from 'yjs'
 import type { SelectionInfo } from './selectionPlugin'
 import type { StoredMark } from '../hooks/useCollabDoc'
 import { buildTextIndex, posToCharOffset } from './utils/textRange'
+import { notify } from '@/lib/notify'
 
 interface Props {
   selection: SelectionInfo | null
@@ -54,6 +55,7 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
     const markType = view.state.schema.marks[schemaName]
     if (!markType) {
       console.error(`[mark] schema mark "${schemaName}" not found`)
+      notify.markCantAdd()
       return false
     }
     const attrs = kind === 'comment'
@@ -73,6 +75,7 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
     const anchors = computeAnchors()
     if (!anchors) {
       console.error('[mark] failed to compute anchors')
+      notify.markCantAdd()
       return
     }
     const markId = crypto.randomUUID()
@@ -105,6 +108,7 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
       reset()
     } catch (err) {
       console.error('[mark] create failed', err)
+      notify.markCantAdd()
       setLoading(false)
     }
   }
@@ -113,6 +117,7 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
     const anchors = computeAnchors()
     if (!anchors) {
       console.error('[mark] failed to compute anchors')
+      notify.markCantAdd()
       return
     }
     const markId = crypto.randomUUID()
@@ -131,6 +136,7 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
       reset()
     } catch (err) {
       console.error('[mark] create failed', err)
+      notify.markCantAdd()
       setLoading(false)
     }
   }

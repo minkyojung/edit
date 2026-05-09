@@ -14,6 +14,7 @@ import * as Y from 'yjs'
 import type { StoredMark } from '../hooks/useCollabDoc'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { topLevelSiblingAfter } from './topLevelSibling'
+import { notify } from '@/lib/notify'
 
 interface FoundAnchor {
   from: number
@@ -88,6 +89,7 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
   const anchor = findInlineAnchor(view, markId, 'proofSuggestion')
   if (!anchor) {
     console.error('[markActions] accept: anchor not found', markId)
+    notify.markCantApply()
     return false
   }
   const { from, to, mark } = anchor
@@ -109,10 +111,16 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
   if (kind === 'delete') {
     tr.delete(from, to)
   } else if (kind === 'replace') {
-    if (content === null || content === undefined) return false
+    if (content === null || content === undefined) {
+      notify.markCantRead()
+      return false
+    }
     tr.replaceWith(from, to, view.state.schema.text(content))
   } else if (kind === 'insert') {
-    if (content === null || content === undefined) return false
+    if (content === null || content === undefined) {
+      notify.markCantRead()
+      return false
+    }
     // Ingest proposals: `content` is a markdown string from the LLM
     // (e.g. "### Sarah\n- Workplace colleague"). Parse it through
     // Milkdown's own commonmark+gfm pipeline so it becomes real
@@ -123,11 +131,13 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     const parser = useEditorViewStore.getState().parser
     if (!parser) {
       console.error('[markActions] accept(insert): parser not ready')
+      notify.markEditorNotReady()
       return false
     }
     const parsed = parser(content)
     if (!parsed || parsed.content.size === 0) {
       console.error('[markActions] accept(insert): parser produced empty doc', content)
+      notify.markCantRead()
       return false
     }
     const suggestionType = view.state.schema.marks.proofSuggestion
@@ -185,6 +195,7 @@ export function rejectMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
   const anchor = findInlineAnchor(view, markId, 'proofSuggestion')
   if (!anchor) {
     console.error('[markActions] reject: anchor not found', markId)
+    notify.markCantDismiss()
     return false
   }
   const { from, to } = anchor

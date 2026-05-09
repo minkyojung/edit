@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { ThemeProvider } from '@/components/theme-provider'
+import { AppToaster } from '@/components/AppToaster'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { MarkPopoverLayer } from '@/components/agent/MarkPopoverLayer'
@@ -81,6 +82,7 @@ export function App() {
             <CommandPalette />
           </HashRouter>
         </ErrorBoundary>
+        <AppToaster />
       </TooltipProvider>
     </ThemeProvider>
   )
