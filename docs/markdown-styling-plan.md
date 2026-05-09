@@ -303,3 +303,78 @@ Style 드롭다운 / B / I / Link / Style 변환 모두 commonmark 명령이 이
 
 → Phase 1 추정 시간이 ~4.5일에서 **~2~3일로 단축**.
 
+---
+
+## 12. proofMark 공존 검증 결과 (2026-05-09 조사)
+
+검증 대상: 새로 활성화될 표준 마크(strong / emphasis / inlineCode /
+strike_through / link)가 기존 proofMark(proofSuggestion / proofComment /
+proofFlagged / proofApproved / proofAuthored / proofProvenance)와
+schema·시각·직렬화에서 공존 가능한지.
+
+### 12.1 proofMark schema 요약
+
+| Mark | inclusive | excludes | spanning |
+|---|---|---|---|
+| proofSuggestion | false | (default) | true |
+| proofComment | false | (default) | true |
+| proofFlagged | false | (default) | true |
+| proofApproved | false | (default) | true |
+| proofAuthored | true | `'proofAuthored'` (자기 자신만) | true |
+| proofProvenance | false | (default) | true |
+
+ProseMirror `excludes` 기본값은 자기 자신만 → 표준 마크와 같은 range에
+공존 가능.
+
+### 12.2 검증 매트릭스
+
+| 검증 항목 | 결과 | 근거 |
+|---|---|---|
+| Schema 충돌 | ✅ 안전 | 모든 proofMark의 excludes가 자기 자신만 → 표준 마크와 자유 공존 |
+| inclusive 동작 | ✅ 자연스러움 | 표준 마크 inclusive=true (경계에서 확장), proofMark은 false (제안 범위 임의 확장 방지) — 둘 다 의도된 동작 |
+| 마크다운 라운드트립 | ✅ 안전 | proofMark의 to/parseMarkdown은 dormant. 서버는 Yjs binary로만 동기화 |
+| Yjs 동기화 | ✅ 안전 | 표준 마크는 commonmark/gfm preset이 이미 schema 등록 — 양 클라이언트 schema 일치 |
+| `toggleInlineCodeCommand` proofMark 보존 | ⚠️ **위험** | 아래 §12.3 |
+
+### 12.3 ⚠️ toggleInlineCodeCommand 위험
+
+`@milkdown/preset-commonmark/.../inline-code.ts:71-83` 의 토글 구현이
+"같은 range의 자기 자신을 제외한 모든 마크 강제 제거" 동작을 함:
+
+```ts
+const restMarksName = Object.keys(state.schema.marks).filter(
+  (x) => x !== inlineCodeSchema.type.name
+)
+restMarksName.map((name) => state.schema.marks[name] as MarkType)
+  .forEach((t) => { tr.removeMark(from, to, t) })
+```
+
+이 명령이 strong / emphasis / link 등 표준 마크뿐 아니라 **proofSuggestion
+등 모든 proofMark도 같이 제거**한다. 시나리오:
+
+1. AI가 텍스트에 proofSuggestion 마크를 걸어둠
+2. 사용자가 같은 범위를 선택해서 inline code 토글
+3. **proofSuggestion이 inline mark에서 조용히 사라짐**
+4. Y.Map의 StoredMark는 남아 있어 "고아 상태" — UI에 표시 안 됨
+
+inline code 자체는 마크다운 문법상 다른 inline 마크와 공존 못 하므로
+("`**bold**`" = 코드 안의 별표 문자), 표준 마크 제거는 합리적이다.
+문제는 proofMark처럼 포맷이 아닌 anchor 용도 마크까지 함께 사라진다는 점.
+
+#### 해결 옵션
+| 옵션 | 내용 | 평가 |
+|---|---|---|
+| **A** | Phase 1 툴바에서 inline code 버튼·단축키 제외 | 가장 단순. Phase 1.5로 미루기 |
+| B | 자체 `toggleInlineCode` 명령 신규 — proofMark은 보존, 다른 inline 마크만 정리 | 정공법. Phase 1.5 도입 |
+| C | preset 자체 패치 또는 schema의 excludes 조정 | 영향 범위 큼, 비추천 |
+
+**Phase 1: A로 회피.** 이미 §5.2에서 Code/Strike를 Phase 1.5 후보로 분리해
+둔 결정과 일치. Phase 1.5에서 코드 버튼을 추가할 때 B로 정공 해결.
+
+### 12.4 결론
+
+Phase 1 진입 가능. 단 다음 두 결정을 잠금:
+- **Phase 1 툴바 최소 구성에 inline code 미포함** (§5.2의 최소 스펙 그대로)
+- **Phase 1.5에서 inline code 추가 시 자체 토글 명령 작성 필수** (TODO)
+
+
