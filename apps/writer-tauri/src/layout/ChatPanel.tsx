@@ -10,7 +10,7 @@
 // user is directed back to the body to act on individual highlights.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { IconAlertTriangle, IconChevronDown } from '@tabler/icons-react'
+import { IconChevronDown } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
 import { TextSelection } from '@milkdown/kit/prose/state'
@@ -51,10 +51,9 @@ import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
 import { ThinkingPanel } from '@/chat/parts/ReasoningPart'
 import { PartList } from '@/chat/parts/PartList'
 import { ActivityStatus, activityLabel } from '@/chat/parts/ActivityStatus'
-import { CopyButton } from '@/chat/messages/CopyButton'
-import { RegenerateButton } from '@/chat/messages/RegenerateButton'
 import { ErrorCard } from '@/chat/messages/ErrorCard'
 import { StoppedCard } from '@/chat/messages/StoppedCard'
+import { MessageFooter } from '@/chat/messages/MessageFooter'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -847,23 +846,14 @@ const MessageRow = React.memo(function MessageRow({
   return (
     <>
       {body}
-      {(durationLabel || stopReasonLabel || canCopy || canRegenerate) && (
-        <div className="mt-1 flex items-center gap-1.5 text-xs">
-          {stopReasonLabel && (
-            <span className="inline-flex items-center gap-1 text-warning">
-              <IconAlertTriangle size={10} />
-              <span>{stopReasonLabel}</span>
-            </span>
-          )}
-          {durationLabel && (
-            <span className="text-muted-foreground/70">
-              {stopReasonLabel ? `· ${durationLabel}` : durationLabel}
-            </span>
-          )}
-          {canCopy && <CopyButton text={turn.content} />}
-          {canRegenerate && <RegenerateButton onClick={() => onRegenerate!(turn.id)} />}
-        </div>
-      )}
+      <MessageFooter
+        turn={turn}
+        durationLabel={durationLabel}
+        stopReasonLabel={stopReasonLabel}
+        canCopy={canCopy}
+        canRegenerate={canRegenerate}
+        onRegenerate={onRegenerate}
+      />
     </>
   )
 })
