@@ -45,6 +45,43 @@ fn app_quit(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+// HTTP-pings the bundled proof-server. The frontend's EngineGate calls
+// this on mount and after a Retry to know when the server is reachable.
+// Short timeout so failure is obvious during cold start (the gate retries
+// itself); longer timeouts would just stall the gate UI.
+#[tauri::command]
+async fn check_proof_server_health() -> Result<(), String> {
+    let resp = reqwest::Client::new()
+        .get("http://127.0.0.1:4000/health")
+        .timeout(Duration::from_millis(800))
+        .send()
+        .await
+        .map_err(|e| format!("connect failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("health returned {}", resp.status()));
+    }
+    Ok(())
+}
+
+// Frontend-driven recovery: kill whatever's holding port 4000 and spawn a
+// fresh proof-server. Returns once spawn succeeds at the OS level —
+// the frontend then resumes health-check polling to confirm it actually
+// started serving requests. Spawn-time eprintln in spawn_proof_server
+// captures the underlying reason for failures (bun missing, binary
+// missing, port stuck, etc.).
+#[tauri::command]
+fn respawn_proof_server(app: tauri::AppHandle) -> Result<(), String> {
+    shutdown_proof_server(&app);
+    let workspace_root = find_workspace_root(&app);
+    let pgid = spawn_proof_server(&workspace_root)
+        .map(|child| child.id() as i32)
+        .ok_or_else(|| "spawn returned no pid (see app logs for reason)".to_string())?;
+    app.state::<ProofServerPgid>()
+        .0
+        .store(pgid, Ordering::SeqCst);
+    Ok(())
+}
+
 /// Hand control of the close decision to the frontend by emitting
 /// `app:close-requested`. If the emit itself fails we exit immediately to
 /// avoid stranding the user on a window they can't dismiss.
@@ -251,6 +288,8 @@ pub fn run() {
             claude_sidecar::commands::claude_chat_cancel,
             claude_sidecar::commands::claude_title,
             app_quit,
+            check_proof_server_health,
+            respawn_proof_server,
         ])
         .setup(|app| {
             // Replace the default macOS Quit menu item with one we control.

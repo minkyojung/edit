@@ -4,6 +4,7 @@ import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppToaster } from '@/components/AppToaster'
+import { EngineGate } from '@/components/EngineGate'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { MarkPopoverLayer } from '@/components/agent/MarkPopoverLayer'
@@ -17,6 +18,21 @@ import { useIdleTrigger } from '@/hooks/useIdleTrigger'
 import { useApplyPendingMarks } from '@/hooks/useApplyPendingMarks'
 
 export function App() {
+  return (
+    <ThemeProvider defaultPalette="charcoal" storageKey="writer-palette">
+      <TooltipProvider delayDuration={200}>
+        <EngineGate>
+          <AppContent />
+        </EngineGate>
+        <AppToaster />
+      </TooltipProvider>
+    </ThemeProvider>
+  )
+}
+
+// Everything inside EngineGate — bootstrap calls hit the proof-server
+// the moment they fire, so we keep them gated behind a healthy engine.
+function AppContent() {
   const bootstrap = useDocsStore((s) => s.bootstrap)
   const activeSlug = useDocsStore((s) => s.activeSlug)
   const handles = useDocsStore((s) => s.handles)
@@ -41,49 +57,44 @@ export function App() {
   const activeStatus = activeSlug ? statusMap[activeSlug] ?? 'initializing' : 'initializing'
 
   return (
-    <ThemeProvider defaultPalette="charcoal" storageKey="writer-palette">
-      <TooltipProvider delayDuration={200}>
-        <ErrorBoundary
-          FallbackComponent={FullPageErrorFallback}
-          onError={(error, info) => console.error('[app] uncaught render error', error, info)}
+    <ErrorBoundary
+      FallbackComponent={FullPageErrorFallback}
+      onError={(error, info) => console.error('[app] uncaught render error', error, info)}
+    >
+      <HashRouter>
+        <AppShell
+          oauthStatus="unauthenticated"
+          collabHandle={activeHandle}
+          collabStatus={activeStatus}
+          editorView={view}
         >
-          <HashRouter>
-            <AppShell
-              oauthStatus="unauthenticated"
-              collabHandle={activeHandle}
-              collabStatus={activeStatus}
-              editorView={view}
-            >
-              <Routes>
-                <Route path="/" element={<Navigate to="/notes" replace />} />
-                <Route
-                  path="/notes"
-                  element={
-                    <MilkdownEditor
-                      key={activeSlug ?? 'no-doc'}
-                      handle={activeHandle}
-                      status={activeStatus}
-                      onViewReady={(v) => {
-                        // Mirror into the global store so non-React
-                        // consumers (ingest apply, future palette
-                        // commands) can reach the live view without
-                        // prop drilling. Local state stays the source
-                        // of truth for sibling renders below.
-                        setView(v)
-                        useEditorViewStore.getState().setView(v)
-                      }}
-                    />
-                  }
+          <Routes>
+            <Route path="/" element={<Navigate to="/notes" replace />} />
+            <Route
+              path="/notes"
+              element={
+                <MilkdownEditor
+                  key={activeSlug ?? 'no-doc'}
+                  handle={activeHandle}
+                  status={activeStatus}
+                  onViewReady={(v) => {
+                    // Mirror into the global store so non-React
+                    // consumers (ingest apply, future palette
+                    // commands) can reach the live view without
+                    // prop drilling. Local state stays the source
+                    // of truth for sibling renders below.
+                    setView(v)
+                    useEditorViewStore.getState().setView(v)
+                  }}
                 />
-              </Routes>
-            </AppShell>
-            <MarkHoverActionsLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
-            <MarkPopoverLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
-            <CommandPalette />
-          </HashRouter>
-        </ErrorBoundary>
-        <AppToaster />
-      </TooltipProvider>
-    </ThemeProvider>
+              }
+            />
+          </Routes>
+        </AppShell>
+        <MarkHoverActionsLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
+        <MarkPopoverLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
+        <CommandPalette />
+      </HashRouter>
+    </ErrorBoundary>
   )
 }
