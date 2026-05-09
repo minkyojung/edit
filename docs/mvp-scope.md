@@ -120,22 +120,20 @@ Silent failure가 14자리 있어 사용자 입장에서 "버튼 눌렀는데 �
 
 **현재 상태**: `bundle.icon: []`, 사이닝 미설정, 업데이터 미설정.
 
-**스코프 (우선순위순)**:
+**전제**: Apple Developer 멤버십 ✅ 보유 (별도 차단 없음).
 
-| 항목 | 영향 | 작업량 | 차단 의존성 |
+**작업 순서 (확정)** — 인프라부터, 아이콘은 마지막:
+
+| 순서 | 항목 | 영향 | 작업량 |
 |---|---|---|---|
-| 1. 앱 아이콘 (`.icns`) | Dock/Spotlight 빈 회색 박스 | 30분 | 디자인 |
-| 2. 코드 사이닝 (Developer ID) | macOS Gatekeeper "Move to Trash" 차단 | 1h | **Apple Developer 멤버십 필요 ($99/yr)** |
-| 3. 노터라이제이션 | Gatekeeper 추가 경고 | 30분 | 사이닝 선행 |
-| 4. 자동 업데이트 (Tauri updater) | v0.1 → v0.2 푸시 불가 | 1~2h | 호스팅 (GitHub Releases 가능) |
-| 5. 빌드 타겟 좁히기 (`"all"` → `["dmg","app"]`) | 빌드 시간 | 5분 | — |
-| 6. CSP (`security.csp: null` → 명시적) | 보안 강화 | 1h+ | 외부 리소스 검증 |
+| 1 | 코드 사이닝 (Developer ID) | macOS Gatekeeper "Move to Trash" 차단 해제 | 1h |
+| 2 | 노터라이제이션 | Gatekeeper 추가 경고 제거 | 30분 (사이닝 선행) |
+| 3 | 자동 업데이트 (Tauri updater) | v0.1 → v0.2 푸시 가능 | 1~2h (GitHub Releases 호스팅) |
+| 4 | 빌드 타겟 좁히기 (`"all"` → `["dmg","app"]`) | 빌드 시간 단축 | 5분 |
+| 5 | CSP (`security.csp: null` → 명시적) | 보안 강화 | 1h+ (외부 리소스 검증 필요) |
+| 6 | **앱 아이콘 (`.icns`) — 가장 마지막** | Dock/Spotlight 첫인상 | 30분 (디자인 후) |
 
-**현재 차단 요인**:
-1. Apple Developer 멤버십 가입 여부 미확정
-2. 앱 아이콘 디자인 유무 미확정
-
-위 두 가지 결정되면 1+2+3+4 순서로 진행.
+총 ~5h. 배포 인프라(1~3)가 핵심, 4~5는 옵션, 6은 디자인 확정 후 마지막에 박음.
 
 ---
 
