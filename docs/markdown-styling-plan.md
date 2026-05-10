@@ -1,7 +1,8 @@
 # Markdown Styling — 구현 계획
 
 작성: 2026-05-09
-상태: Phase 1 착수 전 합의안
+업데이트: 2026-05-10
+상태: Phase 1 + 1.5 완료, 링크 hover bar 진행 중 (UX 버그 1개 미해결)
 
 ---
 
@@ -377,4 +378,67 @@ Phase 1 진입 가능. 단 다음 두 결정을 잠금:
 - **Phase 1 툴바 최소 구성에 inline code 미포함** (§5.2의 최소 스펙 그대로)
 - **Phase 1.5에서 inline code 추가 시 자체 토글 명령 작성 필수** (TODO)
 
+---
 
+## 13. 진행 상황 (2026-05-10)
+
+### 13.1 완료 — Phase 1
+
+| 항목 | 커밋 | 비고 |
+|---|---|---|
+| `Cmd+.` 통합 패널 토글 (Cmd+1, Cmd+\\ 제거) | `4998af15`, `5d4ec080` | shadcn 단축키 충돌 해소 |
+| shadcn `Cmd+B` 단축키 제거 → PM Bold 양보 | `ce43c861` | — |
+| EditorHeader 재배치 (탭 Row 1, Breadcrumb 제거) | `2948b23b`, `e16753ee` | — |
+| FormatToolbar 컴포넌트 (Style ▾ + B + I) | `b1b1cf19`, `d01e8dee`, `91a6e517`, `948b0c6a` | active state 추적 포함 |
+| Active mark/block 추적 (`formatStatePlugin`) | `8d387276` | zustand store 경유 |
+| Link 버튼 + mini popover (Notion 스타일 word expand) | `99e6a3f9` | — |
+| proofMark 공존 검증 | `c655f922` | §12 근거 |
+
+### 13.2 완료 — Phase 1.5
+
+| 항목 | 커밋 | 비고 |
+|---|---|---|
+| Strike 버튼 | `86ff8c88` | gfm preset의 `strike_through` mark |
+| Inline Code 버튼 + proofMark-safe 토글 | `a187343a` | `inlineCodeSafe.ts` 신규 — §12.3 위험 회피 |
+
+### 13.3 진행 중 — 링크 보강
+
+| 항목 | 커밋 | 상태 |
+|---|---|---|
+| Cmd+click 외부 열기 | `60992bcf`, `af8c6cd9` | 완료 (Tauri shell + capability + toast) |
+| `openLinkSafely` helper 추출 | `1d4e9ab2` | 완료 |
+| `linkHoverStore` + `getLinkRange` | `6f8aae4b` | 완료 |
+| `linkHoverPlugin` (감지) | `75e9d915` | 완료 — DevTools 검증 통과 |
+| `LinkHoverBar` (Open/Remove UI) | (commit 예정) | **⚠️ 미해결 버그** — §13.4 |
+
+### 13.4 ⚠️ 미해결 — LinkHoverBar 데드 존 버그
+
+**증상**: hover bar는 시각적으로 등장하지만, 사용자가 클릭하려고 마우스를 아래로 이동하는 즉시 bar가 사라져 클릭이 안 됨.
+
+**근본 원인**: 링크 bottom과 bar top 사이 6px 시각 갭이 mouse-event "데드 존" 형성:
+- `mouseout(link)` 발화 → 150ms `activeOutTimer` 시작
+- 갭 통과 중에는 어느 onMouseEnter도 발화 안 함
+- 사용자가 천천히 이동하면 150ms 안에 bar 도달 못 함 → 타이머 fire → `setActive(null)`
+
+보조 원인:
+- `LinkHoverBar.tsx:85` `onMouseLeave={close}`가 grace 없이 즉시 종료 — bar를 살짝 벗어나면 즉사
+
+**다음 작업 (정공법)**:
+1. `GAP_PX = 0` + bar에 `padding-top` (시각 분리는 visual로, hit area는 연속)
+2. `HOVER_OUT_MS` 150 → 300
+3. bar `onMouseLeave` → 즉시 close 대신 `releaseLinkHoverAlive`만 호출, plugin 타이머가 정리
+
+대안: `markHoverPlugin` 패턴 참고 — Floating UI 사용해 anchor에 직접 붙이고 React가 leave timer 자체 관리.
+
+### 13.5 다음 작업 큐
+
+순서대로 (Phase 2 진입 전):
+1. **§13.4 데드 존 수정** — 정공법 3개 변경
+2. **링크 hover bar — Edit 액션** — `FormatToolbar`의 LinkButton popover를 store-driven으로 분리해 hover bar에서도 띄우기
+3. **`Cmd+K` 재할당** — CommandPalette → `Cmd+Shift+P`, Link → `Cmd+K` (노션 일치)
+4. **Phase 2 슬래시 커맨드** — trigger plugin → 카탈로그 + popover → Todo 토글 명령
+
+확정 결정 (사용자 답변 잠금):
+- `Cmd+K` 링크에 양보 (CommandPalette는 `Cmd+Shift+P`로)
+- 슬래시 메뉴에 Todo 포함 (직접 토글 명령 작성)
+- 슬래시 메뉴에 AI 카테고리 미포함 (채팅 패널/proofMark과 분리, Phase 3에서 재검토)
