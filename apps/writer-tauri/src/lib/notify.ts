@@ -98,3 +98,11 @@ export const notify = {
     toast.error("Couldn't create link")
   },
 }
+
+// Dev-only console handle so smoke testing can fire each toast without
+// having to recreate its real-world trigger conditions.
+//   In DevTools:  window.notify.markCantApply()
+if (import.meta.env.DEV) {
+  ;(window as unknown as { notify: typeof notify }).notify = notify
+}
+
