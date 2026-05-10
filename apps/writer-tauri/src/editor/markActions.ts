@@ -8,7 +8,7 @@
  */
 
 import type { EditorView } from '@milkdown/kit/prose/view'
-import type { Mark } from '@milkdown/kit/prose/model'
+import type { Mark, Node } from '@milkdown/kit/prose/model'
 import { TextSelection } from '@milkdown/kit/prose/state'
 import * as Y from 'yjs'
 import type { StoredMark } from '../hooks/useCollabDoc'
@@ -40,6 +40,96 @@ function findInlineAnchor(
     }
   })
   return result
+}
+
+/**
+ * Collect every text-node range that carries `markId` on the given
+ * schema. Inline marks fragment across block boundaries — a single
+ * proofSuggestion(insert) wrapping a heading + bullet list shows up
+ * as N separate text nodes in PM (one per leaf-block run). Acting on
+ * just the first (findInlineAnchor's behavior) leaves the rest
+ * stranded, so the user has to click Keep N times. Walking the doc
+ * once and returning all matching ranges lets accept transform the
+ * whole proposal in a single transaction.
+ */
+function findAllMarkTextRanges(
+  doc: Node,
+  markId: string,
+  schemaName: 'proofSuggestion' | 'proofComment',
+): FoundAnchor[] {
+  const ranges: FoundAnchor[] = []
+  doc.descendants((node, pos) => {
+    if (!node.isText) return
+    for (const m of node.marks) {
+      if (m.type.name === schemaName && m.attrs.id === markId) {
+        ranges.push({ from: pos, to: pos + node.nodeSize, mark: m })
+      }
+    }
+  })
+  return ranges
+}
+
+/**
+ * Outer span of the top-level blocks that contain any text marked with
+ * `markId`. Used by reject(insert) so the user's single click removes
+ * the entire proposal — heading + bullets + paragraphs — as one unit.
+ *
+ * Why block-level (not text-level): the inserted content is a tree of
+ * blocks (h2 + ul + li...). Deleting only the marked text leaves empty
+ * structural shells (an empty heading, empty bullets) that the user
+ * would then have to delete manually. Walking top-level children and
+ * including any whose subtree carries a matching mark gives the
+ * minimal contiguous range that covers the proposal end-to-end.
+ *
+ * Returns null if no block carries the mark.
+ */
+function findMarkedBlockSpan(
+  doc: Node,
+  markId: string,
+): { from: number; to: number } | null {
+  let firstStart: number | null = null
+  let lastEnd: number | null = null
+  doc.forEach((blockNode, blockPos) => {
+    let hasMark = false
+    blockNode.descendants((descendant) => {
+      if (hasMark) return false
+      if (!descendant.isText) return
+      for (const m of descendant.marks) {
+        if (m.type.name === 'proofSuggestion' && m.attrs.id === markId) {
+          hasMark = true
+          return false
+        }
+      }
+    })
+    if (hasMark) {
+      if (firstStart === null) firstStart = blockPos
+      lastEnd = blockPos + blockNode.nodeSize
+    }
+  })
+  if (firstStart === null || lastEnd === null) return null
+  return { from: firstStart, to: lastEnd }
+}
+
+/**
+ * Whether the live PM doc still carries a `proofSuggestion` mark with
+ * this id. Returns true the moment any text node along the mark's
+ * range has the suggestion attached, false otherwise.
+ *
+ * Why this exists: callers (hover toolbar, popover) used to gate
+ * visibility on the Y.Map<StoredMark> entry — but Y.Map mutations are
+ * NOT undone by ProseMirror's undo stack, so Cmd+Z after accept/reject
+ * restored the PM mark while leaving Y.Map empty, hiding the affordance
+ * even though the visual was back. Aligning visibility on the PM mark
+ * itself matches the codebase's stated invariant
+ * (markCleanupPlugin.ts:1-7): "the inline ProseMirror mark is the
+ * single source of truth for whether a mark exists; Y.Map just holds
+ * metadata."
+ */
+export function hasProofSuggestionInDoc(
+  view: EditorView,
+  markId: string,
+): boolean {
+  return findInlineAnchor(view, markId, 'proofSuggestion') !== null
 }
 
 /**
@@ -106,6 +196,12 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
   // (delete = nothing left, replace = anchor word becomes the content
   // and provenance there is a Phase 2.5 nice-to-have, not in scope).
   let provenanceRange: { from: number; to: number } | null = null
+  // For insert kind, the proposal can fragment across many text nodes
+  // (heading + bullet list = N runs). We collect every range up front
+  // and walk it for both the proofSuggestion removal and the
+  // proofProvenance addition so the whole proposal flips to "accepted"
+  // in one transaction.
+  let insertRanges: FoundAnchor[] = []
   if (kind === 'delete') {
     tr.delete(from, to)
   } else if (kind === 'replace') {
@@ -119,39 +215,67 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     // proposed content — it's already in the PM tree from the
     // materializer (applyIngest:applyOneAsMark). Accept = transform
     // the mark in place: strip proofSuggestion, stamp proofProvenance
-    // on the same range. Content stays put. No re-parse, no re-insert.
+    // on every marked text range. Content stays put. No re-parse, no
+    // re-insert.
     //
-    // Why no content read from Y.Map: the old anchor-word model
-    // stored the proposed text in StoredMark.content because the doc
-    // only had a placeholder; accept had to materialize the content.
-    // Now the doc carries the content itself, so reading Y.Map.content
-    // would either duplicate (if we re-inserted) or be unused.
+    // Why iterate every text node (not just `anchor`): a single
+    // proofSuggestion(insert) wrapping a heading + bullet list lives
+    // as N separate text-node ranges in PM (one per leaf-block run).
+    // Operating on just the first leaves the rest stranded — the user
+    // would have to click Keep N times to fully accept one proposal.
+    // Walking once and transforming all ranges in one transaction
+    // keeps Cmd+Z natural and matches the "one proposal = one user
+    // decision" invariant.
     const suggestionType = view.state.schema.marks.proofSuggestion
-    if (suggestionType) tr.removeMark(from, to, suggestionType)
-    provenanceRange = { from, to }
+    insertRanges = findAllMarkTextRanges(view.state.doc, markId, 'proofSuggestion')
+    if (insertRanges.length === 0) {
+      console.error('[markActions] accept(insert): no marked ranges', markId)
+      notify.markCantApply()
+      return false
+    }
+    if (suggestionType) {
+      for (const r of insertRanges) tr.removeMark(r.from, r.to, suggestionType)
+    }
+    // provenanceRange is repurposed as the outer span just for
+    // bookkeeping / readability; the actual provenance addMark below
+    // walks insertRanges so each text node carries the breadcrumb.
+    provenanceRange = {
+      from: insertRanges[0].from,
+      to: insertRanges[insertRanges.length - 1].to,
+    }
   } else {
     return false
   }
 
-  // Stamp proofProvenance on the inserted range in the same transaction
-  // so the mark appears atomically with the inserted text. Skipped if
-  // the schema lacks the mark (older client) — we fall through to the
+  // Stamp proofProvenance on every accepted range in the same
+  // transaction so the breadcrumb appears atomically with the
+  // suggestion strip. For insert kind we walk insertRanges (one
+  // entry per text-node run); other kinds collapse to a single
+  // range stored in provenanceRange. Skipped entirely if the schema
+  // lacks the mark (older client) — we fall through to the
   // delete-StoredMark path below, which preserves prior behavior.
   const provenanceType = view.state.schema.marks.proofProvenance
-  if (provenanceRange && provenanceType && stored) {
-    tr.addMark(
-      provenanceRange.from,
-      provenanceRange.to,
-      provenanceType.create({
-        id: markId,
-        sourceSlug: stored.sourceSlug ?? null,
-        sourceLabel: stored.sourceLabel ?? null,
-        sourceQuote: stored.sourceQuote ?? null,
-        proposedAt: stored.proposedAt ?? stored.at ?? null,
-        acceptedAt: new Date().toISOString(),
-        model: stored.model ?? null,
-      }),
-    )
+  if (provenanceType && stored) {
+    const provenanceAttrs = {
+      id: markId,
+      sourceSlug: stored.sourceSlug ?? null,
+      sourceLabel: stored.sourceLabel ?? null,
+      sourceQuote: stored.sourceQuote ?? null,
+      proposedAt: stored.proposedAt ?? stored.at ?? null,
+      acceptedAt: new Date().toISOString(),
+      model: stored.model ?? null,
+    }
+    if (insertRanges.length > 0) {
+      for (const r of insertRanges) {
+        tr.addMark(r.from, r.to, provenanceType.create(provenanceAttrs))
+      }
+    } else if (provenanceRange) {
+      tr.addMark(
+        provenanceRange.from,
+        provenanceRange.to,
+        provenanceType.create(provenanceAttrs),
+      )
+    }
   }
   view.dispatch(tr)
 
@@ -184,10 +308,18 @@ export function rejectMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
   const tr = view.state.tr
   if (kind === 'insert') {
     // New model: the marked range IS the proposed content (placed
-    // there by the materializer). Reject = delete the range entirely
-    // so the page returns to its pre-proposal state in a single PM
-    // transaction (Cmd+Z restores the proposal cleanly).
-    tr.delete(from, to)
+    // there by the materializer). Reject = delete every top-level
+    // block whose subtree carries this mark, so a multi-block
+    // proposal (heading + bullets + paragraphs) disappears as a
+    // single unit instead of leaving empty structural shells. One PM
+    // transaction keeps Cmd+Z atomic.
+    const span = findMarkedBlockSpan(view.state.doc, markId)
+    if (!span) {
+      console.error('[markActions] reject(insert): no marked block span', markId)
+      notify.markCantDismiss()
+      return false
+    }
+    tr.delete(span.from, span.to)
   } else {
     // replace / delete kinds (chat AI flows): the marked text is the
     // user's own writing; reject just strips the suggestion mark and

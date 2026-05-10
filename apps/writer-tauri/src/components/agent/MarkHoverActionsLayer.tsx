@@ -25,7 +25,11 @@ import {
   type VirtualElement,
 } from '@floating-ui/react-dom'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { acceptMark, rejectMark } from '@/editor/markActions'
+import {
+  acceptMark,
+  hasProofSuggestionInDoc,
+  rejectMark,
+} from '@/editor/markActions'
 import { MARK_HOVER_EVENT, type MarkHoverDetail } from '@/editor/markHoverPlugin'
 import { getMarkEndRect } from '@/editor/markHoverGeometry'
 import { useMarks } from '@/hooks/useMarks'
@@ -109,9 +113,17 @@ export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
   })
 
   if (!activeMarkId || !editorView || !ydoc) return null
+  // Visibility authority is the live PM mark, NOT Y.Map. PM undo
+  // restores the mark; Y.Map mutations from accept/reject aren't on
+  // PM's undo stack, so a Y.Map-gated check would hide the toolbar
+  // after Cmd+Z even though the suggestion is back in the doc. See
+  // markCleanupPlugin.ts:1-7 for the codebase-wide invariant this
+  // mirrors.
+  if (!hasProofSuggestionInDoc(editorView, activeMarkId)) return null
+  // Y.Map metadata is optional decoration: rationale text shows when
+  // it's there, the toolbar still works when it isn't.
   const stored = marks[activeMarkId]
-  if (!stored) return null
-  const rationale = stored.note?.trim() || null
+  const rationale = stored?.note?.trim() || null
 
   function handleAccept() {
     if (!editorView || !ydoc || !activeMarkId) return
