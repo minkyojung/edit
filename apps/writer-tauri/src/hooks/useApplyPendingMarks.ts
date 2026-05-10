@@ -130,7 +130,7 @@ export function useApplyPendingMarks(): void {
           console.warn('[ingest:materialize] no liveView after sync')
           return
         }
-        return applyPendingForActive(liveView, known.type)
+        return applyPendingForActive(liveView, handle.ydoc, known.type)
       })
       .catch((err) => console.warn('[ingest:materialize] applyPendingForActive failed', err))
       .finally(() => {
