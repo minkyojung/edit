@@ -38,6 +38,33 @@ function buildProposeChangeTool(runId, emit) {
 
 const SIDECAR_VERSION = '0.1.0'
 
+/** Dump a thrown error's full context to stderr so the Rust supervisor's
+ * stderr drain (and the dev console downstream) can see what actually
+ * happened. The user-facing chat/error notification stays terse — this
+ * is purely a debug aid. Captures stack, cause chain, and any custom
+ * fields the SDK attaches (rateLimit, code, etc.) without forcing the
+ * caller to know which fields exist. */
+function logErrorContext(label, runId, err, extras = {}) {
+  const lines = [`[sidecar ${label}] runId=${runId}`]
+  for (const [k, v] of Object.entries(extras)) {
+    if (v !== undefined && v !== null) lines.push(`  ${k}=${v}`)
+  }
+  if (err && typeof err === 'object') {
+    if (err.message) lines.push(`  message=${err.message}`)
+    if (err.code) lines.push(`  code=${err.code}`)
+    if (err.cause) {
+      const c = err.cause
+      const causeMsg = c?.message ?? String(c)
+      lines.push(`  cause=${causeMsg}`)
+      if (c?.stack) lines.push(`  cause.stack=${c.stack}`)
+    }
+    if (err.stack) lines.push(`  stack=${err.stack}`)
+  } else {
+    lines.push(`  raw=${String(err)}`)
+  }
+  process.stderr.write(lines.join('\n') + '\n')
+}
+
 export class Server {
   // mode: 'chat' (multiplexed) | 'title' (single-flight)
   // emit: function(messageObject) — sends a message back over the wire
@@ -184,6 +211,7 @@ export class Server {
     this.emit(response(id, { runId, accepted: true }))
 
     this.#runChat(runId, params, controller).catch((err) => {
+      logErrorContext('runChat-uncaught', runId, err, { mode: this.mode })
       this.#emitChatError(runId, 'INTERNAL', err?.message ?? String(err), true)
       this.activeChats.delete(runId)
     })
@@ -322,6 +350,12 @@ export class Server {
 
       if (streamError) {
         const code = classifyError(streamError)
+        logErrorContext('stream-error', runId, streamError, {
+          attempt,
+          code,
+          mode: this.mode,
+          model,
+        })
         if (code === 'AUTH' && attempt === 1) {
           // Pause: ask the host to push a fresh token and retry once.
           this.emit(notification('auth/refreshNeeded', { runId }))
