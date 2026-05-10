@@ -37,6 +37,10 @@ interface UseChatRunnerDeps {
   activeThreadModel: ChatModel
   activeThreadEffort: ChatEffort
   appendTurn: (turn: ChatTurn) => void
+  /** Called once per run, on the first stream event we receive — the moment
+   * the SDK has confirmed a session for this thread. Idempotent at the
+   * useThreads layer, so repeating across runs is safe. */
+  markSessionStarted: (threadId: string) => void
 }
 
 export interface ChatRunner {
@@ -57,7 +61,15 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
   const startActivity = useChatActivity((s) => s.start)
   const endActivity = useChatActivity((s) => s.end)
 
-  const { editorView, ydoc, activeId, activeThreadModel, activeThreadEffort, appendTurn } = deps
+  const {
+    editorView,
+    ydoc,
+    activeId,
+    activeThreadModel,
+    activeThreadEffort,
+    appendTurn,
+    markSessionStarted,
+  } = deps
 
   const run = useCallback(
     async (threadId: string, history: ChatTurn[], overrides?: RunOverrides) => {
@@ -111,6 +123,13 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
             : s,
         )
       })
+
+      // Latch for marking the thread's session as started — fires exactly
+      // once on the first stream event of this run. Receiving any part
+      // means the SDK accepted the request and a session now exists for
+      // this thread; future runs must `resume` it regardless of what the
+      // history looks like (Regenerate, etc.).
+      let sessionMarked = false
 
       // Counters used by `summarize` (review-comments). Only mutated when
       // a summarize callback is present; otherwise stay at zero and unused.
@@ -171,6 +190,10 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           model: overrides?.model ?? activeThreadModel,
           effort: overrides?.effort ?? activeThreadEffort,
           onPart: (part) => {
+            if (!sessionMarked) {
+              sessionMarked = true
+              markSessionStarted(threadId)
+            }
             buffer.upsert(part)
             flusher.schedule()
           },
@@ -197,7 +220,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [editorView, ydoc, activeId, activeThreadModel, activeThreadEffort, appendTurn, startActivity, endActivity],
+    [editorView, ydoc, activeId, activeThreadModel, activeThreadEffort, appendTurn, markSessionStarted, startActivity, endActivity],
   )
 
   return { status, streaming, run }
