@@ -10,16 +10,8 @@
 
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
-import { open } from '@tauri-apps/plugin-shell'
 
-import { notify } from '@/lib/notify'
-
-const SAFE_SCHEMES = ['http://', 'https://', 'mailto:']
-
-function isSafeUrl(href: string): boolean {
-  const lower = href.toLowerCase().trim()
-  return SAFE_SCHEMES.some((s) => lower.startsWith(s))
-}
+import { openLinkSafely } from './linkUtils'
 
 export function createLinkClickPlugin() {
   return $prose(
@@ -36,12 +28,10 @@ export function createLinkClickPlugin() {
               if (!anchor) return false
 
               const href = anchor.getAttribute('href')
-              if (!href || !isSafeUrl(href)) return false
+              if (!href) return false
 
+              if (!openLinkSafely(href)) return false
               event.preventDefault()
-              void open(href).catch(() => {
-                notify.linkOpenFailed()
-              })
               return true
             },
           },
