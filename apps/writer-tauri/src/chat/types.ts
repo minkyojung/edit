@@ -57,6 +57,13 @@ export interface ThreadMeta {
   /** Per-thread reasoning effort. Older threads default to
    * DEFAULT_CHAT_EFFORT when this field is absent. */
   effort?: ChatEffort
+  /** True once the SDK has confirmed a session for this thread (set on the
+   * first stream event of the first run). Subsequent runs must use `resume`
+   * regardless of history shape — including Regenerate, which deletes the
+   * prior assistant turn and would otherwise look like a brand-new send to
+   * the history-shape heuristic. Absent on threads created before this
+   * field existed; callers fall back to the legacy heuristic in that case. */
+  sessionStarted?: boolean
 }
 
 export interface ChatTurn {
