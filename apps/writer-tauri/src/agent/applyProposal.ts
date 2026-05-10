@@ -128,11 +128,22 @@ export function applyProposal(
   } else {
     const markType = view.state.schema.marks.proofComment
     if (!markType) return { ok: false, reason: 'schema_proof_comment_missing' }
+    // Stamp the comment body / quoted span / rationale onto the mark
+    // itself so PM undo restores them together. The Y.Map.set above
+    // mirrors the data for legacy readers (DocumentInfoDialog stats);
+    // the popover reads from the PM mark instead so resolved-then-undone
+    // comments don't lose their text.
     view.dispatch(
       view.state.tr.addMark(
         range.from,
         range.to,
-        markType.create({ id: markId, by: meta.agentId }),
+        markType.create({
+          id: markId,
+          by: meta.agentId,
+          text: proposal.text ?? null,
+          quote: proposal.quote ?? null,
+          note: proposal.rationale ?? null,
+        }),
       ),
     )
   }

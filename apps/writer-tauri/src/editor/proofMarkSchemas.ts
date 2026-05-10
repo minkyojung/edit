@@ -154,19 +154,40 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
 export const proofCommentAttr = $markAttr('proofComment', () => ({
   id: {},
   by: {},
+  text: {},
+  quote: {},
+  note: {},
 }))
 
 export const proofCommentSchema = $markSchema('proofComment', () => ({
+  // Comment body, the quoted span, and any rationale all live on the
+  // mark itself so PM undo restores them together with the mark. The
+  // dual-source variant (data in Y.Map<StoredMark>) lost the body the
+  // moment a comment got resolved + Cmd+Z'd: PM brought the mark back,
+  // Y.Map stayed empty, popover read empty text. Single authority on
+  // the inline mark eliminates that class of bug.
+  //
+  // All three default to null so older docs whose comment marks
+  // pre-date this schema parse cleanly; the popover treats missing
+  // body as "(no comment text)".
   attrs: {
     id: { default: null },
     by: { default: 'unknown' },
+    text: { default: null },
+    quote: { default: null },
+    note: { default: null },
   },
   inclusive: false,
   spanning: true,
   parseDOM: [
     {
       tag: 'span[data-proof="comment"]',
-      getAttrs: (dom: HTMLElement): Attrs => parseCommonAttrs(dom),
+      getAttrs: (dom: HTMLElement): Attrs => ({
+        ...parseCommonAttrs(dom),
+        text: dom.getAttribute('data-text'),
+        quote: dom.getAttribute('data-quote'),
+        note: dom.getAttribute('data-note'),
+      }),
     },
   ],
   toDOM: (mark) => {
@@ -174,6 +195,9 @@ export const proofCommentSchema = $markSchema('proofComment', () => ({
       'data-proof': 'comment',
       ...buildCommonDomAttrs(mark),
     }
+    if (mark.attrs.text) domAttrs['data-text'] = String(mark.attrs.text)
+    if (mark.attrs.quote) domAttrs['data-quote'] = String(mark.attrs.quote)
+    if (mark.attrs.note) domAttrs['data-note'] = String(mark.attrs.note)
     return ['span', domAttrs, 0]
   },
   parseMarkdown: {
@@ -184,6 +208,9 @@ export const proofCommentSchema = $markSchema('proofComment', () => ({
       state.openMark(markType, {
         id: attrs.id ?? null,
         by: attrs.by ?? 'unknown',
+        text: attrs.text ?? null,
+        quote: attrs.quote ?? null,
+        note: attrs.note ?? null,
       })
       state.next(proofNode.children || [])
       state.closeMark(markType)
@@ -195,6 +222,9 @@ export const proofCommentSchema = $markSchema('proofComment', () => ({
       serializeProofMark(state, mark, 'comment', {
         id: mark.attrs.id ?? null,
         by: mark.attrs.by ?? null,
+        text: mark.attrs.text ?? null,
+        quote: mark.attrs.quote ?? null,
+        note: mark.attrs.note ?? null,
       })
     },
   },

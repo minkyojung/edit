@@ -131,6 +131,20 @@ export function hasProofSuggestionInDoc(
   return findInlineAnchor(view, markId, 'proofSuggestion') !== null
 }
 
+/**
+ * Return the live `proofComment` Mark for `markId`, or null if no such
+ * mark exists in the doc. Used by MarkPopoverLayer to read the comment
+ * body / quote / rationale directly off the PM mark — same Cmd+Z-safe
+ * pattern as hasProofSuggestionInDoc applies to comments now that the
+ * proofComment schema carries text / quote / note attrs itself.
+ */
+export function getProofCommentMark(
+  view: EditorView,
+  markId: string,
+): Mark | null {
+  return findInlineAnchor(view, markId, 'proofComment')?.mark ?? null
+}
+
 export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boolean {
   const anchor = findInlineAnchor(view, markId, 'proofSuggestion')
   if (!anchor) {

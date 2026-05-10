@@ -59,7 +59,7 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
       return false
     }
     const attrs = kind === 'comment'
-      ? { id: markId, by: 'owner' }
+      ? { id: markId, by: 'owner', ...extraAttrs }
       : { id: markId, kind, by: 'owner', ...extraAttrs }
     view.dispatch(view.state.tr.addMark(selection!.from, selection!.to, markType.create(attrs)))
     return true
@@ -83,12 +83,21 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
     setLoading(true)
     try {
       if (mode === 'comment') {
-        if (!stampInlineMark(markId, 'comment')) { setLoading(false); return }
+        const text = input.trim() || '.'
+        const quote = selection!.text
+        // Stamp body + quote on the PM mark so PM undo can restore the
+        // comment intact (single source of truth). Y.Map mirror below
+        // is kept for legacy readers (e.g. DocumentInfoDialog stats);
+        // the popover now reads from the mark itself.
+        if (!stampInlineMark(markId, 'comment', { text, quote })) {
+          setLoading(false)
+          return
+        }
         writeMarkToYMap(markId, {
           kind: 'comment',
           by: 'owner',
-          quote: selection!.text,
-          text: input.trim() || '.',
+          quote,
+          text,
           ...anchors,
           at: now,
         } as StoredMark)
