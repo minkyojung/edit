@@ -249,17 +249,34 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
           // come back), so a follow-up re-accept finds the content
           // exactly where it was.
           //
-          // trackedOrigins: ySyncPluginKey is what y-prosemirror
-          // labels its PM-driven Yjs transactions with; mark-action
-          // is the origin acceptMark / rejectMark wrap their dispatch
-          // + marksMap mutation in (see markActions.ts). Anything
-          // outside those origins (e.g. markCleanupPlugin's deferred
-          // cleanup) stays out of the undo stack so a stale-entry
-          // sweep can't be undone into existence.
+          // trackedOrigins:
+          //   ySyncPluginKey  — y-prosemirror's PM-driven Yjs txns
+          //   mark-action     — acceptMark / rejectMark wraps (dispatch +
+          //                     marksMap mutation, see markActions.ts)
+          //   mark-cleanup    — markCleanupPlugin's microtask follow-up
+          //                     when the user deletes marked text
+          //                     manually. Tracking it means Backspace +
+          //                     Cmd+Z restores BOTH the text and the
+          //                     Y.Map metadata atomically; without it,
+          //                     the text comes back but the mark's
+          //                     stored content stays gone — same dual-
+          //                     source bug we just closed for accept.
+          //                     Yjs's captureTimeout merges the cleanup
+          //                     microtask with the original PM delete
+          //                     into one undo step, so Cmd+Z is one
+          //                     keystroke either way.
+          //
+          // Anything outside these origins (e.g. server reconciliation
+          // updates from Hocuspocus) stays out of the undo stack so a
+          // remote write can't be undone into existence.
           const xmlFragment = ydoc.getXmlFragment('prosemirror')
           const marksMap = ydoc.getMap('marks')
           const undoManager = new UndoManager([xmlFragment, marksMap], {
-            trackedOrigins: new Set([ySyncPluginKey, 'mark-action']),
+            trackedOrigins: new Set([
+              ySyncPluginKey,
+              'mark-action',
+              'mark-cleanup',
+            ]),
             captureTimeout: 500,
           })
           collabService.setOptions({ yUndoOpts: { undoManager } })
