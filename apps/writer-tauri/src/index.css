@@ -103,8 +103,17 @@
     margin-bottom: var(--prose-gap-block);
   }
 
+  /* Inter-item spacing belongs on the OUTER list-item-block wrapper,
+     not on the inner `.list-item` <li> the NodeView puts inside it.
+     Margin on the inner li sits inside the editable flex row, where
+     the browser includes it in cross-block selection paint and draws
+     it as a horizontal bar between items during a drag-select. The
+     outer wrapper sits between items in flow, outside the editable
+     row, so its margin produces the same visual gap without the paint
+     side effect — this is the same split @milkdown/crepe ships in
+     `theme/common/list-item.css`. */
   .ProseMirror li {
-    margin-bottom: 0.15rem;
+    margin-bottom: 0;
   }
 
   .ProseMirror li > p {
@@ -376,6 +385,13 @@
 .ProseMirror .milkdown-list-item-block {
   display: block;
   padding: 0;
+  /* No inter-item margin: any in-flow gap between block siblings
+     inside contenteditable gets painted by the browser's cross-block
+     selection during a drag-select, showing as a horizontal bar in
+     the gutter. We let line-height alone do the breathing; if more
+     air is wanted later, push it onto `.ProseMirror p` line-height
+     (inside the item's own box, where it doesn't paint). */
+  margin-bottom: 0;
 }
 .ProseMirror .milkdown-list-item-block .list-item {
   display: flex;
@@ -398,6 +414,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Keep the icon column out of the user's text selection — without
+     this, dragging across items can include the contenteditable=false
+     wrapper in the selection rectangle, which paints a strip across
+     the marker gutter. */
+  user-select: none;
   flex-shrink: 0;
   height: 1.6em;
   width: 1.5rem;
