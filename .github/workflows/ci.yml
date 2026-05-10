@@ -44,6 +44,10 @@ jobs:
         working-directory: casablanca
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      - name: Lint (writer-tauri)
+        working-directory: casablanca
+        run: pnpm --filter writer-tauri lint
+
       - name: Typecheck (writer-tauri)
         working-directory: casablanca
         run: pnpm --filter writer-tauri typecheck

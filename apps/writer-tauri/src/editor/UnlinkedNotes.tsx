@@ -49,7 +49,6 @@ export function UnlinkedNotes({ view, parentSlug }: Props) {
       }
     })
     return set
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, docVersion])
 
   const children = useMemo(
