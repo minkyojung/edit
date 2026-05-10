@@ -14,7 +14,7 @@
 // placeholder out of the persisted Y.Doc state — collab peers see
 // nothing, the hint is purely a local rendering concern.
 
-import { $prose } from '@milkdown/utils'
+import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view'
 import type { EditorState } from '@milkdown/kit/prose/state'

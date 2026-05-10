@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "identifier": "com.conductor.writer",
   "build": {
-    "beforeDevCommand": "pnpm --filter writer-tauri dev",
+    "beforeDevCommand": "pnpm --filter writer-tauri setup:binaries && pnpm --filter writer-tauri pack:sidecar && pnpm --filter writer-tauri dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm --filter writer-tauri build && bash scripts/pack-sidecar.sh",
+    "beforeBuildCommand": "pnpm --filter writer-tauri setup:binaries:all && pnpm --filter writer-tauri build && pnpm --filter writer-tauri pack:sidecar",
     "frontendDist": "../dist"
   },
   "app": {

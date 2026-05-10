@@ -13,7 +13,7 @@
 
 import { $markSchema, $markAttr } from '@milkdown/kit/utils'
 import type { Attrs, Mark } from '@milkdown/kit/prose/model'
-import type { MarkdownNode, SerializerState } from '@milkdown/transformer'
+import type { MarkdownNode, SerializerState } from '@milkdown/kit/transformer'
 
 type ProofSuggestionKind = 'insert' | 'delete' | 'replace'
 

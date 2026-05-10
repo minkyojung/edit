@@ -15,7 +15,11 @@ import {
 } from './linkHoverPlugin'
 import { openLinkSafely } from './linkUtils'
 
-const GAP_PX = 6
+// 0px so the bar's hit area sits flush with the link's bottom edge.
+// Visual separation comes from padding-top on the bar itself —
+// connecting the hit area is what kills the dead zone.
+const GAP_PX = 0
+const BAR_PAD_TOP_PX = 8
 
 function shortHostname(href: string): string {
   try {
@@ -78,33 +82,45 @@ export function LinkHoverBar() {
   }
 
   return (
+    // Outer wrapper carries the hover handlers and a transparent
+    // padding-top that bridges the visual gap to the link, so the
+    // cursor never crosses a dead zone on its way down.
     <div
-      role="toolbar"
-      aria-label="Link actions"
       onMouseEnter={keepLinkHoverAlive}
       onMouseLeave={close}
-      style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 50 }}
-      className="flex items-center gap-0.5 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+      style={{
+        position: 'fixed',
+        top: pos.top,
+        left: pos.left,
+        paddingTop: BAR_PAD_TOP_PX,
+        zIndex: 50,
+      }}
     >
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={handleOpen}
-        className="h-7 gap-1.5 px-2 text-[12px] font-medium"
-        title={active.href}
+      <div
+        role="toolbar"
+        aria-label="Link actions"
+        className="flex items-center gap-0.5 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
       >
-        <IconExternalLink size={13} stroke={2} />
-        <span className="max-w-[180px] truncate">{shortHostname(active.href)}</span>
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={handleRemove}
-        aria-label="Remove link"
-        className="h-7 w-7"
-      >
-        <IconUnlink size={13} stroke={2} />
-      </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleOpen}
+          className="h-7 gap-1.5 px-2 text-[12px] font-medium"
+          title={active.href}
+        >
+          <IconExternalLink size={13} stroke={2} />
+          <span className="max-w-[180px] truncate">{shortHostname(active.href)}</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={handleRemove}
+          aria-label="Remove link"
+          className="h-7 w-7"
+        >
+          <IconUnlink size={13} stroke={2} />
+        </Button>
+      </div>
     </div>
   )
 }
