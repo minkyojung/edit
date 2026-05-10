@@ -391,15 +391,6 @@
     border-bottom: 2px solid rgba(249, 115, 22, 0.6);
   }
 
-  /* Frozen selection — painted while focus has moved to the chat input so
-     the user keeps seeing what's attached to a slash command. Tone matches
-     the native browser selection (subtle, no border) so it reads as "the
-     selection is still alive" rather than a separate annotation. */
-  .milkdown-frozen-selection {
-    background-color: color-mix(in oklch, var(--ring) 35%, transparent);
-    border-radius: 1px;
-  }
-
 }
 
 /* ── Milkdown list-item-block (NodeView) ────────────────────────────
