@@ -1,7 +1,7 @@
 # ADR: ingest 검토 UX 재구조화 — 절반-적용 상태와 갈림길
 
 작성: 2026-05-10
-상태: **Accepted — Path A**
+상태: **Superseded by 2026-05-10-proof-sdk-realignment.md** — Path A 의 PM-tree 모델이 proof-server 의 reconciliation guardrail 과 충돌해 콘텐츠 revert 발생. 같은 날 proof-sdk 의 ops/suggestion.add 패턴으로 회귀 결정.
 
 이전 ADR: `2026-05-08-wiki-ingest-system.md` (마크 시스템 위에 ingest 를 얹은 최초 설계)
 

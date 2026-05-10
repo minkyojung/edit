@@ -1,8 +1,23 @@
 # Memo: chat-INSERT 콘텐츠가 Keep 직후 서버에 의해 삭제되는 문제
 
 작성: 2026-05-10
-상태: **Investigation paused — root cause 가 클라 코드 밖**
+상태: **Resolved (2026-05-10)** — proof-sdk 정합 회귀 + Y.UndoManager 통합으로 해결
 관련 Phase: Step 3 (commit `d9cbc540`)
+관련 결정 ADR: `2026-05-10-proof-sdk-realignment.md`
+
+---
+
+## Resolution
+
+이 메모의 진단 (PM-tree 모델 → proof-server guardrail 충돌) 은 정확했음. 해결은 **proof-sdk 패턴으로 회귀** 였음:
+
+- ingest, chat-INSERT 모두 anchor-on-existing-text + Y.Map.content 모델로 복귀 (commits `dbf401fb`, `eea3e04b`, Phase 4)
+- ghost widget INSERT 부활로 in-context preview UX 유지 (Cursor 식)
+- 후속으로 발견된 dual-source-of-truth Cmd+Z 버그 (accept → undo → re-accept) 는 `Y.UndoManager` 통합으로 근본 해결 (commit `ffab86f4`)
+
+자세한 결정 / 교훈은 follow-up ADR 참조.
+
+---
 
 ---
 
