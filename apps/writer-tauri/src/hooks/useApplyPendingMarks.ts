@@ -116,14 +116,23 @@ export function useApplyPendingMarks(): void {
     if (lastAttemptRef.current === signature) return
     lastAttemptRef.current = signature
 
+    console.log('[ingest:materialize] scheduling apply', {
+      activeSlug,
+      type: known.type,
+      matching: matching.length,
+      proposalIds: matching.map((p) => p.id),
+    })
     runningRef.current = true
     void waitForSync(handle.provider)
       .then(() => {
         const liveView = useEditorViewStore.getState().view
-        if (!liveView) return
+        if (!liveView) {
+          console.warn('[ingest:materialize] no liveView after sync')
+          return
+        }
         return applyPendingForActive(liveView, handle.ydoc, known.type)
       })
-      .catch((err) => console.warn('[ingest] applyPendingForActive failed', err))
+      .catch((err) => console.warn('[ingest:materialize] applyPendingForActive failed', err))
       .finally(() => {
         runningRef.current = false
       })

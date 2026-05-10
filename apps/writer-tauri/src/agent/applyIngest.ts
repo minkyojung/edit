@@ -31,13 +31,42 @@
 
 import * as Y from 'yjs'
 import type { EditorView } from '@milkdown/kit/prose/view'
+import type { Node } from '@milkdown/kit/prose/model'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
+import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore, type PendingProposal } from '@/state/ingestStore'
-import { applyProposal } from '@/agent/applyProposal'
-import type { Proposal } from '@/agent/proposals'
 import type { StoredMark } from '@/hooks/useCollabDoc'
 
 const AGENT_ID = 'ai:wiki-ingest'
+
+/** Detect whether a mark for this proposal already lives in the doc.
+ * Single source of truth: PM tree carries the inserted content with
+ * its mark; if scanning the doc finds either the pending proofSuggestion
+ * or the post-accept proofProvenance with this id, the proposal has
+ * already been materialized (or accepted) on this page. Skip re-stamping
+ * so a fresh page-mount or sync replay can't double-insert.
+ *
+ * Why both mark types: after the user accepts, proofSuggestion transforms
+ * to proofProvenance with the same id. Without checking provenance too,
+ * an accepted-then-revisited page would re-materialize the same proposal
+ * a second time, undoing the user's accept. */
+function hasMarkForProposal(doc: Node, proposalId: string): boolean {
+  let found = false
+  doc.descendants((node) => {
+    if (found) return false
+    if (!node.isText) return
+    for (const m of node.marks) {
+      if (
+        (m.type.name === 'proofSuggestion' || m.type.name === 'proofProvenance') &&
+        m.attrs.id === proposalId
+      ) {
+        found = true
+        return false
+      }
+    }
+  })
+  return found
+}
 
 /** Find the wiki:* doc for a given type id. Returns null when no
  * such doc exists in the catalog (shouldn't happen — the LLM picks
@@ -95,120 +124,81 @@ export function applyPendingLogsForView(view: EditorView): number {
   return logs.length
 }
 
-/** Ensure a wiki page has at least one paragraph of text so the
- * first proofSuggestion mark has somewhere to anchor. Reads the
- * live PM doc — empty (or ZWS-only) means seed; anything else is a
- * no-op. The seed write goes through PM transaction for the same
- * projection-safety reason as logs. */
-function ensureAnchorViaTransaction(view: EditorView, label: string): void {
-  const text = view.state.doc.textBetween(
-    0,
-    view.state.doc.content.size,
-    '\n',
-    ' ',
-  )
-  const cleaned = text.replace(/[​]/g, '').trim()
-  if (cleaned.length > 0) return
-  appendParagraphViaTransaction(view, label)
-}
-
-/** Find the last word in the live PM doc to use as a proofSuggestion
- * anchor. We pick a word (not the whole last paragraph) so the mark
- * highlights a small, intentional region — and so the "anchor + new
- * content" replacement on accept reads as an append, not a rewrite.
- * Returns null when the doc has no text at all (caller should run
- * ensureAnchor first). */
-function lastWordAnchor(view: EditorView): string | null {
-  const text = view.state.doc.textBetween(
-    0,
-    view.state.doc.content.size,
-    '\n',
-    ' ',
-  )
-  const cleaned = text.replace(/[​]/g, '').trimEnd()
-  if (!cleaned) return null
-  const match = cleaned.match(/\S+$/)
-  return match ? match[0] : null
-}
-
-/** Resolve the proposal's anchor against the live doc. Preferred
- * path: the LLM emitted `anchorAfterText` and that snippet is present
- * in the doc — we anchor on it directly so accept lands the new
- * content right after that line. Fallback: use the doc's last word,
- * which appends to the very end of the page (the previous default).
+/** Materialize one queued proposal as real PM content + a pending
+ * mark. Single source of truth: the proposal's markdown becomes
+ * actual heading / list / paragraph nodes inserted at the top of the
+ * page, and a `proofSuggestion(insert)` mark wraps the inserted range
+ * with id = proposal.id. Accept = transform that mark to provenance
+ * (content stays). Reject = delete the marked range (content goes).
  *
- * Trim before matching so trivial whitespace differences in the LLM
- * echo don't void the anchor; PM's textBetween normalizes block
- * separators to '\n' so a single leading "- " bullet match still
- * works. The string is consumed by applyProposal as `quote`, which
- * runs its own resolveQuoteRange — so an empty/missing anchor here
- * means "fall back," never "fail." */
-function resolveAnchor(
-  view: EditorView,
-  proposal: PendingProposal,
-): string | null {
-  const wanted = proposal.anchorAfterText?.trim()
-  if (wanted) {
-    const docText = view.state.doc
-      .textBetween(0, view.state.doc.content.size, '\n', ' ')
-      .replace(/[​]/g, '')
-    if (docText.includes(wanted)) return wanted
-    // LLM-suggested anchor isn't in the doc (rare — typically a tiny
-    // whitespace/punctuation drift, or the page changed since ingest
-    // ran). Fall through to the page-end fallback rather than
-    // failing the apply outright.
-  }
-  return lastWordAnchor(view)
-}
-
-/** Convert one queued ingest proposal into a Proposal shape the
- * existing applyProposal helper accepts, then stamp it as a mark.
- * Anchor comes from `anchorAfterText` when the LLM specified one;
- * otherwise the doc's last word. Content keeps the anchor (so accept
- * = "anchor + new content") and adds the new line on a fresh line. */
+ * Why pos 0: ingest proposals don't have a natural anchor in the
+ * existing page (the page may be empty, or the proposal is unrelated
+ * to any specific line). Inserting at the top puts new content in the
+ * user's eye on first scroll, and avoids the pre/post position
+ * asymmetry that the old anchor-word model created when the anchor
+ * sat inside a blockquote / list / heading wrapper.
+ *
+ * Idempotency: if a mark with this proposal.id is already in the
+ * doc (pending or accepted-as-provenance), skip. A fresh page mount
+ * or a Yjs sync replay can otherwise re-run the materializer on the
+ * same proposal and double-insert. */
 function applyOneAsMark(
   view: EditorView,
   ydoc: Y.Doc,
   proposal: PendingProposal,
 ): { ok: true; markId: string } | { ok: false; reason: string } {
-  const anchor = resolveAnchor(view, proposal)
-  if (!anchor) return { ok: false, reason: 'no_anchor' }
+  if (hasMarkForProposal(view.state.doc, proposal.id)) {
+    return { ok: true, markId: proposal.id }
+  }
 
-  const proposalShape: Proposal = {
-    kind: 'suggestion',
-    suggestionType: 'insert',
-    quote: anchor,
-    // Just the new content (markdown). Accept will parse this into
-    // real heading / list nodes via Milkdown's parser and insert
-    // them as block(s) after the anchor's containing block, so the
-    // anchor word stays in place and the addition lands on its own
-    // line(s) below it.
-    content: proposal.content,
-    rationale: proposal.rationale,
+  const parser = useEditorViewStore.getState().parser
+  if (!parser) return { ok: false, reason: 'parser_not_ready' }
+
+  const parsed = parser(proposal.content)
+  if (!parsed || parsed.content.size === 0) {
+    return { ok: false, reason: 'parser_empty' }
   }
-  const out = applyProposal(view, ydoc, proposalShape, {
-    runId: proposal.id,
-    agentId: AGENT_ID,
+
+  const suggestionType = view.state.schema.marks.proofSuggestion
+  if (!suggestionType) return { ok: false, reason: 'schema_proof_suggestion_missing' }
+
+  // Single transaction: insert the parsed blocks at pos 0, then mark
+  // the inserted range. Doing both in one tr keeps the user's undo a
+  // single step (Cmd+Z removes the entire materialization atomically)
+  // and prevents the deco plugin from rendering an un-marked-but-
+  // inserted intermediate state.
+  const fragmentSize = parsed.content.size
+  const tr = view.state.tr
+    .insert(0, parsed.content)
+    .addMark(
+      0,
+      fragmentSize,
+      suggestionType.create({
+        id: proposal.id,
+        kind: 'insert',
+        by: AGENT_ID,
+      }),
+    )
+  view.dispatch(tr)
+
+  // Y.Map carries provenance metadata only — content is NOT duplicated
+  // here (PM tree is the authority). Hover popover reads sourceSlug /
+  // sourceLabel / sourceQuote to answer "where did this come from?";
+  // accept transforms the mark in place using the same fields to
+  // stamp a permanent breadcrumb.
+  const marksMap = ydoc.getMap<StoredMark>('marks')
+  marksMap.set(proposal.id, {
+    kind: 'insert',
+    by: AGENT_ID,
+    at: new Date().toISOString(),
+    status: 'pending',
+    sourceSlug: proposal.sourceSlug,
+    sourceLabel: proposal.sourceLabel,
+    sourceQuote: proposal.sourceQuote,
+    proposedAt: new Date(proposal.proposedAt).toISOString(),
   })
-  // Enrich the freshly-created StoredMark with provenance metadata
-  // pulled from the queued proposal. acceptMark reads these on accept
-  // and copies them onto the new proofProvenance mark so the breadcrumb
-  // points back at the source daily / note. applyProposal doesn't know
-  // about ingest-domain fields, so we patch the entry in-place here.
-  if (out.ok) {
-    const marksMap = ydoc.getMap<StoredMark>('marks')
-    const existing = marksMap.get(out.markId)
-    if (existing) {
-      marksMap.set(out.markId, {
-        ...existing,
-        sourceSlug: proposal.sourceSlug,
-        sourceLabel: proposal.sourceLabel,
-        sourceQuote: proposal.sourceQuote,
-        proposedAt: new Date(proposal.proposedAt).toISOString(),
-      })
-    }
-  }
-  return out
+
+  return { ok: true, markId: proposal.id }
 }
 
 /** Apply every queued proposal whose target matches `targetType` to
@@ -233,38 +223,38 @@ export async function applyPendingForActive(
     .pendingProposals.filter((p) => p.target === targetType)
   if (matching.length === 0) return { applied: [], failed: [] }
 
-  // First-time anchor seed — empty pages get a "## <PageName>"
-  // heading so the first mark has a word to anchor on. Subsequent
-  // passes are no-ops because the doc already has content.
-  ensureAnchorViaTransaction(view, defaultAnchorLabel(known))
-  // Wait one tick so the PM transaction commits and the next read
-  // (lastWordAnchor) sees the heading. The first apply otherwise
-  // reads a stale empty doc and fails with no_anchor.
-  await new Promise<void>((r) => setTimeout(r, 50))
+  // No anchor seed needed — proposals are inserted at pos 0 of the
+  // page, which is always a valid position regardless of whether the
+  // page has prior content. The old anchor-word model required the
+  // page to contain at least one word; the new node-insert model
+  // doesn't.
 
   const applied: string[] = []
   const failed: string[] = []
   for (const p of matching) {
     const out = applyOneAsMark(view, ydoc, p)
-    if (out.ok) applied.push(p.id)
-    else {
+    if (out.ok) {
+      applied.push(p.id)
+      console.log('[ingest:materialize] stamped mark', {
+        proposalId: p.id,
+        markId: out.markId,
+        target: p.target,
+      })
+    } else {
       failed.push(p.id)
-      console.warn('[ingest] applyOneAsMark failed', p.id, out.reason)
+      console.warn('[ingest:materialize] applyOneAsMark failed', {
+        proposalId: p.id,
+        reason: out.reason,
+      })
     }
   }
   if (applied.length > 0) {
     useIngestStore.getState().remove({ proposalIds: applied })
   }
+  console.log('[ingest:materialize] done', {
+    applied: applied.length,
+    failed: failed.length,
+  })
   return { applied, failed }
 }
 
-/** Default anchor label for a wiki page's first-ever placeholder.
- * Uses the page's known title (or the type-stripped name as a
- * fallback) so the heading reads as the page's name — "## Beliefs"
- * for wiki:belief, "## People" for a custom 'people' page, etc. */
-function defaultAnchorLabel(known: KnownDoc): string {
-  const live = known.title?.trim()
-  if (live) return live.charAt(0).toUpperCase() + live.slice(1)
-  const stripped = known.type.replace(/^wiki:/, '').replace(/^custom-\w+$/, 'Notes')
-  return stripped.charAt(0).toUpperCase() + stripped.slice(1)
-}

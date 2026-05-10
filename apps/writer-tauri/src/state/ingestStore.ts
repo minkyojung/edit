@@ -134,6 +134,12 @@ export const useIngestStore = create<IngestState>()(
       idleMinutes: DEFAULT_IDLE,
 
       enqueue: ({ proposals, logEntry, sourceSlug, sourceLabel }) => {
+        console.log('[ingest:queue] enqueue called', {
+          proposals: proposals.length,
+          logEntry: !!logEntry,
+          sourceSlug,
+          targets: proposals.map((p) => p.target ?? `new:${p.suggestNewPage}`),
+        })
         if (proposals.length === 0 && !logEntry) return
         const now = Date.now()
         const newProposals: PendingProposal[] = proposals.map((p) => ({
@@ -168,6 +174,11 @@ export const useIngestStore = create<IngestState>()(
           // the new wiki additions waiting for review.
           dismissed: false,
         }))
+        console.log('[ingest:queue] enqueued', {
+          newProposals: newProposals.length,
+          newLogs: newLogs.length,
+          ids: newProposals.map((p) => p.id),
+        })
       },
 
       remove: ({ proposalIds, logIds }) => {

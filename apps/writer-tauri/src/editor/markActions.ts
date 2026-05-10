@@ -12,8 +12,6 @@ import type { Mark } from '@milkdown/kit/prose/model'
 import { TextSelection } from '@milkdown/kit/prose/state'
 import * as Y from 'yjs'
 import type { StoredMark } from '../hooks/useCollabDoc'
-import { useEditorViewStore } from '@/state/editorViewStore'
-import { topLevelSiblingAfter } from './topLevelSibling'
 import { notify } from '@/lib/notify'
 
 interface FoundAnchor {
@@ -117,37 +115,20 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     }
     tr.replaceWith(from, to, view.state.schema.text(content))
   } else if (kind === 'insert') {
-    if (content === null || content === undefined) {
-      notify.markCantRead()
-      return false
-    }
-    // Ingest proposals: `content` is a markdown string from the LLM
-    // (e.g. "### Sarah\n- Workplace colleague"). Parse it through
-    // Milkdown's own commonmark+gfm pipeline so it becomes real
-    // heading / list nodes, then insert those blocks after the block
-    // that holds the anchor word. The anchor itself stays put — we
-    // just strip its proofSuggestion mark — so the visible result is
-    // the original line followed by the new structured content.
-    const parser = useEditorViewStore.getState().parser
-    if (!parser) {
-      console.error('[markActions] accept(insert): parser not ready')
-      notify.markEditorNotReady()
-      return false
-    }
-    const parsed = parser(content)
-    if (!parsed || parsed.content.size === 0) {
-      console.error('[markActions] accept(insert): parser produced empty doc', content)
-      notify.markCantRead()
-      return false
-    }
+    // New model (single source of truth): the marked range IS the
+    // proposed content — it's already in the PM tree from the
+    // materializer (applyIngest:applyOneAsMark). Accept = transform
+    // the mark in place: strip proofSuggestion, stamp proofProvenance
+    // on the same range. Content stays put. No re-parse, no re-insert.
+    //
+    // Why no content read from Y.Map: the old anchor-word model
+    // stored the proposed text in StoredMark.content because the doc
+    // only had a placeholder; accept had to materialize the content.
+    // Now the doc carries the content itself, so reading Y.Map.content
+    // would either duplicate (if we re-inserted) or be unused.
     const suggestionType = view.state.schema.marks.proofSuggestion
     if (suggestionType) tr.removeMark(from, to, suggestionType)
-    // Insert at the top-level sibling slot. Same helper the deco
-    // plugin's ghost preview uses, so the visual position pre-accept
-    // matches the actual insert position post-accept.
-    const blockEnd = topLevelSiblingAfter(view.state.doc, to)
-    tr.insert(blockEnd, parsed.content)
-    provenanceRange = { from: blockEnd, to: blockEnd + parsed.content.size }
+    provenanceRange = { from, to }
   } else {
     return false
   }
@@ -198,9 +179,23 @@ export function rejectMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     notify.markCantDismiss()
     return false
   }
-  const { from, to } = anchor
-  const markType = view.state.schema.marks.proofSuggestion
-  view.dispatch(view.state.tr.removeMark(from, to, markType))
+  const { from, to, mark } = anchor
+  const kind = mark.attrs.kind as 'replace' | 'insert' | 'delete' | undefined
+  const tr = view.state.tr
+  if (kind === 'insert') {
+    // New model: the marked range IS the proposed content (placed
+    // there by the materializer). Reject = delete the range entirely
+    // so the page returns to its pre-proposal state in a single PM
+    // transaction (Cmd+Z restores the proposal cleanly).
+    tr.delete(from, to)
+  } else {
+    // replace / delete kinds (chat AI flows): the marked text is the
+    // user's own writing; reject just strips the suggestion mark and
+    // leaves the underlying text intact.
+    const markType = view.state.schema.marks.proofSuggestion
+    tr.removeMark(from, to, markType)
+  }
+  view.dispatch(tr)
   ydoc.getMap<StoredMark>('marks').delete(markId)
   return true
 }

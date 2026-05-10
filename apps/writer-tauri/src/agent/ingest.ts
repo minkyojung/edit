@@ -433,11 +433,18 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     },
   })
   const raw = await finished
+  console.log('[ingest:producer] LLM responded', { rawLength: raw.length })
   const parsedJson = extractJson(raw)
   if (!parsedJson) {
+    console.warn('[ingest:producer] could not extract JSON from response')
     return { proposals: [], logEntry: null, raw, malformed: true }
   }
   const { proposals, logEntry } = validateParsed(parsedJson)
+  console.log('[ingest:producer] validated', {
+    proposals: proposals.length,
+    logEntry: !!logEntry,
+    targets: proposals.map((p) => p.target ?? `new:${p.suggestNewPage}`),
+  })
   return { proposals, logEntry, raw, malformed: false }
 }
 

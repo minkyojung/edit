@@ -123,9 +123,16 @@ async function readDocLength(slug: string): Promise<number> {
 async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
   const docs = useDocsStore.getState()
   const activeSlug = docs.activeSlug
-  if (!activeSlug) return 0
+  console.log('[ingest:trigger] start', { force: !!opts.force, activeSlug })
+  if (!activeSlug) {
+    console.log('[ingest:trigger] bail: no activeSlug')
+    return 0
+  }
   const activeKnown = docs.knownDocs.find((d) => d.slug === activeSlug)
-  if (!activeKnown) return 0
+  if (!activeKnown) {
+    console.log('[ingest:trigger] bail: activeKnown not in catalog', { activeSlug })
+    return 0
+  }
 
   // Pick the doc to ingest FROM. Active doc is the user's most
   // recent focus, so it's the natural default — except wiki pages,
@@ -142,20 +149,39 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
     const todayDaily = docs.knownDocs.find(
       (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
     )
-    if (!todayDaily) return 0
+    if (!todayDaily) {
+      console.log('[ingest:trigger] bail: active is wiki, no today-daily fallback')
+      return 0
+    }
     slug = todayDaily.slug
     known = todayDaily
+    console.log('[ingest:trigger] rerouted active wiki → today daily', { slug })
   }
-  if (known.archivedAt) return 0
+  if (known.archivedAt) {
+    console.log('[ingest:trigger] bail: source doc archived', { slug })
+    return 0
+  }
 
   const length = await readDocLength(slug)
-  if (length === 0) return 0
+  if (length === 0) {
+    console.log('[ingest:trigger] bail: source doc empty', { slug })
+    return 0
+  }
 
   if (!opts.force) {
     const ingest = useIngestStore.getState()
     const watermark = ingest.lastIngestedLength[slug] ?? 0
-    if (length - watermark < MIN_GROWTH) return 0
+    if (length - watermark < MIN_GROWTH) {
+      console.log('[ingest:trigger] bail: watermark gate', {
+        slug,
+        length,
+        watermark,
+        minGrowth: MIN_GROWTH,
+      })
+      return 0
+    }
   }
+  console.log('[ingest:trigger] passed gates → calling LLM', { slug, length })
 
   let result
   try {
@@ -175,10 +201,13 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
   useIngestStore.getState().pruneDeadProposals()
 
   if (result.malformed) {
-    console.warn('[ingest] malformed response, skipping enqueue', result.raw)
+    console.warn('[ingest:producer] malformed response, skipping enqueue', result.raw)
     return 0
   }
-  if (result.proposals.length === 0 && !result.logEntry) return 0
+  if (result.proposals.length === 0 && !result.logEntry) {
+    console.log('[ingest:producer] empty result (no proposals, no logEntry) — nothing to enqueue')
+    return 0
+  }
 
   // wiki:log is the only system-owned wiki page and is created
   // lazily on first need. Without this, a logEntry would queue but
