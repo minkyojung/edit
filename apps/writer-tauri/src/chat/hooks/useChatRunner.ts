@@ -41,6 +41,11 @@ interface UseChatRunnerDeps {
    * the SDK has confirmed a session for this thread. Idempotent at the
    * useThreads layer, so repeating across runs is safe. */
   markSessionStarted: (threadId: string) => void
+  /** Authoritative resume hint: true once a session has been confirmed for
+   * the thread (read from ThreadMeta.sessionStarted by the caller). Passed
+   * straight into runChat so it can skip the legacy history-shape
+   * heuristic, which mis-predicts on first-message Regenerate. */
+  sessionStarted: boolean
 }
 
 export interface ChatRunner {
@@ -69,6 +74,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
     activeThreadEffort,
     appendTurn,
     markSessionStarted,
+    sessionStarted,
   } = deps
 
   const run = useCallback(
@@ -189,6 +195,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           relayTools: overrides?.relayTools,
           model: overrides?.model ?? activeThreadModel,
           effort: overrides?.effort ?? activeThreadEffort,
+          sessionStarted,
           onPart: (part) => {
             if (!sessionMarked) {
               sessionMarked = true
@@ -220,7 +227,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [editorView, ydoc, activeId, activeThreadModel, activeThreadEffort, appendTurn, markSessionStarted, startActivity, endActivity],
+    [editorView, ydoc, activeId, activeThreadModel, activeThreadEffort, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
   return { status, streaming, run }

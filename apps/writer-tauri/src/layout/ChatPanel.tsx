@@ -97,6 +97,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     activeThreadEffort,
     appendTurn: turnsHook.appendTurn,
     markSessionStarted: threads.markSessionStarted,
+    sessionStarted: activeThread?.sessionStarted ?? false,
   })
   const { status: chatStatus, streaming } = runner
 

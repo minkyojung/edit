@@ -96,6 +96,14 @@ export interface RunChatArgs {
    * upserts by `part.id` to maintain its own ordered list. */
   onPart?: (part: MessagePart) => void
   onToolApplied?: (call: ToolCallRecord) => void
+  /** Authoritative resume hint from the host. True once the SDK has
+   * confirmed a session for this thread (set by the runner on the first
+   * stream event of the first run, persisted on ThreadMeta). When set we
+   * always resume and skip the history-shape heuristic — the heuristic
+   * mis-predicts when Regenerate deletes the only assistant turn, making
+   * a resumable thread look brand-new and triggering a duplicate-create
+   * crash inside the SDK. */
+  sessionStarted?: boolean
 }
 
 export interface RunChatResult {
@@ -212,11 +220,22 @@ function buildPrompt(history: ChatTurn[]): string {
   return turns[turns.length - 1].content
 }
 
-/** True when the conversation has at least one assistant turn already.
- * Used to pick between the `sessionId` (first turn) and `resume`
- * (subsequent) SDK options so we don't try to resume a session that
- * doesn't exist yet, and don't try to create one that does. */
-function shouldResumeSession(history: ChatTurn[] | undefined): boolean {
+/** Picks between the `sessionId` (first turn) and `resume` (subsequent)
+ * SDK options so we don't try to resume a session that doesn't exist
+ * yet, and don't try to create one that does.
+ *
+ * Authoritative source: ThreadMeta.sessionStarted, plumbed through
+ * `sessionStarted`. Once true, every subsequent run for the thread must
+ * resume — including Regenerate, which deletes the prior assistant turn
+ * and would otherwise look like a fresh send.
+ *
+ * Fallback: the legacy history-shape heuristic, used for threads created
+ * before the flag existed (sessionStarted absent on the meta). */
+function shouldResumeSession(
+  history: ChatTurn[] | undefined,
+  sessionStarted: boolean | undefined,
+): boolean {
+  if (sessionStarted) return true
   if (!history) return false
   return history.some((t) => t.role === 'assistant')
 }
@@ -238,6 +257,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     onThinkingDelta,
     onPart,
     onToolApplied,
+    sessionStarted,
   } = args
   const agentId = agentIdForModel(model)
 
@@ -550,7 +570,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // so we pick exactly one based on whether an assistant has spoken
   // yet. Persisted server-side under ~/.claude/projects/ so the
   // session survives app restarts.
-  const isResume = shouldResumeSession(history)
+  const isResume = shouldResumeSession(history, sessionStarted)
   try {
     await invoke('claude_chat_start', {
       args: {
