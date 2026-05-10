@@ -29,13 +29,11 @@
 // later). So both proposals (via applyProposal) and log lines (via
 // tr.insert) write through an EditorView's dispatch.
 
-import * as Y from 'yjs'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { Node } from '@milkdown/kit/prose/model'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore, type PendingProposal } from '@/state/ingestStore'
-import type { StoredMark } from '@/hooks/useCollabDoc'
 
 const AGENT_ID = 'ai:wiki-ingest'
 
@@ -144,7 +142,6 @@ export function applyPendingLogsForView(view: EditorView): number {
  * same proposal and double-insert. */
 function applyOneAsMark(
   view: EditorView,
-  ydoc: Y.Doc,
   proposal: PendingProposal,
 ): { ok: true; markId: string } | { ok: false; reason: string } {
   if (hasMarkForProposal(view.state.doc, proposal.id)) {
@@ -163,10 +160,13 @@ function applyOneAsMark(
   if (!suggestionType) return { ok: false, reason: 'schema_proof_suggestion_missing' }
 
   // Single transaction: insert the parsed blocks at pos 0, then mark
-  // the inserted range. Doing both in one tr keeps the user's undo a
-  // single step (Cmd+Z removes the entire materialization atomically)
-  // and prevents the deco plugin from rendering an un-marked-but-
-  // inserted intermediate state.
+  // the inserted range with both the suggestion and its provenance
+  // breadcrumb. Doing all of it in one tr keeps the user's undo a
+  // single step (Cmd+Z removes the entire materialization atomically),
+  // prevents the deco plugin from rendering an un-marked-but-inserted
+  // intermediate state, and means the breadcrumb metadata rides on
+  // the mark itself — no Y.Map.set, no markCleanupPlugin race, and
+  // Cmd+Z restores the source* attrs for free along with the mark.
   const fragmentSize = parsed.content.size
   const tr = view.state.tr
     .insert(0, parsed.content)
@@ -177,26 +177,13 @@ function applyOneAsMark(
         id: proposal.id,
         kind: 'insert',
         by: AGENT_ID,
+        sourceSlug: proposal.sourceSlug ?? null,
+        sourceLabel: proposal.sourceLabel ?? null,
+        sourceQuote: proposal.sourceQuote ?? null,
+        proposedAt: new Date(proposal.proposedAt).toISOString(),
       }),
     )
   view.dispatch(tr)
-
-  // Y.Map carries provenance metadata only — content is NOT duplicated
-  // here (PM tree is the authority). Hover popover reads sourceSlug /
-  // sourceLabel / sourceQuote to answer "where did this come from?";
-  // accept transforms the mark in place using the same fields to
-  // stamp a permanent breadcrumb.
-  const marksMap = ydoc.getMap<StoredMark>('marks')
-  marksMap.set(proposal.id, {
-    kind: 'insert',
-    by: AGENT_ID,
-    at: new Date().toISOString(),
-    status: 'pending',
-    sourceSlug: proposal.sourceSlug,
-    sourceLabel: proposal.sourceLabel,
-    sourceQuote: proposal.sourceQuote,
-    proposedAt: new Date(proposal.proposedAt).toISOString(),
-  })
 
   return { ok: true, markId: proposal.id }
 }
@@ -212,7 +199,6 @@ function applyOneAsMark(
  * doc whose marks we're about to write. */
 export async function applyPendingForActive(
   view: EditorView,
-  ydoc: Y.Doc,
   targetType: string,
 ): Promise<{ applied: string[]; failed: string[] }> {
   if (!knownByType(targetType)) return { applied: [], failed: [] }
@@ -231,7 +217,7 @@ export async function applyPendingForActive(
   const applied: string[] = []
   const failed: string[] = []
   for (const p of matching) {
-    const out = applyOneAsMark(view, ydoc, p)
+    const out = applyOneAsMark(view, p)
     if (out.ok) {
       applied.push(p.id)
       console.log('[ingest:materialize] stamped mark', {

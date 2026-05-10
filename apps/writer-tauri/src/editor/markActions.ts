@@ -212,45 +212,52 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
   // range stored in provenanceRange. Skipped entirely if the schema
   // lacks the mark (older client) — we fall through to the
   // delete-StoredMark path below, which preserves prior behavior.
+  //
+  // Source of breadcrumb fields differs by kind: insert reads from
+  // the PM mark itself (single source of truth post Step 1) so the
+  // breadcrumb survives Cmd+Z together with the mark. Replace/delete
+  // still rely on Y.Map<StoredMark> until those flows migrate too.
   const provenanceType = view.state.schema.marks.proofProvenance
-  if (provenanceType && stored) {
-    const provenanceAttrs = {
-      id: markId,
-      sourceSlug: stored.sourceSlug ?? null,
-      sourceLabel: stored.sourceLabel ?? null,
-      sourceQuote: stored.sourceQuote ?? null,
-      proposedAt: stored.proposedAt ?? stored.at ?? null,
-      acceptedAt: new Date().toISOString(),
-      model: stored.model ?? null,
-    }
+  if (provenanceType) {
+    const acceptedAt = new Date().toISOString()
     if (insertRanges.length > 0) {
+      const proofMark = insertRanges[0].mark
+      const provenanceAttrs = {
+        id: markId,
+        sourceSlug: proofMark.attrs.sourceSlug ?? null,
+        sourceLabel: proofMark.attrs.sourceLabel ?? null,
+        sourceQuote: proofMark.attrs.sourceQuote ?? null,
+        proposedAt: proofMark.attrs.proposedAt ?? null,
+        acceptedAt,
+        model: null,
+      }
       for (const r of insertRanges) {
         tr.addMark(r.from, r.to, provenanceType.create(provenanceAttrs))
       }
-    } else if (provenanceRange) {
+    } else if (provenanceRange && stored) {
       tr.addMark(
         provenanceRange.from,
         provenanceRange.to,
-        provenanceType.create(provenanceAttrs),
+        provenanceType.create({
+          id: markId,
+          sourceSlug: stored.sourceSlug ?? null,
+          sourceLabel: stored.sourceLabel ?? null,
+          sourceQuote: stored.sourceQuote ?? null,
+          proposedAt: stored.proposedAt ?? stored.at ?? null,
+          acceptedAt,
+          model: stored.model ?? null,
+        }),
       )
     }
   }
   view.dispatch(tr)
 
-  // For insert kind, transform the StoredMark in place: same id, new
-  // kind='provenance', acceptedAt added. The Y.Map entry now describes
-  // a permanent breadcrumb instead of a pending suggestion. For other
-  // kinds, keep prior behavior (delete the entry).
-  if (provenanceRange && stored) {
-    marksMap.set(markId, {
-      ...stored,
-      kind: 'provenance',
-      status: 'accepted',
-      acceptedAt: new Date().toISOString(),
-    })
-  } else {
-    marksMap.delete(markId)
-  }
+  // Y.Map cleanup. INSERT carries its full breadcrumb on the PM mark
+  // now, so there's nothing left to preserve in Y.Map — drop the
+  // entry. (markCleanupPlugin would chase a stale entry anyway once
+  // the proofSuggestion mark disappears, but we do it eagerly here
+  // so observers don't see a half-accepted state for one tick.)
+  marksMap.delete(markId)
   return true
 }
 
