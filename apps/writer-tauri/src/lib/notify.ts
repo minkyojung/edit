@@ -97,6 +97,12 @@ export const notify = {
   wikilinkCreateFailed() {
     toast.error("Couldn't create link")
   },
+
+  // ── External link ─────────────────────────────────────────────
+  /** Cmd+click on a link couldn't reach the system browser. */
+  linkOpenFailed() {
+    toast.error("Couldn't open link")
+  },
 }
 
 // Dev-only console handle so smoke testing can fire each toast without

@@ -16,6 +16,7 @@ import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
 import { formatStatePlugin } from './formatStatePlugin'
 import { inlineCodeSafeKeymap } from './inlineCodeSafe'
+import { createLinkClickPlugin } from './linkClickPlugin'
 import { createWikilinkClickPlugin } from './wikilinkClickPlugin'
 import {
   createWikilinkPalettePlugin,
@@ -186,6 +187,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(createFrozenSelectionPlugin())
       .use(formatStatePlugin)
       .use(inlineCodeSafeKeymap)
+      .use(createLinkClickPlugin())
       .use(createWikilinkClickPlugin())
       .use(createWikilinkBrokenPlugin())
       .use(
