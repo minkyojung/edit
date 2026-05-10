@@ -43,9 +43,14 @@ const BULLET_ICON = `
 
 const CHECKBOX_UNCHECKED_ICON = `<svg ${TABLER_SVG_ATTRS}></svg>`
 
+// Heavier stroke + a path that spans most of the viewBox so the check
+// reads at the small ~14px size we render at. Tabler's default check
+// path (M9 12 l2 2 l4 -4) only fills the inner ~25% of the viewBox,
+// which looked tiny inside our 1em box.
 const CHECKBOX_CHECKED_ICON = `
-<svg ${TABLER_SVG_ATTRS}>
-  <path d="M9 12l2 2l4 -4" />
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+  fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M5 12l5 5L20 7" />
 </svg>
 `
 

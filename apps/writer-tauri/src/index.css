@@ -104,11 +104,11 @@
   }
 
   .ProseMirror li {
-    margin-bottom: 0.25rem;
+    margin-bottom: 0.15rem;
   }
 
   .ProseMirror li > p {
-    margin-bottom: 0.25rem;
+    margin-bottom: 0;
   }
 
 
@@ -386,6 +386,13 @@
   min-width: 0;
   flex: 1;
 }
+/* The base `.ProseMirror p { margin-bottom }` rule applies inside the
+ * NodeView's content slot (the `li > p` fallback doesn't — the NodeView
+ * injects `div.children > div.content-dom` between `li` and `p`).
+ * Zero it out so list items don't get an extra block of spacing. */
+.ProseMirror .milkdown-list-item-block .content-dom > p {
+  margin-bottom: 0;
+}
 .ProseMirror .milkdown-list-item-block .label-wrapper {
   color: var(--muted-foreground);
   display: flex;
@@ -438,8 +445,8 @@
 }
 .ProseMirror .milkdown-list-item-block .milkdown-icon.checked svg {
   stroke: var(--primary-foreground);
-  width: 0.9em;
-  height: 0.9em;
+  width: 0.95em;
+  height: 0.95em;
 }
 
 /* Pointer affordance covers the whole 1.5rem column, not just the
