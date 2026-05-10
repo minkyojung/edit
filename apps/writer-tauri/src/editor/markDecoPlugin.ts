@@ -17,7 +17,6 @@ import { Decoration, DecorationSet } from '@milkdown/kit/prose/view'
 import type { Node } from '@milkdown/kit/prose/model'
 import * as Y from 'yjs'
 import type { StoredMark } from '../hooks/useCollabDoc'
-import { topLevelSiblingAfter } from './topLevelSibling'
 
 const key = new PluginKey<DecorationSet>('markDecoration')
 
@@ -70,40 +69,29 @@ function buildDecos(doc: Node, ydoc: Y.Doc): DecorationSet {
         )
       }
 
-      if (mark.type.name === 'proofSuggestion') {
+      // Ghost preview widget — only for `replace` kind, where the
+      // pending text is a small inline rewrite that's clearer to
+      // preview next to the original word. `insert` no longer takes
+      // this path: the proposal blocks now live in the PM tree as
+      // real, marked nodes (single source of truth), so a ghost
+      // would just duplicate what's already on screen.
+      if (mark.type.name === 'proofSuggestion' && mark.attrs.kind === 'replace') {
         const id = mark.attrs.id
-        const kind = mark.attrs.kind
-        // Source of truth for ghost text is the Y.Map StoredMark, not the
-        // PM mark.attrs. PM mark stays a pure anchor (id + kind); the
-        // suggestion content lives in metadata that survives the server's
-        // markdown projection round-trip without getting stripped.
         const stored = typeof id === 'string' ? marksMap.get(id) : undefined
         const content = stored?.content ?? null
         if (
           typeof id === 'string' &&
-          (kind === 'replace' || kind === 'insert') &&
           typeof content === 'string' &&
           content.length > 0 &&
           !ghostEmitted.has(id)
         ) {
-          // Anchor depends on the suggestion kind so the ghost mirrors
-          // where acceptMark will actually land the text:
-          //  - replace: in-place rewrite. Pin the ghost to the inline
-          //    slot right after the marked word so it reads as an
-          //    "edit-here" preview.
-          //  - insert: block-level addition (ingest path). Pin to the
-          //    top-level sibling slot so the preview lives outside any
-          //    blockquote / list wrapper, matching where the accepted
-          //    content gets inserted.
-          const rawEnd = lastTo.get(id) ?? pos + node.nodeSize
-          const anchorPos =
-            kind === 'insert' ? topLevelSiblingAfter(doc, rawEnd) : rawEnd
+          const anchorPos = lastTo.get(id) ?? pos + node.nodeSize
           decos.push(
             Decoration.widget(
               anchorPos,
               () => {
                 const span = document.createElement('span')
-                span.className = `mark-ghost mark-ghost--${kind}`
+                span.className = `mark-ghost mark-ghost--replace`
                 span.dataset.markId = id
                 span.contentEditable = 'false'
                 span.textContent = content
