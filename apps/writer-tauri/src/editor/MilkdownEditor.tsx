@@ -18,6 +18,7 @@ import { formatStatePlugin } from './formatStatePlugin'
 import { inlineCodeSafeKeymap } from './inlineCodeSafe'
 import { createLinkClickPlugin } from './linkClickPlugin'
 import { createLinkHoverPlugin } from './linkHoverPlugin'
+import { createSlashTriggerPlugin } from './slashTriggerPlugin'
 import { createWikilinkClickPlugin } from './wikilinkClickPlugin'
 import {
   createWikilinkPalettePlugin,
@@ -191,6 +192,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(inlineCodeSafeKeymap)
       .use(createLinkClickPlugin())
       .use(createLinkHoverPlugin())
+      .use(createSlashTriggerPlugin())
       .use(createWikilinkClickPlugin())
       .use(createWikilinkBrokenPlugin())
       .use(
