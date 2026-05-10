@@ -59,20 +59,6 @@ export interface IngestProposal {
    * buried inside the wiki body. Optional because some proposals
    * legitimately stand on aggregated context, not a single line. */
   sourceQuote?: string
-  /** A short snippet of existing text in the target page that this
-   * content should be appended *after*. Echoed verbatim from the
-   * page body so the apply layer can find it with a plain string
-   * match — typically a single bullet line, a short heading, or a
-   * date marker. Omitted when the proposal stands alone (new
-   * section, or page is empty/prose). The apply layer falls back
-   * to "page end" when this is missing or doesn't match.
-   *
-   * Why a quoted snippet instead of a structural address (H3 name,
-   * line number): the LLM already has the page body in context, so
-   * echoing a real line is a natural, low-failure operation. The
-   * apply path is then a one-liner string match — one mechanism
-   * works for entity, list, timeline alike. */
-  anchorAfterText?: string
 }
 
 export interface IngestResult {
@@ -107,15 +93,13 @@ Invariants (do not violate):
 - Be concise. Each proposal's "content" is one bullet line or short block — not a wall of text.
 - Always include a log entry summarizing what you did (or "nothing notable today" if proposals is empty).
 
-When the new content belongs *after* a specific existing line (e.g. a new bullet under "Sarah", or a new date entry after the last one), set "anchorAfterText" to that exact line, copied verbatim from the page body. Omit anchorAfterText when the content stands on its own (new "### Name" block, first content on an empty page, etc.).
-
 Always include "sourceQuote": the exact sentence (or short clause) from the new note that this proposal was derived from. Echo it verbatim — it's the user's audit trail for verifying the proposal landed in the right page. If the proposal aggregates several lines, quote the most representative one.
 
 Output strictly this JSON shape, with no surrounding prose, code fences, or commentary. Each proposal uses *either* \`target\` (existing page) *or* \`suggestNewPage\` (create a new page) — never both.
 
 {
   "proposals": [
-    { "target": "wiki:custom-7ntdvj41", "content": "- Direct report", "anchorAfterText": "- AI team", "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
+    { "target": "wiki:custom-7ntdvj41", "content": "- Direct report", "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
     { "suggestNewPage": "Books", "content": "### The Pragmatic Programmer\\n- Software craftsmanship", "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "no existing page hosts books" }
   ],
   "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; created Books page"
@@ -254,10 +238,6 @@ function validateParsed(value: unknown): ParsedIngest {
     if (!target && !suggestNewPage) continue
     const rationale =
       typeof rec.rationale === 'string' ? rec.rationale : undefined
-    const anchorAfterText =
-      typeof rec.anchorAfterText === 'string' && rec.anchorAfterText.trim()
-        ? rec.anchorAfterText.trim()
-        : undefined
     const sourceQuote =
       typeof rec.sourceQuote === 'string' && rec.sourceQuote.trim()
         ? rec.sourceQuote.trim()
@@ -266,7 +246,6 @@ function validateParsed(value: unknown): ParsedIngest {
       ...(target ? { target } : { suggestNewPage: suggestNewPage! }),
       content,
       rationale,
-      anchorAfterText,
       sourceQuote,
     })
   }

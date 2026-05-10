@@ -215,8 +215,7 @@ export async function applyPendingForActive(
   ydoc: Y.Doc,
   targetType: string,
 ): Promise<{ applied: string[]; failed: string[] }> {
-  const known = knownByType(targetType)
-  if (!known) return { applied: [], failed: [] }
+  if (!knownByType(targetType)) return { applied: [], failed: [] }
 
   const matching = useIngestStore
     .getState()
