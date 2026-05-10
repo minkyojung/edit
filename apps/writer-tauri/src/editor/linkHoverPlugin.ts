@@ -17,20 +17,37 @@ import { getLinkRange, isSafeUrl } from './linkUtils'
 const HOVER_IN_MS = 300
 const HOVER_OUT_MS = 150
 
+// Module-level so the React-side hover bar can pause/resume the close
+// timer as the cursor crosses the gap between the link and the bar.
+// Single editor at a time so a single shared instance is fine.
+let activeOutTimer: number | null = null
+let keepAlive = false
+
+export function keepLinkHoverAlive() {
+  keepAlive = true
+  if (activeOutTimer !== null) {
+    window.clearTimeout(activeOutTimer)
+    activeOutTimer = null
+  }
+}
+
+export function releaseLinkHoverAlive() {
+  keepAlive = false
+}
+
 export function createLinkHoverPlugin() {
   return $prose(() => {
     let currentAnchor: HTMLAnchorElement | null = null
     let inTimer: number | null = null
-    let outTimer: number | null = null
 
     const cancelTimers = () => {
       if (inTimer !== null) {
         window.clearTimeout(inTimer)
         inTimer = null
       }
-      if (outTimer !== null) {
-        window.clearTimeout(outTimer)
-        outTimer = null
+      if (activeOutTimer !== null) {
+        window.clearTimeout(activeOutTimer)
+        activeOutTimer = null
       }
     }
 
@@ -39,6 +56,7 @@ export function createLinkHoverPlugin() {
         return {
           destroy() {
             cancelTimers()
+            keepAlive = false
             currentAnchor = null
             useLinkHoverStore.getState().setActive(null)
           },
@@ -95,7 +113,9 @@ export function createLinkHoverPlugin() {
             }
 
             cancelTimers()
-            outTimer = window.setTimeout(() => {
+            activeOutTimer = window.setTimeout(() => {
+              activeOutTimer = null
+              if (keepAlive) return
               currentAnchor = null
               useLinkHoverStore.getState().setActive(null)
             }, HOVER_OUT_MS)

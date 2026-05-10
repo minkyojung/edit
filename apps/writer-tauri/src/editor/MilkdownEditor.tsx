@@ -36,6 +36,7 @@ import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { useDocTitle } from '../hooks/useDocTitle'
 import { useDocLabel } from '../hooks/useDocLabel'
 import { MarkToolbar } from './MarkToolbar'
+import { LinkHoverBar } from './LinkHoverBar'
 import { proofMarkPlugins } from './proofMarkSchemas'
 import { useEditorViewStore } from '@/state/editorViewStore'
 
@@ -283,6 +284,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
         </div>
       </div>
       {handle && <MarkToolbar selection={selection} ydoc={handle.ydoc} onDismiss={() => setSelection(null)} />}
+      <LinkHoverBar />
       <WikilinkPalette
         parentSlug={handle?.slug ?? null}
         keyHandlerRef={wikilinkKeyHandler}
