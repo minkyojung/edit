@@ -22,6 +22,7 @@ import {
   IconChevronDown,
   IconItalic,
   IconLink,
+  IconStrikethrough,
 } from '@tabler/icons-react'
 
 import { Button } from '@/components/ui/button'
@@ -68,6 +69,7 @@ export function FormatToolbar() {
 
   const isBold = activeMarks.has('strong')
   const isItalic = activeMarks.has('emphasis')
+  const isStrike = activeMarks.has('strike_through')
   const isLink = activeMarks.has('link')
 
   const runMark = (markName: string) => () => {
@@ -197,6 +199,17 @@ export function FormatToolbar() {
         className={cn('h-7 w-7', isItalic && 'bg-accent text-accent-foreground')}
       >
         <IconItalic size={14} stroke={2.25} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        disabled={disabled}
+        onClick={runMark('strike_through')}
+        aria-label="Strikethrough"
+        aria-pressed={isStrike}
+        className={cn('h-7 w-7', isStrike && 'bg-accent text-accent-foreground')}
+      >
+        <IconStrikethrough size={14} stroke={2.25} />
       </Button>
 
       <div aria-hidden className="mx-1 h-4 w-px shrink-0 self-center bg-border" />
