@@ -8,6 +8,7 @@
 // register; this file is a thin presentational shell over them.
 
 import {
+  IconCheckbox,
   IconCode,
   IconH1,
   IconH2,
@@ -22,6 +23,8 @@ import type { ComponentType } from 'react'
 import { setBlockType, wrapIn } from '@milkdown/kit/prose/commands'
 import { wrapInList } from '@milkdown/kit/prose/schema-list'
 import type { EditorView } from '@milkdown/kit/prose/view'
+
+import { wrapInTaskList } from './taskList'
 
 export interface SlashItem {
   /** Stable id for keying / debugging. */
@@ -116,6 +119,13 @@ export const SLASH_ITEMS: SlashItem[] = [
     keywords: ['ol', 'ordered', '1.'],
     icon: IconListNumbers,
     run: wrapNumbered,
+  },
+  {
+    id: 'todo',
+    label: 'To-do list',
+    keywords: ['todo', 'task', 'check', 'checkbox', '[ ]'],
+    icon: IconCheckbox,
+    run: wrapInTaskList,
   },
   {
     id: 'quote',

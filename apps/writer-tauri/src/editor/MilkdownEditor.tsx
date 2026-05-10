@@ -4,6 +4,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { history } from '@milkdown/kit/plugin/history'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
+import { listItemBlockComponent } from '@milkdown/kit/component/list-item-block'
 import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
@@ -19,6 +20,8 @@ import { inlineCodeSafeKeymap } from './inlineCodeSafe'
 import { createLinkClickPlugin } from './linkClickPlugin'
 import { createLinkHoverPlugin } from './linkHoverPlugin'
 import { createSlashTriggerPlugin } from './slashTriggerPlugin'
+import { configureListItemBlock } from './listItemConfig'
+import { listKeymap } from './listKeymap'
 import { createWikilinkClickPlugin } from './wikilinkClickPlugin'
 import {
   createWikilinkPalettePlugin,
@@ -176,8 +179,15 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
         ctx.set(rootCtx, rootRef.current!)
         ctx.set(editorViewOptionsCtx, { attributes: { class: 'milkdown-editor-root' } })
       })
+      .config(configureListItemBlock)
       .use(commonmark)
       .use(gfm)
+      .use(listItemBlockComponent)
+      // Registered after commonmark so our list keymap wins for
+      // list_item context: Enter preserves task `checked` and lifts on
+      // empty; Backspace at start of empty item lifts AND merges in
+      // one keystroke.
+      .use(listKeymap)
       .use(history)
       .use(clipboard)
       .use(collab)
