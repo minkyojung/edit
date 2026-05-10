@@ -30,6 +30,7 @@
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.2.4",
     "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-shell": "^2.3.5",
     "ai": "^6.0.169",
     "chrono-node": "^2.9.0",
     "class-variance-authority": "^0.7.1",
