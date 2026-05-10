@@ -2,23 +2,26 @@
   "name": "montpellier",
   "private": true,
   "scripts": {
-    "setup": "pnpm install && pnpm rebuild electron",
-    "dev": "pnpm --filter writer dev",
-    "build": "pnpm --filter writer build"
+    "dev": "pnpm --filter writer-tauri tauri dev",
+    "build": "pnpm --filter writer-tauri tauri build"
   },
   "dependencies": {
-    "proof-sdk": "link:../proof-sdk",
-    "tsx": "^4.21.0",
     "@milkdown/core": "^7.20.0",
-    "@milkdown/preset-commonmark": "^7.20.0",
-    "@milkdown/preset-gfm": "^7.20.0",
+    "@milkdown/plugin-clipboard": "^7.20.0",
+    "@milkdown/plugin-cursor": "^7.20.0",
     "@milkdown/plugin-history": "^7.20.0",
     "@milkdown/plugin-listener": "^7.20.0",
-    "@milkdown/plugin-cursor": "^7.20.0",
-    "@milkdown/plugin-clipboard": "^7.20.0",
-    "@milkdown/prose": "^7.20.0"
+    "@milkdown/preset-commonmark": "^7.20.0",
+    "@milkdown/preset-gfm": "^7.20.0",
+    "@milkdown/prose": "^7.20.0",
+    "proof-sdk": "link:../proof-sdk"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["electron", "esbuild", "better-sqlite3", "@resvg/resvg-js"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1"
   }
 }
