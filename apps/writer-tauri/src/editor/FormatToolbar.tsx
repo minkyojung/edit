@@ -20,10 +20,13 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import {
   IconBold,
   IconChevronDown,
+  IconCode,
   IconItalic,
   IconLink,
   IconStrikethrough,
 } from '@tabler/icons-react'
+
+import { toggleInlineCodeSafe } from './inlineCodeSafe'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -70,6 +73,7 @@ export function FormatToolbar() {
   const isBold = activeMarks.has('strong')
   const isItalic = activeMarks.has('emphasis')
   const isStrike = activeMarks.has('strike_through')
+  const isCode = activeMarks.has('inlineCode')
   const isLink = activeMarks.has('link')
 
   const runMark = (markName: string) => () => {
@@ -210,6 +214,17 @@ export function FormatToolbar() {
         className={cn('h-7 w-7', isStrike && 'bg-accent text-accent-foreground')}
       >
         <IconStrikethrough size={14} stroke={2.25} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        disabled={disabled}
+        onClick={() => view && toggleInlineCodeSafe(view)}
+        aria-label="Code"
+        aria-pressed={isCode}
+        className={cn('h-7 w-7', isCode && 'bg-accent text-accent-foreground')}
+      >
+        <IconCode size={14} stroke={2.25} />
       </Button>
 
       <div aria-hidden className="mx-1 h-4 w-px shrink-0 self-center bg-border" />
