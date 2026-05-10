@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Editor, rootCtx, editorViewOptionsCtx, editorViewCtx, parserCtx } from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
-import { history } from '@milkdown/kit/plugin/history'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { listItemBlockComponent } from '@milkdown/kit/component/list-item-block'
 import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
+import { UndoManager } from 'yjs'
+import { ySyncPluginKey } from 'y-prosemirror'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
 import { createMarkDecoPlugin } from './markDecoPlugin'
@@ -188,7 +189,12 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       // empty; Backspace at start of empty item lifts AND merges in
       // one keystroke.
       .use(listKeymap)
-      .use(history)
+      // No `.use(history)` here on purpose. The collab plugin already
+      // wires y-prosemirror's yUndoPlugin (UndoManager-backed) and
+      // Mod-Z / Mod-Shift-Z keybindings; adding milkdown's PM-only
+      // history plugin on top doubled the undo stacks and only the
+      // PM half saw mark mutations, which broke "accept → Cmd+Z →
+      // re-accept" by leaving Y.Map gone after the undo.
       .use(clipboard)
       .use(collab)
       .use(proofMarkPlugins)
@@ -234,6 +240,29 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
 
         editor.action((ctx) => {
           const collabService = ctx.get(collabServiceCtx)
+          // Build a Y.UndoManager that tracks BOTH the prosemirror
+          // XmlFragment (the doc itself) AND the marks Y.Map. Wiring
+          // both into the same undo stack means accept/reject's
+          // mutation on `marks` is reversed atomically with the PM
+          // transaction it accompanied — Cmd+Z after accept correctly
+          // restores the suggestion (PM mark + Y.Map metadata both
+          // come back), so a follow-up re-accept finds the content
+          // exactly where it was.
+          //
+          // trackedOrigins: ySyncPluginKey is what y-prosemirror
+          // labels its PM-driven Yjs transactions with; mark-action
+          // is the origin acceptMark / rejectMark wrap their dispatch
+          // + marksMap mutation in (see markActions.ts). Anything
+          // outside those origins (e.g. markCleanupPlugin's deferred
+          // cleanup) stays out of the undo stack so a stale-entry
+          // sweep can't be undone into existence.
+          const xmlFragment = ydoc.getXmlFragment('prosemirror')
+          const marksMap = ydoc.getMap('marks')
+          const undoManager = new UndoManager([xmlFragment, marksMap], {
+            trackedOrigins: new Set([ySyncPluginKey, 'mark-action']),
+            captureTimeout: 500,
+          })
+          collabService.setOptions({ yUndoOpts: { undoManager } })
           const service = collabService.bindDoc(ydoc)
           if (provider.awareness) service.setAwareness(provider.awareness)
           service.connect()

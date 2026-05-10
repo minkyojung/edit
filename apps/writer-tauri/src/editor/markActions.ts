@@ -10,8 +10,20 @@
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { Mark, Node } from '@milkdown/kit/prose/model'
 import * as Y from 'yjs'
+import { useEditorViewStore } from '@/state/editorViewStore'
 import type { StoredMark } from '../hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
+
+/** Position of the slot directly after the top-level block that
+ * contains `pos`. acceptMark uses this to materialize INSERT
+ * proposals at the same spot the markDecoPlugin's ghost widget
+ * was previewing them, so accept reads as "the preview became
+ * real" without a layout jump. depth=1 because depth 0 is the
+ * doc itself; the top-level block is always at depth 1. */
+function topLevelSiblingAfter(doc: Node, pos: number): number {
+  const $pos = doc.resolve(pos)
+  return Math.min($pos.end(1) + 1, doc.content.size)
+}
 
 interface FoundAnchor {
   from: number
@@ -39,74 +51,6 @@ function findInlineAnchor(
     }
   })
   return result
-}
-
-/**
- * Collect every text-node range that carries `markId` on the given
- * schema. Inline marks fragment across block boundaries — a single
- * proofSuggestion(insert) wrapping a heading + bullet list shows up
- * as N separate text nodes in PM (one per leaf-block run). Acting on
- * just the first (findInlineAnchor's behavior) leaves the rest
- * stranded, so the user has to click Keep N times. Walking the doc
- * once and returning all matching ranges lets accept transform the
- * whole proposal in a single transaction.
- */
-function findAllMarkTextRanges(
-  doc: Node,
-  markId: string,
-  schemaName: 'proofSuggestion' | 'proofComment',
-): FoundAnchor[] {
-  const ranges: FoundAnchor[] = []
-  doc.descendants((node, pos) => {
-    if (!node.isText) return
-    for (const m of node.marks) {
-      if (m.type.name === schemaName && m.attrs.id === markId) {
-        ranges.push({ from: pos, to: pos + node.nodeSize, mark: m })
-      }
-    }
-  })
-  return ranges
-}
-
-/**
- * Outer span of the top-level blocks that contain any text marked with
- * `markId`. Used by reject(insert) so the user's single click removes
- * the entire proposal — heading + bullets + paragraphs — as one unit.
- *
- * Why block-level (not text-level): the inserted content is a tree of
- * blocks (h2 + ul + li...). Deleting only the marked text leaves empty
- * structural shells (an empty heading, empty bullets) that the user
- * would then have to delete manually. Walking top-level children and
- * including any whose subtree carries a matching mark gives the
- * minimal contiguous range that covers the proposal end-to-end.
- *
- * Returns null if no block carries the mark.
- */
-function findMarkedBlockSpan(
-  doc: Node,
-  markId: string,
-): { from: number; to: number } | null {
-  let firstStart: number | null = null
-  let lastEnd: number | null = null
-  doc.forEach((blockNode, blockPos) => {
-    let hasMark = false
-    blockNode.descendants((descendant) => {
-      if (hasMark) return false
-      if (!descendant.isText) return
-      for (const m of descendant.marks) {
-        if (m.type.name === 'proofSuggestion' && m.attrs.id === markId) {
-          hasMark = true
-          return false
-        }
-      }
-    })
-    if (hasMark) {
-      if (firstStart === null) firstStart = blockPos
-      lastEnd = blockPos + blockNode.nodeSize
-    }
-  })
-  if (firstStart === null || lastEnd === null) return null
-  return { from: firstStart, to: lastEnd }
 }
 
 /**
@@ -163,17 +107,10 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
   const content = stored?.content ?? null
 
   const tr = view.state.tr
-  // Track the inserted-content range so the insert path can stamp a
-  // proofProvenance mark on the new text. Other kinds don't need this
-  // (delete = nothing left, replace = anchor word becomes the content
-  // and provenance there is a Phase 2.5 nice-to-have, not in scope).
+  // Inserted-content range for the post-dispatch provenance addMark.
+  // Set by the kind branches that produce a stable region of new text;
+  // delete leaves it null (there is no inserted text to breadcrumb).
   let provenanceRange: { from: number; to: number } | null = null
-  // For insert kind, the proposal can fragment across many text nodes
-  // (heading + bullet list = N runs). We collect every range up front
-  // and walk it for both the proofSuggestion removal and the
-  // proofProvenance addition so the whole proposal flips to "accepted"
-  // in one transaction.
-  let insertRanges: FoundAnchor[] = []
   if (kind === 'delete') {
     tr.delete(from, to)
   } else if (kind === 'replace') {
@@ -183,95 +120,77 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     }
     tr.replaceWith(from, to, view.state.schema.text(content))
   } else if (kind === 'insert') {
-    // New model (single source of truth): the marked range IS the
-    // proposed content — it's already in the PM tree from the
-    // materializer (applyIngest:applyOneAsMark). Accept = transform
-    // the mark in place: strip proofSuggestion, stamp proofProvenance
-    // on every marked text range. Content stays put. No re-parse, no
-    // re-insert.
-    //
-    // Why iterate every text node (not just `anchor`): a single
-    // proofSuggestion(insert) wrapping a heading + bullet list lives
-    // as N separate text-node ranges in PM (one per leaf-block run).
-    // Operating on just the first leaves the rest stranded — the user
-    // would have to click Keep N times to fully accept one proposal.
-    // Walking once and transforming all ranges in one transaction
-    // keeps Cmd+Z natural and matches the "one proposal = one user
-    // decision" invariant.
-    const suggestionType = view.state.schema.marks.proofSuggestion
-    insertRanges = findAllMarkTextRanges(view.state.doc, markId, 'proofSuggestion')
-    if (insertRanges.length === 0) {
-      console.error('[markActions] accept(insert): no marked ranges', markId)
-      notify.markCantApply()
+    // Anchor model (proof-sdk pattern): the mark sits on an existing
+    // user word; the proposed content lives only in Y.Map.content and
+    // is shown to the user via markDecoPlugin's ghost widget. Accept
+    // is the moment that promise is realised — parse the markdown,
+    // insert it as real PM blocks at the top-level sibling slot after
+    // the anchor's containing block (same spot the ghost widget was
+    // previewing), and strip the suggestion mark from the anchor.
+    // Single transaction so Cmd+Z restores the pre-accept state in
+    // one step; the server sees a normal PM transaction and accepts
+    // it as canonical (no drift, no revert — that was the trap the
+    // PM-tree materializer fell into).
+    if (content === null || content === undefined) {
+      notify.markCantRead()
       return false
     }
-    if (suggestionType) {
-      for (const r of insertRanges) tr.removeMark(r.from, r.to, suggestionType)
+    const parser = useEditorViewStore.getState().parser
+    if (!parser) {
+      console.error('[markActions] accept(insert): parser not ready')
+      notify.markEditorNotReady()
+      return false
     }
-    // provenanceRange is repurposed as the outer span just for
-    // bookkeeping / readability; the actual provenance addMark below
-    // walks insertRanges so each text node carries the breadcrumb.
-    provenanceRange = {
-      from: insertRanges[0].from,
-      to: insertRanges[insertRanges.length - 1].to,
+    const parsed = parser(content)
+    if (!parsed || parsed.content.size === 0) {
+      console.error('[markActions] accept(insert): parser produced empty doc', content)
+      notify.markCantRead()
+      return false
     }
+    const suggestionType = view.state.schema.marks.proofSuggestion
+    const insertPos = topLevelSiblingAfter(view.state.doc, to)
+    const fragmentSize = parsed.content.size
+    if (suggestionType) tr.removeMark(from, to, suggestionType)
+    tr.insert(insertPos, parsed.content)
+    provenanceRange = { from: insertPos, to: insertPos + fragmentSize }
   } else {
     return false
   }
 
-  // Stamp proofProvenance on every accepted range in the same
+  // Stamp proofProvenance on the inserted range in the same
   // transaction so the breadcrumb appears atomically with the
-  // suggestion strip. For insert kind we walk insertRanges (one
-  // entry per text-node run); other kinds collapse to a single
-  // range stored in provenanceRange. Skipped entirely if the schema
-  // lacks the mark (older client) — we fall through to the
-  // delete-StoredMark path below, which preserves prior behavior.
-  //
-  // Source of breadcrumb fields differs by kind: insert reads from
-  // the PM mark itself (single source of truth post Step 1) so the
-  // breadcrumb survives Cmd+Z together with the mark. Replace/delete
-  // still rely on Y.Map<StoredMark> until those flows migrate too.
+  // suggestion strip. Skipped for delete (no inserted range) and
+  // when the schema doesn't expose the mark (older client) — Y.Map
+  // cleanup below still runs in those cases.
   const provenanceType = view.state.schema.marks.proofProvenance
-  if (provenanceType) {
-    const acceptedAt = new Date().toISOString()
-    if (insertRanges.length > 0) {
-      const proofMark = insertRanges[0].mark
-      const provenanceAttrs = {
+  if (provenanceType && provenanceRange && stored) {
+    tr.addMark(
+      provenanceRange.from,
+      provenanceRange.to,
+      provenanceType.create({
         id: markId,
-        sourceSlug: proofMark.attrs.sourceSlug ?? null,
-        sourceLabel: proofMark.attrs.sourceLabel ?? null,
-        sourceQuote: proofMark.attrs.sourceQuote ?? null,
-        proposedAt: proofMark.attrs.proposedAt ?? null,
-        acceptedAt,
-        model: null,
-      }
-      for (const r of insertRanges) {
-        tr.addMark(r.from, r.to, provenanceType.create(provenanceAttrs))
-      }
-    } else if (provenanceRange && stored) {
-      tr.addMark(
-        provenanceRange.from,
-        provenanceRange.to,
-        provenanceType.create({
-          id: markId,
-          sourceSlug: stored.sourceSlug ?? null,
-          sourceLabel: stored.sourceLabel ?? null,
-          sourceQuote: stored.sourceQuote ?? null,
-          proposedAt: stored.proposedAt ?? stored.at ?? null,
-          acceptedAt,
-          model: stored.model ?? null,
-        }),
-      )
-    }
+        sourceSlug: stored.sourceSlug ?? null,
+        sourceLabel: stored.sourceLabel ?? null,
+        sourceQuote: stored.sourceQuote ?? null,
+        proposedAt: stored.proposedAt ?? stored.at ?? null,
+        acceptedAt: new Date().toISOString(),
+        model: stored.model ?? null,
+      }),
+    )
   }
-  view.dispatch(tr)
-
-  // Y.Map cleanup. INSERT carries its full breadcrumb on the PM mark
-  // now, so there's nothing left to preserve in Y.Map — drop the
-  // entry. (markCleanupPlugin would chase a stale entry anyway once
-  // the proofSuggestion mark disappears, but we do it eagerly here
-  // so observers don't see a half-accepted state for one tick.)
-  marksMap.delete(markId)
+  // Wrap the PM dispatch + Y.Map cleanup in one Yjs transaction with
+  // a tracked origin so they sit in the same undo step. Without this,
+  // Cmd+Z would only undo the PM half (proofSuggestion mark restored)
+  // and the marks map would stay deleted — a re-accept would then hit
+  // an empty Y.Map and bail with markCantRead. The 'mark-action'
+  // origin is whitelisted in the UndoManager configured by
+  // MilkdownEditor; PM transactions run inside view.dispatch already
+  // open their own ydoc.transact, but Yjs collapses nested transacts
+  // so origin/scope stay consistent across both ops.
+  ydoc.transact(() => {
+    view.dispatch(tr)
+    marksMap.delete(markId)
+  }, 'mark-action')
   return true
 }
 
@@ -282,32 +201,25 @@ export function rejectMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     notify.markCantDismiss()
     return false
   }
-  const { from, to, mark } = anchor
-  const kind = mark.attrs.kind as 'replace' | 'insert' | 'delete' | undefined
-  const tr = view.state.tr
-  if (kind === 'insert') {
-    // New model: the marked range IS the proposed content (placed
-    // there by the materializer). Reject = delete every top-level
-    // block whose subtree carries this mark, so a multi-block
-    // proposal (heading + bullets + paragraphs) disappears as a
-    // single unit instead of leaving empty structural shells. One PM
-    // transaction keeps Cmd+Z atomic.
-    const span = findMarkedBlockSpan(view.state.doc, markId)
-    if (!span) {
-      console.error('[markActions] reject(insert): no marked block span', markId)
-      notify.markCantDismiss()
-      return false
-    }
-    tr.delete(span.from, span.to)
-  } else {
-    // replace / delete kinds (chat AI flows): the marked text is the
-    // user's own writing; reject just strips the suggestion mark and
-    // leaves the underlying text intact.
-    const markType = view.state.schema.marks.proofSuggestion
-    tr.removeMark(from, to, markType)
-  }
-  view.dispatch(tr)
-  ydoc.getMap<StoredMark>('marks').delete(markId)
+  const { from, to } = anchor
+  // Anchor model (all kinds): the mark sits on existing user text,
+  // never on AI-inserted content (the candidate content lives in
+  // Y.Map.content and is shown via the ghost widget — never in the
+  // PM tree until accept). Reject is therefore just "strip the mark
+  // and drop the Y.Map entry"; the user's text is untouched. This
+  // also undoes the dangerous reject(insert) of the PM-tree era,
+  // which deleted every top-level block carrying the mark — those
+  // blocks were sometimes the user's own writing.
+  const markType = view.state.schema.marks.proofSuggestion
+  // Same atomic dispatch + Y.Map.delete as acceptMark: one Yjs
+  // transaction with a tracked origin so Cmd+Z brings BOTH the PM
+  // mark and the Y.Map metadata back together. Otherwise reject →
+  // Cmd+Z → re-attempt would surface the same missing-content bug
+  // accept used to have.
+  ydoc.transact(() => {
+    view.dispatch(view.state.tr.removeMark(from, to, markType))
+    ydoc.getMap<StoredMark>('marks').delete(markId)
+  }, 'mark-action')
   return true
 }
 
