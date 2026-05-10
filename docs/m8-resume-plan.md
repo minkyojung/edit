@@ -1,6 +1,6 @@
 # 다음에 할 것 — Live next-steps
 
-작성: 2026-05-01 (초기) / 갱신: 2026-05-06
+작성: 2026-05-01 (초기) / 갱신: 2026-05-10
 상태: M7 완료 후 노트앱 폴리싱/확장 단계
 
 ---
@@ -38,31 +38,59 @@
 - ✅ Radix-luma UI primitives 6종
 - ✅ Geist 타이포그래피, 통일된 헤더 높이
 
+### M8 후속 (2026-05-06 ~ 05-10)
+
+**Reliability**
+- ✅ Toast 시스템 + 14자리 silent failure 가시화 (`lib/notify.ts`)
+- ✅ Rust panic 위험 제거 (mutex → atomic pgid, 좀비 누수 회귀 수정)
+- ✅ proof-server 부트스트랩 게이트 (`<EngineGate>`)
+- ✅ 사이드카 에러 컨텍스트 stderr 로깅 (`logErrorContext`)
+- ✅ 슬래시 커맨드 Regenerate 경로 보존 (`/proofread` 등 빈 응답 버그 픽스)
+- ✅ 첫 메시지 Regenerate 세션 충돌 픽스 — `ThreadMeta.sessionStarted`로 SDK 권장 패턴 정합
+
+**Chat 리팩토링**
+- ✅ ChatPanel 1058 → 534 라인 (20+ 커밋)
+- ✅ 컴포넌트 추출: PartList, ToolPart, ProposeChangePart, MessageRow, MessageFooter, ErrorCard, StoppedCard, ActivityStatus, ScrollToBottomButton, ReviewProgressBadge, leaf parts
+- ✅ 훅/유틸 추출: `useChatRunner`, `createStreamingBuffer`, `createThrottledFlusher`, `watchOffline`, `classifyRunError`
+- ✅ Two-mode prompt input 단일화
+
+**마크 아키텍처 proof-sdk 정렬**
+- ✅ Suggestion content를 Y.Map(StoredMark)에서 단일 source로 읽음 (PM 마크는 순수 앵커)
+- ✅ proofSuggestion 마크 schema 중복 attrs 제거
+- ✅ Provenance kind + source 필드 추가 (`StoredMark`)
+- ✅ Insert kind ghost preview 정리 (PM 노드가 단일 source)
+
+**에디터 FormatToolbar**
+- ✅ Row 2에 FormatToolbar shell (Bold/Italic/Strike/Inline Code/Link)
+- ✅ Active block + marks 상태 반영 (Tabler 아이콘)
+- ✅ Cmd+click on link → Tauri shell::open으로 외부 브라우저
+- ✅ Link hover store + getLinkRange 헬퍼
+
+**레이아웃 폴리싱**
+- ✅ Cmd+. → togglePanels (Cmd+1/Cmd+\\ 통합)
+- ✅ Doc tabs를 Row 1로 끌어올림 (Row 2 = FormatToolbar 자리)
+- ✅ shadcn Cmd+B 단축 제거 (Bold에 양보)
+
 ---
 
 ## 미커밋 상태
 
-```
-M apps/writer-tauri/src/components/ui/sidebar.tsx
-M apps/writer-tauri/src/layout/AppShell.tsx
-```
-
-shadcn-friendly 레이아웃 수정 (SidebarProvider `min-h-svh` → `h-svh overflow-hidden`).
-→ 다음 작업 시작 전 커밋 푸시 권장.
+깨끗 (2026-05-10 기준).
 
 ---
 
 ## 다음 후보 (우선순위 순)
 
-### 🔴 1순위 — 즉시 마무리 (≈30m)
+### 🔴 1순위 — 즉시 마무리
 
-**1-A. 미커밋 변경 커밋 푸시**
-- shadcn sidebar 소스 수정 1건. PR/커밋 1개.
+**1-A. 미커밋 변경 커밋 푸시** — ✅ 완료 (5/6)
 
 **1-B. 채팅 reliability 마감 (Phase 5 Step 7 잔여)**
-- 네트워크 / rate limit / OAuth 만료 에러 메시지 분기
-- 매우 긴 문서 truncation 경고
-- 빈 user 메시지 / 연속 전송 방지
+- ✅ 네트워크 / rate limit / OAuth 만료 에러 메시지 분기 (`classifyRunError` + ErrorCard)
+- ✅ 슬래시 Regenerate 경로 보존 + 마크 cleanup
+- ✅ 첫 메시지 Regenerate 세션 충돌 픽스 (`sessionStarted` flag)
+- [ ] 매우 긴 문서 truncation 경고 (`DOC_CHAR_CAP`)
+- [ ] 빈 user 메시지 / 연속 전송 방지 (sendInFlightRef로 일부 커버됨)
 
 **1-C. 디자인 폴리싱 (Task #40, #47)**
 - 슬래시 커맨드 UX polish (icons, spacing, code preview)
@@ -74,10 +102,8 @@ shadcn-friendly 레이아웃 수정 (SidebarProvider `min-h-svh` → `h-svh over
 - 헤더 카운터 chip + ⇧⌘A / ⇧⌘R
 - 0개일 때 자동 숨김 — 현재 "Reviewing…" 배지 자리에 통합 가능
 
-**2-B. 호버 액션 바** (roadmap PR3)
-- 마크 위 호버 시 부유 [✓][✕] 버튼
-- React Portal + view.coordsAtPos
-- 키보드 못 쓰는 사용자용
+**2-B. 호버 액션 바** (roadmap PR3) — ✅ 완료
+- 마크 위 호버 시 부유 [✓][✕] 버튼 (현재 동작 중)
 
 ### 🟢 3순위 — Comment 마크 (≈2d)
 
@@ -151,10 +177,10 @@ shadcn-friendly 레이아웃 수정 (SidebarProvider `min-h-svh` → `h-svh over
 
 ## 시작할 때 체크리스트
 
-- [ ] 1-A 커밋 푸시
-- [ ] 1-B 채팅 reliability
+- [x] 1-A 커밋 푸시
+- [~] 1-B 채팅 reliability (코어 분기/regenerate 완료, doc cap & 빈/중복 전송 잔여)
 - [ ] 1-C 디자인 폴리싱
 - [ ] 2-A Bulk Actions
-- [ ] 2-B 호버 액션 바
+- [x] 2-B 호버 액션 바
 - [ ] 3 Comment 마크
 - [ ] 4 Wiki 사이드바 섹션

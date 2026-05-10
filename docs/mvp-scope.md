@@ -1,8 +1,8 @@
 # MVP Scope — 출시까지 남은 것
 
 작성: 2026-05-09
-최종 갱신: 2026-05-09 (3/5 완료, 2개 deferred)
-상태: **In progress** — 신뢰성 항목 3개 완료, 온보딩/배포 설정은 추후
+최종 갱신: 2026-05-10 (4/5 완료, 2개 deferred)
+상태: **In progress** — 신뢰성 항목 4개 완료, 온보딩/배포 설정은 추후
 
 > 코드베이스가 길어졌으니 MVP 범위를 락하고 하나씩 마무리한다.
 > 원칙: Reliable + Wellmade. 사용자가 에러를 만나면 항상 무엇이 일어났는지 보여야 한다.
@@ -89,9 +89,39 @@ Silent failure가 14자리 있어 사용자 입장에서 "버튼 눌렀는데 �
 
 ---
 
+### 4. ✅ Chat 세션 라이프사이클 정합 — Done (2026-05-10)
+
+**문제**: 앱 재시작 후 어떤 스레드의 **첫 메시지에 Regenerate**를 누르면 사이드카가 `Claude Code process exited with code 1`로 죽고 답변 없음. 두 번째 이후 메시지의 Regenerate는 정상.
+
+**원인**: `chat.ts`의 `shouldResumeSession`이 "히스토리에 어시스턴트 답변이 있으면 resume, 아니면 create"라는 휴리스틱을 사용. Regenerate는 어시스턴트 답변을 지우는 동작이라 휴리스틱이 "처음 보내는 메시지"로 오판 → 이미 존재하는 세션을 다시 create하려 시도 → SDK 충돌.
+
+**근본 해결**: SDK가 권장하는 "호출자가 세션 라이프사이클 추적" 패턴으로 정합.
+- `ThreadMeta.sessionStarted: boolean` 필드 추가 (Yjs로 multi-device sync)
+- `useChatRunner`가 첫 stream event에서 `markSessionStarted(threadId)` 호출 (idempotent)
+- `shouldResumeSession`은 플래그 우선, 옛 스레드는 휴리스틱 fallback
+
+**Commits**: `9e7c9d53 → c1c4771c` (4 커밋)
+
+**부수 정리**: 사이드카 진단용 `logErrorContext` (stack/cause/code 풀 컨텍스트 stderr 덤프) — 이번 버그 추적이 결정적이었던 도구.
+
+---
+
+### 5. ✅ Chat 코드베이스 리팩토링 — Done (2026-05-06 ~ 05-10)
+
+ChatPanel.tsx **1058 → 534 라인** (≈50% 감소). LEGO-block 구조로 재정리해 다음 reliability 작업의 단위 검증을 쉽게 만듦.
+
+**추출**:
+- 컴포넌트 13종: PartList, ToolPart, ProposeChangePart, MessageRow, MessageFooter, ErrorCard, StoppedCard, ActivityStatus, ScrollToBottomButton, ReviewProgressBadge, leaf parts (Step/Text/Reasoning), 메시지 액션 버튼 등
+- 훅: `useChatRunner` (run lifecycle), `useThreadTurns` (이전 단계)
+- 유틸: `createStreamingBuffer`, `createThrottledFlusher`, `watchOffline`, `classifyRunError`
+
+각 추출은 typecheck + 시각 검증 + 별도 커밋 단위로 진행. 회귀 없음.
+
+---
+
 ## 🟡 출시 전 마무리 (deferred)
 
-### 4. 🟡 온보딩 — Claude 미연결 상태 (deferred)
+### 6. 🟡 온보딩 — Claude 미연결 상태 (deferred)
 
 **문제 (분석 완료, 구현 deferred)**:
 
@@ -116,7 +146,7 @@ Silent failure가 14자리 있어 사용자 입장에서 "버튼 눌렀는데 �
 
 ---
 
-### 5. 🟡 tauri.conf.json — 배포 준비 (deferred)
+### 7. 🟡 tauri.conf.json — 배포 준비 (deferred)
 
 **현재 상태**: `bundle.icon: []`, 사이닝 미설정, 업데이터 미설정.
 
@@ -170,12 +200,14 @@ Silent failure가 14자리 있어 사용자 입장에서 "버튼 눌렀는데 �
 
 ## 📦 출시 직전 체크리스트
 
-- [ ] 미커밋 정리
-- [x] 🔴 1번 완료
-- [x] 🔴 2번 완료
-- [x] 🔴 3번 완료
-- [ ] 🟡 4번 (온보딩 A+B)
-- [ ] 🟡 5번 (배포 설정)
-- [ ] DMG 빌드 + 코드 사이닝 + 공증 (5번 후속)
+- [x] 미커밋 정리
+- [x] 🔴 1번 완료 (토스트)
+- [x] 🔴 2번 완료 (Rust panic / 좀비 누수)
+- [x] 🔴 3번 완료 (EngineGate)
+- [x] 🔴 4번 완료 (Chat 세션 라이프사이클)
+- [x] 🔴 5번 완료 (Chat 리팩토링)
+- [ ] 🟡 6번 (온보딩 A+B)
+- [ ] 🟡 7번 (배포 설정)
+- [ ] DMG 빌드 + 코드 사이닝 + 공증 (7번 후속)
 - [ ] 베타 5–10 명 onboarding 메시지 + 채널
 - [ ] 첫 주 모니터링 후 🟡 핫픽스
