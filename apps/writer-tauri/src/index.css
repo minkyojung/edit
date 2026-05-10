@@ -309,18 +309,14 @@
     border-radius: 2px;
   }
 
-  /* `insert` marks wrap real proposed content sitting in the PM tree
-     (single source of truth) — accept keeps it, reject deletes the
-     range. Green tint matches `.mark-ghost` (the proposed-replacement
-     preview for `replace` kind), so the whole "added/pending" story
-     reads in one color across chat and ingest. Dashed bottom keeps the
-     "still under review" affordance distinct from `.mark-deco--approved`
-     (same green, but solid = settled). Aligns with the universal
-     red=removed / green=added diff convention (Cursor, GitHub, Word
-     track-changes) so users transfer the mental model for free. */
+  /* `insert` anchor — a small dashed underline on the page word that
+     hosts the suggestion. The block-level ghost preview below
+     (`.mark-ghost--insert`) carries the actual proposed content; the
+     anchor stays subtle so the ghost is the visual focal point.
+     Green stays in the universal red=removed / green=added family. */
   .mark-deco--insert {
-    background-color: rgba(34, 197, 94, 0.12);
-    border-bottom: 2px dashed rgba(34, 197, 94, 0.7);
+    background-color: rgba(34, 197, 94, 0.06);
+    border-bottom: 1px dashed rgba(34, 197, 94, 0.5);
   }
 
   .mark-deco--delete,
@@ -343,6 +339,41 @@
 
   .mark-ghost--replace {
     margin-left: 2px;
+  }
+
+  /* Block-level ghost for `insert` proposals — multi-paragraph
+     markdown rendered as a dashed-bordered card right after the
+     anchor's containing block. Matches where acceptMark will
+     materialize the content, so accept feels like "the preview
+     became real" without any layout jump. The card is non-editable
+     so users can't accidentally type into a preview. */
+  .mark-ghost--insert {
+    display: block;
+    margin: var(--prose-gap-block) 0;
+    padding: 0.625rem 0.875rem;
+    background-color: rgba(34, 197, 94, 0.08);
+    border: 1px dashed rgba(34, 197, 94, 0.45);
+    border-radius: 6px;
+    user-select: none;
+    cursor: default;
+  }
+  /* Inner blocks render with ProseMirror's normal block styles, but
+     trim leading/trailing margin so the card hugs its border. */
+  .mark-ghost--insert > :first-child { margin-top: 0; }
+  .mark-ghost--insert > :last-child { margin-bottom: 0; }
+  .mark-ghost--insert h1,
+  .mark-ghost--insert h2,
+  .mark-ghost--insert h3,
+  .mark-ghost--insert h4 {
+    margin: 0.5rem 0 0.25rem;
+  }
+  .mark-ghost--insert ul,
+  .mark-ghost--insert ol {
+    padding-left: 1rem;
+    margin: 0.25rem 0;
+  }
+  .mark-ghost--insert p {
+    margin: 0.25rem 0;
   }
 
   .mark-deco--comment {
