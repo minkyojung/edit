@@ -9,7 +9,6 @@
 
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { Mark, Node } from '@milkdown/kit/prose/model'
-import { TextSelection } from '@milkdown/kit/prose/state'
 import * as Y from 'yjs'
 import type { StoredMark } from '../hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
@@ -130,47 +129,6 @@ export function hasProofSuggestionInDoc(
   markId: string,
 ): boolean {
   return findInlineAnchor(view, markId, 'proofSuggestion') !== null
-}
-
-/**
- * Move selection + scroll to the inline anchor of the given mark, and
- * briefly flash it. Returns true if the mark was found.
- */
-export function jumpToMark(view: EditorView, markId: string): boolean {
-  const anchor = findInlineAnchor(view, markId)
-  if (!anchor) return false
-
-  const tr = view.state.tr.setSelection(
-    TextSelection.create(view.state.doc, anchor.from, anchor.to),
-  )
-  view.dispatch(tr.scrollIntoView())
-  view.focus()
-
-  flashRange(view, anchor.from, anchor.to)
-  return true
-}
-
-function flashRange(view: EditorView, from: number, to: number) {
-  // Walk the rendered DOM for the range and toggle a CSS class for ~1s.
-  const startDom = view.domAtPos(from)
-  const endDom = view.domAtPos(to)
-  const start = startDom.node instanceof Element ? startDom.node : startDom.node.parentElement
-  const end = endDom.node instanceof Element ? endDom.node : endDom.node.parentElement
-  if (!start || !end) return
-
-  const touched: Element[] = []
-  let node: Element | null = start
-  while (node) {
-    touched.push(node)
-    if (node === end) break
-    const sibling: Element | null = node.nextElementSibling
-    node = sibling ?? node.parentElement?.nextElementSibling ?? null
-    if (touched.length > 50) break
-  }
-  for (const el of touched) el.classList.add('mark-flash')
-  window.setTimeout(() => {
-    for (const el of touched) el.classList.remove('mark-flash')
-  }, 1000)
 }
 
 export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boolean {
@@ -328,16 +286,6 @@ export function rejectMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     tr.removeMark(from, to, markType)
   }
   view.dispatch(tr)
-  ydoc.getMap<StoredMark>('marks').delete(markId)
-  return true
-}
-
-export function resolveComment(view: EditorView, ydoc: Y.Doc, markId: string): boolean {
-  const anchor = findInlineAnchor(view, markId, 'proofComment')
-  if (anchor) {
-    const markType = view.state.schema.marks.proofComment
-    view.dispatch(view.state.tr.removeMark(anchor.from, anchor.to, markType))
-  }
   ydoc.getMap<StoredMark>('marks').delete(markId)
   return true
 }
