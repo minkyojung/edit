@@ -29,6 +29,10 @@ export interface UseThreadsResult {
   renameThread: (id: string, title: string) => void
   setThreadModel: (id: string, model: ChatModel) => void
   setThreadEffort: (id: string, effort: ChatEffort) => void
+  /** Marks the thread as having a confirmed SDK session. Called once per
+   * thread, on the first stream event of its first run. Idempotent — repeat
+   * calls short-circuit so we don't spam Yjs updates. */
+  markSessionStarted: (id: string) => void
 }
 
 export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
@@ -162,6 +166,18 @@ export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
     [findIndex, ydoc, replaceAt],
   )
 
+  const markSessionStarted = useCallback<UseThreadsResult['markSessionStarted']>(
+    (id) => {
+      const i = findIndex(id)
+      if (i < 0) return
+      const yThreads = ydoc!.getArray<ThreadMeta>(THREADS_KEY)
+      const cur = yThreads.get(i)
+      if (cur.sessionStarted) return
+      replaceAt(i, { ...cur, sessionStarted: true })
+    },
+    [findIndex, ydoc, replaceAt],
+  )
+
   const { active, archived } = useMemo(() => {
     const a: ThreadMeta[] = []
     const r: ThreadMeta[] = []
@@ -181,5 +197,6 @@ export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
     renameThread,
     setThreadModel,
     setThreadEffort,
+    markSessionStarted,
   }
 }
