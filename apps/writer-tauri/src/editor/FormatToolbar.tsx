@@ -13,7 +13,7 @@
 // preset registered the marks/nodes by the names we look up below, no
 // Milkdown ctx is needed to run setBlockType / wrapIn / wrapInList.
 
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { setBlockType, toggleMark, wrapIn } from '@milkdown/kit/prose/commands'
 import { wrapInList } from '@milkdown/kit/prose/schema-list'
 import type { EditorView } from '@milkdown/kit/prose/view'
@@ -27,6 +27,8 @@ import {
 } from '@tabler/icons-react'
 
 import { toggleInlineCodeSafe } from './inlineCodeSafe'
+import { LinkEditInput } from './LinkEditInput'
+import { applyLinkMark } from './linkUtils'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -36,7 +38,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
 import {
   Popover,
   PopoverContent,
@@ -294,17 +295,14 @@ interface LinkButtonProps {
 
 function LinkButton({ view, active, disabled }: LinkButtonProps) {
   const [open, setOpen] = useState(false)
-  const [url, setUrl] = useState('')
+  const [initialUrl, setInitialUrl] = useState('')
   const rangeRef = useRef<{ from: number; to: number } | null>(null)
-  const inputRef = useRef<HTMLInputElement | null>(null)
 
-  // Autofocus the input when the popover opens. Radix's Popover steals
-  // focus on open, so we delay one tick to win the focus race.
-  useEffect(() => {
-    if (!open) return
-    const t = window.setTimeout(() => inputRef.current?.focus(), 0)
-    return () => window.clearTimeout(t)
-  }, [open])
+  const close = () => {
+    setOpen(false)
+    rangeRef.current = null
+    view?.focus()
+  }
 
   const handleOpenChange = (next: boolean) => {
     if (next) {
@@ -312,30 +310,19 @@ function LinkButton({ view, active, disabled }: LinkButtonProps) {
       const range = expandToWord(view)
       if (!range) return // cursor on whitespace with no word — silent no-op
       rangeRef.current = range
-      setUrl(readExistingHref(view, range))
+      setInitialUrl(readExistingHref(view, range))
       setOpen(true)
     } else {
-      setOpen(false)
-      setUrl('')
-      rangeRef.current = null
-      view?.focus()
+      close()
     }
   }
 
-  const apply = () => {
+  const apply = (href: string) => {
     if (!view) return
     const range = rangeRef.current
     if (!range) return
-    const linkType = view.state.schema.marks.link
-    if (!linkType) return
-
-    const href = url.trim()
-    const tr = view.state.tr.removeMark(range.from, range.to, linkType)
-    if (href) {
-      tr.addMark(range.from, range.to, linkType.create({ href }))
-    }
-    view.dispatch(tr)
-    handleOpenChange(false)
+    applyLinkMark(view, range, href)
+    close()
   }
 
   return (
@@ -353,23 +340,7 @@ function LinkButton({ view, active, disabled }: LinkButtonProps) {
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={6} className="w-72 p-2">
-        <Input
-          ref={inputRef}
-          type="url"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              apply()
-            } else if (e.key === 'Escape') {
-              e.preventDefault()
-              handleOpenChange(false)
-            }
-          }}
-          placeholder="https://…"
-          className="h-8 px-3 text-sm"
-        />
+        <LinkEditInput initialValue={initialUrl} onApply={apply} onCancel={close} />
       </PopoverContent>
     </Popover>
   )

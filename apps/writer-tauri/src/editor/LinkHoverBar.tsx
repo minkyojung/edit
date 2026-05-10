@@ -4,16 +4,22 @@
 // the bar itself, fades 150ms after both are left.
 
 import { useEffect, useState } from 'react'
-import { IconExternalLink, IconUnlink } from '@tabler/icons-react'
+import { IconExternalLink, IconPencil, IconUnlink } from '@tabler/icons-react'
 
 import { Button } from '@/components/ui/button'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { useLinkHoverStore } from '@/state/linkHoverStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import {
   keepLinkHoverAlive,
   releaseLinkHoverAlive,
 } from './linkHoverPlugin'
-import { openLinkSafely } from './linkUtils'
+import { LinkEditInput } from './LinkEditInput'
+import { applyLinkMark, openLinkSafely } from './linkUtils'
 
 // 0px so the bar's hit area sits flush with the link's bottom edge.
 // Visual separation comes from padding-top on the bar itself —
@@ -35,6 +41,10 @@ export function LinkHoverBar() {
   const active = useLinkHoverStore((s) => s.active)
   const view = useEditorViewStore((s) => s.view)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+  // While the edit popover is open, the bar must NOT close on
+  // mouseleave / hover-timer expiry — the popover is anchored to a
+  // button inside the bar, so unmounting the bar would orphan it.
+  const [editOpen, setEditOpen] = useState(false)
 
   // Recompute position whenever active changes, and re-align on
   // scroll/resize so the bar tracks the link as the editor moves.
@@ -68,6 +78,14 @@ export function LinkHoverBar() {
     useLinkHoverStore.getState().setActive(null)
   }
 
+  const handleWrapperMouseLeave = () => {
+    // The edit popover renders into a portal — moving the cursor into
+    // it fires mouseleave on this wrapper. Closing here would unmount
+    // the bar and orphan the popover, so suppress while editing.
+    if (editOpen) return
+    close()
+  }
+
   const handleOpen = () => {
     openLinkSafely(active.href)
     close()
@@ -75,9 +93,14 @@ export function LinkHoverBar() {
 
   const handleRemove = () => {
     if (!view) return
-    const linkType = view.state.schema.marks.link
-    if (!linkType) return
-    view.dispatch(view.state.tr.removeMark(active.from, active.to, linkType))
+    applyLinkMark(view, { from: active.from, to: active.to }, '')
+    close()
+  }
+
+  const handleApplyEdit = (href: string) => {
+    if (!view) return
+    applyLinkMark(view, { from: active.from, to: active.to }, href)
+    setEditOpen(false)
     close()
   }
 
@@ -87,7 +110,7 @@ export function LinkHoverBar() {
     // cursor never crosses a dead zone on its way down.
     <div
       onMouseEnter={keepLinkHoverAlive}
-      onMouseLeave={close}
+      onMouseLeave={handleWrapperMouseLeave}
       style={{
         position: 'fixed',
         top: pos.top,
@@ -111,6 +134,25 @@ export function LinkHoverBar() {
           <IconExternalLink size={13} stroke={2} />
           <span className="max-w-[180px] truncate">{shortHostname(active.href)}</span>
         </Button>
+        <Popover open={editOpen} onOpenChange={setEditOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Edit link"
+              className="h-7 w-7"
+            >
+              <IconPencil size={13} stroke={2} />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" sideOffset={6} className="w-72 p-2">
+            <LinkEditInput
+              initialValue={active.href}
+              onApply={handleApplyEdit}
+              onCancel={() => setEditOpen(false)}
+            />
+          </PopoverContent>
+        </Popover>
         <Button
           variant="ghost"
           size="icon-sm"

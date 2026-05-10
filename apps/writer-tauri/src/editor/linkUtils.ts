@@ -25,6 +25,24 @@ export function openLinkSafely(href: string): boolean {
   return true
 }
 
+/** Replace the link mark on `range` with one pointing at `href`. An
+ * empty `href` removes the mark entirely. Single transaction so undo
+ * collapses replace-and-set into one step. */
+export function applyLinkMark(
+  view: EditorView,
+  range: { from: number; to: number },
+  href: string,
+): void {
+  const linkType = view.state.schema.marks.link
+  if (!linkType) return
+  const trimmed = href.trim()
+  const tr = view.state.tr.removeMark(range.from, range.to, linkType)
+  if (trimmed) {
+    tr.addMark(range.from, range.to, linkType.create({ href: trimmed }))
+  }
+  view.dispatch(tr)
+}
+
 /** Walk outward from a rendered <a> element to find the PM range of
  * the link mark that produced it. Bounded by href identity so two
  * adjacent links with different URLs stay separate. */
