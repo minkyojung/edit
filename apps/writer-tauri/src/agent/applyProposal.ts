@@ -14,6 +14,7 @@ import {
   resolveQuoteRange,
 } from '../editor/utils/textRange'
 import type { StoredMark } from '../hooks/useCollabDoc'
+import { useEditorViewStore } from '@/state/editorViewStore'
 import type { Proposal } from './proposals'
 
 interface ApplyMeta {
@@ -57,6 +58,40 @@ export function applyProposal(
 ): ApplyOutcome {
   const doc = view.state.doc
   const docText = doc.textBetween(0, doc.content.size, '\n', '\n')
+
+  // Empty-doc fast path. The proof-sdk anchor → ghost → accept pattern
+  // presupposes existing text to anchor on; when the doc has no visible
+  // content there is nothing to anchor and nothing to negotiate against
+  // (accept of an empty-doc insert would always succeed, reject would
+  // always be "stay empty"). Skip the mark ceremony entirely and install
+  // the proposed content as the new doc body — the same end-state
+  // markActions.acceptMark would have produced via parser → tr.insert.
+  // Wrapped in 'mark-action' origin so Cmd+Z restores the empty doc in
+  // one step, matching how accept(insert) on a non-empty doc behaves.
+  if (proposal.kind === 'suggestion' && proposal.suggestionType === 'insert') {
+    // Strip zero-width chars (U+200B-200D ZWS/ZWNJ/ZWJ + U+FEFF BOM) and
+    // whitespace. The proof-server seeds empty docs with U+200B so the
+    // markdown projection passes its non-empty validation; this leaks
+    // into doc.textBetween on the client and would otherwise mask the
+    // "empty doc" condition.
+    const docVisible = docText.replace(/[\u200B-\u200D\uFEFF\s]/g, '')
+    if (!docVisible) {
+      if (!proposal.content?.trim()) return { ok: false, reason: 'content_empty' }
+      const parser = useEditorViewStore.getState().parser
+      if (!parser) return { ok: false, reason: 'parser_not_ready' }
+      const parsed = parser(proposal.content)
+      if (!parsed || parsed.content.size === 0) {
+        return { ok: false, reason: 'parsed_empty' }
+      }
+      const markId = crypto.randomUUID()
+      ydoc.transact(() => {
+        view.dispatch(
+          view.state.tr.replaceWith(0, doc.content.size, parsed.content),
+        )
+      }, 'mark-action')
+      return { ok: true, markId }
+    }
+  }
 
   const baseError = validate(proposal, docText)
   if (baseError) return { ok: false, reason: baseError }
