@@ -19,6 +19,12 @@ import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { todayLocalDate, formatLocalDate } from '@/hooks/useDocMeta'
 import { DocTreeNode, indexChildren } from '../DocTreeNode'
+import {
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarMenu,
+  SidebarMenuItem,
+} from '@/components/ui/sidebar'
 
 const DAYS_IN_WEEK = 7
 
@@ -82,62 +88,62 @@ export function WeekView() {
   }
 
   return (
-    <ul className="flex flex-col gap-0.5">
-      {rows.map((row) => {
-        const isExpanded = expandedDates.has(row.date)
-        const children = row.slug
-          ? childrenByParent.get(row.slug) ?? []
-          : []
-        return (
-          <li key={row.date}>
-            <DayRow
-              row={row}
-              isActive={row.slug ? row.slug === activeSlug : false}
-              isExpanded={isExpanded}
-              onToggle={() => toggleExpanded(row.date)}
-              onJump={async () => {
-                const slug = await openDaily(row.date)
-                if (slug) {
-                  // Jumping to a specific day reads as "I want to work
-                  // this day" — drop the user into Day view at that
-                  // anchor so the prev/next chevrons continue from
-                  // where they picked.
-                  setDayAnchor(row.date)
-                  setSidebarTab('day')
-                }
-                ensureNotesRoute()
-              }}
-            />
-            {isExpanded && children.length > 0 && (
-              <ul className="relative flex flex-col gap-0.5 pt-0.5">
-                <span
-                  aria-hidden
-                  className="absolute left-2 top-0.5 bottom-0 w-px bg-border"
+    <SidebarGroup className="p-0">
+      <SidebarGroupContent className="px-2">
+        <SidebarMenu>
+          {rows.map((row) => {
+            const isExpanded = expandedDates.has(row.date)
+            const children = row.slug
+              ? childrenByParent.get(row.slug) ?? []
+              : []
+            return (
+              <SidebarMenuItem key={row.date}>
+                <DayRow
+                  row={row}
+                  isActive={row.slug ? row.slug === activeSlug : false}
+                  isExpanded={isExpanded}
+                  onToggle={() => toggleExpanded(row.date)}
+                  onJump={async () => {
+                    const slug = await openDaily(row.date)
+                    if (slug) {
+                      // Jumping to a specific day reads as "I want to work
+                      // this day" — drop the user into Day view at that
+                      // anchor so the prev/next chevrons continue from
+                      // where they picked.
+                      setDayAnchor(row.date)
+                      setSidebarTab('day')
+                    }
+                    ensureNotesRoute()
+                  }}
                 />
-                {children.map((child) => (
-                  <DocTreeNode
-                    key={child.slug}
-                    doc={child}
-                    childrenByParent={childrenByParent}
-                    activeSlug={activeSlug}
-                    depth={1}
-                    onSelect={(slug) => {
-                      setActive(slug)
-                      ensureNotesRoute()
-                    }}
-                    onAddChild={async (parentSlug) => {
-                      await createChildNote(parentSlug)
-                      ensureNotesRoute()
-                    }}
-                    onArchive={(slug) => archiveDoc(slug)}
-                  />
-                ))}
-              </ul>
-            )}
-          </li>
-        )
-      })}
-    </ul>
+                {isExpanded && children.length > 0 && (
+                  <SidebarMenu className="pt-0.5">
+                    {children.map((child) => (
+                      <DocTreeNode
+                        key={child.slug}
+                        doc={child}
+                        childrenByParent={childrenByParent}
+                        activeSlug={activeSlug}
+                        depth={1}
+                        onSelect={(slug) => {
+                          setActive(slug)
+                          ensureNotesRoute()
+                        }}
+                        onAddChild={async (parentSlug) => {
+                          await createChildNote(parentSlug)
+                          ensureNotesRoute()
+                        }}
+                        onArchive={(slug) => archiveDoc(slug)}
+                      />
+                    ))}
+                  </SidebarMenu>
+                )}
+              </SidebarMenuItem>
+            )
+          })}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
   )
 }
 
@@ -193,15 +199,15 @@ function DayRow({
   return (
     <div
       className={cn(
-        'group flex w-full items-center gap-1 px-1.5 py-1.5 text-sm font-medium transition-colors',
+        'group flex w-full items-center gap-1 rounded-xl px-3 py-2 text-sm font-medium transition-colors',
         'outline-none',
         row.isToday
-          ? 'bg-accent text-foreground'
+          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
           : isActive
-            ? 'bg-accent/60 text-foreground'
+            ? 'bg-sidebar-accent/60 text-sidebar-foreground'
             : isEmpty
-              ? 'text-muted-foreground/45 hover:bg-accent/40 hover:text-muted-foreground'
-              : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+              ? 'text-sidebar-foreground/45 hover:bg-sidebar-accent/40 hover:text-sidebar-foreground/70'
+              : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
       )}
     >
       {/* Caret slot — reserved width even when empty so labels align
@@ -215,9 +221,9 @@ function DayRow({
           }}
           aria-label={isExpanded ? 'Collapse day' : 'Expand day'}
           className={cn(
-            'flex h-4 w-4 shrink-0 items-center justify-center rounded',
-            'text-muted-foreground/70 hover:text-foreground',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+            'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
+            'text-sidebar-foreground/60 hover:text-sidebar-accent-foreground',
+            'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
           )}
         >
           <IconChevronRight
@@ -236,14 +242,14 @@ function DayRow({
         onClick={onJump}
         className={cn(
           'flex min-w-0 flex-1 items-center gap-2 text-left outline-none',
-          'focus-visible:ring-2 focus-visible:ring-ring/40 rounded',
+          'focus-visible:ring-2 focus-visible:ring-sidebar-ring/40 rounded-sm',
         )}
       >
         <span className="truncate">{row.label}</span>
         <span
           className={cn(
-            'ml-auto shrink-0 text-[11px] tabular-nums',
-            hasChildren ? 'text-muted-foreground' : 'text-muted-foreground/70',
+            'ml-auto shrink-0 text-xs tabular-nums',
+            hasChildren ? 'text-sidebar-foreground/60' : 'text-sidebar-foreground/45',
           )}
         >
           {hasChildren ? `${row.childCount} · ${row.weekday}` : row.weekday}
