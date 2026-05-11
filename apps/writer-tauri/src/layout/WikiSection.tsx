@@ -7,10 +7,18 @@
 import { useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { IconFileDescription, IconPlus } from '@tabler/icons-react'
-import { cn } from '@/lib/utils'
 import { useDocsStore, isWikiDoc, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { createCustomWikiPage } from '@/state/wikiService'
+import {
+  SidebarGroup,
+  SidebarGroupAction,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from '@/components/ui/sidebar'
 
 export function WikiSection() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
@@ -40,35 +48,28 @@ export function WikiSection() {
   }
 
   return (
-    <div className="pt-3">
-      <div className="flex items-center justify-between px-2 pb-1">
-        <span className="text-[13px] font-medium text-muted-foreground">
-          Wiki
-        </span>
-        <button
-          type="button"
-          onClick={handleNew}
-          aria-label="New wiki page"
-          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-        >
-          <IconPlus size={13} stroke={1.75} />
-        </button>
-      </div>
-      <ul className="flex flex-col">
-        {wikiDocs.map((doc) => (
-          <li key={doc.slug} data-slug={doc.slug}>
-            <WikiRow
-              doc={doc}
-              isActive={doc.slug === activeSlug}
-              onSelect={() => {
-                setActive(doc.slug)
-                ensureNotesRoute()
-              }}
-            />
-          </li>
-        ))}
-      </ul>
-    </div>
+    <SidebarGroup>
+      <SidebarGroupLabel>Wiki</SidebarGroupLabel>
+      <SidebarGroupAction onClick={handleNew} aria-label="New wiki page">
+        <IconPlus />
+      </SidebarGroupAction>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          {wikiDocs.map((doc) => (
+            <SidebarMenuItem key={doc.slug} data-slug={doc.slug}>
+              <WikiRow
+                doc={doc}
+                isActive={doc.slug === activeSlug}
+                onSelect={() => {
+                  setActive(doc.slug)
+                  ensureNotesRoute()
+                }}
+              />
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
   )
 }
 
@@ -86,24 +87,13 @@ function WikiRow({
   // user-set title yet ("belief" reads better than "wiki:belief").
   const fallback = doc.type.replace(/^wiki:/, '')
   return (
-    <button
-      type="button"
+    <SidebarMenuButton
       onClick={onSelect}
-      className={cn(
-        'group flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[13px] font-medium transition-colors',
-        'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-        isActive
-          ? 'bg-accent text-foreground'
-          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-      )}
+      isActive={isActive}
+      className="text-[13px]"
     >
-      <span
-        className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground"
-        aria-hidden
-      >
-        <IconFileDescription size={12} stroke={1.75} />
-      </span>
-      <span className="truncate">{label || fallback}</span>
-    </button>
+      <IconFileDescription />
+      <span>{label || fallback}</span>
+    </SidebarMenuButton>
   )
 }
