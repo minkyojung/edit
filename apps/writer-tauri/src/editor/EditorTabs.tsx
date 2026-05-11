@@ -134,7 +134,7 @@ function DocTab({
     <TabsPrimitive.Trigger
       value={slug}
       className={cn(
-        'group flex max-w-[200px] shrink-0 items-center gap-1.5 px-1.5 text-[13px] font-medium transition-colors',
+        'group flex max-w-[200px] shrink-0 items-center gap-1.5 px-1.5 text-sm font-medium transition-colors',
         'border-b',
         'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
         isActive

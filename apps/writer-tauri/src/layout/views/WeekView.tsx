@@ -193,7 +193,7 @@ function DayRow({
   return (
     <div
       className={cn(
-        'group flex w-full items-center gap-1 px-1.5 py-1.5 text-[13px] font-medium transition-colors',
+        'group flex w-full items-center gap-1 px-1.5 py-1.5 text-sm font-medium transition-colors',
         'outline-none',
         row.isToday
           ? 'bg-accent text-foreground'

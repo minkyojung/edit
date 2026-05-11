@@ -181,7 +181,7 @@ function Tab({ meta, isActive, onArchive, onRename }: TabProps) {
       value={meta.id}
       onDoubleClick={() => setEditing(true)}
       className={cn(
-        'group flex max-w-[180px] shrink-0 items-center gap-1.5 px-1.5 text-[13px] font-medium transition-colors',
+        'group flex max-w-[180px] shrink-0 items-center gap-1.5 px-1.5 text-sm font-medium transition-colors',
         'border-b',
         'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
         isActive

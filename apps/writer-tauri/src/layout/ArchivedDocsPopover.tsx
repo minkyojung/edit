@@ -64,7 +64,7 @@ export function ArchivedDocsPopover() {
       <PopoverTrigger asChild>
         <SidebarMenuButton
           ref={triggerRef}
-          className="text-[13px] text-sidebar-foreground/70"
+          className="text-sm text-sidebar-foreground/70"
           aria-label="Archived"
         >
           <IconArchive size={16} stroke={1.5} />

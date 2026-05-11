@@ -114,7 +114,7 @@ export function DayView() {
       >
         <SidebarGroupLabel
           asChild
-          className="flex-1 min-w-0 h-full px-2 rounded-none text-[13px] font-medium text-current"
+          className="flex-1 min-w-0 h-full px-2 rounded-none text-sm font-medium text-current"
         >
           <button type="button" onClick={onLabelClick} className="text-left">
             <span className="truncate">{dateLabel}</span>

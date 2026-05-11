@@ -123,7 +123,7 @@ export function FormatToolbar() {
             variant="ghost"
             size="sm"
             disabled={disabled}
-            className="h-7 gap-1 px-2 text-[13px] font-medium"
+            className="h-7 gap-1 px-2 text-sm font-medium"
           >
             {STYLE_LABEL[blockType]}
             <IconChevronDown size={12} stroke={2} />

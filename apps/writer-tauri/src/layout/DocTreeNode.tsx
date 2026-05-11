@@ -119,7 +119,7 @@ export function DocTreeNode({
       <SidebarMenuButton
         isActive={isActive}
         onClick={() => onSelect(doc.slug)}
-        className="text-[13px] pr-14"
+        className="text-sm pr-14"
         style={{ paddingLeft: `${rowPadLeftPx}px` }}
       >
         <span>{label}</span>

@@ -90,7 +90,7 @@ function WikiRow({
     <SidebarMenuButton
       onClick={onSelect}
       isActive={isActive}
-      className="text-[13px]"
+      className="text-sm"
     >
       <IconFileDescription />
       <span>{label || fallback}</span>

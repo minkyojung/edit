@@ -133,7 +133,7 @@ export function IngestProposalCard() {
           'outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring/40',
         )}
       >
-        <h4 className="text-[13px] font-medium text-foreground">
+        <h4 className="text-sm font-medium text-foreground">
           Wiki updates ready
         </h4>
         <p className="text-[12px] leading-snug text-muted-foreground">
