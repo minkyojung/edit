@@ -241,6 +241,7 @@ ChatPanel.tsx **1058 → 534 라인** (≈50% 감소). LEGO-block 구조로 재�
 - Sync persistent 배지
 - Version/About 화면
 - Collaborative editing (단일 사용자 가정)
+- macOS 타이틀바 hover 이벤트 fix — spec 은 `docs/macos-titlebar-hover-fix.md` 에 완비, 디자인 확정 후 진행
 
 ---
 
