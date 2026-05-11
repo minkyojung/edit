@@ -64,13 +64,13 @@ export function ArchivedDocsPopover() {
       <PopoverTrigger asChild>
         <SidebarMenuButton
           ref={triggerRef}
-          className="h-8 px-2 text-[13px] font-medium text-muted-foreground hover:text-foreground !rounded-none"
+          className="text-[13px] text-sidebar-foreground/70"
           aria-label="Archived"
         >
           <IconArchive size={16} stroke={1.5} />
           <span className="flex-1 text-left">Archived</span>
           {count > 0 && (
-            <span className="text-xs tabular-nums text-muted-foreground/70">
+            <span className="text-xs tabular-nums text-sidebar-foreground/50">
               {count}
             </span>
           )}

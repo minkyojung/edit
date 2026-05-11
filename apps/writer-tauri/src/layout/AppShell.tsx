@@ -54,7 +54,6 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
     <SidebarProvider
       open={sidebarOpen}
       onOpenChange={setSidebar}
-      style={{ '--sidebar-width': '220px' } as React.CSSProperties}
     >
       <CloseConfirmDialog />
       <AppSidebar />

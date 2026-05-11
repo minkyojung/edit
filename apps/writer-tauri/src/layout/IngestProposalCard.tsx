@@ -103,7 +103,7 @@ export function IngestProposalCard() {
   return (
     <div
       className={cn(
-        'relative mx-2 mb-2 rounded-lg border border-border bg-card/80 p-3 shadow-sm',
+        'relative rounded-lg border border-border bg-card/80 p-3 shadow-sm',
         'transition-shadow hover:shadow-md',
       )}
     >

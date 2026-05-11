@@ -105,7 +105,7 @@ export function DayView() {
     <SidebarGroup className="p-0">
       <div
         className={cn(
-          'group flex items-center gap-0.5 pr-1 transition-colors',
+          'group mx-2 flex items-center gap-0.5 rounded-xl pr-1 transition-colors',
           anchoredDaily
             ? 'text-foreground hover:bg-sidebar-accent/50'
             : 'text-muted-foreground/70 hover:bg-sidebar-accent/50 hover:text-foreground',
@@ -148,35 +148,26 @@ export function DayView() {
 
       <SidebarGroupContent className="px-2">
         {anchoredDaily && children.length > 0 && (
-          <div className="relative pt-0.5">
-            {/* Vertical guide line spanning the top-level children only.
-                Drawn as an absolute span so each child row can keep full
-                sidebar width and its hover background bleeds wall-to-wall. */}
-            <span
-              aria-hidden
-              className="absolute left-2 top-0.5 bottom-0 w-px bg-sidebar-border"
-            />
-            <SidebarMenu>
-              {children.map((child) => (
-                <DocTreeNode
-                  key={child.slug}
-                  doc={child}
-                  childrenByParent={childrenByParent}
-                  activeSlug={activeSlug}
-                  depth={1}
-                  onSelect={(slug) => {
-                    setActive(slug)
-                    ensureNotesRoute()
-                  }}
-                  onAddChild={async (parentSlug) => {
-                    await createChildNote(parentSlug)
-                    ensureNotesRoute()
-                  }}
-                  onArchive={(slug) => archiveDoc(slug)}
-                />
-              ))}
-            </SidebarMenu>
-          </div>
+          <SidebarMenu className="pt-0.5">
+            {children.map((child) => (
+              <DocTreeNode
+                key={child.slug}
+                doc={child}
+                childrenByParent={childrenByParent}
+                activeSlug={activeSlug}
+                depth={1}
+                onSelect={(slug) => {
+                  setActive(slug)
+                  ensureNotesRoute()
+                }}
+                onAddChild={async (parentSlug) => {
+                  await createChildNote(parentSlug)
+                  ensureNotesRoute()
+                }}
+                onArchive={(slug) => archiveDoc(slug)}
+              />
+            ))}
+          </SidebarMenu>
         )}
 
         {anchoredDaily ? (

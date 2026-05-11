@@ -33,9 +33,9 @@ export function SidebarDateMenu() {
         <button
           type="button"
           className={cn(
-            'flex h-7 items-center gap-1 rounded-md px-2 text-[12px] font-medium',
+            'flex h-7 items-center gap-1 rounded-xl px-2 text-[12px] font-medium',
             'text-sidebar-trigger transition-colors hover:text-sidebar-accent-foreground',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+            'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
           )}
         >
           <span>{VIEW_LABELS[tab]}</span>

@@ -48,7 +48,6 @@ interface DocTreeNodeProps {
 }
 
 const INDENT_PX = 14
-const LINE_PX = 8
 const ROW_BASE_PAD_LEFT = 6
 const CHEVRON_GUTTER_PX = 22 // chevron (16) + gap to label (6)
 
@@ -97,7 +96,7 @@ export function DocTreeNode({
           }}
         >
           <IconChevronRight
-            size={12}
+            size={16}
             stroke={1.75}
             className="transition-transform"
             style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
@@ -113,15 +112,14 @@ export function DocTreeNode({
             transform: 'translateY(-50%)',
           }}
         >
-          <IconFileDescription size={12} stroke={1.75} />
+          <IconFileDescription size={16} stroke={1.75} />
         </span>
       )}
 
       <SidebarMenuButton
         isActive={isActive}
         onClick={() => onSelect(doc.slug)}
-        size="sm"
-        className="text-[13px] font-medium pr-14"
+        className="text-[13px] pr-14"
         style={{ paddingLeft: `${rowPadLeftPx}px` }}
       >
         <span>{label}</span>
@@ -154,15 +152,7 @@ export function DocTreeNode({
       </SidebarMenuAction>
 
       {isExpanded && hasChildren && (
-        <ul className="relative flex flex-col gap-0.5 pt-0.5">
-          {/* Vertical guide line for this node's children. Drawn as an
-              absolute span so each child row can keep full sidebar
-              width and its hover background bleeds wall-to-wall. */}
-          <span
-            aria-hidden
-            className="absolute top-0.5 bottom-0 w-px bg-sidebar-border"
-            style={{ left: `${depth * INDENT_PX + LINE_PX}px` }}
-          />
+        <ul className="flex flex-col gap-0.5 pt-0.5">
           {children.map((child) => (
             <DocTreeNode
               key={child.slug}

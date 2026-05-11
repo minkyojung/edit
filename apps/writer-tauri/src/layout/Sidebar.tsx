@@ -175,9 +175,7 @@ export function AppSidebar() {
   }, [openDaily, createChildNote, navigate, pathname])
 
   return (
-    <Sidebar
-      className="border-r"
-    >
+    <Sidebar>
       <SidebarHeader
         className="flex flex-row items-center gap-0.5 p-0 pl-2 pr-1"
         style={{ height: 'var(--header-h)' }}
@@ -196,7 +194,7 @@ export function AppSidebar() {
         <WikiSection />
       </SidebarContent>
 
-      <SidebarFooter className="px-0">
+      <SidebarFooter>
         {/* Karpathy Memories card — surfaces the queued ingest
             proposals above the archive button so they're easy to
             notice without crowding the doc tree above. */}
@@ -208,7 +206,7 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg" className="px-2 h-11 !rounded-none">
+                <SidebarMenuButton size="lg" className="px-2 h-11">
                   <Avatar className="size-7 shrink-0">
                     <AvatarImage src="" />
                     <AvatarFallback className="avatar-luma text-xs text-primary-foreground font-medium">
@@ -219,11 +217,11 @@ export function AppSidebar() {
                     <p className="text-[13px] font-medium truncate">
                       {accountDisplayName(account.email) ?? 'Guest'}
                     </p>
-                    <p className="text-[13px] font-medium text-muted-foreground truncate">
+                    <p className="text-[13px] font-medium text-sidebar-foreground/60 truncate">
                       {account.connected ? (account.email ?? 'Connected') : 'Not connected'}
                     </p>
                   </div>
-                  <IconSelector size={14} stroke={1.5} className="ml-auto text-muted-foreground" />
+                  <IconSelector size={14} stroke={1.5} className="ml-auto text-sidebar-foreground/60" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-52">
