@@ -195,6 +195,24 @@ async function buildHandle(
   return { ydoc, provider, slug }
 }
 
+// Re-entrancy guard for bootstrap().
+//
+// React Strict Mode intentionally double-invokes effects in dev, so
+// BootGate's `useEffect(() => bootstrap(), [])` fires twice in quick
+// succession. The first call awaits proofClient.createDoc(today, ...)
+// for a ~100ms round-trip; in that window the second call sees the
+// catalog still empty and ALSO calls createDoc. Two server-side docs
+// for the same date, two sidebar tabs, every boot. Catalog audit
+// confirmed this pattern: 12 of 14 days carried exactly 2 dailies.
+//
+// Module-level flag (not in store state) so it lives across the
+// store's set() updates — store-state guard would race with the same
+// async window we are trying to protect. try/finally so a thrown
+// bootstrap (network failure during legacy migration etc.) doesn't
+// leave the guard latched and block legitimate later reboots within
+// the same process.
+let bootstrapInFlight = false
+
 export const useDocsStore = create<DocsState>()(
   persist(
     (set, get) => ({
@@ -210,6 +228,12 @@ export const useDocsStore = create<DocsState>()(
       dayAnchor: todayLocalDate(),
 
       bootstrap: async () => {
+        // Skip if another bootstrap is mid-flight (see the comment on
+        // `bootstrapInFlight` above this store definition for the full
+        // race rationale).
+        if (bootstrapInFlight) return
+        bootstrapInFlight = true
+        try {
         const today = todayLocalDate()
 
         // First, migrate the legacy single-slug localStorage entry. We
@@ -348,6 +372,9 @@ export const useDocsStore = create<DocsState>()(
         )
 
         set({ bootstrapping: false })
+        } finally {
+          bootstrapInFlight = false
+        }
       },
 
       setActive: (slug) => {
