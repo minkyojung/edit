@@ -25,6 +25,7 @@ import { proofClient, waitUntilReady } from '@/lib/proofClient'
 import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
+import { readH1TitleFromFragment } from '@/lib/docTitle'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
 const DEFAULT_DOC_TITLE = 'My Document'
@@ -854,16 +855,21 @@ async function ensureHandle(
   installTitleMirror(slug, handle, set, get)
 }
 
-/** Mirror Y.Text('title') changes back into knownDocs.title so closed
- * docs still show their real label in the sidebar / palette / etc.
- * Gated by provider sync — before the first sync, Y.Text is local-
- * only and reading "" would clobber the persisted cache (which often
- * holds the title set at create time). After sync, the ydoc state is
- * authoritative and we mirror every change.
+/** Mirror title changes back into knownDocs.title so closed docs still
+ * show their real label in the sidebar / palette / etc. Reads the
+ * title with the same priority useDocTitle does: first the body's
+ * first-h1 (the post-migration source), then the legacy Y.Text('title')
+ * fallback. Both surfaces are observed so a change in either updates
+ * the cache.
+ *
+ * Gated by provider sync — before the first sync, the local state is
+ * incomplete and reading "" would clobber the persisted cache (which
+ * often holds the title set at create time). After sync, the ydoc
+ * state is authoritative and we mirror every change.
  *
  * Daily entries are skipped: their label comes from `meta.date`, not
- * a Y.Text. Cleanup happens implicitly when handle.ydoc.destroy() in
- * closeDoc tears down all observers. */
+ * a Y.Text or the body. Cleanup happens implicitly when
+ * handle.ydoc.destroy() in closeDoc tears down all observers. */
 function installTitleMirror(
   slug: string,
   handle: CollabHandle,
@@ -878,14 +884,17 @@ function installTitleMirror(
   if (known?.type === 'daily') return
 
   const ytext = handle.ydoc.getText('title')
+  const fragment = handle.ydoc.getXmlFragment('prosemirror')
   const sync = () => {
-    const next = ytext.toString()
+    const fromH1 = readH1TitleFromFragment(fragment)
+    const next = fromH1 || ytext.toString()
     // Never overwrite the cached title with an empty value. Two
     // different scenarios produce next === '' and we can't tell
     // them apart from this side:
     //   (a) Legitimate: the user emptied the title field
     //   (b) Pre-cache: the doc was created before the title-cache
-    //       feature shipped, so Y.Text was never seeded
+    //       feature shipped, so neither Y.Text nor an h1 was ever
+    //       seeded.
     // Treating both as "clear the cache" loses (b)'s real label —
     // older docs go to Untitled the moment the user warms them.
     // Preserve the last known good value instead; (a) accepts a
@@ -905,6 +914,9 @@ function installTitleMirror(
   const start = () => {
     sync()
     ytext.observe(sync)
+    // observeDeep so edits inside the h1's text children update the
+    // cache, not just structural changes at the fragment root.
+    fragment.observeDeep(sync)
   }
   if (handle.provider.isSynced) {
     start()
