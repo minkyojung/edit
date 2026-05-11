@@ -514,7 +514,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           left; reserved for model / account / right-sidebar toggle on
           the right once those land. */}
       <div
-        className="flex shrink-0 items-center gap-2 border-b border-border bg-background px-3"
+        className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-3"
         style={{ height: 'var(--header-h)' }}
       >
         <ReviewProgressBadge ydoc={ydoc} />
