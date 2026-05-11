@@ -46,6 +46,7 @@ import { LinkHoverBar } from './LinkHoverBar'
 import { SlashMenu } from './SlashMenu'
 import { proofMarkPlugins } from './proofMarkSchemas'
 import { editorDebugPlugin } from './debugPlugin'
+import { titleNodeSchema } from './titleNodeSchema'
 import { useEditorViewStore } from '@/state/editorViewStore'
 
 interface Props {
@@ -151,6 +152,15 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
         ctx.set(editorViewOptionsCtx, { attributes: { class: 'milkdown-editor-root' } })
       })
       .config(configureListItemBlock)
+      // Compatibility-only registration for the retired custom title
+      // node — see editor/titleNodeSchema.ts. Without this, docs
+      // whose Yjs fragment still has stray <title> elements from
+      // the brief experiment would fail to load. The cleanup pass
+      // in lib/docTitle.ts converts any stray title nodes to
+      // heading level=1 on first sync; once we've confirmed no
+      // docs carry the legacy element, this line and the schema
+      // file go away together.
+      .use(titleNodeSchema)
       .use(commonmark)
       .use(gfm)
       .use(listItemBlockComponent)
