@@ -73,18 +73,35 @@ export function migrateTitleToFirstH1(
 
       if (!alreadyHasH1) {
         const fromYText = ytext.toString().trim()
-        const title = fromYText || fallbackTitle?.trim() || ''
-        if (title) {
-          const headingType = view.state.schema.nodes.heading
-          if (headingType) {
-            const tr = view.state.tr
-            const h1 = headingType.create(
-              { level: 1 },
-              view.state.schema.text(title),
-            )
-            tr.insert(0, h1)
-            view.dispatch(tr)
-          }
+        // 'Untitled' is proof-server's title-required sentinel passed
+        // at createDoc time (see docsStore.UNTITLED_SENTINEL) — not
+        // user-authored data. Treat it as empty so the new doc's h1
+        // starts blank and the placeholder plugin paints 'Untitled'
+        // as a hint (vanishes on first keystroke) instead of seeding
+        // literal text the user has to delete before typing. Same
+        // filter on fallbackTitle for symmetry — knownDoc.title can
+        // only hold 'Untitled' via stale cache from earlier builds,
+        // but the guard is cheap and prevents the same papercut.
+        const fromYTextReal = fromYText === 'Untitled' ? '' : fromYText
+        const fromFallback = fallbackTitle?.trim() ?? ''
+        const fromFallbackReal = fromFallback === 'Untitled' ? '' : fromFallback
+        const titleText = fromYTextReal || fromFallbackReal
+
+        // Always insert the h1 — even with no text — so the body's
+        // first child is the title slot the placeholder plugin
+        // expects. Without this, brand-new docs (no Y.Text, no
+        // fallback) come up with [paragraph(ZWS)] and the title
+        // placeholder has nothing to attach to. The empty h1 is
+        // harmless data (`# ` in markdown) and lets every consumer
+        // rely on the "first child = title" invariant.
+        const headingType = view.state.schema.nodes.heading
+        if (headingType) {
+          const tr = view.state.tr
+          const h1 = titleText
+            ? headingType.create({ level: 1 }, view.state.schema.text(titleText))
+            : headingType.create({ level: 1 })
+          tr.insert(0, h1)
+          view.dispatch(tr)
         }
       }
 

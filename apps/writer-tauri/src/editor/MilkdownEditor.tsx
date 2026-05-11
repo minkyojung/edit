@@ -45,6 +45,8 @@ import { MarkToolbar } from './MarkToolbar'
 import { LinkHoverBar } from './LinkHoverBar'
 import { SlashMenu } from './SlashMenu'
 import { proofMarkPlugins } from './proofMarkSchemas'
+import { titleNodeSchema } from './titleNodeSchema'
+import { editorDebugPlugin } from './debugPlugin'
 import { useEditorViewStore } from '@/state/editorViewStore'
 
 interface Props {
@@ -187,6 +189,13 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
         ctx.set(editorViewOptionsCtx, { attributes: { class: 'milkdown-editor-root' } })
       })
       .config(configureListItemBlock)
+      // Register the custom `title` node BEFORE commonmark so its
+      // schema name is reserved up front. The title node has no
+      // parseMarkdown handler (commonmark owns `#`); doc-init
+      // migration converts the first level-1 heading at doc[0] into
+      // a title node, then the isolating schema makes that slot
+      // un-mergeable for the rest of the doc's life.
+      .use(titleNodeSchema)
       .use(commonmark)
       .use(gfm)
       .use(listItemBlockComponent)
@@ -208,6 +217,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       // re-accept" by leaving Y.Map gone after the undo.
       .use(clipboard)
       .use(collab)
+      .use(editorDebugPlugin)
       .use(proofMarkPlugins)
       .use(createMarkDecoPlugin(ydoc))
       .use(createMarkCleanupPlugin(ydoc))
@@ -225,9 +235,15 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(createWikilinkBrokenPlugin())
       .use(
         createPlaceholderPlugin({
-          text: isDaily
+          // Daily docs render their title outside the editor (a
+          // readonly date label above the body), so the body has no
+          // title slot — pass titleText = undefined and the plugin
+          // skips that slot. Non-daily docs carry the title as the
+          // body's first h1 (post Stage-2 title fold).
+          bodyText: isDaily
             ? "What happened today? — type / for commands"
             : "Start writing… — type [[ to link, / for commands",
+          titleText: isDaily ? undefined : 'Untitled',
         }),
       )
       .use(

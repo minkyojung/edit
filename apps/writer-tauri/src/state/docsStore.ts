@@ -26,9 +26,16 @@ import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMet
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
 import { readH1TitleFromFragment } from '@/lib/docTitle'
+import { dbg, registerSnapshotContributor } from '@/lib/editorDebug'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
-const DEFAULT_DOC_TITLE = 'My Document'
+// Server-side title sentinel for newly-created writing docs. The
+// client never displays this directly — knownDocs.title is left
+// undefined so useDocLabel's fallback shows 'Untitled', and the
+// editor body's h1 starts empty so the placeholder plugin shows
+// 'Untitled' there too. proof-server requires a non-empty title at
+// create time, so we send this sentinel to satisfy it.
+const UNTITLED_SENTINEL = 'Untitled'
 
 /** Slim metadata mirrored into localStorage so the sidebar can list
  * docs (especially closed dailies whose ydoc isn't loaded). The
@@ -182,8 +189,25 @@ async function buildHandle(
     document: ydoc,
     token: session.token,
     onStatus: ({ status }) => {
+      dbg('provider', 'status', { slug, status })
       onStatus(status === 'connected' ? 'connected' : 'connecting')
     },
+  })
+  provider.on('synced', () => dbg('provider', 'synced', { slug }))
+  // ydoc.update fires for every Yjs op (local edits, remote merges,
+  // mark mutations). Origin is whatever the transaction was tagged
+  // with (`doc-init`, ySyncPluginKey, etc) — useful to distinguish
+  // "user typed" from "collab merged" from "migration ran".
+  ydoc.on('update', (update: Uint8Array, origin: unknown) => {
+    dbg('yjs', 'update', {
+      slug,
+      bytes: update.byteLength,
+      origin: origin === null
+        ? 'null'
+        : typeof origin === 'string'
+        ? origin
+        : (origin as { constructor?: { name?: string } })?.constructor?.name ?? String(origin),
+    })
   })
   onStatus('connecting')
   return { ydoc, provider, slug }
@@ -399,11 +423,10 @@ export const useDocsStore = create<DocsState>()(
 
       createNew: async () => {
         try {
-          const created = await proofClient.createDoc(DEFAULT_DOC_TITLE, '​')
+          const created = await proofClient.createDoc(UNTITLED_SENTINEL, '​')
           const meta: KnownDoc = {
             slug: created.slug,
             type: 'writing',
-            title: DEFAULT_DOC_TITLE,
           }
           set((s) => ({
             openSlugs: [...s.openSlugs, created.slug],
@@ -473,13 +496,14 @@ export const useDocsStore = create<DocsState>()(
         if (isWikiDoc(parent)) return null
         try {
           // ZWS body — non-blank for the proof-server validator while
-          // not seeding an H1 the user would have to clean up.
-          const created = await proofClient.createDoc(DEFAULT_DOC_TITLE, '​')
+          // not seeding an H1 the user would have to clean up. The
+          // h1 will be added (empty) by the editor's first render and
+          // the placeholder plugin paints 'Untitled' on top of it.
+          const created = await proofClient.createDoc(UNTITLED_SENTINEL, '​')
           const meta: KnownDoc = {
             slug: created.slug,
             type: 'writing',
             parentId: parentSlug,
-            title: DEFAULT_DOC_TITLE,
           }
           set((s) => ({
             knownDocs: [...s.knownDocs, meta],
@@ -857,10 +881,8 @@ async function ensureHandle(
 
 /** Mirror title changes back into knownDocs.title so closed docs still
  * show their real label in the sidebar / palette / etc. Reads the
- * title with the same priority useDocTitle does: first the body's
- * first-h1 (the post-migration source), then the legacy Y.Text('title')
- * fallback. Both surfaces are observed so a change in either updates
- * the cache.
+ * title from the body's first level-1 heading — the single source of
+ * truth post Stage-2 title fold.
  *
  * Gated by provider sync — before the first sync, the local state is
  * incomplete and reading "" would clobber the persisted cache (which
@@ -868,8 +890,8 @@ async function ensureHandle(
  * state is authoritative and we mirror every change.
  *
  * Daily entries are skipped: their label comes from `meta.date`, not
- * a Y.Text or the body. Cleanup happens implicitly when
- * handle.ydoc.destroy() in closeDoc tears down all observers. */
+ * the body. Cleanup happens implicitly when handle.ydoc.destroy() in
+ * closeDoc tears down all observers. */
 function installTitleMirror(
   slug: string,
   handle: CollabHandle,
@@ -883,20 +905,16 @@ function installTitleMirror(
   const known = get().knownDocs.find((d) => d.slug === slug)
   if (known?.type === 'daily') return
 
-  const ytext = handle.ydoc.getText('title')
   const fragment = handle.ydoc.getXmlFragment('prosemirror')
   const sync = () => {
-    const fromH1 = readH1TitleFromFragment(fragment)
-    const next = fromH1 || ytext.toString()
+    const next = readH1TitleFromFragment(fragment)
     // Never overwrite the cached title with an empty value. Two
     // different scenarios produce next === '' and we can't tell
     // them apart from this side:
-    //   (a) Legitimate: the user emptied the title field
-    //   (b) Pre-cache: the doc was created before the title-cache
-    //       feature shipped, so neither Y.Text nor an h1 was ever
-    //       seeded.
-    // Treating both as "clear the cache" loses (b)'s real label —
-    // older docs go to Untitled the moment the user warms them.
+    //   (a) Legitimate: the user emptied the title h1
+    //   (b) Pre-bootstrap: the migration hasn't run yet (e.g. the
+    //       observer fired before provider.synced got far enough)
+    // Treating both as "clear the cache" loses (b)'s real label.
     // Preserve the last known good value instead; (a) accepts a
     // tiny staleness on close, while (b) keeps its label.
     if (next.length === 0) return
@@ -913,7 +931,6 @@ function installTitleMirror(
   }
   const start = () => {
     sync()
-    ytext.observe(sync)
     // observeDeep so edits inside the h1's text children update the
     // cache, not just structural changes at the fragment root.
     fragment.observeDeep(sync)
@@ -930,4 +947,66 @@ function installTitleMirror(
     start()
   }
   handle.provider.on('synced', onceSynced)
+}
+
+// Register the docsStore slice of __editorDump(). Summarizes the
+// active doc's PM tree (depth-limited), open tabs, status map, and
+// the meta map of every loaded ydoc so migration flags are visible
+// at a glance. Runs at dump time — no cost when not invoked.
+registerSnapshotContributor('docs', () => {
+  const s = useDocsStore.getState()
+  const activeHandle = s.activeSlug ? s.handles[s.activeSlug] : undefined
+  const activeMeta = activeHandle
+    ? Object.fromEntries(activeHandle.ydoc.getMap('meta').entries())
+    : undefined
+  const activeFragment = activeHandle?.ydoc.getXmlFragment('prosemirror')
+  const fragmentSummary = activeFragment
+    ? summarizeXmlFragment(activeFragment)
+    : undefined
+  return {
+    openSlugs: s.openSlugs,
+    activeSlug: s.activeSlug,
+    knownDocs: s.knownDocs.map((d) => ({
+      slug: d.slug,
+      type: d.type,
+      title: d.title,
+      date: d.date,
+      parentId: d.parentId,
+      archivedAt: d.archivedAt,
+    })),
+    status: s.status,
+    activeMeta,
+    activeFragment: fragmentSummary,
+  }
+})
+
+// Compact tree summary of a Y.XmlFragment — depth-limited so a long
+// doc doesn't bloat the dump. Each node shows its tag, attrs (if
+// any), child count, and either a text preview or a recursive
+// summary of its children. Text is truncated at 80 chars.
+function summarizeXmlFragment(fragment: Y.XmlFragment): unknown {
+  return {
+    type: 'fragment',
+    childCount: fragment.length,
+    children: fragment.toArray().slice(0, 30).map((c) => summarizeXmlNode(c, 0)),
+  }
+}
+
+function summarizeXmlNode(node: unknown, depth: number): unknown {
+  if (depth > 3) return '[depth-cap]'
+  if (node instanceof Y.XmlText) {
+    const text = node.toString()
+    return text.length > 80 ? `text:${text.slice(0, 80)}…` : `text:${text}`
+  }
+  if (node instanceof Y.XmlElement) {
+    const attrs = node.getAttributes()
+    const children = node.toArray().slice(0, 20)
+    return {
+      tag: node.nodeName,
+      attrs: Object.keys(attrs).length ? attrs : undefined,
+      childCount: node.length,
+      children: children.map((c) => summarizeXmlNode(c, depth + 1)),
+    }
+  }
+  return String(node)
 }

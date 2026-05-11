@@ -42,7 +42,7 @@ export function useDocLabel(slug: string | null): string {
   const known = useDocsStore((s) =>
     slug ? s.knownDocs.find((d) => d.slug === slug) : undefined,
   )
-  const { title } = useDocTitle(handle?.ydoc ?? null)
+  const title = useDocTitle(handle?.ydoc ?? null)
 
   if (known?.type === 'daily' && known.date) return formatDailyLabel(known.date)
   if (known?.type?.startsWith('wiki:')) {
