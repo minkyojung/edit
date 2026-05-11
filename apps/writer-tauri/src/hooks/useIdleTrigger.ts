@@ -25,6 +25,9 @@ import {
 } from '@/state/wikiService'
 import type { IngestProposal } from '@/agent/ingest'
 import { todayLocalDate } from '@/hooks/useDocMeta'
+import { extractErrorCode } from '@/chat/utils/errorMessage'
+import { notify } from '@/lib/notify'
+import { useConnectDialog } from '@/stores/connectDialog'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
 /** Minimum new chars since last ingest before the trigger will run
@@ -188,6 +191,22 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
     result = await runIngest(slug)
   } catch (err) {
     console.warn('[ingest] runIngest failed', slug, err)
+    // Auth errors are the one ingest failure that doesn't auto-
+    // recover — the OAuth token has expired and the user must
+    // sign in again before any future pass can succeed. Surface
+    // it as a toast with a Reconnect action so the silent
+    // background failure becomes visible. Every other error
+    // (NETWORK / RATE_LIMIT / IDLE_TIMEOUT / SIDECAR_DIED /
+    // malformed / transient 5xx) clears on the next idle window
+    // without user action, so interrupting them with a toast
+    // would be noise. Same classifier (`extractErrorCode`) the
+    // chat ErrorCard uses, so the two surfaces agree on what
+    // counts as auth.
+    if (extractErrorCode(err) === 'AUTH') {
+      notify.claudeSessionExpired({
+        onReconnect: () => useConnectDialog.getState().setOpen(true),
+      })
+    }
     return 0
   }
   // Update the watermark unconditionally on a successful call —
