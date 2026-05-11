@@ -29,12 +29,14 @@ import { useEffect, useMemo } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { useEditorFooter, type HoveredMark } from '@/stores/editorFooter'
 import { subscribeToPmDocChanges } from '@/editor/docVersionPlugin'
+import { UnlinkedNotes } from '@/editor/UnlinkedNotes'
 
 interface Props {
   view: EditorView | null
+  parentSlug: string | null
 }
 
-export function EditorFooter({ view }: Props) {
+export function EditorFooter({ view, parentSlug }: Props) {
   const hovered = useEditorFooter((s) => s.hovered)
   const stats = useEditorFooter((s) => s.stats)
   const setStats = useEditorFooter((s) => s.setStats)
@@ -65,15 +67,16 @@ export function EditorFooter({ view }: Props) {
   return (
     <div
       className="
-        flex shrink-0 items-center justify-between
+        flex shrink-0 items-center justify-between gap-3
         border-t border-border/50
-        px-4 py-1.5
-        text-[11px] text-muted-foreground
+        px-4 py-1
+        text-[12px] leading-none text-muted-foreground
         select-none
       "
       data-testid="editor-footer"
     >
-      {content}
+      <div className="min-w-0 flex-1 truncate">{content}</div>
+      <UnlinkedNotes view={view} parentSlug={parentSlug} />
     </div>
   )
 }

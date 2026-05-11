@@ -37,7 +37,6 @@ import {
 import { createPlaceholderPlugin } from './placeholderPlugin'
 import { useDocsStore } from '@/state/docsStore'
 import { WikilinkPalette } from './WikilinkPalette'
-import { UnlinkedNotes } from './UnlinkedNotes'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { normalizeTitleStructure } from '@/lib/docTitle'
 import { useDocLabel } from '../hooks/useDocLabel'
@@ -63,10 +62,11 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   onChangeRef.current = onMarkdownChange
 
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
-  // Local view state — UnlinkedNotes needs to walk the PM doc for
-  // wikilink references, so it needs the live view. The parent App
-  // also gets a view via onViewReady; that's separate and kept for
-  // its own purposes (e.g. mark popovers).
+  // Local view state — EditorFooter (and the UnlinkedNotes trigger
+  // nested inside it) needs to walk the PM doc for wikilink
+  // references and writing stats, so it needs the live view. The
+  // parent App also gets a view via onViewReady; that's separate and
+  // kept for its own purposes (e.g. mark popovers).
   const [pmView, setPmView] = useState<EditorView | null>(null)
   // Daily entries: the date is the title, derived from meta.date
   // (mirrored on knownDocs). Renders as a readonly label above the
@@ -320,10 +320,9 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
             </div>
           ) : null}
           <div ref={rootRef} />
-          <UnlinkedNotes view={pmView} parentSlug={handle?.slug ?? null} />
         </div>
       </div>
-      <EditorFooter view={pmView} />
+      <EditorFooter view={pmView} parentSlug={handle?.slug ?? null} />
       {handle && <MarkToolbar selection={selection} ydoc={handle.ydoc} onDismiss={() => setSelection(null)} />}
       <LinkHoverBar />
       <SlashMenu />
