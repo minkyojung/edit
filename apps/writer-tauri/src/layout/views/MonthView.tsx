@@ -110,8 +110,8 @@ export function MonthView() {
                 cell.isToday
                   ? 'bg-sidebar-accent font-semibold text-sidebar-accent-foreground'
                   : cell.hasEntry
-                    ? 'text-sidebar-foreground hover:bg-sidebar-accent/50'
-                    : 'text-sidebar-foreground/40 hover:bg-sidebar-accent/30 hover:text-sidebar-foreground/70',
+                    ? 'font-medium text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
+                    : 'font-medium text-sidebar-foreground/35 hover:bg-sidebar-accent/30 hover:text-sidebar-foreground/70',
               )}
             >
               <span className="leading-none">{cell.day}</span>

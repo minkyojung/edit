@@ -14,7 +14,7 @@
 
 import { useMemo, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { IconChevronRight } from '@tabler/icons-react'
+import { IconCalendar, IconChevronRight } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { todayLocalDate, formatLocalDate } from '@/hooks/useDocMeta'
@@ -199,15 +199,15 @@ function DayRow({
   return (
     <div
       className={cn(
-        'group flex w-full items-center gap-1 rounded-xl px-3 py-2 text-sm font-medium transition-colors',
+        'group flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors',
         'outline-none',
         row.isToday
           ? 'bg-sidebar-accent text-sidebar-accent-foreground'
           : isActive
-            ? 'bg-sidebar-accent/60 text-sidebar-foreground'
+            ? 'bg-sidebar-accent/60 text-sidebar-accent-foreground'
             : isEmpty
-              ? 'text-sidebar-foreground/45 hover:bg-sidebar-accent/40 hover:text-sidebar-foreground/70'
-              : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
+              ? 'text-sidebar-foreground/40 hover:bg-sidebar-accent/40 hover:text-sidebar-foreground/70'
+              : 'text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
       )}
     >
       {/* Caret slot — reserved width even when empty so labels align
@@ -234,7 +234,12 @@ function DayRow({
           />
         </button>
       ) : (
-        <span className="h-4 w-4 shrink-0" aria-hidden />
+        <span
+          className="flex h-4 w-4 shrink-0 items-center justify-center text-sidebar-foreground/50"
+          aria-hidden
+        >
+          <IconCalendar size={16} stroke={1.75} />
+        </span>
       )}
 
       <button

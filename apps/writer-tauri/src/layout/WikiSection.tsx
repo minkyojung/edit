@@ -87,11 +87,7 @@ function WikiRow({
   // user-set title yet ("belief" reads better than "wiki:belief").
   const fallback = doc.type.replace(/^wiki:/, '')
   return (
-    <SidebarMenuButton
-      onClick={onSelect}
-      isActive={isActive}
-      className="text-sm"
-    >
+    <SidebarMenuButton onClick={onSelect} isActive={isActive}>
       <IconFileDescription />
       <span>{label || fallback}</span>
     </SidebarMenuButton>

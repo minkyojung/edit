@@ -107,8 +107,8 @@ export function DayView() {
         className={cn(
           'group mx-2 flex items-center gap-0.5 rounded-xl pr-1 transition-colors',
           anchoredDaily
-            ? 'text-foreground hover:bg-sidebar-accent/50'
-            : 'text-muted-foreground/70 hover:bg-sidebar-accent/50 hover:text-foreground',
+            ? 'text-sidebar-foreground hover:bg-sidebar-accent/50'
+            : 'text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
         )}
         style={{ height: 'var(--header-h)' }}
       >
