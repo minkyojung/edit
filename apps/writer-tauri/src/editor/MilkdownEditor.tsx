@@ -23,6 +23,7 @@ import { createLinkHoverPlugin } from './linkHoverPlugin'
 import { createSlashTriggerPlugin } from './slashTriggerPlugin'
 import { configureListItemBlock } from './listItemConfig'
 import { listKeymap } from './listKeymap'
+import { headingKeymap } from './headingKeymap'
 import { createWikilinkClickPlugin } from './wikilinkClickPlugin'
 import {
   createWikilinkPalettePlugin,
@@ -38,7 +39,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { WikilinkPalette } from './WikilinkPalette'
 import { UnlinkedNotes } from './UnlinkedNotes'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
-import { useDocTitle } from '../hooks/useDocTitle'
+import { migrateTitleToFirstH1 } from '@/lib/docTitle'
 import { useDocLabel } from '../hooks/useDocLabel'
 import { MarkToolbar } from './MarkToolbar'
 import { LinkHoverBar } from './LinkHoverBar'
@@ -65,10 +66,12 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   // also gets a view via onViewReady; that's separate and kept for
   // its own purposes (e.g. mark popovers).
   const [pmView, setPmView] = useState<EditorView | null>(null)
-  const { title, setTitle } = useDocTitle(handle?.ydoc ?? null)
   // Daily entries: the date is the title, derived from meta.date
-  // (mirrored on knownDocs). Title field becomes a readonly label.
-  // Writing entries: title is user content, editable.
+  // (mirrored on knownDocs). Renders as a readonly label above the
+  // editor. Writing/wiki entries: the title lives as the body's first
+  // h1, no separate input — the title is just the editor's first line,
+  // covered by the same undo / collab / proof-sdk pattern as the rest
+  // of the doc.
   const knownDoc = useDocsStore((s) =>
     handle ? s.knownDocs.find((d) => d.slug === handle.slug) : undefined,
   )
@@ -125,36 +128,39 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     }
   }, [pmView, handle, isDaily, knownDoc?.date])
 
-  // Seed the per-doc Y.Text('title') from the catalog title on
-  // first sync when it's still empty. proofClient.createDoc takes a
-  // title argument and stores it in the server's metadata column,
-  // but it doesn't write into the ydoc's title stream — so the
-  // first time the user opens a freshly-created wiki page the
-  // header input is blank ("Untitled" placeholder) even though the
-  // sidebar already shows the right name. One-shot transactional
-  // insert here keeps both surfaces consistent without changing
-  // the createDoc protocol. Daily entries skip this — they don't
-  // expose the title input.
+  // Fold the legacy Y.Text('title') into the editor body as a level-1
+  // heading at the top. Runs once per doc (gated by meta.titleMigratedToH1)
+  // on first sync. After this, every consumer reads the title from the
+  // h1 — same code path as every other piece of editable content, so
+  // undo / collab / proof-sdk patterns cover it for free.
+  //
+  // Daily entries are skipped inside migrateTitleToFirstH1 — their
+  // title is rendered from meta.date outside the body.
+  //
+  // Title source priority: existing h1 > Y.Text('title') > catalog
+  // title from knownDocs (mirrors proofClient.createDoc's server
+  // metadata, used for freshly-created docs that never seeded
+  // Y.Text). Replaces the older Y.Text seed effect: once h1 is the
+  // source of truth, re-seeding Y.Text on every open is a ghost
+  // write the read path ignores.
   useEffect(() => {
-    if (!handle || isDaily) return
-    const seed = knownDoc?.title?.trim()
-    if (!seed) return
+    if (!handle || !pmView || isDaily) return
     const ydoc = handle.ydoc
     const provider = handle.provider
+    const view = pmView
+    const fallback = knownDoc?.title
     let ran = false
     const run = () => {
       if (ran) return
       ran = true
-      const ytext = ydoc.getText('title')
-      if (ytext.length > 0) return
-      ydoc.transact(() => ytext.insert(0, seed))
+      migrateTitleToFirstH1(ydoc, view, fallback)
     }
     if (provider.isSynced) run()
     else provider.on('synced', run)
     return () => {
       provider.off('synced', run)
     }
-  }, [handle, isDaily, knownDoc?.title])
+  }, [handle, pmView, isDaily, knownDoc?.title])
 
   // Bridge between the wikilink-palette plugin (lives inside the
   // Milkdown editor instance) and the React palette popup. The
@@ -189,6 +195,11 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       // empty; Backspace at start of empty item lifts AND merges in
       // one keystroke.
       .use(listKeymap)
+      // Enter inside a heading splits into [heading | paragraph]
+      // instead of [heading | heading], matching Notion / Bear /
+      // Obsidian convention. Registered after commonmark for the same
+      // priority reason as listKeymap.
+      .use(headingKeymap)
       // No `.use(history)` here on purpose. The collab plugin already
       // wires y-prosemirror's yUndoPlugin (UndoManager-backed) and
       // Mod-Z / Mod-Shift-Z keybindings; adding milkdown's PM-only
@@ -328,16 +339,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
             >
               {dailyLabel}
             </div>
-          ) : (
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Untitled"
-              aria-label="Document title"
-              className="mb-6 w-full bg-transparent text-3xl font-semibold leading-tight outline-none placeholder:text-muted-foreground/50"
-            />
-          )}
+          ) : null}
           <div ref={rootRef} />
           <UnlinkedNotes view={pmView} parentSlug={handle?.slug ?? null} />
         </div>
