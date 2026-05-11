@@ -132,10 +132,6 @@ export function applyProposal(
   const markId = crypto.randomUUID()
   const now = new Date().toISOString()
 
-  // Y.Map metadata first (proof-sdk's StoredMark shape) so the decoration
-  // plugin's first buildDecos pass — triggered by the PM transaction below
-  // — finds `content` already in place. Reversing the order would race the
-  // ghost-preview render against the metadata write.
   const marksMap = ydoc.getMap<StoredMark>('marks')
   const stored: StoredMark = {
     kind: proposal.kind === 'comment' ? 'comment' : (proposal.suggestionType ?? 'replace'),
@@ -150,50 +146,54 @@ export function applyProposal(
     ...(proposal.kind === 'comment' ? { text: proposal.text } : {}),
     ...(proposal.rationale ? { note: proposal.rationale } : {}),
   } as StoredMark
-  marksMap.set(markId, stored)
 
-  // Inline mark stamp. The PM mark is a pure anchor — only id / kind / by
-  // ride along here. content / status / createdAt all live on the Y.Map
-  // StoredMark we wrote above; readers (markDecoPlugin, markActions) look
-  // them up there. Keeping the inline mark thin avoids the dual-source bug
-  // where a server markdown round-trip strips PM attrs and the ghost goes
-  // blank even though the metadata is intact.
+  // Resolve the inline mark type up front so the schema-missing branch
+  // can early-return before we open the Yjs transaction below. Keeps
+  // the transact body to its two essential writes.
+  let inlineMark
   if (proposal.kind === 'suggestion') {
     const markType = view.state.schema.marks.proofSuggestion
     if (!markType) return { ok: false, reason: 'schema_proof_suggestion_missing' }
-    view.dispatch(
-      view.state.tr.addMark(
-        range.from,
-        range.to,
-        markType.create({
-          id: markId,
-          kind: proposal.suggestionType,
-          by: meta.agentId,
-        }),
-      ),
-    )
+    inlineMark = markType.create({
+      id: markId,
+      kind: proposal.suggestionType,
+      by: meta.agentId,
+    })
   } else {
     const markType = view.state.schema.marks.proofComment
     if (!markType) return { ok: false, reason: 'schema_proof_comment_missing' }
     // Stamp the comment body / quoted span / rationale onto the mark
-    // itself so PM undo restores them together. The Y.Map.set above
-    // mirrors the data for legacy readers (DocumentInfoDialog stats);
-    // the popover reads from the PM mark instead so resolved-then-undone
-    // comments don't lose their text.
-    view.dispatch(
-      view.state.tr.addMark(
-        range.from,
-        range.to,
-        markType.create({
-          id: markId,
-          by: meta.agentId,
-          text: proposal.text ?? null,
-          quote: proposal.quote ?? null,
-          note: proposal.rationale ?? null,
-        }),
-      ),
-    )
+    // itself so PM undo restores them together. The Y.Map.set inside
+    // the transact below mirrors the data for legacy readers
+    // (DocumentInfoDialog stats); the popover reads from the PM mark
+    // instead so resolved-then-undone comments don't lose their text.
+    inlineMark = markType.create({
+      id: markId,
+      by: meta.agentId,
+      text: proposal.text ?? null,
+      quote: proposal.quote ?? null,
+      note: proposal.rationale ?? null,
+    })
   }
+
+  // Wrap the Y.Map metadata write and the PM mark stamp in one Yjs
+  // transaction with the 'mark-action' origin so Cmd+Z restores both
+  // atomically — mirrors MarkToolbar.submit and markActions.acceptMark/
+  // rejectMark. Without the wrap, Cmd+Z would only undo the PM half
+  // and the Y.Map entry would linger (the dual-source bug acceptMark
+  // had until it adopted this same pattern; see markActions.ts:182-194).
+  //
+  // Order inside the transact: Y.Map.set first, then view.dispatch.
+  // The markDecoPlugin's buildDecos pass runs during the PM dispatch
+  // and reads the marks map synchronously; with the write coming
+  // first, the ghost preview finds `content` already in place. Inside
+  // a single transact the observers fire only after both writes
+  // commit, but the synchronous PM-side read still needs the map
+  // populated when dispatch runs.
+  ydoc.transact(() => {
+    marksMap.set(markId, stored)
+    view.dispatch(view.state.tr.addMark(range.from, range.to, inlineMark))
+  }, 'mark-action')
 
   return { ok: true, markId }
 }
