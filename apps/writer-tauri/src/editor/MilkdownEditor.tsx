@@ -39,7 +39,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { WikilinkPalette } from './WikilinkPalette'
 import { UnlinkedNotes } from './UnlinkedNotes'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
-import { migrateTitleToFirstH1 } from '@/lib/docTitle'
+import { normalizeTitleStructure } from '@/lib/docTitle'
 import { useDocLabel } from '../hooks/useDocLabel'
 import { MarkToolbar } from './MarkToolbar'
 import { LinkHoverBar } from './LinkHoverBar'
@@ -98,71 +98,34 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     return unsubscribe
   }, [pmView])
 
-  // One-time migration for daily entries created before the
-  // date-as-meta rework. Older builds seeded "# YYYY-MM-DD" into the
-  // body via proofClient.createDoc's default markdown, sometimes
-  // multiple times under racing bootstraps. Now that the date lives
-  // only in meta, those leading H1 nodes are pure duplication. After
-  // the first sync (so we see the canonical body) we walk the doc,
-  // remove any H1 at the very top whose plain text is the daily's
-  // date or a concatenation of it ("2026-05-042026-05-04"), and
-  // stamp meta.titleCleanedV1 so we never re-run.
+  // Normalize the doc's title structure on first sync. Single entry
+  // point covering both kinds of doc:
+  //   - non-daily: dedup leading h1s, ensure first child is an h1
+  //     (empty if no title yet), clear stale Y.Text
+  //   - daily:     strip the legacy "# YYYY-MM-DD" heading some old
+  //                builds seeded into the body, clear stale Y.Text
+  // Idempotent via meta.titleNormalizedV2 — see lib/docTitle.ts.
   useEffect(() => {
-    if (!pmView || !handle || !isDaily || !knownDoc?.date) return
-    const ydoc = handle.ydoc
-    const provider = handle.provider
-    const date = knownDoc.date
-    let ran = false
-    const run = () => {
-      if (ran) return
-      ran = true
-      const meta = ydoc.getMap('meta')
-      if (meta.get('titleCleanedV1')) return
-      cleanupDailyBodyDateHeading(pmView, date)
-      ydoc.transact(() => {
-        meta.set('titleCleanedV1', true)
-      })
-    }
-    if (provider.isSynced) run()
-    else provider.on('synced', run)
-    return () => {
-      provider.off('synced', run)
-    }
-  }, [pmView, handle, isDaily, knownDoc?.date])
-
-  // Fold the legacy Y.Text('title') into the editor body as a level-1
-  // heading at the top. Runs once per doc (gated by meta.titleMigratedToH1)
-  // on first sync. After this, every consumer reads the title from the
-  // h1 — same code path as every other piece of editable content, so
-  // undo / collab / proof-sdk patterns cover it for free.
-  //
-  // Daily entries are skipped inside migrateTitleToFirstH1 — their
-  // title is rendered from meta.date outside the body.
-  //
-  // Title source priority: existing h1 > Y.Text('title') > catalog
-  // title from knownDocs (mirrors proofClient.createDoc's server
-  // metadata, used for freshly-created docs that never seeded
-  // Y.Text). Replaces the older Y.Text seed effect: once h1 is the
-  // source of truth, re-seeding Y.Text on every open is a ghost
-  // write the read path ignores.
-  useEffect(() => {
-    if (!handle || !pmView || isDaily) return
+    if (!handle || !pmView) return
     const ydoc = handle.ydoc
     const provider = handle.provider
     const view = pmView
-    const fallback = knownDoc?.title
+    const opts = {
+      fallbackTitle: isDaily ? undefined : knownDoc?.title,
+      date: isDaily ? knownDoc?.date : undefined,
+    }
     let ran = false
     const run = () => {
       if (ran) return
       ran = true
-      migrateTitleToFirstH1(ydoc, view, fallback)
+      normalizeTitleStructure(ydoc, view, opts)
     }
     if (provider.isSynced) run()
     else provider.on('synced', run)
     return () => {
       provider.off('synced', run)
     }
-  }, [handle, pmView, isDaily, knownDoc?.title])
+  }, [handle, pmView, isDaily, knownDoc?.title, knownDoc?.date])
 
   // Bridge between the wikilink-palette plugin (lives inside the
   // Milkdown editor instance) and the React palette popup. The
@@ -371,37 +334,3 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   )
 }
 
-/** Strip leading H1 nodes whose plain text is the daily's date or a
- * concatenation of repeats of it (legacy artifact). Stops at the
- * first non-matching block so we never delete a heading the user
- * intentionally wrote. Date format is the same YYYY-MM-DD that
- * meta.date stores; we tolerate any whole-number repeat
- * ("2026-05-04", "2026-05-042026-05-04", …) so duplications from
- * pre-fix multi-bootstrap races also get cleaned up. */
-function cleanupDailyBodyDateHeading(view: EditorView, date: string): void {
-  const doc = view.state.doc
-  let pos = 0
-  let endRemovePos = 0
-  for (let i = 0; i < doc.childCount; i += 1) {
-    const child = doc.child(i)
-    if (child.type.name !== 'heading') break
-    if (child.attrs.level !== 1) break
-    if (!isRepeatedDate(child.textContent, date)) break
-    endRemovePos = pos + child.nodeSize
-    pos += child.nodeSize
-  }
-  if (endRemovePos === 0) return
-  const tr = view.state.tr.delete(0, endRemovePos)
-  tr.setMeta('addToHistory', false)
-  view.dispatch(tr)
-}
-
-function isRepeatedDate(text: string, date: string): boolean {
-  if (text.length === 0 || date.length === 0) return false
-  if (text.length % date.length !== 0) return false
-  const repeats = text.length / date.length
-  for (let i = 0; i < repeats; i += 1) {
-    if (text.slice(i * date.length, (i + 1) * date.length) !== date) return false
-  }
-  return true
-}

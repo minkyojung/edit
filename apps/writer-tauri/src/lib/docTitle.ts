@@ -1,139 +1,130 @@
-// Read the doc title from the editor body itself — specifically, the
-// text of the first level-1 heading in the Y.XmlFragment that backs
-// the ProseMirror doc. Used by useDocTitle and the sidebar title
-// mirror so every consumer pulls the title from the same logical
-// source (the body) rather than the legacy Y.Text('title') side
-// channel, which becomes a write-only fallback during the title-fold
-// migration and is dropped entirely once every doc has been
-// migrated.
+// Doc title normalization — one entry point that brings every doc
+// into the canonical structure the rest of the app assumes:
 //
-// Returns '' when there is no first child, the first child is not a
-// heading, or the heading is not level 1. Callers fall back to the
-// legacy Y.Text in those cases.
+//   Non-daily:  [ h1 (title slot) ][ ...body ]
+//                 - Y.Text('title') is empty (body owns the title)
+//                 - No duplicate consecutive h1s at the top
+//                 - First child is always an h1, even when empty,
+//                   so the placeholder plugin has a slot to paint
+//
+//   Daily:      [ ...body ]
+//                 - No date-as-h1 at the top (legacy artefact from
+//                   an earlier build that seeded "# YYYY-MM-DD" into
+//                   the body markdown)
+//                 - Date label is rendered outside the editor from
+//                   meta.date — body doesn't carry it
+//
+// Idempotent via the single `meta.titleNormalizedV2` flag. Earlier
+// builds set three separate flags (titleMigratedToH1, titleDedupedV1,
+// titleCleanedV1) for each piece of work; those still exist on
+// already-migrated docs but are no longer read — V2 supersedes them.
+// Running the V2 pass on a previously-V1'd doc is a no-op for the
+// already-completed parts (dedup finds nothing, h1 already present,
+// etc), so we don't need a migration-of-the-migration step.
+//
+// Origin: 'doc-init'. Deliberately NOT in the UndoManager's
+// trackedOrigins so this system-driven normalization does not
+// pollute the user's undo stack (Cmd+Z right after first open would
+// otherwise "undo" the migration).
 
 import type { EditorView } from '@milkdown/kit/prose/view'
 import * as Y from 'yjs'
 
-/** One-shot migration: move the doc's title from the legacy
- * Y.Text('title') side channel into the editor body's first level-1
- * heading, so every consumer (useDocTitle, sidebar cache, undo,
- * collab) sees the title through the same path as every other piece
- * of editable content.
- *
- * Idempotent via `meta.titleMigratedToH1` — set inside the same Yjs
- * transaction as the migration writes, so a second call (or a
- * concurrent call from another tab of the same client) returns early.
- *
- * Daily docs are skipped: their title is rendered from `meta.date`
- * outside the body, and the existing daily-body H1 cleanup elsewhere
- * in MilkdownEditor handles stray h1s that crept in via earlier bugs.
- *
- * Title source priority: Y.Text > fallback (typically the catalog
- * title from docsStore.knownDocs, mirroring proofClient.createDoc's
- * server-side metadata). Falling back lets freshly-created docs that
- * never seeded their Y.Text pick up their real name on first open.
- *
- * Origin: 'doc-init'. Deliberately NOT in the UndoManager's
- * trackedOrigins so this system-driven move does not pollute the
- * user's undo stack (Cmd+Z right after first open would otherwise
- * "undo" the migration). */
-export function migrateTitleToFirstH1(
+interface NormalizeOptions {
+  /** Catalog title (knownDoc.title) — used as a fallback source for
+   * the body h1 when Y.Text('title') is empty (typical for freshly-
+   * created writing docs whose Y.Text was never seeded). Ignored
+   * for daily docs. */
+  fallbackTitle?: string
+  /** Daily doc's date (YYYY-MM-DD). Only consulted when meta.type
+   * is 'daily' — used to detect and remove the legacy "# DATE" h1s
+   * that earlier builds wrote into the body. */
+  date?: string
+}
+
+export function normalizeTitleStructure(
   ydoc: Y.Doc,
   view: EditorView,
-  fallbackTitle: string | undefined,
+  options: NormalizeOptions,
 ): void {
   const meta = ydoc.getMap('meta')
+  if (meta.get('titleNormalizedV2')) return
+
   ydoc.transact(() => {
-    if (meta.get('type') === 'daily') {
-      // Daily: title comes from meta.date; nothing to migrate or dedup.
-      // Mark both flags so we don't re-check on every open. The daily
-      // body h1 cleanup (cleanupDailyBodyDateHeading) handles its own
-      // legacy artefacts.
-      meta.set('titleMigratedToH1', true)
-      meta.set('titleDedupedV1', true)
-      return
-    }
+    const isDaily = meta.get('type') === 'daily'
 
-    // Main migration — runs once per doc.
-    if (!meta.get('titleMigratedToH1')) {
-      const fragment = ydoc.getXmlFragment('prosemirror')
-      const first = fragment.toArray()[0]
-      const alreadyHasH1 =
-        first instanceof Y.XmlElement &&
-        first.nodeName === 'heading' &&
-        // y-prosemirror passes PM attrs through without coercion, so
-        // the heading's `level` is the JS number 1, not the string
-        // '1'. Cast through unknown and coerce to a number so this
-        // check actually fires for existing h1s (an earlier
-        // string-only compare always returned false, which is what
-        // caused the duplicate-h1 bug this dedup step now cleans up).
-        Number(first.getAttribute('level') as unknown) === 1
-
-      const ytext = ydoc.getText('title')
-
-      if (!alreadyHasH1) {
-        const fromYText = ytext.toString().trim()
-        // 'Untitled' is proof-server's title-required sentinel passed
-        // at createDoc time (see docsStore.UNTITLED_SENTINEL) — not
-        // user-authored data. Treat it as empty so the new doc's h1
-        // starts blank and the placeholder plugin paints 'Untitled'
-        // as a hint (vanishes on first keystroke) instead of seeding
-        // literal text the user has to delete before typing. Same
-        // filter on fallbackTitle for symmetry — knownDoc.title can
-        // only hold 'Untitled' via stale cache from earlier builds,
-        // but the guard is cheap and prevents the same papercut.
-        const fromYTextReal = fromYText === 'Untitled' ? '' : fromYText
-        const fromFallback = fallbackTitle?.trim() ?? ''
-        const fromFallbackReal = fromFallback === 'Untitled' ? '' : fromFallback
-        const titleText = fromYTextReal || fromFallbackReal
-
-        // Always insert the h1 — even with no text — so the body's
-        // first child is the title slot the placeholder plugin
-        // expects. Without this, brand-new docs (no Y.Text, no
-        // fallback) come up with [paragraph(ZWS)] and the title
-        // placeholder has nothing to attach to. The empty h1 is
-        // harmless data (`# ` in markdown) and lets every consumer
-        // rely on the "first child = title" invariant.
-        const headingType = view.state.schema.nodes.heading
-        if (headingType) {
-          const tr = view.state.tr
-          const h1 = titleText
-            ? headingType.create({ level: 1 }, view.state.schema.text(titleText))
-            : headingType.create({ level: 1 })
-          tr.insert(0, h1)
-          view.dispatch(tr)
-        }
-      }
-
-      // Y.Text is no longer the source of truth — clear it if non-empty
-      // so the h1 path is unambiguously the live data. Reads still
-      // fall back to Y.Text in useDocTitle for un-migrated docs, but
-      // once migrated, Y.Text stays empty until Stage 5 removes it
-      // entirely.
-      if (ytext.length > 0) {
-        ytext.delete(0, ytext.length)
-      }
-
-      meta.set('titleMigratedToH1', true)
-    }
-
-    // One-time dedup pass for docs hit by the earlier alreadyHasH1
-    // type-compare bug (which caused some docs to grow a second
-    // identical h1 at the top). Runs independently of the migration
-    // flag so docs that already migrated still get cleaned up. New
-    // docs hit this path too but find nothing to remove and just set
-    // the flag.
-    if (!meta.get('titleDedupedV1')) {
+    if (isDaily) {
+      if (options.date) cleanupDailyDateHeading(view, options.date)
+    } else {
       dedupConsecutiveLeadingH1s(view)
-      meta.set('titleDedupedV1', true)
+      ensureFirstChildIsH1(view, ydoc, options.fallbackTitle)
     }
+
+    // Y.Text('title') is no longer the source of truth — clear it so
+    // there's exactly one place the title can live (body h1 for
+    // writing docs, meta.date for dailies). The Y.Text key itself
+    // stays defined on the ydoc; only its content is wiped.
+    const ytext = ydoc.getText('title')
+    if (ytext.length > 0) ytext.delete(0, ytext.length)
+
+    meta.set('titleNormalizedV2', true)
   }, 'doc-init')
 }
 
-/** Remove h1s at the top of the doc that immediately follow another
- * h1 with identical text content. Targets the duplicate-title pattern
- * specifically — not a general dedup. Stops at the first non-matching
- * block so legitimate content below the title isn't touched. */
+// ── helpers ──────────────────────────────────────────────────────
+
+const UNTITLED_SENTINEL = 'Untitled'
+
+function filterSentinel(text: string): string {
+  return text === UNTITLED_SENTINEL ? '' : text
+}
+
+function isH1(first: unknown): first is Y.XmlElement {
+  if (!(first instanceof Y.XmlElement)) return false
+  if (first.nodeName !== 'heading') return false
+  // y-prosemirror passes PM attrs through without coercion, so the
+  // heading's `level` is the JS number 1, not the string '1'. Cast
+  // through unknown and coerce so this check fires for existing h1s
+  // (a string-only compare would always miss).
+  return Number(first.getAttribute('level') as unknown) === 1
+}
+
+function ensureFirstChildIsH1(
+  view: EditorView,
+  ydoc: Y.Doc,
+  fallbackTitle: string | undefined,
+): void {
+  const fragment = ydoc.getXmlFragment('prosemirror')
+  if (isH1(fragment.toArray()[0])) return
+
+  // Pick title text from the legacy Y.Text first, then catalog
+  // fallback. Filter the server's 'Untitled' sentinel from both —
+  // it's required by proof-server's title-required validator but
+  // not real user data; we want the placeholder plugin to paint
+  // 'Untitled' as a hint instead of seeding literal text.
+  const ytext = ydoc.getText('title')
+  const fromYText = filterSentinel(ytext.toString().trim())
+  const fromFallback = filterSentinel(fallbackTitle?.trim() ?? '')
+  const titleText = fromYText || fromFallback
+
+  // Always insert an h1 — even with no text — so the body's first
+  // child is the title slot the placeholder plugin expects. Empty
+  // h1 is harmless data (`# ` in markdown).
+  const headingType = view.state.schema.nodes.heading
+  if (!headingType) return
+  const tr = view.state.tr
+  const h1 = titleText
+    ? headingType.create({ level: 1 }, view.state.schema.text(titleText))
+    : headingType.create({ level: 1 })
+  tr.insert(0, h1)
+  view.dispatch(tr)
+}
+
+// Remove h1s at the top of the doc that immediately follow another
+// h1 with identical text content. Targets the duplicate-title
+// pattern specifically — not a general dedup. Stops at the first
+// non-matching block so legitimate content below the title isn't
+// touched.
 function dedupConsecutiveLeadingH1s(view: EditorView): void {
   const doc = view.state.doc
   if (doc.childCount < 2) return
@@ -148,9 +139,8 @@ function dedupConsecutiveLeadingH1s(view: EditorView): void {
     if (next.textContent !== first.textContent) break
     dropEnd += 1
   }
-  if (dropEnd === 1) return // no duplicates
+  if (dropEnd === 1) return
 
-  // Compute byte range covering child[1..dropEnd) and delete it.
   let from = first.nodeSize
   let to = from
   for (let i = 1; i < dropEnd; i += 1) {
@@ -159,21 +149,45 @@ function dedupConsecutiveLeadingH1s(view: EditorView): void {
   view.dispatch(view.state.tr.delete(from, to))
 }
 
+// Daily docs: strip any leading h1 whose text is the daily's date
+// or a concatenation of repeats of it (legacy artefact from a
+// pre-fix multi-bootstrap race). Stops at the first non-matching
+// block so a heading the user intentionally wrote is left alone.
+function cleanupDailyDateHeading(view: EditorView, date: string): void {
+  const doc = view.state.doc
+  let pos = 0
+  let endRemovePos = 0
+  for (let i = 0; i < doc.childCount; i += 1) {
+    const child = doc.child(i)
+    if (child.type.name !== 'heading') break
+    if (child.attrs.level !== 1) break
+    if (!isRepeatedDate(child.textContent, date)) break
+    endRemovePos = pos + child.nodeSize
+    pos += child.nodeSize
+  }
+  if (endRemovePos === 0) return
+  const tr = view.state.tr.delete(0, endRemovePos)
+  tr.setMeta('addToHistory', false)
+  view.dispatch(tr)
+}
+
+function isRepeatedDate(text: string, date: string): boolean {
+  if (text.length === 0 || date.length === 0) return false
+  if (text.length % date.length !== 0) return false
+  const repeats = text.length / date.length
+  for (let i = 0; i < repeats; i += 1) {
+    if (text.slice(i * date.length, (i + 1) * date.length) !== date) return false
+  }
+  return true
+}
+
+// ── reader API ──────────────────────────────────────────────────
+
 export function readH1TitleFromFragment(fragment: Y.XmlFragment): string {
   const children = fragment.toArray()
   if (children.length === 0) return ''
   const first = children[0]
-  if (!(first instanceof Y.XmlElement)) return ''
-  if (first.nodeName !== 'heading') return ''
-  // y-prosemirror passes PM node attrs through to Yjs without
-  // coercion (see y-prosemirror/dist setAttribute call site), so a
-  // PM heading created with { level: 1 } lands here as the number 1,
-  // not the string '1'. TypeScript's getAttribute signature says
-  // string | undefined but the runtime value is whatever was set.
-  // Cast through unknown and coerce to a number so a string-typed
-  // attr (from a future binding) still works.
-  const level = Number(first.getAttribute('level') as unknown)
-  if (level !== 1) return ''
+  if (!isH1(first)) return ''
   return collectText(first).trim()
 }
 
