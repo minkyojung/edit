@@ -5,6 +5,16 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Vue feature flags — required because @milkdown/kit/component/list-item-block
+  // ships an ESM-bundler Vue build that expects these globals at compile time.
+  // Without them, Vue logs a runtime warning on every page load and tree-shakes
+  // less aggressively in the production bundle. We don't use the Options API,
+  // don't enable prod devtools, and don't SSR — all three are false.
+  define: {
+    __VUE_OPTIONS_API__: "false",
+    __VUE_PROD_DEVTOOLS__: "false",
+    __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: "false",
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
