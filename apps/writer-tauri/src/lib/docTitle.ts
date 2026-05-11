@@ -29,7 +29,6 @@
 
 import type { EditorView } from '@milkdown/kit/prose/view'
 import * as Y from 'yjs'
-import { dbg } from './editorDebug'
 
 interface NormalizeOptions {
   /** Catalog title (knownDoc.title) — used as a fallback source for
@@ -48,13 +47,6 @@ export function normalizeTitleStructure(
   view: EditorView,
   options: NormalizeOptions,
 ): void {
-  // Always-run cleanup, OUTSIDE the V2 gate, for the retired custom
-  // title-node experiment. Some docs picked up stray <title> Yjs
-  // elements during the experiment; those need to be converted back
-  // to heading level=1 regardless of whether V2 already ran on this
-  // doc. Idempotent — no-op when no title nodes are present.
-  scrubStrayTitleNodes(view)
-
   const meta = ydoc.getMap('meta')
   if (meta.get('titleNormalizedV2')) return
 
@@ -77,42 +69,6 @@ export function normalizeTitleStructure(
 
     meta.set('titleNormalizedV2', true)
   }, 'doc-init')
-}
-
-// Convert any `title` PM node in the doc into a `heading` (level 1).
-// Title nodes only exist as a residue of the retired custom-title
-// experiment — once converted, the doc carries no `title` Yjs
-// elements anymore, and the surrounding code stays on its happy
-// path of "title slot = first h1".
-//
-// Walks the doc once, collecting positions in reverse so each
-// replacement keeps the earlier positions valid. The replacement
-// reuses the title node's inline content unchanged, so any text /
-// marks the user typed inside survive intact.
-function scrubStrayTitleNodes(view: EditorView): void {
-  const doc = view.state.doc
-  const headingType = view.state.schema.nodes.heading
-  if (!headingType) return
-  const positions: number[] = []
-  doc.descendants((node, pos) => {
-    if (node.type.name === 'title') {
-      positions.push(pos)
-      return false
-    }
-    return true
-  })
-  if (positions.length === 0) return
-  dbg('migration', 'scrubStrayTitleNodes', { count: positions.length })
-  const tr = view.state.tr
-  for (let i = positions.length - 1; i >= 0; i -= 1) {
-    const pos = positions[i]
-    const node = tr.doc.nodeAt(pos)
-    if (!node || node.type.name !== 'title') continue
-    const replacement = headingType.create({ level: 1 }, node.content)
-    tr.replaceWith(pos, pos + node.nodeSize, replacement)
-  }
-  tr.setMeta('addToHistory', false)
-  view.dispatch(tr)
 }
 
 // ── helpers ──────────────────────────────────────────────────────

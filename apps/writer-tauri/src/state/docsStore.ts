@@ -26,7 +26,6 @@ import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMet
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
 import { readH1TitleFromFragment } from '@/lib/docTitle'
-import { dbg, registerSnapshotContributor } from '@/lib/editorDebug'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
 // Server-side title sentinel for newly-created writing docs. The
@@ -189,25 +188,8 @@ async function buildHandle(
     document: ydoc,
     token: session.token,
     onStatus: ({ status }) => {
-      dbg('provider', 'status', { slug, status })
       onStatus(status === 'connected' ? 'connected' : 'connecting')
     },
-  })
-  provider.on('synced', () => dbg('provider', 'synced', { slug }))
-  // ydoc.update fires for every Yjs op (local edits, remote merges,
-  // mark mutations). Origin is whatever the transaction was tagged
-  // with (`doc-init`, ySyncPluginKey, etc) — useful to distinguish
-  // "user typed" from "collab merged" from "migration ran".
-  ydoc.on('update', (update: Uint8Array, origin: unknown) => {
-    dbg('yjs', 'update', {
-      slug,
-      bytes: update.byteLength,
-      origin: origin === null
-        ? 'null'
-        : typeof origin === 'string'
-        ? origin
-        : (origin as { constructor?: { name?: string } })?.constructor?.name ?? String(origin),
-    })
   })
   onStatus('connecting')
   return { ydoc, provider, slug }
@@ -947,66 +929,4 @@ function installTitleMirror(
     start()
   }
   handle.provider.on('synced', onceSynced)
-}
-
-// Register the docsStore slice of __editorDump(). Summarizes the
-// active doc's PM tree (depth-limited), open tabs, status map, and
-// the meta map of every loaded ydoc so migration flags are visible
-// at a glance. Runs at dump time — no cost when not invoked.
-registerSnapshotContributor('docs', () => {
-  const s = useDocsStore.getState()
-  const activeHandle = s.activeSlug ? s.handles[s.activeSlug] : undefined
-  const activeMeta = activeHandle
-    ? Object.fromEntries(activeHandle.ydoc.getMap('meta').entries())
-    : undefined
-  const activeFragment = activeHandle?.ydoc.getXmlFragment('prosemirror')
-  const fragmentSummary = activeFragment
-    ? summarizeXmlFragment(activeFragment)
-    : undefined
-  return {
-    openSlugs: s.openSlugs,
-    activeSlug: s.activeSlug,
-    knownDocs: s.knownDocs.map((d) => ({
-      slug: d.slug,
-      type: d.type,
-      title: d.title,
-      date: d.date,
-      parentId: d.parentId,
-      archivedAt: d.archivedAt,
-    })),
-    status: s.status,
-    activeMeta,
-    activeFragment: fragmentSummary,
-  }
-})
-
-// Compact tree summary of a Y.XmlFragment — depth-limited so a long
-// doc doesn't bloat the dump. Each node shows its tag, attrs (if
-// any), child count, and either a text preview or a recursive
-// summary of its children. Text is truncated at 80 chars.
-function summarizeXmlFragment(fragment: Y.XmlFragment): unknown {
-  return {
-    type: 'fragment',
-    childCount: fragment.length,
-    children: fragment.toArray().slice(0, 30).map((c) => summarizeXmlNode(c, 0)),
-  }
-}
-
-function summarizeXmlNode(node: unknown, depth: number): unknown {
-  if (depth > 3) return '[depth-cap]'
-  if (node instanceof Y.XmlText) {
-    const text = node.toString()
-    return text.length > 80 ? `text:${text.slice(0, 80)}…` : `text:${text}`
-  }
-  if (node instanceof Y.XmlElement) {
-    const attrs = node.getAttributes()
-    const children = node.toArray().slice(0, 20)
-    return {
-      tag: node.nodeName,
-      attrs: Object.keys(attrs).length ? attrs : undefined,
-      childCount: node.length,
-      children: children.map((c) => summarizeXmlNode(c, depth + 1)),
-    }
-  }
-  return String(node)
 }

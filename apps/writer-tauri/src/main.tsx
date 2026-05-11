@@ -3,12 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { App } from './App'
-import { bootstrapEditorDebug } from './lib/editorDebug'
 import './index.css'
-
-// Install console/error capture + window.__editorDump before anything
-// renders so the buffer has a chance to catch boot-time problems.
-bootstrapEditorDebug()
 
 // Cmd+R → reload, Cmd+Option+I → devtools (dev only)
 if (import.meta.env.DEV) {
