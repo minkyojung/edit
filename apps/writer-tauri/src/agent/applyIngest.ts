@@ -183,36 +183,45 @@ function applyOneAsMark(
   // dispatch below triggers a deco rebuild that already finds the
   // metadata in place; reversing the order would race the ghost
   // render against the metadata write.
+  //
+  // Wrap both writes in one Yjs transaction with the 'mark-action'
+  // origin so Cmd+Z restores the proposal's PM mark and Y.Map entry
+  // as a single undo step — matching accept/reject in markActions.ts.
+  // Without this, Cmd+Z would only undo the PM half and a re-attempt
+  // would hit an empty Y.Map (the same divergence we hit before
+  // labelling accept/reject).
   const marksMap = ydoc.getMap<StoredMark>('marks')
-  marksMap.set(proposal.id, {
-    kind: 'insert',
-    by: AGENT_ID,
-    quote: anchor,
-    content: proposal.content,
-    status: 'pending',
-    at: new Date().toISOString(),
-    sourceSlug: proposal.sourceSlug,
-    sourceLabel: proposal.sourceLabel,
-    sourceQuote: proposal.sourceQuote,
-    proposedAt: new Date(proposal.proposedAt).toISOString(),
-  } as StoredMark)
+  ydoc.transact(() => {
+    marksMap.set(proposal.id, {
+      kind: 'insert',
+      by: AGENT_ID,
+      quote: anchor,
+      content: proposal.content,
+      status: 'pending',
+      at: new Date().toISOString(),
+      sourceSlug: proposal.sourceSlug,
+      sourceLabel: proposal.sourceLabel,
+      sourceQuote: proposal.sourceQuote,
+      proposedAt: new Date(proposal.proposedAt).toISOString(),
+    } as StoredMark)
 
-  // Mark stamp on the anchor range — PM doc itself is unchanged. The
-  // server's reconciliation guardrail sees only a metadata-shape
-  // update on existing text, treats it as canonical, and doesn't
-  // revert (the failure mode that motivated this revert from the
-  // PM-tree-insert model).
-  view.dispatch(
-    view.state.tr.addMark(
-      range.from,
-      range.to,
-      suggestionType.create({
-        id: proposal.id,
-        kind: 'insert',
-        by: AGENT_ID,
-      }),
-    ),
-  )
+    // Mark stamp on the anchor range — PM doc itself is unchanged. The
+    // server's reconciliation guardrail sees only a metadata-shape
+    // update on existing text, treats it as canonical, and doesn't
+    // revert (the failure mode that motivated this revert from the
+    // PM-tree-insert model).
+    view.dispatch(
+      view.state.tr.addMark(
+        range.from,
+        range.to,
+        suggestionType.create({
+          id: proposal.id,
+          kind: 'insert',
+          by: AGENT_ID,
+        }),
+      ),
+    )
+  }, 'mark-action')
 
   return { ok: true, markId: proposal.id }
 }

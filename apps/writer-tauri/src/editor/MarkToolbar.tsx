@@ -82,37 +82,46 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
     const now = new Date().toISOString()
     setLoading(true)
     try {
-      if (mode === 'comment') {
-        const text = input.trim() || '.'
-        const quote = selection!.text
-        // Stamp body + quote on the PM mark so PM undo can restore the
-        // comment intact (single source of truth). Y.Map mirror below
-        // is kept for legacy readers (e.g. DocumentInfoDialog stats);
-        // the popover now reads from the mark itself.
-        if (!stampInlineMark(markId, 'comment', { text, quote })) {
-          setLoading(false)
-          return
+      // PM stamp + Y.Map write share one Yjs transaction with the
+      // 'mark-action' origin so Cmd+Z restores the mark and metadata
+      // together — mirrors accept/reject in markActions.ts.
+      let stamped = false
+      ydoc.transact(() => {
+        if (mode === 'comment') {
+          const text = input.trim() || '.'
+          const quote = selection!.text
+          // Stamp body + quote on the PM mark so PM undo can restore the
+          // comment intact (single source of truth). Y.Map mirror below
+          // is kept for legacy readers (e.g. DocumentInfoDialog stats);
+          // the popover now reads from the mark itself.
+          if (!stampInlineMark(markId, 'comment', { text, quote })) return
+          writeMarkToYMap(markId, {
+            kind: 'comment',
+            by: 'owner',
+            quote,
+            text,
+            ...anchors,
+            at: now,
+          } as StoredMark)
+          stamped = true
+        } else if (mode === 'replace') {
+          const content = input.trim()
+          if (!stampInlineMark(markId, 'replace', { content })) return
+          writeMarkToYMap(markId, {
+            kind: 'replace',
+            by: 'owner',
+            quote: selection!.text,
+            content,
+            status: 'pending',
+            ...anchors,
+            at: now,
+          } as StoredMark)
+          stamped = true
         }
-        writeMarkToYMap(markId, {
-          kind: 'comment',
-          by: 'owner',
-          quote,
-          text,
-          ...anchors,
-          at: now,
-        } as StoredMark)
-      } else if (mode === 'replace') {
-        const content = input.trim()
-        if (!stampInlineMark(markId, 'replace', { content })) { setLoading(false); return }
-        writeMarkToYMap(markId, {
-          kind: 'replace',
-          by: 'owner',
-          quote: selection!.text,
-          content,
-          status: 'pending',
-          ...anchors,
-          at: now,
-        } as StoredMark)
+      }, 'mark-action')
+      if (!stamped) {
+        setLoading(false)
+        return
       }
       reset()
     } catch (err) {
@@ -133,15 +142,23 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
     const now = new Date().toISOString()
     setLoading(true)
     try {
-      if (!stampInlineMark(markId, 'delete')) { setLoading(false); return }
-      writeMarkToYMap(markId, {
-        kind: 'delete',
-        by: 'owner',
-        quote: selection!.text,
-        status: 'pending',
-        ...anchors,
-        at: now,
-      } as StoredMark)
+      let stamped = false
+      ydoc.transact(() => {
+        if (!stampInlineMark(markId, 'delete')) return
+        writeMarkToYMap(markId, {
+          kind: 'delete',
+          by: 'owner',
+          quote: selection!.text,
+          status: 'pending',
+          ...anchors,
+          at: now,
+        } as StoredMark)
+        stamped = true
+      }, 'mark-action')
+      if (!stamped) {
+        setLoading(false)
+        return
+      }
       reset()
     } catch (err) {
       console.error('[mark] create failed', err)
