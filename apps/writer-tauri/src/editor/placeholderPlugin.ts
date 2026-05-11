@@ -50,12 +50,13 @@ function isNodeEmpty(node: PMNode): boolean {
   return false
 }
 
-// Title slot: either the dedicated `title` node (post Stage-6
-// migration) OR a legacy level-1 heading (un-migrated docs). Both are
-// rendered as h1 in the DOM and both occupy the same logical slot at
-// doc[0], so the placeholder plugin treats them interchangeably.
-function isTitleSlot(node: PMNode): boolean {
-  if (node.type.name === 'title') return true
+// Title slot: a level-1 heading at the top of the doc. We tried a
+// dedicated `title` node with `isolating: true` at one point but the
+// server's collab pipeline didn't recognize the new type and reverted
+// every change made inside one — see the revert(title) commit for
+// the full story. Keymap guards in headingKeymap.ts now provide the
+// "physical separation" we were after, without a schema change.
+function isLevel1Heading(node: PMNode): boolean {
   return node.type.name === 'heading' && node.attrs.level === 1
 }
 
@@ -73,10 +74,10 @@ export function createPlaceholderPlugin(opts: PlaceholderOptions) {
             const first = doc.firstChild
             if (!first) return null
 
-            // Title slot: first block is a title node or legacy h1.
+            // Title slot: first block is a level-1 heading.
             let bodyStartIndex = 0
             let bodyStartPos = 0
-            if (isTitleSlot(first)) {
+            if (isLevel1Heading(first)) {
               if (opts.titleText && isNodeEmpty(first)) {
                 decos.push(
                   Decoration.node(0, first.nodeSize, {
