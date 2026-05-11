@@ -47,6 +47,7 @@ import { SlashMenu } from './SlashMenu'
 import { proofMarkPlugins } from './proofMarkSchemas'
 import { titleGuardPlugin } from './titleGuardPlugin'
 import { useEditorViewStore } from '@/state/editorViewStore'
+import { EditorFooter } from '@/components/EditorFooter'
 
 interface Props {
   handle: CollabHandle | null
@@ -307,8 +308,8 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   }, [handle])
 
   return (
-    <div className="relative h-full w-full">
-      <div className="h-full w-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div className="relative flex h-full w-full flex-col">
+      <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="mx-auto max-w-2xl px-8 pt-12 pb-12">
           {isDaily ? (
             <div
@@ -322,6 +323,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
           <UnlinkedNotes view={pmView} parentSlug={handle?.slug ?? null} />
         </div>
       </div>
+      <EditorFooter view={pmView} />
       {handle && <MarkToolbar selection={selection} ydoc={handle.ydoc} onDismiss={() => setSelection(null)} />}
       <LinkHoverBar />
       <SlashMenu />
