@@ -22,7 +22,7 @@ export const MessageRow = React.memo(function MessageRow({
   if (turn.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-3xl bg-accent px-3.5 py-2 text-sm">{turn.content}</div>
+        <div className="max-w-[85%] rounded-3xl bg-accent px-3 py-2 text-sm">{turn.content}</div>
       </div>
     )
   }

@@ -521,7 +521,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       </div>
 
       <div
-        className="flex shrink-0 items-stretch bg-background px-2 shadow-[inset_0_-1px_0_var(--border)]"
+        className="flex shrink-0 items-stretch border-b border-border bg-background px-2"
         style={{ height: 'var(--header-h)' }}
       >
         <ThreadTabs

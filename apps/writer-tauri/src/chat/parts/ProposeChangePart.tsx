@@ -43,9 +43,9 @@ export function ProposeChangePart({ part }: { part: ToolPartType }) {
             </div>
           )}
           {!isComment && replacement && (
-            <div className="pl-[18px] text-foreground">→ {replacement}</div>
+            <div className="pl-4 text-foreground">→ {replacement}</div>
           )}
-          {isComment && replacement && <div className="pl-[18px] text-foreground">{replacement}</div>}
+          {isComment && replacement && <div className="pl-4 text-foreground">{replacement}</div>}
           {input.rationale && (
             <div className="border-t border-border pt-1.5 mt-1.5 text-muted-foreground">
               {input.rationale}
