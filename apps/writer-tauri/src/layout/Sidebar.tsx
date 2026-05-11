@@ -251,11 +251,11 @@ export function AppSidebar() {
                     <DropdownMenuSeparator />
                   </>
                 )}
-                <DropdownMenuItem>
+                <DropdownMenuItem disabled title="Coming soon">
                   <IconSettings size={16} stroke={1.5} />
                   Settings
                 </DropdownMenuItem>
-                <DropdownMenuItem>
+                <DropdownMenuItem disabled title="Coming soon">
                   <IconFilter size={16} stroke={1.5} />
                   Filter
                 </DropdownMenuItem>
