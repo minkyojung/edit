@@ -45,6 +45,7 @@ import { MarkToolbar } from './MarkToolbar'
 import { LinkHoverBar } from './LinkHoverBar'
 import { SlashMenu } from './SlashMenu'
 import { proofMarkPlugins } from './proofMarkSchemas'
+import { titleGuardPlugin } from './titleGuardPlugin'
 import { useEditorViewStore } from '@/state/editorViewStore'
 
 interface Props {
@@ -171,6 +172,14 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       // re-accept" by leaving Y.Map gone after the undo.
       .use(clipboard)
       .use(collab)
+      // Registered after collab so remote (y-prosemirror) transactions
+      // already carry the ySyncPluginKey meta by the time our filter
+      // inspects them — see editor/titleGuardPlugin.ts for the
+      // structural rationale. The filter refuses any local change
+      // that would remove or downgrade the first h1 (the title slot),
+      // protecting it from every input path uniformly (keystrokes,
+      // paste, slash commands, programmatic dispatch).
+      .use(titleGuardPlugin)
       .use(proofMarkPlugins)
       .use(createMarkDecoPlugin(ydoc))
       .use(createMarkCleanupPlugin(ydoc))

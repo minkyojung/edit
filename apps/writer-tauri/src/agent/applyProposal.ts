@@ -83,10 +83,22 @@ export function applyProposal(
       if (!parsed || parsed.content.size === 0) {
         return { ok: false, reason: 'parsed_empty' }
       }
+      // Preserve the title slot — non-daily docs always carry a
+      // level-1 heading as their first child (see lib/docTitle.ts),
+      // and the title-guard plugin refuses any transaction that
+      // would remove it. We splice the proposal AFTER the first h1
+      // instead of replacing from position 0. Daily docs (no leading
+      // h1) and pre-migration docs (paragraph first) fall back to
+      // replacing the whole body, preserving their existing behavior.
+      const firstChild = doc.firstChild
+      const insertFrom =
+        firstChild && firstChild.type.name === 'heading' && firstChild.attrs.level === 1
+          ? firstChild.nodeSize
+          : 0
       const markId = crypto.randomUUID()
       ydoc.transact(() => {
         view.dispatch(
-          view.state.tr.replaceWith(0, doc.content.size, parsed.content),
+          view.state.tr.replaceWith(insertFrom, doc.content.size, parsed.content),
         )
       }, 'mark-action')
       return { ok: true, markId }

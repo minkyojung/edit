@@ -29,6 +29,7 @@
 
 import type { EditorView } from '@milkdown/kit/prose/view'
 import * as Y from 'yjs'
+import { SYSTEM_DOC_INIT_META } from '@/editor/titleGuardPlugin'
 
 interface NormalizeOptions {
   /** Catalog title (knownDoc.title) — used as a fallback source for
@@ -117,6 +118,7 @@ function ensureFirstChildIsH1(
     ? headingType.create({ level: 1 }, view.state.schema.text(titleText))
     : headingType.create({ level: 1 })
   tr.insert(0, h1)
+  tr.setMeta(SYSTEM_DOC_INIT_META, true)
   view.dispatch(tr)
 }
 
@@ -146,7 +148,9 @@ function dedupConsecutiveLeadingH1s(view: EditorView): void {
   for (let i = 1; i < dropEnd; i += 1) {
     to += doc.child(i).nodeSize
   }
-  view.dispatch(view.state.tr.delete(from, to))
+  const tr = view.state.tr.delete(from, to)
+  tr.setMeta(SYSTEM_DOC_INIT_META, true)
+  view.dispatch(tr)
 }
 
 // Daily docs: strip any leading h1 whose text is the daily's date
@@ -168,6 +172,7 @@ function cleanupDailyDateHeading(view: EditorView, date: string): void {
   if (endRemovePos === 0) return
   const tr = view.state.tr.delete(0, endRemovePos)
   tr.setMeta('addToHistory', false)
+  tr.setMeta(SYSTEM_DOC_INIT_META, true)
   view.dispatch(tr)
 }
 
