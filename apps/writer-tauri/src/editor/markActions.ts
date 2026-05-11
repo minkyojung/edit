@@ -118,7 +118,9 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
       notify.markCantRead()
       return false
     }
-    tr.replaceWith(from, to, view.state.schema.text(content))
+    const replacement = view.state.schema.text(content)
+    tr.replaceWith(from, to, replacement)
+    provenanceRange = { from, to: from + replacement.nodeSize }
   } else if (kind === 'insert') {
     // Anchor model (proof-sdk pattern): the mark sits on an existing
     // user word; the proposed content lives only in Y.Map.content and
@@ -157,27 +159,6 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     return false
   }
 
-  // Stamp proofProvenance on the inserted range in the same
-  // transaction so the breadcrumb appears atomically with the
-  // suggestion strip. Skipped for delete (no inserted range) and
-  // when the schema doesn't expose the mark (older client) — Y.Map
-  // cleanup below still runs in those cases.
-  const provenanceType = view.state.schema.marks.proofProvenance
-  if (provenanceType && provenanceRange && stored) {
-    tr.addMark(
-      provenanceRange.from,
-      provenanceRange.to,
-      provenanceType.create({
-        id: markId,
-        sourceSlug: stored.sourceSlug ?? null,
-        sourceLabel: stored.sourceLabel ?? null,
-        sourceQuote: stored.sourceQuote ?? null,
-        proposedAt: stored.proposedAt ?? stored.at ?? null,
-        acceptedAt: new Date().toISOString(),
-        model: stored.model ?? null,
-      }),
-    )
-  }
   // Wrap the PM dispatch + Y.Map cleanup in one Yjs transaction with
   // a tracked origin so they sit in the same undo step. Without this,
   // Cmd+Z would only undo the PM half (proofSuggestion mark restored)
@@ -191,6 +172,39 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     view.dispatch(tr)
     marksMap.delete(markId)
   }, 'mark-action')
+
+  // Stamp proofProvenance in a SEPARATE Yjs transaction after the
+  // doc-content commit lands. Earlier attempts that bundled both into
+  // a single tr triggered the proof-server reconciliation's drift
+  // detection on `replace` accepts and the body was reverted to
+  // empty — same projection-wipe pattern proof-sdk's collab.ts
+  // calls out (`recordProjectionWipeWarning`). Splitting separates
+  // the user-edit step (server sees a normal text mutation) from
+  // the metadata-only step (server sees a mark addition over text
+  // that already exists in its projection), each cleanly matching
+  // one of the proof-sdk edit modes server-side. Cmd+Z costs one
+  // extra keystroke for the mark layer, which is acceptable for
+  // the safety win.
+  const provenanceType = view.state.schema.marks.proofProvenance
+  if (provenanceType && provenanceRange && stored) {
+    ydoc.transact(() => {
+      const tr2 = view.state.tr
+      tr2.addMark(
+        provenanceRange.from,
+        provenanceRange.to,
+        provenanceType.create({
+          id: markId,
+          sourceSlug: stored.sourceSlug ?? null,
+          sourceLabel: stored.sourceLabel ?? null,
+          sourceQuote: stored.sourceQuote ?? null,
+          proposedAt: stored.proposedAt ?? stored.at ?? null,
+          acceptedAt: new Date().toISOString(),
+          model: stored.model ?? null,
+        }),
+      )
+      view.dispatch(tr2)
+    }, 'mark-action')
+  }
   return true
 }
 
