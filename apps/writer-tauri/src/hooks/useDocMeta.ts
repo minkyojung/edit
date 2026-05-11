@@ -7,7 +7,6 @@
 // localStorage for sidebar listings without forcing every doc to
 // open its provider.
 
-import { useEffect, useState } from 'react'
 import * as Y from 'yjs'
 
 // `wiki:*` = LLM-synthesized memory pages (Karpathy split: Sources
@@ -39,40 +38,9 @@ function readMeta(ydoc: Y.Doc): DocMeta {
   return { type, date, parentId, createdAt }
 }
 
-export function useDocMeta(ydoc: Y.Doc | null): {
-  meta: DocMeta
-  setMeta: (next: Partial<DocMeta>) => void
-} {
-  const [meta, setLocalMeta] = useState<DocMeta>({ type: 'writing' })
-
-  useEffect(() => {
-    if (!ydoc) {
-      setLocalMeta({ type: 'writing' })
-      return
-    }
-    setLocalMeta(readMeta(ydoc))
-    const map = ydoc.getMap(META_KEY)
-    const onChange = () => setLocalMeta(readMeta(ydoc))
-    map.observe(onChange)
-    return () => map.unobserve(onChange)
-  }, [ydoc])
-
-  const setMeta = (next: Partial<DocMeta>) => {
-    if (!ydoc) return
-    const map = ydoc.getMap(META_KEY)
-    ydoc.transact(() => {
-      if (next.type !== undefined) map.set('type', next.type)
-      if (next.date !== undefined) map.set('date', next.date)
-      if (next.parentId !== undefined) map.set('parentId', next.parentId)
-      if (next.createdAt !== undefined) map.set('createdAt', next.createdAt)
-    })
-  }
-
-  return { meta, setMeta }
-}
-
-/** One-shot read used during bootstrap, before React state is wired
- * up. Returns the same shape as useDocMeta's `meta`. */
+/** One-shot read used during bootstrap, before any reactive
+ * subscription is needed. Returns the same shape every consumer
+ * would have observed via a live subscription if one existed. */
 export function readDocMeta(ydoc: Y.Doc): DocMeta {
   return readMeta(ydoc)
 }
