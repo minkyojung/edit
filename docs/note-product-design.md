@@ -26,7 +26,7 @@
 ### 근거 (proof-sdk 관점)
 
 - proof-sdk 의 핵심 가치 = **글자 단위 provenance + 인라인 suggestion 마크**. 이 둘은 한 페이지에 마크가 dense 하게 누적될 때 가치가 폭발 → 장문 글쓰기 모델(A)이 최적.
-- proof-sdk agent-bridge 는 "1 문서 = 1 에이전트 세션" 매핑. plan.md §13 의 persistent session + prompt caching 정책은 **장문 전제**에서만 비용/속도가 맞음. atomic note 다발(C)은 세션이 잘게 쪼개져 cache 이점 손실.
+- proof-sdk agent-bridge 는 "1 문서 = 1 에이전트 세션" 매핑. archive/plan.md §13 의 persistent session + prompt caching 정책은 **장문 전제**에서만 비용/속도가 맞음. atomic note 다발(C)은 세션이 잘게 쪼개져 cache 이점 손실.
 - B (Notion 블록/DB) 는 proof-sdk markdown 문서 모델과 mismatch — 채택하지 않음.
 
 ### 두 영역의 분리
@@ -64,7 +64,7 @@
 | Wiki (LLM synthesize) | belief/entity/episode | Memory-writer (사용자 review 가능) |
 | CLAUDE.md (schema) | system prompt + Memory-writer 정책 | — |
 
-→ plan.md §4 (Memory Writer 파이프라인) 가 사실상 카파시 패턴의 proof-sdk 위 구현체.
+→ archive/plan.md §4 (Memory Writer 파이프라인) 가 사실상 카파시 패턴의 proof-sdk 위 구현체.
 
 ### 백링크 (자동 생성됨)
 
@@ -74,7 +74,7 @@ proof-sdk provenance `by: "ai:memory-writer from doc:{noteId} rev:{n}"` 가 글�
 
 - **v1** (PR 1~6, 노트 제품 골격): 백링크 UI 없음. 데이터에는 박힐 뿐 (위키가 아직 비어 보여줄 게 적음).
 - **v1.5** (v1 끝나고 P3 시작 전): **forward-only** — 위키 항목 옆 "출처: [글 A, 글 B]" 표시. 가벼운 추가.
-- **P3** (Memory-writer 정식 구현, plan.md §9 P3): 양방향 백링크 + reverse index 풀 구현. 위키가 자동으로 자라기 시작.
+- **P3** (Memory-writer 정식 구현, archive/plan.md §9 P3): 양방향 백링크 + reverse index 풀 구현. 위키가 자동으로 자라기 시작.
 
 → **결정: 백링크 UI 는 v1.5 부터 (forward-only)**.
 
@@ -751,7 +751,7 @@ Provider 중첩 0, prop drilling 0.
 **추정**: 1-2일.
 
 #### PR G — Bulk Actions + Comment 마크 + 호버 액션
-roadmap.md PR 1/2/3 흡수:
+archive/roadmap.md PR 1/2/3 흡수:
 - shadcn 정리 + 마크 카운터 chip + Bulk accept/reject
 - proofComment 마크 + popover + 추가/해결 흐름
 - 마크 hover 액션 바 (React Portal)

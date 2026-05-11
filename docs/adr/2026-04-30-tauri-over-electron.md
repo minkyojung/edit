@@ -65,4 +65,4 @@
 ## Related
 
 - `docs/adr/2026-04-30-path-b-rewrite.md` (에디터 Path B 결정 — 동시 진행)
-- `docs/path-b-rewrite-plan.md` (실행 계획)
+- `docs/archive/path-b-rewrite-plan.md` (실행 계획)
