@@ -11,7 +11,7 @@
 // connection.
 
 import { useEffect, useRef } from 'react'
-import { IconPlus, IconX } from '@tabler/icons-react'
+import { IconFileDescription, IconPlus, IconX } from '@tabler/icons-react'
 import { Tabs as TabsPrimitive } from 'radix-ui'
 import {
   Tooltip,
@@ -68,7 +68,7 @@ export function EditorTabs() {
     >
       <TabsPrimitive.List
         aria-label="Documents"
-        className="flex flex-1 items-stretch gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex flex-1 items-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {openSlugs.map((slug) => (
           <DocTab
@@ -134,14 +134,18 @@ function DocTab({
     <TabsPrimitive.Trigger
       value={slug}
       className={cn(
-        'group flex max-w-[200px] shrink-0 items-center gap-1.5 px-1.5 text-sm font-medium transition-colors',
-        'border-b',
-        'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+        'group relative flex w-48 shrink-0 items-center gap-1.5 pl-2 pr-1.5 text-left text-sm font-medium transition-colors',
+        'outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40',
         isActive
-          ? 'border-foreground text-foreground'
-          : 'border-transparent text-muted-foreground hover:text-foreground',
+          // Active tab paints in the canvas color. The header's bottom
+          // hairline is an inset box-shadow on the parent, so the tab's
+          // background naturally paints over the 1px strip beneath it
+          // and the divider disappears under the active tab.
+          ? 'bg-background text-foreground'
+          : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground',
       )}
     >
+      <IconFileDescription size={14} stroke={1.75} className="shrink-0 opacity-70" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {showClose && (
         <span

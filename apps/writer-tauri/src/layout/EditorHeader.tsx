@@ -56,7 +56,7 @@ export function EditorHeader({
   const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
   return (
     <div
-      className="flex shrink-0 items-center border-b border-border bg-card"
+      className="flex shrink-0 items-center bg-card shadow-[inset_0_-1px_0_var(--border)]"
       style={{ height: 'var(--header-h)' }}
     >
       {showSidebarTrigger && (
@@ -69,7 +69,7 @@ export function EditorHeader({
           <SidebarTrigger />
         </>
       )}
-      <div className="flex min-w-0 flex-1 items-stretch px-2">
+      <div className="flex min-w-0 flex-1 items-stretch self-stretch">
         <EditorTabs />
       </div>
       {statusLabel && (
