@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppToaster } from '@/components/AppToaster'
 import { EngineGate } from '@/components/EngineGate'
+import { BootGate } from '@/components/BootGate'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { MarkPopoverLayer } from '@/components/agent/MarkPopoverLayer'
@@ -22,7 +23,9 @@ export function App() {
     <ThemeProvider defaultPalette="charcoal" storageKey="writer-palette">
       <TooltipProvider delayDuration={200}>
         <EngineGate>
-          <AppContent />
+          <BootGate>
+            <AppContent />
+          </BootGate>
         </EngineGate>
         <AppToaster />
       </TooltipProvider>
@@ -30,18 +33,15 @@ export function App() {
   )
 }
 
-// Everything inside EngineGate — bootstrap calls hit the proof-server
-// the moment they fire, so we keep them gated behind a healthy engine.
+// Everything inside EngineGate + BootGate — by the time this renders,
+// proof-server is healthy AND the catalog bootstrap has finished, so
+// React subscriptions land on a stable store and the sidebar's first
+// paint already reflects the user's real data.
 function AppContent() {
-  const bootstrap = useDocsStore((s) => s.bootstrap)
   const activeSlug = useDocsStore((s) => s.activeSlug)
   const handles = useDocsStore((s) => s.handles)
   const statusMap = useDocsStore((s) => s.status)
   const [view, setView] = useState<EditorView | null>(null)
-
-  useEffect(() => {
-    bootstrap()
-  }, [bootstrap])
 
   // Karpathy "Memories" idle pass — runs ingest in the background
   // after the user has been quiet for `idleMinutes`. Mounted once
