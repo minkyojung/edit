@@ -90,14 +90,23 @@ export function createPlaceholderPlugin(opts: PlaceholderOptions) {
             }
 
             // Body slot: shown only when the entire body content is a
-            // single empty/ZWS block. Avoids painting a hint on top
-            // of real content elsewhere in the body.
+            // single empty/ZWS paragraph. The paragraph guard matters
+            // because container nodes (ordered_list, bullet_list,
+            // task_list, blockquote, code_block) render their own
+            // chrome (markers, checkboxes, bars, code background) at
+            // the same coordinates the placeholder would paint —
+            // without the guard the hint visually collides with that
+            // chrome the moment the user types "1. ", "- ", "[ ] ",
+            // "> ", or "```".
             if (
               doc.childCount === bodyStartIndex + 1 &&
               bodyStartIndex < doc.childCount
             ) {
               const bodyFirst = doc.child(bodyStartIndex)
-              if (isNodeEmpty(bodyFirst)) {
+              if (
+                bodyFirst.type.name === 'paragraph' &&
+                isNodeEmpty(bodyFirst)
+              ) {
                 decos.push(
                   Decoration.node(
                     bodyStartPos,
