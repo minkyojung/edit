@@ -143,7 +143,7 @@ function dedupConsecutiveLeadingH1s(view: EditorView): void {
   }
   if (dropEnd === 1) return
 
-  let from = first.nodeSize
+  const from = first.nodeSize
   let to = from
   for (let i = 1; i < dropEnd; i += 1) {
     to += doc.child(i).nodeSize
