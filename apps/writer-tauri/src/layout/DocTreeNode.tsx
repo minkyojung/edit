@@ -7,6 +7,13 @@
 // actions) and recurses into children when expanded. Expansion
 // state lives in docsStore.expandedDocSlugs so fold/unfold survives
 // reload.
+//
+// Click contract (mirrors Cursor's file tree):
+//   • chevron click  → toggle expand only (no selection change)
+//   • label click    → open the doc only (no expand toggle)
+// The chevron is an overlay button positioned over the row's left
+// padding, with stopPropagation so its click doesn't bubble to the
+// SidebarMenuButton's onClick.
 
 import { type MouseEvent } from 'react'
 import {
@@ -18,6 +25,11 @@ import {
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
+import {
+  SidebarMenuAction,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from '@/components/ui/sidebar'
 
 interface DocTreeNodeProps {
   doc: KnownDoc
@@ -38,6 +50,7 @@ interface DocTreeNodeProps {
 const INDENT_PX = 14
 const LINE_PX = 8
 const ROW_BASE_PAD_LEFT = 6
+const CHEVRON_GUTTER_PX = 22 // chevron (16) + gap to label (6)
 
 export function DocTreeNode({
   doc,
@@ -56,102 +69,98 @@ export function DocTreeNode({
   const isExpanded = expandedDocSlugs.includes(doc.slug)
   const isActive = doc.slug === activeSlug
 
+  const chevronLeftPx = depth * INDENT_PX + ROW_BASE_PAD_LEFT
+  const rowPadLeftPx = chevronLeftPx + CHEVRON_GUTTER_PX
+
   return (
-    <li>
-      <div
-        className={cn(
-          'group flex w-full items-center gap-1 pr-1.5 py-1.5 text-[13px] font-medium transition-colors',
-          isActive
-            ? 'bg-accent text-foreground'
-            : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-        )}
-        style={{ paddingLeft: `${depth * INDENT_PX + ROW_BASE_PAD_LEFT}px` }}
+    <SidebarMenuItem>
+      {/* Leading: expand toggle (or file glyph). Overlaid over the
+          SidebarMenuButton's left padding so the row's hover/active
+          background still bleeds wall-to-wall behind it. */}
+      {hasChildren ? (
+        <button
+          type="button"
+          onClick={(e: MouseEvent) => {
+            e.stopPropagation()
+            toggleExpanded(doc.slug)
+          }}
+          aria-label={isExpanded ? 'Collapse' : 'Expand'}
+          className={cn(
+            'absolute z-10 flex h-4 w-4 items-center justify-center rounded-sm',
+            'text-sidebar-foreground/60 hover:text-sidebar-accent-foreground',
+            'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
+          )}
+          style={{
+            left: `${chevronLeftPx}px`,
+            top: '50%',
+            transform: 'translateY(-50%)',
+          }}
+        >
+          <IconChevronRight
+            size={12}
+            stroke={1.75}
+            className="transition-transform"
+            style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+          />
+        </button>
+      ) : (
+        <span
+          aria-hidden
+          className="absolute z-10 flex h-4 w-4 items-center justify-center text-sidebar-foreground/60"
+          style={{
+            left: `${chevronLeftPx}px`,
+            top: '50%',
+            transform: 'translateY(-50%)',
+          }}
+        >
+          <IconFileDescription size={12} stroke={1.75} />
+        </span>
+      )}
+
+      <SidebarMenuButton
+        isActive={isActive}
+        onClick={() => onSelect(doc.slug)}
+        size="sm"
+        className="text-[13px] font-medium pr-14"
+        style={{ paddingLeft: `${rowPadLeftPx}px` }}
       >
-        {hasChildren ? (
-          <button
-            type="button"
-            onClick={(e: MouseEvent) => {
-              e.stopPropagation()
-              toggleExpanded(doc.slug)
-            }}
-            aria-label={isExpanded ? 'Collapse' : 'Expand'}
-            className={cn(
-              'flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:text-foreground',
-              'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-            )}
-          >
-            <IconChevronRight
-              size={12}
-              stroke={1.75}
-              className="transition-transform"
-              style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-            />
-          </button>
-        ) : (
-          <span
-            className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground"
-            aria-hidden
-          >
-            <IconFileDescription size={12} stroke={1.75} />
-          </span>
-        )}
+        <span>{label}</span>
+      </SidebarMenuButton>
 
-        <button
-          type="button"
-          onClick={() => onSelect(doc.slug)}
-          className={cn(
-            'flex min-w-0 flex-1 items-center gap-2 text-left outline-none',
-            'focus-visible:ring-2 focus-visible:ring-ring/40 rounded',
-          )}
-        >
-          <span className="truncate">{label}</span>
-        </button>
+      <SidebarMenuAction
+        showOnHover
+        aria-label="Archive note"
+        title="Archive"
+        onClick={(e: MouseEvent) => {
+          e.stopPropagation()
+          onArchive(doc.slug)
+        }}
+        className="right-7 size-5"
+      >
+        <IconArchive size={10} stroke={1.75} />
+      </SidebarMenuAction>
 
-        <button
-          type="button"
-          onClick={(e: MouseEvent) => {
-            e.stopPropagation()
-            onArchive(doc.slug)
-          }}
-          aria-label="Archive note"
-          title="Archive"
-          className={cn(
-            'flex h-4 w-4 shrink-0 items-center justify-center rounded',
-            'opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground',
-            'group-hover:opacity-60 focus-visible:opacity-100',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          )}
-        >
-          <IconArchive size={10} stroke={1.75} />
-        </button>
-
-        <button
-          type="button"
-          onClick={(e: MouseEvent) => {
-            e.stopPropagation()
-            onAddChild(doc.slug)
-            if (!isExpanded) toggleExpanded(doc.slug)
-          }}
-          aria-label="Add note"
-          className={cn(
-            'flex h-4 w-4 shrink-0 items-center justify-center rounded',
-            'opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground',
-            'group-hover:opacity-60 focus-visible:opacity-100',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          )}
-        >
-          <IconPlus size={10} stroke={2} />
-        </button>
-      </div>
+      <SidebarMenuAction
+        showOnHover
+        aria-label="Add note"
+        onClick={(e: MouseEvent) => {
+          e.stopPropagation()
+          onAddChild(doc.slug)
+          if (!isExpanded) toggleExpanded(doc.slug)
+        }}
+        className="size-5"
+      >
+        <IconPlus size={10} stroke={2} />
+      </SidebarMenuAction>
 
       {isExpanded && hasChildren && (
         <ul className="relative flex flex-col gap-0.5 pt-0.5">
           {/* Vertical guide line for this node's children. Drawn as an
-              absolute span so each child <li> can keep full sidebar
+              absolute span so each child row can keep full sidebar
               width and its hover background bleeds wall-to-wall. */}
           <span
             aria-hidden
-            className="absolute top-0.5 bottom-0 w-px bg-border"
+            className="absolute top-0.5 bottom-0 w-px bg-sidebar-border"
             style={{ left: `${depth * INDENT_PX + LINE_PX}px` }}
           />
           {children.map((child) => (
@@ -168,7 +177,7 @@ export function DocTreeNode({
           ))}
         </ul>
       )}
-    </li>
+    </SidebarMenuItem>
   )
 }
 
