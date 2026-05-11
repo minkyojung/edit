@@ -65,10 +65,16 @@ export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
     (i: number, next: ThreadMeta) => {
       if (!ydoc) return
       const yThreads = ydoc.getArray<ThreadMeta>(THREADS_KEY)
+      // 'chat-meta' origin keeps thread metadata edits out of the
+      // doc-body UndoManager. The UndoManager wires its trackedOrigins
+      // around content (ySyncPluginKey, mark-action, mark-cleanup);
+      // sending Cmd+Z through thread renames / archives / model
+      // switches would feel arbitrary to the user and could revert
+      // chat state that no longer matches the current run.
       ydoc.transact(() => {
         yThreads.delete(i, 1)
         yThreads.insert(i, [next])
-      })
+      }, 'chat-meta')
     },
     [ydoc],
   )
@@ -91,7 +97,7 @@ export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
         model: DEFAULT_CHAT_MODEL,
         effort: DEFAULT_CHAT_EFFORT,
       }
-      ydoc.transact(() => yThreads.push([meta]))
+      ydoc.transact(() => yThreads.push([meta]), 'chat-meta')
       return meta.id
     },
     [ydoc],

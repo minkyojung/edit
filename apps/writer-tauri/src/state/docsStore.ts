@@ -537,9 +537,14 @@ export const useDocsStore = create<DocsState>()(
             })
             const ytext = handle.ydoc.getText('title')
             if (ytext.toString().length === 0) {
+              // 'doc-init' origin — seeding the title of a freshly-
+              // created wikilink child is a system action, not
+              // something the user should be able to Cmd+Z (they'd
+              // end up with an empty-titled doc that the catalog
+              // still references).
               handle.ydoc.transact(() => {
                 ytext.insert(0, title)
-              })
+              }, 'doc-init')
             }
           }
           return created.slug
@@ -828,9 +833,11 @@ function collectDescendantSlugs(docs: KnownDoc[], root: string): string[] {
 function scrubDailyTitleArtifacts(ydoc: Y.Doc): void {
   const ytext = ydoc.getText('title')
   if (ytext.length === 0) return
+  // 'doc-init' origin — system cleanup of legacy artefacts; not a
+  // user action and not undo-able by design.
   ydoc.transact(() => {
     ytext.delete(0, ytext.length)
-  })
+  }, 'doc-init')
 }
 
 /** Internal: lazy-create a handle for `slug`, register it, and route

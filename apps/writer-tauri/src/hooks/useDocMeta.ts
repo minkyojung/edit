@@ -78,14 +78,16 @@ export function readDocMeta(ydoc: Y.Doc): DocMeta {
 }
 
 /** One-shot write — used by migration / first-create paths in the
- * store where we only need to seed values once. */
+ * store where we only need to seed values once. 'doc-init' origin
+ * marks this as a system-driven write so the UndoManager skips it
+ * (we don't want Cmd+Z to undo "this doc was created"). */
 export function writeDocMeta(ydoc: Y.Doc, next: Partial<DocMeta>): void {
   const map = ydoc.getMap(META_KEY)
   ydoc.transact(() => {
     if (next.type !== undefined) map.set('type', next.type)
     if (next.date !== undefined) map.set('date', next.date)
     if (next.createdAt !== undefined) map.set('createdAt', next.createdAt)
-  })
+  }, 'doc-init')
 }
 
 /** Format a Date as YYYY-MM-DD in local time. We pin to local because

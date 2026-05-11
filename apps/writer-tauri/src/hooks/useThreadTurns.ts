@@ -43,7 +43,12 @@ export function useThreadTurns(
     (turn) => {
       if (!ydoc || !threadId) return
       const yTurns = ydoc.getArray<ChatTurn>(turnsKey(threadId))
-      ydoc.transact(() => yTurns.push([turn]))
+      // 'chat-meta' origin — same rationale as useThreads' replaceAt:
+      // chat turns aren't part of the document undo stack. Sending
+      // Cmd+Z through a sent message would feel like the wrong action
+      // got an undo handle. The UndoManager's trackedOrigins skips
+      // this origin by design.
+      ydoc.transact(() => yTurns.push([turn]), 'chat-meta')
     },
     [ydoc, threadId],
   )
@@ -54,7 +59,7 @@ export function useThreadTurns(
       const yTurns = ydoc.getArray<ChatTurn>(turnsKey(threadId))
       const idx = yTurns.toArray().findIndex((t) => t.id === id)
       if (idx < 0) return
-      ydoc.transact(() => yTurns.delete(idx, 1))
+      ydoc.transact(() => yTurns.delete(idx, 1), 'chat-meta')
     },
     [ydoc, threadId],
   )
