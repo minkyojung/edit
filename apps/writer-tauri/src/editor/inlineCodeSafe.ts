@@ -14,15 +14,9 @@ import { $prose } from '@milkdown/kit/utils'
 import { keymap } from '@milkdown/kit/prose/keymap'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { Command } from '@milkdown/kit/prose/state'
+import { ALL_PROOF_MARK_NAMES } from './markTypes'
 
-const PROOF_MARK_NAMES = new Set([
-  'proofSuggestion',
-  'proofComment',
-  'proofFlagged',
-  'proofApproved',
-  'proofAuthored',
-  'proofProvenance',
-])
+const PROOF_MARK_NAMES: ReadonlySet<string> = new Set(ALL_PROOF_MARK_NAMES)
 
 const INLINE_CODE_MARK_NAME = 'inlineCode'
 

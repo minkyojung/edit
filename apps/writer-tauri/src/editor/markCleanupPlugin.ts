@@ -10,9 +10,10 @@ import * as Y from 'yjs'
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
 import type { StoredMark } from '../hooks/useCollabDoc'
+import { INTERACTIVE_PROOF_MARK_NAMES } from './markTypes'
 
 const key = new PluginKey('markCleanup')
-const TRACKED_TYPES = new Set(['proofSuggestion', 'proofComment', 'proofFlagged', 'proofApproved'])
+const TRACKED_TYPES: ReadonlySet<string> = new Set(INTERACTIVE_PROOF_MARK_NAMES)
 
 export function createMarkCleanupPlugin(ydoc: Y.Doc) {
   return $prose(

@@ -13,6 +13,7 @@ import * as Y from 'yjs'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import type { StoredMark } from '../hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
+import { ANCHOR_PROOF_MARK_NAMES } from './markTypes'
 
 /** Position of the slot directly after the top-level block that
  * contains `pos`. acceptMark uses this to materialize INSERT
@@ -31,14 +32,12 @@ interface FoundAnchor {
   mark: Mark
 }
 
-const ANCHOR_SCHEMAS = ['proofSuggestion', 'proofComment'] as const
-
 function findInlineAnchor(
   view: EditorView,
   markId: string,
   schemaName?: string,
 ): FoundAnchor | null {
-  const targets = schemaName ? [schemaName] : ANCHOR_SCHEMAS
+  const targets = schemaName ? [schemaName] : ANCHOR_PROOF_MARK_NAMES
   let result: FoundAnchor | null = null
   view.state.doc.descendants((node, pos) => {
     if (result) return false
