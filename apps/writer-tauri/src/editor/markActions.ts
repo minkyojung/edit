@@ -11,7 +11,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import type { Mark, Node } from '@milkdown/kit/prose/model'
 import * as Y from 'yjs'
 import { useEditorViewStore } from '@/state/editorViewStore'
-import type { StoredMark } from '../hooks/useCollabDoc'
+import type { AuthoredMeta, StoredMark } from '../hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
 import { ANCHOR_PROOF_MARK_NAMES } from './markTypes'
 
@@ -106,10 +106,10 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
   const content = stored?.content ?? null
 
   const tr = view.state.tr
-  // Inserted-content range for the post-dispatch provenance addMark.
+  // Inserted-content range for the same-tr authored addMark.
   // Set by the kind branches that produce a stable region of new text;
   // delete leaves it null (there is no inserted text to breadcrumb).
-  let provenanceRange: { from: number; to: number } | null = null
+  let authoredRange: { from: number; to: number } | null = null
   if (kind === 'delete') {
     tr.delete(from, to)
   } else if (kind === 'replace') {
@@ -119,7 +119,7 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     }
     const replacement = view.state.schema.text(content)
     tr.replaceWith(from, to, replacement)
-    provenanceRange = { from, to: from + replacement.nodeSize }
+    authoredRange = { from, to: from + replacement.nodeSize }
   } else if (kind === 'insert') {
     // Anchor model (proof-sdk pattern): the mark sits on an existing
     // user word; the proposed content lives only in Y.Map.content and
@@ -153,57 +153,58 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     const fragmentSize = parsed.content.size
     if (suggestionType) tr.removeMark(from, to, suggestionType)
     tr.insert(insertPos, parsed.content)
-    provenanceRange = { from: insertPos, to: insertPos + fragmentSize }
+    authoredRange = { from: insertPos, to: insertPos + fragmentSize }
   } else {
     return false
   }
 
-  // Wrap the PM dispatch + Y.Map cleanup in one Yjs transaction with
-  // a tracked origin so they sit in the same undo step. Without this,
-  // Cmd+Z would only undo the PM half (proofSuggestion mark restored)
-  // and the marks map would stay deleted — a re-accept would then hit
-  // an empty Y.Map and bail with markCantRead. The 'mark-action'
-  // origin is whitelisted in the UndoManager configured by
-  // MilkdownEditor; PM transactions run inside view.dispatch already
-  // open their own ydoc.transact, but Yjs collapses nested transacts
-  // so origin/scope stay consistent across both ops.
+  // Stamp proofAuthored on the just-inserted/replaced range in the
+  // SAME tr, matching proof-sdk's web client (marks.ts applyMarkdown
+  // Replace / applyMarkdownInsert pattern). We used to stamp our own
+  // proofProvenance mark in a separate ydoc.transact to dodge a
+  // drift-revert: the server's HTML→markdown projection didn't know
+  // proofProvenance, so a same-tr stamp produced a malformed
+  // projection that fired recordProjectionWipeWarning and reverted
+  // the accept. proofAuthored is one of the seven kinds the server
+  // canonicalizes, so the projection round-trips cleanly and the
+  // single-tr pattern (the proof-sdk convention) becomes safe again.
+  const authoredType = view.state.schema.marks.proofAuthored
+  if (authoredType && authoredRange) {
+    tr.addMark(
+      authoredRange.from,
+      authoredRange.to,
+      authoredType.create({
+        id: markId,
+        by: stored?.by ?? 'ai:unknown',
+      }),
+    )
+  }
+
+  // Single ydoc.transact wrapping the PM dispatch + Y.Map writes so
+  // Cmd+Z restores text change, suggestion-mark removal, authored-
+  // mark stamp, and BOTH map entries (marks deletion + authoredMeta
+  // set) atomically. Extra metadata that used to ride on
+  // proofProvenance attrs now lives in Y.Map('authoredMeta'), keyed
+  // by the same mark id — Yjs treats this map as opaque binary so
+  // the server's drift detector never sees these fields and the
+  // single-tr safety holds regardless of how rich the breadcrumb
+  // grows over time.
+  const authoredMetaMap = ydoc.getMap<AuthoredMeta>('authoredMeta')
   ydoc.transact(() => {
     view.dispatch(tr)
     marksMap.delete(markId)
+    if (authoredRange && stored) {
+      authoredMetaMap.set(markId, {
+        sourceSlug: stored.sourceSlug,
+        sourceLabel: stored.sourceLabel,
+        sourceQuote: stored.sourceQuote,
+        createdAt: stored.createdAt ?? stored.proposedAt ?? stored.at,
+        acceptedAt: new Date().toISOString(),
+        model: stored.model,
+      })
+    }
   }, 'mark-action')
 
-  // Stamp proofProvenance in a SEPARATE Yjs transaction after the
-  // doc-content commit lands. Earlier attempts that bundled both into
-  // a single tr triggered the proof-server reconciliation's drift
-  // detection on `replace` accepts and the body was reverted to
-  // empty — same projection-wipe pattern proof-sdk's collab.ts
-  // calls out (`recordProjectionWipeWarning`). Splitting separates
-  // the user-edit step (server sees a normal text mutation) from
-  // the metadata-only step (server sees a mark addition over text
-  // that already exists in its projection), each cleanly matching
-  // one of the proof-sdk edit modes server-side. Cmd+Z costs one
-  // extra keystroke for the mark layer, which is acceptable for
-  // the safety win.
-  const provenanceType = view.state.schema.marks.proofProvenance
-  if (provenanceType && provenanceRange && stored) {
-    ydoc.transact(() => {
-      const tr2 = view.state.tr
-      tr2.addMark(
-        provenanceRange.from,
-        provenanceRange.to,
-        provenanceType.create({
-          id: markId,
-          sourceSlug: stored.sourceSlug ?? null,
-          sourceLabel: stored.sourceLabel ?? null,
-          sourceQuote: stored.sourceQuote ?? null,
-          createdAt: stored.createdAt ?? stored.proposedAt ?? stored.at ?? null,
-          acceptedAt: new Date().toISOString(),
-          model: stored.model ?? null,
-        }),
-      )
-      view.dispatch(tr2)
-    }, 'mark-action')
-  }
   return true
 }
 
