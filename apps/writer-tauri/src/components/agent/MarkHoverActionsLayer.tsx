@@ -33,6 +33,8 @@ import {
 import { MARK_HOVER_EVENT, type MarkHoverDetail } from '@/editor/markHoverPlugin'
 import { getMarkEndRect } from '@/editor/markHoverGeometry'
 import { useMarks } from '@/hooks/useMarks'
+import { formatActor } from '@/lib/formatActor'
+import { formatRelative } from '@/lib/formatRelative'
 
 interface Props {
   editorView: EditorView | null
@@ -124,6 +126,12 @@ export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
   // it's there, the toolbar still works when it isn't.
   const stored = marks[activeMarkId]
   const rationale = stored?.note?.trim() || null
+  const actor = formatActor(stored?.by)
+  const proposedAt = stored?.at ? formatRelative(stored.at) : null
+  // Author label sits to the left of the action buttons. We hide
+  // the whole row when neither piece of metadata is known so the
+  // bar stays clean for marks that were seeded without provenance.
+  const hasMeta = actor !== null || proposedAt !== null
 
   function handleAccept() {
     if (!editorView || !ydoc || !activeMarkId) return
@@ -150,7 +158,17 @@ export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
       {rationale && (
         <p className="text-[12.5px] leading-snug text-foreground/85">{rationale}</p>
       )}
-      <div className="flex items-center justify-end gap-1">
+      <div className="flex items-center justify-between gap-2">
+        {hasMeta ? (
+          <span className="flex min-w-0 items-center gap-1 text-[11px] leading-none text-muted-foreground opacity-80">
+            {actor && <span className="truncate">{actor}</span>}
+            {actor && proposedAt && <span className="opacity-40">·</span>}
+            {proposedAt && <span className="truncate">{proposedAt}</span>}
+          </span>
+        ) : (
+          <span aria-hidden />
+        )}
+        <span className="flex items-center gap-1">
         <button
           type="button"
           onMouseDown={(e) => e.preventDefault()}
@@ -172,6 +190,7 @@ export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
           <IconCheck size={12} stroke={2.25} />
           Keep
         </button>
+        </span>
       </div>
     </div>
   )

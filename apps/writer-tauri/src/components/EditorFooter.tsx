@@ -31,6 +31,8 @@ import { IconSparklesFilled, IconUserFilled } from '@tabler/icons-react'
 import { useEditorFooter, type HoveredMark } from '@/stores/editorFooter'
 import { subscribeToPmDocChanges } from '@/editor/docVersionPlugin'
 import { UnlinkedNotes } from '@/editor/UnlinkedNotes'
+import { formatRelative } from '@/lib/formatRelative'
+import { formatModel } from '@/lib/formatModel'
 
 interface Props {
   view: EditorView | null
@@ -143,33 +145,3 @@ function computeStats(view: EditorView): { totalChars: number; aiChars: number }
   return { totalChars: total, aiChars: ai }
 }
 
-/** Short relative-time string ("3m ago", "2h ago", "yesterday"). The
- * footer is glanceable; we deliberately keep precision low to avoid
- * the "exact timestamp on hover, summary in footer" pattern's split
- * brain. */
-function formatRelative(iso: string): string {
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return 'recently'
-  const diff = Date.now() - then
-  const m = Math.round(diff / 60_000)
-  if (m < 1) return 'just now'
-  if (m < 60) return `${m}m ago`
-  const h = Math.round(m / 60)
-  if (h < 24) return `${h}h ago`
-  const d = Math.round(h / 24)
-  if (d === 1) return 'yesterday'
-  if (d < 7) return `${d}d ago`
-  const w = Math.round(d / 7)
-  if (w < 5) return `${w}w ago`
-  // Past ~5 weeks the absolute date is more useful than "12w ago".
-  return new Date(iso).toLocaleDateString()
-}
-
-/** Trim our internal model identifiers into the user-facing labels
- * the rest of the app uses ('claude-haiku' → 'haiku', etc). */
-function formatModel(model: string): string {
-  if (model.includes('haiku')) return 'haiku'
-  if (model.includes('sonnet')) return 'sonnet'
-  if (model.includes('opus')) return 'opus'
-  return model
-}

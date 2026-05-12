@@ -40,12 +40,14 @@ import { useChatRuns } from '@/stores/chatRuns'
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 const DOC_CHAR_CAP = 60_000
 
-// Maps Anthropic model id → the agent identifier we stamp on marks created
-// from a turn. The agent id is read by mark UI to attribute proposals.
+// Maps Anthropic model id → the agent identifier we stamp on marks
+// created from a turn. The agent id is read by mark UI to attribute
+// proposals. We pass the full id through (e.g. "claude-haiku-4-5-
+// 20251001") instead of collapsing it to the family name, so display
+// surfaces can render the family AND the version. formatModel in
+// lib/formatModel.ts handles the user-facing collapse.
 function agentIdForModel(model: string): string {
-  if (model.includes('haiku')) return 'ai:claude-haiku'
-  if (model.includes('opus')) return 'ai:claude-opus'
-  return 'ai:claude-sonnet'
+  return `ai:${model}`
 }
 
 export interface ToolCallRecord {
