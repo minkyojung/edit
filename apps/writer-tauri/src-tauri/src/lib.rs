@@ -24,20 +24,60 @@ struct ProofServerPgid(AtomicI32);
 // kill, the rest are no-ops. Cmd+Q routes through RunEvent::Exit, the X
 // button routes through WindowEvent::Destroyed — both call this so a
 // proof-server zombie can't be left holding port 4000 between launches.
+//
+// Two-phase shutdown so proof-sdk's debounced persistDoc timers actually
+// get a chance to flush before the process dies: send SIGTERM, then poll
+// for the process group to exit (proof-sdk's graceful path completes in
+// ~1–2s typically, with a 5s hard timeout of its own). If the wait
+// itself times out we fall back to the prior force-kill behavior so a
+// hung child can never leave port 4000 occupied. Without this wait the
+// SIGTERM and the SIGKILL fired in the same millisecond, which raced
+// the graceful path and reliably ate the last 250ms of edits on every
+// Cmd+Q — see proof-sdk/server/index.ts:registerGracefulShutdown for
+// the receiving side.
+const GRACEFUL_SHUTDOWN_BUDGET: Duration = Duration::from_secs(6);
+const GRACEFUL_SHUTDOWN_POLL: Duration = Duration::from_millis(100);
+
 fn shutdown_proof_server(app: &tauri::AppHandle) {
     let pgid = app
         .state::<ProofServerPgid>()
         .0
         .swap(0, Ordering::SeqCst);
-    if pgid > 0 {
-        #[cfg(unix)]
-        unsafe {
-            libc::kill(-pgid, libc::SIGTERM);
-        }
-        // Belt-and-suspenders: catches grandchildren that escaped the group.
-        kill_port_holders(4000);
-        println!("[proof-server] killed at shutdown (pgid={pgid})");
+    if pgid <= 0 {
+        return;
     }
+
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-pgid, libc::SIGTERM);
+    }
+    println!("[proof-server] SIGTERM sent (pgid={pgid}), awaiting graceful exit");
+
+    let deadline = std::time::Instant::now() + GRACEFUL_SHUTDOWN_BUDGET;
+    while std::time::Instant::now() < deadline {
+        // kill(pgid, 0) probes whether the process group still exists
+        // without delivering a signal — returns 0 while alive, -1 with
+        // ESRCH once every process in the group has reaped. We poll
+        // rather than waitpid() because Tauri spawned the child with
+        // setsid() and dropped its Child handle (see ProofServerPgid),
+        // so there's no waitpid-able handle to block on.
+        #[cfg(unix)]
+        let still_alive = unsafe { libc::kill(-pgid, 0) == 0 };
+        #[cfg(not(unix))]
+        let still_alive = true;
+        if !still_alive {
+            println!("[proof-server] graceful exit observed (pgid={pgid})");
+            return;
+        }
+        thread::sleep(GRACEFUL_SHUTDOWN_POLL);
+    }
+
+    // Hard fallback: child didn't honour SIGTERM within the budget.
+    // Belt-and-suspenders kills anything still holding port 4000 (and
+    // catches grandchildren that escaped the process group along the
+    // way) so the next spawn can bind cleanly.
+    println!("[proof-server] graceful exit timed out, force-killing (pgid={pgid})");
+    kill_port_holders(4000);
 }
 
 #[tauri::command]
