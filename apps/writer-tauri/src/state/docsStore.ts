@@ -25,7 +25,7 @@ import { proofClient, waitUntilReady } from '@/lib/proofClient'
 import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
-import { readH1TitleFromFragment } from '@/lib/docTitle'
+import { deriveLabel } from '@/lib/docLabel'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
 // Server-side title sentinel for newly-created writing docs. The
@@ -921,15 +921,16 @@ function seedMetaFromCatalog(handle: CollabHandle, known: KnownDoc | undefined):
   })
 }
 
-/** Mirror title changes back into knownDocs.title so closed docs still
- * show their real label in the sidebar / palette / etc. Reads the
- * title from the body's first level-1 heading — the single source of
- * truth post Stage-2 title fold.
+/** Mirror the doc's derived label back into knownDocs.title so closed
+ * docs still show their real label in the sidebar / palette / etc.
+ * The label comes from the body's first non-empty block (see
+ * lib/docLabel.ts), not specifically the first h1.
  *
- * Gated by provider sync — before the first sync, the local state is
- * incomplete and reading "" would clobber the persisted cache (which
- * often holds the title set at create time). After sync, the ydoc
- * state is authoritative and we mirror every change.
+ * Gated by provider sync to avoid the pre-bootstrap window where the
+ * local state is incomplete. Once sync completes, the ydoc state is
+ * authoritative and every change — including transitions to empty —
+ * is mirrored straight through. Display callers fall back to
+ * 'Untitled' in one place (hooks/useDocLabel.ts).
  *
  * Daily entries are skipped: their label comes from `meta.date`, not
  * the body. Cleanup happens implicitly when handle.ydoc.destroy() in
@@ -949,23 +950,13 @@ function installTitleMirror(
 
   const fragment = handle.ydoc.getXmlFragment('prosemirror')
   const sync = () => {
-    const next = readH1TitleFromFragment(fragment)
-    // Never overwrite the cached title with an empty value. Two
-    // different scenarios produce next === '' and we can't tell
-    // them apart from this side:
-    //   (a) Legitimate: the user emptied the title h1
-    //   (b) Pre-bootstrap: the migration hasn't run yet (e.g. the
-    //       observer fired before provider.synced got far enough)
-    // Treating both as "clear the cache" loses (b)'s real label.
-    // Preserve the last known good value instead; (a) accepts a
-    // tiny staleness on close, while (b) keeps its label.
-    if (next.length === 0) return
+    const next = deriveLabel(fragment)
     set((s) => {
       const idx = s.knownDocs.findIndex((d) => d.slug === slug)
       if (idx < 0) return s
       const cur = s.knownDocs[idx]
       if (cur.type === 'daily') return s
-      if (cur.title === next) return s
+      if ((cur.title ?? '') === next) return s
       const list = [...s.knownDocs]
       list[idx] = { ...cur, title: next }
       return { knownDocs: list }
@@ -973,7 +964,7 @@ function installTitleMirror(
   }
   const start = () => {
     sync()
-    // observeDeep so edits inside the h1's text children update the
+    // observeDeep so edits inside block text children update the
     // cache, not just structural changes at the fragment root.
     fragment.observeDeep(sync)
   }
