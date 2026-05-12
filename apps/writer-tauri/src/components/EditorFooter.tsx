@@ -27,6 +27,7 @@
 
 import { useEffect, useMemo } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
+import { IconSparklesFilled, IconUserFilled } from '@tabler/icons-react'
 import { useEditorFooter, type HoveredMark } from '@/stores/editorFooter'
 import { subscribeToPmDocChanges } from '@/editor/docVersionPlugin'
 import { UnlinkedNotes } from '@/editor/UnlinkedNotes'
@@ -68,7 +69,7 @@ export function EditorFooter({ view, parentSlug }: Props) {
     <div
       className="
         flex shrink-0 items-center justify-between gap-3
-        border-t border-border/50
+        bg-card shadow-[inset_0_1px_0_var(--border)]
         px-4 py-1
         text-[12px] leading-none text-muted-foreground
         select-none
@@ -87,10 +88,16 @@ function DefaultContent({ aiPct, totalChars }: { aiPct: number; totalChars: numb
   }
   const humanPct = 100 - aiPct
   return (
-    <span>
-      <span className="opacity-80">{humanPct}% you</span>
-      <span className="opacity-40"> · </span>
-      <span className="opacity-80">{aiPct}% AI</span>
+    <span className="inline-flex items-center gap-1.5">
+      <span className="inline-flex items-center gap-1 opacity-80">
+        <IconUserFilled size={11} />
+        {humanPct}%
+      </span>
+      <span className="opacity-40">·</span>
+      <span className="inline-flex items-center gap-1 opacity-80">
+        <IconSparklesFilled size={11} />
+        {aiPct}%
+      </span>
     </span>
   )
 }

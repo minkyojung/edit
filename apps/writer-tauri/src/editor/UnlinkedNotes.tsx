@@ -91,7 +91,7 @@ export function UnlinkedNotes({ view, parentSlug }: Props) {
           )}
         >
           <span>Unlinked ({unlinked.length})</span>
-          <IconChevronRight size={10} stroke={2} className="opacity-50" />
+          <IconChevronRight size={11} stroke={2} />
         </button>
       </PopoverTrigger>
       <PopoverContent
