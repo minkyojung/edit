@@ -892,7 +892,33 @@ async function ensureHandle(
     return
   }
   set((s) => ({ handles: { ...s.handles, [slug]: handle } }))
+  seedMetaFromCatalog(handle, get().knownDocs.find((d) => d.slug === slug))
   installTitleMirror(slug, handle, set, get)
+}
+
+/** Mirror catalog-level type/date into the doc's Y.Map('meta') the
+ * first time we open the handle, so meta becomes the single source of
+ * truth that everything else (normalize, footer, hover popovers) can
+ * read without racing the bootstrap.
+ *
+ * No-op when meta.type already exists — that's the steady state after
+ * the first seed (or for docs that were created by an already-meta-
+ * aware build). Skips silently when catalog has no entry, since there
+ * is nothing authoritative to copy.
+ *
+ * createdAt is deliberately NOT seeded here — back-stamping a fresh
+ * timestamp on a doc that was created last week would lie about its
+ * age. Create paths set createdAt themselves at the real creation
+ * moment; legacy docs simply have an empty createdAt forever, which
+ * is correct. */
+function seedMetaFromCatalog(handle: CollabHandle, known: KnownDoc | undefined): void {
+  if (!known) return
+  const metaMap = handle.ydoc.getMap('meta')
+  if (metaMap.get('type')) return
+  writeDocMeta(handle.ydoc, {
+    type: known.type,
+    date: known.type === 'daily' ? known.date : undefined,
+  })
 }
 
 /** Mirror title changes back into knownDocs.title so closed docs still

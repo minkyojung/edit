@@ -45,6 +45,7 @@ import { LinkHoverBar } from './LinkHoverBar'
 import { SlashMenu } from './SlashMenu'
 import { proofMarkPlugins } from './proofMarkSchemas'
 import { titleGuardPlugin } from './titleGuardPlugin'
+import { dailyGuardPlugin } from './dailyGuardPlugin'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { EditorFooter } from '@/components/EditorFooter'
 
@@ -105,25 +106,40 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   //   - daily:     strip the legacy "# YYYY-MM-DD" heading some old
   //                builds seeded into the body, clear stale Y.Text
   // Idempotent via meta.titleNormalizedV2 — see lib/docTitle.ts.
+  //
+  // Gated on BOTH provider.synced AND meta.type being populated:
+  // normalize's internal branch (daily vs non-daily) reads meta.type,
+  // so firing it before meta is seeded misclassifies daily docs as
+  // writing and erroneously inserts an empty h1 at the top. The
+  // catalog → meta seed in docsStore.ensureHandle covers the common
+  // case; the meta.observe here is a belt-and-suspenders for any
+  // path that opens a handle without going through ensureHandle
+  // (or for legacy docs whose meta arrives via provider sync rather
+  // than the local seed).
   useEffect(() => {
     if (!handle || !pmView) return
     const ydoc = handle.ydoc
     const provider = handle.provider
     const view = pmView
+    const metaMap = ydoc.getMap('meta')
     const opts = {
       fallbackTitle: isDaily ? undefined : knownDoc?.title,
       date: isDaily ? knownDoc?.date : undefined,
     }
     let ran = false
-    const run = () => {
+    const tryRun = () => {
       if (ran) return
+      if (!provider.isSynced) return
+      if (!metaMap.get('type')) return
       ran = true
       normalizeTitleStructure(ydoc, view, opts)
     }
-    if (provider.isSynced) run()
-    else provider.on('synced', run)
+    tryRun()
+    provider.on('synced', tryRun)
+    metaMap.observe(tryRun)
     return () => {
-      provider.off('synced', run)
+      provider.off('synced', tryRun)
+      metaMap.unobserve(tryRun)
     }
   }, [handle, pmView, isDaily, knownDoc?.title, knownDoc?.date])
 
@@ -175,12 +191,14 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(collab)
       // Registered after collab so remote (y-prosemirror) transactions
       // already carry the ySyncPluginKey meta by the time our filter
-      // inspects them — see editor/titleGuardPlugin.ts for the
-      // structural rationale. The filter refuses any local change
-      // that would remove or downgrade the first h1 (the title slot),
-      // protecting it from every input path uniformly (keystrokes,
-      // paste, slash commands, programmatic dispatch).
-      .use(titleGuardPlugin)
+      // inspects them. Daily and writing/wiki docs have inverted
+      // structural invariants — daily's date lives outside the editor
+      // and its body must NOT lead with an h1; writing/wiki carry
+      // their title as the body's first h1. Each invariant gets its
+      // own filter plugin, mutually exclusive per editor instance.
+      // See editor/titleGuardPlugin.ts and editor/dailyGuardPlugin.ts
+      // for the symmetric rationale.
+      .use(isDaily ? dailyGuardPlugin : titleGuardPlugin)
       .use(proofMarkPlugins)
       .use(createMarkDecoPlugin(ydoc))
       .use(createMarkCleanupPlugin(ydoc))
