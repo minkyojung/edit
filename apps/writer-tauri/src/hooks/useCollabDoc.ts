@@ -43,6 +43,9 @@ export interface StoredMark {
   sourceQuote?: string
   sourceSlug?: string
   sourceLabel?: string
+  createdAt?: string
+  /** @deprecated Legacy alias for createdAt — older entries may still
+   * carry this key. Readers fall through createdAt → proposedAt → at. */
   proposedAt?: string
   acceptedAt?: string
   model?: string

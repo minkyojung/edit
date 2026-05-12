@@ -202,7 +202,7 @@ function applyOneAsMark(
       sourceSlug: proposal.sourceSlug,
       sourceLabel: proposal.sourceLabel,
       sourceQuote: proposal.sourceQuote,
-      proposedAt: new Date(proposal.proposedAt).toISOString(),
+      createdAt: new Date(proposal.proposedAt).toISOString(),
     } as StoredMark)
 
     // Mark stamp on the anchor range — PM doc itself is unchanged. The

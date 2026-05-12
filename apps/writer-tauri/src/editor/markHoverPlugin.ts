@@ -64,7 +64,7 @@ function extractHover(found: FoundMark): HoveredMark {
     sourceLabel: ds.sourceLabel ?? null,
     sourceSlug: ds.sourceSlug ?? null,
     acceptedAt: ds.acceptedAt ?? null,
-    proposedAt: ds.proposedAt ?? null,
+    createdAt: ds.createdAt ?? ds.proposedAt ?? null,
     model: ds.model ?? null,
     suggestionType:
       // The decoration class encodes the suggestion kind — pull it out

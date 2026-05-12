@@ -61,7 +61,7 @@ export const proofSuggestionAttr = $markAttr('proofSuggestion', () => ({
   sourceSlug: {},
   sourceLabel: {},
   sourceQuote: {},
-  proposedAt: {},
+  createdAt: {},
 }))
 
 export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
@@ -74,9 +74,12 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
   // matches the codebase invariant the deco/cleanup plugins already
   // assume.
   //
-  // All source* / proposedAt default to null so older docs whose marks
+  // All source* / createdAt default to null so older docs whose marks
   // were stamped before this schema change still parse cleanly; the
   // popover treats missing breadcrumb as "no source available."
+  // createdAt aligns with proof-sdk's field name (we used to call it
+  // proposedAt — parseDOM/parseMarkdown still accept the legacy key
+  // so older snapshots round-trip without losing the timestamp).
   attrs: {
     id: { default: null },
     kind: { default: 'replace' },
@@ -84,7 +87,7 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
     sourceSlug: { default: null },
     sourceLabel: { default: null },
     sourceQuote: { default: null },
-    proposedAt: { default: null },
+    createdAt: { default: null },
   },
   inclusive: false,
   spanning: true,
@@ -99,7 +102,8 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
           sourceSlug: dom.getAttribute('data-source-slug'),
           sourceLabel: dom.getAttribute('data-source-label'),
           sourceQuote: dom.getAttribute('data-source-quote'),
-          proposedAt: dom.getAttribute('data-proposed-at'),
+          createdAt:
+            dom.getAttribute('data-created-at') ?? dom.getAttribute('data-proposed-at'),
         }
       },
     },
@@ -113,7 +117,7 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
     if (mark.attrs.sourceSlug) domAttrs['data-source-slug'] = String(mark.attrs.sourceSlug)
     if (mark.attrs.sourceLabel) domAttrs['data-source-label'] = String(mark.attrs.sourceLabel)
     if (mark.attrs.sourceQuote) domAttrs['data-source-quote'] = String(mark.attrs.sourceQuote)
-    if (mark.attrs.proposedAt) domAttrs['data-proposed-at'] = String(mark.attrs.proposedAt)
+    if (mark.attrs.createdAt) domAttrs['data-created-at'] = String(mark.attrs.createdAt)
     return ['span', domAttrs, 0]
   },
   parseMarkdown: {
@@ -128,7 +132,7 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
         sourceSlug: attrs.sourceSlug ?? null,
         sourceLabel: attrs.sourceLabel ?? null,
         sourceQuote: attrs.sourceQuote ?? null,
-        proposedAt: attrs.proposedAt ?? null,
+        createdAt: attrs.createdAt ?? attrs.proposedAt ?? null,
       })
       state.next(proofNode.children || [])
       state.closeMark(markType)
@@ -144,7 +148,7 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
         sourceSlug: mark.attrs.sourceSlug ?? null,
         sourceLabel: mark.attrs.sourceLabel ?? null,
         sourceQuote: mark.attrs.sourceQuote ?? null,
-        proposedAt: mark.attrs.proposedAt ?? null,
+        createdAt: mark.attrs.createdAt ?? null,
       })
     },
   },
@@ -402,7 +406,7 @@ export const proofProvenanceSchema = $markSchema('proofProvenance', () => ({
     sourceSlug: { default: null },
     sourceLabel: { default: null },
     sourceQuote: { default: null },
-    proposedAt: { default: null },
+    createdAt: { default: null },
     acceptedAt: { default: null },
     model: { default: null },
   },
@@ -416,7 +420,8 @@ export const proofProvenanceSchema = $markSchema('proofProvenance', () => ({
         sourceSlug: dom.getAttribute('data-source-slug'),
         sourceLabel: dom.getAttribute('data-source-label'),
         sourceQuote: dom.getAttribute('data-source-quote'),
-        proposedAt: dom.getAttribute('data-proposed-at'),
+        createdAt:
+          dom.getAttribute('data-created-at') ?? dom.getAttribute('data-proposed-at'),
         acceptedAt: dom.getAttribute('data-accepted-at'),
         model: dom.getAttribute('data-model'),
       }),
@@ -428,7 +433,7 @@ export const proofProvenanceSchema = $markSchema('proofProvenance', () => ({
     if (mark.attrs.sourceSlug) domAttrs['data-source-slug'] = String(mark.attrs.sourceSlug)
     if (mark.attrs.sourceLabel) domAttrs['data-source-label'] = String(mark.attrs.sourceLabel)
     if (mark.attrs.sourceQuote) domAttrs['data-source-quote'] = String(mark.attrs.sourceQuote)
-    if (mark.attrs.proposedAt) domAttrs['data-proposed-at'] = String(mark.attrs.proposedAt)
+    if (mark.attrs.createdAt) domAttrs['data-created-at'] = String(mark.attrs.createdAt)
     if (mark.attrs.acceptedAt) domAttrs['data-accepted-at'] = String(mark.attrs.acceptedAt)
     if (mark.attrs.model) domAttrs['data-model'] = String(mark.attrs.model)
     return ['span', domAttrs, 0]
@@ -443,7 +448,7 @@ export const proofProvenanceSchema = $markSchema('proofProvenance', () => ({
         sourceSlug: attrs.sourceSlug ?? null,
         sourceLabel: attrs.sourceLabel ?? null,
         sourceQuote: attrs.sourceQuote ?? null,
-        proposedAt: attrs.proposedAt ?? null,
+        createdAt: attrs.createdAt ?? attrs.proposedAt ?? null,
         acceptedAt: attrs.acceptedAt ?? null,
         model: attrs.model ?? null,
       })
@@ -459,7 +464,7 @@ export const proofProvenanceSchema = $markSchema('proofProvenance', () => ({
         sourceSlug: mark.attrs.sourceSlug ?? null,
         sourceLabel: mark.attrs.sourceLabel ?? null,
         sourceQuote: mark.attrs.sourceQuote ?? null,
-        proposedAt: mark.attrs.proposedAt ?? null,
+        createdAt: mark.attrs.createdAt ?? null,
         acceptedAt: mark.attrs.acceptedAt ?? null,
         model: mark.attrs.model ?? null,
       })

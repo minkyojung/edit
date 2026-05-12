@@ -197,7 +197,7 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
           sourceSlug: stored.sourceSlug ?? null,
           sourceLabel: stored.sourceLabel ?? null,
           sourceQuote: stored.sourceQuote ?? null,
-          proposedAt: stored.proposedAt ?? stored.at ?? null,
+          createdAt: stored.createdAt ?? stored.proposedAt ?? stored.at ?? null,
           acceptedAt: new Date().toISOString(),
           model: stored.model ?? null,
         }),
