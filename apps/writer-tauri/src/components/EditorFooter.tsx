@@ -25,7 +25,7 @@
 // thousand chars at most) this is cheap; if it ever shows up in a
 // profile, we can debounce or maintain an incremental count.
 
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { IconSparklesFilled, IconUserFilled } from '@tabler/icons-react'
 import {
@@ -54,7 +54,12 @@ export function EditorFooter({ view, parentSlug }: Props) {
   // transactions directly.
   useEffect(() => {
     if (!view) {
-      setStats({ totalChars: 0, aiChars: 0, wordCount: 0 })
+      setStats({
+        totalChars: 0,
+        aiChars: 0,
+        wordCount: 0,
+        lastAcceptedAt: null,
+      })
       return
     }
     const recompute = () => setStats(computeStats(view))
@@ -67,9 +72,27 @@ export function EditorFooter({ view, parentSlug }: Props) {
     return Math.round((stats.aiChars / stats.totalChars) * 100)
   }, [stats])
 
+  // Relative-time labels ("3m ago") need to flow even when the user
+  // isn't typing. A 60s tick is plenty: under the 60-minute display
+  // threshold every visible label changes at most once per minute.
+  // The tick is a state bump used only to re-run formatRelative on
+  // lastAcceptedAt — it doesn't trigger any other recompute.
+  const [, setNow] = useState(0)
+  useEffect(() => {
+    const id = window.setInterval(() => setNow((n) => n + 1), 60_000)
+    return () => window.clearInterval(id)
+  }, [])
+
   const content = hovered
     ? <HoverContent hovered={hovered} />
-    : <DefaultContent aiPct={aiPct} totalChars={stats.totalChars} wordCount={stats.wordCount} />
+    : (
+      <DefaultContent
+        aiPct={aiPct}
+        totalChars={stats.totalChars}
+        wordCount={stats.wordCount}
+        lastAcceptedAt={stats.lastAcceptedAt}
+      />
+    )
 
   return (
     <div
@@ -88,19 +111,34 @@ export function EditorFooter({ view, parentSlug }: Props) {
   )
 }
 
+// Hide the "Last accepted" readout once the event is old enough that
+// the label stops being useful — past one hour it's no longer "what
+// AI is doing right now in this doc", and competing for footer real
+// estate hurts more than it helps.
+const LAST_ACCEPTED_VISIBLE_MS = 60 * 60 * 1000
+
 function DefaultContent({
   aiPct,
   totalChars,
   wordCount,
+  lastAcceptedAt,
 }: {
   aiPct: number
   totalChars: number
   wordCount: number
+  lastAcceptedAt: string | null
 }) {
   if (totalChars === 0) {
     return <span className="opacity-60">Empty doc</span>
   }
   const humanPct = 100 - aiPct
+  const lastAcceptedLabel = useMemo(() => {
+    if (!lastAcceptedAt) return null
+    const ms = Date.parse(lastAcceptedAt)
+    if (Number.isNaN(ms)) return null
+    if (Date.now() - ms > LAST_ACCEPTED_VISIBLE_MS) return null
+    return formatRelative(lastAcceptedAt)
+  }, [lastAcceptedAt])
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className="opacity-80">{wordCount.toLocaleString()} words</span>
@@ -114,6 +152,12 @@ function DefaultContent({
         <IconSparklesFilled size={11} />
         {aiPct}%
       </span>
+      {lastAcceptedLabel && (
+        <>
+          <span className="opacity-40">·</span>
+          <span className="opacity-80">Last accepted {lastAcceptedLabel}</span>
+        </>
+      )}
     </span>
   )
 }
@@ -148,12 +192,23 @@ function computeStats(view: EditorView): DocStats {
   let total = 0
   let ai = 0
   let words = 0
+  let latestAcceptMs = 0
+  let latestAcceptIso: string | null = null
   view.state.doc.descendants((node) => {
     if (!node.isText) return true
     const text = node.text ?? ''
     total += text.length
-    if (node.marks.some((m) => m.type.name === 'proofProvenance')) {
+    for (const mark of node.marks) {
+      if (mark.type.name !== 'proofProvenance') continue
       ai += text.length
+      const iso = mark.attrs.acceptedAt as string | null | undefined
+      if (!iso) continue
+      const ms = Date.parse(iso)
+      if (Number.isNaN(ms)) continue
+      if (ms > latestAcceptMs) {
+        latestAcceptMs = ms
+        latestAcceptIso = iso
+      }
     }
     // Whitespace split is good enough for English AND for CJK: in
     // Korean, splitting on whitespace gives the natural "eojeol"
@@ -163,6 +218,11 @@ function computeStats(view: EditorView): DocStats {
     words += text.split(/\s+/).filter(Boolean).length
     return true
   })
-  return { totalChars: total, aiChars: ai, wordCount: words }
+  return {
+    totalChars: total,
+    aiChars: ai,
+    wordCount: words,
+    lastAcceptedAt: latestAcceptIso,
+  }
 }
 

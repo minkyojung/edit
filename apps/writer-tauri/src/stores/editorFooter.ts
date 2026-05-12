@@ -45,6 +45,10 @@ export interface DocStats {
   totalChars: number
   aiChars: number
   wordCount: number
+  /** Newest acceptedAt across all proofProvenance marks in the doc,
+   * or null when nothing AI-authored has been kept. The display
+   * decides whether to render it; this is just the raw fact. */
+  lastAcceptedAt: string | null
 }
 
 interface EditorFooterState {
@@ -56,7 +60,7 @@ interface EditorFooterState {
 
 export const useEditorFooter = create<EditorFooterState>((set) => ({
   hovered: null,
-  stats: { totalChars: 0, aiChars: 0, wordCount: 0 },
+  stats: { totalChars: 0, aiChars: 0, wordCount: 0, lastAcceptedAt: null },
   setHovered: (m) => set({ hovered: m }),
   setStats: (s) => set({ stats: s }),
 }))
