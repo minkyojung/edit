@@ -1,12 +1,10 @@
-// Daily-doc structural guard. Mirror of titleGuardPlugin for the
-// inverted invariant: daily docs render their date label outside the
-// editor (a readonly heading rendered by the layout), so the body
-// MUST NOT lead with an h1. Otherwise the user sees the date label
-// AND an empty h1 stacked on top of the body, with the body
-// placeholder pushed below — a visual regression that previously
-// reached the user when a race in normalizeTitleStructure
-// misclassified a daily as a writing doc and stamped the h1 the
-// non-daily branch normally creates.
+// Daily-doc structural guard. Daily docs render their date label
+// outside the editor (a readonly heading rendered by the layout), so
+// the body MUST NOT lead with an h1. Otherwise the user sees the
+// date label AND an empty h1 stacked on top of the body, with the
+// body placeholder pushed below — a visual regression that
+// previously reached the user when older builds seeded a date h1
+// directly into the body markdown.
 //
 // What this plugin enforces:
 //
@@ -29,10 +27,9 @@
 //      that edge case.
 //
 // What this plugin does NOT do:
-//   - Touch writing/wiki docs. MilkdownEditor picks between
-//     titleGuardPlugin and dailyGuardPlugin based on the catalog's
-//     knownDoc.type, so the two guards are mutually exclusive per
-//     editor instance.
+//   - Touch writing/wiki docs. MilkdownEditor only installs this
+//     guard when the catalog's knownDoc.type is 'daily'; writing
+//     and wiki docs run no body-structure guard at all.
 //   - Block remote updates. The ySyncPluginKey-meta path is allowed
 //     through filterTransaction so collab stays in sync; the
 //     appendTransaction repair is what normalizes any leading h1
@@ -41,7 +38,12 @@
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
 import { ySyncPluginKey } from 'y-prosemirror'
-import { SYSTEM_DOC_INIT_META } from './titleGuardPlugin'
+
+// Transaction meta key stamped on every doc-init normalization tr so
+// the guard's filterTransaction lets the migration through (it would
+// otherwise be rejected for adding/removing the leading h1). Used by
+// lib/docTitle.ts when it dispatches a cleanupDailyDateHeading tr.
+export const SYSTEM_DOC_INIT_META = 'writerDocInit'
 
 const dailyGuardKey = new PluginKey('writer-daily-guard')
 
