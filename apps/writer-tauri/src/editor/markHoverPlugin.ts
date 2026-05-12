@@ -14,17 +14,10 @@
 //                     + .mark-ghost (the multi-line preview widget)
 //   proofComment    → .mark-deco--comment (PM Decoration class)
 //   proofAuthored   → span[data-proof="authored"] (proof-sdk standard
-//                     kind, used for new AI-accepted text). The mark
-//                     carries only id + by on its attrs; the wiki-source
-//                     / accept-time / model breadcrumb lives in
-//                     Y.Map('authoredMeta'), keyed by mark id.
-//   proofProvenance → span[data-proof="provenance"] (legacy custom mark
-//                     still present on older docs). All breadcrumb
-//                     fields ride directly on data-* attrs.
-//
-// Both authored and provenance emit kind='authored' to the store so the
-// footer's hover UX has one path regardless of which inline mark the
-// span actually carries.
+//                     kind for accepted AI text). The mark carries only
+//                     id + by on its attrs; the wiki-source / accept-
+//                     time / model breadcrumb lives in Y.Map('authored
+//                     Meta'), keyed by mark id.
 
 import * as Y from 'yjs'
 import { $prose } from '@milkdown/kit/utils'
@@ -48,14 +41,10 @@ const SUGGESTION_SELECTOR =
   '.mark-deco--replace, .mark-deco--insert, .mark-deco--delete, .mark-ghost'
 const COMMENT_SELECTOR = '.mark-deco--comment'
 const AUTHORED_SELECTOR = 'span[data-proof="authored"]'
-const PROVENANCE_SELECTOR = 'span[data-proof="provenance"]'
 const ANY_MARK_SELECTOR =
-  `${SUGGESTION_SELECTOR}, ${COMMENT_SELECTOR}, ${AUTHORED_SELECTOR}, ${PROVENANCE_SELECTOR}`
+  `${SUGGESTION_SELECTOR}, ${COMMENT_SELECTOR}, ${AUTHORED_SELECTOR}`
 
-// Distinct internal kinds so extractHover can pick the right data
-// source (DOM attrs vs Y.Map lookup); both collapse to 'authored'
-// on the HoveredMark we push to the store.
-type FoundMarkKind = 'suggestion' | 'comment' | 'authored' | 'provenance'
+type FoundMarkKind = 'suggestion' | 'comment' | 'authored'
 
 interface FoundMark {
   el: HTMLElement
@@ -67,7 +56,6 @@ function findAnyMarkEl(target: EventTarget | null): FoundMark | null {
   const el = target.closest<HTMLElement>(ANY_MARK_SELECTOR)
   if (!el) return null
   if (el.matches(AUTHORED_SELECTOR)) return { el, kind: 'authored' }
-  if (el.matches(PROVENANCE_SELECTOR)) return { el, kind: 'provenance' }
   if (el.matches(COMMENT_SELECTOR)) return { el, kind: 'comment' }
   return { el, kind: 'suggestion' }
 }
@@ -81,26 +69,20 @@ function extractHover(found: FoundMark, ydoc: Y.Doc): HoveredMark {
   // proofAuthored carries only id + by on its DOM attrs; the full
   // breadcrumb lives in Y.Map('authoredMeta'), keyed by the same id.
   // Look it up so the footer can render "From X · accepted Y ago ·
-  // model Z" the same way it does for the legacy provenance marks.
+  // model Z".
   const authoredMeta =
     kind === 'authored' && markId
       ? ydoc.getMap<AuthoredMeta>('authoredMeta').get(markId)
       : undefined
 
-  // Footer kind: collapse authored + provenance into a single
-  // 'authored' UX kind. The two inline marks are equivalent from the
-  // hover viewer's perspective — same breadcrumb, same UI.
-  const hoveredKind: HoveredMark['kind'] =
-    kind === 'authored' || kind === 'provenance' ? 'authored' : kind
-
   return {
-    kind: hoveredKind,
+    kind,
     id: markId,
-    sourceLabel: authoredMeta?.sourceLabel ?? ds.sourceLabel ?? null,
-    sourceSlug: authoredMeta?.sourceSlug ?? ds.sourceSlug ?? null,
-    acceptedAt: authoredMeta?.acceptedAt ?? ds.acceptedAt ?? null,
-    createdAt: authoredMeta?.createdAt ?? ds.createdAt ?? ds.proposedAt ?? null,
-    model: authoredMeta?.model ?? ds.model ?? null,
+    sourceLabel: authoredMeta?.sourceLabel ?? null,
+    sourceSlug: authoredMeta?.sourceSlug ?? null,
+    acceptedAt: authoredMeta?.acceptedAt ?? null,
+    createdAt: authoredMeta?.createdAt ?? null,
+    model: authoredMeta?.model ?? null,
     suggestionType:
       // The decoration class encodes the suggestion kind — pull it out
       // for the footer's "Suggested replace from …" copy.
@@ -147,8 +129,8 @@ export function createMarkHoverPlugin(ydoc: Y.Doc) {
               if (!found) return false
 
               const hover = extractHover(found, ydoc)
-              // Dedup key — for suggestion/comment we have an id; for
-              // provenance we use sourceSlug + acceptedAt as a stable
+              // Dedup key — for suggestion/comment/authored we have an
+              // id; the fallback uses sourceSlug + acceptedAt as a stable
               // composite. Falls back to the element identity itself
               // (its outerHTML's hash would be overkill).
               const dedupKey =

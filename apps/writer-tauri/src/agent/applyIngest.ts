@@ -39,7 +39,7 @@ const AGENT_ID = 'ai:wiki-ingest'
 /** Detect whether a mark for this proposal already lives in the doc.
  * Skips re-stamping when a fresh page mount or Yjs sync replay would
  * otherwise duplicate the same anchor mark. Checks both proofSuggestion
- * (pending) and proofProvenance (post-accept) so an accepted-then-
+ * (pending) and proofAuthored (post-accept) so an accepted-then-
  * revisited page doesn't undo the user's accept by stamping fresh. */
 function hasMarkForProposal(doc: Node, proposalId: string): boolean {
   let found = false
@@ -48,7 +48,7 @@ function hasMarkForProposal(doc: Node, proposalId: string): boolean {
     if (!node.isText) return
     for (const m of node.marks) {
       if (
-        (m.type.name === 'proofSuggestion' || m.type.name === 'proofProvenance') &&
+        (m.type.name === 'proofSuggestion' || m.type.name === 'proofAuthored') &&
         m.attrs.id === proposalId
       ) {
         found = true

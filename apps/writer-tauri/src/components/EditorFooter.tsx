@@ -258,18 +258,17 @@ function computeStats(view: EditorView): DocStats {
     const text = node.text ?? ''
     total += text.length
     for (const mark of node.marks) {
-      // Both kinds count toward the AI-authored byte tally: proofAuthored
-      // is the proof-sdk-standard mark stamped by new accepts; proof
-      // Provenance is the legacy custom mark still present on older
-      // docs accepted before the schema migration.
-      if (mark.type.name !== 'proofProvenance' && mark.type.name !== 'proofAuthored') continue
+      if (mark.type.name !== 'proofAuthored') continue
       ai += text.length
-      // acceptedAt is an attr on proofProvenance directly, but it
-      // lives in Y.Map('authoredMeta') for proofAuthored. The "last
-      // accepted" footer readout reads the PM-attr path here; the
-      // Y.Map path is reserved for the hover popover, which has the
-      // ydoc handle. A future pass can lift this into a shared
-      // walker that consults both surfaces.
+      // acceptedAt lives in Y.Map('authoredMeta') for proofAuthored,
+      // not on the mark attrs. computeStats has no ydoc handle and
+      // walks only the PM doc, so the "last accepted" readout is
+      // intentionally left to a future pass that exposes ydoc to
+      // this surface (the hover popover already does the Y.Map
+      // lookup it needs). For now lastAcceptedAt only reflects
+      // any pre-migration provenance marks that still carry the
+      // attr — empty for everything new, which is acceptable until
+      // we lift the walker.
       const iso = mark.attrs.acceptedAt as string | null | undefined
       if (!iso) continue
       const ms = Date.parse(iso)
