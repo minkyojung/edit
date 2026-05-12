@@ -151,10 +151,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   // / escape so the popup can drive its highlight without the
   // editor swallowing the keys.
   const wikilinkKeyHandler = useRef<((key: WikilinkPaletteKey) => boolean) | null>(null)
-  // Status is consumed by AppSidebar's header now — keep the prop in
-  // the public surface (callers still pass it) but suppress the lint
-  // for the deliberately-unused symbol.
-  void status
 
   useEffect(() => {
     if (!rootRef.current || !handle) return
@@ -340,7 +336,12 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
           <div ref={rootRef} />
         </div>
       </div>
-      <EditorFooter view={pmView} parentSlug={handle?.slug ?? null} />
+      <EditorFooter
+        view={pmView}
+        parentSlug={handle?.slug ?? null}
+        status={status}
+        provider={handle?.provider ?? null}
+      />
       {handle && <MarkToolbar selection={selection} ydoc={handle.ydoc} onDismiss={() => setSelection(null)} />}
       <LinkHoverBar />
       <SlashMenu />
