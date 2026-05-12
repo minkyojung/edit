@@ -28,13 +28,6 @@ import { notify } from '@/lib/notify'
 import { deriveLabel } from '@/lib/docLabel'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
-// Server-side title sentinel for newly-created writing docs. The
-// client never displays this directly — knownDocs.title is left
-// undefined so useDocLabel's fallback shows 'Untitled', and the
-// editor body's h1 starts empty so the placeholder plugin shows
-// 'Untitled' there too. proof-server requires a non-empty title at
-// create time, so we send this sentinel to satisfy it.
-const UNTITLED_SENTINEL = 'Untitled'
 
 /** Slim metadata mirrored into localStorage so the sidebar can list
  * docs (especially closed dailies whose ydoc isn't loaded). The
@@ -259,12 +252,10 @@ export const useDocsStore = create<DocsState>()(
         )
         if (!todaysDaily) {
           try {
-            // Zero-width space markdown — proof-server rejects blank
-            // bodies (markdown.trim() check), but we don't want a body
-            // H1 duplicating the date that the title field already
-            // shows. ZWS passes the trim guard while rendering as an
-            // empty paragraph in the editor.
-            const created = await proofClient.createDoc(today, '​')
+            // Empty body — dailies derive their label from meta.date,
+            // so the body must not seed a heading that would duplicate
+            // it. proof-server accepts empty bodies post-relaxation.
+            const created = await proofClient.createDoc(today, '')
             const meta: KnownDoc = { slug: created.slug, type: 'daily', date: today }
             todaysDaily = meta
             set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
@@ -314,7 +305,7 @@ export const useDocsStore = create<DocsState>()(
             )
             if (!exists) {
               try {
-                const created = await proofClient.createDoc(date, '​')
+                const created = await proofClient.createDoc(date, '')
                 const meta: KnownDoc = { slug: created.slug, type: 'daily', date }
                 set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
               } catch (err) {
@@ -432,7 +423,10 @@ export const useDocsStore = create<DocsState>()(
 
       createNew: async () => {
         try {
-          const created = await proofClient.createDoc(UNTITLED_SENTINEL, '​')
+          // Empty title + empty body. The displayed label falls back
+          // to 'Untitled' in useDocLabel; the editor renders the body
+          // placeholder hint. Nothing is seeded into the doc itself.
+          const created = await proofClient.createDoc('', '')
           const meta: KnownDoc = {
             slug: created.slug,
             type: 'writing',
@@ -463,10 +457,9 @@ export const useDocsStore = create<DocsState>()(
         )
         if (!known) {
           try {
-            // ZWS body — see the bootstrap comment above for the
-            // proof-server blank-markdown guard. Title field carries
-            // the date, body stays visually clean.
-            const created = await proofClient.createDoc(targetDate, '​')
+            // Empty body — dailies derive their label from meta.date,
+            // so the body stays visually clean.
+            const created = await proofClient.createDoc(targetDate, '')
             known = { slug: created.slug, type: 'daily', date: targetDate }
             set((s) => ({ knownDocs: [...s.knownDocs, known!] }))
           } catch (err) {
@@ -504,11 +497,9 @@ export const useDocsStore = create<DocsState>()(
         // Wiki pages are roots; user notes don't hang off them.
         if (isWikiDoc(parent)) return null
         try {
-          // ZWS body — non-blank for the proof-server validator while
-          // not seeding an H1 the user would have to clean up. The
-          // h1 will be added (empty) by the editor's first render and
-          // the placeholder plugin paints 'Untitled' on top of it.
-          const created = await proofClient.createDoc(UNTITLED_SENTINEL, '​')
+          // Empty title + empty body. The displayed label falls back
+          // to 'Untitled' in useDocLabel.
+          const created = await proofClient.createDoc('', '')
           const meta: KnownDoc = {
             slug: created.slug,
             type: 'writing',
@@ -543,10 +534,9 @@ export const useDocsStore = create<DocsState>()(
         if (!parent) return null
         if (isWikiDoc(parent)) return null
         try {
-          // ZWS body for the same reason daily / writing creates use
-          // it: proof-server rejects blank markdown but we don't want
-          // a default H1 in the body.
-          const created = await proofClient.createDoc(title, '​')
+          // Empty body — server accepts it and the editor renders the
+          // body placeholder. The title comes from the palette input.
+          const created = await proofClient.createDoc(title, '')
           const meta: KnownDoc = {
             slug: created.slug,
             type: 'writing',

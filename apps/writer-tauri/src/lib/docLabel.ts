@@ -21,12 +21,18 @@ const SKIP_BLOCK_NODES = new Set(['code_block'])
 // List nodes: descend into only the first item so a multi-item list
 // yields "first item" rather than "first item second item ...".
 const LIST_NODES = new Set(['bullet_list', 'ordered_list'])
+// Invisible characters older builds seeded into the body to satisfy
+// proof-server's now-removed non-empty-markdown guard. Strip them so
+// a legacy ZWS-only doc still derives an empty label (and falls back
+// to 'Untitled' in the display layer) rather than rendering an
+// invisible character in the sidebar.
+const INVISIBLE_CHARS_RE = /[​﻿]/g
 
 export function deriveLabel(fragment: Y.XmlFragment): string {
   for (const child of fragment.toArray()) {
     if (!(child instanceof Y.XmlElement)) continue
     if (SKIP_BLOCK_NODES.has(child.nodeName)) continue
-    const text = collectText(child).trim()
+    const text = collectText(child).replace(INVISIBLE_CHARS_RE, '').trim()
     if (text.length === 0) continue
     return text.length > MAX_LEN ? text.slice(0, MAX_LEN) : text
   }

@@ -48,10 +48,9 @@ export interface CollabSession {
 
 export const proofClient = {
   // Uses the agent path (/documents without /api prefix) which skips client version headers.
-  // markdown is required (no default) — proof-server rejects blank bodies, but we don't want
-  // a default '# title' template either, since dailies derive their label from meta.date and
-  // would otherwise duplicate it in the body. Callsites pass ZWS (​) for "intentionally
-  // empty" bodies; writing-with-template paths can pass a literal markdown string.
+  // markdown is required as a parameter but may be empty — proof-server now accepts blank
+  // bodies, so fresh notes pass '' rather than seeding a body template. Callsites that
+  // want a starter template still pass a literal markdown string.
   async createDoc(title: string, markdown: string): Promise<{ slug: string }> {
     return request('/documents', {
       method: 'POST',
