@@ -29,7 +29,7 @@ export interface HoveredMark {
   sourceLabel: string | null
   sourceSlug: string | null
   acceptedAt: string | null
-  proposedAt: string | null
+  createdAt: string | null
   model: string | null
   /** suggestionType (replace / insert / delete) for suggestions;
    * undefined otherwise. */
@@ -44,6 +44,7 @@ export interface HoveredMark {
 export interface DocStats {
   totalChars: number
   aiChars: number
+  wordCount: number
 }
 
 interface EditorFooterState {
@@ -55,7 +56,7 @@ interface EditorFooterState {
 
 export const useEditorFooter = create<EditorFooterState>((set) => ({
   hovered: null,
-  stats: { totalChars: 0, aiChars: 0 },
+  stats: { totalChars: 0, aiChars: 0, wordCount: 0 },
   setHovered: (m) => set({ hovered: m }),
   setStats: (s) => set({ stats: s }),
 }))

@@ -28,7 +28,11 @@
 import { useEffect, useMemo } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { IconSparklesFilled, IconUserFilled } from '@tabler/icons-react'
-import { useEditorFooter, type HoveredMark } from '@/stores/editorFooter'
+import {
+  useEditorFooter,
+  type DocStats,
+  type HoveredMark,
+} from '@/stores/editorFooter'
 import { subscribeToPmDocChanges } from '@/editor/docVersionPlugin'
 import { UnlinkedNotes } from '@/editor/UnlinkedNotes'
 import { formatRelative } from '@/lib/formatRelative'
@@ -50,7 +54,7 @@ export function EditorFooter({ view, parentSlug }: Props) {
   // transactions directly.
   useEffect(() => {
     if (!view) {
-      setStats({ totalChars: 0, aiChars: 0 })
+      setStats({ totalChars: 0, aiChars: 0, wordCount: 0 })
       return
     }
     const recompute = () => setStats(computeStats(view))
@@ -65,7 +69,7 @@ export function EditorFooter({ view, parentSlug }: Props) {
 
   const content = hovered
     ? <HoverContent hovered={hovered} />
-    : <DefaultContent aiPct={aiPct} totalChars={stats.totalChars} />
+    : <DefaultContent aiPct={aiPct} totalChars={stats.totalChars} wordCount={stats.wordCount} />
 
   return (
     <div
@@ -84,13 +88,23 @@ export function EditorFooter({ view, parentSlug }: Props) {
   )
 }
 
-function DefaultContent({ aiPct, totalChars }: { aiPct: number; totalChars: number }) {
+function DefaultContent({
+  aiPct,
+  totalChars,
+  wordCount,
+}: {
+  aiPct: number
+  totalChars: number
+  wordCount: number
+}) {
   if (totalChars === 0) {
     return <span className="opacity-60">Empty doc</span>
   }
   const humanPct = 100 - aiPct
   return (
     <span className="inline-flex items-center gap-1.5">
+      <span className="opacity-80">{wordCount.toLocaleString()} words</span>
+      <span className="opacity-40">·</span>
       <span className="inline-flex items-center gap-1 opacity-80">
         <IconUserFilled size={11} />
         {humanPct}%
@@ -130,18 +144,25 @@ function HoverContent({ hovered }: { hovered: HoveredMark }) {
 
 // ── helpers ───────────────────────────────────────────────────────
 
-function computeStats(view: EditorView): { totalChars: number; aiChars: number } {
+function computeStats(view: EditorView): DocStats {
   let total = 0
   let ai = 0
+  let words = 0
   view.state.doc.descendants((node) => {
     if (!node.isText) return true
-    const len = node.text?.length ?? 0
-    total += len
+    const text = node.text ?? ''
+    total += text.length
     if (node.marks.some((m) => m.type.name === 'proofProvenance')) {
-      ai += len
+      ai += text.length
     }
+    // Whitespace split is good enough for English AND for CJK: in
+    // Korean, splitting on whitespace gives the natural "eojeol"
+    // counting users expect, matching what other editors report.
+    // A morpheme-aware tokenizer would be more precise but is way
+    // beyond what a status-bar number needs.
+    words += text.split(/\s+/).filter(Boolean).length
     return true
   })
-  return { totalChars: total, aiChars: ai }
+  return { totalChars: total, aiChars: ai, wordCount: words }
 }
 
