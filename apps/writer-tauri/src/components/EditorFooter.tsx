@@ -222,7 +222,7 @@ function ConnectionProblem({
 }
 
 function HoverContent({ hovered }: { hovered: HoveredMark }) {
-  if (hovered.kind === 'provenance') {
+  if (hovered.kind === 'authored') {
     const parts: string[] = []
     if (hovered.sourceLabel) parts.push(`From ${hovered.sourceLabel}`)
     if (hovered.acceptedAt) parts.push(formatRelative(hovered.acceptedAt))
@@ -258,8 +258,18 @@ function computeStats(view: EditorView): DocStats {
     const text = node.text ?? ''
     total += text.length
     for (const mark of node.marks) {
-      if (mark.type.name !== 'proofProvenance') continue
+      // Both kinds count toward the AI-authored byte tally: proofAuthored
+      // is the proof-sdk-standard mark stamped by new accepts; proof
+      // Provenance is the legacy custom mark still present on older
+      // docs accepted before the schema migration.
+      if (mark.type.name !== 'proofProvenance' && mark.type.name !== 'proofAuthored') continue
       ai += text.length
+      // acceptedAt is an attr on proofProvenance directly, but it
+      // lives in Y.Map('authoredMeta') for proofAuthored. The "last
+      // accepted" footer readout reads the PM-attr path here; the
+      // Y.Map path is reserved for the hover popover, which has the
+      // ydoc handle. A future pass can lift this into a shared
+      // walker that consults both surfaces.
       const iso = mark.attrs.acceptedAt as string | null | undefined
       if (!iso) continue
       const ms = Date.parse(iso)

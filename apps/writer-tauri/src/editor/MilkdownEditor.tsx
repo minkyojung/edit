@@ -199,7 +199,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(createMarkDecoPlugin(ydoc))
       .use(createMarkCleanupPlugin(ydoc))
       .use(createMarkClickPlugin())
-      .use(createMarkHoverPlugin())
+      .use(createMarkHoverPlugin(ydoc))
       .use(createDocVersionPlugin())
       .use(createSelectionPlugin(setSelection))
       .use(createFrozenSelectionPlugin())

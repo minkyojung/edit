@@ -15,7 +15,15 @@
 
 import { create } from 'zustand'
 
-export type HoveredMarkKind = 'provenance' | 'suggestion' | 'comment'
+// 'authored' is the unified hover kind for any AI-authored span,
+// whether the inline anchor is a proofAuthored mark (the proof-sdk
+// standard kind, used for new accepts) or a legacy proofProvenance
+// mark (our prior custom kind, still present on docs accepted before
+// the schema migration). The hover plugin emits 'authored' for both
+// — they trigger the same footer UX ("From X · accepted Y ago ·
+// model Z"), and we don't want callers to branch on the underlying
+// mark type.
+export type HoveredMarkKind = 'authored' | 'suggestion' | 'comment'
 
 /** Shape pushed by the mark-hover plugin. Strings are extracted from
  * the rendered DOM attributes the mark schemas set in toDOM — we
@@ -23,7 +31,7 @@ export type HoveredMarkKind = 'provenance' | 'suggestion' | 'comment'
 export interface HoveredMark {
   kind: HoveredMarkKind
   /** Mark id (proofSuggestion / proofComment) — used by callers that
-   * may want to navigate to the mark. Provenance marks may or may
+   * may want to navigate to the mark. Authored marks may or may
    * not carry one. */
   id: string | null
   sourceLabel: string | null
