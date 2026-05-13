@@ -11,6 +11,15 @@
 // Today gets a soft accent background + foreground text so it reads as
 // the anchor of the strip; days with no entry yet dim down so the gap
 // is visible without shouting.
+//
+// Structurally the row uses shadcn primitives composed Cursor-style:
+// SidebarMenuButton carries the full-row "jump" action; the leading
+// slot at the left (an absolute overlay over the button's pl-8
+// padding) holds either a CollapsibleTrigger chevron (when the day
+// has child notes) or a plain calendar glyph (when it doesn't), so
+// the slot communicates "expandable subtree" vs "leaf day" the same
+// way DocTreeNode does. Children render inside CollapsibleContent →
+// SidebarMenuSub for automatic indentation and the vertical guide.
 
 import { useMemo, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
@@ -23,8 +32,15 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarMenu,
+  SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
 } from '@/components/ui/sidebar'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 
 const DAYS_IN_WEEK = 7
 
@@ -87,57 +103,48 @@ export function WeekView() {
     if (!pathname.startsWith('/notes')) navigate('/notes')
   }
 
+  const onJump = async (row: Row) => {
+    const slug = await openDaily(row.date)
+    if (slug) {
+      // Jumping to a specific day reads as "I want to work this day" —
+      // drop the user into Day view at that anchor so the prev/next
+      // chevrons continue from where they picked.
+      setDayAnchor(row.date)
+      setSidebarTab('day')
+    }
+    ensureNotesRoute()
+  }
+
   return (
     <SidebarGroup className="p-0">
       <SidebarGroupContent className="px-2">
         <SidebarMenu>
           {rows.map((row) => {
             const isExpanded = expandedDates.has(row.date)
-            const children = row.slug
+            const subChildren = row.slug
               ? childrenByParent.get(row.slug) ?? []
               : []
             return (
-              <SidebarMenuItem key={row.date}>
-                <DayRow
-                  row={row}
-                  isActive={row.slug ? row.slug === activeSlug : false}
-                  isExpanded={isExpanded}
-                  onToggle={() => toggleExpanded(row.date)}
-                  onJump={async () => {
-                    const slug = await openDaily(row.date)
-                    if (slug) {
-                      // Jumping to a specific day reads as "I want to work
-                      // this day" — drop the user into Day view at that
-                      // anchor so the prev/next chevrons continue from
-                      // where they picked.
-                      setDayAnchor(row.date)
-                      setSidebarTab('day')
-                    }
-                    ensureNotesRoute()
-                  }}
-                />
-                {isExpanded && children.length > 0 && (
-                  <SidebarMenu className="pt-0.5">
-                    {children.map((child) => (
-                      <DocTreeNode
-                        key={child.slug}
-                        doc={child}
-                        childrenByParent={childrenByParent}
-                        activeSlug={activeSlug}
-                        onSelect={(slug) => {
-                          setActive(slug)
-                          ensureNotesRoute()
-                        }}
-                        onAddChild={async (parentSlug) => {
-                          await createChildNote(parentSlug)
-                          ensureNotesRoute()
-                        }}
-                        onArchive={(slug) => archiveDoc(slug)}
-                      />
-                    ))}
-                  </SidebarMenu>
-                )}
-              </SidebarMenuItem>
+              <DayItem
+                key={row.date}
+                row={row}
+                isActive={row.slug ? row.slug === activeSlug : false}
+                isExpanded={isExpanded}
+                subChildren={subChildren}
+                childrenByParent={childrenByParent}
+                activeSlug={activeSlug}
+                onJump={() => onJump(row)}
+                onToggle={() => toggleExpanded(row.date)}
+                onSelectChild={(slug) => {
+                  setActive(slug)
+                  ensureNotesRoute()
+                }}
+                onAddChild={async (parentSlug) => {
+                  await createChildNote(parentSlug)
+                  ensureNotesRoute()
+                }}
+                onArchive={(slug) => archiveDoc(slug)}
+              />
             )
           })}
         </SidebarMenu>
@@ -180,86 +187,127 @@ function buildRow(
   }
 }
 
-function DayRow({
+function DayItem({
   row,
   isActive,
   isExpanded,
-  onToggle,
+  subChildren,
+  childrenByParent,
+  activeSlug,
   onJump,
+  onToggle,
+  onSelectChild,
+  onAddChild,
+  onArchive,
 }: {
   row: Row
   isActive: boolean
   isExpanded: boolean
-  onToggle: () => void
+  subChildren: KnownDoc[]
+  childrenByParent: Map<string, KnownDoc[]>
+  activeSlug: string | null
   onJump: () => void
+  onToggle: () => void
+  onSelectChild: (slug: string) => void
+  onAddChild: (parentSlug: string) => void
+  onArchive: (slug: string) => void
 }) {
+  const hasChildren = subChildren.length > 0
   const isEmpty = !row.hasEntry && !row.isToday
-  const hasChildren = row.childCount > 0
-  return (
-    <div
-      className={cn(
-        'group flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors',
-        'outline-none',
-        row.isToday
-          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-          : isActive
-            ? 'bg-sidebar-accent/60 text-sidebar-accent-foreground'
-            : isEmpty
-              ? 'text-sidebar-foreground/40 hover:bg-sidebar-accent/40 hover:text-sidebar-foreground/70'
-              : 'text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
-      )}
-    >
-      {/* Caret slot — reserved width even when empty so labels align
-          across rows regardless of whether each day has children. */}
-      {hasChildren ? (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            onToggle()
-          }}
-          aria-label={isExpanded ? 'Collapse day' : 'Expand day'}
-          className={cn(
-            'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
-            'text-sidebar-foreground/60 hover:text-sidebar-accent-foreground',
-            'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
-          )}
-        >
-          <IconChevronRight
-            size={12}
-            stroke={1.75}
-            className="transition-transform"
-            style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-          />
-        </button>
-      ) : (
+
+  // Today wins over selection — both share the accent palette but
+  // today is solid and selection is 60% so the "anchor of the strip"
+  // reads stronger than a passing selection. Empty days dim the
+  // foreground without touching the background so the gap reads as
+  // absence, not as a different state.
+  const stateClass = row.isToday
+    ? 'bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+    : isActive
+      ? 'bg-sidebar-accent/60 text-sidebar-accent-foreground'
+      : isEmpty
+        ? 'text-sidebar-foreground/40 hover:bg-sidebar-accent/40 hover:text-sidebar-foreground/70'
+        : 'text-sidebar-foreground/60'
+
+  const button = (
+    // pr-3!: SidebarMenuButton's variant auto-adds pr-8 when its
+    // SidebarMenuItem contains any descendant SidebarMenuAction. When
+    // the day is expanded its child DocTreeNodes carry archive/+
+    // actions, which are descendants of this day's SidebarMenuItem and
+    // would push the count text leftward by ~20px. The day itself has
+    // no right-side action, so override back to pr-3 with !important
+    // (the :has() selector outranks the unconditional class).
+    <SidebarMenuButton onClick={onJump} className={cn('pl-8 pr-3!', stateClass)}>
+      <span className="truncate">{row.label}</span>
+      <span
+        className={cn(
+          'ml-auto shrink-0 text-xs tabular-nums',
+          row.isToday || isActive ? 'opacity-80' : 'opacity-60',
+        )}
+      >
+        {hasChildren ? `${row.childCount} · ${row.weekday}` : row.weekday}
+      </span>
+    </SidebarMenuButton>
+  )
+
+  if (!hasChildren) {
+    return (
+      <SidebarMenuItem>
         <span
-          className="flex h-4 w-4 shrink-0 items-center justify-center text-sidebar-foreground/50"
           aria-hidden
+          className="absolute top-2 left-2 z-10 flex h-4 w-4 items-center justify-center text-sidebar-foreground/50"
         >
           <IconCalendar size={16} stroke={1.75} />
         </span>
-      )}
+        {button}
+      </SidebarMenuItem>
+    )
+  }
 
-      <button
-        type="button"
-        onClick={onJump}
-        className={cn(
-          'flex min-w-0 flex-1 items-center gap-2 text-left outline-none',
-          'focus-visible:ring-2 focus-visible:ring-sidebar-ring/40 rounded-sm',
-        )}
-      >
-        <span className="truncate">{row.label}</span>
-        <span
-          className={cn(
-            'ml-auto shrink-0 text-xs tabular-nums',
-            hasChildren ? 'text-sidebar-foreground/60' : 'text-sidebar-foreground/45',
-          )}
-        >
-          {hasChildren ? `${row.childCount} · ${row.weekday}` : row.weekday}
-        </span>
-      </button>
-    </div>
+  return (
+    <Collapsible
+      asChild
+      open={isExpanded}
+      onOpenChange={(open) => {
+        if (open !== isExpanded) onToggle()
+      }}
+    >
+      <SidebarMenuItem>
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            aria-label={isExpanded ? 'Collapse day' : 'Expand day'}
+            onClick={(e) => e.stopPropagation()}
+            className={cn(
+              'absolute top-2 left-2 z-10 flex h-4 w-4 items-center justify-center rounded-sm',
+              'text-sidebar-foreground/60 hover:text-sidebar-accent-foreground',
+              'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
+            )}
+          >
+            <IconChevronRight
+              size={16}
+              stroke={1.75}
+              className="transition-transform data-[state=open]:rotate-90"
+            />
+          </button>
+        </CollapsibleTrigger>
+        {button}
+        <CollapsibleContent asChild>
+          <SidebarMenuSub>
+            {subChildren.map((child) => (
+              <DocTreeNode
+                key={child.slug}
+                doc={child}
+                childrenByParent={childrenByParent}
+                activeSlug={activeSlug}
+                onSelect={onSelectChild}
+                onAddChild={onAddChild}
+                onArchive={onArchive}
+              />
+            ))}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </SidebarMenuItem>
+    </Collapsible>
   )
 }
 
