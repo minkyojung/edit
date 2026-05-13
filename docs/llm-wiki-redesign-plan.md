@@ -1,9 +1,25 @@
 # LLM Wiki 재설계 계획
 
 작성: 2026-05-13
+최종 갱신: 2026-05-13
 참고 원문: https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
 
 이 문서의 목적: Karpathy의 LLM Wiki 패턴을 기준으로, 현재 writer-tauri의 위키/ingest/proof-sdk 구조가 어디까지 정합하고 어디가 어긋났는지 정리하고, 항목별로 어떻게 수정할지 한 군데에 기록한다.
+
+## 진행 현황 요약
+
+| 우선순위 | 항목 | 상태 | 완료 커밋 |
+|---|---|---|---|
+| 1 | 5번 위키 ingest를 마크 시스템에서 분리 | ✅ | `3585ef2f` |
+| 2 | 1번 목차 페이지 도입 (Phase 1-A: 빈 페이지 자동 생성) | ✅ | `877c3212` |
+| 2 | 1번 목차 페이지 도입 (Phase 1-B: indexUpdates + dedup merge) | ✅ | `b5c45813` |
+| 3 | 4번 cross-link 압력 | ✅ | `9039e875` |
+| 4 | 2번 Query 동작 | ⏳ |  |
+| 5 | 7번 daily 재정리 신호 | ⏳ |  |
+| 6 | 3번 Lint | ⏳ |  |
+| 7 | 6번 wiki:log dedup (5번 후 우선순위 재평가) | ⏳ |  |
+| 8 | 8번 schema leakage 정리 | ⏳ |  |
+| — | 1번 Phase 2 (readWikiContext index 기반 전환 + fetch tool) | ⏳ | Phase 1-B 검증 후 |
 
 ---
 
@@ -37,14 +53,15 @@
 
 | Karpathy | 우리 (writer-tauri) | 상태 |
 |---|---|---|
-| Raw sources | `daily/*` 노트 + 일반 노트 | ⚠ raw와 writing surface가 같은 표면 |
-| Wiki | `wiki:custom-*`, `wiki:log` | ✅ |
+| Raw sources | `daily/*` 노트 + 일반 노트 | ⚠ raw와 writing surface가 같은 표면 (7번에서 해소 예정) |
+| Wiki | `wiki:custom-*`, `wiki:log`, `wiki:index` | ✅ |
 | Schema (CLAUDE.md) | `wiki:conventions` (사용자 편집 가능) | ✅ 정확히 매핑됨 |
-| Ingest | `runIngest()` + `applyIngest.ts` + ingestStore 큐 + lazy materialize | ✅ 구현됨 |
+| Ingest | `runIngest()` + WikiPageBanner inbox + ingestStore 큐 | ✅ 구현됨 (banner 모델) |
 | Query | (없음 — 일반 chat만) | ❌ 누락 |
 | Lint | (없음) | ❌ 누락 |
-| `index.md` | 사이드바 리스트만 (LLM이 안 봄) | ⚠ 요약 없음 |
+| `index.md` | `wiki:index` (Phase 1-A·1-B로 자동 채워짐) | ✅ Phase 1; Phase 2에서 프롬프트 읽기 경로 전환 예정 |
 | `log.md` | `wiki:log` (tail 30 lines) | ✅ |
+| Cross-link | `[[Title]]` resolver + ingest 프롬프트 룰 | ✅ |
 
 **우리만의 추가 조건**
 - proof-sdk라는 별도 시스템이 있고, 그 위에 "글에 인라인 댓글/제안" 마크 시스템이 따로 존재.
@@ -55,7 +72,7 @@
 
 ## 3. 수정 계획 — 항목별
 
-### 3.1 목차 페이지(index) 도입 — 우선순위 2
+### 3.1 목차 페이지(index) 도입 — 우선순위 2 (Phase 1 ✅ / Phase 2 ⏳)
 
 **Karpathy 원형**
 - 모든 페이지의 한 줄 요약을 `index.md`에 모음.
@@ -119,7 +136,7 @@
 
 ---
 
-### 3.4 cross-link 압력 추가 — 우선순위 3
+### 3.4 cross-link 압력 추가 — 우선순위 3 ✅
 
 **Karpathy 원형**
 - 위키는 그래프. 페이지끼리 명시적으로 서로 참조해야 누적의 가치가 살아남.
@@ -137,7 +154,9 @@
 
 ---
 
-### 3.5 위키 ingest를 마크 시스템에서 분리 — 우선순위 1 (가장 큰 정공)
+### 3.5 위키 ingest를 마크 시스템에서 분리 — 우선순위 1 (가장 큰 정공) ✅
+
+**완료** (`3585ef2f`). ADR `docs/adr/2026-05-13-wiki-ingest-banner-inbox.md` 참고. 5가지 우회 중 1·2·4·5 제거, 3(ghost widget INSERT 분기)은 채팅 propose_change가 같은 surface를 쓰므로 보존.
 
 **Karpathy 원형**
 - ingest는 그냥 markdown 파일 갱신. 검토 UI는 별도. proof-sdk 같은 마크 개념 없음.
@@ -224,13 +243,13 @@
 
 ## 4. 우선순위 (반복)
 
-1. **5번 — 위키 ingest를 마크 시스템에서 분리**: 가장 큰 정공. 5가지 우회 제거. 후속 작업의 토대.
-2. **1번 — 목차 페이지 도입**: 스케일 대비. 5번 끝나면 banner inbox에서 어느 페이지로 갈지 결정할 때도 index가 유용.
-3. **4번 — cross-link 압력**: 한 줄짜리 프롬프트 변경. 그래프성 회복.
-4. **2번 — Query 동작**: 위키 누적 가치를 닫는 loop.
+1. ✅ **5번 — 위키 ingest를 마크 시스템에서 분리** (`3585ef2f`).
+2. ✅ **1번 Phase 1 — 목차 페이지 도입** (Phase 1-A `877c3212`, Phase 1-B `b5c45813`). Phase 2 (readWikiContext 전환 + fetch tool) 는 실전 검증 후로 보류.
+3. ✅ **4번 — cross-link 압력** (`9039e875`). resolveWikilinksInMarkdown + 시스템 프롬프트 룰.
+4. **2번 — Query 동작**: 위키 누적 가치를 닫는 loop. 다음 항목.
 5. **7번 — daily 재정리 신호**: 메타 1개 + 트리거 조건. 작은 추가.
 6. **3번 — Lint**: 운영 안정성. 위키가 어느 정도 누적된 후 가치 발현.
-7. **6번 — log dedup**: 5번 들어간 후 우선순위 재평가.
+7. **6번 — log dedup**: 5번 들어간 후 우선순위 재평가. (Phase 1-B에서 indexUpdates 통해 부분적으로 완화됨 — LLM이 index 본문을 보면서 중복 제안을 줄임.)
 8. **8번 — schema leakage**: 곁가지 cleanup.
 
 ---
