@@ -194,6 +194,15 @@ async function attachProviderWhenReady(
   set: (fn: (s: DocsState) => Partial<DocsState>) => void,
   onStatus: (status: CollabStatus) => void,
 ): Promise<void> {
+  // Wait for IndexedDB to finish hydrating the ydoc before attaching the
+  // WebSocket provider. If we attach earlier, the server sends its baseline
+  // (which for a newly-registered empty-markdown doc is a fresh-clientId
+  // empty fragment from seedLegacyDocumentToPersistedYjsAsync) and that
+  // merges *alongside* the soon-to-arrive IDB fragment instead of into it
+  // — fragment root accumulates one extra paragraph per launch, which is
+  // exactly the 1→2→4→8 doubling regression. Order matters: IDB first,
+  // server second.
+  await handle.idbSynced
   const ready = await waitUntilReady(15_000)
   if (!ready) {
     onStatus('error')

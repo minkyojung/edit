@@ -5,8 +5,9 @@ import { gfm } from '@milkdown/kit/preset/gfm'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { listItemBlockComponent } from '@milkdown/kit/component/list-item-block'
 import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
+import * as Y from 'yjs'
 import { UndoManager } from 'yjs'
-import { ySyncPluginKey } from 'y-prosemirror'
+import { prosemirrorToYDoc, ySyncPluginKey } from 'y-prosemirror'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
 import { createMarkDecoPlugin } from './markDecoPlugin'
@@ -225,12 +226,48 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
         }),
       )
       .create()
-      .then((editor) => {
+      .then(async (editor) => {
         if (!mounted) {
           editor.destroy()
           return
         }
         editorRef.current = editor
+
+        // Wait for IndexedDB to finish hydrating the ydoc before binding
+        // the collab service. y-prosemirror's sync plugin runs an initial
+        // PM↔Y reconcile the moment it sees a ydoc; if we bind while the
+        // fragment is empty (pre-hydrate) and IDB then fills it after,
+        // PM ends up with a doc where the hydrated paragraphs sit
+        // alongside new client items the initial reconcile created — the
+        // 1→2→4→8 doubling regression. Binding after idbSynced means PM
+        // sees the fully-populated fragment from frame one and the
+        // initial reconcile is a no-op.
+        await handle.idbSynced
+        if (!mounted) return
+
+        // If hydration left the fragment empty (brand-new note), pre-seed
+        // it with the schema's minimal fill (one empty paragraph) before
+        // binding. y-prosemirror's sync plugin compares PM's filled doc
+        // against the fragment on first bind; an empty fragment vs PM's
+        // schema-required <paragraph/> triggers a PM→Y commit that puts
+        // an extra paragraph node into the fragment for good. After the
+        // user types into PM's paragraph, the fragment ends up with two
+        // paragraph items — the leading empty one is the visible regression.
+        // Seeding the same shape PM would have filled means the diff
+        // check is a no-op and no spurious commit fires.
+        editor.action((ctx) => {
+          const xmlFragment = ydoc.getXmlFragment('prosemirror')
+          if (xmlFragment.length === 0) {
+            const view = ctx.get(editorViewCtx)
+            const fill = view.state.schema.topNodeType.createAndFill()
+            if (fill) {
+              const seedDoc = prosemirrorToYDoc(fill, 'prosemirror')
+              const update = Y.encodeStateAsUpdate(seedDoc)
+              Y.applyUpdate(ydoc, update, 'doc-init')
+              seedDoc.destroy()
+            }
+          }
+        })
 
         editor.action((ctx) => {
           const collabService = ctx.get(collabServiceCtx)
