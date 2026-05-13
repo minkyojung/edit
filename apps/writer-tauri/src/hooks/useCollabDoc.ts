@@ -5,6 +5,7 @@
 // 'My Document' default-title bootstrap are gone.
 import type * as Y from 'yjs'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
+import type { IndexeddbPersistence } from 'y-indexeddb'
 
 export type CollabStatus = 'initializing' | 'connecting' | 'connected' | 'error'
 
@@ -55,6 +56,20 @@ export interface CollabHandle {
   ydoc: Y.Doc
   provider: HocuspocusProvider
   slug: string
+  /** Client-side IndexedDB persistence layer. Writes every Y.Doc update
+   * to local disk synchronously with the in-memory CRDT, so the editor
+   * survives any failure mode of the proof-server (graceful exit,
+   * SIGKILL, crash, network drop). Without this, all data survival
+   * depends on round-tripping every change through the WebSocket and
+   * out the proof-server's 250ms debounce — the path that drops the
+   * last keystrokes on Ctrl+C. */
+  idb: IndexeddbPersistence
+  /** Resolves once the IndexedDB layer has hydrated the ydoc from its
+   * local cache (or confirmed there's nothing cached for this slug).
+   * Gates downstream consumers (editor render, mark application) that
+   * previously waited only on `provider.synced` — with this we can
+   * paint immediately on cold boot even when the server is unreachable. */
+  idbSynced: Promise<void>
 }
 
 /**

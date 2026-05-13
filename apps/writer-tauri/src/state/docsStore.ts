@@ -21,6 +21,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
+import { IndexeddbPersistence } from 'y-indexeddb'
 import { proofClient, waitUntilReady } from '@/lib/proofClient'
 import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
@@ -175,6 +176,14 @@ async function buildHandle(
   url.searchParams.set('role', session.role)
 
   const ydoc = new Y.Doc()
+  // IndexedDB layer attaches before the WebSocket provider so any updates
+  // that arrive (from local typing or server sync) hit local disk as part
+  // of the same Y.Doc lifecycle. Two persistence layers on one Y.Doc is
+  // the standard CRDT pattern — Yjs merges concurrent updates regardless
+  // of which transport delivered them. Database name is the doc slug so
+  // each tab gets its own IndexedDB store, mirroring the per-slug routing
+  // the server uses.
+  const idb = new IndexeddbPersistence(slug, ydoc)
   const provider = new HocuspocusProvider({
     url: url.toString(),
     name: slug,
@@ -185,7 +194,16 @@ async function buildHandle(
     },
   })
   onStatus('connecting')
-  return { ydoc, provider, slug }
+  return {
+    ydoc,
+    provider,
+    idb,
+    // Discard the resolved IndexeddbPersistence — callers only care about
+    // "is local hydration done?", not the instance (they already have it
+    // via handle.idb). Keeps the public signature a plain Promise<void>.
+    idbSynced: idb.whenSynced.then(() => undefined),
+    slug,
+  }
 }
 
 // Re-entrancy guard for bootstrap().
@@ -400,6 +418,7 @@ export const useDocsStore = create<DocsState>()(
         const handle = handles[slug]
         if (handle) {
           handle.provider.destroy()
+          handle.idb.destroy()
           handle.ydoc.destroy()
         }
         const nextHandles = { ...handles }
@@ -617,6 +636,7 @@ export const useDocsStore = create<DocsState>()(
           const h = nextHandles[s]
           if (h) {
             h.provider.destroy()
+            h.idb.destroy()
             h.ydoc.destroy()
           }
           delete nextHandles[s]
@@ -695,6 +715,10 @@ export const useDocsStore = create<DocsState>()(
             console.error('[docs] deleteDocForever failed', s, err)
             failed += 1
           }
+          // Erase the local IndexedDB shard for this slug. Without this the
+          // cached Y.Doc updates would outlive the server row — a future tab
+          // re-using the same slug would resurrect deleted content.
+          indexedDB.deleteDatabase(s)
         }
         const groupSet = new Set(groupSlugs)
         set((s) => ({
@@ -730,6 +754,7 @@ export const useDocsStore = create<DocsState>()(
             console.error('[docs] emptyArchive item failed', d.slug, err)
             failed += 1
           }
+          indexedDB.deleteDatabase(d.slug)
         }
         const archivedSet = new Set(archived.map((d) => d.slug))
         set((s) => ({
