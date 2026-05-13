@@ -477,26 +477,22 @@ export const useDocsStore = create<DocsState>()(
         delete nextHandles[slug]
         const nextStatus = { ...get().status }
         delete nextStatus[slug]
-        set({
+        // Single set: the empty-strip invariant is folded into the
+        // same patch via ensureNonEmptyTabStrip, so the UI never
+        // flickers through a blank state and there's no async
+        // follow-up that can fail and leave the user stuck.
+        set(ensureNonEmptyTabStrip(get(), {
           openSlugs: next,
           activeSlug: nextActive,
           handles: nextHandles,
           status: nextStatus,
-        })
-        // Invariant: tab strip is never empty. Closing the last tab
-        // pops today's daily back open so the user always lands on
-        // a writing surface. openDaily() runs its own set() in the
-        // same tick, so the UI doesn't flash a blank state.
-        if (next.length === 0) {
-          void get().openDaily().catch((err) =>
-            console.error('[docs] post-close openDaily failed', err),
-          )
-          return
-        }
-        // If we closed the active and a neighbor exists, make sure it's
-        // also got a handle so the editor doesn't show a blank state.
-        if (nextActive && !nextHandles[nextActive]) {
-          ensureHandle(nextActive, set, get).catch((err) =>
+        }))
+        // Warm the new active slug's handle if it isn't loaded yet —
+        // applies whether the invariant kicked in (today's daily) or
+        // we just shifted to a neighbor.
+        const finalActive = get().activeSlug
+        if (finalActive && !get().handles[finalActive]) {
+          ensureHandle(finalActive, set, get).catch((err) =>
             console.error('[docs] post-close ensureHandle failed', err),
           )
         }
@@ -698,25 +694,23 @@ export const useDocsStore = create<DocsState>()(
             : d,
         )
 
-        set({
+        // The empty-strip invariant uses the *post-archive* catalog
+        // (so today's daily must still be archive-free in nextKnown).
+        // Pass a synthesized state to ensureNonEmptyTabStrip rather
+        // than the live one so the lookup sees nextKnown.
+        const postState: DocsState = { ...state, knownDocs: nextKnown }
+        set(ensureNonEmptyTabStrip(postState, {
           knownDocs: nextKnown,
           openSlugs: nextOpen,
           activeSlug: nextActive,
           handles: nextHandles,
           status: nextStatus,
-        })
-
-        // Same invariant as closeDoc: never leave the tab strip empty.
-        if (nextOpen.length === 0) {
-          void get().openDaily().catch((err) =>
-            console.error('[docs] post-archive openDaily failed', err),
-          )
-          return true
-        }
-        // If we shifted activeSlug to a known but unloaded tab, warm it
-        // up so the editor doesn't sit on a stale handle.
-        if (nextActive && !nextHandles[nextActive]) {
-          ensureHandle(nextActive, set, get).catch((err) =>
+        }))
+        // Warm whichever slug ended up active — whether nextActive
+        // survived or the invariant fell back to today's daily.
+        const finalActive = get().activeSlug
+        if (finalActive && !get().handles[finalActive]) {
+          ensureHandle(finalActive, set, get).catch((err) =>
             console.error('[docs] post-archive ensureHandle failed', err),
           )
         }
@@ -772,16 +766,16 @@ export const useDocsStore = create<DocsState>()(
           indexedDB.deleteDatabase(s)
         }
         const groupSet = new Set(groupSlugs)
-        set((s) => ({
-          knownDocs: s.knownDocs.filter((d) => !groupSet.has(d.slug)),
-          openSlugs: s.openSlugs.filter((sl) => !groupSet.has(sl)),
-          expandedDocSlugs: s.expandedDocSlugs.filter((sl) => !groupSet.has(sl)),
+        const cur = get()
+        const nextKnown = cur.knownDocs.filter((d) => !groupSet.has(d.slug))
+        const nextOpen = cur.openSlugs.filter((sl) => !groupSet.has(sl))
+        const nextExpanded = cur.expandedDocSlugs.filter((sl) => !groupSet.has(sl))
+        const postState: DocsState = { ...cur, knownDocs: nextKnown }
+        set(ensureNonEmptyTabStrip(postState, {
+          knownDocs: nextKnown,
+          openSlugs: nextOpen,
+          expandedDocSlugs: nextExpanded,
         }))
-        if (get().openSlugs.length === 0) {
-          void get().openDaily().catch((err) =>
-            console.error('[docs] post-deleteForever openDaily failed', err),
-          )
-        }
         if (failed > 0) {
           notify.cantDeleteNote({ onRetry: () => get().deleteForever(slug) })
         }
@@ -813,10 +807,15 @@ export const useDocsStore = create<DocsState>()(
           indexedDB.deleteDatabase(d.slug)
         }
         const archivedSet = new Set(archived.map((d) => d.slug))
-        set((s) => ({
-          knownDocs: s.knownDocs.filter((d) => !archivedSet.has(d.slug)),
-          openSlugs: s.openSlugs.filter((sl) => !archivedSet.has(sl)),
-          expandedDocSlugs: s.expandedDocSlugs.filter((sl) => !archivedSet.has(sl)),
+        const cur = get()
+        const nextKnown = cur.knownDocs.filter((d) => !archivedSet.has(d.slug))
+        const nextOpen = cur.openSlugs.filter((sl) => !archivedSet.has(sl))
+        const nextExpanded = cur.expandedDocSlugs.filter((sl) => !archivedSet.has(sl))
+        const postState: DocsState = { ...cur, knownDocs: nextKnown }
+        set(ensureNonEmptyTabStrip(postState, {
+          knownDocs: nextKnown,
+          openSlugs: nextOpen,
+          expandedDocSlugs: nextExpanded,
         }))
         if (get().openSlugs.length === 0) {
           void get().openDaily().catch((err) =>
@@ -954,6 +953,43 @@ function seedBodyFirstLine(ydoc: Y.Doc, text: string): void {
     }
     fragment.insert(0, [paragraph])
   }, 'doc-init')
+}
+
+/** Apply the "tab strip is never empty" invariant to a state patch
+ * about to be passed to set(). If the patch (or current state, if
+ * the patch doesn't touch openSlugs) would leave openSlugs empty,
+ * today's daily slug is folded back in synchronously and made active
+ * — so the user never sees a blank tab strip, regardless of whether
+ * any follow-up async work succeeds or fails.
+ *
+ * The store-level invariant lives here rather than scattered across
+ * each mutation (closeDoc / archiveDoc / deleteForever / emptyArchive)
+ * because the policy is identical at every site: "if removing this
+ * slug would empty the strip, fall back to today's daily." Putting it
+ * in one helper means the rule has one definition and one place to
+ * change.
+ *
+ * No-op when today's daily isn't in the catalog (bootstrap hasn't
+ * run yet, or the day rolled over since bootstrap). In that edge
+ * case the strip stays empty for the moment — caller's own async
+ * follow-up (ensureHandle, openDaily) is the next line of defense,
+ * but it's not relied on for the common path. */
+function ensureNonEmptyTabStrip(
+  state: DocsState,
+  patch: Partial<DocsState>,
+): Partial<DocsState> {
+  const nextOpen = patch.openSlugs ?? state.openSlugs
+  if (nextOpen.length > 0) return patch
+  const today = todayLocalDate()
+  const todayDaily = state.knownDocs.find(
+    (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
+  )
+  if (!todayDaily) return patch
+  return {
+    ...patch,
+    openSlugs: [todayDaily.slug],
+    activeSlug: todayDaily.slug,
+  }
 }
 
 function scrubDailyTitleArtifacts(ydoc: Y.Doc): void {
