@@ -67,7 +67,7 @@ export function useApplyPendingIndexUpdates(): void {
     const known = useDocsStore
       .getState()
       .knownDocs.find((d) => d.slug === activeSlug)
-    if (!known || known.type !== 'wiki:index') return
+    if (!known || known.type !== 'system:index') return
     const handle = handles[activeSlug]
     if (!handle) return
     if (pendingIndexUpdates.length === 0) return

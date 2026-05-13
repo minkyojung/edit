@@ -1,13 +1,25 @@
-// Wiki pages section for the sidebar — belief / entity / episode
-// docs and any user-defined wiki pages. Lives below the date-axis
-// date view because wiki content is agent-synthesized memory,
-// not user-authored notes on the time spine; mixing them blurs the
-// write-ownership split (see isWikiDoc in docsStore).
+// Wiki pages section for the sidebar — split into two groups that
+// mirror Karpathy's schema-vs-wiki separation:
+//
+//   System  → agent meta surface (conventions / log / index).
+//             Read-only from the user's perspective — the LLM
+//             writes / maintains these pages on dedicated prompt
+//             channels (not via the wiki catalog), so they get
+//             their own visual region with no `+` button.
+//
+//   Wiki    → user-accumulated content pages (`wiki:custom-*`).
+//             Created via the `+` button or via the LLM's
+//             `suggestNewPage` flow.
+//
+// Lives below the date-axis date view because both groups are
+// agent-managed memory, not user-authored notes on the time
+// spine; mixing them blurs the write-ownership split (see
+// isWikiDoc in docsStore).
 
 import { useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { IconFileDescription, IconPlus } from '@tabler/icons-react'
-import { useDocsStore, isWikiDoc, type KnownDoc } from '@/state/docsStore'
+import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { createCustomWikiPage } from '@/state/wikiService'
 import {
@@ -27,8 +39,13 @@ export function WikiSection() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
+  const systemDocs = useMemo(
+    () =>
+      knownDocs.filter((d) => !d.archivedAt && d.type.startsWith('system:')),
+    [knownDocs],
+  )
   const wikiDocs = useMemo(
-    () => knownDocs.filter((d) => !d.archivedAt && isWikiDoc(d)),
+    () => knownDocs.filter((d) => !d.archivedAt && d.type.startsWith('wiki:')),
     [knownDocs],
   )
 
@@ -42,36 +59,50 @@ export function WikiSection() {
     // empty title field IS the prompt. The sidebar / palette display
     // 'Untitled' as a fallback in useDocLabel until the user types
     // a real name. Custom-* slug ensures it never collides with a
-    // seed wiki type.
+    // system page type.
     const slug = await createCustomWikiPage('')
     if (!slug) return
     setActive(slug)
     ensureNotesRoute()
   }
 
+  const renderRow = (doc: KnownDoc) => (
+    <SidebarMenuItem key={doc.slug} data-slug={doc.slug}>
+      <WikiRow
+        doc={doc}
+        isActive={doc.slug === activeSlug}
+        onSelect={() => {
+          setActive(doc.slug)
+          ensureNotesRoute()
+        }}
+      />
+    </SidebarMenuItem>
+  )
+
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Wiki</SidebarGroupLabel>
-      <SidebarGroupAction onClick={handleNew} aria-label="New wiki page">
-        <IconPlus />
-      </SidebarGroupAction>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          {wikiDocs.map((doc) => (
-            <SidebarMenuItem key={doc.slug} data-slug={doc.slug}>
-              <WikiRow
-                doc={doc}
-                isActive={doc.slug === activeSlug}
-                onSelect={() => {
-                  setActive(doc.slug)
-                  ensureNotesRoute()
-                }}
-              />
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
+    <>
+      {/* System group — render only when at least one system page
+          exists. They're created lazily on first ingest, so the
+          group stays hidden until then. No `+` button: the user
+          doesn't author system pages. */}
+      {systemDocs.length > 0 && (
+        <SidebarGroup>
+          <SidebarGroupLabel>System</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{systemDocs.map(renderRow)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      )}
+      <SidebarGroup>
+        <SidebarGroupLabel>Wiki</SidebarGroupLabel>
+        <SidebarGroupAction onClick={handleNew} aria-label="New wiki page">
+          <IconPlus />
+        </SidebarGroupAction>
+        <SidebarGroupContent>
+          <SidebarMenu>{wikiDocs.map(renderRow)}</SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
+    </>
   )
 }
 
@@ -85,9 +116,12 @@ function WikiRow({
   onSelect: () => void
 }) {
   const label = useDocLabel(doc.slug)
-  // Strip the `wiki:` prefix for a tidy default when the doc has no
-  // user-set title yet ("belief" reads better than "wiki:belief").
-  const fallback = doc.type.replace(/^wiki:/, '')
+  // Strip the agent prefix for a tidy default when the doc has no
+  // user-set title yet ("log" reads better than "system:log",
+  // "belief" reads better than "wiki:belief"). useDocLabel already
+  // handles this for system / custom pages — fallback is just the
+  // last-resort path in case label resolution returns empty.
+  const fallback = doc.type.replace(/^(?:wiki|system):/, '')
   return (
     <SidebarMenuButton onClick={onSelect} isActive={isActive}>
       <IconFileDescription />

@@ -106,9 +106,9 @@ export function WikiPageBanner() {
   )
   if (!known || !known.type.startsWith('wiki:')) return null
 
-  // wiki:log drains pending log entries via useApplyPendingLogs;
+  // system:log drains pending log entries via useApplyPendingLogs;
   // there are no "proposals" to review for the log page itself.
-  if (known.type === 'wiki:log') return null
+  if (known.type === 'system:log') return null
 
   const matching = pendingProposals.filter((p) => p.target === known.type)
   if (matching.length === 0) return null

@@ -17,7 +17,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { useDocsStore } from '@/state/docsStore'
+import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import {
   readWikiContext,
   readConventions,
@@ -298,7 +298,7 @@ function validateParsed(value: unknown): ParsedIngest {
   // allowed to summarize. Defensive filter even though the catalog
   // snapshot already excludes them, so a hallucinated id can't sneak
   // a stray summary line into the index.
-  const SYSTEM_TARGETS = new Set(['wiki:index', 'wiki:log', 'wiki:conventions'])
+  const SYSTEM_TARGETS = new Set(['system:index', 'system:log', 'system:conventions'])
   const rawIndex = Array.isArray(obj.indexUpdates) ? obj.indexUpdates : []
   const indexUpdates: IndexUpdate[] = []
   for (const u of rawIndex) {
@@ -428,12 +428,13 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     .getState()
     .knownDocs.find((d) => d.slug === noteSlug)
   if (!known) throw new Error(`unknown doc: ${noteSlug}`)
-  if (known.type.startsWith('wiki:')) {
-    // Wiki pages are the LLM's output, not its input — ingesting one
-    // would mean asking the model to summarize itself. The trigger
-    // layer (PR 3-2) enforces this too, but guard here so console
-    // testing can't accidentally poison the wiki with self-echo.
-    throw new Error(`refusing to ingest a wiki page: ${noteSlug}`)
+  if (isWikiDoc(known)) {
+    // Agent-managed pages (system:* meta surface + wiki:custom-*
+    // content) are LLM output, not input — ingesting one would mean
+    // asking the model to summarize itself. The trigger layer
+    // enforces this too, but guard here so console testing can't
+    // accidentally poison the wiki with self-echo.
+    throw new Error(`refusing to ingest an agent-managed page: ${noteSlug}`)
   }
 
   const noteMarkdown = await readDocMarkdown(noteSlug)

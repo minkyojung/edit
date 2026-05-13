@@ -39,7 +39,15 @@ const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
  * changes while open. */
 export interface KnownDoc {
   slug: string
-  type: 'daily' | 'writing' | `wiki:${string}`
+  /** `system:*` = agent-owned meta surface (conventions / log / index)
+   * that the LLM reads / maintains on dedicated prompt channels, not
+   * through the wiki catalog. `wiki:*` = agent-managed content pages
+   * (`wiki:custom-...`) the user accumulates over time. `daily` and
+   * `writing` are user-authored. The two agent prefixes split a
+   * pre-2026-05-13 single `wiki:*` bucket so sidebar grouping, prompt
+   * channels, and write-protection guards line up with Karpathy's
+   * schema-vs-wiki separation. */
+  type: 'daily' | 'writing' | `system:${string}` | `wiki:${string}`
   /** YYYY-MM-DD when type === 'daily'. */
   date?: string
   /** Parent doc's slug for tree-nested writing notes. Undefined for
@@ -68,14 +76,16 @@ export interface KnownDoc {
   archivedFromParent?: string
 }
 
-/** Karpathy-style write-ownership split: `wiki:*` docs are LLM-
- * synthesized memory pages (belief / entity / episode). They live
- * in the same catalog as user notes but are protected from archive
- * and hard-delete so the user can't accidentally wipe the agent's
- * memory. Single field, single predicate — every guard branches
- * off this one helper. */
+/** Karpathy-style write-ownership predicate: true for any agent-
+ * managed page — the meta surface (`system:*` — conventions / log /
+ * index) and the content pages (`wiki:*` — `wiki:custom-...`). Both
+ * are protected from archive and hard-delete so the user can't
+ * accidentally wipe agent memory, both feed the sidebar "Wiki"
+ * region (split into System / Wiki groups visually), and both are
+ * never ingest sources. Single predicate keeps every guard in sync
+ * when a new agent-page kind is added later. */
 export function isWikiDoc(doc: Pick<KnownDoc, 'type'>): boolean {
-  return doc.type.startsWith('wiki:')
+  return doc.type.startsWith('wiki:') || doc.type.startsWith('system:')
 }
 
 interface DocsState {
@@ -180,13 +190,16 @@ function buildHandle(
   // point on, any XmlFragment change (typing, mark accept, remote
   // sync) bumps ingestStore.lastEditedAt[slug] — that's the watermark
   // useIdleTrigger compares against lastIngestedAt to decide whether
-  // the note is a candidate for re-ingest. markEdited itself filters
-  // out wiki:* slugs so this fires harmlessly on every doc type.
+  // the note is a candidate for re-ingest. Agent-managed pages
+  // (`system:*` + `wiki:*`) are filtered out here via isWikiDoc so
+  // ingest sources stay clean — those pages are output, not input.
   // No explicit unobserve: ydoc.destroy() in closeDoc tears down all
   // observers attached to fragments it owns.
   void idb.whenSynced.then(() => {
     const fragment = ydoc.getXmlFragment('prosemirror')
     fragment.observeDeep(() => {
+      const known = useDocsStore.getState().knownDocs.find((d) => d.slug === slug)
+      if (!known || isWikiDoc(known)) return
       useIngestStore.getState().markEdited(slug)
     })
   })
@@ -829,7 +842,7 @@ export const useDocsStore = create<DocsState>()(
     }),
     {
       name: 'writer-tauri:docs',
-      version: 5,
+      version: 6,
       partialize: (s) => ({
         openSlugs: s.openSlugs,
         activeSlug: s.activeSlug,
@@ -854,6 +867,28 @@ export const useDocsStore = create<DocsState>()(
         // any persisted blob so the rehydrated state matches the new
         // shape (silently ignored fields are fine; explicit removal
         // is cleaner).
+        // v5 → v6: split the agent-page bucket. The three system
+        // pages (conventions / log / index) move from `wiki:*` to
+        // `system:*` so prompt channels, sidebar grouping, and
+        // write-protection guards can branch on a single prefix.
+        // User content pages (`wiki:custom-...`) keep their type.
+        // Slug-keyed data (ydoc bodies in IndexedDB, ingestStore's
+        // edit / ingest watermarks, queued proposals, marks Y.Maps)
+        // is unaffected — only the `knownDocs[i].type` string is
+        // rewritten. Unknown legacy prefixes pass through unchanged.
+        if (version < 6) {
+          const state = (persisted ?? {}) as { knownDocs?: KnownDoc[] }
+          const rename: Record<string, KnownDoc['type']> = {
+            'wiki:conventions': 'system:conventions',
+            'wiki:log': 'system:log',
+            'wiki:index': 'system:index',
+          }
+          const nextKnownDocs = (state.knownDocs ?? []).map((doc) => {
+            const renamed = rename[doc.type as string]
+            return renamed ? { ...doc, type: renamed } : doc
+          })
+          persisted = { ...state, knownDocs: nextKnownDocs }
+        }
         if (version < 5) {
           const { expandedWeekStarts: _drop, ...rest } =
             (persisted as { expandedWeekStarts?: unknown }) ?? {}

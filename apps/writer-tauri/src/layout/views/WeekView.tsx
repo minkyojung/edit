@@ -16,7 +16,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { IconCalendar, IconChevronRight } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
-import { useDocsStore, type KnownDoc } from '@/state/docsStore'
+import { useDocsStore, isWikiDoc, type KnownDoc } from '@/state/docsStore'
 import { todayLocalDate, formatLocalDate } from '@/hooks/useDocMeta'
 import { DocTreeNode, indexChildren } from '../DocTreeNode'
 import {
@@ -60,7 +60,7 @@ export function WeekView() {
   // on each row and for the recursive DocTreeNode render when a row is
   // expanded.
   const liveDocs = useMemo(
-    () => knownDocs.filter((d) => !d.archivedAt && !d.type.startsWith('wiki:')),
+    () => knownDocs.filter((d) => !d.archivedAt && !isWikiDoc(d)),
     [knownDocs],
   )
   const childrenByParent = useMemo(() => indexChildren(liveDocs), [liveDocs])
@@ -124,7 +124,6 @@ export function WeekView() {
                         doc={child}
                         childrenByParent={childrenByParent}
                         activeSlug={activeSlug}
-                        depth={1}
                         onSelect={(slug) => {
                           setActive(slug)
                           ensureNotesRoute()

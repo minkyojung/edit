@@ -25,7 +25,7 @@ import {
   IconPlus,
 } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
-import { useDocsStore, shiftDayAnchor } from '@/state/docsStore'
+import { useDocsStore, shiftDayAnchor, isWikiDoc } from '@/state/docsStore'
 import { DocTreeNode, indexChildren } from '../DocTreeNode'
 import {
   SidebarGroup,
@@ -61,7 +61,7 @@ export function DayView() {
   // walks the full graph once so DocTreeNode's recursive lookups stay
   // O(1) per level.
   const liveDocs = useMemo(
-    () => knownDocs.filter((d) => !d.archivedAt && !d.type.startsWith('wiki:')),
+    () => knownDocs.filter((d) => !d.archivedAt && !isWikiDoc(d)),
     [knownDocs],
   )
   const childrenByParent = useMemo(() => indexChildren(liveDocs), [liveDocs])
@@ -155,7 +155,6 @@ export function DayView() {
                 doc={child}
                 childrenByParent={childrenByParent}
                 activeSlug={activeSlug}
-                depth={1}
                 onSelect={(slug) => {
                   setActive(slug)
                   ensureNotesRoute()

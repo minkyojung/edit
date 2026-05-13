@@ -290,11 +290,11 @@ export const useIngestStore = create<IngestState>()(
       },
 
       markEdited: (slug) => {
-        // No-op for wiki:* — they're ingest outputs, not inputs.
-        // Bumping them would waste writes and (more importantly)
-        // could confuse a future feature that wants to detect
-        // "user edited a wiki page directly".
-        if (slug.startsWith('wiki:')) return
+        // Caller is responsible for type-gating (slug is a random
+        // UUID, not a type id, so prefix checks here never matched).
+        // docsStore's XmlFragment observer in `buildHandle` filters
+        // agent-managed pages via `isWikiDoc(known)` before calling
+        // in, so this just records the timestamp.
         set((s) => ({
           lastEditedAt: { ...s.lastEditedAt, [slug]: Date.now() },
         }))

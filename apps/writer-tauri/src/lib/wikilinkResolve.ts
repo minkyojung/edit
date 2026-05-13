@@ -36,7 +36,19 @@ import { WIKILINK_HREF_PREFIX } from '@/editor/wikilinkPalettePlugin'
  *   - empty / whitespace-only `[[ ]]`
  *   - `[[Title|alias]]` alias syntax (out of scope; not used elsewhere) */
 export function resolveWikilinksInMarkdown(md: string): string {
-  const docs = useDocsStore.getState().knownDocs.filter((d) => !d.archivedAt)
+  const docs = useDocsStore
+    .getState()
+    .knownDocs.filter(
+      (d) =>
+        !d.archivedAt &&
+        // System pages (system:conventions / log / index) are agent
+        // meta surfaces — the user isn't expected to author links
+        // pointing at them, and the LLM was told the same via the
+        // cross-link prompt rule. Filter them out of the title →
+        // slug map so an accidental `[[Conventions]]` stays as
+        // literal text rather than silently routing through.
+        !d.type.startsWith('system:'),
+    )
   const titleToSlug = new Map<string, string>()
   for (const d of docs) {
     const title = (d.title ?? '').trim()

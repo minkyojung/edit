@@ -17,7 +17,7 @@
 
 import { useEffect, useRef } from 'react'
 import { runIngest } from '@/agent/ingest'
-import { useDocsStore } from '@/state/docsStore'
+import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useIngestStore } from '@/state/ingestStore'
 import {
   ensureLogWikiSlug,
@@ -148,16 +148,17 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
   }
 
   // Pick the doc to ingest FROM. Active doc is the user's most
-  // recent focus, so it's the natural default — except wiki pages,
-  // which are the agent's output: ingesting one would feed the
-  // wiki's own content back into itself. Falling back to today's
-  // daily covers the common pattern where the user writes in the
-  // daily, opens a wiki page to review the result, then walks away;
-  // without this fallback the idle trigger would silently no-op on
-  // their daily's new content.
+  // recent focus, so it's the natural default — except agent-
+  // managed pages (system:* + wiki:*), which are the agent's
+  // output: ingesting one would feed the wiki's own content back
+  // into itself. Falling back to today's daily covers the common
+  // pattern where the user writes in the daily, opens a wiki
+  // page to review the result, then walks away; without this
+  // fallback the idle trigger would silently no-op on their
+  // daily's new content.
   let slug = activeSlug
   let known = activeKnown
-  if (activeKnown.type.startsWith('wiki:')) {
+  if (isWikiDoc(activeKnown)) {
     const today = todayLocalDate()
     const todayDaily = docs.knownDocs.find(
       (d) => d.type === 'daily' && d.date === today && !d.archivedAt,

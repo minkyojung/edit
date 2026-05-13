@@ -20,7 +20,7 @@
 // scan doesn't re-fire on every render.
 
 import { useEffect, useRef } from 'react'
-import { useDocsStore } from '@/state/docsStore'
+import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import type { StoredMark } from '@/hooks/useCollabDoc'
 
@@ -38,7 +38,7 @@ export function useMigrateLegacyIngestMarks(): void {
     const known = useDocsStore
       .getState()
       .knownDocs.find((d) => d.slug === activeSlug)
-    if (!known || !known.type.startsWith('wiki:')) return
+    if (!known || !isWikiDoc(known)) return
     const handle = handles[activeSlug]
     if (!handle) return
 

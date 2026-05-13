@@ -9,12 +9,14 @@
 
 import * as Y from 'yjs'
 
-// `wiki:*` = LLM-synthesized memory pages (Karpathy split: Sources
-// vs Wiki). Distinct from `writing` so archive/delete guards and
-// sidebar grouping can branch on a single field. The wiki branch is
-// open-ended (`wiki:${string}`) so users can spawn custom pages
-// alongside the bootstrapped seeds (belief / entity / episode).
-export type DocType = 'daily' | 'writing' | `wiki:${string}`
+// `system:*` = agent meta surface (conventions / log / index) read /
+// maintained on dedicated prompt channels. `wiki:*` = agent-managed
+// content pages (`wiki:custom-...`) the user accumulates. Both are
+// distinct from user-authored `daily` / `writing` so archive /
+// delete guards and sidebar grouping can branch on a single field.
+// See KnownDoc.type doc in docsStore.ts for the schema-vs-wiki
+// rationale (Karpathy split applied to our catalog).
+export type DocType = 'daily' | 'writing' | `system:${string}` | `wiki:${string}`
 
 export interface DocMeta {
   type: DocType

@@ -22,8 +22,9 @@ const PROOF_BASE_URL = 'http://localhost:4000'
 
 /** The agent's append-only timeline. Held in a constant so the
  * lazy-create path (`ensureLogWikiSlug`) and the read path
- * (`readWikiContext`) agree on the type id. */
-const LOG_TYPE = 'wiki:log' as const
+ * (`readWikiContext`) agree on the type id. `system:*` prefix
+ * marks this as agent meta surface — see KnownDoc.type doc. */
+const LOG_TYPE = 'system:log' as const
 /** Cap the log body to the last N non-empty lines when it gets fed
  * to the LLM. The timeline grows unbounded otherwise and would
  * slowly bloat every prompt. */
@@ -32,21 +33,20 @@ const LOG_TAIL_LINES = 30
 /** User-editable conventions page. Karpathy's CLAUDE.md pattern:
  * the rules for how the wiki is organized live in the wiki itself,
  * the user co-evolves them, and ingest prepends the page body to
- * its system prompt every call. We special-case it the same way as
- * `wiki:log` — known type id + lazy created on first need + filtered
- * out of the regular catalog snapshot (it's an instruction
- * surface, not a content surface). */
-const CONVENTIONS_TYPE = 'wiki:conventions' as const
+ * its system prompt every call. `system:*` prefix groups it with
+ * the other agent meta surfaces (log, index) so sidebar branching
+ * and catalog filtering use a single predicate. */
+const CONVENTIONS_TYPE = 'system:conventions' as const
 
 /** System-owned summary index of every wiki page. Karpathy's
  * `index.md` pattern — one line per page, lets the ingest LLM see
  * "what targets exist" without having to dump every body into the
- * prompt. Lazy created on first ingest pass. Phase 1-A: page exists
- * but stays empty; Phase 1-B will start populating it via the
- * ingest output. Filtered out of the wiki catalog snapshot so the
- * LLM never routes a proposal to it — index is system-managed
- * metadata, not a content target. */
-const INDEX_TYPE = 'wiki:index' as const
+ * prompt. Lazy created on first ingest pass. `system:*` prefix
+ * groups it with the other agent meta surfaces — the LLM never
+ * routes a proposal to it, the catalog filter excludes it, the
+ * sidebar's System group renders it separately from user wiki
+ * pages. Index is system-managed metadata, not a content target. */
+const INDEX_TYPE = 'system:index' as const
 
 /** Default body seeded into the conventions page on first creation.
  * The user is expected to edit this freely — that's the whole
@@ -270,18 +270,17 @@ export async function readWikiContext(): Promise<string> {
     .getState()
     .knownDocs.filter(
       (d) =>
-        d.type.startsWith('wiki:') &&
         !d.archivedAt &&
-        // The conventions page is fed to the LLM separately as
-        // system-prompt context, not as a target the LLM can route
-        // proposals to. Excluding it here keeps the catalog clean.
-        d.type !== CONVENTIONS_TYPE &&
-        // The index page is system-managed metadata (one summary
-        // line per wiki page); the LLM updates it via a dedicated
-        // `indexUpdates` channel (Phase 1-B), never via target-based
-        // proposals. Filtering it from the catalog snapshot so it
-        // never appears as a routing option.
-        d.type !== INDEX_TYPE,
+        // Content pages — every `wiki:custom-*` user wiki page is a
+        // valid routing target. system:conventions / system:index
+        // arrive on dedicated prompt channels (system-prompt prefix
+        // + INDEX block respectively), so they stay out of this
+        // catalog. system:log is the one system page that does sit
+        // inside the catalog block — its rolling timeline is part
+        // of the wiki's read context and the head/tail split below
+        // pins it to the end so a log append only invalidates its
+        // own cache section.
+        (d.type.startsWith('wiki:') || d.type === LOG_TYPE),
     )
 
   const head = docs.filter((d) => d.type !== LOG_TYPE)

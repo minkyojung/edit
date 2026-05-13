@@ -23,7 +23,7 @@
 //      docs still show their real label without N WebSockets.
 //   5. Fallback     → 'Untitled'.
 
-import { useDocsStore } from '@/state/docsStore'
+import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useDocTitle } from './useDocTitle'
 
 const DAILY_LABEL_FMT = new Intl.DateTimeFormat('en-US', {
@@ -49,17 +49,19 @@ export function useDocLabel(slug: string | null): string {
   const title = useDocTitle(handle?.ydoc ?? null)
 
   if (known?.type === 'daily' && known.date) return formatDailyLabel(known.date)
-  if (known?.type?.startsWith('wiki:')) {
+  if (known && isWikiDoc(known)) {
     const live = title.trim()
     if (live) return live
     const cached = known.title?.trim()
     if (cached) return cached
-    // Custom pages (wiki:custom-<id>) have meaningless type suffixes,
-    // so prefer the 'Untitled' fallback the rest of the app uses
-    // for blank labels. Seed types (belief / entity / episode) carry
-    // meaningful names — surface them as the label so the sidebar
-    // reads as a topic rather than 'Untitled'.
+    // Custom content pages (wiki:custom-<id>) have meaningless
+    // type suffixes — fall back to 'Untitled' like the rest of the
+    // app. System pages (system:log / system:conventions /
+    // system:index) carry meaningful suffixes — surface them as
+    // the label so the sidebar reads as 'log' / 'Conventions' /
+    // 'index' rather than the raw type id.
     if (known.type.startsWith('wiki:custom-')) return 'Untitled'
+    if (known.type.startsWith('system:')) return known.type.replace(/^system:/, '')
     return known.type.replace(/^wiki:/, '')
   }
   if (handle) return title || known?.title || 'Untitled'
