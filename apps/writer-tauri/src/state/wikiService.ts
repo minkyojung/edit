@@ -16,6 +16,7 @@
 
 import { proofClient } from '@/lib/proofClient'
 import { generateClientSlug } from '@/lib/slug'
+import { isEffectivelyEmpty } from '@/lib/markdownText'
 import { useDocsStore, type KnownDoc } from './docsStore'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
@@ -98,8 +99,13 @@ export async function ensureLogWikiSlug(): Promise<string | null> {
   const slug = generateClientSlug()
   const meta: KnownDoc = { slug, type: LOG_TYPE, title: 'log' }
   useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-  // ZWS body so the proof-server's blank-markdown guard accepts it.
-  void proofClient.createDoc('log', '​', { slug }).catch((err) => {
+  // Empty body — proof-server accepts blank bodies (same as the
+  // daily / writing create paths). Sending a ZWS placeholder here
+  // (the legacy workaround for the pre-relaxation guard) made the
+  // PM doc render with one invisible-char paragraph that
+  // placeholderPlugin's "is this empty?" check sometimes missed,
+  // leaving the user with a blank page and no hint.
+  void proofClient.createDoc('log', '', { slug }).catch((err) => {
     console.warn('[wiki] ensureLogWikiSlug background register failed', err)
   })
   return slug
@@ -143,9 +149,10 @@ export async function ensureIndexWikiSlug(): Promise<string | null> {
   const slug = generateClientSlug()
   const meta: KnownDoc = { slug, type: INDEX_TYPE, title: 'index' }
   useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-  // ZWS body so the proof-server's blank-markdown guard accepts it.
-  // Real summary lines arrive in Phase 1-B.
-  void proofClient.createDoc('index', '​', { slug }).catch((err) => {
+  // Empty body — see ensureLogWikiSlug for the same rationale.
+  // Real summary lines arrive as indexUpdates merge into the page
+  // body on first navigation.
+  void proofClient.createDoc('index', '', { slug }).catch((err) => {
     console.warn('[wiki] ensureIndexWikiSlug background register failed', err)
   })
   return slug
@@ -222,7 +229,12 @@ export async function createCustomWikiPage(
   // the birthday-collision threshold.
   const id = Math.random().toString(36).slice(2, 10)
   const type = `wiki:custom-${id}` as `wiki:${string}`
-  const initialBody = body && body.trim().length > 0 ? body : '​'
+  // Empty body when no real content is given. proof-server accepts
+  // blank bodies; sending a ZWS placeholder here (the legacy guard
+  // workaround) gave fresh wiki pages an invisible-char paragraph
+  // that placeholderPlugin's hint check sometimes missed — same
+  // path as daily / writing creation now.
+  const initialBody = body && body.trim().length > 0 ? body : ''
   const slug = generateClientSlug()
 
   // Validate parentId before writing the catalog entry. A bad
@@ -276,9 +288,11 @@ async function readWikiMarkdown(slug: string | null): Promise<string> {
     if (!res.ok) return ''
     const json = (await res.json()) as { markdown?: string }
     const md = (json.markdown ?? '').trim()
-    // ZWS-only or whitespace-only counts as empty — we don't want a
-    // stray invisible char polluting the cacheable prefix.
-    if (!md || md.replace(/[​\s]/g, '') === '') return ''
+    // Treat zero-width / whitespace-only bodies as empty — shared
+    // isEffectivelyEmpty covers the variants the server occasionally
+    // produces. Without this, a stray invisible char would pollute
+    // the cacheable system-prompt prefix.
+    if (isEffectivelyEmpty(md)) return ''
     return md
   } catch (err) {
     console.warn('[wiki] readWikiMarkdown failed', slug, err)

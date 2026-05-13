@@ -18,6 +18,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
+import { isEffectivelyEmpty } from '@/lib/markdownText'
 import {
   readWikiContext,
   readConventions,
@@ -208,7 +209,7 @@ async function readDocMarkdown(slug: string): Promise<string> {
     if (!res.ok) return ''
     const json = (await res.json()) as { markdown?: string }
     const md = (json.markdown ?? '').trim()
-    if (!md || md.replace(/[​\s]/g, '') === '') return ''
+    if (isEffectivelyEmpty(md)) return ''
     return md
   } catch {
     return ''

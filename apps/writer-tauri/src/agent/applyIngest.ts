@@ -20,6 +20,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore, type PendingIndexUpdate } from '@/state/ingestStore'
+import { isEffectivelyEmpty } from '@/lib/markdownText'
 
 /** Append a paragraph of plain text to the active editor's doc via a
  * ProseMirror transaction. PM transactions go through the server's
@@ -154,18 +155,17 @@ function applyOneIndexUpdate(
   const doc = view.state.doc
   const existing = findIndexLineForTarget(doc, update.target)
 
-  // Strip leading ZWS-only paragraph the proof-server seeds on
-  // create. Without this the very first applied line lands AFTER
-  // a blank paragraph, leaving a leading gap that grows weirder
-  // when the user views the page. Defensive check: only the *first*
-  // child, only when it's a paragraph whose textContent is ZWS or
-  // whitespace.
+  // Strip the leading effectively-empty paragraph the server (or
+  // an initial empty seed) leaves behind so the first applied line
+  // doesn't land below a blank block. Uses the shared
+  // isEffectivelyEmpty so ZWS variants, BOMs, and stray whitespace
+  // are all treated as "blank" — the four other empty-detection
+  // sites in the codebase use the same helper.
   let cleanupTr = view.state.tr
   let placeholderRemoved = 0
   if (doc.childCount > 0) {
     const first = doc.child(0)
-    const cleaned = first.textContent.replace(/[​-‍﻿\s]/g, '')
-    if (!cleaned) {
+    if (isEffectivelyEmpty(first.textContent)) {
       cleanupTr = cleanupTr.delete(0, first.nodeSize)
       placeholderRemoved = first.nodeSize
     }

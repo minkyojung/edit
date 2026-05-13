@@ -18,7 +18,7 @@ import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view'
 import type { EditorState } from '@milkdown/kit/prose/state'
-import type { Node as PMNode } from '@milkdown/kit/prose/model'
+import { isEffectivelyEmpty } from '@/lib/markdownText'
 
 const PLACEHOLDER_ATTR = 'data-placeholder'
 const placeholderKey = new PluginKey('writer-placeholder')
@@ -26,16 +26,6 @@ const placeholderKey = new PluginKey('writer-placeholder')
 export interface PlaceholderOptions {
   /** Hint shown when the body is a single empty paragraph. */
   bodyText: string
-}
-
-function isNodeEmpty(node: PMNode): boolean {
-  const text = node.textContent
-  if (text.length === 0) return true
-  // ZWS is a legacy placeholder some older docs still carry, seeded
-  // back when proof-server required non-empty markdown. Treat it as
-  // empty so the hint shows until the user's first real keystroke.
-  if (text === '​') return true
-  return false
 }
 
 export function createPlaceholderPlugin(opts: PlaceholderOptions) {
@@ -50,7 +40,7 @@ export function createPlaceholderPlugin(opts: PlaceholderOptions) {
             const first = doc.firstChild
             if (!first) return null
             if (first.type.name !== 'paragraph') return null
-            if (!isNodeEmpty(first)) return null
+            if (!isEffectivelyEmpty(first.textContent)) return null
             return DecorationSet.create(doc, [
               Decoration.node(0, first.nodeSize, {
                 [PLACEHOLDER_ATTR]: opts.bodyText,

@@ -25,6 +25,7 @@ import {
 } from '@/state/wikiService'
 import type { IngestProposal, IndexUpdate } from '@/agent/ingest'
 import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
+import { effectiveLength } from '@/lib/markdownText'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { extractErrorCode } from '@/chat/utils/errorMessage'
 import { notify } from '@/lib/notify'
@@ -154,8 +155,7 @@ async function readDocLength(slug: string): Promise<number> {
     )
     if (!res.ok) return 0
     const json = (await res.json()) as { markdown?: string }
-    const md = (json.markdown ?? '').replace(/[​\s]/g, '')
-    return md.length
+    return effectiveLength(json.markdown ?? '')
   } catch {
     return 0
   }
