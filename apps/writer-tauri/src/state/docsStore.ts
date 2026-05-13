@@ -983,16 +983,21 @@ function installTitleMirror(
     // cache, not just structural changes at the fragment root.
     fragment.observeDeep(sync)
   }
-  if (handle.provider.isSynced) {
+  if (handle.provider.isSynced || handle.idb.synced) {
     start()
     return
   }
+  // Either signal triggers the mirror: idb hydrates the same fragment
+  // the server would have sent, so sidebar titles populate on cold/
+  // offline launches without waiting for proof-server.
   let started = false
-  const onceSynced = () => {
+  const onceReady = () => {
     if (started) return
     started = true
-    handle.provider.off('synced', onceSynced)
+    handle.provider.off('synced', onceReady)
+    handle.idb.off('synced', onceReady)
     start()
   }
-  handle.provider.on('synced', onceSynced)
+  handle.provider.on('synced', onceReady)
+  handle.idb.on('synced', onceReady)
 }

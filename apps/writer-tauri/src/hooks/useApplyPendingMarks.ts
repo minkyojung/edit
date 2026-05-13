@@ -34,25 +34,41 @@ import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
 import { applyPendingForActive, applyPendingLogsForView } from '@/agent/applyIngest'
 
-/** Resolve when the provider's initial sync is done AND y-prosemirror
- * has had a tick to project the ydoc into the PM view. Without this
- * gate, PM transactions dispatched on a freshly-mounted view land on
- * an empty doc that gets rebuilt out from under them when sync
- * completes — the local edits silently vanish. */
-function waitForSync(
-  provider: { isSynced: boolean; on: (e: 'synced', f: () => void) => void; off: (e: 'synced', f: () => void) => void },
-): Promise<void> {
+/** Resolve when either persistence layer has populated the ydoc AND
+ * y-prosemirror has had a tick to project it into the PM view. Without
+ * this gate, PM transactions dispatched on a freshly-mounted view land
+ * on an empty doc that gets rebuilt out from under them when hydration
+ * completes — the local edits silently vanish.
+ *
+ * Either signal is sufficient: idb hydrate restores the same Y.Doc the
+ * server would have sent, so a wiki page can apply queued ingest marks
+ * offline. Race semantics — whichever fires first wins, the loser's
+ * later updates merge into the same Y.Doc via CRDT. */
+function waitForLocalReady(handle: {
+  provider: {
+    isSynced: boolean
+    on: (e: 'synced', f: () => void) => void
+    off: (e: 'synced', f: () => void) => void
+  }
+  idb: {
+    synced: boolean
+    on: (e: 'synced', f: () => void) => void
+    off: (e: 'synced', f: () => void) => void
+  }
+}): Promise<void> {
   return new Promise<void>((resolve) => {
     const finish = () => setTimeout(resolve, 50)
-    if (provider.isSynced) {
+    if (handle.provider.isSynced || handle.idb.synced) {
       finish()
       return
     }
-    const onSynced = () => {
-      provider.off('synced', onSynced)
+    const onAny = () => {
+      handle.provider.off('synced', onAny)
+      handle.idb.off('synced', onAny)
       finish()
     }
-    provider.on('synced', onSynced)
+    handle.provider.on('synced', onAny)
+    handle.idb.on('synced', onAny)
   })
 }
 
@@ -91,7 +107,7 @@ export function useApplyPendingMarks(): void {
       if (lastAttemptRef.current === signature) return
       lastAttemptRef.current = signature
       runningRef.current = true
-      void waitForSync(handle.provider)
+      void waitForLocalReady(handle)
         .then(() => {
           // Re-read latest view in case the editor remounted while
           // we were waiting for sync (user clicked away and back).
@@ -123,7 +139,7 @@ export function useApplyPendingMarks(): void {
       proposalIds: matching.map((p) => p.id),
     })
     runningRef.current = true
-    void waitForSync(handle.provider)
+    void waitForLocalReady(handle)
       .then(() => {
         const liveView = useEditorViewStore.getState().view
         if (!liveView) {
@@ -132,7 +148,7 @@ export function useApplyPendingMarks(): void {
         }
         return applyPendingForActive(liveView, handle.ydoc, known.type)
       })
-      .catch((err) => console.warn('[ingest:materialize] applyPendingForActive failed', err))
+      .catch((err: unknown) => console.warn('[ingest:materialize] applyPendingForActive failed', err))
       .finally(() => {
         runningRef.current = false
       })

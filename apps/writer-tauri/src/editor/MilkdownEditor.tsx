@@ -104,28 +104,32 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   // must not duplicate it. Idempotent via meta.titleNormalizedV2 —
   // see lib/docTitle.ts. Non-daily docs run no normalization.
   //
-  // Gated on BOTH provider.synced AND meta.type being populated.
+  // Gated on (provider.synced OR idb.synced) AND meta.type being populated.
+  // Local-disk hydration is enough to run normalization — the title
+  // structure lives in the Y.Doc that idb just restored. Waiting for the
+  // server is unnecessary and would stall this on cold/offline launches.
   useEffect(() => {
     if (!handle || !pmView) return
     if (!isDaily) return
-    const ydoc = handle.ydoc
-    const provider = handle.provider
+    const { ydoc, provider, idb } = handle
     const view = pmView
     const metaMap = ydoc.getMap('meta')
     const opts = { date: knownDoc?.date }
     let ran = false
     const tryRun = () => {
       if (ran) return
-      if (!provider.isSynced) return
+      if (!provider.isSynced && !idb.synced) return
       if (!metaMap.get('type')) return
       ran = true
       normalizeTitleStructure(ydoc, view, opts)
     }
     tryRun()
     provider.on('synced', tryRun)
+    idb.on('synced', tryRun)
     metaMap.observe(tryRun)
     return () => {
       provider.off('synced', tryRun)
+      idb.off('synced', tryRun)
       metaMap.unobserve(tryRun)
     }
   }, [handle, pmView, isDaily, knownDoc?.date])
