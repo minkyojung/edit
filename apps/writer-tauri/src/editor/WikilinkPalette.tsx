@@ -19,6 +19,7 @@ import {
 } from './wikilinkPalettePlugin'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocTitle } from '@/hooks/useDocTitle'
+import { deriveLabel } from '@/lib/docLabel'
 import { cn } from '@/lib/utils'
 import { notify } from '@/lib/notify'
 
@@ -234,21 +235,20 @@ async function commit(info: WikilinkPaletteInfo, pick: Candidate) {
   }
 }
 
-/** Pull a display label for a candidate row. We bias toward the
- * cached Y.Text title once the doc has been opened; otherwise fall
- * back to a plain "Untitled" since unopened children don't yet
- * have a synced title we can read from this bird's-eye component. */
+/** Pull a display label for a candidate row. Mirrors useDocLabel's
+ * resolution order for non-daily docs: live body label wins when
+ * the handle is warm; otherwise the cached knownDocs.title; finally
+ * 'Untitled'. */
 function titleFor(doc: KnownDoc): string {
   return TitleResolver(doc) || 'Untitled'
 }
 
 function TitleResolver(doc: KnownDoc): string {
-  // Live ydoc title wins when the handle is warm (reflects edits in
-  // real time). Otherwise fall back to the cached mirror in
-  // knownDocs.title — set at create time and kept in sync by the
-  // per-handle observer installed in docsStore.ensureHandle.
   const handle = useDocsStore.getState().handles[doc.slug]
-  if (handle) return handle.ydoc.getText('title').toString()
+  if (handle) {
+    const live = deriveLabel(handle.ydoc.getXmlFragment('prosemirror'))
+    if (live) return live
+  }
   return doc.title ?? ''
 }
 

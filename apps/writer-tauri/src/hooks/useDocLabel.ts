@@ -4,17 +4,21 @@
 //
 // Resolution order:
 //   1. Daily entry  → meta.date (anchor; no editable title at all).
-//   2. Wiki entry   → live Y.Text('title') if non-empty, else the
-//      cached knownDocs.title (set at create time for both seeds and
-//      custom pages), else a type-derived label. Wiki docs are
-//      bootstrapped without a ydoc title, so without this branch
+//   2. Wiki entry   → live body label (deriveLabel) if non-empty,
+//      else the cached knownDocs.title (set at create time for both
+//      seeds and custom pages), else a type-derived label. Wiki docs
+//      are bootstrapped with an empty body, so without this fallback
 //      they'd all read as 'Untitled'. The cached-title fallback is
 //      what lets a custom 'wiki:custom-<id>' page show its real
 //      user-given name ('people') instead of the opaque suffix.
-//   3. Warm writing → Y.Text('title') from the live ydoc. Reflects
-//      every keystroke, including across collab peers.
+//   3. Warm writing → live body label (deriveLabel via useDocTitle).
+//      Reflects every keystroke, including across collab peers. If
+//      the body is empty, falls through to the cached knownDocs.title
+//      so wikilink children don't flicker to 'Untitled' the moment
+//      the user opens them — the cached label persists until they
+//      type a real first line.
 //   4. Cold writing → knownDocs.title, the persisted mirror set at
-//      create time and kept in sync by the per-handle title observer
+//      create time and kept in sync by the per-handle body observer
 //      installed in docsStore.ensureHandle. Lets closed/unopened
 //      docs still show their real label without N WebSockets.
 //   5. Fallback     → 'Untitled'.
@@ -57,6 +61,6 @@ export function useDocLabel(slug: string | null): string {
     // seed types (belief / entity / episode).
     return known.type.replace(/^wiki:/, '')
   }
-  if (handle) return title || 'Untitled'
+  if (handle) return title || known?.title || 'Untitled'
   return known?.title || 'Untitled'
 }

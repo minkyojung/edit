@@ -604,24 +604,22 @@ export const useDocsStore = create<DocsState>()(
         void proofClient.createDoc(title, '', { slug }).catch((err) => {
           console.warn('[docs] createWritingChild background register failed', err)
         })
-          if (handle) {
-            writeDocMeta(handle.ydoc, {
-              type: 'writing',
-              parentId: parentSlug,
-              createdAt: new Date().toISOString(),
-            })
-            const ytext = handle.ydoc.getText('title')
-            if (ytext.toString().length === 0) {
-              // 'doc-init' origin — seeding the title of a freshly-
-              // created wikilink child is a system action, not
-              // something the user should be able to Cmd+Z (they'd
-              // end up with an empty-titled doc that the catalog
-              // still references).
-              handle.ydoc.transact(() => {
-                ytext.insert(0, title)
-              }, 'doc-init')
-            }
-          }
+        if (handle) {
+          writeDocMeta(handle.ydoc, {
+            type: 'writing',
+            parentId: parentSlug,
+            createdAt: new Date().toISOString(),
+          })
+          // Seed the body's first paragraph with the wikilink text so
+          // the child opens with its name on screen and the label
+          // system (deriveLabel reads the first non-empty block, see
+          // lib/docLabel.ts) picks it up uniformly — same path as a
+          // user-typed first line. From then on the body owns the
+          // label; the user can edit or delete this freely. 'doc-init'
+          // origin keeps the seed out of the undo stack so Cmd+Z right
+          // after opening doesn't strip the name.
+          seedBodyFirstLine(handle.ydoc, title)
+        }
         return slug
       },
 
@@ -921,6 +919,24 @@ function collectDescendantSlugs(docs: KnownDoc[], root: string): string[] {
  * daily; the label everywhere (tabs, sidebar, breadcrumb, header)
  * now reads from meta.date instead, so clearing the Y.Text is safe
  * and removes the legacy artifact in one shot. */
+/** Seed `<paragraph>text</paragraph>` into a brand-new doc's body
+ * fragment. Used for wikilink-created children so the body opens
+ * with the wikilink text already on screen, and the deriveLabel-based
+ * label system reads it through the same first-non-empty-block path
+ * as any user-typed first line. No-op when the fragment is already
+ * non-empty (idb hydration finished first, or the doc was created
+ * by an older build that seeded differently). */
+function seedBodyFirstLine(ydoc: Y.Doc, text: string): void {
+  if (text.length === 0) return
+  const fragment = ydoc.getXmlFragment('prosemirror')
+  if (fragment.length > 0) return
+  ydoc.transact(() => {
+    const paragraph = new Y.XmlElement('paragraph')
+    paragraph.insert(0, [new Y.XmlText(text)])
+    fragment.insert(0, [paragraph])
+  }, 'doc-init')
+}
+
 function scrubDailyTitleArtifacts(ydoc: Y.Doc): void {
   const ytext = ydoc.getText('title')
   if (ytext.length === 0) return
