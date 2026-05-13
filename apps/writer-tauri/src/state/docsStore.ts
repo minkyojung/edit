@@ -467,6 +467,16 @@ export const useDocsStore = create<DocsState>()(
           handles: nextHandles,
           status: nextStatus,
         })
+        // Invariant: tab strip is never empty. Closing the last tab
+        // pops today's daily back open so the user always lands on
+        // a writing surface. openDaily() runs its own set() in the
+        // same tick, so the UI doesn't flash a blank state.
+        if (next.length === 0) {
+          void get().openDaily().catch((err) =>
+            console.error('[docs] post-close openDaily failed', err),
+          )
+          return
+        }
         // If we closed the active and a neighbor exists, make sure it's
         // also got a handle so the editor doesn't show a blank state.
         if (nextActive && !nextHandles[nextActive]) {
@@ -684,6 +694,13 @@ export const useDocsStore = create<DocsState>()(
           status: nextStatus,
         })
 
+        // Same invariant as closeDoc: never leave the tab strip empty.
+        if (nextOpen.length === 0) {
+          void get().openDaily().catch((err) =>
+            console.error('[docs] post-archive openDaily failed', err),
+          )
+          return true
+        }
         // If we shifted activeSlug to a known but unloaded tab, warm it
         // up so the editor doesn't sit on a stale handle.
         if (nextActive && !nextHandles[nextActive]) {
@@ -748,6 +765,11 @@ export const useDocsStore = create<DocsState>()(
           openSlugs: s.openSlugs.filter((sl) => !groupSet.has(sl)),
           expandedDocSlugs: s.expandedDocSlugs.filter((sl) => !groupSet.has(sl)),
         }))
+        if (get().openSlugs.length === 0) {
+          void get().openDaily().catch((err) =>
+            console.error('[docs] post-deleteForever openDaily failed', err),
+          )
+        }
         if (failed > 0) {
           notify.cantDeleteNote({ onRetry: () => get().deleteForever(slug) })
         }
@@ -784,6 +806,11 @@ export const useDocsStore = create<DocsState>()(
           openSlugs: s.openSlugs.filter((sl) => !archivedSet.has(sl)),
           expandedDocSlugs: s.expandedDocSlugs.filter((sl) => !archivedSet.has(sl)),
         }))
+        if (get().openSlugs.length === 0) {
+          void get().openDaily().catch((err) =>
+            console.error('[docs] post-emptyArchive openDaily failed', err),
+          )
+        }
         if (failed > 0) {
           notify.cantEmptyTrash({ onRetry: () => get().emptyArchive() })
         }

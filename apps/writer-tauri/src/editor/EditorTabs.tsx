@@ -21,7 +21,6 @@ import {
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
-import { todayLocalDate } from '@/hooks/useDocMeta'
 
 export function EditorTabs() {
   const openSlugs = useDocsStore((s) => s.openSlugs)
@@ -75,7 +74,6 @@ export function EditorTabs() {
             key={slug}
             slug={slug}
             isActive={slug === activeSlug}
-            canClose={openSlugs.length > 1}
             onClose={() => closeDoc(slug)}
           />
         ))}
@@ -109,26 +107,17 @@ export function EditorTabs() {
 function DocTab({
   slug,
   isActive,
-  canClose,
   onClose,
 }: {
   slug: string
   isActive: boolean
-  canClose: boolean
   onClose: () => void
 }) {
-  const knownDoc = useDocsStore((s) =>
-    s.knownDocs.find((d) => d.slug === slug),
-  )
   const label = useDocLabel(slug)
-  // Today's daily is the bootstrap anchor — "you always land on
-  // today" is a design promise, so its tab can't leave the strip.
-  // Past dailies are just history the user opened; they're closeable
-  // like any other tab (knownDocs survives, so the sidebar still
-  // lists them).
-  const isTodaysDaily =
-    knownDoc?.type === 'daily' && knownDoc.date === todayLocalDate()
-  const showClose = canClose && !isTodaysDaily
+  // Every tab is closeable, including today's daily. closeDoc (and the
+  // archive/delete paths in docsStore) reopens today's daily in the
+  // same tick if the strip would otherwise be empty, so this surface
+  // doesn't need its own "never close the last one" guard.
 
   return (
     <TabsPrimitive.Trigger
@@ -147,32 +136,30 @@ function DocTab({
     >
       <IconFileDescription size={14} stroke={1.75} className="shrink-0 opacity-70" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {showClose && (
-        <span
-          role="button"
-          tabIndex={0}
-          onClick={(e) => {
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={(e) => {
+          e.stopPropagation()
+          onClose()
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
             e.stopPropagation()
             onClose()
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              e.stopPropagation()
-              onClose()
-            }
-          }}
-          aria-label="Close document"
-          className={cn(
-            'flex h-4 w-4 shrink-0 items-center justify-center rounded transition-opacity hover:bg-foreground/10',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-            'opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60 hover:!opacity-100',
-            isActive && 'opacity-60',
-          )}
-        >
-          <IconX size={12} stroke={2} />
-        </span>
-      )}
+          }
+        }}
+        aria-label="Close document"
+        className={cn(
+          'flex h-4 w-4 shrink-0 items-center justify-center rounded transition-opacity hover:bg-foreground/10',
+          'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+          'opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60 hover:!opacity-100',
+          isActive && 'opacity-60',
+        )}
+      >
+        <IconX size={12} stroke={2} />
+      </span>
     </TabsPrimitive.Trigger>
   )
 }
