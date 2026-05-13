@@ -7,7 +7,7 @@
 //
 // Why call ProseMirror commands directly instead of going through
 // Milkdown's commandsCtx: the rest of writer-tauri (markActions.ts,
-// useApplyPendingMarks.ts) already operates on the EditorView via
+// WikiPageBanner.tsx) already operates on the EditorView via
 // PM transactions and reads schema types straight off view.state. We
 // stay in that lane for consistency — and because the commonmark
 // preset registered the marks/nodes by the names we look up below, no

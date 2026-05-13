@@ -13,10 +13,12 @@ import { MarkHoverActionsLayer } from '@/components/agent/MarkHoverActionsLayer'
 import { AppShell } from '@/layout/AppShell'
 import { MilkdownEditor } from '@/editor/MilkdownEditor'
 import { CommandPalette } from '@/layout/CommandPalette'
+import { WikiPageBanner } from '@/layout/WikiPageBanner'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
-import { useApplyPendingMarks } from '@/hooks/useApplyPendingMarks'
+import { useApplyPendingLogs } from '@/hooks/useApplyPendingLogs'
+import { useMigrateLegacyIngestMarks } from '@/hooks/useMigrateLegacyIngestMarks'
 
 export function App() {
   return (
@@ -47,11 +49,15 @@ function AppContent() {
   // after the user has been quiet for `idleMinutes`. Mounted once
   // here at the root so a single timer covers the whole session.
   useIdleTrigger()
-  // Lazily materializes queued ingest proposals as proofSuggestion
-  // marks the moment the user navigates to a target wiki page.
-  // Pairs with the Review action on IngestProposalCard, which is
-  // itself just "navigate to the first target — marks appear there".
-  useApplyPendingMarks()
+  // Drains queued wiki:log entries when the user navigates to the
+  // log page. Wiki proposal review moved off the mark surface — see
+  // WikiPageBanner (mounted inside the /notes route) for the
+  // in-page inbox. This hook is now log-drain-only.
+  useApplyPendingLogs()
+  // One-time cleanup of legacy ingest-origin proofSuggestion marks
+  // left over from the pre-banner era. Runs per wiki page on first
+  // mount post-upgrade; no-op afterwards.
+  useMigrateLegacyIngestMarks()
 
   const activeHandle = activeSlug ? handles[activeSlug] ?? null : null
   const activeStatus = activeSlug ? statusMap[activeSlug] ?? 'initializing' : 'initializing'
@@ -73,20 +79,28 @@ function AppContent() {
             <Route
               path="/notes"
               element={
-                <MilkdownEditor
-                  key={activeSlug ?? 'no-doc'}
-                  handle={activeHandle}
-                  status={activeStatus}
-                  onViewReady={(v) => {
-                    // Mirror into the global store so non-React
-                    // consumers (ingest apply, future palette
-                    // commands) can reach the live view without
-                    // prop drilling. Local state stays the source
-                    // of truth for sibling renders below.
-                    setView(v)
-                    useEditorViewStore.getState().setView(v)
-                  }}
-                />
+                <>
+                  {/* Banner mounts above the editor and self-hides
+                      when the active doc isn't a wiki:* page with
+                      pending proposals. Lives in the scroll area
+                      so it doesn't shift layout when it appears/
+                      disappears. */}
+                  <WikiPageBanner />
+                  <MilkdownEditor
+                    key={activeSlug ?? 'no-doc'}
+                    handle={activeHandle}
+                    status={activeStatus}
+                    onViewReady={(v) => {
+                      // Mirror into the global store so non-React
+                      // consumers (banner accept, future palette
+                      // commands) can reach the live view without
+                      // prop drilling. Local state stays the source
+                      // of truth for sibling renders below.
+                      setView(v)
+                      useEditorViewStore.getState().setView(v)
+                    }}
+                  />
+                </>
               }
             />
           </Routes>

@@ -98,9 +98,9 @@ interface IngestState {
    * (page archived since enqueue, legacy seed-page targets like
    * `wiki:people` left over from before the seed pages were
    * removed, etc.). Without this, dead proposals sit in the queue
-   * forever — applyPendingForActive's knownByType check just
-   * silently no-ops them. Idempotent; safe to call on every idle
-   * pass. */
+   * forever — the banner inbox simply never shows them because
+   * the target page can't be opened. Idempotent; safe to call on
+   * every idle pass. */
   pruneDeadProposals: () => void
   /** Hide the card without touching the queue. Reopens automatically
    * the next time enqueue lands new content. */
