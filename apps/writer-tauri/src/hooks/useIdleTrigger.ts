@@ -91,7 +91,39 @@ async function materializeNewPageProposals(
     const body = p.sourceQuote
       ? `${resolvedContent}\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
       : resolvedContent
-    const newSlug = await createCustomWikiPage(name, body)
+
+    // Resolve suggestNewPageParent (a page title) to a slug by
+    // case-insensitive lookup against the live catalog, limited to
+    // user content pages (wiki:custom-*). createCustomWikiPage runs
+    // its own validation too — bad slug degrades to root creation
+    // there — but resolving here lets us log a clear miss for
+    // debugging when the LLM picks a parent that doesn't exist.
+    let parentId: string | undefined
+    if (p.suggestNewPageParent) {
+      const wantedLower = p.suggestNewPageParent.toLowerCase()
+      const parent = useDocsStore
+        .getState()
+        .knownDocs.find(
+          (d) =>
+            !d.archivedAt &&
+            d.type.startsWith('wiki:custom-') &&
+            (d.title ?? '').trim().toLowerCase() === wantedLower,
+        )
+      if (parent) {
+        parentId = parent.slug
+      } else {
+        console.warn(
+          '[ingest] suggestNewPageParent did not resolve; creating at root',
+          p.suggestNewPageParent,
+        )
+      }
+    }
+
+    const newSlug = await createCustomWikiPage(
+      name,
+      body,
+      parentId ? { parentId } : undefined,
+    )
     if (!newSlug) {
       console.warn(
         '[ingest] suggestNewPage failed; dropping proposal',

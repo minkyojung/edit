@@ -73,6 +73,14 @@ These are the rules I follow when adding to my wiki. Edit this page to teach the
 ### Length
 
 - Keep each proposal's content concise — one bullet line or a short block of two or three lines, not a wall of text. If a fact deserves more than a few lines, split it into multiple proposals or summarize aggressively. I can always re-ingest later for missing detail.
+
+### Categories
+
+I organize my wiki by creating top-level pages that act as categories — for me these are e.g. \`Work\`, \`People\`, \`Study\`, but pick whatever shows up as a top-level page in my actual WIKI block.
+
+When you create a new page via \`suggestNewPage\`, also pick the most fitting existing top-level page as its parent and emit it as \`suggestNewPageParent\` so the new page lands in the right group. Use only titles that already appear in the WIKI block headers — don't invent new categories. If nothing fits, leave \`suggestNewPageParent\` null and the page is created at the root for me to file later.
+
+A page that already has children naturally acts as a category. Don't create a category page yourself unless I clearly need one and I haven't made it — propose with \`suggestNewPage\` and a short name like "Books", and I'll review.
 `
 
 /** Ensure the wiki:log doc exists. Lazy: created on first call.

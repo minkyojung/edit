@@ -49,6 +49,15 @@ export interface IngestProposal {
    * because no existing page is a good home for this content. The
    * apply layer turns this into a real `wiki:custom-<id>` page. */
   suggestNewPage?: string
+  /** Title of an existing wiki page to nest the new page under.
+   * Used only with `suggestNewPage`. Picked from the WIKI block
+   * headers the LLM sees (`[<type-id> — <title>]`). The apply
+   * layer resolves this title to a slug via knownDocs lookup
+   * (case-insensitive). Missing or unresolvable → page created
+   * at root. System pages (`system:*`) are filtered out at the
+   * createCustomWikiPage layer so the LLM can't accidentally
+   * nest content under conventions / log / index. */
+  suggestNewPageParent?: string
   /** Markdown to append to the target page's body. */
   content: string
   /** Short reason the LLM gave for proposing this. Optional. */
@@ -120,6 +129,8 @@ Always include "sourceQuote": the exact sentence (or short clause) from the new 
 
 Cross-link: when a proposal's content mentions another wiki page that already exists in the WIKI block, wrap that page's title with double-brackets so it renders as a clickable link. Use the title exactly as it appears in the block header — \`[<type-id> — <title>]\` — for the inner text. Skip the link when the page being mentioned is the same one you're writing to (no self-links). Skip the link when no existing page matches the mention (don't invent links). Example: if "Alex" is the title of \`wiki:custom-9k4...\`, write \`Working with [[Alex]] on the project\`, not \`Working with Alex on the project\`. This applies to both \`target\`-bound and \`suggestNewPage\` proposals.
 
+Nesting: when emitting \`suggestNewPage\`, optionally also emit \`suggestNewPageParent\` with the exact title of an existing wiki page to file the new page under. Use only titles you see in the WIKI block headers — don't invent new categories. If no existing page is a good fit, leave \`suggestNewPageParent\` null and the new page is created at the root (the user can move it later). The user's conventions page declares which top-level pages act as categories; respect that hierarchy. Never nest under a system page; system surfaces don't accept children. Ignored when the proposal uses \`target\` instead of \`suggestNewPage\` — moving an existing page is a separate workflow.
+
 The INDEX block (above WIKI) is the current one-line summary of each wiki page. For every page you propose to modify (\`target\`) or create (\`suggestNewPage\`), also emit an "indexUpdates" entry with a short summary. The summary is one sentence describing what the page is *about*, not what just changed. Reuse the existing summary verbatim when the page's nature didn't really change — only emit an updated summary if the new content meaningfully shifts what the page is about. For \`suggestNewPage\` you must always provide a fresh summary since no line exists yet. Use the same target type id you used in proposals.
 
 Output strictly this JSON shape, with no surrounding prose, code fences, or commentary. Each proposal uses *either* \`target\` (existing page) *or* \`suggestNewPage\` (create a new page) — never both.
@@ -127,13 +138,13 @@ Output strictly this JSON shape, with no surrounding prose, code fences, or comm
 {
   "proposals": [
     { "target": "wiki:custom-7ntdvj41", "content": "- Direct report", "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
-    { "suggestNewPage": "Books", "content": "### The Pragmatic Programmer\\n- Software craftsmanship", "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "no existing page hosts books" }
+    { "suggestNewPage": "The Pragmatic Programmer", "suggestNewPageParent": "Books", "content": "- Software craftsmanship", "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "fits under existing Books category" }
   ],
   "indexUpdates": [
     { "target": "wiki:custom-7ntdvj41", "summary": "Direct reports and their roles" },
-    { "target": "Books", "summary": "Books I've read and their core ideas" }
+    { "target": "The Pragmatic Programmer", "summary": "Core ideas from The Pragmatic Programmer" }
   ],
-  "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; created Books page"
+  "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; created The Pragmatic Programmer under Books"
 }
 
 Note: for \`suggestNewPage\` proposals, the indexUpdates entry uses the proposed page name (the same string you put in \`suggestNewPage\`) as the target — the apply layer rewrites it to the real wiki type id after the page is created.
@@ -286,8 +297,19 @@ function validateParsed(value: unknown): ParsedIngest {
       typeof rec.sourceQuote === 'string' && rec.sourceQuote.trim()
         ? rec.sourceQuote.trim()
         : undefined
+    // Optional parent for suggestNewPage proposals. Trim + carry
+    // through if it's a non-empty string; the apply layer resolves
+    // it title → slug and filters system pages out. Ignored when
+    // the proposal uses `target` (parent applies only to brand-new
+    // pages; moving an existing page is Phase 3).
+    const suggestNewPageParent =
+      typeof rec.suggestNewPageParent === 'string' &&
+      rec.suggestNewPageParent.trim()
+        ? rec.suggestNewPageParent.trim()
+        : undefined
     proposals.push({
       ...(target ? { target } : { suggestNewPage: suggestNewPage! }),
+      ...(suggestNewPageParent && !target ? { suggestNewPageParent } : {}),
       content,
       rationale,
       sourceQuote,
