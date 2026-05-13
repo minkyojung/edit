@@ -18,6 +18,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
 import { useApplyPendingLogs } from '@/hooks/useApplyPendingLogs'
+import { useApplyPendingIndexUpdates } from '@/hooks/useApplyPendingIndexUpdates'
 import { useMigrateLegacyIngestMarks } from '@/hooks/useMigrateLegacyIngestMarks'
 
 export function App() {
@@ -54,6 +55,10 @@ function AppContent() {
   // WikiPageBanner (mounted inside the /notes route) for the
   // in-page inbox. This hook is now log-drain-only.
   useApplyPendingLogs()
+  // Drains queued index summary updates into wiki:index when the
+  // user navigates there. One line per wiki page, dedup-keyed on
+  // target (Karpathy's index.md pattern, Phase 1-B).
+  useApplyPendingIndexUpdates()
   // One-time cleanup of legacy ingest-origin proofSuggestion marks
   // left over from the pre-banner era. Runs per wiki page on first
   // mount post-upgrade; no-op afterwards.

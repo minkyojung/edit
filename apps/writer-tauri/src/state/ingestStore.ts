@@ -23,7 +23,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { IngestProposal } from '@/agent/ingest'
+import type { IngestProposal, IndexUpdate } from '@/agent/ingest'
 import { useDocsStore } from './docsStore'
 
 /** A proposal waiting for the user to accept or skip. Adds a stable
@@ -58,10 +58,22 @@ export interface PendingLogEntry {
   proposedAt: number
 }
 
+/** A pending index summary update — one line for `wiki:index`.
+ * Drained lazily when the user visits wiki:index (same lazy-on-
+ * active pattern logs and proposals use). The apply layer dedups
+ * by target so a stale update for the same page never appends a
+ * duplicate line. */
+export interface PendingIndexUpdate extends IndexUpdate {
+  id: string
+  sourceSlug: string
+  proposedAt: number
+}
+
 interface IngestState {
   // Persisted
   pendingProposals: PendingProposal[]
   pendingLogs: PendingLogEntry[]
+  pendingIndexUpdates: PendingIndexUpdate[]
   /** Per-note watermark: the doc body length we last ran ingest on.
    * Idle trigger only re-runs when current length exceeds this by
    * the configured threshold (default 200 chars). Map keyed by
@@ -79,14 +91,19 @@ interface IngestState {
    * (clears `dismissed`) so the user notices the new batch. */
   enqueue: (args: {
     proposals: IngestProposal[]
+    indexUpdates: IndexUpdate[]
     logEntry: string | null
     sourceSlug: string
     sourceLabel: string
   }) => void
-  /** Drop the listed proposal ids from the queue (after they've
-   * been applied OR explicitly skipped — same operation either way).
-   * `appliedLogId`, if given, also clears that log entry. */
-  remove: (args: { proposalIds: string[]; logIds?: string[] }) => void
+  /** Drop the listed proposal / log / index-update ids from the
+   * queue (after they've been applied OR explicitly skipped — same
+   * operation either way). */
+  remove: (args: {
+    proposalIds: string[]
+    logIds?: string[]
+    indexUpdateIds?: string[]
+  }) => void
   /** Update a single proposal in place. Used by the apply layer
    * when it materializes a `suggestNewPage` proposal — it creates
    * the new wiki page, then patches the proposal's `target` to the
@@ -129,18 +146,20 @@ export const useIngestStore = create<IngestState>()(
     (set) => ({
       pendingProposals: [],
       pendingLogs: [],
+      pendingIndexUpdates: [],
       lastIngestedLength: {},
       dismissed: false,
       idleMinutes: DEFAULT_IDLE,
 
-      enqueue: ({ proposals, logEntry, sourceSlug, sourceLabel }) => {
+      enqueue: ({ proposals, indexUpdates, logEntry, sourceSlug, sourceLabel }) => {
         console.log('[ingest:queue] enqueue called', {
           proposals: proposals.length,
+          indexUpdates: indexUpdates.length,
           logEntry: !!logEntry,
           sourceSlug,
           targets: proposals.map((p) => p.target ?? `new:${p.suggestNewPage}`),
         })
-        if (proposals.length === 0 && !logEntry) return
+        if (proposals.length === 0 && indexUpdates.length === 0 && !logEntry) return
         const now = Date.now()
         const newProposals: PendingProposal[] = proposals.map((p) => ({
           ...p,
@@ -166,10 +185,26 @@ export const useIngestStore = create<IngestState>()(
               },
             ]
           : []
-        if (newProposals.length === 0 && newLogs.length === 0) return
+        // Index summary updates follow the same lazy pattern —
+        // they're drained when the user visits wiki:index. Each
+        // entry carries the proposed summary plus its target; the
+        // apply layer dedups by target so a stale update never
+        // creates a duplicate line.
+        const newIndexUpdates: PendingIndexUpdate[] = indexUpdates.map((u) => ({
+          ...u,
+          id: crypto.randomUUID(),
+          sourceSlug,
+          proposedAt: now,
+        }))
+        if (
+          newProposals.length === 0 &&
+          newLogs.length === 0 &&
+          newIndexUpdates.length === 0
+        ) return
         set((s) => ({
           pendingProposals: [...s.pendingProposals, ...newProposals],
           pendingLogs: [...s.pendingLogs, ...newLogs],
+          pendingIndexUpdates: [...s.pendingIndexUpdates, ...newIndexUpdates],
           // Wake the card on every fresh batch so the user notices
           // the new wiki additions waiting for review.
           dismissed: false,
@@ -177,18 +212,23 @@ export const useIngestStore = create<IngestState>()(
         console.log('[ingest:queue] enqueued', {
           newProposals: newProposals.length,
           newLogs: newLogs.length,
+          newIndexUpdates: newIndexUpdates.length,
           ids: newProposals.map((p) => p.id),
         })
       },
 
-      remove: ({ proposalIds, logIds }) => {
+      remove: ({ proposalIds, logIds, indexUpdateIds }) => {
         const propSet = new Set(proposalIds)
         const logSet = new Set(logIds ?? [])
+        const idxSet = new Set(indexUpdateIds ?? [])
         set((s) => ({
           pendingProposals: s.pendingProposals.filter(
             (p) => !propSet.has(p.id),
           ),
           pendingLogs: s.pendingLogs.filter((l) => !logSet.has(l.id)),
+          pendingIndexUpdates: s.pendingIndexUpdates.filter(
+            (u) => !idxSet.has(u.id),
+          ),
         }))
       },
 
@@ -236,6 +276,7 @@ export const useIngestStore = create<IngestState>()(
         set({
           pendingProposals: [],
           pendingLogs: [],
+          pendingIndexUpdates: [],
           lastIngestedLength: {},
           dismissed: false,
         }),
@@ -246,6 +287,7 @@ export const useIngestStore = create<IngestState>()(
       partialize: (s) => ({
         pendingProposals: s.pendingProposals,
         pendingLogs: s.pendingLogs,
+        pendingIndexUpdates: s.pendingIndexUpdates,
         lastIngestedLength: s.lastIngestedLength,
         dismissed: s.dismissed,
         idleMinutes: s.idleMinutes,

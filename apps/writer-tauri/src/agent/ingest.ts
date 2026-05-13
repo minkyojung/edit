@@ -23,6 +23,7 @@ import {
   readConventions,
   ensureConventionsWikiSlug,
   ensureIndexWikiSlug,
+  readIndexContext,
 } from '@/state/wikiService'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
@@ -62,9 +63,31 @@ export interface IngestProposal {
   sourceQuote?: string
 }
 
+/** One summary line in `wiki:index` — Karpathy's index.md pattern.
+ * The LLM emits one of these whenever a target page either gained
+ * meaningful content or is being created (via `suggestNewPage`).
+ * The apply layer keeps the index page deduplicated by `target`:
+ * a fresh update for the same target replaces the existing line
+ * instead of appending. */
+export interface IndexUpdate {
+  /** wiki:* type id of the page this summary describes. Must match
+   * an existing wiki page or one being created via suggestNewPage
+   * in the same ingest pass. */
+  target: string
+  /** One-line description of the page. Phase 1-B keeps the format
+   * loose — typically "X about Y" or "Z 관련 페이지". Phase 2 may
+   * standardize once we see what the model produces in practice. */
+  summary: string
+}
+
 export interface IngestResult {
   /** Append-only edits the LLM thinks the wiki should reflect. */
   proposals: IngestProposal[]
+  /** One-line summaries for `wiki:index`, one per touched page.
+   * Empty when nothing meaningful changed. The apply layer
+   * deduplicates by target — sending the same target's summary
+   * twice in different ingest passes replaces, doesn't append. */
+  indexUpdates: IndexUpdate[]
   /** Pre-formatted log line for wiki:log, or null if nothing was
    * meaningful enough to log. Format follows Karpathy's convention:
    * `## [YYYY-MM-DD] <kind> | <summary>`. */
@@ -96,6 +119,8 @@ Invariants (do not violate):
 
 Always include "sourceQuote": the exact sentence (or short clause) from the new note that this proposal was derived from. Echo it verbatim — it's the user's audit trail for verifying the proposal landed in the right page. If the proposal aggregates several lines, quote the most representative one.
 
+The INDEX block (above WIKI) is the current one-line summary of each wiki page. For every page you propose to modify (\`target\`) or create (\`suggestNewPage\`), also emit an "indexUpdates" entry with a short summary. The summary is one sentence describing what the page is *about*, not what just changed. Reuse the existing summary verbatim when the page's nature didn't really change — only emit an updated summary if the new content meaningfully shifts what the page is about. For \`suggestNewPage\` you must always provide a fresh summary since no line exists yet. Use the same target type id you used in proposals.
+
 Output strictly this JSON shape, with no surrounding prose, code fences, or commentary. Each proposal uses *either* \`target\` (existing page) *or* \`suggestNewPage\` (create a new page) — never both.
 
 {
@@ -103,10 +128,16 @@ Output strictly this JSON shape, with no surrounding prose, code fences, or comm
     { "target": "wiki:custom-7ntdvj41", "content": "- Direct report", "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
     { "suggestNewPage": "Books", "content": "### The Pragmatic Programmer\\n- Software craftsmanship", "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "no existing page hosts books" }
   ],
+  "indexUpdates": [
+    { "target": "wiki:custom-7ntdvj41", "summary": "Direct reports and their roles" },
+    { "target": "Books", "summary": "Books I've read and their core ideas" }
+  ],
   "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; created Books page"
 }
 
-If proposals is empty, logEntry should still be a single line summarizing the ingest pass (e.g. "## [2026-05-07] ingest | daily/2026-05-07: nothing notable").`
+Note: for \`suggestNewPage\` proposals, the indexUpdates entry uses the proposed page name (the same string you put in \`suggestNewPage\`) as the target — the apply layer rewrites it to the real wiki type id after the page is created.
+
+If proposals is empty, indexUpdates should also be empty. logEntry should still be a single line summarizing the ingest pass (e.g. "## [2026-05-07] ingest | daily/2026-05-07: nothing notable").`
 
 /** Compose the full system prompt. The user-editable conventions
  * page (Karpathy's CLAUDE.md pattern) is prepended so it shadows
@@ -129,19 +160,29 @@ function buildPrompt(args: {
   noteLabel: string
   noteMarkdown: string
   wikiSnapshot: string
+  indexSnapshot: string
 }): string {
   const wiki = args.wikiSnapshot.trim().length
     ? args.wikiSnapshot
     : '(no wiki pages yet — propose targets only if a clearly-named one is needed)'
-  return [
-    `DATE: ${args.date}`,
-    '',
-    'WIKI:',
-    wiki,
-    '',
-    `NEW NOTE (${args.noteLabel}):`,
-    args.noteMarkdown,
-  ].join('\n')
+  // The INDEX block carries the existing one-line summary per page.
+  // Showing it explicitly lets the LLM decide whether a page's
+  // summary needs updating — Phase 1-B's signal that index has
+  // become a first-class part of the prompt. Skip the block when
+  // it's empty (no pages summarized yet) rather than emitting an
+  // empty header that distracts from the WIKI section.
+  const sections: string[] = [`DATE: ${args.date}`, '']
+  if (args.indexSnapshot.trim().length) {
+    sections.push('INDEX (current — one summary line per wiki page):')
+    sections.push(args.indexSnapshot)
+    sections.push('')
+  }
+  sections.push('WIKI:')
+  sections.push(wiki)
+  sections.push('')
+  sections.push(`NEW NOTE (${args.noteLabel}):`)
+  sections.push(args.noteMarkdown)
+  return sections.join('\n')
 }
 
 /** Read a doc's markdown body via the canonical proof-server route.
@@ -207,6 +248,7 @@ function extractJson(raw: string): unknown {
 
 interface ParsedIngest {
   proposals: IngestProposal[]
+  indexUpdates: IndexUpdate[]
   logEntry: string | null
 }
 
@@ -215,7 +257,7 @@ interface ParsedIngest {
  * than to apply garbage to the wiki later. */
 function validateParsed(value: unknown): ParsedIngest {
   if (!value || typeof value !== 'object') {
-    return { proposals: [], logEntry: null }
+    return { proposals: [], indexUpdates: [], logEntry: null }
   }
   const obj = value as Record<string, unknown>
   const rawProposals = Array.isArray(obj.proposals) ? obj.proposals : []
@@ -250,11 +292,34 @@ function validateParsed(value: unknown): ParsedIngest {
       sourceQuote,
     })
   }
+  // System-owned pages must never appear in indexUpdates — they are
+  // the index/log/conventions themselves, never targets the LLM is
+  // allowed to summarize. Defensive filter even though the catalog
+  // snapshot already excludes them, so a hallucinated id can't sneak
+  // a stray summary line into the index.
+  const SYSTEM_TARGETS = new Set(['wiki:index', 'wiki:log', 'wiki:conventions'])
+  const rawIndex = Array.isArray(obj.indexUpdates) ? obj.indexUpdates : []
+  const indexUpdates: IndexUpdate[] = []
+  for (const u of rawIndex) {
+    if (!u || typeof u !== 'object') continue
+    const rec = u as Record<string, unknown>
+    const target =
+      typeof rec.target === 'string' && rec.target.trim()
+        ? rec.target.trim()
+        : null
+    const summary =
+      typeof rec.summary === 'string' && rec.summary.trim()
+        ? rec.summary.trim()
+        : null
+    if (!target || !summary) continue
+    if (SYSTEM_TARGETS.has(target)) continue
+    indexUpdates.push({ target, summary })
+  }
   const logEntry =
     typeof obj.logEntry === 'string' && obj.logEntry.trim()
       ? obj.logEntry.trim()
       : null
-  return { proposals, logEntry }
+  return { proposals, indexUpdates, logEntry }
 }
 
 /** Wait for one chat run to complete on the chat sidecar, returning
@@ -374,6 +439,7 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
   if (!noteMarkdown) {
     return {
       proposals: [],
+      indexUpdates: [],
       logEntry: null,
       raw: '',
       malformed: false,
@@ -386,12 +452,12 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
   // means the static rules take over alone.
   await ensureConventionsWikiSlug()
   const conventions = await readConventions()
-  // Seed the index page on first need. Phase 1-A: the page exists
-  // in the catalog but stays empty; later phases populate it from
-  // ingest output and (Phase 2) feed it back as the prompt context.
-  // Fire-and-forget — a failed create just means the page lazily
-  // appears on the next pass.
-  void ensureIndexWikiSlug()
+  // Seed the index page on first need; readIndexContext feeds the
+  // current summary lines into the prompt so the LLM can decide
+  // whether to update or leave each page's summary alone. Empty
+  // body means "no summaries yet" — buildPrompt skips the block.
+  await ensureIndexWikiSlug()
+  const indexSnapshot = await readIndexContext()
   const noteLabel =
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
@@ -402,6 +468,7 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     noteLabel,
     noteMarkdown,
     wikiSnapshot,
+    indexSnapshot,
   })
 
   const runId = crypto.randomUUID()
@@ -423,15 +490,16 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
   const parsedJson = extractJson(raw)
   if (!parsedJson) {
     console.warn('[ingest:producer] could not extract JSON from response')
-    return { proposals: [], logEntry: null, raw, malformed: true }
+    return { proposals: [], indexUpdates: [], logEntry: null, raw, malformed: true }
   }
-  const { proposals, logEntry } = validateParsed(parsedJson)
+  const { proposals, indexUpdates, logEntry } = validateParsed(parsedJson)
   console.log('[ingest:producer] validated', {
     proposals: proposals.length,
+    indexUpdates: indexUpdates.length,
     logEntry: !!logEntry,
     targets: proposals.map((p) => p.target ?? `new:${p.suggestNewPage}`),
   })
-  return { proposals, logEntry, raw, malformed: false }
+  return { proposals, indexUpdates, logEntry, raw, malformed: false }
 }
 
 /** Convenience for console testing: run ingest against today's

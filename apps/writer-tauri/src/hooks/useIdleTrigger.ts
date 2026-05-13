@@ -23,7 +23,7 @@ import {
   ensureLogWikiSlug,
   createCustomWikiPage,
 } from '@/state/wikiService'
-import type { IngestProposal } from '@/agent/ingest'
+import type { IngestProposal, IndexUpdate } from '@/agent/ingest'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { extractErrorCode } from '@/chat/utils/errorMessage'
 import { notify } from '@/lib/notify'
@@ -49,28 +49,29 @@ interface RunOptions {
 }
 
 /** Split an ingest pass into "create a new page with this content"
- * vs "stamp this content as a mark on an existing page". The former
- * goes through createCustomWikiPage(name, body) — the page is born
- * with the content already in its body, no mark is created, no
- * placeholder scaffolding is needed. The latter is just the existing
- * target-based proposals passed straight through to the queue.
+ * vs "append this content to an existing page". The former goes
+ * through createCustomWikiPage(name, body) — the page is born with
+ * content already in its body, no banner card is needed. The
+ * latter is just the existing target-based proposals passed
+ * straight through to the queue for in-page banner review.
  *
- * Why the asymmetry: marks are a review surface for *inline*
- * suggestions on top of existing content. A brand-new page has
- * nothing to review against — there is no surrounding text to
- * disambiguate from. Forcing it through the mark system meant
- * stamping a placeholder anchor, which left visible cruft and
- * triggered a server/client sync race when the mark's content
- * leaked into the doc body. Creating the page with content
- * directly keeps the create and review paths on disjoint surfaces.
+ * suggestNewPage / target rewrite: when the LLM creates a new
+ * page, the indexUpdates entry it emitted references the new page
+ * by its proposed `name` (e.g. "Books") since the real type id
+ * didn't exist at LLM-call time. We collect a name → realType map
+ * here and apply it to indexUpdates below, so by the time the
+ * queue sees them every target is a real wiki:* type id and the
+ * apply layer can resolve the title via knownDocs.
+ *
  * Proposals whose page creation fails are dropped (better to lose
  * one than send the LLM's "make a Books page" content to a random
  * existing target). */
 async function materializeNewPageProposals(
   proposals: IngestProposal[],
   sourceLabel: string,
-): Promise<IngestProposal[]> {
+): Promise<{ proposals: IngestProposal[]; nameToType: Map<string, string> }> {
   const out: IngestProposal[] = []
+  const nameToType = new Map<string, string>()
   for (const p of proposals) {
     if (p.target) {
       out.push(p)
@@ -94,12 +95,17 @@ async function materializeNewPageProposals(
       )
       continue
     }
+    // Lookup the type id the catalog just assigned (createCustomWikiPage
+    // mints a `wiki:custom-<id>` and registers it). Used below to
+    // rewrite indexUpdates that referenced this page by name.
+    const known = useDocsStore.getState().knownDocs.find((d) => d.slug === newSlug)
+    if (known) nameToType.set(name, known.type)
     // Page is now in the catalog with its content already in the
     // body. No queue entry — there's no mark to apply. The user
     // sees the new page in the sidebar; if they don't like it,
     // archiving is a one-click rejection.
   }
-  return out
+  return { proposals: out, nameToType }
 }
 
 /** Read a doc's markdown via the canonical proof-server route.
@@ -246,13 +252,42 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
       : known.title?.trim() || slug
-  const proposalsForQueue = await materializeNewPageProposals(
-    result.proposals,
-    sourceLabel,
+  const { proposals: proposalsForQueue, nameToType } =
+    await materializeNewPageProposals(result.proposals, sourceLabel)
+
+  // Rewrite indexUpdates so every target is a real wiki:* type id.
+  // The LLM emitted them with the new page's *name* (e.g. "Books")
+  // when it didn't have an id yet; materializeNewPageProposals just
+  // created the real pages and gave us the name → type map. Drop
+  // any indexUpdate whose name didn't resolve — the matching page
+  // creation must have failed, so its summary line has nothing to
+  // anchor to.
+  const validTypes = new Set<string>(
+    useDocsStore
+      .getState()
+      .knownDocs.filter((d) => !d.archivedAt)
+      .map((d) => d.type),
   )
+  const indexUpdatesForQueue: IndexUpdate[] = []
+  for (const u of result.indexUpdates) {
+    if (validTypes.has(u.target)) {
+      indexUpdatesForQueue.push(u)
+      continue
+    }
+    const rewritten = nameToType.get(u.target)
+    if (rewritten) {
+      indexUpdatesForQueue.push({ target: rewritten, summary: u.summary })
+    } else {
+      console.warn(
+        '[ingest] indexUpdate target did not resolve to a real page; dropping',
+        u.target,
+      )
+    }
+  }
 
   useIngestStore.getState().enqueue({
     proposals: proposalsForQueue,
+    indexUpdates: indexUpdatesForQueue,
     logEntry: result.logEntry,
     sourceSlug: slug,
     sourceLabel,

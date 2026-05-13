@@ -150,6 +150,21 @@ export async function readConventions(): Promise<string> {
   return readWikiMarkdown(doc.slug)
 }
 
+/** Read the wiki:index body as a labeled INDEX block for the
+ * ingest prompt. The LLM sees what summaries already exist so it
+ * can decide whether to emit a new `indexUpdates` entry or leave a
+ * page's line untouched. Returns '' when the page is missing or
+ * empty so callers can skip the block entirely. */
+export async function readIndexContext(): Promise<string> {
+  const doc = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.type === INDEX_TYPE && !d.archivedAt)
+  if (!doc) return ''
+  const md = await readWikiMarkdown(doc.slug)
+  if (!md) return ''
+  return md
+}
+
 /** No-op placeholder kept so the docsStore bootstrap call site
  * doesn't have to special-case the new lazy model. The wiki used to
  * pre-seed three pages here; now it stays empty until something
