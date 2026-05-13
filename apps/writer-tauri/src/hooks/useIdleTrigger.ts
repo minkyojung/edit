@@ -31,11 +31,6 @@ import { notify } from '@/lib/notify'
 import { useConnectDialog } from '@/stores/connectDialog'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
-/** Minimum new chars since last ingest before the trigger will run
- * again on the same doc. Keeps short edits / typo fixes from
- * burning Haiku calls — the wiki only cares about substantive
- * additions. Tuned at 200 chars ≈ a short paragraph. */
-const MIN_GROWTH = 200
 /** Throttle window for mousemove handling. mousemove fires per
  * pixel of motion; without this the listener pegs a CPU on idle
  * trigger reset thrash. 1s is invisible to humans but spares the
@@ -187,14 +182,24 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
   }
 
   if (!opts.force) {
+    // Dirty-bit gate: re-ingest only if the note has been edited
+    // since the last successful pass. The XmlFragment observer in
+    // docsStore.buildHandle bumps `lastEditedAt[slug]` on any
+    // change; `markIngested` below stamps `lastIngestedAt[slug]`
+    // on successful return. First ingest (no prior `lastIngestedAt`)
+    // always falls through — the length=0 short-circuit above
+    // already caught the empty case. This replaces the old growth-
+    // based MIN_GROWTH watermark; a small but meaningful edit (a
+    // new bullet under an existing entity) used to fall under the
+    // 200-char threshold and silently skip.
     const ingest = useIngestStore.getState()
-    const watermark = ingest.lastIngestedLength[slug] ?? 0
-    if (length - watermark < MIN_GROWTH) {
-      console.log('[ingest:trigger] bail: watermark gate', {
+    const editedAt = ingest.lastEditedAt[slug] ?? 0
+    const ingestedAt = ingest.lastIngestedAt[slug] ?? 0
+    if (ingestedAt > 0 && editedAt <= ingestedAt) {
+      console.log('[ingest:trigger] bail: no edits since last ingest', {
         slug,
-        length,
-        watermark,
-        minGrowth: MIN_GROWTH,
+        editedAt,
+        ingestedAt,
       })
       return 0
     }

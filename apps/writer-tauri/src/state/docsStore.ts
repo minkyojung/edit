@@ -28,6 +28,7 @@ import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMet
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
 import { deriveLabel } from '@/lib/docLabel'
+import { useIngestStore } from './ingestStore'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
 
@@ -174,6 +175,21 @@ function buildHandle(
     idbSynced: idb.whenSynced.then(() => undefined),
     slug,
   }
+  // Install the ingest dirty-bit tracker after IDB finishes hydrating
+  // so the initial replay doesn't register as a fresh edit. From that
+  // point on, any XmlFragment change (typing, mark accept, remote
+  // sync) bumps ingestStore.lastEditedAt[slug] — that's the watermark
+  // useIdleTrigger compares against lastIngestedAt to decide whether
+  // the note is a candidate for re-ingest. markEdited itself filters
+  // out wiki:* slugs so this fires harmlessly on every doc type.
+  // No explicit unobserve: ydoc.destroy() in closeDoc tears down all
+  // observers attached to fragments it owns.
+  void idb.whenSynced.then(() => {
+    const fragment = ydoc.getXmlFragment('prosemirror')
+    fragment.observeDeep(() => {
+      useIngestStore.getState().markEdited(slug)
+    })
+  })
   // 'connecting' on launch reads as "we're trying to reach the server";
   // the background task below promotes to 'connected' or 'error' once
   // the outcome is known. Callers that only need local writes don't
@@ -599,7 +615,14 @@ export const useDocsStore = create<DocsState>()(
           title,
         }
         set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-        await ensureHandle(slug, set, get)
+        // Seed the body's first paragraph with the wikilink text via
+        // ensureHandle's seedFirstLine option. Critical: the seed runs
+        // *inside* ensureHandle, before the handle is published to the
+        // store, so MilkdownEditor never sees an empty fragment and
+        // its schema-fill branch can't race with this seed. The
+        // 'doc-init' transaction origin keeps the seed out of the undo
+        // stack so Cmd+Z right after opening doesn't strip the name.
+        await ensureHandle(slug, set, get, { seedFirstLine: title })
         const handle = get().handles[slug]
         void proofClient.createDoc(title, '', { slug }).catch((err) => {
           console.warn('[docs] createWritingChild background register failed', err)
@@ -610,15 +633,6 @@ export const useDocsStore = create<DocsState>()(
             parentId: parentSlug,
             createdAt: new Date().toISOString(),
           })
-          // Seed the body's first paragraph with the wikilink text so
-          // the child opens with its name on screen and the label
-          // system (deriveLabel reads the first non-empty block, see
-          // lib/docLabel.ts) picks it up uniformly — same path as a
-          // user-typed first line. From then on the body owns the
-          // label; the user can edit or delete this freely. 'doc-init'
-          // origin keeps the seed out of the undo stack so Cmd+Z right
-          // after opening doesn't strip the name.
-          seedBodyFirstLine(handle.ydoc, title)
         }
         return slug
       },
@@ -919,20 +933,25 @@ function collectDescendantSlugs(docs: KnownDoc[], root: string): string[] {
  * daily; the label everywhere (tabs, sidebar, breadcrumb, header)
  * now reads from meta.date instead, so clearing the Y.Text is safe
  * and removes the legacy artifact in one shot. */
-/** Seed `<paragraph>text</paragraph>` into a brand-new doc's body
- * fragment. Used for wikilink-created children so the body opens
- * with the wikilink text already on screen, and the deriveLabel-based
- * label system reads it through the same first-non-empty-block path
- * as any user-typed first line. No-op when the fragment is already
- * non-empty (idb hydration finished first, or the doc was created
- * by an older build that seeded differently). */
+/** Seed `<paragraph>text</paragraph>` (or `<paragraph/>` when `text`
+ * is empty) into a brand-new doc's body fragment. Used by the create
+ * paths via ensureHandle's `seedFirstLine` option so that:
+ *   1. MilkdownEditor's schema-fill branch never sees an empty
+ *      fragment and therefore can't race with the seed (the fragment
+ *      is already populated by the time the handle is published).
+ *   2. The label system (deriveLabel reads the first non-empty
+ *      block) picks up the wikilink text uniformly when one is
+ *      supplied.
+ * No-op when the fragment is already non-empty — defensive against
+ * a caller passing this option on a reopen path. */
 function seedBodyFirstLine(ydoc: Y.Doc, text: string): void {
-  if (text.length === 0) return
   const fragment = ydoc.getXmlFragment('prosemirror')
   if (fragment.length > 0) return
   ydoc.transact(() => {
     const paragraph = new Y.XmlElement('paragraph')
-    paragraph.insert(0, [new Y.XmlText(text)])
+    if (text.length > 0) {
+      paragraph.insert(0, [new Y.XmlText(text)])
+    }
     fragment.insert(0, [paragraph])
   }, 'doc-init')
 }
@@ -949,7 +968,17 @@ function scrubDailyTitleArtifacts(ydoc: Y.Doc): void {
 
 /** Internal: lazy-create a handle for `slug`, register it, and route
  * status updates back into the store. Idempotent — a second call for
- * the same slug returns immediately. */
+ * the same slug returns immediately.
+ *
+ * `opts.seedFirstLine`: when supplied (only by brand-new-doc create
+ * paths), the body fragment is seeded with `<paragraph>text</paragraph>`
+ * (or a single empty paragraph if `text` is '') *before* the handle is
+ * published to the store. That ordering is the race fix: by the time
+ * MilkdownEditor receives the handle, the fragment is already
+ * non-empty, so its schema-fill branch never fires and can't compete
+ * with the seed. Callers must NOT pass this option for handles that
+ * are merely reopening an existing doc — the seed would land on top
+ * of whatever IndexedDB is about to hydrate. */
 async function ensureHandle(
   slug: string,
   set: (
@@ -958,6 +987,7 @@ async function ensureHandle(
       | ((s: DocsState) => Partial<DocsState>),
   ) => void,
   get: () => DocsState,
+  opts?: { seedFirstLine?: string },
 ): Promise<void> {
   if (get().handles[slug]) return
   // Local-only handle is ready immediately (Y.Doc + IndexedDB are sync).
@@ -975,6 +1005,9 @@ async function ensureHandle(
       set((s) => ({ status: { ...s.status, [slug]: status } }))
     },
   )
+  if (opts?.seedFirstLine !== undefined) {
+    seedBodyFirstLine(handle.ydoc, opts.seedFirstLine)
+  }
   set((s) => ({ handles: { ...s.handles, [slug]: handle } }))
   seedMetaFromCatalog(handle, get().knownDocs.find((d) => d.slug === slug))
   installTitleMirror(slug, handle, set, get)

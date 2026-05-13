@@ -74,13 +74,25 @@ interface IngestState {
   pendingProposals: PendingProposal[]
   pendingLogs: PendingLogEntry[]
   pendingIndexUpdates: PendingIndexUpdate[]
-  /** Per-note watermark: the doc body length we last ran ingest on.
-   * Idle trigger only re-runs when current length exceeds this by
-   * the configured threshold (default 200 chars). Map keyed by
-   * note slug. ms-since-epoch isn't stored separately — the
-   * watermark is the body length itself, which is the meaningful
-   * signal (time alone doesn't matter if the user hasn't typed). */
+  /** @deprecated Old growth-based watermark. Superseded by the
+   * lastEditedAt / lastIngestedAt pair below — left in the interface
+   * so existing persisted state rehydrates without runtime warnings;
+   * new code paths never read or write it. */
   lastIngestedLength: Record<string, number>
+  /** Per-note ms-since-epoch of the most recent observed edit to the
+   * note body. Bumped by an XmlFragment observer installed in
+   * docsStore.buildHandle once IDB has finished hydrating (so the
+   * initial replay doesn't register as a fresh edit). Idle trigger
+   * compares this against `lastIngestedAt[slug]` — if the doc has
+   * been edited since the last successful ingest, it becomes a
+   * candidate again, no matter how small the edit was. */
+  lastEditedAt: Record<string, number>
+  /** Per-note ms-since-epoch of the most recent successful ingest
+   * pass. Set after the LLM returns valid output (even when the
+   * output had zero proposals — "we looked and judged nothing"
+   * still counts). Used as the watermark the idle trigger compares
+   * `lastEditedAt` against. */
+  lastIngestedAt: Record<string, number>
   dismissed: boolean
   /** Idle minutes before the trigger fires. User-configurable;
    * defaults to 5 (matches Karpathy "step away briefly" cadence). */
@@ -128,9 +140,17 @@ interface IngestState {
    * a stray dev-tools edit can't accidentally schedule an ingest
    * every second or once a day. */
   setIdleMinutes: (n: number) => void
-  /** Update the per-note watermark after a successful ingest pass.
-   * Idle trigger uses this to skip notes that haven't grown enough
-   * since last time. */
+  /** Stamp `lastEditedAt[slug]` to now. Called by the XmlFragment
+   * observer installed per-handle so any observed edit (typing,
+   * remote sync, mark accept) makes the note re-eligible for the
+   * next idle pass. No-op for wiki:* slugs — those aren't ingest
+   * sources, bumping their state would waste persistence writes. */
+  markEdited: (slug: string) => void
+  /** Update the per-note watermarks after a successful ingest pass.
+   * Sets `lastIngestedAt[slug]` so the next idle pass compares
+   * `lastEditedAt` against this fresh value. The `bodyLength` arg
+   * is legacy (used to populate the deprecated length-based gate);
+   * still recorded for diagnostics but no live gate reads it. */
   markIngested: (slug: string, bodyLength: number) => void
   /** Wipe all pending state. Useful for a "clear queue" affordance
    * and for tests. */
@@ -148,6 +168,8 @@ export const useIngestStore = create<IngestState>()(
       pendingLogs: [],
       pendingIndexUpdates: [],
       lastIngestedLength: {},
+      lastEditedAt: {},
+      lastIngestedAt: {},
       dismissed: false,
       idleMinutes: DEFAULT_IDLE,
 
@@ -267,9 +289,21 @@ export const useIngestStore = create<IngestState>()(
         set({ idleMinutes: clamped })
       },
 
+      markEdited: (slug) => {
+        // No-op for wiki:* — they're ingest outputs, not inputs.
+        // Bumping them would waste writes and (more importantly)
+        // could confuse a future feature that wants to detect
+        // "user edited a wiki page directly".
+        if (slug.startsWith('wiki:')) return
+        set((s) => ({
+          lastEditedAt: { ...s.lastEditedAt, [slug]: Date.now() },
+        }))
+      },
+
       markIngested: (slug, bodyLength) =>
         set((s) => ({
           lastIngestedLength: { ...s.lastIngestedLength, [slug]: bodyLength },
+          lastIngestedAt: { ...s.lastIngestedAt, [slug]: Date.now() },
         })),
 
       reset: () =>
@@ -278,6 +312,8 @@ export const useIngestStore = create<IngestState>()(
           pendingLogs: [],
           pendingIndexUpdates: [],
           lastIngestedLength: {},
+          lastEditedAt: {},
+          lastIngestedAt: {},
           dismissed: false,
         }),
     }),
@@ -289,6 +325,8 @@ export const useIngestStore = create<IngestState>()(
         pendingLogs: s.pendingLogs,
         pendingIndexUpdates: s.pendingIndexUpdates,
         lastIngestedLength: s.lastIngestedLength,
+        lastEditedAt: s.lastEditedAt,
+        lastIngestedAt: s.lastIngestedAt,
         dismissed: s.dismissed,
         idleMinutes: s.idleMinutes,
       }),
