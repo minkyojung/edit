@@ -191,12 +191,22 @@ export async function ensureWikiDocs(): Promise<void> {
  * inline-review path on disjoint surfaces — the mark system never
  * has to deal with empty-page placeholder scaffolding.
  *
- * Returns the new doc's slug, or null on failure (empty name or
- * proof-server error). The created doc is registered in the catalog
- * but NOT auto-opened — the caller decides whether to navigate. */
+ * `options.parentId` nests the new page under an existing wiki:
+ * custom-* doc. Used by the in-row `+` affordance ("create child
+ * page") and by ingest's auto-categorization (Phase 2). The parent
+ * must exist, be live (not archived), and itself be a wiki:custom-*
+ * page — system:* pages refuse children since they're agent meta
+ * surfaces, not content categories. Invalid parent is treated as
+ * a programmer error and dropped (page still created at root) so
+ * callers don't accidentally lose a write because of a stale slug.
+ *
+ * Returns the new doc's slug, or null on failure (proof-server
+ * error). The created doc is registered in the catalog but NOT
+ * auto-opened — the caller decides whether to navigate. */
 export async function createCustomWikiPage(
   name: string,
   body?: string,
+  options?: { parentId?: string },
 ): Promise<string | null> {
   const trimmed = name.trim()
   // 8 hex chars = 32 bits. Collision probability is negligible at the
@@ -206,12 +216,34 @@ export async function createCustomWikiPage(
   const type = `wiki:custom-${id}` as `wiki:${string}`
   const initialBody = body && body.trim().length > 0 ? body : '​'
   const slug = generateClientSlug()
+
+  // Validate parentId before writing the catalog entry. A bad
+  // parent quietly degrades to root creation — we still want the
+  // page to exist so the caller's write isn't lost.
+  let parentId: string | undefined
+  if (options?.parentId) {
+    const parent = useDocsStore
+      .getState()
+      .knownDocs.find((d) => d.slug === options.parentId)
+    const valid =
+      parent && !parent.archivedAt && parent.type.startsWith('wiki:custom-')
+    if (valid) {
+      parentId = parent.slug
+    } else {
+      console.warn(
+        '[wiki] createCustomWikiPage: invalid parentId, creating at root',
+        options.parentId,
+      )
+    }
+  }
+
   // Empty title is stored as undefined rather than '' so the catalog
   // entry omits the key entirely; useDocLabel falls back to 'Untitled'
   // when both the live body label and the cached title are empty.
-  const meta: KnownDoc = trimmed
+  const baseMeta: KnownDoc = trimmed
     ? { slug, type, title: trimmed }
     : { slug, type }
+  const meta: KnownDoc = parentId ? { ...baseMeta, parentId } : baseMeta
   useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
   void proofClient.createDoc(trimmed, initialBody, { slug }).catch((err) => {
     console.warn('[wiki] createCustomWikiPage background register failed', err)
