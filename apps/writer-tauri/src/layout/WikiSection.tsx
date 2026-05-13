@@ -26,10 +26,20 @@
 import { useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { IconFileDescription, IconPlus } from '@tabler/icons-react'
+import {
+  DndContext,
+  PointerSensor,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { createCustomWikiPage } from '@/state/wikiService'
-import { DocTreeNode, indexChildren } from './DocTreeNode'
+import { notify } from '@/lib/notify'
+import { DocTreeNode, indexChildren, type MoveTarget } from './DocTreeNode'
 import {
   SidebarGroup,
   SidebarGroupAction,
@@ -40,11 +50,18 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
 
+/** dnd-kit identifier for the "promote to root" drop target. Real
+ * wiki slugs are uuids so any non-uuid sentinel works; this string
+ * lives next to its only consumer (the drop handler below) so a
+ * future rename stays local. */
+const ROOT_DROP_ID = 'wiki:__root__'
+
 export function WikiSection() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const activeSlug = useDocsStore((s) => s.activeSlug)
   const setActive = useDocsStore((s) => s.setActive)
   const archiveDoc = useDocsStore((s) => s.archiveDoc)
+  const moveDoc = useDocsStore((s) => s.moveDoc)
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
@@ -71,6 +88,48 @@ export function WikiSection() {
     () => wikiDocs.filter((d) => !d.parentId),
     [wikiDocs],
   )
+  // Move-to targets surfaced in each row's context menu: the
+  // top-level wiki pages (which act as categories) plus a Root
+  // option for promoting a nested page back up. Top-level only
+  // means cycle prevention is trivial — a root page can't be a
+  // descendant of any moved doc — and matches Phase 2's "pick a
+  // category by title" mental model. Deeper-tree moves are the
+  // drag-and-drop surface's job (Phase 3-3+).
+  const moveTargets = useMemo<MoveTarget[]>(() => {
+    const targets: MoveTarget[] = [{ slug: null, label: '(Root)' }]
+    for (const d of rootWikiDocs) {
+      const title = (d.title ?? '').trim() || d.type.replace(/^wiki:custom-/, '')
+      targets.push({ slug: d.slug, label: title })
+    }
+    return targets
+  }, [rootWikiDocs])
+  const handleMoveTo = (slug: string, newParentId: string | null) => {
+    moveDoc(slug, newParentId)
+  }
+
+  // Pointer sensor with a small activation distance so the row's
+  // single-click "open this doc" gesture isn't accidentally read
+  // as the start of a drag. 8px is the dnd-kit default reference;
+  // it survives a quick mouseup before the drag overlay engages.
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+  )
+
+  // Drop handler. dnd-kit routes the source's `id` and the over
+  // target's `id` here; we translate ROOT_DROP_ID to a null parent,
+  // then defer all validation (cycle, system parent, archived) to
+  // moveDoc. A false return surfaces the refusal toast — context-
+  // menu items self-disable so they don't reach this path.
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over) return
+    const sourceSlug = String(active.id)
+    const newParentId = over.id === ROOT_DROP_ID ? null : String(over.id)
+    const ok = moveDoc(sourceSlug, newParentId)
+    if (!ok) notify.cantMoveDoc()
+  }
 
   const ensureNotesRoute = () => {
     if (!pathname.startsWith('/notes')) navigate('/notes')
@@ -129,28 +188,56 @@ export function WikiSection() {
           </SidebarGroupContent>
         </SidebarGroup>
       )}
-      <SidebarGroup>
-        <SidebarGroupLabel>Wiki</SidebarGroupLabel>
-        <SidebarGroupAction onClick={handleNewRoot} aria-label="New wiki page">
-          <IconPlus />
-        </SidebarGroupAction>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {rootWikiDocs.map((doc) => (
-              <DocTreeNode
-                key={doc.slug}
-                doc={doc}
-                childrenByParent={childrenByParent}
-                activeSlug={activeSlug}
-                onSelect={onSelectDoc}
-                onAddChild={handleNewChild}
-                onArchive={onArchiveDoc}
-              />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
+      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+        <SidebarGroup>
+          <SidebarGroupLabel>Wiki</SidebarGroupLabel>
+          <SidebarGroupAction onClick={handleNewRoot} aria-label="New wiki page">
+            <IconPlus />
+          </SidebarGroupAction>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {rootWikiDocs.map((doc) => (
+                <DocTreeNode
+                  key={doc.slug}
+                  doc={doc}
+                  childrenByParent={childrenByParent}
+                  activeSlug={activeSlug}
+                  onSelect={onSelectDoc}
+                  onAddChild={handleNewChild}
+                  onArchive={onArchiveDoc}
+                  moveTargets={moveTargets}
+                  onMoveTo={handleMoveTo}
+                  draggable
+                />
+              ))}
+              <RootDropZone />
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </DndContext>
     </>
+  )
+}
+
+/** Tail-of-list drop target that promotes a dragged doc to the
+ * root by setting parentId = null. Rendered as a thin spacer below
+ * the last wiki row — large enough to land a drag on without
+ * stealing visual real estate from real content. dnd-kit's isOver
+ * paints a subtle highlight so the user sees what the drop will
+ * mean. */
+function RootDropZone() {
+  const { isOver, setNodeRef } = useDroppable({ id: ROOT_DROP_ID })
+  return (
+    <li
+      ref={setNodeRef}
+      data-slot="wiki-root-drop"
+      aria-label="Drop here to move to top level"
+      className={cn(
+        'mx-2 my-1 h-6 rounded-md border border-dashed border-transparent',
+        'transition-colors',
+        isOver && 'border-sidebar-accent-foreground/50 bg-sidebar-accent/20',
+      )}
+    />
   )
 }
 

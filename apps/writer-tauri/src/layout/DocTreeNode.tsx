@@ -35,6 +35,7 @@ import {
   IconFileDescription,
   IconPlus,
 } from '@tabler/icons-react'
+import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
@@ -53,8 +54,24 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
+
+/** One entry in the "Move to…" section of the context menu. `slug`
+ * is the new parent's slug (or `null` to move to root). `label` is
+ * what the menu item shows. The caller decides which entries to
+ * include so different sidebar regions (daily / writing / wiki)
+ * can supply different sets — wiki uses top-level wiki pages,
+ * daily / writing currently supply nothing (the prop is omitted
+ * and the Move section is skipped entirely). */
+export interface MoveTarget {
+  slug: string | null
+  label: string
+  /** Disable the row — used by the caller to grey out the target
+   * the doc already lives under, plus any cycle-creating choices. */
+  disabled?: boolean
+}
 
 interface DocTreeNodeProps {
   doc: KnownDoc
@@ -65,6 +82,18 @@ interface DocTreeNodeProps {
   onSelect: (slug: string) => void
   onAddChild: (parentSlug: string) => void
   onArchive: (slug: string) => void
+  /** Optional "Move to…" section in the context menu. Omitted for
+   * tree regions where moving doesn't apply (e.g. daily / writing
+   * placement is time-axis-driven). */
+  moveTargets?: MoveTarget[]
+  onMoveTo?: (slug: string, newParentId: string | null) => void
+  /** Enable drag-and-drop on this row. Caller is responsible for
+   * wrapping the tree in a <DndContext> and resolving the resulting
+   * onDragEnd via moveDoc — DocTreeNode just exposes itself as a
+   * drag source + drop target. When false (the default), the dnd-kit
+   * hooks below still mount but in a disabled state so no listeners
+   * attach and no drop interactions fire. */
+  draggable?: boolean
 }
 
 export function DocTreeNode({
@@ -74,6 +103,9 @@ export function DocTreeNode({
   onSelect,
   onAddChild,
   onArchive,
+  moveTargets,
+  onMoveTo,
+  draggable = false,
 }: DocTreeNodeProps) {
   const label = useDocLabel(doc.slug)
   const expandedDocSlugs = useDocsStore((s) => s.expandedDocSlugs)
@@ -82,6 +114,25 @@ export function DocTreeNode({
   const hasChildren = children.length > 0
   const isExpanded = expandedDocSlugs.includes(doc.slug)
   const isActive = doc.slug === activeSlug
+
+  // dnd-kit hooks must be called unconditionally to satisfy the
+  // Rules of Hooks. When draggable=false the `disabled` option
+  // keeps them inert — no listeners attach, no drop hover state
+  // fires — so daily / writing trees mount cleanly without a
+  // DndContext ancestor.
+  const dragSource = useDraggable({ id: doc.slug, disabled: !draggable })
+  const dropTarget = useDroppable({ id: doc.slug, disabled: !draggable })
+  const setNodeRef = (node: HTMLElement | null) => {
+    dragSource.setNodeRef(node)
+    dropTarget.setNodeRef(node)
+  }
+  // Hover ring: when a drag is over this row, show a subtle outline
+  // so the user knows where the drop will land. dnd-kit only flips
+  // isOver when this exact row is the closest valid drop target.
+  const dropIndicatorClass =
+    draggable && dropTarget.isOver
+      ? 'ring-1 ring-sidebar-accent-foreground/40 rounded-md'
+      : ''
 
   const labelButton = (
     <SidebarMenuButton
@@ -114,8 +165,38 @@ export function DocTreeNode({
     </SidebarMenuAction>
   )
 
+  // Move section is rendered only when the caller provides
+  // targets — keeps daily / writing rows free of an irrelevant
+  // "Move to…" block. Each target item self-disables when it's
+  // the doc's current parent (or another non-movable choice the
+  // caller flagged), so the user can see the option but not act
+  // on it redundantly.
+  const showMoveSection = !!(moveTargets && moveTargets.length > 0 && onMoveTo)
+  // Filter out the doc's current parent (already there) and the
+  // doc itself (self-parent) from the rendered options. The
+  // store's moveDoc would refuse these anyway, but disabling at
+  // render time keeps the menu honest about which options are
+  // actionable. Cycle prevention is handled by the caller (it
+  // only passes top-level pages, which can't be descendants of a
+  // user-owned wiki child) and by moveDoc as the last gate.
+  const currentParentSlug = doc.parentId ?? null
   const contextMenu = (
     <ContextMenuContent>
+      {showMoveSection &&
+        moveTargets!.map((t) => {
+          const isCurrent = t.slug === currentParentSlug
+          const isSelf = t.slug === doc.slug
+          return (
+            <ContextMenuItem
+              key={t.slug ?? '__root__'}
+              disabled={isCurrent || isSelf || t.disabled}
+              onSelect={() => onMoveTo!(doc.slug, t.slug)}
+            >
+              {`Move to ${t.label}`}
+            </ContextMenuItem>
+          )
+        })}
+      {showMoveSection && <ContextMenuSeparator />}
       <ContextMenuItem
         variant="destructive"
         onSelect={() => onArchive(doc.slug)}
@@ -130,7 +211,12 @@ export function DocTreeNode({
     return (
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <SidebarMenuItem>
+          <SidebarMenuItem
+            ref={setNodeRef}
+            className={dropIndicatorClass}
+            {...(draggable ? dragSource.listeners : {})}
+            {...(draggable ? dragSource.attributes : {})}
+          >
             <span
               aria-hidden
               className="absolute top-2 left-2 z-10 flex h-4 w-4 items-center justify-center text-sidebar-foreground/60"
@@ -156,7 +242,12 @@ export function DocTreeNode({
             if (open !== isExpanded) toggleExpanded(doc.slug)
           }}
         >
-          <SidebarMenuItem>
+          <SidebarMenuItem
+            ref={setNodeRef}
+            className={dropIndicatorClass}
+            {...(draggable ? dragSource.listeners : {})}
+            {...(draggable ? dragSource.attributes : {})}
+          >
             <CollapsibleTrigger asChild>
               <button
                 type="button"
@@ -191,6 +282,9 @@ export function DocTreeNode({
                     onSelect={onSelect}
                     onAddChild={onAddChild}
                     onArchive={onArchive}
+                    moveTargets={moveTargets}
+                    onMoveTo={onMoveTo}
+                    draggable={draggable}
                   />
                 ))}
               </SidebarMenuSub>

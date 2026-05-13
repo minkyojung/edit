@@ -98,6 +98,16 @@ export const notify = {
     toast.error("Couldn't create link")
   },
 
+  // ── Doc tree move ────────────────────────────────────────────
+  /** moveDoc refused — invalid target (cycle, system page parent,
+   * archived, etc.). Surfaced from the drag-and-drop drop handler;
+   * context-menu items self-disable so they never hit this path. */
+  cantMoveDoc() {
+    toast.error("Can't move there", {
+      description: 'That target would create a cycle or isn’t allowed',
+    })
+  },
+
   // ── External link ─────────────────────────────────────────────
   /** Cmd+click on a link couldn't reach the system browser. */
   linkOpenFailed() {
