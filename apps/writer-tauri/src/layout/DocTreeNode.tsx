@@ -3,14 +3,17 @@
 // today-tree; the structure is identical, only the parent context
 // differs (a daily date row vs. a tab container).
 //
-// The node renders its own row (chevron / icon + label + hover
-// actions) and recurses into children when expanded. Expansion
-// state lives in docsStore.expandedDocSlugs so fold/unfold survives
-// reload, bound to Radix Collapsible via controlled open/onOpenChange.
+// The node renders its own row (chevron / icon + label + add button)
+// and recurses into children when expanded. Expansion state lives in
+// docsStore.expandedDocSlugs so fold/unfold survives reload, bound to
+// Radix Collapsible via controlled open/onOpenChange.
 //
 // Click contract (mirrors Cursor's file tree):
 //   • chevron click  → toggle expand only (no selection change)
 //   • label click    → open the doc only (no expand toggle)
+//   • + click        → create a child note (auto-expands parent)
+//   • right-click    → context menu (Archive note)
+//
 // The chevron is wrapped in CollapsibleTrigger so its click drives
 // Radix's open state directly; stopPropagation prevents bubbling to
 // the SidebarMenuButton's onClick. The chevron is absolutely
@@ -18,6 +21,12 @@
 // hover/active background still bleeds wall-to-wall behind it; using
 // a fixed `top-2` (not `top: 50%`) keeps it glued to the parent row
 // even when the row's <li> grows to contain the expanded subtree.
+//
+// Archive moved off-row into the right-click context menu (the
+// destructive action shouldn't compete visually with create) — this
+// also lets the row carry shadcn's intended single-action layout, so
+// SidebarMenuButton's auto pr-8 pads exactly the room one action
+// needs and we don't fight the primitive's :has() rule with !pr-15.
 
 import { type MouseEvent } from 'react'
 import {
@@ -40,6 +49,12 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 
 interface DocTreeNodeProps {
   doc: KnownDoc
@@ -72,27 +87,18 @@ export function DocTreeNode({
     <SidebarMenuButton
       isActive={isActive}
       onClick={() => onSelect(doc.slug)}
-      className="pr-14 pl-8"
+      className="pl-8"
     >
       <span>{label}</span>
     </SidebarMenuButton>
   )
 
-  const archiveAction = (
-    <SidebarMenuAction
-      showOnHover
-      aria-label="Archive note"
-      title="Archive"
-      onClick={(e: MouseEvent) => {
-        e.stopPropagation()
-        onArchive(doc.slug)
-      }}
-      className="right-7 size-5"
-    >
-      <IconArchive size={10} stroke={1.75} />
-    </SidebarMenuAction>
-  )
-
+  // The + glyph reads as a quiet inline icon (no chunky button chrome)
+  // so it sits at the same visual weight as WeekView's right-side
+  // count text. Default 16px sizing comes from SidebarMenuAction's
+  // [&>svg]:size-4 rule. top-1.5! restores true vertical centering:
+  // the cva base correctly uses top-1.5 (centers a 20px action in a
+  // 32px row) but peer-data-[size=default]:top-2 pushes it 2px down.
   const addAction = (
     <SidebarMenuAction
       showOnHover
@@ -102,78 +108,98 @@ export function DocTreeNode({
         onAddChild(doc.slug)
         if (!isExpanded) toggleExpanded(doc.slug)
       }}
-      className="size-5"
+      className="top-1.5! text-sidebar-foreground/60 hover:bg-transparent hover:text-sidebar-accent-foreground"
     >
-      <IconPlus size={10} stroke={2} />
+      <IconPlus stroke={2} />
     </SidebarMenuAction>
+  )
+
+  const contextMenu = (
+    <ContextMenuContent>
+      <ContextMenuItem
+        variant="destructive"
+        onSelect={() => onArchive(doc.slug)}
+      >
+        <IconArchive stroke={1.75} />
+        Archive note
+      </ContextMenuItem>
+    </ContextMenuContent>
   )
 
   if (!hasChildren) {
     return (
-      <SidebarMenuItem>
-        <span
-          aria-hidden
-          className="absolute top-2 left-2 z-10 flex h-4 w-4 items-center justify-center text-sidebar-foreground/60"
-        >
-          <IconFileDescription size={16} stroke={1.75} />
-        </span>
-        {labelButton}
-        {archiveAction}
-        {addAction}
-      </SidebarMenuItem>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <SidebarMenuItem>
+            <span
+              aria-hidden
+              className="absolute top-2 left-2 z-10 flex h-4 w-4 items-center justify-center text-sidebar-foreground/60"
+            >
+              <IconFileDescription size={16} stroke={1.75} />
+            </span>
+            {labelButton}
+            {addAction}
+          </SidebarMenuItem>
+        </ContextMenuTrigger>
+        {contextMenu}
+      </ContextMenu>
     )
   }
 
   return (
-    <Collapsible
-      asChild
-      open={isExpanded}
-      onOpenChange={(open) => {
-        if (open !== isExpanded) toggleExpanded(doc.slug)
-      }}
-    >
-      <SidebarMenuItem>
-        <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            aria-label={isExpanded ? 'Collapse' : 'Expand'}
-            onClick={(e: MouseEvent) => e.stopPropagation()}
-            className={cn(
-              'absolute top-2 left-2 z-10 flex h-4 w-4 items-center justify-center rounded-sm',
-              'text-sidebar-foreground/60 hover:text-sidebar-accent-foreground',
-              'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
-            )}
-          >
-            <IconChevronRight
-              size={16}
-              stroke={1.75}
-              className="transition-transform"
-              style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-            />
-          </button>
-        </CollapsibleTrigger>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <Collapsible
+          asChild
+          open={isExpanded}
+          onOpenChange={(open) => {
+            if (open !== isExpanded) toggleExpanded(doc.slug)
+          }}
+        >
+          <SidebarMenuItem>
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                onClick={(e: MouseEvent) => e.stopPropagation()}
+                className={cn(
+                  'absolute top-2 left-2 z-10 flex h-4 w-4 items-center justify-center rounded-sm',
+                  'text-sidebar-foreground/60 hover:text-sidebar-accent-foreground',
+                  'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
+                )}
+              >
+                <IconChevronRight
+                  size={16}
+                  stroke={1.75}
+                  className="transition-transform"
+                  style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                />
+              </button>
+            </CollapsibleTrigger>
 
-        {labelButton}
-        {archiveAction}
-        {addAction}
+            {labelButton}
+            {addAction}
 
-        <CollapsibleContent asChild>
-          <SidebarMenuSub>
-            {children.map((child) => (
-              <DocTreeNode
-                key={child.slug}
-                doc={child}
-                childrenByParent={childrenByParent}
-                activeSlug={activeSlug}
-                onSelect={onSelect}
-                onAddChild={onAddChild}
-                onArchive={onArchive}
-              />
-            ))}
-          </SidebarMenuSub>
-        </CollapsibleContent>
-      </SidebarMenuItem>
-    </Collapsible>
+            <CollapsibleContent asChild>
+              <SidebarMenuSub className="mr-0 pr-0">
+                {children.map((child) => (
+                  <DocTreeNode
+                    key={child.slug}
+                    doc={child}
+                    childrenByParent={childrenByParent}
+                    activeSlug={activeSlug}
+                    onSelect={onSelect}
+                    onAddChild={onAddChild}
+                    onArchive={onArchive}
+                  />
+                ))}
+              </SidebarMenuSub>
+            </CollapsibleContent>
+          </SidebarMenuItem>
+        </Collapsible>
+      </ContextMenuTrigger>
+      {contextMenu}
+    </ContextMenu>
   )
 }
 

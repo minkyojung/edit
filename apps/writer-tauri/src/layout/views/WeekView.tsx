@@ -292,7 +292,7 @@ function DayItem({
         </CollapsibleTrigger>
         {button}
         <CollapsibleContent asChild>
-          <SidebarMenuSub>
+          <SidebarMenuSub className="mr-0 pr-0">
             {subChildren.map((child) => (
               <DocTreeNode
                 key={child.slug}
