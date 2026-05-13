@@ -37,11 +37,13 @@ export function WikiSection() {
   }
 
   const handleNew = async () => {
-    // Untitled by design: the new doc gets a title input the user
+    // Empty name by design: the new doc gets a title input the user
     // fills in immediately. Notion-style — no modal, no prompt, the
-    // empty title field IS the prompt. Custom-* slug ensures it
-    // never collides with a seed wiki type.
-    const slug = await createCustomWikiPage('Untitled')
+    // empty title field IS the prompt. The sidebar / palette display
+    // 'Untitled' as a fallback in useDocLabel until the user types
+    // a real name. Custom-* slug ensures it never collides with a
+    // seed wiki type.
+    const slug = await createCustomWikiPage('')
     if (!slug) return
     setActive(slug)
     ensureNotesRoute()

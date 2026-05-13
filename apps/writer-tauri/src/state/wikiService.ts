@@ -195,7 +195,6 @@ export async function createCustomWikiPage(
   body?: string,
 ): Promise<string | null> {
   const trimmed = name.trim()
-  if (!trimmed) return null
   // 8 hex chars = 32 bits. Collision probability is negligible at the
   // scale of one user's wiki — even a thousand pages stays well below
   // the birthday-collision threshold.
@@ -203,7 +202,12 @@ export async function createCustomWikiPage(
   const type = `wiki:custom-${id}` as `wiki:${string}`
   const initialBody = body && body.trim().length > 0 ? body : '​'
   const slug = generateClientSlug()
-  const meta: KnownDoc = { slug, type, title: trimmed }
+  // Empty title is stored as undefined rather than '' so the catalog
+  // entry omits the key entirely; useDocLabel falls back to 'Untitled'
+  // when both the live body label and the cached title are empty.
+  const meta: KnownDoc = trimmed
+    ? { slug, type, title: trimmed }
+    : { slug, type }
   useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
   void proofClient.createDoc(trimmed, initialBody, { slug }).catch((err) => {
     console.warn('[wiki] createCustomWikiPage background register failed', err)

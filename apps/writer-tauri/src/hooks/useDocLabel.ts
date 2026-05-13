@@ -54,11 +54,12 @@ export function useDocLabel(slug: string | null): string {
     if (live) return live
     const cached = known.title?.trim()
     if (cached) return cached
-    // Fall back to the type-derived label rather than 'Untitled' so
-    // the sidebar reads as a meaningful wiki section even before
-    // the user touches the title field. For custom pages the
-    // cached title above wins, so this branch only fires for
-    // seed types (belief / entity / episode).
+    // Custom pages (wiki:custom-<id>) have meaningless type suffixes,
+    // so prefer the 'Untitled' fallback the rest of the app uses
+    // for blank labels. Seed types (belief / entity / episode) carry
+    // meaningful names — surface them as the label so the sidebar
+    // reads as a topic rather than 'Untitled'.
+    if (known.type.startsWith('wiki:custom-')) return 'Untitled'
     return known.type.replace(/^wiki:/, '')
   }
   if (handle) return title || known?.title || 'Untitled'
