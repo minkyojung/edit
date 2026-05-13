@@ -38,6 +38,16 @@ const LOG_TAIL_LINES = 30
  * surface, not a content surface). */
 const CONVENTIONS_TYPE = 'wiki:conventions' as const
 
+/** System-owned summary index of every wiki page. Karpathy's
+ * `index.md` pattern — one line per page, lets the ingest LLM see
+ * "what targets exist" without having to dump every body into the
+ * prompt. Lazy created on first ingest pass. Phase 1-A: page exists
+ * but stays empty; Phase 1-B will start populating it via the
+ * ingest output. Filtered out of the wiki catalog snapshot so the
+ * LLM never routes a proposal to it — index is system-managed
+ * metadata, not a content target. */
+const INDEX_TYPE = 'wiki:index' as const
+
 /** Default body seeded into the conventions page on first creation.
  * The user is expected to edit this freely — that's the whole
  * point. We pick a minimal starting set so the LLM has *some*
@@ -104,6 +114,28 @@ export async function ensureConventionsWikiSlug(): Promise<string | null> {
       console.warn('[wiki] ensureConventionsWikiSlug background register failed', err)
     },
   )
+  return slug
+}
+
+/** Ensure the wiki:index doc exists. Lazy: called from runIngest
+ * right after the conventions slug, so the page is in the catalog
+ * by the time Phase 1-B starts emitting `indexUpdates`. Body stays
+ * empty in Phase 1-A — population happens once the ingest output
+ * carries summary lines. Returns the slug, or null if proof-server
+ * is unreachable. */
+export async function ensureIndexWikiSlug(): Promise<string | null> {
+  const existing = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.type === INDEX_TYPE && !d.archivedAt)
+  if (existing) return existing.slug
+  const slug = generateClientSlug()
+  const meta: KnownDoc = { slug, type: INDEX_TYPE, title: 'index' }
+  useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+  // ZWS body so the proof-server's blank-markdown guard accepts it.
+  // Real summary lines arrive in Phase 1-B.
+  void proofClient.createDoc('index', '​', { slug }).catch((err) => {
+    console.warn('[wiki] ensureIndexWikiSlug background register failed', err)
+  })
   return slug
 }
 
@@ -220,7 +252,13 @@ export async function readWikiContext(): Promise<string> {
         // The conventions page is fed to the LLM separately as
         // system-prompt context, not as a target the LLM can route
         // proposals to. Excluding it here keeps the catalog clean.
-        d.type !== CONVENTIONS_TYPE,
+        d.type !== CONVENTIONS_TYPE &&
+        // The index page is system-managed metadata (one summary
+        // line per wiki page); the LLM updates it via a dedicated
+        // `indexUpdates` channel (Phase 1-B), never via target-based
+        // proposals. Filtering it from the catalog snapshot so it
+        // never appears as a routing option.
+        d.type !== INDEX_TYPE,
     )
 
   const head = docs.filter((d) => d.type !== LOG_TYPE)

@@ -22,6 +22,7 @@ import {
   readWikiContext,
   readConventions,
   ensureConventionsWikiSlug,
+  ensureIndexWikiSlug,
 } from '@/state/wikiService'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
@@ -385,6 +386,12 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
   // means the static rules take over alone.
   await ensureConventionsWikiSlug()
   const conventions = await readConventions()
+  // Seed the index page on first need. Phase 1-A: the page exists
+  // in the catalog but stays empty; later phases populate it from
+  // ingest output and (Phase 2) feed it back as the prompt context.
+  // Fire-and-forget — a failed create just means the page lazily
+  // appears on the next pass.
+  void ensureIndexWikiSlug()
   const noteLabel =
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
