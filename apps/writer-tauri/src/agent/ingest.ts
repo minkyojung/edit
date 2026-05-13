@@ -114,7 +114,6 @@ Invariants (do not violate):
 - APPEND ONLY. Never propose modifying or deleting existing lines.
 - Each proposal "target" is the wiki page's full \`type\` id (e.g. "wiki:custom-7nt..."). Take it verbatim from the WIKI block headers — do not invent ids.
 - Each WIKI block header looks like \`[<type-id> — <title>]\`. Read each page's body to understand what shape it has and what kind of content belongs there. The user's conventions (above) guide the broad strokes; the page's own body is the ground truth for its current pattern.
-- Be concise. Each proposal's "content" is one bullet line or short block — not a wall of text.
 - Always include a log entry summarizing what you did (or "nothing notable today" if proposals is empty).
 
 Always include "sourceQuote": the exact sentence (or short clause) from the new note that this proposal was derived from. Echo it verbatim — it's the user's audit trail for verifying the proposal landed in the right page. If the proposal aggregates several lines, quote the most representative one.

@@ -69,6 +69,10 @@ These are the rules I follow when adding to my wiki. Edit this page to teach the
 - If a fact doesn't clearly belong on any existing page, emit \`suggestNewPage: "PageName"\` instead of \`target\`. Pick a short, descriptive name. The system will create that page and stamp the content there as a mark for me to review.
 - Only fall back to leaving \`proposals\` empty (with a \`logEntry\` note) if you genuinely can't tell what the content is about — \`suggestNewPage\` is preferred over silence.
 - Skip transient stuff (mood, weather, small talk). Only durable info belongs in the wiki.
+
+### Length
+
+- Keep each proposal's content concise — one bullet line or a short block of two or three lines, not a wall of text. If a fact deserves more than a few lines, split it into multiple proposals or summarize aggressively. I can always re-ingest later for missing detail.
 `
 
 /** Ensure the wiki:log doc exists. Lazy: created on first call.
