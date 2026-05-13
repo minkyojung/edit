@@ -76,16 +76,25 @@ export interface KnownDoc {
   archivedFromParent?: string
 }
 
-/** Karpathy-style write-ownership predicate: true for any agent-
- * managed page — the meta surface (`system:*` — conventions / log /
- * index) and the content pages (`wiki:*` — `wiki:custom-...`). Both
- * are protected from archive and hard-delete so the user can't
- * accidentally wipe agent memory, both feed the sidebar "Wiki"
- * region (split into System / Wiki groups visually), and both are
- * never ingest sources. Single predicate keeps every guard in sync
- * when a new agent-page kind is added later. */
+/** True for any wiki-region page: agent-managed (`system:*` meta,
+ * `wiki:belief|entity|episode|...` content) and user-spawned
+ * (`wiki:custom-...`). All of them feed the sidebar "Wiki" region
+ * (split into System / Wiki groups visually) and none are ever
+ * ingest sources. Used by guards that should treat the whole region
+ * uniformly (e.g. "no children under a wiki"). For archive / delete
+ * authority, see `isUserOwnedWiki` — that's where Karpathy's write-
+ * ownership invariant actually splits agent vs user. */
 export function isWikiDoc(doc: Pick<KnownDoc, 'type'>): boolean {
   return doc.type.startsWith('wiki:') || doc.type.startsWith('system:')
+}
+
+/** Karpathy write-ownership invariant: whoever wrote the page may
+ * delete it. `wiki:custom-*` is the user's own creation surface, so
+ * archive/hard-delete are allowed. Everything else in the wiki region
+ * is agent memory and stays protected — wiping it on a slip would
+ * silently lose synthesis the agent built up over many sessions. */
+export function isUserOwnedWiki(doc: Pick<KnownDoc, 'type'>): boolean {
+  return doc.type.startsWith('wiki:custom-')
 }
 
 interface DocsState {
@@ -153,6 +162,23 @@ interface DocsState {
   deleteForever: (slug: string) => Promise<void>
   /** Permanently delete every archived doc (sidecar + local state). */
   emptyArchive: () => Promise<void>
+  /** Move a user-owned wiki page (`wiki:custom-*`) under a new
+   * parent — or to the root when `newParentId` is null. Returns
+   * true on success, false when the move would violate one of:
+   *
+   *   - source isn't a user-owned wiki page
+   *   - source is archived
+   *   - new parent doesn't exist / is archived / isn't a live
+   *     `wiki:custom-*` (system / daily / writing parents refused)
+   *   - new parent is the source itself (self-parent)
+   *   - new parent is a descendant of the source (would create
+   *     a cycle)
+   *
+   * No-op (returns true) when the source already has this parent.
+   * UI callers can ignore the boolean and just react to the
+   * sidebar re-render; surfaces that want to surface a refusal
+   * (drag-and-drop drop targets) can read the return value. */
+  moveDoc: (slug: string, newParentId: string | null) => boolean
   /** Switch the sidebar date view. */
   setSidebarTab: (tab: 'day' | 'week' | 'month') => void
   /** Set the Month view's anchor month (YYYY-MM). */
@@ -662,9 +688,11 @@ export const useDocsStore = create<DocsState>()(
         // Daily entries are time-axis spine, not user-authored docs.
         // Refuse so the sidebar/breadcrumb invariants stay intact.
         if (target.type === 'daily') return false
-        // Wiki docs are agent memory — protected from accidental
-        // wipe (Karpathy write-ownership invariant).
-        if (isWikiDoc(target)) return false
+        // Agent-managed wiki/system pages are protected from accidental
+        // wipe (Karpathy write-ownership invariant). User-spawned
+        // wiki:custom-* pages are the user's own writing surface, so
+        // they follow the regular ownership rule and can be archived.
+        if (isWikiDoc(target) && !isUserOwnedWiki(target)) return false
         if (target.archivedAt) return false
 
         const groupSlugs = collectDescendantSlugs(state.knownDocs, slug)
@@ -754,10 +782,12 @@ export const useDocsStore = create<DocsState>()(
         const state = get()
         const target = state.knownDocs.find((d) => d.slug === slug)
         if (!target?.archivedAt) return
-        // Wiki docs can't reach this code path today (archive is
-        // refused above) but assert it anyway so a future regression
-        // can't silently wipe agent memory.
-        if (isWikiDoc(target)) return
+        // Agent-managed wiki/system pages can't reach this code path
+        // today (archive is refused above) but assert it anyway so a
+        // future regression can't silently wipe agent memory. User-
+        // spawned wiki:custom-* pages reach archive, so they're
+        // allowed through here and follow normal hard-delete.
+        if (isWikiDoc(target) && !isUserOwnedWiki(target)) return
         const stamp = target.archivedAt
         const groupSlugs = state.knownDocs
           .filter((d) => d.archivedAt === stamp)
@@ -805,6 +835,56 @@ export const useDocsStore = create<DocsState>()(
 
       shiftDay: (delta) =>
         set((s) => ({ dayAnchor: shiftDayAnchor(s.dayAnchor, delta) })),
+
+      moveDoc: (slug, newParentId) => {
+        const state = get()
+        const doc = state.knownDocs.find((d) => d.slug === slug)
+        if (!doc) return false
+        if (doc.archivedAt) return false
+        // Only user-owned wiki pages can be re-parented. System pages,
+        // dailies, and writing notes have their own placement rules
+        // and aren't draggable in the Wiki tree.
+        if (!isUserOwnedWiki(doc)) return false
+
+        // No-op when the requested parent is already the current
+        // parent. We return true so callers (drag handlers, context
+        // menus) treat this as a successful "already there".
+        const currentParentId = doc.parentId ?? null
+        if (currentParentId === newParentId) return true
+
+        if (newParentId !== null) {
+          if (newParentId === slug) return false
+          const parent = state.knownDocs.find((d) => d.slug === newParentId)
+          if (!parent) return false
+          if (parent.archivedAt) return false
+          // Parent must be a live user-owned wiki page. Refusing
+          // system / daily / writing parents keeps the wiki region
+          // self-contained and prevents weird trees like a wiki
+          // nested under a daily.
+          if (!isUserOwnedWiki(parent)) return false
+
+          // Cycle check: walk the prospective parent's ancestry; if
+          // we hit `slug`, the move would create a loop. Bounded by
+          // knownDocs.length so a corrupt parentId chain can't hang.
+          const docs = state.knownDocs
+          let cursor: KnownDoc | undefined = parent
+          for (let i = 0; i < docs.length && cursor; i += 1) {
+            if (cursor.slug === slug) return false
+            const nextParentSlug: string | undefined = cursor.parentId
+            if (!nextParentSlug) break
+            cursor = docs.find((d) => d.slug === nextParentSlug)
+          }
+        }
+
+        set((s) => ({
+          knownDocs: s.knownDocs.map((d) =>
+            d.slug === slug
+              ? { ...d, parentId: newParentId ?? undefined }
+              : d,
+          ),
+        }))
+        return true
+      },
 
       emptyArchive: async () => {
         const archived = get().knownDocs.filter((d) => d.archivedAt)
