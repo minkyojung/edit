@@ -24,7 +24,7 @@ interface NormalizeOptions {
   date?: string
 }
 
-export function normalizeTitleStructure(
+export function normalizeDailyBody(
   ydoc: Y.Doc,
   view: EditorView,
   options: NormalizeOptions,

@@ -39,7 +39,7 @@ import { createPlaceholderPlugin } from './placeholderPlugin'
 import { useDocsStore } from '@/state/docsStore'
 import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
-import { normalizeTitleStructure } from '@/lib/docTitle'
+import { normalizeDailyBody } from '@/lib/docTitle'
 import { useDocLabel } from '../hooks/useDocLabel'
 import { MarkToolbar } from './MarkToolbar'
 import { LinkHoverBar } from './LinkHoverBar'
@@ -124,7 +124,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       if (!provider?.isSynced && !idb.synced) return
       if (!metaMap.get('type')) return
       ran = true
-      normalizeTitleStructure(ydoc, view, opts)
+      normalizeDailyBody(ydoc, view, opts)
     }
     tryRun()
     provider?.on('synced', tryRun)
