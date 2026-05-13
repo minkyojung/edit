@@ -15,6 +15,7 @@
 // `ensureLogWikiSlug` below.
 
 import { proofClient } from '@/lib/proofClient'
+import { generateClientSlug } from '@/lib/slug'
 import { useDocsStore, type KnownDoc } from './docsStore'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
@@ -69,16 +70,17 @@ export async function ensureLogWikiSlug(): Promise<string | null> {
     .getState()
     .knownDocs.find((d) => d.type === LOG_TYPE && !d.archivedAt)
   if (existing) return existing.slug
-  try {
-    // ZWS body so the proof-server's blank-markdown guard accepts it.
-    const created = await proofClient.createDoc('log', '​')
-    const meta: KnownDoc = { slug: created.slug, type: LOG_TYPE, title: 'log' }
-    useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-    return created.slug
-  } catch (err) {
-    console.error('[wiki] ensureLogWikiSlug failed', err)
-    return null
-  }
+  // Client-side slug so the log page exists locally before proof-server
+  // sees it. The registration call below is fire-and-forget — failures
+  // just mean the page stays local-only until a future online boot.
+  const slug = generateClientSlug()
+  const meta: KnownDoc = { slug, type: LOG_TYPE, title: 'log' }
+  useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+  // ZWS body so the proof-server's blank-markdown guard accepts it.
+  void proofClient.createDoc('log', '​', { slug }).catch((err) => {
+    console.warn('[wiki] ensureLogWikiSlug background register failed', err)
+  })
+  return slug
 }
 
 /** Ensure the wiki:conventions doc exists, seeded with default
@@ -90,19 +92,19 @@ export async function ensureConventionsWikiSlug(): Promise<string | null> {
     .getState()
     .knownDocs.find((d) => d.type === CONVENTIONS_TYPE && !d.archivedAt)
   if (existing) return existing.slug
-  try {
-    const created = await proofClient.createDoc('Conventions', DEFAULT_CONVENTIONS)
-    const meta: KnownDoc = {
-      slug: created.slug,
-      type: CONVENTIONS_TYPE,
-      title: 'Conventions',
-    }
-    useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-    return created.slug
-  } catch (err) {
-    console.error('[wiki] ensureConventionsWikiSlug failed', err)
-    return null
+  const slug = generateClientSlug()
+  const meta: KnownDoc = {
+    slug,
+    type: CONVENTIONS_TYPE,
+    title: 'Conventions',
   }
+  useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+  void proofClient.createDoc('Conventions', DEFAULT_CONVENTIONS, { slug }).catch(
+    (err) => {
+      console.warn('[wiki] ensureConventionsWikiSlug background register failed', err)
+    },
+  )
+  return slug
 }
 
 /** Read the user's conventions page body. Returns '' when the page
@@ -153,15 +155,13 @@ export async function createCustomWikiPage(
   const id = Math.random().toString(36).slice(2, 10)
   const type = `wiki:custom-${id}` as `wiki:${string}`
   const initialBody = body && body.trim().length > 0 ? body : '​'
-  try {
-    const created = await proofClient.createDoc(trimmed, initialBody)
-    const meta: KnownDoc = { slug: created.slug, type, title: trimmed }
-    useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-    return created.slug
-  } catch (err) {
-    console.error('[wiki] createCustomWikiPage failed', err)
-    return null
-  }
+  const slug = generateClientSlug()
+  const meta: KnownDoc = { slug, type, title: trimmed }
+  useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+  void proofClient.createDoc(trimmed, initialBody, { slug }).catch((err) => {
+    console.warn('[wiki] createCustomWikiPage background register failed', err)
+  })
+  return slug
 }
 
 /** Fetch the markdown body of a wiki doc by slug. Returns '' when the

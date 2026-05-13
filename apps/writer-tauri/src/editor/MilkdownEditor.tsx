@@ -108,6 +108,8 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   // Local-disk hydration is enough to run normalization — the title
   // structure lives in the Y.Doc that idb just restored. Waiting for the
   // server is unnecessary and would stall this on cold/offline launches.
+  // provider may be null (offline tab) — in that case idb is the only
+  // signal we'll ever get; the OR-gate handles both cases uniformly.
   useEffect(() => {
     if (!handle || !pmView) return
     if (!isDaily) return
@@ -118,17 +120,17 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     let ran = false
     const tryRun = () => {
       if (ran) return
-      if (!provider.isSynced && !idb.synced) return
+      if (!provider?.isSynced && !idb.synced) return
       if (!metaMap.get('type')) return
       ran = true
       normalizeTitleStructure(ydoc, view, opts)
     }
     tryRun()
-    provider.on('synced', tryRun)
+    provider?.on('synced', tryRun)
     idb.on('synced', tryRun)
     metaMap.observe(tryRun)
     return () => {
-      provider.off('synced', tryRun)
+      provider?.off('synced', tryRun)
       idb.off('synced', tryRun)
       metaMap.unobserve(tryRun)
     }
@@ -273,7 +275,10 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
           })
           collabService.setOptions({ yUndoOpts: { undoManager } })
           const service = collabService.bindDoc(ydoc)
-          if (provider.awareness) service.setAwareness(provider.awareness)
+          // Awareness is the multi-cursor / presence layer. It only
+          // exists once the WebSocket provider has attached; offline
+          // tabs simply skip it and the editor still works locally.
+          if (provider?.awareness) service.setAwareness(provider.awareness)
           service.connect()
         })
 

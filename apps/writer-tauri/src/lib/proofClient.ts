@@ -51,10 +51,25 @@ export const proofClient = {
   // markdown is required as a parameter but may be empty — proof-server now accepts blank
   // bodies, so fresh notes pass '' rather than seeding a body template. Callsites that
   // want a starter template still pass a literal markdown string.
-  async createDoc(title: string, markdown: string): Promise<{ slug: string }> {
+  //
+  // options.slug — when provided, the server registers under this slug
+  // instead of minting its own. Used by the offline-first creation path:
+  // the client decides the slug up front (so the editor and IndexedDB
+  // can start working before the network), then calls this as a fire-
+  // and-forget registration. The endpoint is idempotent on slug, so a
+  // retry after a partial failure returns the existing doc unchanged.
+  async createDoc(
+    title: string,
+    markdown: string,
+    options: { slug?: string } = {},
+  ): Promise<{ slug: string; alreadyExisted?: boolean }> {
     return request('/documents', {
       method: 'POST',
-      body: JSON.stringify({ title, markdown }),
+      body: JSON.stringify({
+        title,
+        markdown,
+        ...(options.slug ? { slug: options.slug } : {}),
+      }),
     })
   },
   async getCollabSession(slug: string): Promise<{ session: CollabSession }> {

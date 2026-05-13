@@ -54,7 +54,12 @@ export interface StoredMark {
 
 export interface CollabHandle {
   ydoc: Y.Doc
-  provider: HocuspocusProvider
+  /** WebSocket sync layer. Null while we're offline or waiting for the
+   * proof-server health check / collab-session; gets attached in the
+   * background once the server is reachable. Consumers must null-check
+   * before reading provider.synced / awareness / etc — the editor still
+   * works (writes flow through `idb`) without a provider. */
+  provider: HocuspocusProvider | null
   slug: string
   /** Client-side IndexedDB persistence layer. Writes every Y.Doc update
    * to local disk synchronously with the in-memory CRDT, so the editor

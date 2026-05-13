@@ -23,6 +23,7 @@ import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { IndexeddbPersistence } from 'y-indexeddb'
 import { proofClient, waitUntilReady } from '@/lib/proofClient'
+import { generateClientSlug } from '@/lib/slug'
 import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
@@ -153,14 +154,50 @@ interface DocsState {
   shiftDay: (delta: number) => void
 }
 
-async function buildHandle(
+// Synchronous local-only handle construction. The Y.Doc + IndexedDB
+// layer come up immediately so the editor can mount and the user can
+// type — even when proof-server is unreachable. WebSocket sync is
+// strictly background; see attachProviderWhenReady for the second
+// phase. This is the offline-first pattern used by Tldraw/Affine/Linear:
+// local writes never block on the network.
+function buildHandle(
   slug: string,
+  set: (fn: (s: DocsState) => Partial<DocsState>) => void,
   onStatus: (status: CollabStatus) => void,
-): Promise<CollabHandle | null> {
+): CollabHandle {
+  const ydoc = new Y.Doc()
+  const idb = new IndexeddbPersistence(slug, ydoc)
+  const handle: CollabHandle = {
+    ydoc,
+    provider: null,
+    idb,
+    idbSynced: idb.whenSynced.then(() => undefined),
+    slug,
+  }
+  // 'connecting' on launch reads as "we're trying to reach the server";
+  // the background task below promotes to 'connected' or 'error' once
+  // the outcome is known. Callers that only need local writes don't
+  // care — they read from `ydoc` / `idb` immediately.
+  onStatus('connecting')
+  void attachProviderWhenReady(slug, handle, set, onStatus)
+  return handle
+}
+
+/** Second phase of handle construction: probe the server, fetch a collab
+ * session, then build a HocuspocusProvider and splice it into the handle.
+ * Failures (proof-server down, network blip) leave handle.provider null
+ * forever — IndexedDB keeps everything alive locally, and the user can
+ * retry by closing/reopening the tab once the server is back. */
+async function attachProviderWhenReady(
+  slug: string,
+  handle: CollabHandle,
+  set: (fn: (s: DocsState) => Partial<DocsState>) => void,
+  onStatus: (status: CollabStatus) => void,
+): Promise<void> {
   const ready = await waitUntilReady(15_000)
   if (!ready) {
     onStatus('error')
-    return null
+    return
   }
   let session: Awaited<ReturnType<typeof proofClient.getCollabSession>>['session']
   try {
@@ -169,41 +206,27 @@ async function buildHandle(
   } catch (err) {
     console.error('[docs] failed to get collab session', err)
     onStatus('error')
-    return null
+    return
   }
   const url = new URL(session.collabWsUrl)
   url.searchParams.set('token', session.token)
   url.searchParams.set('role', session.role)
-
-  const ydoc = new Y.Doc()
-  // IndexedDB layer attaches before the WebSocket provider so any updates
-  // that arrive (from local typing or server sync) hit local disk as part
-  // of the same Y.Doc lifecycle. Two persistence layers on one Y.Doc is
-  // the standard CRDT pattern — Yjs merges concurrent updates regardless
-  // of which transport delivered them. Database name is the doc slug so
-  // each tab gets its own IndexedDB store, mirroring the per-slug routing
-  // the server uses.
-  const idb = new IndexeddbPersistence(slug, ydoc)
   const provider = new HocuspocusProvider({
     url: url.toString(),
     name: slug,
-    document: ydoc,
+    document: handle.ydoc,
     token: session.token,
     onStatus: ({ status }) => {
       onStatus(status === 'connected' ? 'connected' : 'connecting')
     },
   })
-  onStatus('connecting')
-  return {
-    ydoc,
-    provider,
-    idb,
-    // Discard the resolved IndexeddbPersistence — callers only care about
-    // "is local hydration done?", not the instance (they already have it
-    // via handle.idb). Keeps the public signature a plain Promise<void>.
-    idbSynced: idb.whenSynced.then(() => undefined),
-    slug,
-  }
+  // Mutate the handle in place, then re-publish into the store so any
+  // selector subscribed to handles[slug] re-renders with the WebSocket
+  // attached. We can't replace the handle object wholesale because other
+  // observers (sidebar title mirror, mark plugins) already hold a
+  // reference to this exact instance.
+  handle.provider = provider
+  set((s) => ({ handles: { ...s.handles, [slug]: handle } }))
 }
 
 // Re-entrancy guard for bootstrap().
@@ -269,18 +292,23 @@ export const useDocsStore = create<DocsState>()(
           (d) => d.type === 'daily' && d.date === today,
         )
         if (!todaysDaily) {
-          try {
-            // Empty body — dailies derive their label from meta.date,
-            // so the body must not seed a heading that would duplicate
-            // it. proof-server accepts empty bodies post-relaxation.
-            const created = await proofClient.createDoc(today, '')
-            const meta: KnownDoc = { slug: created.slug, type: 'daily', date: today }
-            todaysDaily = meta
-            set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-          } catch (err) {
-            console.error('[docs] failed to create today daily', err)
-            notify.cantOpenJournal()
-          }
+          // Client picks the slug locally so today's daily exists in the
+          // catalog (and on disk via IndexedDB) before the server is
+          // even reached. Registration is fire-and-forget — failures
+          // just mean the doc stays local-only until the next online
+          // boot, which is the right behavior for a daily journal that
+          // must always greet the user with "today".
+          //
+          // Empty body — dailies derive their label from meta.date,
+          // so the body must not seed a heading that would duplicate
+          // it. proof-server accepts empty bodies post-relaxation.
+          const slug = generateClientSlug()
+          const meta: KnownDoc = { slug, type: 'daily', date: today }
+          todaysDaily = meta
+          set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+          void proofClient.createDoc(today, '', { slug }).catch((err) => {
+            console.warn('[docs] background register failed for today daily', err)
+          })
         }
 
         // Add today to openSlugs if it isn't already there, and make
@@ -322,13 +350,12 @@ export const useDocsStore = create<DocsState>()(
               (k) => k.type === 'daily' && k.date === date,
             )
             if (!exists) {
-              try {
-                const created = await proofClient.createDoc(date, '')
-                const meta: KnownDoc = { slug: created.slug, type: 'daily', date }
-                set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-              } catch (err) {
-                console.error('[docs] backfill daily failed', date, err)
-              }
+              const slug = generateClientSlug()
+              const meta: KnownDoc = { slug, type: 'daily', date }
+              set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+              void proofClient.createDoc(date, '', { slug }).catch((err) => {
+                console.warn('[docs] backfill daily register failed', date, err)
+              })
             }
             cursor.setDate(cursor.getDate() + 1)
           }
@@ -417,7 +444,7 @@ export const useDocsStore = create<DocsState>()(
         }
         const handle = handles[slug]
         if (handle) {
-          handle.provider.destroy()
+          handle.provider?.destroy()
           handle.idb.destroy()
           handle.ydoc.destroy()
         }
@@ -441,32 +468,27 @@ export const useDocsStore = create<DocsState>()(
       },
 
       createNew: async () => {
-        try {
-          // Empty title + empty body. The displayed label falls back
-          // to 'Untitled' in useDocLabel; the editor renders the body
-          // placeholder hint. Nothing is seeded into the doc itself.
-          const created = await proofClient.createDoc('', '')
-          const meta: KnownDoc = {
-            slug: created.slug,
+        // Empty title + empty body. The displayed label falls back to
+        // 'Untitled' in useDocLabel; the editor renders the body
+        // placeholder hint. Nothing is seeded into the doc itself.
+        const slug = generateClientSlug()
+        const meta: KnownDoc = { slug, type: 'writing' }
+        set((s) => ({
+          openSlugs: [...s.openSlugs, slug],
+          activeSlug: slug,
+          knownDocs: [...s.knownDocs, meta],
+        }))
+        await ensureHandle(slug, set, get)
+        const handle = get().handles[slug]
+        if (handle) {
+          writeDocMeta(handle.ydoc, {
             type: 'writing',
-          }
-          set((s) => ({
-            openSlugs: [...s.openSlugs, created.slug],
-            activeSlug: created.slug,
-            knownDocs: [...s.knownDocs, meta],
-          }))
-          await ensureHandle(created.slug, set, get)
-          const handle = get().handles[created.slug]
-          if (handle) {
-            writeDocMeta(handle.ydoc, {
-              type: 'writing',
-              createdAt: new Date().toISOString(),
-            })
-          }
-        } catch (err) {
-          console.error('[docs] createNew failed', err)
-          notify.cantCreateNote({ onRetry: () => get().createNew() })
+            createdAt: new Date().toISOString(),
+          })
         }
+        void proofClient.createDoc('', '', { slug }).catch((err) => {
+          console.warn('[docs] background register failed for new note', err)
+        })
       },
 
       openDaily: async (date) => {
@@ -475,17 +497,16 @@ export const useDocsStore = create<DocsState>()(
           (d) => d.type === 'daily' && d.date === targetDate,
         )
         if (!known) {
-          try {
-            // Empty body — dailies derive their label from meta.date,
-            // so the body stays visually clean.
-            const created = await proofClient.createDoc(targetDate, '')
-            known = { slug: created.slug, type: 'daily', date: targetDate }
-            set((s) => ({ knownDocs: [...s.knownDocs, known!] }))
-          } catch (err) {
-            console.error('[docs] openDaily createDoc failed', err)
-            notify.cantOpenJournal({ onRetry: () => get().openDaily(targetDate) })
-            return null
-          }
+          // Empty body — dailies derive their label from meta.date, so
+          // the body stays visually clean. Client-side slug + fire-and-
+          // forget keeps "I can always open the daily for any date"
+          // true even when proof-server is unreachable.
+          const slug = generateClientSlug()
+          known = { slug, type: 'daily', date: targetDate }
+          set((s) => ({ knownDocs: [...s.knownDocs, known!] }))
+          void proofClient.createDoc(targetDate, '', { slug }).catch((err) => {
+            console.warn('[docs] openDaily background register failed', err)
+          })
         }
         const slug = known.slug
         if (!get().openSlugs.includes(slug)) {
@@ -515,56 +536,55 @@ export const useDocsStore = create<DocsState>()(
         if (!parent) return null
         // Wiki pages are roots; user notes don't hang off them.
         if (isWikiDoc(parent)) return null
-        try {
-          // Empty title + empty body. The displayed label falls back
-          // to 'Untitled' in useDocLabel.
-          const created = await proofClient.createDoc('', '')
-          const meta: KnownDoc = {
-            slug: created.slug,
+        // Empty title + empty body. The displayed label falls back to
+        // 'Untitled' in useDocLabel.
+        const slug = generateClientSlug()
+        const meta: KnownDoc = {
+          slug,
+          type: 'writing',
+          parentId: parentSlug,
+        }
+        set((s) => ({
+          knownDocs: [...s.knownDocs, meta],
+          openSlugs: s.openSlugs.includes(slug)
+            ? s.openSlugs
+            : [...s.openSlugs, slug],
+          activeSlug: slug,
+        }))
+        await ensureHandle(slug, set, get)
+        const handle = get().handles[slug]
+        if (handle) {
+          writeDocMeta(handle.ydoc, {
             type: 'writing',
             parentId: parentSlug,
-          }
-          set((s) => ({
-            knownDocs: [...s.knownDocs, meta],
-            openSlugs: s.openSlugs.includes(created.slug)
-              ? s.openSlugs
-              : [...s.openSlugs, created.slug],
-            activeSlug: created.slug,
-          }))
-          await ensureHandle(created.slug, set, get)
-          const handle = get().handles[created.slug]
-          if (handle) {
-            writeDocMeta(handle.ydoc, {
-              type: 'writing',
-              parentId: parentSlug,
-              createdAt: new Date().toISOString(),
-            })
-          }
-          return created.slug
-        } catch (err) {
-          console.error('[docs] createChildNote failed', err)
-          notify.cantCreateNote({ onRetry: () => get().createChildNote(parentSlug) })
-          return null
+            createdAt: new Date().toISOString(),
+          })
         }
+        void proofClient.createDoc('', '', { slug }).catch((err) => {
+          console.warn('[docs] createChildNote background register failed', err)
+        })
+        return slug
       },
 
       createWritingChild: async (parentSlug, title) => {
         const parent = get().knownDocs.find((d) => d.slug === parentSlug)
         if (!parent) return null
         if (isWikiDoc(parent)) return null
-        try {
-          // Empty body — server accepts it and the editor renders the
-          // body placeholder. The title comes from the palette input.
-          const created = await proofClient.createDoc(title, '')
-          const meta: KnownDoc = {
-            slug: created.slug,
-            type: 'writing',
-            parentId: parentSlug,
-            title,
-          }
-          set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-          await ensureHandle(created.slug, set, get)
-          const handle = get().handles[created.slug]
+        // Empty body — server accepts it and the editor renders the
+        // body placeholder. The title comes from the palette input.
+        const slug = generateClientSlug()
+        const meta: KnownDoc = {
+          slug,
+          type: 'writing',
+          parentId: parentSlug,
+          title,
+        }
+        set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+        await ensureHandle(slug, set, get)
+        const handle = get().handles[slug]
+        void proofClient.createDoc(title, '', { slug }).catch((err) => {
+          console.warn('[docs] createWritingChild background register failed', err)
+        })
           if (handle) {
             writeDocMeta(handle.ydoc, {
               type: 'writing',
@@ -583,14 +603,7 @@ export const useDocsStore = create<DocsState>()(
               }, 'doc-init')
             }
           }
-          return created.slug
-        } catch (err) {
-          console.error('[docs] createWritingChild failed', err)
-          notify.cantCreateNote({
-            onRetry: () => get().createWritingChild(parentSlug, title),
-          })
-          return null
-        }
+        return slug
       },
 
       toggleExpanded: (slug) =>
@@ -635,7 +648,7 @@ export const useDocsStore = create<DocsState>()(
         for (const s of groupSlugs) {
           const h = nextHandles[s]
           if (h) {
-            h.provider.destroy()
+            h.provider?.destroy()
             h.idb.destroy()
             h.ydoc.destroy()
           }
@@ -895,17 +908,21 @@ async function ensureHandle(
   get: () => DocsState,
 ): Promise<void> {
   if (get().handles[slug]) return
-  set((s) => ({ status: { ...s.status, [slug]: 'initializing' } }))
-  const handle = await buildHandle(slug, (status) => {
-    set((s) => ({ status: { ...s.status, [slug]: status } }))
-  })
-  if (!handle) {
-    // proof-server unreachable or session denied. Toast once so the user
-    // knows their tab is dead instead of silently sitting on the editor's
-    // 'error' status banner. Retry re-runs the same setup.
-    notify.cantOpenNote({ onRetry: () => ensureHandle(slug, set, get) })
-    return
-  }
+  // Local-only handle is ready immediately (Y.Doc + IndexedDB are sync).
+  // The WebSocket provider attaches in the background via
+  // attachProviderWhenReady — by which time the editor is already
+  // rendering and the user may have typed several characters. Those
+  // characters land in IndexedDB first, then merge into the server's
+  // state once the provider arrives. If the server never arrives the
+  // tab stays local-only forever; no toast or error gate, since "I
+  // can keep writing offline" is the contract this pattern offers.
+  const handle = buildHandle(
+    slug,
+    set as (fn: (s: DocsState) => Partial<DocsState>) => void,
+    (status) => {
+      set((s) => ({ status: { ...s.status, [slug]: status } }))
+    },
+  )
   set((s) => ({ handles: { ...s.handles, [slug]: handle } }))
   seedMetaFromCatalog(handle, get().knownDocs.find((d) => d.slug === slug))
   installTitleMirror(slug, handle, set, get)
@@ -983,21 +1000,22 @@ function installTitleMirror(
     // cache, not just structural changes at the fragment root.
     fragment.observeDeep(sync)
   }
-  if (handle.provider.isSynced || handle.idb.synced) {
+  if (handle.provider?.isSynced || handle.idb.synced) {
     start()
     return
   }
   // Either signal triggers the mirror: idb hydrates the same fragment
   // the server would have sent, so sidebar titles populate on cold/
-  // offline launches without waiting for proof-server.
+  // offline launches without waiting for proof-server. provider may
+  // never arrive (offline-only tab) — that's fine, idb alone covers it.
   let started = false
   const onceReady = () => {
     if (started) return
     started = true
-    handle.provider.off('synced', onceReady)
+    handle.provider?.off('synced', onceReady)
     handle.idb.off('synced', onceReady)
     start()
   }
-  handle.provider.on('synced', onceReady)
+  handle.provider?.on('synced', onceReady)
   handle.idb.on('synced', onceReady)
 }

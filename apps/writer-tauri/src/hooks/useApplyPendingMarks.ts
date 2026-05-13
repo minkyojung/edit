@@ -49,7 +49,7 @@ function waitForLocalReady(handle: {
     isSynced: boolean
     on: (e: 'synced', f: () => void) => void
     off: (e: 'synced', f: () => void) => void
-  }
+  } | null
   idb: {
     synced: boolean
     on: (e: 'synced', f: () => void) => void
@@ -58,16 +58,16 @@ function waitForLocalReady(handle: {
 }): Promise<void> {
   return new Promise<void>((resolve) => {
     const finish = () => setTimeout(resolve, 50)
-    if (handle.provider.isSynced || handle.idb.synced) {
+    if (handle.provider?.isSynced || handle.idb.synced) {
       finish()
       return
     }
     const onAny = () => {
-      handle.provider.off('synced', onAny)
+      handle.provider?.off('synced', onAny)
       handle.idb.off('synced', onAny)
       finish()
     }
-    handle.provider.on('synced', onAny)
+    handle.provider?.on('synced', onAny)
     handle.idb.on('synced', onAny)
   })
 }
