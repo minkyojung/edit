@@ -24,6 +24,7 @@ import {
   createCustomWikiPage,
 } from '@/state/wikiService'
 import type { IngestProposal, IndexUpdate } from '@/agent/ingest'
+import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { extractErrorCode } from '@/chat/utils/errorMessage'
 import { notify } from '@/lib/notify'
@@ -84,9 +85,17 @@ async function materializeNewPageProposals(
     // glance (e.g. "this is Alex's career — why is it on a Chris
     // page?") and either keep the page or archive it. They can
     // delete the footer themselves once they've confirmed.
+    //
+    // resolveWikilinks rewrites [[Other Page]] tokens to real
+    // markdown links — without this the LLM-emitted brackets land
+    // as literal text in the new page's body. Only the content
+    // portion is rewritten; sourceQuote stays verbatim because it
+    // mirrors the user's note (no LLM-side rewriting allowed
+    // there).
+    const resolvedContent = resolveWikilinksInMarkdown(p.content)
     const body = p.sourceQuote
-      ? `${p.content}\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
-      : p.content
+      ? `${resolvedContent}\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
+      : resolvedContent
     const newSlug = await createCustomWikiPage(name, body)
     if (!newSlug) {
       console.warn(

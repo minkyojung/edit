@@ -24,6 +24,7 @@ import type * as Y from 'yjs'
 import { IconCheck, IconX } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { notify } from '@/lib/notify'
+import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
 
 const AGENT_ID = 'ai:wiki-ingest'
 
@@ -41,7 +42,12 @@ function acceptProposal(
     notify.markEditorNotReady()
     return false
   }
-  const parsed = parser(proposal.content)
+  // Resolve [[Page Title]] tokens before parse — the LLM emits them
+  // verbatim in content, and unless we rewrite to standard markdown
+  // link syntax the parser produces literal `[[X]]` text. Unresolved
+  // titles stay as literals so the user can fix typos manually.
+  const content = resolveWikilinksInMarkdown(proposal.content)
+  const parsed = parser(content)
   if (!parsed || parsed.content.size === 0) {
     notify.markCantRead()
     return false
