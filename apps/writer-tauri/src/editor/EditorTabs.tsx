@@ -1,16 +1,15 @@
-// Document tab strip in the editor header. Mirrors ThreadTabs in
-// shape — Radix Tabs primitive for tablist semantics + keyboard nav,
-// plus a global ⌘⇧[ / ⌘⇧] shortcut that fires only when focus is
-// inside the editor area (so the same chord can swap chat threads
-// when focus is in the chat panel without conflict).
+// Document tab strip in the editor header. Built on Radix Tabs
+// primitive for tablist semantics + keyboard nav, with a global
+// ⌘⇧[ / ⌘⇧] shortcut for cycling tabs. The shortcut is the only
+// global tab-switching chord in the app — chat threads no longer
+// own a competing ⌘⇧[ / ⌘⇧] handler, so we don't need a focus
+// gate to disambiguate.
 //
-// Each tab pulls its title live from the doc's Y.Text, so renaming
-// a doc updates the tab label in place. Tabs whose handle hasn't
-// been opened yet show "Untitled" — the title materializes the
-// first time the user activates that tab and triggers the ydoc
-// connection.
+// Each tab pulls its label live from the doc's body (see
+// useDocLabel). Tabs whose handle hasn't been opened yet fall back
+// to the cached knownDocs.title or 'Untitled'.
 
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { IconFileDescription, IconPlus, IconX } from '@tabler/icons-react'
 import { Tabs as TabsPrimitive } from 'radix-ui'
 import {
@@ -29,10 +28,10 @@ export function EditorTabs() {
   const closeDoc = useDocsStore((s) => s.closeDoc)
   const createNew = useDocsStore((s) => s.createNew)
 
-  // Focus-scoped ⌘⇧[ / ⌘⇧] — only fire when something inside the
-  // editor area has focus, so the chat panel keeps its own scope of
-  // the same chord. We anchor via the tablist's containing element.
-  const rootRef = useRef<HTMLDivElement>(null)
+  // ⌘⇧[ / ⌘⇧] cycles tabs. Global — no focus gate. The chord
+  // isn't bound to anything else in any input we render, so a
+  // user typing in the wikilink palette or tab rename input can
+  // still cycle docs without surprises.
   useEffect(() => {
     if (openSlugs.length <= 1) return
     const handler = (e: KeyboardEvent) => {
@@ -40,12 +39,6 @@ export function EditorTabs() {
       const isPrev = e.key === '[' || e.code === 'BracketLeft'
       const isNext = e.key === ']' || e.code === 'BracketRight'
       if (!isPrev && !isNext) return
-      // Only act if focus is inside the editor surface. ProseMirror's
-      // contenteditable counts; the title input counts; nothing
-      // outside this column does.
-      const editorPanel = rootRef.current?.closest('[data-editor-panel]')
-      if (!editorPanel) return
-      if (!editorPanel.contains(document.activeElement)) return
       e.preventDefault()
       const idx = openSlugs.findIndex((s) => s === activeSlug)
       const cur = idx < 0 ? 0 : idx
@@ -60,7 +53,6 @@ export function EditorTabs() {
 
   return (
     <TabsPrimitive.Root
-      ref={rootRef}
       value={activeSlug ?? ''}
       onValueChange={setActive}
       className="flex flex-1 items-stretch gap-1 overflow-hidden"
