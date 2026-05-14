@@ -1,8 +1,17 @@
-import React from 'react'
-import { IconChevronRight, IconLoader2 } from '@tabler/icons-react'
 import type { ReasoningPart as ReasoningPartType } from '@/chat/types'
-import { InlineCard } from '@/chat/ui/InlineCard'
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from '@/components/ai-elements/reasoning'
 
+/** Thinking-block renderer. Built on AI Elements `Reasoning` so the
+ * collapsible primitive matches `Tool` / `ProposeChangePart` — same
+ * chevron rotation, same fade/slide animation, same keyboard a11y. The
+ * Reasoning container auto-opens during streaming and auto-closes ~1s
+ * after the model stops thinking, replacing our previous hand-rolled
+ * useState/useEffect dance, and surfaces a "Thought for N seconds"
+ * duration when the run settles. */
 export function ReasoningPart({
   part,
   isStreaming,
@@ -10,12 +19,16 @@ export function ReasoningPart({
   part: ReasoningPartType
   isStreaming: boolean
 }) {
-  // Empty-state spinner is owned by the top-level ActivityStatus now —
-  // skip rendering until we actually have thoughts to show.
+  // Empty-state spinner is owned by the top-level ActivityStatus —
+  // don't render until we actually have thoughts to show.
   if (!part.text) return null
   return <ThinkingPanel content={part.text} streamingNoText={isStreaming} />
 }
 
+/** Same as ReasoningPart but driven by a raw `thinking` string off the
+ * legacy turn shape (turns produced before the parts timeline existed
+ * carry their reasoning in `turn.thinking` rather than as a part). The
+ * second prop name dates back to that legacy path. */
 export function ThinkingPanel({
   content,
   streamingNoText,
@@ -23,39 +36,10 @@ export function ThinkingPanel({
   content: string
   streamingNoText: boolean
 }) {
-  // While the model is mid-stream and hasn't produced any text yet, render an
-  // open spinner-style panel so the user can see the chain of thought live.
-  // Once text starts flowing (or the turn finished), collapse to a small
-  // toggleable capsule so it doesn't dominate the conversation.
-  const [open, setOpen] = React.useState(streamingNoText)
-
-  React.useEffect(() => {
-    if (streamingNoText) setOpen(true)
-    else setOpen(false)
-  }, [streamingNoText])
-
   return (
-    <InlineCard className="mb-2 text-xs">
-      <details
-        open={open}
-        onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      >
-        <summary className="flex cursor-pointer items-center gap-2 list-none px-3 py-1.5 text-muted-foreground select-none">
-          {streamingNoText ? (
-            <IconLoader2 size={12} className="shrink-0 animate-spin" />
-          ) : (
-            <IconChevronRight
-              size={12}
-              className="shrink-0 transition-transform"
-              style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
-            />
-          )}
-          <span>{streamingNoText ? 'Thinking…' : 'Thoughts'}</span>
-        </summary>
-        <div className="px-3 pb-2 pt-1 whitespace-pre-wrap text-muted-foreground/90">
-          {content}
-        </div>
-      </details>
-    </InlineCard>
+    <Reasoning isStreaming={streamingNoText} className="mb-2 text-xs">
+      <ReasoningTrigger />
+      <ReasoningContent>{content}</ReasoningContent>
+    </Reasoning>
   )
 }
