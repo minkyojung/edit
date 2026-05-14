@@ -21,6 +21,7 @@ import { formatStatePlugin } from './formatStatePlugin'
 import { inlineCodeSafeKeymap } from './inlineCodeSafe'
 import { createLinkClickPlugin } from './linkClickPlugin'
 import { createLinkHoverPlugin } from './linkHoverPlugin'
+import { createPasteSanitizerPlugin } from './pasteSanitizerPlugin'
 import { createSlashTriggerPlugin } from './slashTriggerPlugin'
 import { configureListItemBlock } from './listItemConfig'
 import { listKeymap } from './listKeymap'
@@ -199,6 +200,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(createFrozenSelectionPlugin())
       .use(formatStatePlugin)
       .use(inlineCodeSafeKeymap)
+      .use(createPasteSanitizerPlugin())
       .use(createLinkClickPlugin())
       .use(createLinkHoverPlugin())
       .use(createSlashTriggerPlugin())
