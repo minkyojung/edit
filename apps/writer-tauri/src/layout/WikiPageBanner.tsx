@@ -25,6 +25,7 @@ import { IconCheck, IconX } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { notify } from '@/lib/notify'
 import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
+import { prepareMarkdownAppend } from '@/lib/markdownAppend'
 
 const AGENT_ID = 'ai:wiki-ingest'
 
@@ -37,8 +38,13 @@ function acceptProposal(
   ydoc: Y.Doc,
   proposal: PendingProposal,
 ): boolean {
-  const parser = useEditorViewStore.getState().parser
-  if (!parser) {
+  // Differentiate "parser not mounted" from "parser ran but produced
+  // empty content" by pre-checking parser presence here. The shared
+  // prepareMarkdownAppend helper returns null for both cases without
+  // distinguishing — both happen rarely enough that pushing the
+  // distinction into the helper isn't worth it, but the user-facing
+  // toasts (Reconnect vs "couldn't read content") are different.
+  if (!useEditorViewStore.getState().parser) {
     notify.markEditorNotReady()
     return false
   }
@@ -47,16 +53,11 @@ function acceptProposal(
   // link syntax the parser produces literal `[[X]]` text. Unresolved
   // titles stay as literals so the user can fix typos manually.
   const content = resolveWikilinksInMarkdown(proposal.content)
-  const parsed = parser(content)
-  if (!parsed || parsed.content.size === 0) {
+  const prep = prepareMarkdownAppend(view, content)
+  if (!prep) {
     notify.markCantRead()
     return false
   }
-
-  const tr = view.state.tr
-  const insertPos = view.state.doc.content.size
-  const fragmentSize = parsed.content.size
-  tr.insert(insertPos, parsed.content)
 
   // Stamp proofAuthored on the inserted range. Same pattern as
   // markActions.acceptMark(insert): the inline mark anchors the
@@ -66,9 +67,9 @@ function acceptProposal(
   const markId = crypto.randomUUID()
   const authoredType = view.state.schema.marks.proofAuthored
   if (authoredType) {
-    tr.addMark(
-      insertPos,
-      insertPos + fragmentSize,
+    prep.tr.addMark(
+      prep.from,
+      prep.to,
       authoredType.create({ id: markId, by: AGENT_ID }),
     )
   }
@@ -78,7 +79,7 @@ function acceptProposal(
   // atomically. 'mark-action' origin matches the trackedOrigins
   // configured on Y.UndoManager (see MilkdownEditor.tsx).
   ydoc.transact(() => {
-    view.dispatch(tr)
+    view.dispatch(prep.tr)
     const meta: AuthoredMeta = {
       sourceSlug: proposal.sourceSlug,
       sourceLabel: proposal.sourceLabel,

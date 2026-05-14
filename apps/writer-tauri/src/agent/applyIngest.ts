@@ -21,35 +21,32 @@ import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore, type PendingIndexUpdate } from '@/state/ingestStore'
 import { isEffectivelyEmpty } from '@/lib/markdownText'
-
-/** Append a paragraph of plain text to the active editor's doc via a
- * ProseMirror transaction. PM transactions go through the server's
- * projection guardrails cleanly; raw XmlFragment inserts don't. */
-function appendParagraphViaTransaction(view: EditorView, line: string): void {
-  const schema = view.state.schema
-  const paragraph = schema.nodes.paragraph
-  if (!paragraph) {
-    console.warn('[ingest] schema has no paragraph node; skipping append')
-    return
-  }
-  const textNode = line.length > 0 ? schema.text(line) : null
-  const para = textNode ? paragraph.create(null, textNode) : paragraph.create()
-  const end = view.state.doc.content.size
-  view.dispatch(view.state.tr.insert(end, para))
-}
+import { prepareMarkdownAppend } from '@/lib/markdownAppend'
 
 /** Drain queued log entries into wiki:log. Called from
- * useApplyPendingLogs when the user navigates to the log page. */
+ * useApplyPendingLogs when the user navigates to the log page.
+ * Each entry is a pre-formatted markdown line (`## [DATE] kind |
+ * summary`) and goes through the shared markdown-append helper so
+ * headings, links, and any other markdown render — they used to
+ * land as literal text because the old appender skipped the
+ * parser. */
 export function applyPendingLogsForView(view: EditorView): number {
   const logs = useIngestStore.getState().pendingLogs
   if (logs.length === 0) return 0
+  const applied: string[] = []
   for (const entry of logs) {
-    appendParagraphViaTransaction(view, entry.line)
+    const prep = prepareMarkdownAppend(view, entry.line)
+    if (!prep) {
+      console.warn('[ingest:log] markdown parse failed; leaving in queue', entry.line)
+      continue
+    }
+    view.dispatch(prep.tr)
+    applied.push(entry.id)
   }
-  useIngestStore
-    .getState()
-    .remove({ proposalIds: [], logIds: logs.map((l) => l.id) })
-  return logs.length
+  if (applied.length > 0) {
+    useIngestStore.getState().remove({ proposalIds: [], logIds: applied })
+  }
+  return applied.length
 }
 
 /** Format one index line. Format:
@@ -134,7 +131,13 @@ export function applyPendingIndexUpdatesForView(view: EditorView): number {
 /** Apply one index update — either replace the matching line or
  * append at the end of the doc. Returns true on success so the
  * caller can mark this update as drained; false leaves it in the
- * queue for the next pass. */
+ * queue for the next pass.
+ *
+ * Append path runs through prepareMarkdownAppend (the shared
+ * helper) so leading-empty cleanup and the parse step stay in
+ * lockstep with the log drain and banner accept. Replace path
+ * stays inline because it depends on a marker-derived range that
+ * the helper has no way to know about. */
 function applyOneIndexUpdate(
   view: EditorView,
   update: PendingIndexUpdate,
@@ -142,50 +145,42 @@ function applyOneIndexUpdate(
 ): boolean {
   const title = titleForTarget(update.target)
   const line = formatIndexLine(update.target, title, update.summary)
+  const existing = findIndexLineForTarget(view.state.doc, update.target)
+
+  if (!existing) {
+    const prep = prepareMarkdownAppend(view, line)
+    if (!prep) {
+      console.warn('[ingest:index] markdown parse failed for line', line)
+      return false
+    }
+    view.dispatch(prep.tr)
+    return true
+  }
+
+  // Replace path: parse, account for the leading-empty cleanup the
+  // shared helper would have done so the marker range stays valid,
+  // and replaceWith on the adjusted range. The replace branch is
+  // load-bearing for the index's "one summary per target" invariant
+  // — without it a re-summary would append a second line for the
+  // same target instead of editing the existing one.
   const parsed = parser(line)
   if (!parsed || parsed.content.size === 0) {
     console.warn('[ingest:index] parser returned empty for line', line)
     return false
   }
-  // parser() returns a full doc; we want its children (typically a
-  // single paragraph). Inserting the whole doc would nest a doc
-  // inside a doc — illegal in the schema.
   const fragment = parsed.content
-
-  const doc = view.state.doc
-  const existing = findIndexLineForTarget(doc, update.target)
-
-  // Strip the leading effectively-empty paragraph the server (or
-  // an initial empty seed) leaves behind so the first applied line
-  // doesn't land below a blank block. Uses the shared
-  // isEffectivelyEmpty so ZWS variants, BOMs, and stray whitespace
-  // are all treated as "blank" — the four other empty-detection
-  // sites in the codebase use the same helper.
-  let cleanupTr = view.state.tr
+  let tr = view.state.tr
   let placeholderRemoved = 0
-  if (doc.childCount > 0) {
-    const first = doc.child(0)
-    if (isEffectivelyEmpty(first.textContent)) {
-      cleanupTr = cleanupTr.delete(0, first.nodeSize)
-      placeholderRemoved = first.nodeSize
-    }
+  const doc = view.state.doc
+  if (doc.childCount > 0 && isEffectivelyEmpty(doc.child(0).textContent)) {
+    tr = tr.delete(0, doc.child(0).nodeSize)
+    placeholderRemoved = doc.child(0).nodeSize
   }
-
-  // Re-resolve `existing` against the post-cleanup doc state so the
-  // in-place replace points at the right range. After deleting the
-  // leading placeholder, every other block shifts left by its size.
-  const adjustedExisting = existing
-    ? {
-        from: existing.from - placeholderRemoved,
-        to: existing.to - placeholderRemoved,
-      }
-    : null
-  const docAfterCleanup = cleanupTr.doc
-  if (adjustedExisting) {
-    cleanupTr.replaceWith(adjustedExisting.from, adjustedExisting.to, fragment)
-  } else {
-    cleanupTr.insert(docAfterCleanup.content.size, fragment)
-  }
-  view.dispatch(cleanupTr)
+  tr.replaceWith(
+    existing.from - placeholderRemoved,
+    existing.to - placeholderRemoved,
+    fragment,
+  )
+  view.dispatch(tr)
   return true
 }
