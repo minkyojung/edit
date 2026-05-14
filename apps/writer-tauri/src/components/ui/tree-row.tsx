@@ -24,7 +24,7 @@ import * as React from 'react'
 import { Slot } from 'radix-ui'
 import { cn } from '@/lib/utils'
 
-interface TreeRowProps extends React.ComponentProps<'li'> {
+interface TreeRowProps extends React.ComponentProps<'div'> {
   /** Whether this row is the currently selected doc. Drives the
    * `data-active` attribute which, combined with the cn-merged
    * `data-active:bg-sidebar-accent` rule, paints the row in the
@@ -33,8 +33,13 @@ interface TreeRowProps extends React.ComponentProps<'li'> {
 }
 
 /**
- * The row container — a <li> so it slots into <SidebarMenu> /
- * <SidebarMenuSub> (both <ul>) without breaking HTML semantics.
+ * The row itself — a <div> with flex layout for Lead / Label / Trail.
+ * Intentionally NOT the outer <li>: the caller wraps TreeRow in their
+ * own <li> alongside any sibling content (CollapsibleContent + child
+ * <ul>, etc.) that should stack vertically below the row. Making
+ * TreeRow the <li> would force every sibling into the same flex line
+ * and break tree expansion.
+ *
  * Carries the row-level styling (height, hover bg, active bg, base
  * text color) that all child slots inherit via `text-inherit`.
  *
@@ -44,7 +49,7 @@ interface TreeRowProps extends React.ComponentProps<'li'> {
  */
 function TreeRow({ active, className, ...props }: TreeRowProps) {
   return (
-    <li
+    <div
       data-slot="tree-row"
       data-active={active || undefined}
       className={cn(

@@ -12,21 +12,20 @@
 //   • chevron click  → toggle expand only (no selection change)
 //   • label click    → open the doc only (no expand toggle)
 //   • + click        → create a child note (auto-expands parent)
-//   • right-click    → context menu (Archive note)
+//   • right-click    → context menu (Archive note, optional Move to…)
 //
-// The chevron is wrapped in CollapsibleTrigger so its click drives
-// Radix's open state directly; stopPropagation prevents bubbling to
-// the SidebarMenuButton's onClick. The chevron is absolutely
-// positioned over the SidebarMenuButton's left padding so the row's
-// hover/active background still bleeds wall-to-wall behind it; using
-// a fixed `top-2` (not `top: 50%`) keeps it glued to the parent row
-// even when the row's <li> grows to contain the expanded subtree.
+// Built on the TreeRow primitive (`components/ui/tree-row.tsx`):
+// chevron / file-icon, label, and + sit as flex siblings inside a
+// single <li>, so the row's hover/active background fills naturally
+// and there's no absolute-overlay positioning math that breaks when
+// the <li> grows to contain expanded children. The chevron is
+// wrapped in CollapsibleTrigger asChild and stops click propagation
+// so its toggle doesn't also fire the label's select.
 //
-// Archive moved off-row into the right-click context menu (the
-// destructive action shouldn't compete visually with create) — this
-// also lets the row carry shadcn's intended single-action layout, so
-// SidebarMenuButton's auto pr-8 pads exactly the room one action
-// needs and we don't fight the primitive's :has() rule with !pr-15.
+// Archive lives in the right-click context menu (destructive action
+// shouldn't compete visually with create); Move to… is included only
+// when the caller passes targets (wiki tree currently does, daily /
+// writing don't).
 
 import { type MouseEvent } from 'react'
 import {
@@ -39,12 +38,13 @@ import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
+import { SidebarMenuSub } from '@/components/ui/sidebar'
 import {
-  SidebarMenuAction,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
-} from '@/components/ui/sidebar'
+  TreeRow,
+  TreeRowLabel,
+  TreeRowLead,
+  TreeRowTrail,
+} from '@/components/ui/tree-row'
 import {
   Collapsible,
   CollapsibleContent,
@@ -134,37 +134,6 @@ export function DocTreeNode({
       ? 'ring-1 ring-sidebar-accent-foreground/40 rounded-md'
       : ''
 
-  const labelButton = (
-    <SidebarMenuButton
-      isActive={isActive}
-      onClick={() => onSelect(doc.slug)}
-      className="pl-8"
-    >
-      <span>{label}</span>
-    </SidebarMenuButton>
-  )
-
-  // The + glyph reads as a quiet inline icon (no chunky button chrome)
-  // so it sits at the same visual weight as WeekView's right-side
-  // count text. Default 16px sizing comes from SidebarMenuAction's
-  // [&>svg]:size-4 rule. top-1.5! restores true vertical centering:
-  // the cva base correctly uses top-1.5 (centers a 20px action in a
-  // 32px row) but peer-data-[size=default]:top-2 pushes it 2px down.
-  const addAction = (
-    <SidebarMenuAction
-      showOnHover
-      aria-label="Add note"
-      onClick={(e: MouseEvent) => {
-        e.stopPropagation()
-        onAddChild(doc.slug)
-        if (!isExpanded) toggleExpanded(doc.slug)
-      }}
-      className="top-1.5! text-sidebar-foreground/60 hover:bg-transparent hover:text-sidebar-accent-foreground"
-    >
-      <IconPlus stroke={2} />
-    </SidebarMenuAction>
-  )
-
   // Move section is rendered only when the caller provides
   // targets — keeps daily / writing rows free of an irrelevant
   // "Move to…" block. Each target item self-disables when it's
@@ -211,21 +180,34 @@ export function DocTreeNode({
     return (
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <SidebarMenuItem
+          <li
             ref={setNodeRef}
-            className={dropIndicatorClass}
+            className={cn('group/menu-item relative', dropIndicatorClass)}
             {...(draggable ? dragSource.listeners : {})}
             {...(draggable ? dragSource.attributes : {})}
           >
-            <span
-              aria-hidden
-              className="absolute top-2 left-2 z-10 flex h-4 w-4 items-center justify-center text-sidebar-foreground/60"
-            >
-              <IconFileDescription size={16} stroke={1.75} />
-            </span>
-            {labelButton}
-            {addAction}
-          </SidebarMenuItem>
+            <TreeRow active={isActive}>
+              <TreeRowLead asChild>
+                <span aria-hidden>
+                  <IconFileDescription size={16} stroke={1.75} />
+                </span>
+              </TreeRowLead>
+              <TreeRowLabel onClick={() => onSelect(doc.slug)}>
+                {label}
+              </TreeRowLabel>
+              <TreeRowTrail
+                showOnHover
+                aria-label="Add note"
+                onClick={(e: MouseEvent) => {
+                  e.stopPropagation()
+                  onAddChild(doc.slug)
+                  if (!isExpanded) toggleExpanded(doc.slug)
+                }}
+              >
+                <IconPlus stroke={2} />
+              </TreeRowTrail>
+            </TreeRow>
+          </li>
         </ContextMenuTrigger>
         {contextMenu}
       </ContextMenu>
@@ -242,35 +224,41 @@ export function DocTreeNode({
             if (open !== isExpanded) toggleExpanded(doc.slug)
           }}
         >
-          <SidebarMenuItem
+          <li
             ref={setNodeRef}
-            className={dropIndicatorClass}
+            className={cn('group/menu-item relative', dropIndicatorClass)}
             {...(draggable ? dragSource.listeners : {})}
             {...(draggable ? dragSource.attributes : {})}
           >
-            <CollapsibleTrigger asChild>
-              <button
-                type="button"
-                aria-label={isExpanded ? 'Collapse' : 'Expand'}
-                onClick={(e: MouseEvent) => e.stopPropagation()}
-                className={cn(
-                  'absolute top-2 left-2 z-10 flex h-4 w-4 items-center justify-center rounded-sm',
-                  'text-sidebar-foreground/60 hover:text-sidebar-accent-foreground',
-                  'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
-                )}
+            <TreeRow active={isActive}>
+              <CollapsibleTrigger asChild>
+                <TreeRowLead
+                  aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                  onClick={(e: MouseEvent) => e.stopPropagation()}
+                >
+                  <IconChevronRight
+                    size={16}
+                    stroke={1.75}
+                    className="transition-transform"
+                    style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                  />
+                </TreeRowLead>
+              </CollapsibleTrigger>
+              <TreeRowLabel onClick={() => onSelect(doc.slug)}>
+                {label}
+              </TreeRowLabel>
+              <TreeRowTrail
+                showOnHover
+                aria-label="Add note"
+                onClick={(e: MouseEvent) => {
+                  e.stopPropagation()
+                  onAddChild(doc.slug)
+                  if (!isExpanded) toggleExpanded(doc.slug)
+                }}
               >
-                <IconChevronRight
-                  size={16}
-                  stroke={1.75}
-                  className="transition-transform"
-                  style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-                />
-              </button>
-            </CollapsibleTrigger>
-
-            {labelButton}
-            {addAction}
-
+                <IconPlus stroke={2} />
+              </TreeRowTrail>
+            </TreeRow>
             <CollapsibleContent asChild>
               <SidebarMenuSub className="mr-0 pr-0">
                 {children.map((child) => (
@@ -289,7 +277,7 @@ export function DocTreeNode({
                 ))}
               </SidebarMenuSub>
             </CollapsibleContent>
-          </SidebarMenuItem>
+          </li>
         </Collapsible>
       </ContextMenuTrigger>
       {contextMenu}
