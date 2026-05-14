@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>이 위키, 어떻게 동작하나?</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --text: #111827;
+    --muted: #6b7280;
+    --user: #3b82f6;
+    --user-bg: #dbeafe;
+    --ai: #f59e0b;
+    --ai-bg: #fef3c7;
+    --system: #6b7280;
+    --system-bg: #f3f4f6;
+    --result: #10b981;
+    --result-bg: #d1fae5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Pretendard", "Apple SD Gothic Neo", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 {
+    font-size: 28px;
+    margin: 0 0 8px;
+    letter-spacing: -0.5px;
+  }
+  .lead {
+    color: var(--muted);
+    margin: 0 0 40px;
+    font-size: 15px;
+  }
+  h2 {
+    font-size: 20px;
+    margin: 48px 0 16px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+  h3 {
+    font-size: 16px;
+    margin: 24px 0 12px;
+  }
+  p { margin: 8px 0; }
+  .legend {
+    display: flex;
+    gap: 12px;
+    margin: 16px 0 24px;
+    flex-wrap: wrap;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    background: var(--card);
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .dot-user { background: var(--user); }
+  .dot-ai { background: var(--ai); }
+  .dot-system { background: var(--system); }
+  .dot-result { background: var(--result); }
+
+  .three-layers {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin: 16px 0 8px;
+  }
+  .layer {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    background: var(--card);
+  }
+  .layer-head { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 6px; }
+  .layer-sub { font-size: 13px; color: var(--muted); }
+  .layer.daily { border-left: 4px solid var(--user); }
+  .layer.wiki { border-left: 4px solid var(--ai); }
+  .layer.system { border-left: 4px solid var(--system); }
+
+  .flow {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 16px 0;
+  }
+  .flow-title {
+    font-weight: 600;
+    font-size: 16px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .flow-title .num {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--text);
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .step {
+    display: grid;
+    grid-template-columns: 32px 110px 1fr;
+    gap: 12px;
+    align-items: start;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--bg);
+  }
+  .step .idx {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .step .who {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 6px;
+    text-align: center;
+    line-height: 1.2;
+    height: fit-content;
+  }
+  .who.user { background: var(--user-bg); color: var(--user); }
+  .who.ai { background: var(--ai-bg); color: var(--ai); }
+  .who.system { background: var(--system-bg); color: var(--system); }
+  .who.result { background: var(--result-bg); color: var(--result); }
+  .step .what {
+    font-size: 14px;
+  }
+  .step .what code {
+    background: var(--system-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text);
+  }
+  .step .note {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 2px;
+  }
+
+  .pages {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 16px 0;
+  }
+  @media (max-width: 600px) {
+    .pages { grid-template-columns: 1fr; }
+  }
+  .page-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    background: var(--card);
+  }
+  .page-card .tag {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .tag.system { background: var(--system-bg); color: var(--system); }
+  .tag.wiki { background: var(--ai-bg); color: var(--ai); }
+  .tag.daily { background: var(--user-bg); color: var(--user); }
+  .page-card h4 { margin: 0 0 6px; font-size: 14px; }
+  .page-card p { margin: 0; font-size: 13px; color: var(--muted); }
+
+  .callout {
+    border-left: 3px solid var(--ai);
+    background: var(--ai-bg);
+    padding: 12px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    margin: 16px 0;
+  }
+  .footer {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 48px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>이 위키, 어떻게 동작하나?</h1>
+  <p class="lead">
+    개발자 아닌 사람도 이해할 수 있게. 4가지 흐름 + 페이지 종류 3개.
+  </p>
+
+  <div class="legend">
+    <span class="pill"><span class="dot dot-user"></span>사용자가 함</span>
+    <span class="pill"><span class="dot dot-ai"></span>AI가 함</span>
+    <span class="pill"><span class="dot dot-system"></span>시스템이 자동으로 함</span>
+    <span class="pill"><span class="dot dot-result"></span>결과로 남는 것</span>
+  </div>
+
+  <!-- =========================== -->
+  <h2>1. 큰 그림 — 페이지 3 종류</h2>
+  <p>모든 페이지는 셋 중 하나. 누가 쓰느냐로 구분.</p>
+
+  <div class="pages">
+    <div class="page-card">
+      <span class="tag daily">사용자 작성</span>
+      <h4>Daily / Writing 노트</h4>
+      <p>매일매일 생각·메모를 그대로 적는 곳. AI는 읽기만. 사용자만 씀.</p>
+    </div>
+    <div class="page-card">
+      <span class="tag wiki">AI가 정리</span>
+      <h4>Wiki (<code>wiki:custom-*</code>)</h4>
+      <p>Daniel, Migration 같은 누적 페이지. AI가 daily에서 뽑아 정리. 사용자는 검토만.</p>
+    </div>
+    <div class="page-card">
+      <span class="tag system">시스템 자동</span>
+      <h4>System (<code>system:*</code>)</h4>
+      <p>Conventions / Log / Index 3개. AI 운영을 위한 메타 페이지. 자동 갱신.</p>
+    </div>
+    <div class="page-card">
+      <span class="tag system">시스템 자동</span>
+      <h4>Conventions / Log / Index</h4>
+      <p>· <b>Conventions</b>: AI에게 주는 정리 규칙<br/>· <b>Log</b>: AI 작업 일지<br/>· <b>Index</b>: 모든 wiki 페이지 요약 목록</p>
+    </div>
+  </div>
+
+  <!-- =========================== -->
+  <h2>2. 네 가지 흐름</h2>
+
+  <!-- ============= 흐름 1: 메모 → 위키 정리 ============= -->
+  <div class="flow">
+    <div class="flow-title"><span class="num">1</span>메모를 적으면 AI가 위키에 정리</div>
+    <div class="steps">
+      <div class="step">
+        <span class="idx">1</span>
+        <span class="who user">사용자</span>
+        <div class="what">Daily 노트에 글을 적음.
+          <div class="note">예: “Daniel이 음성 합성 프로젝트 시작”</div>
+        </div>
+      </div>
+      <div class="step">
+        <span class="idx">2</span>
+        <span class="who system">시스템</span>
+        <div class="what">5분간 타이핑 멈춤 (idle) 감지.
+          <div class="note">노트가 마지막 정리 이후 수정됐는지 확인 (<code>lastEditedAt &gt; lastIngestedAt</code>).</div>
+        </div>
+      </div>
+      <div class="step">
+        <span class="idx">3</span>
+        <span class="who ai">AI (Haiku)</span>
+        <div class="what">현재 위키 전체 + Index 요약 + Conventions 규칙 + 새 노트를 받아 정리 제안 생성.
+          <div class="note">“Daniel 페이지에 한 줄 추가” + “Index의 Daniel 요약 갱신” + “Log에 한 줄” — JSON으로 출력.</div>
+        </div>
+      </div>
+      <div class="step">
+        <span class="idx">4</span>
+        <span class="who system">시스템</span>
+        <div class="what">제안들을 큐에 보관. 자동 적용 안 함.
+          <div class="note">사용자가 직접 확인할 때까지 대기.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============= 흐름 2: 사용자 검토 ============= -->
+  <div class="flow">
+    <div class="flow-title"><span class="num">2</span>사용자가 검토하고 받아들임</div>
+    <div class="steps">
+      <div class="step">
+        <span class="idx">1</span>
+        <span class="who user">사용자</span>
+        <div class="what">사이드바에서 Wiki 페이지 (예: Daniel) 클릭.</div>
+      </div>
+      <div class="step">
+        <span class="idx">2</span>
+        <span class="who system">시스템</span>
+        <div class="what">그 페이지 상단에 “검토할 제안 N건” 박스(banner) 표시.
+          <div class="note">큐에 있던 제안 중 이 페이지 대상인 것만 카드로.</div>
+        </div>
+      </div>
+      <div class="step">
+        <span class="idx">3</span>
+        <span class="who user">사용자</span>
+        <div class="what">각 카드의 ✓ (수락) 또는 ✕ (거절) 클릭.</div>
+      </div>
+      <div class="step">
+        <span class="idx">4a</span>
+        <span class="who result">수락 결과</span>
+        <div class="what">카드 내용이 페이지 끝에 진짜 텍스트로 추가됨. 그 텍스트에 “출처 데이터(언제·어디서 왔는지)”가 보이지 않게 박힘.
+          <div class="note">사용자가 나중에 어디서 왔는지 hover로 확인 가능.</div>
+        </div>
+      </div>
+      <div class="step">
+        <span class="idx">4b</span>
+        <span class="who result">거절 결과</span>
+        <div class="what">카드만 사라짐. 페이지는 변경 없음.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============= 흐름 3: /ask ============= -->
+  <div class="flow">
+    <div class="flow-title"><span class="num">3</span>위키 기반 답 받기 (<code>/ask</code>)</div>
+    <div class="steps">
+      <div class="step">
+        <span class="idx">1</span>
+        <span class="who user">사용자</span>
+        <div class="what">채팅에 <code>/ask Daniel이 뭐하고 있더라?</code> 입력.</div>
+      </div>
+      <div class="step">
+        <span class="idx">2</span>
+        <span class="who system">시스템</span>
+        <div class="what">위키 전체 본문을 AI의 시스템 프롬프트 앞쪽(캐시)에 자동으로 붙임.</div>
+      </div>
+      <div class="step">
+        <span class="idx">3</span>
+        <span class="who ai">AI (Sonnet)</span>
+        <div class="what">위키 페이지를 근거로 답하면서 출처는 <code>[[Daniel]]</code> 같은 형태로 표시.
+          <div class="note">위키에 없는 내용은 “위키엔 없음” 명시 후 일반 답.</div>
+        </div>
+      </div>
+      <div class="step">
+        <span class="idx">4</span>
+        <span class="who system">시스템</span>
+        <div class="what">답 화면이 <code>[[Daniel]]</code>을 클릭 가능한 링크로 변환.</div>
+      </div>
+      <div class="step">
+        <span class="idx">5</span>
+        <span class="who user">사용자</span>
+        <div class="what">링크 클릭 → 그 위키 페이지로 즉시 이동.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============= 흐름 4: 시스템 페이지 자동 갱신 ============= -->
+  <div class="flow">
+    <div class="flow-title"><span class="num">4</span>시스템 페이지 자동 갱신 (Index / Log)</div>
+    <div class="steps">
+      <div class="step">
+        <span class="idx">1</span>
+        <span class="who ai">AI</span>
+        <div class="what">흐름 1의 마지막 단계에서 위키 정리 제안과 함께 Index 요약 + Log 한 줄도 같이 만듦.</div>
+      </div>
+      <div class="step">
+        <span class="idx">2</span>
+        <span class="who system">시스템</span>
+        <div class="what">사용자가 Index 페이지 진입하면 → 자동으로 본문 머지. 같은 페이지 요약이 이미 있으면 그 줄 교체, 없으면 추가.
+          <div class="note">결과: Index는 항상 한 페이지당 한 줄로 정리됨.</div>
+        </div>
+      </div>
+      <div class="step">
+        <span class="idx">3</span>
+        <span class="who system">시스템</span>
+        <div class="what">사용자가 Log 페이지 진입하면 → 큐의 로그 줄들을 페이지 끝에 자동 append.</div>
+      </div>
+      <div class="step">
+        <span class="idx">4</span>
+        <span class="who result">결과</span>
+        <div class="what">Index: 위키 카탈로그 / Log: 작업 일지. 사용자가 손 안 대도 항상 최신.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================== -->
+  <h2>3. 핵심 원리 요약</h2>
+
+  <div class="callout">
+    <b>가장 중요한 원리</b>: AI가 위키에 자동으로 박지 않음. 항상 제안 → 사용자 검토 → 수락 → 적용. 그래서 위키는 사용자가 신뢰할 수 있는 상태로 유지됨.
+  </div>
+
+  <p>
+    <b>3계층 분리</b>: 사용자 작성(daily) / AI 정리(wiki) / 시스템 운영(system) 이 명확히 분리. 사이드바도 두 그룹 (System / Wiki) 로 시각 분리.
+  </p>
+
+  <p>
+    <b>자동 트리거</b>: 사용자가 글 쓰는 동안엔 AI가 끼어들지 않음. 5분 idle 후 백그라운드로 동작. 사용자 워크플로 방해 최소화.
+  </p>
+
+  <p>
+    <b>출처 추적</b>: 위키에 추가된 모든 줄은 “어느 daily의 어느 문장에서 왔는지” 메타데이터 보존. hover로 확인 가능.
+  </p>
+
+  <p>
+    <b>cross-link</b>: AI가 위키를 정리하거나 답할 때 다른 페이지 이름이 등장하면 자동으로 <code>[[Title]]</code> 링크로 만듦. 위키가 평면 목록이 아니라 그래프로 자랄 수 있게.
+  </p>
+
+  <div class="footer">
+    Karpathy LLM Wiki 패턴 기반. 자세한 설계 결정은 <code>docs/llm-wiki-redesign-plan.md</code>, ADR 시리즈 참고.
+  </div>
+
+</div>
+</body>
+</html>
