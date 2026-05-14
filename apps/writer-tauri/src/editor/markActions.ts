@@ -32,7 +32,7 @@ interface FoundAnchor {
   mark: Mark
 }
 
-function findInlineAnchor(
+export function findInlineAnchor(
   view: EditorView,
   markId: string,
   schemaName?: string,

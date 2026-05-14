@@ -12,9 +12,15 @@ import { MessageFooter } from '@/chat/messages/MessageFooter'
 
 export const MessageRow = React.memo(function MessageRow({
   turn,
+  slug,
   onRegenerate,
 }: {
   turn: ChatTurn
+  /** Slug of the doc this chat panel is open for. Threaded down to the
+   * propose_change step click handler so it can scroll the right doc's
+   * editor to the mark. Null when no doc is active (chat panel can also
+   * mount during transitional states). */
+  slug: string | null
   /** Provided only when this turn is the latest settled assistant turn —
    * the only one Regenerate is allowed on. */
   onRegenerate?: (turnId: string) => void
@@ -57,7 +63,7 @@ export const MessageRow = React.memo(function MessageRow({
     <div className="text-sm text-foreground leading-relaxed">
       {showActivity && <ActivityStatus parts={turn.parts} />}
       {turn.parts && turn.parts.length > 0 ? (
-        <PartList parts={turn.parts} isStreaming={isStreaming} />
+        <PartList parts={turn.parts} isStreaming={isStreaming} slug={slug} />
       ) : (
         <>
           {hasThinking && (

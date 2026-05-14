@@ -49,6 +49,8 @@ import { proofMarkPlugins } from './proofMarkSchemas'
 import { dailyGuardPlugin } from './dailyGuardPlugin'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { usePendingProposals } from '@/state/pendingProposalsStore'
+import { usePendingScroll } from '@/state/pendingScrollStore'
+import { scrollToMark } from '@/editor/scrollToMark'
 import { applyProposal } from '@/agent/applyProposal'
 import { EditorFooter } from '@/components/EditorFooter'
 
@@ -346,6 +348,16 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
           usePendingProposals.getState().drain(handle.slug, ({ proposal, meta }) =>
             applyProposal(view, ydoc, proposal, meta),
           )
+          // Drain a pending "scroll to this mark" target queued by the
+          // chat panel before this slug's editor was mounted. Runs after
+          // the proposal drain above so a freshly-applied mark from the
+          // same chat session is reachable. rAF defers one paint so the
+          // decoration plugins finish their first build pass and the
+          // target mark has stable coordinates.
+          const pendingMarkId = usePendingScroll.getState().drain(handle.slug)
+          if (pendingMarkId) {
+            requestAnimationFrame(() => scrollToMark(view, pendingMarkId))
+          }
         })
       })
 

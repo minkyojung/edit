@@ -564,6 +564,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           <MessageRow
             key={turn.id}
             turn={turn}
+            slug={slug}
             onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
           />
         ))}
