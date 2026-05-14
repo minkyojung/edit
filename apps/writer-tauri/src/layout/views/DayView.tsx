@@ -35,6 +35,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
+import { Button } from '@/components/ui/button'
 
 export function DayView() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
@@ -120,30 +121,27 @@ export function DayView() {
             <span className="truncate">{dateLabel}</span>
           </button>
         </SidebarGroupLabel>
-        <button
-          type="button"
+        {/* Day navigators sized down to icon-xs (24px) so the header
+            stays compact. Color tokens overridden to sidebar palette
+            since the default ghost variant uses generic `muted`. */}
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={() => handleShift(-1)}
           aria-label="Previous day"
-          className={cn(
-            'flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-colors',
-            'text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-            'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
-          )}
+          className="rounded-md text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground dark:hover:bg-sidebar-accent"
         >
-          <IconChevronLeft size={12} stroke={1.75} />
-        </button>
-        <button
-          type="button"
+          <IconChevronLeft stroke={1.75} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={() => handleShift(1)}
           aria-label="Next day"
-          className={cn(
-            'flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-colors',
-            'text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-            'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
-          )}
+          className="rounded-md text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground dark:hover:bg-sidebar-accent"
         >
-          <IconChevronRight size={12} stroke={1.75} />
-        </button>
+          <IconChevronRight stroke={1.75} />
+        </Button>
       </div>
 
       <SidebarGroupContent className="px-2">
