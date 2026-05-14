@@ -78,25 +78,107 @@ export interface KnownDoc {
   archivedFromParent?: string
 }
 
-/** True for any wiki-region page: agent-managed (`system:*` meta,
- * `wiki:belief|entity|episode|...` content) and user-spawned
- * (`wiki:custom-...`). All of them feed the sidebar "Wiki" region
- * (split into System / Wiki groups visually) and none are ever
- * ingest sources. Used by guards that should treat the whole region
- * uniformly (e.g. "no children under a wiki"). For archive / delete
- * authority, see `isUserOwnedWiki` — that's where Karpathy's write-
- * ownership invariant actually splits agent vs user. */
+/** Coarse classification used by the DOC_POLICIES table below. Every
+ * doc in the app falls into exactly one bucket, and each bucket
+ * carries a fixed policy for archive, move, ingest, sidebar
+ * placement, and write authority. Keeping the buckets coarse (4)
+ * instead of mapping per `type` prefix avoids a wide table that
+ * has to grow every time we add a new `system:about` or
+ * `wiki:custom-...`. */
+export type DocCategory =
+  | 'daily'         // user-authored time-spine entry
+  | 'writing'       // user-authored free note (may nest under daily / writing)
+  | 'wiki-content'  // agent-created, user-editable wiki page (wiki:custom-*)
+  | 'system-meta'   // agent-managed config / metadata (system:conventions/log/index)
+
+/** Capability matrix for one doc category. Every caller that used
+ * to ask "can this doc be archived / moved / ingested" reads from
+ * this struct instead of hand-rolling a `type.startsWith(...)`
+ * check. Add a new category → add one row → every gate updates. */
+export interface DocPolicy {
+  category: DocCategory
+  /** Which sidebar region this doc belongs in. The Day / Week / Month
+   * views render `date` and `none` (latter never appears); the
+   * Wiki section splits `wiki` (content) and `system` (meta). */
+  sidebarGroup: 'date' | 'wiki' | 'system' | 'none'
+  /** User can soft-delete via archive UI. Karpathy write-ownership
+   * invariant: only docs the user authored or owns can be wiped. */
+  canArchive: boolean
+  /** Eligible as moveDoc source or target parent (the wiki tree
+   * surface). Daily entries are time-anchored, system pages are
+   * fixed slots — neither participates in the tree's re-parenting. */
+  canBeMovedInWikiTree: boolean
+  /** Idle trigger considers this doc as an ingest source. Agent-
+   * managed pages are output, not input, so they're false here
+   * regardless of whether the user has typed into them. */
+  isIngestSource: boolean
+  /** LLM owns the canonical contents. User may read (and, for
+   * conventions, edit), but the agent is the primary author.
+   * Drives "no children under wiki", legacy mark migration scope,
+   * markEdited observer skip, and similar guards. */
+  isAgentManaged: boolean
+}
+
+const DAILY_POLICY: DocPolicy = {
+  category: 'daily',
+  sidebarGroup: 'date',
+  canArchive: false,
+  canBeMovedInWikiTree: false,
+  isIngestSource: true,
+  isAgentManaged: false,
+}
+const WRITING_POLICY: DocPolicy = {
+  category: 'writing',
+  sidebarGroup: 'date', // shown nested under its parent daily
+  canArchive: true,
+  canBeMovedInWikiTree: false,
+  isIngestSource: true,
+  isAgentManaged: false,
+}
+const WIKI_CONTENT_POLICY: DocPolicy = {
+  category: 'wiki-content',
+  sidebarGroup: 'wiki',
+  canArchive: true,
+  canBeMovedInWikiTree: true,
+  isIngestSource: false,
+  isAgentManaged: true,
+}
+const SYSTEM_META_POLICY: DocPolicy = {
+  category: 'system-meta',
+  sidebarGroup: 'system',
+  canArchive: false,
+  canBeMovedInWikiTree: false,
+  isIngestSource: false,
+  isAgentManaged: true,
+}
+
+/** Resolve a doc's policy by type. Unknown / legacy types fall
+ * through to wiki-content — the v6 migration already moved the
+ * pre-rename `wiki:conventions|log|index` to `system:*`, so any
+ * leftover `wiki:*` here is genuinely user content (or corrupt
+ * data we shouldn't crash on). */
+export function getDocPolicy(doc: Pick<KnownDoc, 'type'>): DocPolicy {
+  if (doc.type === 'daily') return DAILY_POLICY
+  if (doc.type === 'writing') return WRITING_POLICY
+  if (doc.type.startsWith('system:')) return SYSTEM_META_POLICY
+  if (doc.type.startsWith('wiki:')) return WIKI_CONTENT_POLICY
+  return WIKI_CONTENT_POLICY
+}
+
+/** True for any wiki-region page: agent-managed (`system:*` meta
+ * and `wiki:custom-*` content). Now a thin wrapper over the
+ * policy table so the source of truth is one struct, not two
+ * helpers. Kept for callsite readability ("is this in the wiki
+ * sidebar region?"). */
 export function isWikiDoc(doc: Pick<KnownDoc, 'type'>): boolean {
-  return doc.type.startsWith('wiki:') || doc.type.startsWith('system:')
+  return getDocPolicy(doc).isAgentManaged
 }
 
 /** Karpathy write-ownership invariant: whoever wrote the page may
- * delete it. `wiki:custom-*` is the user's own creation surface, so
- * archive/hard-delete are allowed. Everything else in the wiki region
- * is agent memory and stays protected — wiping it on a slip would
- * silently lose synthesis the agent built up over many sessions. */
+ * delete it. Thin wrapper around the policy table — `canArchive`
+ * is true exactly for the category the user can wipe. */
 export function isUserOwnedWiki(doc: Pick<KnownDoc, 'type'>): boolean {
-  return doc.type.startsWith('wiki:custom-')
+  return getDocPolicy(doc).category === 'wiki-content'
 }
 
 interface DocsState {

@@ -17,7 +17,11 @@
 import { proofClient } from '@/lib/proofClient'
 import { generateClientSlug } from '@/lib/slug'
 import { isEffectivelyEmpty } from '@/lib/markdownText'
-import { useDocsStore, type KnownDoc } from './docsStore'
+import {
+  useDocsStore,
+  isUserOwnedWiki,
+  type KnownDoc,
+} from './docsStore'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
 
@@ -84,78 +88,84 @@ When you create a new page via \`suggestNewPage\`, also pick the most fitting ex
 A page that already has children naturally acts as a category. Don't create a category page yourself unless I clearly need one and I haven't made it — propose with \`suggestNewPage\` and a short name like "Books", and I'll review.
 `
 
-/** Ensure the wiki:log doc exists. Lazy: created on first call.
- * Returns the slug, or null if proof-server is unreachable. The
- * timeline is one of two "system-owned" wiki pages (the other is
- * conventions); everything else is user-created. */
+/** Lazy-create shape for an agent-managed `system:*` page. Each one
+ * carries the same three differences (type id, display title,
+ * initial body) and otherwise follows the identical setup: probe
+ * the catalog, mint a client slug if missing, register the doc
+ * locally, fire-and-forget the server create. Pulling the config
+ * out into a record keeps the per-page ensure* helpers below to
+ * one line each and makes adding a new system page (Phase 4 lint,
+ * Phase 5 about, etc.) a single config edit. */
+interface SystemPageConfig {
+  type: KnownDoc['type']
+  title: string
+  initialBody: string
+}
+
+const SYSTEM_PAGE_LOG: SystemPageConfig = {
+  type: LOG_TYPE,
+  title: 'log',
+  initialBody: '',
+}
+const SYSTEM_PAGE_CONVENTIONS: SystemPageConfig = {
+  type: CONVENTIONS_TYPE,
+  title: 'Conventions',
+  initialBody: DEFAULT_CONVENTIONS,
+}
+const SYSTEM_PAGE_INDEX: SystemPageConfig = {
+  type: INDEX_TYPE,
+  title: 'index',
+  initialBody: '',
+}
+
+/** Shared body for the three lazy-create helpers below. Probes the
+ * catalog, then on first-need mints a client-side slug so the page
+ * exists locally even when proof-server is unreachable. The server
+ * register call is fire-and-forget — failures leave the page local
+ * until the next online boot. Empty body is the post-relaxation
+ * default for system pages (ZWS placeholder caused the placeholder-
+ * hint regression in commit 046a0701). */
+async function ensureSystemPage(
+  config: SystemPageConfig,
+): Promise<string | null> {
+  const existing = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.type === config.type && !d.archivedAt)
+  if (existing) return existing.slug
+  const slug = generateClientSlug()
+  const meta: KnownDoc = { slug, type: config.type, title: config.title }
+  useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+  void proofClient
+    .createDoc(config.title, config.initialBody, { slug })
+    .catch((err) => {
+      console.warn(
+        `[wiki] ensureSystemPage(${config.type}) background register failed`,
+        err,
+      )
+    })
+  return slug
+}
+
+/** Ensure `system:log` exists. The agent's append-only timeline —
+ * created lazily on the first ingest pass that produces a log
+ * entry. */
 export async function ensureLogWikiSlug(): Promise<string | null> {
-  const existing = useDocsStore
-    .getState()
-    .knownDocs.find((d) => d.type === LOG_TYPE && !d.archivedAt)
-  if (existing) return existing.slug
-  // Client-side slug so the log page exists locally before proof-server
-  // sees it. The registration call below is fire-and-forget — failures
-  // just mean the page stays local-only until a future online boot.
-  const slug = generateClientSlug()
-  const meta: KnownDoc = { slug, type: LOG_TYPE, title: 'log' }
-  useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-  // Empty body — proof-server accepts blank bodies (same as the
-  // daily / writing create paths). Sending a ZWS placeholder here
-  // (the legacy workaround for the pre-relaxation guard) made the
-  // PM doc render with one invisible-char paragraph that
-  // placeholderPlugin's "is this empty?" check sometimes missed,
-  // leaving the user with a blank page and no hint.
-  void proofClient.createDoc('log', '', { slug }).catch((err) => {
-    console.warn('[wiki] ensureLogWikiSlug background register failed', err)
-  })
-  return slug
+  return ensureSystemPage(SYSTEM_PAGE_LOG)
 }
 
-/** Ensure the wiki:conventions doc exists, seeded with default
- * rules on first creation. Lazy: called from runIngest right
- * before the LLM call. Returns the slug, or null on failure (in
- * which case ingest falls back to the static system prompt only). */
+/** Ensure `system:conventions` exists, seeded with DEFAULT_CONVENTIONS
+ * on first creation. Called from runIngest right before the LLM
+ * call so the user can edit the conventions and have them shadow
+ * the static rules on the very next pass. */
 export async function ensureConventionsWikiSlug(): Promise<string | null> {
-  const existing = useDocsStore
-    .getState()
-    .knownDocs.find((d) => d.type === CONVENTIONS_TYPE && !d.archivedAt)
-  if (existing) return existing.slug
-  const slug = generateClientSlug()
-  const meta: KnownDoc = {
-    slug,
-    type: CONVENTIONS_TYPE,
-    title: 'Conventions',
-  }
-  useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-  void proofClient.createDoc('Conventions', DEFAULT_CONVENTIONS, { slug }).catch(
-    (err) => {
-      console.warn('[wiki] ensureConventionsWikiSlug background register failed', err)
-    },
-  )
-  return slug
+  return ensureSystemPage(SYSTEM_PAGE_CONVENTIONS)
 }
 
-/** Ensure the wiki:index doc exists. Lazy: called from runIngest
- * right after the conventions slug, so the page is in the catalog
- * by the time Phase 1-B starts emitting `indexUpdates`. Body stays
- * empty in Phase 1-A — population happens once the ingest output
- * carries summary lines. Returns the slug, or null if proof-server
- * is unreachable. */
+/** Ensure `system:index` exists. Body stays empty on create; real
+ * summary lines arrive as `indexUpdates` merge into the page body
+ * on first navigation. */
 export async function ensureIndexWikiSlug(): Promise<string | null> {
-  const existing = useDocsStore
-    .getState()
-    .knownDocs.find((d) => d.type === INDEX_TYPE && !d.archivedAt)
-  if (existing) return existing.slug
-  const slug = generateClientSlug()
-  const meta: KnownDoc = { slug, type: INDEX_TYPE, title: 'index' }
-  useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-  // Empty body — see ensureLogWikiSlug for the same rationale.
-  // Real summary lines arrive as indexUpdates merge into the page
-  // body on first navigation.
-  void proofClient.createDoc('index', '', { slug }).catch((err) => {
-    console.warn('[wiki] ensureIndexWikiSlug background register failed', err)
-  })
-  return slug
+  return ensureSystemPage(SYSTEM_PAGE_INDEX)
 }
 
 /** Read the user's conventions page body. Returns '' when the page
@@ -245,8 +255,7 @@ export async function createCustomWikiPage(
     const parent = useDocsStore
       .getState()
       .knownDocs.find((d) => d.slug === options.parentId)
-    const valid =
-      parent && !parent.archivedAt && parent.type.startsWith('wiki:custom-')
+    const valid = parent && !parent.archivedAt && isUserOwnedWiki(parent)
     if (valid) {
       parentId = parent.slug
     } else {

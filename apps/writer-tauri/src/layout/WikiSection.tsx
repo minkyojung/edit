@@ -35,7 +35,7 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core'
 import { cn } from '@/lib/utils'
-import { useDocsStore, type KnownDoc } from '@/state/docsStore'
+import { useDocsStore, getDocPolicy, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { createCustomWikiPage } from '@/state/wikiService'
 import { notify } from '@/lib/notify'
@@ -67,14 +67,19 @@ export function WikiSection() {
 
   const systemDocs = useMemo(
     () =>
-      knownDocs.filter((d) => !d.archivedAt && d.type.startsWith('system:')),
+      knownDocs.filter(
+        (d) => !d.archivedAt && getDocPolicy(d).sidebarGroup === 'system',
+      ),
     [knownDocs],
   )
   // Live wiki pages — the universe DocTreeNode walks. childrenByParent
   // is keyed across this whole set, so a node at any depth gets its
   // direct children in O(1).
   const wikiDocs = useMemo(
-    () => knownDocs.filter((d) => !d.archivedAt && d.type.startsWith('wiki:')),
+    () =>
+      knownDocs.filter(
+        (d) => !d.archivedAt && getDocPolicy(d).sidebarGroup === 'wiki',
+      ),
     [knownDocs],
   )
   const childrenByParent = useMemo(

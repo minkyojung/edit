@@ -17,7 +17,7 @@
 
 import { useEffect, useRef } from 'react'
 import { runIngest } from '@/agent/ingest'
-import { useDocsStore, isWikiDoc } from '@/state/docsStore'
+import { useDocsStore, isWikiDoc, isUserOwnedWiki } from '@/state/docsStore'
 import { useIngestStore } from '@/state/ingestStore'
 import {
   ensureLogWikiSlug,
@@ -107,7 +107,7 @@ async function materializeNewPageProposals(
         .knownDocs.find(
           (d) =>
             !d.archivedAt &&
-            d.type.startsWith('wiki:custom-') &&
+            isUserOwnedWiki(d) &&
             (d.title ?? '').trim().toLowerCase() === wantedLower,
         )
       if (parent) {

@@ -15,7 +15,7 @@
 // only when the active doc is a wiki:* page and pendingProposals
 // has entries targeting that page's type.
 
-import { useDocsStore } from '@/state/docsStore'
+import { useDocsStore, isUserOwnedWiki } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore, type PendingProposal } from '@/state/ingestStore'
 import type { AuthoredMeta } from '@/hooks/useCollabDoc'
@@ -104,11 +104,12 @@ export function WikiPageBanner() {
   const known = knownDocs.find(
     (d) => d.slug === activeSlug && !d.archivedAt,
   )
-  if (!known || !known.type.startsWith('wiki:')) return null
-
-  // system:log drains pending log entries via useApplyPendingLogs;
-  // there are no "proposals" to review for the log page itself.
-  if (known.type === 'system:log') return null
+  // Banner shows on user wiki content only. system:* pages have
+  // dedicated drains (useApplyPendingLogs / useApplyPendingIndexUpdates)
+  // so they don't need an inbox — isUserOwnedWiki narrows to the
+  // wiki:custom-* category and folds in the old "skip system:log"
+  // guard naturally.
+  if (!known || !isUserOwnedWiki(known)) return null
 
   const matching = pendingProposals.filter((p) => p.target === known.type)
   if (matching.length === 0) return null
