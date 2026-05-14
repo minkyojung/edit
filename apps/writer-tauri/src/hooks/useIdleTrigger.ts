@@ -93,22 +93,23 @@ async function materializeNewPageProposals(
       ? `${resolvedContent}\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
       : resolvedContent
 
-    // Resolve suggestNewPageParent (a page title) to a slug by
-    // case-insensitive lookup against the live catalog, limited to
-    // user content pages (wiki:custom-*). createCustomWikiPage runs
-    // its own validation too — bad slug degrades to root creation
-    // there — but resolving here lets us log a clear miss for
-    // debugging when the LLM picks a parent that doesn't exist.
+    // Resolve suggestNewPageParent (a page type id) to a slug by
+    // exact-equality lookup against the live catalog, limited to
+    // user content pages (wiki:custom-*). The system prompt asks
+    // the model to copy the id verbatim from the WIKI block
+    // header, so there's no title-fallback heuristic — a miss
+    // means typo / hallucination and we'd rather log + root-
+    // create than guess. createCustomWikiPage runs its own
+    // validation too.
     let parentId: string | undefined
     if (p.suggestNewPageParent) {
-      const wantedLower = p.suggestNewPageParent.toLowerCase()
       const parent = useDocsStore
         .getState()
         .knownDocs.find(
           (d) =>
             !d.archivedAt &&
             isUserOwnedWiki(d) &&
-            (d.title ?? '').trim().toLowerCase() === wantedLower,
+            d.type === p.suggestNewPageParent,
         )
       if (parent) {
         parentId = parent.slug

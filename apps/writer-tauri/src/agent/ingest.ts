@@ -50,14 +50,15 @@ export interface IngestProposal {
    * because no existing page is a good home for this content. The
    * apply layer turns this into a real `wiki:custom-<id>` page. */
   suggestNewPage?: string
-  /** Title of an existing wiki page to nest the new page under.
-   * Used only with `suggestNewPage`. Picked from the WIKI block
-   * headers the LLM sees (`[<type-id> — <title>]`). The apply
-   * layer resolves this title to a slug via knownDocs lookup
-   * (case-insensitive). Missing or unresolvable → page created
-   * at root. System pages (`system:*`) are filtered out at the
-   * createCustomWikiPage layer so the LLM can't accidentally
-   * nest content under conventions / log / index. */
+  /** Type id of an existing wiki page to nest the new page under.
+   * Used only with `suggestNewPage`. Uses the SAME format as
+   * `target` (e.g. `wiki:custom-7nt...`) — picked from the WIKI
+   * block headers the LLM sees (`[<type-id> — <title>]`). Strict
+   * type-id lookup, no title fallback: the system prompt asks the
+   * model to copy the id verbatim, and a miss degrades to root
+   * creation (logged) so a typo doesn't silently land the page
+   * somewhere unintended. System pages are filtered out at the
+   * createCustomWikiPage layer too. */
   suggestNewPageParent?: string
   /** Markdown to append to the target page's body. */
   content: string
@@ -130,7 +131,7 @@ Always include "sourceQuote": the exact sentence (or short clause) from the new 
 
 Cross-link: when a proposal's content mentions another wiki page that already exists in the WIKI block, wrap that page's title with double-brackets so it renders as a clickable link. Use the title exactly as it appears in the block header — \`[<type-id> — <title>]\` — for the inner text. Skip the link when the page being mentioned is the same one you're writing to (no self-links). Skip the link when no existing page matches the mention (don't invent links). Example: if "Alex" is the title of \`wiki:custom-9k4...\`, write \`Working with [[Alex]] on the project\`, not \`Working with Alex on the project\`. This applies to both \`target\`-bound and \`suggestNewPage\` proposals.
 
-Nesting: when emitting \`suggestNewPage\`, optionally also emit \`suggestNewPageParent\` with the exact title of an existing wiki page to file the new page under. Use only titles you see in the WIKI block headers — don't invent new categories. If no existing page is a good fit, leave \`suggestNewPageParent\` null and the new page is created at the root (the user can move it later). The user's conventions page declares which top-level pages act as categories; respect that hierarchy. Never nest under a system page; system surfaces don't accept children. Ignored when the proposal uses \`target\` instead of \`suggestNewPage\` — moving an existing page is a separate workflow.
+Nesting: when emitting \`suggestNewPage\`, optionally also emit \`suggestNewPageParent\` with the exact type id (same format as \`target\` — e.g. \`wiki:custom-7nt...\`) of an existing wiki page to file the new page under. Copy the id verbatim from a WIKI block header — \`[<type-id> — <title>]\` — never use the title or invent an id. If no existing page is a good fit, leave \`suggestNewPageParent\` null and the new page is created at the root (the user can move it later). The user's conventions page declares which top-level pages act as categories; respect that hierarchy. Never nest under a system page; system surfaces don't accept children. Ignored when the proposal uses \`target\` instead of \`suggestNewPage\` — moving an existing page is a separate workflow.
 
 The INDEX block (above WIKI) is the current one-line summary of each wiki page. For every page you propose to modify (\`target\`) or create (\`suggestNewPage\`), also emit an "indexUpdates" entry with a short summary. The summary is one sentence describing what the page is *about*, not what just changed. Reuse the existing summary verbatim when the page's nature didn't really change — only emit an updated summary if the new content meaningfully shifts what the page is about. For \`suggestNewPage\` you must always provide a fresh summary since no line exists yet. Use the same target type id you used in proposals.
 
@@ -139,7 +140,7 @@ Output strictly this JSON shape, with no surrounding prose, code fences, or comm
 {
   "proposals": [
     { "target": "wiki:custom-7ntdvj41", "content": "- Direct report", "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
-    { "suggestNewPage": "The Pragmatic Programmer", "suggestNewPageParent": "Books", "content": "- Software craftsmanship", "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "fits under existing Books category" }
+    { "suggestNewPage": "The Pragmatic Programmer", "suggestNewPageParent": "wiki:custom-bk44a1z9", "content": "- Software craftsmanship", "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "fits under existing Books category (wiki:custom-bk44a1z9)" }
   ],
   "indexUpdates": [
     { "target": "wiki:custom-7ntdvj41", "summary": "Direct reports and their roles" },
@@ -158,44 +159,64 @@ If proposals is empty, indexUpdates should also be empty. logEntry should still 
  * how their wiki should grow. The static rules follow because they
  * encode wire-format invariants the model must not ignore even if
  * the user wrote something contradictory in conventions. */
-function composeSystemPrompt(conventions: string): string {
-  const trimmed = conventions.trim()
-  if (!trimmed) return SYSTEM_PROMPT_STATIC
-  return `User-defined wiki conventions (read carefully — these reflect how the user wants their wiki to grow):\n\n${trimmed}\n\n---\n\n${SYSTEM_PROMPT_STATIC}`
+/** Compose the system prompt as a cacheable string[] for the Agent
+ * SDK. Items before any `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` are
+ * treated as the cacheable prefix; we don't have a dynamic suffix
+ * here (per-call data lives in the user prompt) so every block
+ * gets cached.
+ *
+ * Block order matters for cache stability:
+ *   1. STATIC_RULES + conventions  — operating rules
+ *   2. WIKI catalog                — page bodies
+ *   3. INDEX summary               — per-page one-liners
+ *
+ * Subsequent ingest calls with the same wiki state hit the cache
+ * for ~90% of the prompt cost; only the user prompt (DATE + NEW
+ * NOTE) is fresh per call. Moving WIKI and INDEX out of the user
+ * prompt (where they used to live) is what unlocks the cache —
+ * user prompts are never cached. */
+function composeSystemPrompt(args: {
+  wikiSnapshot: string
+  indexSnapshot: string
+  conventions: string
+}): string[] {
+  const trimmedConventions = args.conventions.trim()
+  const rules = trimmedConventions
+    ? `User-defined wiki conventions (read carefully — these reflect how the user wants their wiki to grow):\n\n${trimmedConventions}\n\n---\n\n${SYSTEM_PROMPT_STATIC}`
+    : SYSTEM_PROMPT_STATIC
+
+  const blocks: string[] = [rules]
+
+  const wiki = args.wikiSnapshot.trim().length
+    ? args.wikiSnapshot
+    : '(no wiki pages yet — propose targets only if a clearly-named one is needed)'
+  blocks.push(`--- WIKI ---\n${wiki}`)
+
+  if (args.indexSnapshot.trim().length) {
+    blocks.push(
+      `--- INDEX (current — one summary line per wiki page) ---\n${args.indexSnapshot}`,
+    )
+  }
+
+  return blocks
 }
 
-/** Build the user-facing prompt body: today's date, the wiki context
- * (each page as a `[type — title — shape]` block with body), and the
- * new note text. The wiki block carries both "what targets exist"
- * and "what's already in each" — see readWikiContext for the format. */
+/** Build the per-call user prompt. Everything that changes on
+ * every ingest pass (today's date, the note being analyzed) goes
+ * here so the system-prompt cache keeps hitting. The wiki context
+ * and conventions used to live here too; they moved into the
+ * system prompt (composeSystemPrompt above) for cache reuse. */
 function buildPrompt(args: {
   date: string
   noteLabel: string
   noteMarkdown: string
-  wikiSnapshot: string
-  indexSnapshot: string
 }): string {
-  const wiki = args.wikiSnapshot.trim().length
-    ? args.wikiSnapshot
-    : '(no wiki pages yet — propose targets only if a clearly-named one is needed)'
-  // The INDEX block carries the existing one-line summary per page.
-  // Showing it explicitly lets the LLM decide whether a page's
-  // summary needs updating — Phase 1-B's signal that index has
-  // become a first-class part of the prompt. Skip the block when
-  // it's empty (no pages summarized yet) rather than emitting an
-  // empty header that distracts from the WIKI section.
-  const sections: string[] = [`DATE: ${args.date}`, '']
-  if (args.indexSnapshot.trim().length) {
-    sections.push('INDEX (current — one summary line per wiki page):')
-    sections.push(args.indexSnapshot)
-    sections.push('')
-  }
-  sections.push('WIKI:')
-  sections.push(wiki)
-  sections.push('')
-  sections.push(`NEW NOTE (${args.noteLabel}):`)
-  sections.push(args.noteMarkdown)
-  return sections.join('\n')
+  return [
+    `DATE: ${args.date}`,
+    '',
+    `NEW NOTE (${args.noteLabel}):`,
+    args.noteMarkdown,
+  ].join('\n')
 }
 
 /** Read a doc's markdown body via the canonical proof-server route.
@@ -492,8 +513,11 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     date: todayLocalDate(),
     noteLabel,
     noteMarkdown,
+  })
+  const systemPrompt = composeSystemPrompt({
     wikiSnapshot,
     indexSnapshot,
+    conventions,
   })
 
   const runId = crypto.randomUUID()
@@ -503,7 +527,7 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     args: {
       runId,
       model: INGEST_MODEL,
-      systemPrompt: composeSystemPrompt(conventions),
+      systemPrompt,
       prompt,
       relayTools: [],
       effort: 'low',
