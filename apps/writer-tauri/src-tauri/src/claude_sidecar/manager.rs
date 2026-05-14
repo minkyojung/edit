@@ -216,6 +216,11 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             "chat/done" => "claude:done",
             "chat/error" => "claude:error",
             "chat/proposal" => "claude:proposal",
+            // Structured ingest output. The sidecar's
+            // submit_ingest_result MCP tool relays its full input
+            // payload via this notification; the frontend's ingest
+            // path listens for it instead of parsing free-form JSON.
+            "ingest/result" => "ingest:result",
             _ => return,
         };
         if let Err(e) = app.emit(event_name, params) {

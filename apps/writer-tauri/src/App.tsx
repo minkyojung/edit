@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppToaster } from '@/components/AppToaster'
 import { EngineGate } from '@/components/EngineGate'
+import { BootGate } from '@/components/BootGate'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { MarkPopoverLayer } from '@/components/agent/MarkPopoverLayer'
@@ -12,17 +13,47 @@ import { MarkHoverActionsLayer } from '@/components/agent/MarkHoverActionsLayer'
 import { AppShell } from '@/layout/AppShell'
 import { MilkdownEditor } from '@/editor/MilkdownEditor'
 import { CommandPalette } from '@/layout/CommandPalette'
+import { WikiPageBanner } from '@/layout/WikiPageBanner'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
-import { useApplyPendingMarks } from '@/hooks/useApplyPendingMarks'
+import {
+  useLazyMaterialize,
+  type LazyMaterializeConfig,
+} from '@/hooks/useLazyMaterialize'
+import { useMigrateLegacyIngestMarks } from '@/hooks/useMigrateLegacyIngestMarks'
+import {
+  applyPendingLogsForView,
+  applyPendingIndexUpdatesForView,
+} from '@/agent/applyIngest'
+
+// Module-scope so the configs array reference is stable across
+// renders — required by useLazyMaterialize's caller contract
+// (configs.length must be constant; React enforces it for the
+// per-config hook calls inside).
+const SYSTEM_DRAIN_CONFIGS: LazyMaterializeConfig[] = [
+  {
+    matchType: 'system:log',
+    queueSelector: (s) => s.pendingLogs,
+    applyForView: applyPendingLogsForView,
+    signaturePrefix: 'log',
+  },
+  {
+    matchType: 'system:index',
+    queueSelector: (s) => s.pendingIndexUpdates,
+    applyForView: applyPendingIndexUpdatesForView,
+    signaturePrefix: 'index',
+  },
+]
 
 export function App() {
   return (
     <ThemeProvider defaultPalette="charcoal" storageKey="writer-palette">
       <TooltipProvider delayDuration={200}>
         <EngineGate>
-          <AppContent />
+          <BootGate>
+            <AppContent />
+          </BootGate>
         </EngineGate>
         <AppToaster />
       </TooltipProvider>
@@ -30,28 +61,32 @@ export function App() {
   )
 }
 
-// Everything inside EngineGate — bootstrap calls hit the proof-server
-// the moment they fire, so we keep them gated behind a healthy engine.
+// Everything inside EngineGate + BootGate — by the time this renders,
+// proof-server is healthy AND the catalog bootstrap has finished, so
+// React subscriptions land on a stable store and the sidebar's first
+// paint already reflects the user's real data.
 function AppContent() {
-  const bootstrap = useDocsStore((s) => s.bootstrap)
   const activeSlug = useDocsStore((s) => s.activeSlug)
   const handles = useDocsStore((s) => s.handles)
   const statusMap = useDocsStore((s) => s.status)
   const [view, setView] = useState<EditorView | null>(null)
 
-  useEffect(() => {
-    bootstrap()
-  }, [bootstrap])
-
-  // Karpathy "Memories" idle pass — runs ingest in the background
-  // after the user has been quiet for `idleMinutes`. Mounted once
-  // here at the root so a single timer covers the whole session.
+  // Karpathy "Memories" ingest — fires in the background when the
+  // user navigates away from a daily, or when the local date rolls
+  // over. Mounted once here at the root so subscriptions and the
+  // date-poll timer share a single lifetime across the session.
   useIdleTrigger()
-  // Lazily materializes queued ingest proposals as proofSuggestion
-  // marks the moment the user navigates to a target wiki page.
-  // Pairs with the Review action on IngestProposalCard, which is
-  // itself just "navigate to the first target — marks appear there".
-  useApplyPendingMarks()
+  // Drains queued log entries / index updates into their respective
+  // system pages when the user navigates there. One hook, one
+  // configs table — adding system:about or system:lint later is a
+  // single config row above. Wiki proposal review (the third
+  // ingest output) stays on the in-page banner surface, not in
+  // this lazy-drain pipeline.
+  useLazyMaterialize(SYSTEM_DRAIN_CONFIGS)
+  // One-time cleanup of legacy ingest-origin proofSuggestion marks
+  // left over from the pre-banner era. Runs per wiki page on first
+  // mount post-upgrade; no-op afterwards.
+  useMigrateLegacyIngestMarks()
 
   const activeHandle = activeSlug ? handles[activeSlug] ?? null : null
   const activeStatus = activeSlug ? statusMap[activeSlug] ?? 'initializing' : 'initializing'
@@ -73,20 +108,28 @@ function AppContent() {
             <Route
               path="/notes"
               element={
-                <MilkdownEditor
-                  key={activeSlug ?? 'no-doc'}
-                  handle={activeHandle}
-                  status={activeStatus}
-                  onViewReady={(v) => {
-                    // Mirror into the global store so non-React
-                    // consumers (ingest apply, future palette
-                    // commands) can reach the live view without
-                    // prop drilling. Local state stays the source
-                    // of truth for sibling renders below.
-                    setView(v)
-                    useEditorViewStore.getState().setView(v)
-                  }}
-                />
+                <>
+                  {/* Banner mounts above the editor and self-hides
+                      when the active doc isn't a wiki:* page with
+                      pending proposals. Lives in the scroll area
+                      so it doesn't shift layout when it appears/
+                      disappears. */}
+                  <WikiPageBanner />
+                  <MilkdownEditor
+                    key={activeSlug ?? 'no-doc'}
+                    handle={activeHandle}
+                    status={activeStatus}
+                    onViewReady={(v) => {
+                      // Mirror into the global store so non-React
+                      // consumers (banner accept, future palette
+                      // commands) can reach the live view without
+                      // prop drilling. Local state stays the source
+                      // of truth for sibling renders below.
+                      setView(v)
+                      useEditorViewStore.getState().setView(v)
+                    }}
+                  />
+                </>
               }
             />
           </Routes>

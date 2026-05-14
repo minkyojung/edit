@@ -67,7 +67,7 @@ function accountDisplayName(email: string | null): string | null {
 }
 
 type PaletteOption = {
-  value: 'charcoal' | 'olive' | 'paper'
+  value: 'charcoal' | 'graphite' | 'olive' | 'paper' | 'mist'
   label: string
   swatch: { bg: string; fg: string; accent: string; border: string }
 }
@@ -79,6 +79,11 @@ const PALETTE_OPTIONS: PaletteOption[] = [
     swatch: { bg: '#141414', fg: '#ECECEC', accent: '#262626', border: '#333333' },
   },
   {
+    value: 'graphite',
+    label: 'Graphite',
+    swatch: { bg: '#1D2024', fg: '#ECECEE', accent: '#2B2C32', border: '#383940' },
+  },
+  {
     value: 'olive',
     label: 'Olive',
     swatch: { bg: '#111001', fg: '#E8E4D0', accent: '#26230C', border: '#3A3520' },
@@ -87,6 +92,11 @@ const PALETTE_OPTIONS: PaletteOption[] = [
     value: 'paper',
     label: 'Paper',
     swatch: { bg: '#D2D2D2', fg: '#1A1A1A', accent: '#BCBCBC', border: '#A8A8A8' },
+  },
+  {
+    value: 'mist',
+    label: 'Mist',
+    swatch: { bg: '#E9EAEC', fg: '#1D2024', accent: '#CFD1D4', border: '#B8BABE' },
   },
 ]
 
@@ -175,9 +185,7 @@ export function AppSidebar() {
   }, [openDaily, createChildNote, navigate, pathname])
 
   return (
-    <Sidebar
-      className="border-r"
-    >
+    <Sidebar>
       <SidebarHeader
         className="flex flex-row items-center gap-0.5 p-0 pl-2 pr-1"
         style={{ height: 'var(--header-h)' }}
@@ -196,7 +204,7 @@ export function AppSidebar() {
         <WikiSection />
       </SidebarContent>
 
-      <SidebarFooter className="px-0">
+      <SidebarFooter>
         {/* Karpathy Memories card — surfaces the queued ingest
             proposals above the archive button so they're easy to
             notice without crowding the doc tree above. */}
@@ -208,7 +216,7 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg" className="px-2 h-11 !rounded-none">
+                <SidebarMenuButton size="lg" className="px-2 h-11">
                   <Avatar className="size-7 shrink-0">
                     <AvatarImage src="" />
                     <AvatarFallback className="avatar-luma text-xs text-primary-foreground font-medium">
@@ -216,14 +224,14 @@ export function AppSidebar() {
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-medium truncate">
+                    <p className="text-sm font-medium text-sidebar-foreground truncate">
                       {accountDisplayName(account.email) ?? 'Guest'}
                     </p>
-                    <p className="text-[13px] font-medium text-muted-foreground truncate">
+                    <p className="text-sm font-medium text-sidebar-foreground/50 truncate">
                       {account.connected ? (account.email ?? 'Connected') : 'Not connected'}
                     </p>
                   </div>
-                  <IconSelector size={14} stroke={1.5} className="ml-auto text-muted-foreground" />
+                  <IconSelector size={14} stroke={1.5} className="ml-auto text-sidebar-foreground/60" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-52">
@@ -251,11 +259,11 @@ export function AppSidebar() {
                     <DropdownMenuSeparator />
                   </>
                 )}
-                <DropdownMenuItem>
+                <DropdownMenuItem disabled title="Coming soon">
                   <IconSettings size={16} stroke={1.5} />
                   Settings
                 </DropdownMenuItem>
-                <DropdownMenuItem>
+                <DropdownMenuItem disabled title="Coming soon">
                   <IconFilter size={16} stroke={1.5} />
                   Filter
                 </DropdownMenuItem>

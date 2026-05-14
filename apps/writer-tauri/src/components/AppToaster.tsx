@@ -1,7 +1,7 @@
 import { Toaster } from 'sonner'
 import { useTheme } from '@/components/theme-provider'
 
-const DARK_PALETTES = new Set(['charcoal', 'olive'])
+const DARK_PALETTES = new Set(['charcoal', 'graphite', 'olive'])
 
 export function AppToaster() {
   const { palette } = useTheme()

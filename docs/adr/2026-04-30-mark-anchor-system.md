@@ -1,7 +1,8 @@
 # ADR: 마크 앵커 시스템 — proof-sdk inline mark 통합
 
 작성: 2026-04-30
-상태: **Accepted**
+상태: **Accepted** (accept/reject 메커니즘은 후속 ADR 에서 갱신됨)
+후속: `2026-05-10-proof-sdk-realignment.md` — 원칙(REST 우회 + 클라 PM/Yjs 직접 쓰기)은 유지, anchor/content 모델 + Cmd+Z 통합 정련
 
 ---
 

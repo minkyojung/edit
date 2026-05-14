@@ -14,9 +14,20 @@
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view'
-import type { Node } from '@milkdown/kit/prose/model'
+import { DOMSerializer, type Node } from '@milkdown/kit/prose/model'
 import * as Y from 'yjs'
+import { useEditorViewStore } from '@/state/editorViewStore'
 import type { StoredMark } from '../hooks/useCollabDoc'
+
+/** Position of the slot directly after the top-level block that
+ * contains `pos`. Used by the insert-ghost widget so its preview
+ * lands at the same spot acceptMark will materialize the content —
+ * pre/post-accept positions match, no jumpiness. depth=1 because
+ * depth 0 is the doc itself; the top-level block is always at depth 1. */
+function topLevelSiblingAfter(doc: Node, pos: number): number {
+  const $pos = doc.resolve(pos)
+  return Math.min($pos.end(1) + 1, doc.content.size)
+}
 
 const key = new PluginKey<DecorationSet>('markDecoration')
 
@@ -69,13 +80,21 @@ function buildDecos(doc: Node, ydoc: Y.Doc): DecorationSet {
         )
       }
 
-      // Ghost preview widget — only for `replace` kind, where the
-      // pending text is a small inline rewrite that's clearer to
-      // preview next to the original word. `insert` no longer takes
-      // this path: the proposal blocks now live in the PM tree as
-      // real, marked nodes (single source of truth), so a ghost
-      // would just duplicate what's already on screen.
-      if (mark.type.name === 'proofSuggestion' && mark.attrs.kind === 'replace') {
+      // Ghost preview widget for `replace` and `insert` kinds. The
+      // pending content rides on Y.Map<StoredMark>('marks').content;
+      // the widget serializes it into the page so the user sees the
+      // candidate inline (Cursor-style) without the doc itself
+      // changing — the server's reconciliation guardrail can't see
+      // decorations, so this preview never causes drift.
+      //
+      // `replace`: short text → inline span next to the marked word.
+      // `insert`:  multi-block markdown → block-level div at the
+      //            top-level sibling slot (where acceptMark will
+      //            materialize the content).
+      const isGhostKind =
+        mark.type.name === 'proofSuggestion' &&
+        (mark.attrs.kind === 'replace' || mark.attrs.kind === 'insert')
+      if (isGhostKind) {
         const id = mark.attrs.id
         const stored = typeof id === 'string' ? marksMap.get(id) : undefined
         const content = stored?.content ?? null
@@ -85,13 +104,37 @@ function buildDecos(doc: Node, ydoc: Y.Doc): DecorationSet {
           content.length > 0 &&
           !ghostEmitted.has(id)
         ) {
-          const anchorPos = lastTo.get(id) ?? pos + node.nodeSize
+          const lastPos = lastTo.get(id) ?? pos + node.nodeSize
+          const isInsert = mark.attrs.kind === 'insert'
+          const anchorPos = isInsert ? topLevelSiblingAfter(doc, lastPos) : lastPos
           decos.push(
             Decoration.widget(
               anchorPos,
               () => {
+                if (isInsert) {
+                  // Block-level container — multi-paragraph markdown
+                  // rendered through PM's parser + DOMSerializer so
+                  // headings, lists, and paragraphs come out with
+                  // their normal styling. Falls back to plain text if
+                  // the parser isn't ready (rare race during mount).
+                  const div = document.createElement('div')
+                  div.className = 'mark-ghost mark-ghost--insert'
+                  div.dataset.markId = id
+                  div.contentEditable = 'false'
+                  const parser = useEditorViewStore.getState().parser
+                  const parsed = parser ? parser(content) : null
+                  if (parsed && parsed.content.size > 0) {
+                    const serializer = DOMSerializer.fromSchema(parsed.type.schema)
+                    const fragment = serializer.serializeFragment(parsed.content)
+                    div.appendChild(fragment)
+                  } else {
+                    div.textContent = content
+                  }
+                  return div
+                }
+                // replace — single-line inline ghost (existing behavior)
                 const span = document.createElement('span')
-                span.className = `mark-ghost mark-ghost--replace`
+                span.className = 'mark-ghost mark-ghost--replace'
                 span.dataset.markId = id
                 span.contentEditable = 'false'
                 span.textContent = content

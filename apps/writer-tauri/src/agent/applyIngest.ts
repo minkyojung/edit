@@ -1,270 +1,186 @@
-// Apply layer for ingest review — turns queued proposals into
-// proofSuggestion marks inside the target wiki page. Each
-// proposal becomes one inline mark, anchored on the doc's last
-// non-empty word; accepting the mark replaces the anchor with
-// "anchor + new content" (= visible append). Reject removes the
-// mark, leaving the anchor untouched.
+// Apply layer for ingest — drains queued log entries into wiki:log
+// and queued index summaries into wiki:index when those pages are
+// active.
 //
-// Why marks instead of a separate review modal:
-// - Reuses the proof-sdk mark UI (MarkPopoverLayer + MarkPopover)
-//   that the rest of the app already uses for AI suggestions, so
-//   the user sees one consistent affordance everywhere.
-// - Reviewing happens in-context, inside the wiki page itself —
-//   the user can see exactly where the addition lands.
-// - Karpathy "user reviews what the agent proposed" without
-//   building a parallel approve-list dashboard.
+// Proposal review used to live here too (stamping proofSuggestion
+// marks on the last word of the target wiki page, with a ghost
+// widget rendering the candidate content). That model is gone —
+// proposals are now reviewed via the in-page WikiPageBanner inbox
+// (see layout/WikiPageBanner.tsx), which parses + inserts on
+// accept without ever creating an inline mark.
 //
-// Application is lazy: marks materialize when the user navigates
-// to the target wiki page, driven by useApplyPendingMarks. Log
-// entries follow the same pattern — they queue at ingest time and
-// land in wiki:log the next time that page becomes active.
-//
-// Why every write goes through ProseMirror:
-// proof-server keeps two representations of a doc — the y-prosemirror
-// XmlFragment and a server-side markdown projection. PM transactions
-// are the only path the server's projection guardrails consider
-// canonical; raw Y.XmlElement inserts can drift, the server detects
-// the drift, and "repairs" by reverting our write (we observed exactly
-// this — a paragraph appeared in wiki:log and then vanished a second
-// later). So both proposals (via applyProposal) and log lines (via
-// tr.insert) write through an EditorView's dispatch.
+// wiki:log is append-only; wiki:index is line-by-line dedup-merge
+// keyed on `target` (Karpathy's index.md pattern). Two drains live
+// here so the apply-on-active hook (useApplyPendingLogs,
+// useApplyPendingIndexUpdates) can call into them without knowing
+// the merge semantics.
 
-import * as Y from 'yjs'
+import type { Node as PMNode } from '@milkdown/kit/prose/model'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { useDocsStore, type KnownDoc } from '@/state/docsStore'
-import { useIngestStore, type PendingProposal } from '@/state/ingestStore'
-import { applyProposal } from '@/agent/applyProposal'
-import type { Proposal } from '@/agent/proposals'
-import type { StoredMark } from '@/hooks/useCollabDoc'
+import { useDocsStore } from '@/state/docsStore'
+import { useEditorViewStore } from '@/state/editorViewStore'
+import { useIngestStore, type PendingIndexUpdate } from '@/state/ingestStore'
+import { isEffectivelyEmpty } from '@/lib/markdownText'
+import { prepareMarkdownAppend } from '@/lib/markdownAppend'
 
-const AGENT_ID = 'ai:wiki-ingest'
-
-/** Find the wiki:* doc for a given type id. Returns null when no
- * such doc exists in the catalog (shouldn't happen — the LLM picks
- * targets from the same catalog the user sees — but handled so a
- * stale proposal can't crash the apply). */
-function knownByType(type: string): KnownDoc | null {
-  return (
-    useDocsStore
-      .getState()
-      .knownDocs.find((d) => d.type === type && !d.archivedAt) ?? null
-  )
-}
-
-/** Append a paragraph of plain text to the active editor's doc via a
- * ProseMirror transaction. Used both as the ensureAnchor placeholder
- * seed and as the log-entry append.
- *
- * Why this is safe (where raw XmlFragment inserts aren't): every
- * normal user keystroke flows through PM transactions too, so the
- * server's projection guardrails accept the resulting ydoc updates
- * without flagging drift. The repair pass that erased our raw
- * inserts can't run on PM-shaped writes. */
-function appendParagraphViaTransaction(view: EditorView, line: string): void {
-  const schema = view.state.schema
-  const paragraph = schema.nodes.paragraph
-  if (!paragraph) {
-    console.warn('[ingest] schema has no paragraph node; skipping append')
-    return
-  }
-  // Build a paragraph node containing one text run. Empty lines fall
-  // through as a bare paragraph (PM rejects an empty text node).
-  const textNode = line.length > 0 ? schema.text(line) : null
-  const para = textNode ? paragraph.create(null, textNode) : paragraph.create()
-  const end = view.state.doc.content.size
-  view.dispatch(view.state.tr.insert(end, para))
-}
-
-/** Drain every queued log entry into wiki:log via PM transactions on
- * its live editor view. Called from useApplyPendingMarks when the
- * user navigates to wiki:log. Logs accumulated since the last visit
- * (one per ingest pass) all land in order. */
+/** Drain queued log entries into wiki:log. Called from
+ * useApplyPendingLogs when the user navigates to the log page.
+ * Each entry is a pre-formatted markdown line (`## [DATE] kind |
+ * summary`) and goes through the shared markdown-append helper so
+ * headings, links, and any other markdown render — they used to
+ * land as literal text because the old appender skipped the
+ * parser. */
 export function applyPendingLogsForView(view: EditorView): number {
   const logs = useIngestStore.getState().pendingLogs
   if (logs.length === 0) return 0
-  // One transaction per line keeps each entry as its own paragraph
-  // (PM batches insertions cleanly, but a fresh tr per line also
-  // means a partial failure halfway through still preserves earlier
-  // appends).
-  for (const entry of logs) {
-    appendParagraphViaTransaction(view, entry.line)
-  }
-  useIngestStore
-    .getState()
-    .remove({ proposalIds: [], logIds: logs.map((l) => l.id) })
-  return logs.length
-}
-
-/** Ensure a wiki page has at least one paragraph of text so the
- * first proofSuggestion mark has somewhere to anchor. Reads the
- * live PM doc — empty (or ZWS-only) means seed; anything else is a
- * no-op. The seed write goes through PM transaction for the same
- * projection-safety reason as logs. */
-function ensureAnchorViaTransaction(view: EditorView, label: string): void {
-  const text = view.state.doc.textBetween(
-    0,
-    view.state.doc.content.size,
-    '\n',
-    ' ',
-  )
-  const cleaned = text.replace(/[​]/g, '').trim()
-  if (cleaned.length > 0) return
-  appendParagraphViaTransaction(view, label)
-}
-
-/** Find the last word in the live PM doc to use as a proofSuggestion
- * anchor. We pick a word (not the whole last paragraph) so the mark
- * highlights a small, intentional region — and so the "anchor + new
- * content" replacement on accept reads as an append, not a rewrite.
- * Returns null when the doc has no text at all (caller should run
- * ensureAnchor first). */
-function lastWordAnchor(view: EditorView): string | null {
-  const text = view.state.doc.textBetween(
-    0,
-    view.state.doc.content.size,
-    '\n',
-    ' ',
-  )
-  const cleaned = text.replace(/[​]/g, '').trimEnd()
-  if (!cleaned) return null
-  const match = cleaned.match(/\S+$/)
-  return match ? match[0] : null
-}
-
-/** Resolve the proposal's anchor against the live doc. Preferred
- * path: the LLM emitted `anchorAfterText` and that snippet is present
- * in the doc — we anchor on it directly so accept lands the new
- * content right after that line. Fallback: use the doc's last word,
- * which appends to the very end of the page (the previous default).
- *
- * Trim before matching so trivial whitespace differences in the LLM
- * echo don't void the anchor; PM's textBetween normalizes block
- * separators to '\n' so a single leading "- " bullet match still
- * works. The string is consumed by applyProposal as `quote`, which
- * runs its own resolveQuoteRange — so an empty/missing anchor here
- * means "fall back," never "fail." */
-function resolveAnchor(
-  view: EditorView,
-  proposal: PendingProposal,
-): string | null {
-  const wanted = proposal.anchorAfterText?.trim()
-  if (wanted) {
-    const docText = view.state.doc
-      .textBetween(0, view.state.doc.content.size, '\n', ' ')
-      .replace(/[​]/g, '')
-    if (docText.includes(wanted)) return wanted
-    // LLM-suggested anchor isn't in the doc (rare — typically a tiny
-    // whitespace/punctuation drift, or the page changed since ingest
-    // ran). Fall through to the page-end fallback rather than
-    // failing the apply outright.
-  }
-  return lastWordAnchor(view)
-}
-
-/** Convert one queued ingest proposal into a Proposal shape the
- * existing applyProposal helper accepts, then stamp it as a mark.
- * Anchor comes from `anchorAfterText` when the LLM specified one;
- * otherwise the doc's last word. Content keeps the anchor (so accept
- * = "anchor + new content") and adds the new line on a fresh line. */
-function applyOneAsMark(
-  view: EditorView,
-  ydoc: Y.Doc,
-  proposal: PendingProposal,
-): { ok: true; markId: string } | { ok: false; reason: string } {
-  const anchor = resolveAnchor(view, proposal)
-  if (!anchor) return { ok: false, reason: 'no_anchor' }
-
-  const proposalShape: Proposal = {
-    kind: 'suggestion',
-    suggestionType: 'insert',
-    quote: anchor,
-    // Just the new content (markdown). Accept will parse this into
-    // real heading / list nodes via Milkdown's parser and insert
-    // them as block(s) after the anchor's containing block, so the
-    // anchor word stays in place and the addition lands on its own
-    // line(s) below it.
-    content: proposal.content,
-    rationale: proposal.rationale,
-  }
-  const out = applyProposal(view, ydoc, proposalShape, {
-    runId: proposal.id,
-    agentId: AGENT_ID,
-  })
-  // Enrich the freshly-created StoredMark with provenance metadata
-  // pulled from the queued proposal. acceptMark reads these on accept
-  // and copies them onto the new proofProvenance mark so the breadcrumb
-  // points back at the source daily / note. applyProposal doesn't know
-  // about ingest-domain fields, so we patch the entry in-place here.
-  if (out.ok) {
-    const marksMap = ydoc.getMap<StoredMark>('marks')
-    const existing = marksMap.get(out.markId)
-    if (existing) {
-      marksMap.set(out.markId, {
-        ...existing,
-        sourceSlug: proposal.sourceSlug,
-        sourceLabel: proposal.sourceLabel,
-        sourceQuote: proposal.sourceQuote,
-        proposedAt: new Date(proposal.proposedAt).toISOString(),
-      })
-    }
-  }
-  return out
-}
-
-/** Apply every queued proposal whose target matches `targetType` to
- * the currently-active editor view. Removes successfully-applied
- * proposals from the queue; failed ones (e.g. anchor not found, doc
- * still loading) stay queued so a retry on the next view-ready
- * cycle picks them up.
- *
- * Called from useApplyPendingMarks when both the active slug and
- * its view are ready — so we know `view`/`ydoc` correspond to the
- * doc whose marks we're about to write. */
-export async function applyPendingForActive(
-  view: EditorView,
-  ydoc: Y.Doc,
-  targetType: string,
-): Promise<{ applied: string[]; failed: string[] }> {
-  const known = knownByType(targetType)
-  if (!known) return { applied: [], failed: [] }
-
-  const matching = useIngestStore
-    .getState()
-    .pendingProposals.filter((p) => p.target === targetType)
-  if (matching.length === 0) return { applied: [], failed: [] }
-
-  // First-time anchor seed — empty pages get a "## <PageName>"
-  // heading so the first mark has a word to anchor on. Subsequent
-  // passes are no-ops because the doc already has content.
-  ensureAnchorViaTransaction(view, defaultAnchorLabel(known))
-  // Wait one tick so the PM transaction commits and the next read
-  // (lastWordAnchor) sees the heading. The first apply otherwise
-  // reads a stale empty doc and fails with no_anchor.
-  await new Promise<void>((r) => setTimeout(r, 50))
-
   const applied: string[] = []
-  const failed: string[] = []
-  for (const p of matching) {
-    const out = applyOneAsMark(view, ydoc, p)
-    if (out.ok) applied.push(p.id)
-    else {
-      failed.push(p.id)
-      console.warn('[ingest] applyOneAsMark failed', p.id, out.reason)
+  for (const entry of logs) {
+    const prep = prepareMarkdownAppend(view, entry.line)
+    if (!prep) {
+      console.warn('[ingest:log] markdown parse failed; leaving in queue', entry.line)
+      continue
     }
+    view.dispatch(prep.tr)
+    applied.push(entry.id)
   }
   if (applied.length > 0) {
-    useIngestStore.getState().remove({ proposalIds: applied })
+    useIngestStore.getState().remove({ proposalIds: [], logIds: applied })
   }
-  return { applied, failed }
+  return applied.length
 }
 
-/** Default anchor label for a wiki page's first-ever placeholder.
- * Uses the page's known title (or the type-stripped name as a
- * fallback) so the heading reads as the page's name — "## Beliefs"
- * for wiki:belief, "## People" for a custom 'people' page, etc. */
-function defaultAnchorLabel(known: KnownDoc): string {
-  const live = known.title?.trim()
-  if (live) return live.charAt(0).toUpperCase() + live.slice(1)
-  const stripped = known.type.replace(/^wiki:/, '').replace(/^custom-\w+$/, 'Notes')
-  return stripped.charAt(0).toUpperCase() + stripped.slice(1)
+/** Format one index line. Format:
+ *
+ *   `[wiki:custom-XXX] **Title** — summary`
+ *
+ * `[type-id]` at the start is the dedup key (substring match —
+ * cheaper than parsing the line back out). The bold title gives
+ * the user something readable to scan; the summary follows after
+ * the em-dash. Title comes from knownDocs at apply time, so a page
+ * rename naturally flows through on the next index pass.
+ *
+ * Pure function — caller wraps the result with parser() to get a
+ * PM paragraph node. */
+function formatIndexLine(target: string, title: string, summary: string): string {
+  return `[${target}] **${title}** — ${summary}`
+}
+
+/** Find a top-level block in the doc whose text contains the given
+ * target marker (`[wiki:custom-XXX]`). Used by the index merge to
+ * locate an existing summary line for in-place replacement. Returns
+ * { from, to } of the block's range (covering its full nodeSize so
+ * the replaceWith below substitutes the entire paragraph). Null
+ * when no existing line matches the target. */
+function findIndexLineForTarget(
+  doc: PMNode,
+  target: string,
+): { from: number; to: number } | null {
+  const marker = `[${target}]`
+  let pos = 0
+  for (let i = 0; i < doc.childCount; i += 1) {
+    const child = doc.child(i)
+    if (child.textContent.includes(marker)) {
+      return { from: pos, to: pos + child.nodeSize }
+    }
+    pos += child.nodeSize
+  }
+  return null
+}
+
+/** Resolve a proposal target (wiki:* type id) to its display title
+ * via the docs catalog. Falls back to the type-id minus the
+ * `wiki:` prefix when the catalog entry is missing or has no
+ * title — better to render a stripped id than crash on missing
+ * data. */
+function titleForTarget(target: string): string {
+  const known = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.type === target && !d.archivedAt)
+  const t = known?.title?.trim()
+  if (t) return t
+  return target.replace(/^wiki:/, '')
+}
+
+/** Drain queued index summary updates into wiki:index. Called from
+ * useApplyPendingIndexUpdates when the user navigates to the index
+ * page. Each update either replaces an existing line for the same
+ * target (in-place edit) or appends a new line at the end. The
+ * doc-wide ZWS placeholder body that proof-server seeds on first
+ * createDoc is stripped on the first append so the page starts
+ * clean — without this the index would render with a leading
+ * invisible character before any real content. */
+export function applyPendingIndexUpdatesForView(view: EditorView): number {
+  const updates = useIngestStore.getState().pendingIndexUpdates
+  if (updates.length === 0) return 0
+  const parser = useEditorViewStore.getState().parser
+  if (!parser) {
+    console.warn('[ingest:index] parser not ready; skipping drain')
+    return 0
+  }
+  const applied: string[] = []
+  for (const u of updates) {
+    if (!applyOneIndexUpdate(view, u, parser)) continue
+    applied.push(u.id)
+  }
+  if (applied.length > 0) {
+    useIngestStore.getState().remove({ proposalIds: [], indexUpdateIds: applied })
+  }
+  return applied.length
+}
+
+/** Apply one index update — either replace the matching line or
+ * append at the end of the doc. Returns true on success so the
+ * caller can mark this update as drained; false leaves it in the
+ * queue for the next pass.
+ *
+ * Append path runs through prepareMarkdownAppend (the shared
+ * helper) so leading-empty cleanup and the parse step stay in
+ * lockstep with the log drain and banner accept. Replace path
+ * stays inline because it depends on a marker-derived range that
+ * the helper has no way to know about. */
+function applyOneIndexUpdate(
+  view: EditorView,
+  update: PendingIndexUpdate,
+  parser: (md: string) => PMNode,
+): boolean {
+  const title = titleForTarget(update.target)
+  const line = formatIndexLine(update.target, title, update.summary)
+  const existing = findIndexLineForTarget(view.state.doc, update.target)
+
+  if (!existing) {
+    const prep = prepareMarkdownAppend(view, line)
+    if (!prep) {
+      console.warn('[ingest:index] markdown parse failed for line', line)
+      return false
+    }
+    view.dispatch(prep.tr)
+    return true
+  }
+
+  // Replace path: parse, account for the leading-empty cleanup the
+  // shared helper would have done so the marker range stays valid,
+  // and replaceWith on the adjusted range. The replace branch is
+  // load-bearing for the index's "one summary per target" invariant
+  // — without it a re-summary would append a second line for the
+  // same target instead of editing the existing one.
+  const parsed = parser(line)
+  if (!parsed || parsed.content.size === 0) {
+    console.warn('[ingest:index] parser returned empty for line', line)
+    return false
+  }
+  const fragment = parsed.content
+  let tr = view.state.tr
+  let placeholderRemoved = 0
+  const doc = view.state.doc
+  if (doc.childCount > 0 && isEffectivelyEmpty(doc.child(0).textContent)) {
+    tr = tr.delete(0, doc.child(0).nodeSize)
+    placeholderRemoved = doc.child(0).nodeSize
+  }
+  tr.replaceWith(
+    existing.from - placeholderRemoved,
+    existing.to - placeholderRemoved,
+    fragment,
+  )
+  view.dispatch(tr)
+  return true
 }

@@ -21,13 +21,18 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
+import { IndexeddbPersistence } from 'y-indexeddb'
 import { proofClient, waitUntilReady } from '@/lib/proofClient'
+import { generateClientSlug } from '@/lib/slug'
 import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
+import { deriveLabel } from '@/lib/docLabel'
+import { useIngestStore } from './ingestStore'
+import { usePendingProposals } from './pendingProposalsStore'
+import { useChatRuns } from '@/stores/chatRuns'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
-const DEFAULT_DOC_TITLE = 'My Document'
 
 /** Slim metadata mirrored into localStorage so the sidebar can list
  * docs (especially closed dailies whose ydoc isn't loaded). The
@@ -36,7 +41,15 @@ const DEFAULT_DOC_TITLE = 'My Document'
  * changes while open. */
 export interface KnownDoc {
   slug: string
-  type: 'daily' | 'writing' | `wiki:${string}`
+  /** `system:*` = agent-owned meta surface (conventions / log / index)
+   * that the LLM reads / maintains on dedicated prompt channels, not
+   * through the wiki catalog. `wiki:*` = agent-managed content pages
+   * (`wiki:custom-...`) the user accumulates over time. `daily` and
+   * `writing` are user-authored. The two agent prefixes split a
+   * pre-2026-05-13 single `wiki:*` bucket so sidebar grouping, prompt
+   * channels, and write-protection guards line up with Karpathy's
+   * schema-vs-wiki separation. */
+  type: 'daily' | 'writing' | `system:${string}` | `wiki:${string}`
   /** YYYY-MM-DD when type === 'daily'. */
   date?: string
   /** Parent doc's slug for tree-nested writing notes. Undefined for
@@ -65,14 +78,107 @@ export interface KnownDoc {
   archivedFromParent?: string
 }
 
-/** Karpathy-style write-ownership split: `wiki:*` docs are LLM-
- * synthesized memory pages (belief / entity / episode). They live
- * in the same catalog as user notes but are protected from archive
- * and hard-delete so the user can't accidentally wipe the agent's
- * memory. Single field, single predicate — every guard branches
- * off this one helper. */
+/** Coarse classification used by the DOC_POLICIES table below. Every
+ * doc in the app falls into exactly one bucket, and each bucket
+ * carries a fixed policy for archive, move, ingest, sidebar
+ * placement, and write authority. Keeping the buckets coarse (4)
+ * instead of mapping per `type` prefix avoids a wide table that
+ * has to grow every time we add a new `system:about` or
+ * `wiki:custom-...`. */
+export type DocCategory =
+  | 'daily'         // user-authored time-spine entry
+  | 'writing'       // user-authored free note (may nest under daily / writing)
+  | 'wiki-content'  // agent-created, user-editable wiki page (wiki:custom-*)
+  | 'system-meta'   // agent-managed config / metadata (system:conventions/log/index)
+
+/** Capability matrix for one doc category. Every caller that used
+ * to ask "can this doc be archived / moved / ingested" reads from
+ * this struct instead of hand-rolling a `type.startsWith(...)`
+ * check. Add a new category → add one row → every gate updates. */
+export interface DocPolicy {
+  category: DocCategory
+  /** Which sidebar region this doc belongs in. The Day / Week / Month
+   * views render `date` and `none` (latter never appears); the
+   * Wiki section splits `wiki` (content) and `system` (meta). */
+  sidebarGroup: 'date' | 'wiki' | 'system' | 'none'
+  /** User can soft-delete via archive UI. Karpathy write-ownership
+   * invariant: only docs the user authored or owns can be wiped. */
+  canArchive: boolean
+  /** Eligible as moveDoc source or target parent (the wiki tree
+   * surface). Daily entries are time-anchored, system pages are
+   * fixed slots — neither participates in the tree's re-parenting. */
+  canBeMovedInWikiTree: boolean
+  /** Idle trigger considers this doc as an ingest source. Agent-
+   * managed pages are output, not input, so they're false here
+   * regardless of whether the user has typed into them. */
+  isIngestSource: boolean
+  /** LLM owns the canonical contents. User may read (and, for
+   * conventions, edit), but the agent is the primary author.
+   * Drives "no children under wiki", legacy mark migration scope,
+   * markEdited observer skip, and similar guards. */
+  isAgentManaged: boolean
+}
+
+const DAILY_POLICY: DocPolicy = {
+  category: 'daily',
+  sidebarGroup: 'date',
+  canArchive: false,
+  canBeMovedInWikiTree: false,
+  isIngestSource: true,
+  isAgentManaged: false,
+}
+const WRITING_POLICY: DocPolicy = {
+  category: 'writing',
+  sidebarGroup: 'date', // shown nested under its parent daily
+  canArchive: true,
+  canBeMovedInWikiTree: false,
+  isIngestSource: true,
+  isAgentManaged: false,
+}
+const WIKI_CONTENT_POLICY: DocPolicy = {
+  category: 'wiki-content',
+  sidebarGroup: 'wiki',
+  canArchive: true,
+  canBeMovedInWikiTree: true,
+  isIngestSource: false,
+  isAgentManaged: true,
+}
+const SYSTEM_META_POLICY: DocPolicy = {
+  category: 'system-meta',
+  sidebarGroup: 'system',
+  canArchive: false,
+  canBeMovedInWikiTree: false,
+  isIngestSource: false,
+  isAgentManaged: true,
+}
+
+/** Resolve a doc's policy by type. Unknown / legacy types fall
+ * through to wiki-content — the v6 migration already moved the
+ * pre-rename `wiki:conventions|log|index` to `system:*`, so any
+ * leftover `wiki:*` here is genuinely user content (or corrupt
+ * data we shouldn't crash on). */
+export function getDocPolicy(doc: Pick<KnownDoc, 'type'>): DocPolicy {
+  if (doc.type === 'daily') return DAILY_POLICY
+  if (doc.type === 'writing') return WRITING_POLICY
+  if (doc.type.startsWith('system:')) return SYSTEM_META_POLICY
+  if (doc.type.startsWith('wiki:')) return WIKI_CONTENT_POLICY
+  return WIKI_CONTENT_POLICY
+}
+
+/** True for any wiki-region page: agent-managed (`system:*` meta
+ * and `wiki:custom-*` content). Now a thin wrapper over the
+ * policy table so the source of truth is one struct, not two
+ * helpers. Kept for callsite readability ("is this in the wiki
+ * sidebar region?"). */
 export function isWikiDoc(doc: Pick<KnownDoc, 'type'>): boolean {
-  return doc.type.startsWith('wiki:')
+  return getDocPolicy(doc).isAgentManaged
+}
+
+/** Karpathy write-ownership invariant: whoever wrote the page may
+ * delete it. Thin wrapper around the policy table — `canArchive`
+ * is true exactly for the category the user can wipe. */
+export function isUserOwnedWiki(doc: Pick<KnownDoc, 'type'>): boolean {
+  return getDocPolicy(doc).category === 'wiki-content'
 }
 
 interface DocsState {
@@ -140,6 +246,23 @@ interface DocsState {
   deleteForever: (slug: string) => Promise<void>
   /** Permanently delete every archived doc (sidecar + local state). */
   emptyArchive: () => Promise<void>
+  /** Move a user-owned wiki page (`wiki:custom-*`) under a new
+   * parent — or to the root when `newParentId` is null. Returns
+   * true on success, false when the move would violate one of:
+   *
+   *   - source isn't a user-owned wiki page
+   *   - source is archived
+   *   - new parent doesn't exist / is archived / isn't a live
+   *     `wiki:custom-*` (system / daily / writing parents refused)
+   *   - new parent is the source itself (self-parent)
+   *   - new parent is a descendant of the source (would create
+   *     a cycle)
+   *
+   * No-op (returns true) when the source already has this parent.
+   * UI callers can ignore the boolean and just react to the
+   * sidebar re-render; surfaces that want to surface a refusal
+   * (drag-and-drop drop targets) can read the return value. */
+  moveDoc: (slug: string, newParentId: string | null) => boolean
   /** Switch the sidebar date view. */
   setSidebarTab: (tab: 'day' | 'week' | 'month') => void
   /** Set the Month view's anchor month (YYYY-MM). */
@@ -152,14 +275,77 @@ interface DocsState {
   shiftDay: (delta: number) => void
 }
 
-async function buildHandle(
+// Synchronous local-only handle construction. The Y.Doc + IndexedDB
+// layer come up immediately so the editor can mount and the user can
+// type — even when proof-server is unreachable. WebSocket sync is
+// strictly background; see attachProviderWhenReady for the second
+// phase. This is the offline-first pattern used by Tldraw/Affine/Linear:
+// local writes never block on the network.
+function buildHandle(
   slug: string,
+  set: (fn: (s: DocsState) => Partial<DocsState>) => void,
   onStatus: (status: CollabStatus) => void,
-): Promise<CollabHandle | null> {
+): CollabHandle {
+  const ydoc = new Y.Doc()
+  const idb = new IndexeddbPersistence(slug, ydoc)
+  const handle: CollabHandle = {
+    ydoc,
+    provider: null,
+    idb,
+    idbSynced: idb.whenSynced.then(() => undefined),
+    slug,
+  }
+  // Install the ingest dirty-bit tracker after IDB finishes hydrating
+  // so the initial replay doesn't register as a fresh edit. From that
+  // point on, any XmlFragment change (typing, mark accept, remote
+  // sync) bumps ingestStore.lastEditedAt[slug] — that's the watermark
+  // useIdleTrigger compares against lastIngestedAt to decide whether
+  // the note is a candidate for re-ingest. Agent-managed pages
+  // (`system:*` + `wiki:*`) are filtered out here via isWikiDoc so
+  // ingest sources stay clean — those pages are output, not input.
+  // No explicit unobserve: ydoc.destroy() in closeDoc tears down all
+  // observers attached to fragments it owns.
+  void idb.whenSynced.then(() => {
+    const fragment = ydoc.getXmlFragment('prosemirror')
+    fragment.observeDeep(() => {
+      const known = useDocsStore.getState().knownDocs.find((d) => d.slug === slug)
+      if (!known || isWikiDoc(known)) return
+      useIngestStore.getState().markEdited(slug)
+    })
+  })
+  // 'connecting' on launch reads as "we're trying to reach the server";
+  // the background task below promotes to 'connected' or 'error' once
+  // the outcome is known. Callers that only need local writes don't
+  // care — they read from `ydoc` / `idb` immediately.
+  onStatus('connecting')
+  void attachProviderWhenReady(slug, handle, set, onStatus)
+  return handle
+}
+
+/** Second phase of handle construction: probe the server, fetch a collab
+ * session, then build a HocuspocusProvider and splice it into the handle.
+ * Failures (proof-server down, network blip) leave handle.provider null
+ * forever — IndexedDB keeps everything alive locally, and the user can
+ * retry by closing/reopening the tab once the server is back. */
+async function attachProviderWhenReady(
+  slug: string,
+  handle: CollabHandle,
+  set: (fn: (s: DocsState) => Partial<DocsState>) => void,
+  onStatus: (status: CollabStatus) => void,
+): Promise<void> {
+  // Wait for IndexedDB to finish hydrating the ydoc before attaching the
+  // WebSocket provider. If we attach earlier, the server sends its baseline
+  // (which for a newly-registered empty-markdown doc is a fresh-clientId
+  // empty fragment from seedLegacyDocumentToPersistedYjsAsync) and that
+  // merges *alongside* the soon-to-arrive IDB fragment instead of into it
+  // — fragment root accumulates one extra paragraph per launch, which is
+  // exactly the 1→2→4→8 doubling regression. Order matters: IDB first,
+  // server second.
+  await handle.idbSynced
   const ready = await waitUntilReady(15_000)
   if (!ready) {
     onStatus('error')
-    return null
+    return
   }
   let session: Awaited<ReturnType<typeof proofClient.getCollabSession>>['session']
   try {
@@ -168,25 +354,46 @@ async function buildHandle(
   } catch (err) {
     console.error('[docs] failed to get collab session', err)
     onStatus('error')
-    return null
+    return
   }
   const url = new URL(session.collabWsUrl)
   url.searchParams.set('token', session.token)
   url.searchParams.set('role', session.role)
-
-  const ydoc = new Y.Doc()
   const provider = new HocuspocusProvider({
     url: url.toString(),
     name: slug,
-    document: ydoc,
+    document: handle.ydoc,
     token: session.token,
     onStatus: ({ status }) => {
       onStatus(status === 'connected' ? 'connected' : 'connecting')
     },
   })
-  onStatus('connecting')
-  return { ydoc, provider, slug }
+  // Mutate the handle in place, then re-publish into the store so any
+  // selector subscribed to handles[slug] re-renders with the WebSocket
+  // attached. We can't replace the handle object wholesale because other
+  // observers (sidebar title mirror, mark plugins) already hold a
+  // reference to this exact instance.
+  handle.provider = provider
+  set((s) => ({ handles: { ...s.handles, [slug]: handle } }))
 }
+
+// Re-entrancy guard for bootstrap().
+//
+// React Strict Mode intentionally double-invokes effects in dev, so
+// BootGate's `useEffect(() => bootstrap(), [])` fires twice in quick
+// succession. The first call awaits proofClient.createDoc(today, ...)
+// for a ~100ms round-trip; in that window the second call sees the
+// catalog still empty and ALSO calls createDoc. Two server-side docs
+// for the same date, two sidebar tabs, every boot. Catalog audit
+// confirmed this pattern: 12 of 14 days carried exactly 2 dailies.
+//
+// Module-level flag (not in store state) so it lives across the
+// store's set() updates — store-state guard would race with the same
+// async window we are trying to protect. try/finally so a thrown
+// bootstrap (network failure during legacy migration etc.) doesn't
+// leave the guard latched and block legitimate later reboots within
+// the same process.
+let bootstrapInFlight = false
 
 export const useDocsStore = create<DocsState>()(
   persist(
@@ -203,6 +410,12 @@ export const useDocsStore = create<DocsState>()(
       dayAnchor: todayLocalDate(),
 
       bootstrap: async () => {
+        // Skip if another bootstrap is mid-flight (see the comment on
+        // `bootstrapInFlight` above this store definition for the full
+        // race rationale).
+        if (bootstrapInFlight) return
+        bootstrapInFlight = true
+        try {
         const today = todayLocalDate()
 
         // First, migrate the legacy single-slug localStorage entry. We
@@ -227,20 +440,23 @@ export const useDocsStore = create<DocsState>()(
           (d) => d.type === 'daily' && d.date === today,
         )
         if (!todaysDaily) {
-          try {
-            // Zero-width space markdown — proof-server rejects blank
-            // bodies (markdown.trim() check), but we don't want a body
-            // H1 duplicating the date that the title field already
-            // shows. ZWS passes the trim guard while rendering as an
-            // empty paragraph in the editor.
-            const created = await proofClient.createDoc(today, '​')
-            const meta: KnownDoc = { slug: created.slug, type: 'daily', date: today }
-            todaysDaily = meta
-            set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-          } catch (err) {
-            console.error('[docs] failed to create today daily', err)
-            notify.cantOpenJournal()
-          }
+          // Client picks the slug locally so today's daily exists in the
+          // catalog (and on disk via IndexedDB) before the server is
+          // even reached. Registration is fire-and-forget — failures
+          // just mean the doc stays local-only until the next online
+          // boot, which is the right behavior for a daily journal that
+          // must always greet the user with "today".
+          //
+          // Empty body — dailies derive their label from meta.date,
+          // so the body must not seed a heading that would duplicate
+          // it. proof-server accepts empty bodies post-relaxation.
+          const slug = generateClientSlug()
+          const meta: KnownDoc = { slug, type: 'daily', date: today }
+          todaysDaily = meta
+          set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+          void proofClient.createDoc(today, '', { slug }).catch((err) => {
+            console.warn('[docs] background register failed for today daily', err)
+          })
         }
 
         // Add today to openSlugs if it isn't already there, and make
@@ -282,13 +498,12 @@ export const useDocsStore = create<DocsState>()(
               (k) => k.type === 'daily' && k.date === date,
             )
             if (!exists) {
-              try {
-                const created = await proofClient.createDoc(date, '​')
-                const meta: KnownDoc = { slug: created.slug, type: 'daily', date }
-                set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-              } catch (err) {
-                console.error('[docs] backfill daily failed', date, err)
-              }
+              const slug = generateClientSlug()
+              const meta: KnownDoc = { slug, type: 'daily', date }
+              set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+              void proofClient.createDoc(date, '', { slug }).catch((err) => {
+                console.warn('[docs] backfill daily register failed', date, err)
+              })
             }
             cursor.setDate(cursor.getDate() + 1)
           }
@@ -341,6 +556,9 @@ export const useDocsStore = create<DocsState>()(
         )
 
         set({ bootstrapping: false })
+        } finally {
+          bootstrapInFlight = false
+        }
       },
 
       setActive: (slug) => {
@@ -372,55 +590,64 @@ export const useDocsStore = create<DocsState>()(
           const idx = openSlugs.indexOf(slug)
           nextActive = next[idx] ?? next[idx - 1] ?? null
         }
+        // Stop any chat run bound to this slug and drop its pending
+        // proposal queue BEFORE destroying the ydoc — a late proposal
+        // would otherwise try to dispatch into a dead fragment.
+        useChatRuns.getState().abortBySlug(slug)
+        usePendingProposals.getState().clear(slug)
         const handle = handles[slug]
         if (handle) {
-          handle.provider.destroy()
+          handle.provider?.destroy()
+          handle.idb.destroy()
           handle.ydoc.destroy()
         }
         const nextHandles = { ...handles }
         delete nextHandles[slug]
         const nextStatus = { ...get().status }
         delete nextStatus[slug]
-        set({
+        // Single set: the empty-strip invariant is folded into the
+        // same patch via ensureNonEmptyTabStrip, so the UI never
+        // flickers through a blank state and there's no async
+        // follow-up that can fail and leave the user stuck.
+        set(ensureNonEmptyTabStrip(get(), {
           openSlugs: next,
           activeSlug: nextActive,
           handles: nextHandles,
           status: nextStatus,
-        })
-        // If we closed the active and a neighbor exists, make sure it's
-        // also got a handle so the editor doesn't show a blank state.
-        if (nextActive && !nextHandles[nextActive]) {
-          ensureHandle(nextActive, set, get).catch((err) =>
+        }))
+        // Warm the new active slug's handle if it isn't loaded yet —
+        // applies whether the invariant kicked in (today's daily) or
+        // we just shifted to a neighbor.
+        const finalActive = get().activeSlug
+        if (finalActive && !get().handles[finalActive]) {
+          ensureHandle(finalActive, set, get).catch((err) =>
             console.error('[docs] post-close ensureHandle failed', err),
           )
         }
       },
 
       createNew: async () => {
-        try {
-          const created = await proofClient.createDoc(DEFAULT_DOC_TITLE, '​')
-          const meta: KnownDoc = {
-            slug: created.slug,
+        // Empty title + empty body. The displayed label falls back to
+        // 'Untitled' in useDocLabel; the editor renders the body
+        // placeholder hint. Nothing is seeded into the doc itself.
+        const slug = generateClientSlug()
+        const meta: KnownDoc = { slug, type: 'writing' }
+        set((s) => ({
+          openSlugs: [...s.openSlugs, slug],
+          activeSlug: slug,
+          knownDocs: [...s.knownDocs, meta],
+        }))
+        await ensureHandle(slug, set, get)
+        const handle = get().handles[slug]
+        if (handle) {
+          writeDocMeta(handle.ydoc, {
             type: 'writing',
-            title: DEFAULT_DOC_TITLE,
-          }
-          set((s) => ({
-            openSlugs: [...s.openSlugs, created.slug],
-            activeSlug: created.slug,
-            knownDocs: [...s.knownDocs, meta],
-          }))
-          await ensureHandle(created.slug, set, get)
-          const handle = get().handles[created.slug]
-          if (handle) {
-            writeDocMeta(handle.ydoc, {
-              type: 'writing',
-              createdAt: new Date().toISOString(),
-            })
-          }
-        } catch (err) {
-          console.error('[docs] createNew failed', err)
-          notify.cantCreateNote({ onRetry: () => get().createNew() })
+            createdAt: new Date().toISOString(),
+          })
         }
+        void proofClient.createDoc('', '', { slug }).catch((err) => {
+          console.warn('[docs] background register failed for new note', err)
+        })
       },
 
       openDaily: async (date) => {
@@ -429,18 +656,16 @@ export const useDocsStore = create<DocsState>()(
           (d) => d.type === 'daily' && d.date === targetDate,
         )
         if (!known) {
-          try {
-            // ZWS body — see the bootstrap comment above for the
-            // proof-server blank-markdown guard. Title field carries
-            // the date, body stays visually clean.
-            const created = await proofClient.createDoc(targetDate, '​')
-            known = { slug: created.slug, type: 'daily', date: targetDate }
-            set((s) => ({ knownDocs: [...s.knownDocs, known!] }))
-          } catch (err) {
-            console.error('[docs] openDaily createDoc failed', err)
-            notify.cantOpenJournal({ onRetry: () => get().openDaily(targetDate) })
-            return null
-          }
+          // Empty body — dailies derive their label from meta.date, so
+          // the body stays visually clean. Client-side slug + fire-and-
+          // forget keeps "I can always open the daily for any date"
+          // true even when proof-server is unreachable.
+          const slug = generateClientSlug()
+          known = { slug, type: 'daily', date: targetDate }
+          set((s) => ({ knownDocs: [...s.knownDocs, known!] }))
+          void proofClient.createDoc(targetDate, '', { slug }).catch((err) => {
+            console.warn('[docs] openDaily background register failed', err)
+          })
         }
         const slug = known.slug
         if (!get().openSlugs.includes(slug)) {
@@ -470,79 +695,70 @@ export const useDocsStore = create<DocsState>()(
         if (!parent) return null
         // Wiki pages are roots; user notes don't hang off them.
         if (isWikiDoc(parent)) return null
-        try {
-          // ZWS body — non-blank for the proof-server validator while
-          // not seeding an H1 the user would have to clean up.
-          const created = await proofClient.createDoc(DEFAULT_DOC_TITLE, '​')
-          const meta: KnownDoc = {
-            slug: created.slug,
+        // Empty title + empty body. The displayed label falls back to
+        // 'Untitled' in useDocLabel.
+        const slug = generateClientSlug()
+        const meta: KnownDoc = {
+          slug,
+          type: 'writing',
+          parentId: parentSlug,
+        }
+        set((s) => ({
+          knownDocs: [...s.knownDocs, meta],
+          openSlugs: s.openSlugs.includes(slug)
+            ? s.openSlugs
+            : [...s.openSlugs, slug],
+          activeSlug: slug,
+        }))
+        await ensureHandle(slug, set, get)
+        const handle = get().handles[slug]
+        if (handle) {
+          writeDocMeta(handle.ydoc, {
             type: 'writing',
             parentId: parentSlug,
-            title: DEFAULT_DOC_TITLE,
-          }
-          set((s) => ({
-            knownDocs: [...s.knownDocs, meta],
-            openSlugs: s.openSlugs.includes(created.slug)
-              ? s.openSlugs
-              : [...s.openSlugs, created.slug],
-            activeSlug: created.slug,
-          }))
-          await ensureHandle(created.slug, set, get)
-          const handle = get().handles[created.slug]
-          if (handle) {
-            writeDocMeta(handle.ydoc, {
-              type: 'writing',
-              parentId: parentSlug,
-              createdAt: new Date().toISOString(),
-            })
-          }
-          return created.slug
-        } catch (err) {
-          console.error('[docs] createChildNote failed', err)
-          notify.cantCreateNote({ onRetry: () => get().createChildNote(parentSlug) })
-          return null
+            createdAt: new Date().toISOString(),
+          })
         }
+        void proofClient.createDoc('', '', { slug }).catch((err) => {
+          console.warn('[docs] createChildNote background register failed', err)
+        })
+        return slug
       },
 
       createWritingChild: async (parentSlug, title) => {
         const parent = get().knownDocs.find((d) => d.slug === parentSlug)
         if (!parent) return null
         if (isWikiDoc(parent)) return null
-        try {
-          // ZWS body for the same reason daily / writing creates use
-          // it: proof-server rejects blank markdown but we don't want
-          // a default H1 in the body.
-          const created = await proofClient.createDoc(title, '​')
-          const meta: KnownDoc = {
-            slug: created.slug,
+        // Empty body — server accepts it and the editor renders the
+        // body placeholder. The title comes from the palette input.
+        const slug = generateClientSlug()
+        const meta: KnownDoc = {
+          slug,
+          type: 'writing',
+          parentId: parentSlug,
+          title,
+        }
+        set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+        // Seed the body's first paragraph with the wikilink text via
+        // ensureHandle's seedFirstLine option. Critical: the seed runs
+        // *inside* ensureHandle, before the handle is published to the
+        // store, so MilkdownEditor never sees an empty fragment and
+        // its schema-fill branch can't race with this seed. The
+        // 'doc-init' transaction origin keeps the seed out of the undo
+        // stack so Cmd+Z right after opening doesn't strip the name.
+        await ensureHandle(slug, set, get, { seedFirstLine: title })
+        const handle = get().handles[slug]
+        void proofClient.createDoc(title, '', { slug }).catch((err) => {
+          console.warn('[docs] createWritingChild background register failed', err)
+        })
+        if (handle) {
+          writeDocMeta(handle.ydoc, {
             type: 'writing',
             parentId: parentSlug,
-            title,
-          }
-          set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-          await ensureHandle(created.slug, set, get)
-          const handle = get().handles[created.slug]
-          if (handle) {
-            writeDocMeta(handle.ydoc, {
-              type: 'writing',
-              parentId: parentSlug,
-              createdAt: new Date().toISOString(),
-            })
-            const ytext = handle.ydoc.getText('title')
-            if (ytext.toString().length === 0) {
-              handle.ydoc.transact(() => {
-                ytext.insert(0, title)
-              })
-            }
-          }
-          return created.slug
-        } catch (err) {
-          console.error('[docs] createWritingChild failed', err)
-          notify.cantCreateNote({
-            onRetry: () => get().createWritingChild(parentSlug, title),
+            createdAt: new Date().toISOString(),
           })
-          return null
         }
+        return slug
       },
 
       toggleExpanded: (slug) =>
@@ -561,9 +777,11 @@ export const useDocsStore = create<DocsState>()(
         // Daily entries are time-axis spine, not user-authored docs.
         // Refuse so the sidebar/breadcrumb invariants stay intact.
         if (target.type === 'daily') return false
-        // Wiki docs are agent memory — protected from accidental
-        // wipe (Karpathy write-ownership invariant).
-        if (isWikiDoc(target)) return false
+        // Agent-managed wiki/system pages are protected from accidental
+        // wipe (Karpathy write-ownership invariant). User-spawned
+        // wiki:custom-* pages are the user's own writing surface, so
+        // they follow the regular ownership rule and can be archived.
+        if (isWikiDoc(target) && !isUserOwnedWiki(target)) return false
         if (target.archivedAt) return false
 
         const groupSlugs = collectDescendantSlugs(state.knownDocs, slug)
@@ -582,12 +800,22 @@ export const useDocsStore = create<DocsState>()(
             [...state.openSlugs.slice(0, idx)].reverse().find((s) => !groupSet.has(s)) ??
             null
         }
+        // Cancel chat runs + drop pending queues for the whole cascade
+        // before tearing handles down. Same reasoning as closeDoc: late
+        // proposals must not race past a destroyed ydoc.
+        const chatRuns = useChatRuns.getState()
+        const pending = usePendingProposals.getState()
+        for (const s of groupSlugs) {
+          chatRuns.abortBySlug(s)
+          pending.clear(s)
+        }
         const nextHandles = { ...state.handles }
         const nextStatus = { ...state.status }
         for (const s of groupSlugs) {
           const h = nextHandles[s]
           if (h) {
-            h.provider.destroy()
+            h.provider?.destroy()
+            h.idb.destroy()
             h.ydoc.destroy()
           }
           delete nextHandles[s]
@@ -605,18 +833,23 @@ export const useDocsStore = create<DocsState>()(
             : d,
         )
 
-        set({
+        // The empty-strip invariant uses the *post-archive* catalog
+        // (so today's daily must still be archive-free in nextKnown).
+        // Pass a synthesized state to ensureNonEmptyTabStrip rather
+        // than the live one so the lookup sees nextKnown.
+        const postState: DocsState = { ...state, knownDocs: nextKnown }
+        set(ensureNonEmptyTabStrip(postState, {
           knownDocs: nextKnown,
           openSlugs: nextOpen,
           activeSlug: nextActive,
           handles: nextHandles,
           status: nextStatus,
-        })
-
-        // If we shifted activeSlug to a known but unloaded tab, warm it
-        // up so the editor doesn't sit on a stale handle.
-        if (nextActive && !nextHandles[nextActive]) {
-          ensureHandle(nextActive, set, get).catch((err) =>
+        }))
+        // Warm whichever slug ended up active — whether nextActive
+        // survived or the invariant fell back to today's daily.
+        const finalActive = get().activeSlug
+        if (finalActive && !get().handles[finalActive]) {
+          ensureHandle(finalActive, set, get).catch((err) =>
             console.error('[docs] post-archive ensureHandle failed', err),
           )
         }
@@ -647,10 +880,12 @@ export const useDocsStore = create<DocsState>()(
         const state = get()
         const target = state.knownDocs.find((d) => d.slug === slug)
         if (!target?.archivedAt) return
-        // Wiki docs can't reach this code path today (archive is
-        // refused above) but assert it anyway so a future regression
-        // can't silently wipe agent memory.
-        if (isWikiDoc(target)) return
+        // Agent-managed wiki/system pages can't reach this code path
+        // today (archive is refused above) but assert it anyway so a
+        // future regression can't silently wipe agent memory. User-
+        // spawned wiki:custom-* pages reach archive, so they're
+        // allowed through here and follow normal hard-delete.
+        if (isWikiDoc(target) && !isUserOwnedWiki(target)) return
         const stamp = target.archivedAt
         const groupSlugs = state.knownDocs
           .filter((d) => d.archivedAt === stamp)
@@ -666,12 +901,21 @@ export const useDocsStore = create<DocsState>()(
             console.error('[docs] deleteDocForever failed', s, err)
             failed += 1
           }
+          // Erase the local IndexedDB shard for this slug. Without this the
+          // cached Y.Doc updates would outlive the server row — a future tab
+          // re-using the same slug would resurrect deleted content.
+          indexedDB.deleteDatabase(s)
         }
         const groupSet = new Set(groupSlugs)
-        set((s) => ({
-          knownDocs: s.knownDocs.filter((d) => !groupSet.has(d.slug)),
-          openSlugs: s.openSlugs.filter((sl) => !groupSet.has(sl)),
-          expandedDocSlugs: s.expandedDocSlugs.filter((sl) => !groupSet.has(sl)),
+        const cur = get()
+        const nextKnown = cur.knownDocs.filter((d) => !groupSet.has(d.slug))
+        const nextOpen = cur.openSlugs.filter((sl) => !groupSet.has(sl))
+        const nextExpanded = cur.expandedDocSlugs.filter((sl) => !groupSet.has(sl))
+        const postState: DocsState = { ...cur, knownDocs: nextKnown }
+        set(ensureNonEmptyTabStrip(postState, {
+          knownDocs: nextKnown,
+          openSlugs: nextOpen,
+          expandedDocSlugs: nextExpanded,
         }))
         if (failed > 0) {
           notify.cantDeleteNote({ onRetry: () => get().deleteForever(slug) })
@@ -690,6 +934,56 @@ export const useDocsStore = create<DocsState>()(
       shiftDay: (delta) =>
         set((s) => ({ dayAnchor: shiftDayAnchor(s.dayAnchor, delta) })),
 
+      moveDoc: (slug, newParentId) => {
+        const state = get()
+        const doc = state.knownDocs.find((d) => d.slug === slug)
+        if (!doc) return false
+        if (doc.archivedAt) return false
+        // Only user-owned wiki pages can be re-parented. System pages,
+        // dailies, and writing notes have their own placement rules
+        // and aren't draggable in the Wiki tree.
+        if (!isUserOwnedWiki(doc)) return false
+
+        // No-op when the requested parent is already the current
+        // parent. We return true so callers (drag handlers, context
+        // menus) treat this as a successful "already there".
+        const currentParentId = doc.parentId ?? null
+        if (currentParentId === newParentId) return true
+
+        if (newParentId !== null) {
+          if (newParentId === slug) return false
+          const parent = state.knownDocs.find((d) => d.slug === newParentId)
+          if (!parent) return false
+          if (parent.archivedAt) return false
+          // Parent must be a live user-owned wiki page. Refusing
+          // system / daily / writing parents keeps the wiki region
+          // self-contained and prevents weird trees like a wiki
+          // nested under a daily.
+          if (!isUserOwnedWiki(parent)) return false
+
+          // Cycle check: walk the prospective parent's ancestry; if
+          // we hit `slug`, the move would create a loop. Bounded by
+          // knownDocs.length so a corrupt parentId chain can't hang.
+          const docs = state.knownDocs
+          let cursor: KnownDoc | undefined = parent
+          for (let i = 0; i < docs.length && cursor; i += 1) {
+            if (cursor.slug === slug) return false
+            const nextParentSlug: string | undefined = cursor.parentId
+            if (!nextParentSlug) break
+            cursor = docs.find((d) => d.slug === nextParentSlug)
+          }
+        }
+
+        set((s) => ({
+          knownDocs: s.knownDocs.map((d) =>
+            d.slug === slug
+              ? { ...d, parentId: newParentId ?? undefined }
+              : d,
+          ),
+        }))
+        return true
+      },
+
       emptyArchive: async () => {
         const archived = get().knownDocs.filter((d) => d.archivedAt)
         if (archived.length === 0) return
@@ -701,13 +995,24 @@ export const useDocsStore = create<DocsState>()(
             console.error('[docs] emptyArchive item failed', d.slug, err)
             failed += 1
           }
+          indexedDB.deleteDatabase(d.slug)
         }
         const archivedSet = new Set(archived.map((d) => d.slug))
-        set((s) => ({
-          knownDocs: s.knownDocs.filter((d) => !archivedSet.has(d.slug)),
-          openSlugs: s.openSlugs.filter((sl) => !archivedSet.has(sl)),
-          expandedDocSlugs: s.expandedDocSlugs.filter((sl) => !archivedSet.has(sl)),
+        const cur = get()
+        const nextKnown = cur.knownDocs.filter((d) => !archivedSet.has(d.slug))
+        const nextOpen = cur.openSlugs.filter((sl) => !archivedSet.has(sl))
+        const nextExpanded = cur.expandedDocSlugs.filter((sl) => !archivedSet.has(sl))
+        const postState: DocsState = { ...cur, knownDocs: nextKnown }
+        set(ensureNonEmptyTabStrip(postState, {
+          knownDocs: nextKnown,
+          openSlugs: nextOpen,
+          expandedDocSlugs: nextExpanded,
         }))
+        if (get().openSlugs.length === 0) {
+          void get().openDaily().catch((err) =>
+            console.error('[docs] post-emptyArchive openDaily failed', err),
+          )
+        }
         if (failed > 0) {
           notify.cantEmptyTrash({ onRetry: () => get().emptyArchive() })
         }
@@ -715,7 +1020,7 @@ export const useDocsStore = create<DocsState>()(
     }),
     {
       name: 'writer-tauri:docs',
-      version: 5,
+      version: 6,
       partialize: (s) => ({
         openSlugs: s.openSlugs,
         activeSlug: s.activeSlug,
@@ -740,6 +1045,28 @@ export const useDocsStore = create<DocsState>()(
         // any persisted blob so the rehydrated state matches the new
         // shape (silently ignored fields are fine; explicit removal
         // is cleaner).
+        // v5 → v6: split the agent-page bucket. The three system
+        // pages (conventions / log / index) move from `wiki:*` to
+        // `system:*` so prompt channels, sidebar grouping, and
+        // write-protection guards can branch on a single prefix.
+        // User content pages (`wiki:custom-...`) keep their type.
+        // Slug-keyed data (ydoc bodies in IndexedDB, ingestStore's
+        // edit / ingest watermarks, queued proposals, marks Y.Maps)
+        // is unaffected — only the `knownDocs[i].type` string is
+        // rewritten. Unknown legacy prefixes pass through unchanged.
+        if (version < 6) {
+          const state = (persisted ?? {}) as { knownDocs?: KnownDoc[] }
+          const rename: Record<string, KnownDoc['type']> = {
+            'wiki:conventions': 'system:conventions',
+            'wiki:log': 'system:log',
+            'wiki:index': 'system:index',
+          }
+          const nextKnownDocs = (state.knownDocs ?? []).map((doc) => {
+            const renamed = rename[doc.type as string]
+            return renamed ? { ...doc, type: renamed } : doc
+          })
+          persisted = { ...state, knownDocs: nextKnownDocs }
+        }
         if (version < 5) {
           const { expandedWeekStarts: _drop, ...rest } =
             (persisted as { expandedWeekStarts?: unknown }) ?? {}
@@ -818,17 +1145,89 @@ function collectDescendantSlugs(docs: KnownDoc[], root: string): string[] {
  * daily; the label everywhere (tabs, sidebar, breadcrumb, header)
  * now reads from meta.date instead, so clearing the Y.Text is safe
  * and removes the legacy artifact in one shot. */
+/** Seed `<paragraph>text</paragraph>` (or `<paragraph/>` when `text`
+ * is empty) into a brand-new doc's body fragment. Used by the create
+ * paths via ensureHandle's `seedFirstLine` option so that:
+ *   1. MilkdownEditor's schema-fill branch never sees an empty
+ *      fragment and therefore can't race with the seed (the fragment
+ *      is already populated by the time the handle is published).
+ *   2. The label system (deriveLabel reads the first non-empty
+ *      block) picks up the wikilink text uniformly when one is
+ *      supplied.
+ * No-op when the fragment is already non-empty — defensive against
+ * a caller passing this option on a reopen path. */
+function seedBodyFirstLine(ydoc: Y.Doc, text: string): void {
+  const fragment = ydoc.getXmlFragment('prosemirror')
+  if (fragment.length > 0) return
+  ydoc.transact(() => {
+    const paragraph = new Y.XmlElement('paragraph')
+    if (text.length > 0) {
+      paragraph.insert(0, [new Y.XmlText(text)])
+    }
+    fragment.insert(0, [paragraph])
+  }, 'doc-init')
+}
+
+/** Apply the "tab strip is never empty" invariant to a state patch
+ * about to be passed to set(). If the patch (or current state, if
+ * the patch doesn't touch openSlugs) would leave openSlugs empty,
+ * today's daily slug is folded back in synchronously and made active
+ * — so the user never sees a blank tab strip, regardless of whether
+ * any follow-up async work succeeds or fails.
+ *
+ * The store-level invariant lives here rather than scattered across
+ * each mutation (closeDoc / archiveDoc / deleteForever / emptyArchive)
+ * because the policy is identical at every site: "if removing this
+ * slug would empty the strip, fall back to today's daily." Putting it
+ * in one helper means the rule has one definition and one place to
+ * change.
+ *
+ * No-op when today's daily isn't in the catalog (bootstrap hasn't
+ * run yet, or the day rolled over since bootstrap). In that edge
+ * case the strip stays empty for the moment — caller's own async
+ * follow-up (ensureHandle, openDaily) is the next line of defense,
+ * but it's not relied on for the common path. */
+function ensureNonEmptyTabStrip(
+  state: DocsState,
+  patch: Partial<DocsState>,
+): Partial<DocsState> {
+  const nextOpen = patch.openSlugs ?? state.openSlugs
+  if (nextOpen.length > 0) return patch
+  const today = todayLocalDate()
+  const todayDaily = state.knownDocs.find(
+    (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
+  )
+  if (!todayDaily) return patch
+  return {
+    ...patch,
+    openSlugs: [todayDaily.slug],
+    activeSlug: todayDaily.slug,
+  }
+}
+
 function scrubDailyTitleArtifacts(ydoc: Y.Doc): void {
   const ytext = ydoc.getText('title')
   if (ytext.length === 0) return
+  // 'doc-init' origin — system cleanup of legacy artefacts; not a
+  // user action and not undo-able by design.
   ydoc.transact(() => {
     ytext.delete(0, ytext.length)
-  })
+  }, 'doc-init')
 }
 
 /** Internal: lazy-create a handle for `slug`, register it, and route
  * status updates back into the store. Idempotent — a second call for
- * the same slug returns immediately. */
+ * the same slug returns immediately.
+ *
+ * `opts.seedFirstLine`: when supplied (only by brand-new-doc create
+ * paths), the body fragment is seeded with `<paragraph>text</paragraph>`
+ * (or a single empty paragraph if `text` is '') *before* the handle is
+ * published to the store. That ordering is the race fix: by the time
+ * MilkdownEditor receives the handle, the fragment is already
+ * non-empty, so its schema-fill branch never fires and can't compete
+ * with the seed. Callers must NOT pass this option for handles that
+ * are merely reopening an existing doc — the seed would land on top
+ * of whatever IndexedDB is about to hydrate. */
 async function ensureHandle(
   slug: string,
   set: (
@@ -837,32 +1236,70 @@ async function ensureHandle(
       | ((s: DocsState) => Partial<DocsState>),
   ) => void,
   get: () => DocsState,
+  opts?: { seedFirstLine?: string },
 ): Promise<void> {
   if (get().handles[slug]) return
-  set((s) => ({ status: { ...s.status, [slug]: 'initializing' } }))
-  const handle = await buildHandle(slug, (status) => {
-    set((s) => ({ status: { ...s.status, [slug]: status } }))
-  })
-  if (!handle) {
-    // proof-server unreachable or session denied. Toast once so the user
-    // knows their tab is dead instead of silently sitting on the editor's
-    // 'error' status banner. Retry re-runs the same setup.
-    notify.cantOpenNote({ onRetry: () => ensureHandle(slug, set, get) })
-    return
+  // Local-only handle is ready immediately (Y.Doc + IndexedDB are sync).
+  // The WebSocket provider attaches in the background via
+  // attachProviderWhenReady — by which time the editor is already
+  // rendering and the user may have typed several characters. Those
+  // characters land in IndexedDB first, then merge into the server's
+  // state once the provider arrives. If the server never arrives the
+  // tab stays local-only forever; no toast or error gate, since "I
+  // can keep writing offline" is the contract this pattern offers.
+  const handle = buildHandle(
+    slug,
+    set as (fn: (s: DocsState) => Partial<DocsState>) => void,
+    (status) => {
+      set((s) => ({ status: { ...s.status, [slug]: status } }))
+    },
+  )
+  if (opts?.seedFirstLine !== undefined) {
+    seedBodyFirstLine(handle.ydoc, opts.seedFirstLine)
   }
   set((s) => ({ handles: { ...s.handles, [slug]: handle } }))
+  seedMetaFromCatalog(handle, get().knownDocs.find((d) => d.slug === slug))
   installTitleMirror(slug, handle, set, get)
 }
 
-/** Mirror Y.Text('title') changes back into knownDocs.title so closed
+/** Mirror catalog-level type/date into the doc's Y.Map('meta') the
+ * first time we open the handle, so meta becomes the single source of
+ * truth that everything else (normalize, footer, hover popovers) can
+ * read without racing the bootstrap.
+ *
+ * No-op when meta.type already exists — that's the steady state after
+ * the first seed (or for docs that were created by an already-meta-
+ * aware build). Skips silently when catalog has no entry, since there
+ * is nothing authoritative to copy.
+ *
+ * createdAt is deliberately NOT seeded here — back-stamping a fresh
+ * timestamp on a doc that was created last week would lie about its
+ * age. Create paths set createdAt themselves at the real creation
+ * moment; legacy docs simply have an empty createdAt forever, which
+ * is correct. */
+function seedMetaFromCatalog(handle: CollabHandle, known: KnownDoc | undefined): void {
+  if (!known) return
+  const metaMap = handle.ydoc.getMap('meta')
+  if (metaMap.get('type')) return
+  writeDocMeta(handle.ydoc, {
+    type: known.type,
+    date: known.type === 'daily' ? known.date : undefined,
+  })
+}
+
+/** Mirror the doc's derived label back into knownDocs.title so closed
  * docs still show their real label in the sidebar / palette / etc.
- * Gated by provider sync — before the first sync, Y.Text is local-
- * only and reading "" would clobber the persisted cache (which often
- * holds the title set at create time). After sync, the ydoc state is
- * authoritative and we mirror every change.
+ * The label comes from the body's first non-empty block (see
+ * lib/docLabel.ts), not specifically the first h1.
+ *
+ * Gated by provider sync to avoid the pre-bootstrap window where the
+ * local state is incomplete. Once sync completes, the ydoc state is
+ * authoritative and every change — including transitions to empty —
+ * is mirrored straight through. Display callers fall back to
+ * 'Untitled' in one place (hooks/useDocLabel.ts).
  *
  * Daily entries are skipped: their label comes from `meta.date`, not
- * a Y.Text. Cleanup happens implicitly when handle.ydoc.destroy() in
+ * the body. Cleanup happens implicitly when handle.ydoc.destroy() in
  * closeDoc tears down all observers. */
 function installTitleMirror(
   slug: string,
@@ -875,28 +1312,36 @@ function installTitleMirror(
   get: () => DocsState,
 ): void {
   const known = get().knownDocs.find((d) => d.slug === slug)
-  if (known?.type === 'daily') return
+  if (!known) return
+  // Title mirror runs only for user-authored `writing` notes — the
+  // doc kind whose body's first block IS the title by user
+  // intuition (Notion-style "header-as-first-line"). Daily entries
+  // derive their label from meta.date; wiki:* content pages and
+  // system:* meta pages carry an explicit title in the catalog
+  // (set by createCustomWikiPage / ensureSystemPage), and that
+  // title is the source of truth — body edits must NOT overwrite
+  // it. Letting them did, in practice:
+  //   - AI's "Daniel" wiki page got its title overwritten by the
+  //     first bullet under it the moment the user opened the doc;
+  //   - system:index's title became the raw markdown index line
+  //     the moment a single update merged into the body.
+  // Restricting the mirror to writing-type docs keeps everything
+  // else stable while preserving the writing-note UX.
+  if (known.type !== 'writing') return
 
-  const ytext = handle.ydoc.getText('title')
+  const fragment = handle.ydoc.getXmlFragment('prosemirror')
   const sync = () => {
-    const next = ytext.toString()
-    // Never overwrite the cached title with an empty value. Two
-    // different scenarios produce next === '' and we can't tell
-    // them apart from this side:
-    //   (a) Legitimate: the user emptied the title field
-    //   (b) Pre-cache: the doc was created before the title-cache
-    //       feature shipped, so Y.Text was never seeded
-    // Treating both as "clear the cache" loses (b)'s real label —
-    // older docs go to Untitled the moment the user warms them.
-    // Preserve the last known good value instead; (a) accepts a
-    // tiny staleness on close, while (b) keeps its label.
-    if (next.length === 0) return
+    const next = deriveLabel(fragment)
     set((s) => {
       const idx = s.knownDocs.findIndex((d) => d.slug === slug)
       if (idx < 0) return s
       const cur = s.knownDocs[idx]
-      if (cur.type === 'daily') return s
-      if (cur.title === next) return s
+      // Defense in depth — the outer gate above already excludes
+      // non-writing types, but a future change that calls sync()
+      // from a different path shouldn't accidentally clobber
+      // catalog titles on wiki / system docs.
+      if (cur.type !== 'writing') return s
+      if ((cur.title ?? '') === next) return s
       const list = [...s.knownDocs]
       list[idx] = { ...cur, title: next }
       return { knownDocs: list }
@@ -904,18 +1349,26 @@ function installTitleMirror(
   }
   const start = () => {
     sync()
-    ytext.observe(sync)
+    // observeDeep so edits inside block text children update the
+    // cache, not just structural changes at the fragment root.
+    fragment.observeDeep(sync)
   }
-  if (handle.provider.isSynced) {
+  if (handle.provider?.isSynced || handle.idb.synced) {
     start()
     return
   }
+  // Either signal triggers the mirror: idb hydrates the same fragment
+  // the server would have sent, so sidebar titles populate on cold/
+  // offline launches without waiting for proof-server. provider may
+  // never arrive (offline-only tab) — that's fine, idb alone covers it.
   let started = false
-  const onceSynced = () => {
+  const onceReady = () => {
     if (started) return
     started = true
-    handle.provider.off('synced', onceSynced)
+    handle.provider?.off('synced', onceReady)
+    handle.idb.off('synced', onceReady)
     start()
   }
-  handle.provider.on('synced', onceSynced)
+  handle.provider?.on('synced', onceReady)
+  handle.idb.on('synced', onceReady)
 }

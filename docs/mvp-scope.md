@@ -1,8 +1,8 @@
 # MVP Scope — 출시까지 남은 것
 
 작성: 2026-05-09
-최종 갱신: 2026-05-10 (4/5 완료, 2개 deferred)
-상태: **In progress** — 신뢰성 항목 4개 완료, 온보딩/배포 설정은 추후
+최종 갱신: 2026-05-11 (신뢰성 5/5 완료, 출시 잔여 7개 항목 + Audit 누락 Phase 0~4 로 구조화)
+상태: **In progress** — 신뢰성 완료, 다음은 출시 잔여 기능 확장 (Phase 0~4) + 배포 설정 (병렬)
 
 > 코드베이스가 길어졌으니 MVP 범위를 락하고 하나씩 마무리한다.
 > 원칙: Reliable + Wellmade. 사용자가 에러를 만나면 항상 무엇이 일어났는지 보여야 한다.
@@ -119,9 +119,137 @@ ChatPanel.tsx **1058 → 534 라인** (≈50% 감소). LEGO-block 구조로 재�
 
 ---
 
+## 🚀 출시 잔여 — Phase 0~4 기능 확장
+
+제품 오너가 출시 전 필요 작업으로 식별한 7개 항목 + 코드베이스 audit 으로 발견한 누락 항목을 의존성 순서로 정리. 신뢰성(1~5)이 끝났으니 다음은 "쓸수록 나를 안다" 가치를 실제 작동시키는 단계.
+
+**7 개 출시 잔여 항목** (제품 오너 식별):
+1. 기존 마크다운 임포트
+2. 마크다운/온보딩 데이터로 콜드스타트 완화 메모리 생성
+3. 위키 구조 및 동작 원리 개선
+4. proof-sdk 적용 UX 개선
+5. 채팅 패널 ↔ 에디터 상호작용
+6. 에디터 스타일링 개선
+7. 온보딩
+
+**Audit 으로 발견된 누락 항목** (출시 전 필수):
+- Settings/Preferences 패널 — 메뉴 아이템만 있고 onClick 미연결 (ghost 버튼)
+- Filter 메뉴 — 동일 상태
+- Keyboard Shortcuts Help — 10+ 단축키가 코드 산재, 문서화 0
+- Empty States — 빈 날짜 / 빈 에디터 placeholder 없음
+- Full-text Search — 현재 doc name 검색만, 본문 검색 없음
+
+---
+
+### Phase 0 — Reliability Foundation (선결)
+
+**목표**: 출시 잔여 작업이 안전하게 얹힐 invariant 기반 마련.
+
+**작업**:
+- `Y.UndoManager([xmlFragment, marksMap])` 정합 invariant 테스트 — 모든 mutation path 가 `ydoc.transact(_, origin)` 사용하는지 강제
+- import dry-run skeleton (per-file transaction, slug 충돌 검출)
+- ingest 결과 토스트화 — silent fail 금지
+- catalog migration 게이트 (EngineGate 확장)
+- ghost Settings / Filter 메뉴 disabled 처리 — 비활성 버튼으로 출시 금지
+
+**위험**: 보이지 않는 작업이라 미루기 쉬움 → 별도 PR 강제.
+
+---
+
+### Phase 1 — Import + Cold-start Memory (순차)
+
+**목표**: 첫 가치 = "쓸수록 나를 안다" 메커니즘 가동.
+
+**포함**: ① 마크다운 임포트 → ② 콜드스타트 메모리 (이 순서로)
+
+**선행**: Phase 0.
+
+**작업**:
+- 문서 생성 API 가 초기 markdown 인자 받도록 확장
+- File picker + .md 파서 + bulk import (per-file transaction, slug idempotent)
+- 온보딩 답변 + import 산출물 → bootstrap → ingest 파이프 통과 → wiki 마크
+- Watermark cap — ingest 가 wiki 를 마크로 도배 못 하게 "Review N proposals" 큐로 묶기
+
+**위험**: 대량 import 시 collab throughput, slug 충돌, parser 실패 → 데이터 손실. 방어: dry-run + per-file rollback + 실패 토스트.
+
+---
+
+### Phase 2 — Wiki 구조 + proof-sdk UX (트랙 A/B 병렬)
+
+**선행**: Phase 1 (콜드스타트 결과를 위키에서 본다).
+
+**트랙 A — ③ 위키 구조**:
+- catalog `type=wiki:*` 사이드바 정식
+- anchor-text 모델 점검 (ADR 2026-05-08-wiki-ingest-system)
+- append-only 의미 가시화 (sourceBeliefId chip)
+- 위키 빈 상태 헬프 + 새 페이지 템플릿
+
+**트랙 B — ④ proof-sdk UX**:
+- ADR 2026-05-10-proof-sdk-realignment 패턴 — ops/suggestion.add + ghost widget 유지
+- `proofComment` 마크 생성 UI (현재 schema/render 만 있음 — 출시 범위로 끌어옴)
+- mark hover 액션바 일관성, accept/reject 키바인딩 발견성
+
+**위험**: edit/v2 와 ops 혼용 재발 → PR 템플릿에 ADR 한 줄 규칙 명시.
+
+---
+
+### Phase 3 — Chat↔Editor + Styling (트랙 C/D 병렬)
+
+**선행**: Phase 2 (마크 패턴 fix).
+
+**트랙 C — ⑤ 채팅↔에디터**:
+- 드래그→칩 메타데이터 동행 (snippet ↔ inline mark)
+- ⌘⇧L 단축키, snippet 카드 ↔ inline mark 양방향 스크롤
+- multi-turn suggestion 적용 일관성
+
+**트랙 D — ⑥ 에디터 스타일링**:
+- `docs/markdown-styling-plan.md` 흡수 — 타이포 / spacing / 리스트 / heading rhythm
+- link hover bar 완성, mark toolbar position 튜닝
+- dark mode 완전성 점검
+- Bulk accept/reject (`⇧⌘A` / `⇧⌘R`) + 헤더 카운터 (폴리싱에서 흡수)
+
+**위험**: D 의 CSS 가 B 의 mark decoration 시각 회귀 유발 → 스냅샷 테스트.
+
+---
+
+### Phase 4 — 온보딩 (마지막)
+
+**선행**: Phase 1~3 (보여줄 가치가 모두 작동해야 온보딩이 거짓말 안 함).
+
+**포함**: ⑦ + Audit 누락 (Help, Empty states) + 기존 §6 의 A+B 흡수.
+
+**작업**:
+- §6 의 A+B — ChatPanel 오버레이 [Sign in] 버튼 + `useIdleTrigger` auth pre-check
+- 첫 실행 wizard — Phase 1 의 import + 콜드스타트 호출
+- Keyboard Shortcuts Help modal (`?` 아이콘) — 단축키 통합 노출
+- Empty State 컴포넌트 — 빈 날짜 / 빈 에디터 / 빈 위키
+- Command Palette 액션 확장 (Archive current, New note 등)
+
+**위험**: Claude 미연결 상태 ingest silent fail (§6 진단) → auth pre-check 강제.
+
+---
+
+### 병렬 가능 페어
+
+순차 필수: Phase 0 → ① → ② → (③ ∥ ④) → (⑤ ∥ ⑥) → ⑦.
+**2 인 병렬**: (③ 위키) ∥ (④ proof-sdk UX), 그리고 (⑤ 채팅↔에디터) ∥ (⑥ 스타일링). 다른 파일군이라 머지 충돌 최소.
+
+### v1 이후로 미룸 (이번 출시 범위 밖)
+
+- Document duplicate / Rename slug
+- Trash 일괄 작업 UI
+- Sync persistent 배지
+- Version/About 화면
+- Collaborative editing (단일 사용자 가정)
+- macOS 타이틀바 hover 이벤트 fix — spec 은 `docs/macos-titlebar-hover-fix.md` 에 완비, 디자인 확정 후 진행
+
+---
+
 ## 🟡 출시 전 마무리 (deferred)
 
-### 6. 🟡 온보딩 — Claude 미연결 상태 (deferred)
+### 6. 🟡 온보딩 — Claude 미연결 상태 (deferred → Phase 4 에서 흡수)
+
+> 이 작업의 A+B 는 위 **Phase 4 — 온보딩**의 일부로 흡수됨. 아래 분석은 그대로 유효.
 
 **문제 (분석 완료, 구현 deferred)**:
 
@@ -146,7 +274,9 @@ ChatPanel.tsx **1058 → 534 라인** (≈50% 감소). LEGO-block 구조로 재�
 
 ---
 
-### 7. 🟡 tauri.conf.json — 배포 준비 (deferred)
+### 7. 🟡 tauri.conf.json — 배포 준비 (deferred, Phase 0~4 와 병렬 트랙)
+
+> 배포 인프라 작업. 기능 Phase 와 의존 없음 → 별도 트랙으로 병렬 진행 가능.
 
 **현재 상태**: `bundle.icon: []`, 사이닝 미설정, 업데이터 미설정.
 
@@ -169,8 +299,6 @@ ChatPanel.tsx **1058 → 534 라인** (≈50% 감소). LEGO-block 구조로 재�
 
 ## 🟡 폴리싱 (MVP 같이 / 여유되면 / 또는 1.1)
 
-- [ ] Bulk accept/reject (`⇧⌘A` / `⇧⌘R`) + 헤더 카운터 (roadmap PR 1-B)
-- [ ] 위키 사이드바 빈 상태 헬프 텍스트 + 새 페이지 템플릿
 - [ ] 매우 긴 문서 (>60K) 잘림 경고 (`DOC_CHAR_CAP`)
 - [ ] 스레드 5개 한도 시 disabled 버튼 툴팁
 - [ ] Stale ingest proposal 정리 (`ingestStore.ts:97-100`)
@@ -206,8 +334,12 @@ ChatPanel.tsx **1058 → 534 라인** (≈50% 감소). LEGO-block 구조로 재�
 - [x] 🔴 3번 완료 (EngineGate)
 - [x] 🔴 4번 완료 (Chat 세션 라이프사이클)
 - [x] 🔴 5번 완료 (Chat 리팩토링)
-- [ ] 🟡 6번 (온보딩 A+B)
-- [ ] 🟡 7번 (배포 설정)
+- [ ] 🚀 Phase 0 — Reliability Foundation (invariant 테스트, ghost 메뉴 정리)
+- [ ] 🚀 Phase 1 — Import + Cold-start Memory (순차)
+- [ ] 🚀 Phase 2 — Wiki + proof-sdk UX (트랙 A/B 병렬)
+- [ ] 🚀 Phase 3 — Chat↔Editor + Styling (트랙 C/D 병렬)
+- [ ] 🚀 Phase 4 — 온보딩 (§6 의 A+B 흡수)
+- [ ] 🟡 7번 (배포 설정, Phase 와 병렬 트랙)
 - [ ] DMG 빌드 + 코드 사이닝 + 공증 (7번 후속)
 - [ ] 베타 5–10 명 onboarding 메시지 + 채널
 - [ ] 첫 주 모니터링 후 🟡 핫픽스

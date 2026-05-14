@@ -1,24 +1,31 @@
-// Fallback list rendered at the bottom of the editor canvas: any
-// child note (writing under the active doc) that the user hasn't
-// referenced via a wikilink in the body. Surfacing them keeps a
-// child from going invisible just because the author hasn't typed
-// `[[name]]` yet — the sidebar tree is one place to find children,
-// this is the other, anchored to the parent doc itself.
+// Footer trigger + popover surfacing child notes (writing under the
+// active doc) that the user hasn't referenced via a wikilink in the
+// body. Surfacing them keeps a child from going invisible just
+// because the author hasn't typed `[[name]]` yet — the sidebar tree
+// is one place to find children, this is the other, anchored to the
+// parent doc itself.
 //
 // Hidden when there are no children, or when every child is already
 // linked from the body. Updates live: PM doc changes via
 // usePmDocVersion bump the version and re-collect referenced slugs;
-// docsStore changes (new child added, child closed) re-derive
-// the children list.
+// docsStore changes (new child added, child closed) re-derive the
+// children list.
 //
-// Each row uses the child's live Y.Text title when its handle is
-// already open, falling back to "Untitled" otherwise. Clicking a
-// row pushes the child back into openSlugs (if not there) and
-// activates it, mirroring the wikilink click behavior.
+// Lives inside EditorFooter on the right side. Default state is a
+// compact `Unlinked (n) >` button; clicking opens a popover with the
+// list. Each row uses the child's live Y.Text title when its handle
+// is already open, falling back to "Untitled" otherwise. Clicking a
+// row pushes the child back into openSlugs (if not there), activates
+// it, and closes the popover.
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { IconFileDescription } from '@tabler/icons-react'
+import { IconChevronRight, IconFileDescription } from '@tabler/icons-react'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
@@ -33,6 +40,7 @@ interface Props {
 export function UnlinkedNotes({ view, parentSlug }: Props) {
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const docVersion = usePmDocVersion()
+  const [open, setOpen] = useState(false)
 
   // Walk the PM doc once per change, collecting note: hrefs from
   // every link mark instance. Cheap (just a descend over text
@@ -49,7 +57,6 @@ export function UnlinkedNotes({ view, parentSlug }: Props) {
       }
     })
     return set
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, docVersion])
 
   const children = useMemo(
@@ -71,23 +78,49 @@ export function UnlinkedNotes({ view, parentSlug }: Props) {
   if (unlinked.length === 0) return null
 
   return (
-    <section
-      aria-label="Unlinked child notes"
-      className="mt-8 border-t border-border pt-4"
-    >
-      <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
-        Unlinked notes
-      </h3>
-      <ul className="flex flex-col gap-0.5">
-        {unlinked.map((doc) => (
-          <UnlinkedRow key={doc.slug} doc={doc} />
-        ))}
-      </ul>
-    </section>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`${unlinked.length} unlinked child notes`}
+          className={cn(
+            'flex items-center gap-1',
+            'text-[12px] leading-none text-muted-foreground opacity-80',
+            'transition-opacity hover:opacity-100',
+            'outline-none focus-visible:opacity-100',
+          )}
+        >
+          <span>Unlinked ({unlinked.length})</span>
+          <IconChevronRight size={11} stroke={2} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        side="top"
+        sideOffset={6}
+        className="w-64 gap-0 p-1"
+      >
+        <ul className="flex flex-col">
+          {unlinked.map((doc) => (
+            <UnlinkedRow
+              key={doc.slug}
+              doc={doc}
+              onPick={() => setOpen(false)}
+            />
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
   )
 }
 
-function UnlinkedRow({ doc }: { doc: KnownDoc }) {
+function UnlinkedRow({
+  doc,
+  onPick,
+}: {
+  doc: KnownDoc
+  onPick: () => void
+}) {
   const setActive = useDocsStore((s) => s.setActive)
   const openSlugs = useDocsStore((s) => s.openSlugs)
   const label = useDocLabel(doc.slug)
@@ -101,6 +134,7 @@ function UnlinkedRow({ doc }: { doc: KnownDoc }) {
       )
     }
     setActive(doc.slug)
+    onPick()
   }
 
   return (

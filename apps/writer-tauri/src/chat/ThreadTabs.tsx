@@ -53,39 +53,10 @@ export function ThreadTabs({
   onRestoreLimitReached,
 }: Props) {
   const atLimit = active.length >= MAX_ACTIVE_THREADS
-  const rootRef = useRef<HTMLDivElement>(null)
-
-  // Tab-switch shortcuts: ⌘⇧[ previous, ⌘⇧] next (Ctrl on non-Mac).
-  // Cursor-style focus scoping — the same chord swaps editor docs
-  // when focus is in the editor, so we only fire when something
-  // inside the chat panel currently has focus. The chat panel
-  // marks itself with data-chat-panel; we walk up from the tablist
-  // to find that boundary and gate on it.
-  useEffect(() => {
-    if (active.length <= 1) return
-    const handler = (e: KeyboardEvent) => {
-      if (!e.shiftKey || !(e.metaKey || e.ctrlKey)) return
-      const isPrev = e.key === '[' || e.code === 'BracketLeft'
-      const isNext = e.key === ']' || e.code === 'BracketRight'
-      if (!isPrev && !isNext) return
-      const chatPanel = rootRef.current?.closest('[data-chat-panel]')
-      if (!chatPanel || !chatPanel.contains(document.activeElement)) return
-      e.preventDefault()
-      const idx = active.findIndex((t) => t.id === activeId)
-      const cur = idx < 0 ? 0 : idx
-      const next = isPrev
-        ? (cur - 1 + active.length) % active.length
-        : (cur + 1) % active.length
-      onSelect(active[next].id)
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [active, activeId, onSelect])
 
   return (
     <TooltipProvider>
       <TabsPrimitive.Root
-        ref={rootRef}
         value={activeId ?? ''}
         onValueChange={onSelect}
         className="flex flex-1 items-stretch gap-1 overflow-hidden"
@@ -181,7 +152,7 @@ function Tab({ meta, isActive, onArchive, onRename }: TabProps) {
       value={meta.id}
       onDoubleClick={() => setEditing(true)}
       className={cn(
-        'group flex max-w-[180px] shrink-0 items-center gap-1.5 px-1.5 text-[13px] font-medium transition-colors',
+        'group flex max-w-[180px] shrink-0 items-center gap-1.5 px-1.5 text-sm font-medium transition-colors',
         'border-b',
         'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
         isActive

@@ -13,7 +13,7 @@
 
 import { $markSchema, $markAttr } from '@milkdown/kit/utils'
 import type { Attrs, Mark } from '@milkdown/kit/prose/model'
-import type { MarkdownNode, SerializerState } from '@milkdown/transformer'
+import type { MarkdownNode, SerializerState } from '@milkdown/kit/transformer'
 
 type ProofSuggestionKind = 'insert' | 'delete' | 'replace'
 
@@ -58,17 +58,36 @@ export const proofSuggestionAttr = $markAttr('proofSuggestion', () => ({
   id: {},
   kind: {},
   by: {},
+  sourceSlug: {},
+  sourceLabel: {},
+  sourceQuote: {},
+  createdAt: {},
 }))
 
 export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
-  // The PM mark is a pure anchor — only id / kind / by ride here.
-  // content / status / createdAt all live on the Y.Map StoredMark so a
-  // server markdown round-trip can't strip them; readers look them up
-  // there instead of off mark.attrs.
+  // Provenance fields live on the mark itself (not Y.Map) so PM undo
+  // restores them as part of the same atomic step that restores the
+  // mark. The dual-source variant — id/kind/by on the mark, source*
+  // metadata in Y.Map — produced a class of Cmd+Z bugs where the
+  // visual came back but the breadcrumb was gone (markCleanupPlugin
+  // had wiped Y.Map mid-accept). Single authority on the inline mark
+  // matches the codebase invariant the deco/cleanup plugins already
+  // assume.
+  //
+  // All source* / createdAt default to null so older docs whose marks
+  // were stamped before this schema change still parse cleanly; the
+  // popover treats missing breadcrumb as "no source available."
+  // createdAt aligns with proof-sdk's field name (we used to call it
+  // proposedAt — parseDOM/parseMarkdown still accept the legacy key
+  // so older snapshots round-trip without losing the timestamp).
   attrs: {
     id: { default: null },
     kind: { default: 'replace' },
     by: { default: 'unknown' },
+    sourceSlug: { default: null },
+    sourceLabel: { default: null },
+    sourceQuote: { default: null },
+    createdAt: { default: null },
   },
   inclusive: false,
   spanning: true,
@@ -80,6 +99,11 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
         return {
           ...common,
           kind: normalizeSuggestionKind(dom.getAttribute('data-kind')),
+          sourceSlug: dom.getAttribute('data-source-slug'),
+          sourceLabel: dom.getAttribute('data-source-label'),
+          sourceQuote: dom.getAttribute('data-source-quote'),
+          createdAt:
+            dom.getAttribute('data-created-at') ?? dom.getAttribute('data-proposed-at'),
         }
       },
     },
@@ -90,6 +114,10 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
       'data-kind': normalizeSuggestionKind(mark.attrs.kind),
       ...buildCommonDomAttrs(mark),
     }
+    if (mark.attrs.sourceSlug) domAttrs['data-source-slug'] = String(mark.attrs.sourceSlug)
+    if (mark.attrs.sourceLabel) domAttrs['data-source-label'] = String(mark.attrs.sourceLabel)
+    if (mark.attrs.sourceQuote) domAttrs['data-source-quote'] = String(mark.attrs.sourceQuote)
+    if (mark.attrs.createdAt) domAttrs['data-created-at'] = String(mark.attrs.createdAt)
     return ['span', domAttrs, 0]
   },
   parseMarkdown: {
@@ -101,6 +129,10 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
         id: attrs.id ?? null,
         kind: normalizeSuggestionKind(attrs.kind),
         by: attrs.by ?? 'unknown',
+        sourceSlug: attrs.sourceSlug ?? null,
+        sourceLabel: attrs.sourceLabel ?? null,
+        sourceQuote: attrs.sourceQuote ?? null,
+        createdAt: attrs.createdAt ?? attrs.proposedAt ?? null,
       })
       state.next(proofNode.children || [])
       state.closeMark(markType)
@@ -113,6 +145,10 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
         id: mark.attrs.id ?? null,
         by: mark.attrs.by ?? null,
         kind: normalizeSuggestionKind(mark.attrs.kind),
+        sourceSlug: mark.attrs.sourceSlug ?? null,
+        sourceLabel: mark.attrs.sourceLabel ?? null,
+        sourceQuote: mark.attrs.sourceQuote ?? null,
+        createdAt: mark.attrs.createdAt ?? null,
       })
     },
   },
@@ -122,19 +158,40 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', () => ({
 export const proofCommentAttr = $markAttr('proofComment', () => ({
   id: {},
   by: {},
+  text: {},
+  quote: {},
+  note: {},
 }))
 
 export const proofCommentSchema = $markSchema('proofComment', () => ({
+  // Comment body, the quoted span, and any rationale all live on the
+  // mark itself so PM undo restores them together with the mark. The
+  // dual-source variant (data in Y.Map<StoredMark>) lost the body the
+  // moment a comment got resolved + Cmd+Z'd: PM brought the mark back,
+  // Y.Map stayed empty, popover read empty text. Single authority on
+  // the inline mark eliminates that class of bug.
+  //
+  // All three default to null so older docs whose comment marks
+  // pre-date this schema parse cleanly; the popover treats missing
+  // body as "(no comment text)".
   attrs: {
     id: { default: null },
     by: { default: 'unknown' },
+    text: { default: null },
+    quote: { default: null },
+    note: { default: null },
   },
   inclusive: false,
   spanning: true,
   parseDOM: [
     {
       tag: 'span[data-proof="comment"]',
-      getAttrs: (dom: HTMLElement): Attrs => parseCommonAttrs(dom),
+      getAttrs: (dom: HTMLElement): Attrs => ({
+        ...parseCommonAttrs(dom),
+        text: dom.getAttribute('data-text'),
+        quote: dom.getAttribute('data-quote'),
+        note: dom.getAttribute('data-note'),
+      }),
     },
   ],
   toDOM: (mark) => {
@@ -142,6 +199,9 @@ export const proofCommentSchema = $markSchema('proofComment', () => ({
       'data-proof': 'comment',
       ...buildCommonDomAttrs(mark),
     }
+    if (mark.attrs.text) domAttrs['data-text'] = String(mark.attrs.text)
+    if (mark.attrs.quote) domAttrs['data-quote'] = String(mark.attrs.quote)
+    if (mark.attrs.note) domAttrs['data-note'] = String(mark.attrs.note)
     return ['span', domAttrs, 0]
   },
   parseMarkdown: {
@@ -152,6 +212,9 @@ export const proofCommentSchema = $markSchema('proofComment', () => ({
       state.openMark(markType, {
         id: attrs.id ?? null,
         by: attrs.by ?? 'unknown',
+        text: attrs.text ?? null,
+        quote: attrs.quote ?? null,
+        note: attrs.note ?? null,
       })
       state.next(proofNode.children || [])
       state.closeMark(markType)
@@ -163,6 +226,9 @@ export const proofCommentSchema = $markSchema('proofComment', () => ({
       serializeProofMark(state, mark, 'comment', {
         id: mark.attrs.id ?? null,
         by: mark.attrs.by ?? null,
+        text: mark.attrs.text ?? null,
+        quote: mark.attrs.quote ?? null,
+        note: mark.attrs.note ?? null,
       })
     },
   },
@@ -340,7 +406,7 @@ export const proofProvenanceSchema = $markSchema('proofProvenance', () => ({
     sourceSlug: { default: null },
     sourceLabel: { default: null },
     sourceQuote: { default: null },
-    proposedAt: { default: null },
+    createdAt: { default: null },
     acceptedAt: { default: null },
     model: { default: null },
   },
@@ -354,7 +420,8 @@ export const proofProvenanceSchema = $markSchema('proofProvenance', () => ({
         sourceSlug: dom.getAttribute('data-source-slug'),
         sourceLabel: dom.getAttribute('data-source-label'),
         sourceQuote: dom.getAttribute('data-source-quote'),
-        proposedAt: dom.getAttribute('data-proposed-at'),
+        createdAt:
+          dom.getAttribute('data-created-at') ?? dom.getAttribute('data-proposed-at'),
         acceptedAt: dom.getAttribute('data-accepted-at'),
         model: dom.getAttribute('data-model'),
       }),
@@ -366,7 +433,7 @@ export const proofProvenanceSchema = $markSchema('proofProvenance', () => ({
     if (mark.attrs.sourceSlug) domAttrs['data-source-slug'] = String(mark.attrs.sourceSlug)
     if (mark.attrs.sourceLabel) domAttrs['data-source-label'] = String(mark.attrs.sourceLabel)
     if (mark.attrs.sourceQuote) domAttrs['data-source-quote'] = String(mark.attrs.sourceQuote)
-    if (mark.attrs.proposedAt) domAttrs['data-proposed-at'] = String(mark.attrs.proposedAt)
+    if (mark.attrs.createdAt) domAttrs['data-created-at'] = String(mark.attrs.createdAt)
     if (mark.attrs.acceptedAt) domAttrs['data-accepted-at'] = String(mark.attrs.acceptedAt)
     if (mark.attrs.model) domAttrs['data-model'] = String(mark.attrs.model)
     return ['span', domAttrs, 0]
@@ -381,7 +448,7 @@ export const proofProvenanceSchema = $markSchema('proofProvenance', () => ({
         sourceSlug: attrs.sourceSlug ?? null,
         sourceLabel: attrs.sourceLabel ?? null,
         sourceQuote: attrs.sourceQuote ?? null,
-        proposedAt: attrs.proposedAt ?? null,
+        createdAt: attrs.createdAt ?? attrs.proposedAt ?? null,
         acceptedAt: attrs.acceptedAt ?? null,
         model: attrs.model ?? null,
       })
@@ -397,7 +464,7 @@ export const proofProvenanceSchema = $markSchema('proofProvenance', () => ({
         sourceSlug: mark.attrs.sourceSlug ?? null,
         sourceLabel: mark.attrs.sourceLabel ?? null,
         sourceQuote: mark.attrs.sourceQuote ?? null,
-        proposedAt: mark.attrs.proposedAt ?? null,
+        createdAt: mark.attrs.createdAt ?? null,
         acceptedAt: mark.attrs.acceptedAt ?? null,
         model: mark.attrs.model ?? null,
       })

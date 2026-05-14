@@ -1,22 +1,18 @@
-// Document title kept in the same Y.Doc as the body so it syncs with
-// every other peer for free. Stored as a Y.Text under the well-known
-// 'title' key; the body lives elsewhere (Milkdown owns its own
-// fragment) so the two streams don't fight.
+// Live label of a doc, read from the body's first non-empty block.
 //
-// Returns React-friendly { title, setTitle }. setTitle does a
-// transactional replace (delete-all + insert) instead of trying to
-// diff — title strings are short, the cost is trivial, and it keeps
-// the surface predictable.
+// The body is the single source of truth for a doc's name. There is
+// no special "title slot" — whatever the user wrote in the first
+// non-empty block (heading, paragraph, list item, etc.) is the
+// displayed label. See lib/docLabel.ts for the exact rule.
+//
+// Callers update the label by editing the body in the editor; there
+// is no setter on this hook.
 
 import { useEffect, useState } from 'react'
 import * as Y from 'yjs'
+import { deriveLabel } from '@/lib/docLabel'
 
-const TITLE_KEY = 'title'
-
-export function useDocTitle(ydoc: Y.Doc | null): {
-  title: string
-  setTitle: (next: string) => void
-} {
+export function useDocTitle(ydoc: Y.Doc | null): string {
   const [title, setLocalTitle] = useState('')
 
   useEffect(() => {
@@ -24,22 +20,17 @@ export function useDocTitle(ydoc: Y.Doc | null): {
       setLocalTitle('')
       return
     }
-    const ytext = ydoc.getText(TITLE_KEY)
-    setLocalTitle(ytext.toString())
-    const onChange = () => setLocalTitle(ytext.toString())
-    ytext.observe(onChange)
-    return () => ytext.unobserve(onChange)
+    const fragment = ydoc.getXmlFragment('prosemirror')
+    const compute = () => deriveLabel(fragment)
+    setLocalTitle(compute())
+    const onChange = () => setLocalTitle(compute())
+    // observeDeep so edits inside block children fire even when the
+    // fragment's top-level structure is unchanged.
+    fragment.observeDeep(onChange)
+    return () => {
+      fragment.unobserveDeep(onChange)
+    }
   }, [ydoc])
 
-  const setTitle = (next: string) => {
-    if (!ydoc) return
-    const ytext = ydoc.getText(TITLE_KEY)
-    if (ytext.toString() === next) return
-    ydoc.transact(() => {
-      ytext.delete(0, ytext.length)
-      if (next.length > 0) ytext.insert(0, next)
-    })
-  }
-
-  return { title, setTitle }
+  return title
 }

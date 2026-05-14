@@ -1,31 +1,30 @@
-// Frozen selection — keeps the user's last non-empty selection visible
-// (and accessible by external callers) while focus moves to the chat
-// input. Without this, slash commands like `/polish` lose their context
-// the moment the user clicks the prompt textarea: ProseMirror retains
-// state.selection, but the browser only paints native selection on the
-// focused element, so the highlight visually disappears and the UX
-// reads as "my selection got dropped."
+// Frozen selection — keeps the user's last non-empty selection
+// available to the chat panel after the editor loses focus, so a
+// slash command like `/polish` knows what range it's attached to.
 //
 // Design:
 //   - Plugin state holds an optional { from, to } range.
 //   - On editor.dom blur we snapshot the current selection if non-empty.
-//   - On editor.dom focus we clear the snapshot — the live selection
-//     takes over again.
 //   - Every transaction maps the range through tr.mapping so collab
 //     edits arriving from other clients don't shift the snapshot off
 //     its anchor.
-//   - props.decorations renders an inline decoration with a CSS class
-//     that mimics the native selection color, so the user keeps seeing
-//     what's "attached" to the chat run.
+//
+// No visual: the chat panel chip already shows the captured text, so
+// painting an inline decoration over the editor range was a redundant
+// second affordance. It also caused phantom highlights — any blur
+// (DevTools, context menu, NodeView CE=false click) snapshotted, and
+// the focus-back event was unreliable enough that stale green boxes
+// would linger in the body. Removing the paint takes that whole class
+// of bug off the table; the chip is the single source of truth for
+// "selection still attached."
 //
 // External API: `getFrozenRange(view)` lets the chat panel read the
-// snapshot when the live selection has collapsed. `frozenRangeKey` is
-// exported so callers can subscribe via plugin state if they need
-// finer-grained reactivity later.
+// snapshot when the live selection has collapsed. `clearFrozenRange`
+// drops it (used by the chip's X button).
 
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
-import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view'
+import type { EditorView } from '@milkdown/kit/prose/view'
 
 interface FrozenState {
   range: { from: number; to: number } | null
@@ -65,11 +64,20 @@ export function createFrozenSelectionPlugin() {
           init(): FrozenState {
             return { range: null }
           },
-          apply(tr, prev): FrozenState {
+          apply(tr, prev, oldState, newState): FrozenState {
             const meta = tr.getMeta(frozenRangeKey) as FrozenMeta | undefined
             if (meta) {
               if (meta.type === 'clear') return { range: null }
               return { range: { from: meta.from, to: meta.to } }
+            }
+            // Fresh non-empty selection in the editor → user is back,
+            // snapshot is stale.
+            if (
+              prev.range &&
+              !newState.selection.empty &&
+              !oldState.selection.eq(newState.selection)
+            ) {
+              return { range: null }
             }
             // Map the range across doc edits so collab inserts/deletes
             // upstream don't shift the snapshot relative to its anchor.
@@ -98,23 +106,6 @@ export function createFrozenSelectionPlugin() {
               )
               return false
             },
-            focus(view) {
-              const cur = frozenRangeKey.getState(view.state)
-              if (!cur?.range) return false
-              view.dispatch(
-                view.state.tr.setMeta(frozenRangeKey, { type: 'clear' } satisfies FrozenMeta),
-              )
-              return false
-            },
-          },
-          decorations(state) {
-            const s = frozenRangeKey.getState(state)
-            if (!s?.range) return null
-            return DecorationSet.create(state.doc, [
-              Decoration.inline(s.range.from, s.range.to, {
-                class: 'milkdown-frozen-selection',
-              }),
-            ])
           },
         },
       }),

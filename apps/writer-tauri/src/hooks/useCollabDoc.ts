@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
-import * as Y from 'yjs'
-import { HocuspocusProvider } from '@hocuspocus/provider'
-import { proofClient, waitUntilReady } from '../lib/proofClient'
+// Types-only module — the original single-doc `useCollabDoc()` hook
+// was retired when the multi-doc store (`docsStore`) took over handle
+// lifecycle. Several files still import the shared types from here so
+// the file remains as a pure type surface; the runtime hook + its
+// 'My Document' default-title bootstrap are gone.
+import type * as Y from 'yjs'
+import type { HocuspocusProvider } from '@hocuspocus/provider'
+import type { IndexeddbPersistence } from 'y-indexeddb'
 
 export type CollabStatus = 'initializing' | 'connecting' | 'connected' | 'error'
 
@@ -40,6 +44,9 @@ export interface StoredMark {
   sourceQuote?: string
   sourceSlug?: string
   sourceLabel?: string
+  createdAt?: string
+  /** @deprecated Legacy alias for createdAt — older entries may still
+   * carry this key. Readers fall through createdAt → proposedAt → at. */
   proposedAt?: string
   acceptedAt?: string
   model?: string
@@ -47,94 +54,71 @@ export interface StoredMark {
 
 export interface CollabHandle {
   ydoc: Y.Doc
-  provider: HocuspocusProvider
+  /** WebSocket sync layer. Null while we're offline or waiting for the
+   * proof-server health check / collab-session; gets attached in the
+   * background once the server is reachable. Consumers must null-check
+   * before reading provider.synced / awareness / etc — the editor still
+   * works (writes flow through `idb`) without a provider. */
+  provider: HocuspocusProvider | null
   slug: string
+  /** Client-side IndexedDB persistence layer. Writes every Y.Doc update
+   * to local disk synchronously with the in-memory CRDT, so the editor
+   * survives any failure mode of the proof-server (graceful exit,
+   * SIGKILL, crash, network drop). Without this, all data survival
+   * depends on round-tripping every change through the WebSocket and
+   * out the proof-server's 250ms debounce — the path that drops the
+   * last keystrokes on Ctrl+C. */
+  idb: IndexeddbPersistence
+  /** Resolves once the IndexedDB layer has hydrated the ydoc from its
+   * local cache (or confirmed there's nothing cached for this slug).
+   * Gates downstream consumers (editor render, mark application) that
+   * previously waited only on `provider.synced` — with this we can
+   * paint immediately on cold boot even when the server is unreachable. */
+  idbSynced: Promise<void>
 }
 
-const DOC_SLUG_KEY = 'writer-tauri:doc-slug'
-const DOC_TITLE = 'My Document'
-
-// Returns a stable handle (ydoc + provider never change once set) and a separate status.
-export function useCollabDoc(): { handle: CollabHandle | null; status: CollabStatus } {
-  const [handle, setHandle] = useState<CollabHandle | null>(null)
-  const [status, setStatus] = useState<CollabStatus>('initializing')
-  // Keep a ref so onStatus callback can always read the latest cancelled flag
-  const cancelledRef = useRef(false)
-
-  useEffect(() => {
-    cancelledRef.current = false
-    let ydoc: Y.Doc | null = null
-    let provider: HocuspocusProvider | null = null
-
-    async function init() {
-      const ready = await waitUntilReady(15_000)
-      if (cancelledRef.current) return
-      if (!ready) {
-        setStatus('error')
-        return
-      }
-
-      let slug = localStorage.getItem(DOC_SLUG_KEY)
-      if (!slug) {
-        try {
-          const created = await proofClient.createDoc(DOC_TITLE, '​')
-          slug = created.slug
-          localStorage.setItem(DOC_SLUG_KEY, slug)
-        } catch (err) {
-          console.error('[collab] failed to create doc', err)
-          if (!cancelledRef.current) setStatus('error')
-          return
-        }
-      }
-
-      let wsUrl: string
-      let token: string
-      try {
-        const { session } = await proofClient.getCollabSession(slug)
-        // The server (ws.ts) detects collab connections by ?role=... in the URL.
-        // It also validates the token from URL params before handing off to Hocuspocus.
-        // This matches the v2 `parameters: { token, role }` behavior that the server expects.
-        const url = new URL(session.collabWsUrl)
-        url.searchParams.set('token', session.token)
-        url.searchParams.set('role', session.role)
-        wsUrl = url.toString()
-        token = session.token
-      } catch (err) {
-        console.error('[collab] failed to get collab session', err)
-        if (!cancelledRef.current) setStatus('error')
-        return
-      }
-
-      if (cancelledRef.current) return
-
-      ydoc = new Y.Doc()
-      provider = new HocuspocusProvider({
-        url: wsUrl,
-        name: slug,
-        document: ydoc,
-        token,
-        onStatus: ({ status: s }) => {
-          if (cancelledRef.current) return
-          setStatus(s === 'connected' ? 'connected' : 'connecting')
-        },
-      })
-
-      setHandle({ ydoc, provider, slug })
-      setStatus('connecting')
-    }
-
-    init()
-
-    return () => {
-      cancelledRef.current = true
-      provider?.destroy()
-      ydoc?.destroy()
-      provider = null
-      ydoc = null
-      setHandle(null)
-      setStatus('initializing')
-    }
-  }, [])
-
-  return { handle, status }
+/**
+ * Per-authored-mark metadata, keyed by mark id in Y.Map('authoredMeta').
+ *
+ * Background: proof-server only canonicalizes the seven mark kinds
+ * it ships with (authored / approved / flagged / comment / insert /
+ * delete / replace). Our old `proofProvenance` mark was a custom
+ * kind layered on top to carry wiki-source breadcrumbs + accept
+ * timestamps; the server didn't recognize it, so its HTML→markdown
+ * projection mangled spans carrying that mark, which the drift
+ * detector then read as a projection wipe and reverted the accept.
+ * The split-tr workaround in markActions.ts was a defensive
+ * sequencing trick to dodge that — never a proper fix.
+ *
+ * The portable path is to use the standard `proofAuthored` mark for
+ * the inline anchor (server understands it, single-tr accept stays
+ * safe) and park the extra metadata in a sibling Y.Map keyed by the
+ * same mark id. Yjs syncs the Y.Map as opaque binary, so the server
+ * never has to parse it — drift detection can't fire on metadata
+ * the server doesn't read.
+ *
+ * Wire shape:
+ *   ydoc.getMap<AuthoredMeta>('authoredMeta').set(markId, { ... })
+ *
+ * Lifecycle: written when acceptMark stamps the authored mark; read
+ * by markHoverPlugin (footer breadcrumb) and EditorFooter (the
+ * "X% AI" stat sums chars covered by authored marks regardless of
+ * whether they carry meta or not). Cleared by markCleanupPlugin
+ * when the inline anchor disappears (deletion / overtype), same as
+ * Y.Map('marks').
+ */
+export interface AuthoredMeta {
+  /** Wiki page slug the AI sentence came from, if any. Null for
+   * suggestions that weren't sourced from another doc. */
+  sourceSlug?: string
+  /** Human-readable label for the source wiki page. */
+  sourceLabel?: string
+  /** The exact quoted span from the source page. */
+  sourceQuote?: string
+  /** ISO timestamp when the AI first proposed this text. */
+  createdAt?: string
+  /** ISO timestamp when the user accepted it. */
+  acceptedAt?: string
+  /** Model identifier (e.g., 'claude-opus-4-7'). */
+  model?: string
 }

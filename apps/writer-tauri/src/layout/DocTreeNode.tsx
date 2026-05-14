@@ -3,10 +3,29 @@
 // today-tree; the structure is identical, only the parent context
 // differs (a daily date row vs. a tab container).
 //
-// The node renders its own row (chevron / icon + label + hover
-// actions) and recurses into children when expanded. Expansion
-// state lives in docsStore.expandedDocSlugs so fold/unfold survives
-// reload.
+// The node renders its own row (chevron / icon + label + add button)
+// and recurses into children when expanded. Expansion state lives in
+// docsStore.expandedDocSlugs so fold/unfold survives reload, bound to
+// Radix Collapsible via controlled open/onOpenChange.
+//
+// Click contract (mirrors Cursor's file tree):
+//   • chevron click  → toggle expand only (no selection change)
+//   • label click    → open the doc only (no expand toggle)
+//   • + click        → create a child note (auto-expands parent)
+//   • right-click    → context menu (Archive note, optional Move to…)
+//
+// Built on the TreeRow primitive (`components/ui/tree-row.tsx`):
+// chevron / file-icon, label, and + sit as flex siblings inside a
+// single <li>, so the row's hover/active background fills naturally
+// and there's no absolute-overlay positioning math that breaks when
+// the <li> grows to contain expanded children. The chevron is
+// wrapped in CollapsibleTrigger asChild and stops click propagation
+// so its toggle doesn't also fire the label's select.
+//
+// Archive lives in the right-click context menu (destructive action
+// shouldn't compete visually with create); Move to… is included only
+// when the caller passes targets (wiki tree currently does, daily /
+// writing don't).
 
 import { type MouseEvent } from 'react'
 import {
@@ -15,9 +34,44 @@ import {
   IconFileDescription,
   IconPlus,
 } from '@tabler/icons-react'
+import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
+import {
+  TreeRow,
+  TreeRowLabel,
+  TreeRowLead,
+  TreeRowTrail,
+  TreeSub,
+} from '@/components/ui/tree-row'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
+
+/** One entry in the "Move to…" section of the context menu. `slug`
+ * is the new parent's slug (or `null` to move to root). `label` is
+ * what the menu item shows. The caller decides which entries to
+ * include so different sidebar regions (daily / writing / wiki)
+ * can supply different sets — wiki uses top-level wiki pages,
+ * daily / writing currently supply nothing (the prop is omitted
+ * and the Move section is skipped entirely). */
+export interface MoveTarget {
+  slug: string | null
+  label: string
+  /** Disable the row — used by the caller to grey out the target
+   * the doc already lives under, plus any cycle-creating choices. */
+  disabled?: boolean
+}
 
 interface DocTreeNodeProps {
   doc: KnownDoc
@@ -25,28 +79,33 @@ interface DocTreeNodeProps {
    * once per render so each node lookup is O(1). */
   childrenByParent: Map<string, KnownDoc[]>
   activeSlug: string | null
-  /** Tree depth from the topmost row in the wrapping list. Used to
-   * indent the row content while keeping each row full-width so the
-   * hover background bleeds wall-to-wall. The vertical guide line is
-   * drawn separately in the parent <ul> at `depth*INDENT_PX + LINE_PX`. */
-  depth: number
   onSelect: (slug: string) => void
   onAddChild: (parentSlug: string) => void
   onArchive: (slug: string) => void
+  /** Optional "Move to…" section in the context menu. Omitted for
+   * tree regions where moving doesn't apply (e.g. daily / writing
+   * placement is time-axis-driven). */
+  moveTargets?: MoveTarget[]
+  onMoveTo?: (slug: string, newParentId: string | null) => void
+  /** Enable drag-and-drop on this row. Caller is responsible for
+   * wrapping the tree in a <DndContext> and resolving the resulting
+   * onDragEnd via moveDoc — DocTreeNode just exposes itself as a
+   * drag source + drop target. When false (the default), the dnd-kit
+   * hooks below still mount but in a disabled state so no listeners
+   * attach and no drop interactions fire. */
+  draggable?: boolean
 }
-
-const INDENT_PX = 14
-const LINE_PX = 8
-const ROW_BASE_PAD_LEFT = 6
 
 export function DocTreeNode({
   doc,
   childrenByParent,
   activeSlug,
-  depth,
   onSelect,
   onAddChild,
   onArchive,
+  moveTargets,
+  onMoveTo,
+  draggable = false,
 }: DocTreeNodeProps) {
   const label = useDocLabel(doc.slug)
   const expandedDocSlugs = useDocsStore((s) => s.expandedDocSlugs)
@@ -56,119 +115,173 @@ export function DocTreeNode({
   const isExpanded = expandedDocSlugs.includes(doc.slug)
   const isActive = doc.slug === activeSlug
 
-  return (
-    <li>
-      <div
-        className={cn(
-          'group flex w-full items-center gap-1 pr-1.5 py-1.5 text-[13px] font-medium transition-colors',
-          isActive
-            ? 'bg-accent text-foreground'
-            : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-        )}
-        style={{ paddingLeft: `${depth * INDENT_PX + ROW_BASE_PAD_LEFT}px` }}
+  // dnd-kit hooks must be called unconditionally to satisfy the
+  // Rules of Hooks. When draggable=false the `disabled` option
+  // keeps them inert — no listeners attach, no drop hover state
+  // fires — so daily / writing trees mount cleanly without a
+  // DndContext ancestor.
+  const dragSource = useDraggable({ id: doc.slug, disabled: !draggable })
+  const dropTarget = useDroppable({ id: doc.slug, disabled: !draggable })
+  const setNodeRef = (node: HTMLElement | null) => {
+    dragSource.setNodeRef(node)
+    dropTarget.setNodeRef(node)
+  }
+  // Hover ring: when a drag is over this row, show a subtle outline
+  // so the user knows where the drop will land. dnd-kit only flips
+  // isOver when this exact row is the closest valid drop target.
+  const dropIndicatorClass =
+    draggable && dropTarget.isOver
+      ? 'ring-1 ring-sidebar-accent-foreground/40 rounded-md'
+      : ''
+
+  // Move section is rendered only when the caller provides
+  // targets — keeps daily / writing rows free of an irrelevant
+  // "Move to…" block. Each target item self-disables when it's
+  // the doc's current parent (or another non-movable choice the
+  // caller flagged), so the user can see the option but not act
+  // on it redundantly.
+  const showMoveSection = !!(moveTargets && moveTargets.length > 0 && onMoveTo)
+  // Filter out the doc's current parent (already there) and the
+  // doc itself (self-parent) from the rendered options. The
+  // store's moveDoc would refuse these anyway, but disabling at
+  // render time keeps the menu honest about which options are
+  // actionable. Cycle prevention is handled by the caller (it
+  // only passes top-level pages, which can't be descendants of a
+  // user-owned wiki child) and by moveDoc as the last gate.
+  const currentParentSlug = doc.parentId ?? null
+  const contextMenu = (
+    <ContextMenuContent>
+      {showMoveSection &&
+        moveTargets!.map((t) => {
+          const isCurrent = t.slug === currentParentSlug
+          const isSelf = t.slug === doc.slug
+          return (
+            <ContextMenuItem
+              key={t.slug ?? '__root__'}
+              disabled={isCurrent || isSelf || t.disabled}
+              onSelect={() => onMoveTo!(doc.slug, t.slug)}
+            >
+              {`Move to ${t.label}`}
+            </ContextMenuItem>
+          )
+        })}
+      {showMoveSection && <ContextMenuSeparator />}
+      <ContextMenuItem
+        variant="destructive"
+        onSelect={() => onArchive(doc.slug)}
       >
-        {hasChildren ? (
-          <button
-            type="button"
-            onClick={(e: MouseEvent) => {
-              e.stopPropagation()
-              toggleExpanded(doc.slug)
-            }}
-            aria-label={isExpanded ? 'Collapse' : 'Expand'}
-            className={cn(
-              'flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:text-foreground',
-              'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-            )}
+        <IconArchive stroke={1.75} />
+        Archive note
+      </ContextMenuItem>
+    </ContextMenuContent>
+  )
+
+  if (!hasChildren) {
+    return (
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <li
+            ref={setNodeRef}
+            className={cn('group/menu-item relative', dropIndicatorClass)}
+            {...(draggable ? dragSource.listeners : {})}
+            {...(draggable ? dragSource.attributes : {})}
           >
-            <IconChevronRight
-              size={12}
-              stroke={1.75}
-              className="transition-transform"
-              style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-            />
-          </button>
-        ) : (
-          <span
-            className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground"
-            aria-hidden
+            <TreeRow active={isActive}>
+              <TreeRowLead asChild>
+                <span aria-hidden>
+                  <IconFileDescription size={16} stroke={1.75} />
+                </span>
+              </TreeRowLead>
+              <TreeRowLabel onClick={() => onSelect(doc.slug)}>
+                <span className="truncate">{label}</span>
+              </TreeRowLabel>
+              <TreeRowTrail
+                showOnHover
+                aria-label="Add note"
+                onClick={(e: MouseEvent) => {
+                  e.stopPropagation()
+                  onAddChild(doc.slug)
+                  if (!isExpanded) toggleExpanded(doc.slug)
+                }}
+              >
+                <IconPlus stroke={2} />
+              </TreeRowTrail>
+            </TreeRow>
+          </li>
+        </ContextMenuTrigger>
+        {contextMenu}
+      </ContextMenu>
+    )
+  }
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <Collapsible
+          asChild
+          open={isExpanded}
+          onOpenChange={(open) => {
+            if (open !== isExpanded) toggleExpanded(doc.slug)
+          }}
+        >
+          <li
+            ref={setNodeRef}
+            className={cn('group/menu-item relative', dropIndicatorClass)}
+            {...(draggable ? dragSource.listeners : {})}
+            {...(draggable ? dragSource.attributes : {})}
           >
-            <IconFileDescription size={12} stroke={1.75} />
-          </span>
-        )}
-
-        <button
-          type="button"
-          onClick={() => onSelect(doc.slug)}
-          className={cn(
-            'flex min-w-0 flex-1 items-center gap-2 text-left outline-none',
-            'focus-visible:ring-2 focus-visible:ring-ring/40 rounded',
-          )}
-        >
-          <span className="truncate">{label}</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={(e: MouseEvent) => {
-            e.stopPropagation()
-            onArchive(doc.slug)
-          }}
-          aria-label="Archive note"
-          title="Archive"
-          className={cn(
-            'flex h-4 w-4 shrink-0 items-center justify-center rounded',
-            'opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground',
-            'group-hover:opacity-60 focus-visible:opacity-100',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          )}
-        >
-          <IconArchive size={10} stroke={1.75} />
-        </button>
-
-        <button
-          type="button"
-          onClick={(e: MouseEvent) => {
-            e.stopPropagation()
-            onAddChild(doc.slug)
-            if (!isExpanded) toggleExpanded(doc.slug)
-          }}
-          aria-label="Add note"
-          className={cn(
-            'flex h-4 w-4 shrink-0 items-center justify-center rounded',
-            'opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground',
-            'group-hover:opacity-60 focus-visible:opacity-100',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          )}
-        >
-          <IconPlus size={10} stroke={2} />
-        </button>
-      </div>
-
-      {isExpanded && hasChildren && (
-        <ul className="relative flex flex-col gap-0.5 pt-0.5">
-          {/* Vertical guide line for this node's children. Drawn as an
-              absolute span so each child <li> can keep full sidebar
-              width and its hover background bleeds wall-to-wall. */}
-          <span
-            aria-hidden
-            className="absolute top-0.5 bottom-0 w-px bg-border"
-            style={{ left: `${depth * INDENT_PX + LINE_PX}px` }}
-          />
-          {children.map((child) => (
-            <DocTreeNode
-              key={child.slug}
-              doc={child}
-              childrenByParent={childrenByParent}
-              activeSlug={activeSlug}
-              depth={depth + 1}
-              onSelect={onSelect}
-              onAddChild={onAddChild}
-              onArchive={onArchive}
-            />
-          ))}
-        </ul>
-      )}
-    </li>
+            <TreeRow active={isActive}>
+              <CollapsibleTrigger asChild>
+                <TreeRowLead
+                  aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                  onClick={(e: MouseEvent) => e.stopPropagation()}
+                >
+                  <IconChevronRight
+                    size={16}
+                    stroke={1.75}
+                    className="transition-transform"
+                    style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                  />
+                </TreeRowLead>
+              </CollapsibleTrigger>
+              <TreeRowLabel onClick={() => onSelect(doc.slug)}>
+                <span className="truncate">{label}</span>
+              </TreeRowLabel>
+              <TreeRowTrail
+                showOnHover
+                aria-label="Add note"
+                onClick={(e: MouseEvent) => {
+                  e.stopPropagation()
+                  onAddChild(doc.slug)
+                  if (!isExpanded) toggleExpanded(doc.slug)
+                }}
+              >
+                <IconPlus stroke={2} />
+              </TreeRowTrail>
+            </TreeRow>
+            <CollapsibleContent asChild>
+              <TreeSub>
+                {children.map((child) => (
+                  <DocTreeNode
+                    key={child.slug}
+                    doc={child}
+                    childrenByParent={childrenByParent}
+                    activeSlug={activeSlug}
+                    onSelect={onSelect}
+                    onAddChild={onAddChild}
+                    onArchive={onArchive}
+                    moveTargets={moveTargets}
+                    onMoveTo={onMoveTo}
+                    draggable={draggable}
+                  />
+                ))}
+              </TreeSub>
+            </CollapsibleContent>
+          </li>
+        </Collapsible>
+      </ContextMenuTrigger>
+      {contextMenu}
+    </ContextMenu>
   )
 }
 

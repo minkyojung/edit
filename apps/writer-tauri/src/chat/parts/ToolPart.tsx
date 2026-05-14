@@ -1,43 +1,40 @@
-import React from 'react'
-import { IconChevronRight, IconTool } from '@tabler/icons-react'
+import { IconChevronDown, IconTool } from '@tabler/icons-react'
 import type { ToolPart as ToolPartType } from '@/chat/types'
-import { InlineCard } from '@/chat/ui/InlineCard'
+import { Tool, ToolContent } from '@/components/ai-elements/tool'
+import { CollapsibleTrigger } from '@/components/ui/collapsible'
 import { ToolStateBadge } from '@/chat/ui/ToolStateBadge'
 import { KeyValueBlock } from '@/chat/ui/KeyValueBlock'
+import { humanizeToolCall } from '@/chat/humanizers'
 
-/** Tool invocation card. Mirrors the AI Elements `<Tool>` family — a
- * collapsible wrapper with a header (tool name + state badge) and a
- * content section showing input and (when available) output. */
+/** Generic tool invocation card (Read / Bash / Grep / …). Built on AI
+ * Elements `Tool` so it lines up with `ProposeChangePart`; the body is
+ * collapsed by default because generic tool I/O is rarely the thing the
+ * user actually wants to read — it's there for inspection, not the
+ * star of the turn. */
 export function ToolPart({ part }: { part: ToolPartType }) {
-  const [open, setOpen] = React.useState(false)
+  const { label } = humanizeToolCall(part.toolName, part.input, part.output)
   return (
-    <InlineCard className="my-1 text-xs">
-      <details
-        open={open}
-        onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      >
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 select-none">
-          <IconChevronRight
+    <Tool className="my-2 text-xs">
+      <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-2 p-3 text-left">
+        <IconTool size={12} className="shrink-0 text-muted-foreground" />
+        <span className="text-foreground">{label}</span>
+        <span className="ml-auto flex items-center gap-2">
+          <ToolStateBadge state={part.state} />
+          <IconChevronDown
             size={12}
-            className="shrink-0 transition-transform"
-            style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}
+            className="shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
           />
-          <IconTool size={12} className="shrink-0 text-muted-foreground" />
-          <span className="font-mono">{part.toolName}</span>
-          <span className="ml-auto">
-            <ToolStateBadge state={part.state} />
-          </span>
-        </summary>
-        <div className="space-y-2 px-3 pb-2 pt-1">
-          <KeyValueBlock label="input" value={part.input} />
-          {(part.state === 'output-available' || part.state === 'output-error') && (
-            <KeyValueBlock
-              label={part.state === 'output-error' ? 'error' : 'output'}
-              value={part.errorText ?? part.output}
-            />
-          )}
-        </div>
-      </details>
-    </InlineCard>
+        </span>
+      </CollapsibleTrigger>
+      <ToolContent className="!p-3 !pt-0 !space-y-2">
+        <KeyValueBlock label="input" value={part.input} />
+        {(part.state === 'output-available' || part.state === 'output-error') && (
+          <KeyValueBlock
+            label={part.state === 'output-error' ? 'error' : 'output'}
+            value={part.errorText ?? part.output}
+          />
+        )}
+      </ToolContent>
+    </Tool>
   )
 }

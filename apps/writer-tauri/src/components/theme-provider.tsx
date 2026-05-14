@@ -1,9 +1,9 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 
-export type Palette = 'charcoal' | 'olive' | 'paper'
+export type Palette = 'charcoal' | 'graphite' | 'olive' | 'paper' | 'mist'
 
-const PALETTES: Palette[] = ['charcoal', 'olive', 'paper']
-const DARK_PALETTES: ReadonlySet<Palette> = new Set<Palette>(['charcoal', 'olive'])
+const PALETTES: Palette[] = ['charcoal', 'graphite', 'olive', 'paper', 'mist']
+const DARK_PALETTES: ReadonlySet<Palette> = new Set<Palette>(['charcoal', 'graphite', 'olive'])
 
 type ThemeProviderProps = {
   children: React.ReactNode

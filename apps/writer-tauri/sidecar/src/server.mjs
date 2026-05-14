@@ -36,6 +36,48 @@ function buildProposeChangeTool(runId, emit) {
   )
 }
 
+// Ingest result tool. Called once per ingest pass with the complete
+// JSON shape the frontend used to extract from raw assistant text.
+// The schema enforces structure at the SDK boundary — no more
+// frontend-side JSON parsing or per-field sanitization.
+//
+// Single-call contract: the model emits exactly one tool call per
+// run carrying every proposal / index update / log entry it decided
+// on. Empty arrays + null logEntry are valid (an ingest pass that
+// found nothing notable still calls the tool to mark the pass as
+// complete). The handler forwards the raw input to the host as an
+// `ingest/result` notification; ingest.ts assembles its IngestResult
+// from that payload directly.
+function buildSubmitIngestResultTool(runId, emit) {
+  return tool(
+    'submit_ingest_result',
+    'Submit the structured result of an ingest pass over a user note. Call this exactly once per run, after analyzing the note against the wiki. Include every proposal, index update, and log entry; if you found nothing, pass empty arrays and a null logEntry.',
+    {
+      proposals: z.array(
+        z.object({
+          target: z.string().optional(),
+          suggestNewPage: z.string().optional(),
+          suggestNewPageParent: z.string().optional(),
+          content: z.string(),
+          rationale: z.string().optional(),
+          sourceQuote: z.string().optional(),
+        }),
+      ),
+      indexUpdates: z.array(
+        z.object({
+          target: z.string(),
+          summary: z.string(),
+        }),
+      ),
+      logEntry: z.string().nullable(),
+    },
+    async (args) => {
+      emit(notification('ingest/result', { runId, input: args }))
+      return { content: [{ type: 'text', text: 'Ingest result recorded.' }] }
+    },
+  )
+}
+
 const SIDECAR_VERSION = '0.1.0'
 
 /** Dump a thrown error's full context to stderr so the Rust supervisor's
@@ -275,6 +317,8 @@ export class Server {
     for (const name of enabledRelay) {
       if (name === 'propose_change') {
         relayDefs.push(buildProposeChangeTool(runId, this.emit))
+      } else if (name === 'submit_ingest_result') {
+        relayDefs.push(buildSubmitIngestResultTool(runId, this.emit))
       }
     }
     if (relayDefs.length > 0) {

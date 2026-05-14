@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout casablanca
+        uses: actions/checkout@v4
+        with:
+          path: casablanca
+
+      # proof-sdk is a sibling workspace consumed via `link:../proof-sdk`.
+      # Without it, pnpm install fails. CI mirrors the local layout.
+      - name: Checkout proof-sdk (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: minkyojung/proof-sdk
+          path: proof-sdk
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: casablanca/pnpm-lock.yaml
+
+      # Skip postinstall here — binaries setup is needed only for the
+      # Rust/Tauri build, not for vite typecheck/build. Faster CI, and
+      # avoids requiring bun network access on every PR.
+      - name: pnpm install (skip postinstall)
+        working-directory: casablanca
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Lint (writer-tauri)
+        working-directory: casablanca
+        run: pnpm --filter writer-tauri lint
+
+      - name: Typecheck (writer-tauri)
+        working-directory: casablanca
+        run: pnpm --filter writer-tauri typecheck
+
+      - name: Build (writer-tauri vite)
+        working-directory: casablanca
+        run: pnpm --filter writer-tauri build

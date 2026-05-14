@@ -8,13 +8,23 @@
  */
 
 import type { EditorView } from '@milkdown/kit/prose/view'
-import type { Mark } from '@milkdown/kit/prose/model'
-import { TextSelection } from '@milkdown/kit/prose/state'
+import type { Mark, Node } from '@milkdown/kit/prose/model'
 import * as Y from 'yjs'
-import type { StoredMark } from '../hooks/useCollabDoc'
 import { useEditorViewStore } from '@/state/editorViewStore'
-import { topLevelSiblingAfter } from './topLevelSibling'
+import type { AuthoredMeta, StoredMark } from '../hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
+import { ANCHOR_PROOF_MARK_NAMES } from './markTypes'
+
+/** Position of the slot directly after the top-level block that
+ * contains `pos`. acceptMark uses this to materialize INSERT
+ * proposals at the same spot the markDecoPlugin's ghost widget
+ * was previewing them, so accept reads as "the preview became
+ * real" without a layout jump. depth=1 because depth 0 is the
+ * doc itself; the top-level block is always at depth 1. */
+function topLevelSiblingAfter(doc: Node, pos: number): number {
+  const $pos = doc.resolve(pos)
+  return Math.min($pos.end(1) + 1, doc.content.size)
+}
 
 interface FoundAnchor {
   from: number
@@ -22,14 +32,12 @@ interface FoundAnchor {
   mark: Mark
 }
 
-const ANCHOR_SCHEMAS = ['proofSuggestion', 'proofComment'] as const
-
-function findInlineAnchor(
+export function findInlineAnchor(
   view: EditorView,
   markId: string,
   schemaName?: string,
 ): FoundAnchor | null {
-  const targets = schemaName ? [schemaName] : ANCHOR_SCHEMAS
+  const targets = schemaName ? [schemaName] : ANCHOR_PROOF_MARK_NAMES
   let result: FoundAnchor | null = null
   view.state.doc.descendants((node, pos) => {
     if (result) return false
@@ -45,44 +53,39 @@ function findInlineAnchor(
 }
 
 /**
- * Move selection + scroll to the inline anchor of the given mark, and
- * briefly flash it. Returns true if the mark was found.
+ * Whether the live PM doc still carries a `proofSuggestion` mark with
+ * this id. Returns true the moment any text node along the mark's
+ * range has the suggestion attached, false otherwise.
+ *
+ * Why this exists: callers (hover toolbar, popover) used to gate
+ * visibility on the Y.Map<StoredMark> entry — but Y.Map mutations are
+ * NOT undone by ProseMirror's undo stack, so Cmd+Z after accept/reject
+ * restored the PM mark while leaving Y.Map empty, hiding the affordance
+ * even though the visual was back. Aligning visibility on the PM mark
+ * itself matches the codebase's stated invariant
+ * (markCleanupPlugin.ts:1-7): "the inline ProseMirror mark is the
+ * single source of truth for whether a mark exists; Y.Map just holds
+ * metadata."
  */
-export function jumpToMark(view: EditorView, markId: string): boolean {
-  const anchor = findInlineAnchor(view, markId)
-  if (!anchor) return false
-
-  const tr = view.state.tr.setSelection(
-    TextSelection.create(view.state.doc, anchor.from, anchor.to),
-  )
-  view.dispatch(tr.scrollIntoView())
-  view.focus()
-
-  flashRange(view, anchor.from, anchor.to)
-  return true
+export function hasProofSuggestionInDoc(
+  view: EditorView,
+  markId: string,
+): boolean {
+  return findInlineAnchor(view, markId, 'proofSuggestion') !== null
 }
 
-function flashRange(view: EditorView, from: number, to: number) {
-  // Walk the rendered DOM for the range and toggle a CSS class for ~1s.
-  const startDom = view.domAtPos(from)
-  const endDom = view.domAtPos(to)
-  const start = startDom.node instanceof Element ? startDom.node : startDom.node.parentElement
-  const end = endDom.node instanceof Element ? endDom.node : endDom.node.parentElement
-  if (!start || !end) return
-
-  const touched: Element[] = []
-  let node: Element | null = start
-  while (node) {
-    touched.push(node)
-    if (node === end) break
-    const sibling: Element | null = node.nextElementSibling
-    node = sibling ?? node.parentElement?.nextElementSibling ?? null
-    if (touched.length > 50) break
-  }
-  for (const el of touched) el.classList.add('mark-flash')
-  window.setTimeout(() => {
-    for (const el of touched) el.classList.remove('mark-flash')
-  }, 1000)
+/**
+ * Return the live `proofComment` Mark for `markId`, or null if no such
+ * mark exists in the doc. Used by MarkPopoverLayer to read the comment
+ * body / quote / rationale directly off the PM mark — same Cmd+Z-safe
+ * pattern as hasProofSuggestionInDoc applies to comments now that the
+ * proofComment schema carries text / quote / note attrs itself.
+ */
+export function getProofCommentMark(
+  view: EditorView,
+  markId: string,
+): Mark | null {
+  return findInlineAnchor(view, markId, 'proofComment')?.mark ?? null
 }
 
 export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boolean {
@@ -103,11 +106,10 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
   const content = stored?.content ?? null
 
   const tr = view.state.tr
-  // Track the inserted-content range so the insert path can stamp a
-  // proofProvenance mark on the new text. Other kinds don't need this
-  // (delete = nothing left, replace = anchor word becomes the content
-  // and provenance there is a Phase 2.5 nice-to-have, not in scope).
-  let provenanceRange: { from: number; to: number } | null = null
+  // Inserted-content range for the same-tr authored addMark.
+  // Set by the kind branches that produce a stable region of new text;
+  // delete leaves it null (there is no inserted text to breadcrumb).
+  let authoredRange: { from: number; to: number } | null = null
   if (kind === 'delete') {
     tr.delete(from, to)
   } else if (kind === 'replace') {
@@ -115,19 +117,25 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
       notify.markCantRead()
       return false
     }
-    tr.replaceWith(from, to, view.state.schema.text(content))
+    const replacement = view.state.schema.text(content)
+    tr.replaceWith(from, to, replacement)
+    authoredRange = { from, to: from + replacement.nodeSize }
   } else if (kind === 'insert') {
+    // Anchor model (proof-sdk pattern): the mark sits on an existing
+    // user word; the proposed content lives only in Y.Map.content and
+    // is shown to the user via markDecoPlugin's ghost widget. Accept
+    // is the moment that promise is realised — parse the markdown,
+    // insert it as real PM blocks at the top-level sibling slot after
+    // the anchor's containing block (same spot the ghost widget was
+    // previewing), and strip the suggestion mark from the anchor.
+    // Single transaction so Cmd+Z restores the pre-accept state in
+    // one step; the server sees a normal PM transaction and accepts
+    // it as canonical (no drift, no revert — that was the trap the
+    // PM-tree materializer fell into).
     if (content === null || content === undefined) {
       notify.markCantRead()
       return false
     }
-    // Ingest proposals: `content` is a markdown string from the LLM
-    // (e.g. "### Sarah\n- Workplace colleague"). Parse it through
-    // Milkdown's own commonmark+gfm pipeline so it becomes real
-    // heading / list nodes, then insert those blocks after the block
-    // that holds the anchor word. The anchor itself stays put — we
-    // just strip its proofSuggestion mark — so the visible result is
-    // the original line followed by the new structured content.
     const parser = useEditorViewStore.getState().parser
     if (!parser) {
       console.error('[markActions] accept(insert): parser not ready')
@@ -141,53 +149,62 @@ export function acceptMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
       return false
     }
     const suggestionType = view.state.schema.marks.proofSuggestion
+    const insertPos = topLevelSiblingAfter(view.state.doc, to)
+    const fragmentSize = parsed.content.size
     if (suggestionType) tr.removeMark(from, to, suggestionType)
-    // Insert at the top-level sibling slot. Same helper the deco
-    // plugin's ghost preview uses, so the visual position pre-accept
-    // matches the actual insert position post-accept.
-    const blockEnd = topLevelSiblingAfter(view.state.doc, to)
-    tr.insert(blockEnd, parsed.content)
-    provenanceRange = { from: blockEnd, to: blockEnd + parsed.content.size }
+    tr.insert(insertPos, parsed.content)
+    authoredRange = { from: insertPos, to: insertPos + fragmentSize }
   } else {
     return false
   }
 
-  // Stamp proofProvenance on the inserted range in the same transaction
-  // so the mark appears atomically with the inserted text. Skipped if
-  // the schema lacks the mark (older client) — we fall through to the
-  // delete-StoredMark path below, which preserves prior behavior.
-  const provenanceType = view.state.schema.marks.proofProvenance
-  if (provenanceRange && provenanceType && stored) {
+  // Stamp proofAuthored on the just-inserted/replaced range in the
+  // SAME tr, matching proof-sdk's web client (marks.ts applyMarkdown
+  // Replace / applyMarkdownInsert pattern). We used to stamp our own
+  // proofProvenance mark in a separate ydoc.transact to dodge a
+  // drift-revert: the server's HTML→markdown projection didn't know
+  // proofProvenance, so a same-tr stamp produced a malformed
+  // projection that fired recordProjectionWipeWarning and reverted
+  // the accept. proofAuthored is one of the seven kinds the server
+  // canonicalizes, so the projection round-trips cleanly and the
+  // single-tr pattern (the proof-sdk convention) becomes safe again.
+  const authoredType = view.state.schema.marks.proofAuthored
+  if (authoredType && authoredRange) {
     tr.addMark(
-      provenanceRange.from,
-      provenanceRange.to,
-      provenanceType.create({
+      authoredRange.from,
+      authoredRange.to,
+      authoredType.create({
         id: markId,
-        sourceSlug: stored.sourceSlug ?? null,
-        sourceLabel: stored.sourceLabel ?? null,
-        sourceQuote: stored.sourceQuote ?? null,
-        proposedAt: stored.proposedAt ?? stored.at ?? null,
-        acceptedAt: new Date().toISOString(),
-        model: stored.model ?? null,
+        by: stored?.by ?? 'ai:unknown',
       }),
     )
   }
-  view.dispatch(tr)
 
-  // For insert kind, transform the StoredMark in place: same id, new
-  // kind='provenance', acceptedAt added. The Y.Map entry now describes
-  // a permanent breadcrumb instead of a pending suggestion. For other
-  // kinds, keep prior behavior (delete the entry).
-  if (provenanceRange && stored) {
-    marksMap.set(markId, {
-      ...stored,
-      kind: 'provenance',
-      status: 'accepted',
-      acceptedAt: new Date().toISOString(),
-    })
-  } else {
+  // Single ydoc.transact wrapping the PM dispatch + Y.Map writes so
+  // Cmd+Z restores text change, suggestion-mark removal, authored-
+  // mark stamp, and BOTH map entries (marks deletion + authoredMeta
+  // set) atomically. Extra metadata that used to ride on
+  // proofProvenance attrs now lives in Y.Map('authoredMeta'), keyed
+  // by the same mark id — Yjs treats this map as opaque binary so
+  // the server's drift detector never sees these fields and the
+  // single-tr safety holds regardless of how rich the breadcrumb
+  // grows over time.
+  const authoredMetaMap = ydoc.getMap<AuthoredMeta>('authoredMeta')
+  ydoc.transact(() => {
+    view.dispatch(tr)
     marksMap.delete(markId)
-  }
+    if (authoredRange && stored) {
+      authoredMetaMap.set(markId, {
+        sourceSlug: stored.sourceSlug,
+        sourceLabel: stored.sourceLabel,
+        sourceQuote: stored.sourceQuote,
+        createdAt: stored.createdAt ?? stored.proposedAt ?? stored.at,
+        acceptedAt: new Date().toISOString(),
+        model: stored.model,
+      })
+    }
+  }, 'mark-action')
+
   return true
 }
 
@@ -199,19 +216,24 @@ export function rejectMark(view: EditorView, ydoc: Y.Doc, markId: string): boole
     return false
   }
   const { from, to } = anchor
+  // Anchor model (all kinds): the mark sits on existing user text,
+  // never on AI-inserted content (the candidate content lives in
+  // Y.Map.content and is shown via the ghost widget — never in the
+  // PM tree until accept). Reject is therefore just "strip the mark
+  // and drop the Y.Map entry"; the user's text is untouched. This
+  // also undoes the dangerous reject(insert) of the PM-tree era,
+  // which deleted every top-level block carrying the mark — those
+  // blocks were sometimes the user's own writing.
   const markType = view.state.schema.marks.proofSuggestion
-  view.dispatch(view.state.tr.removeMark(from, to, markType))
-  ydoc.getMap<StoredMark>('marks').delete(markId)
-  return true
-}
-
-export function resolveComment(view: EditorView, ydoc: Y.Doc, markId: string): boolean {
-  const anchor = findInlineAnchor(view, markId, 'proofComment')
-  if (anchor) {
-    const markType = view.state.schema.marks.proofComment
-    view.dispatch(view.state.tr.removeMark(anchor.from, anchor.to, markType))
-  }
-  ydoc.getMap<StoredMark>('marks').delete(markId)
+  // Same atomic dispatch + Y.Map.delete as acceptMark: one Yjs
+  // transaction with a tracked origin so Cmd+Z brings BOTH the PM
+  // mark and the Y.Map metadata back together. Otherwise reject →
+  // Cmd+Z → re-attempt would surface the same missing-content bug
+  // accept used to have.
+  ydoc.transact(() => {
+    view.dispatch(view.state.tr.removeMark(from, to, markType))
+    ydoc.getMap<StoredMark>('marks').delete(markId)
+  }, 'mark-action')
   return true
 }
 

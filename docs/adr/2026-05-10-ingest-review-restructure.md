@@ -1,7 +1,7 @@
 # ADR: ingest 검토 UX 재구조화 — 절반-적용 상태와 갈림길
 
 작성: 2026-05-10
-상태: **In progress / Decision pending**
+상태: **Superseded by 2026-05-10-proof-sdk-realignment.md** — Path A 의 PM-tree 모델이 proof-server 의 reconciliation guardrail 과 충돌해 콘텐츠 revert 발생. 같은 날 proof-sdk 의 ops/suggestion.add 패턴으로 회귀 결정.
 
 이전 ADR: `2026-05-08-wiki-ingest-system.md` (마크 시스템 위에 ingest 를 얹은 최초 설계)
 
@@ -90,11 +90,21 @@ Step 4 (ghost 제거) 가 머지되었으나 Step 3 (콘텐츠를 노드로 삽�
 
 ## Decision
 
-**미정.** 셋 중 하나로 마무리해야 절반-적용 회귀가 사라짐.
+**Path A — Step 3 재구현으로 마무리.** (확정: 2026-05-10)
 
-엔지니어 관점에서 A 가 정공법 (구조적 뿌리 제거), C 가 가장 정직한 단순함 (서로 다른 일은 서로 다른 도구), B 는 단기 회귀 회피.
+### 선택 이유
 
-다음 의사결정 자리에서 확정 필요.
+사용자 멘탈 모델: **"AI 가 어떤 트리거로 내 글을 수정했다"** 는 단일 경험. Chat 인라인 수정과 ingest 자동 제안은 사용자 입장에서 같은 일이고, 따라서 **마크 = 통합 UX 표면**, **엔진(트리거·소스·콘텐츠 생성) 만 다름** 이 정직한 구조다.
+
+이 결론이 함의:
+
+- **B 폐기.** Ghost preview 부활은 chat 마크와 시각적으로 다른 표면을 다시 만드는 것 — 통합 UX 원칙에 어긋남. 사용자도 "ghost 미리보기 없어도 됨" 명시.
+- **C 폐기.** 별도 카드 모달은 ingest 검토를 페이지 컨텍스트에서 분리 → chat 마크와 다른 인터랙션이 됨. 두 시스템이 같은 일을 하므로 같은 도구를 써야 함.
+- **A 채택.** 콘텐츠를 PM 트리에 노드로 박고 그 범위에 마크만 입히면 single-source-of-truth 가 되어 undo / blockquote 두 버그의 공통 뿌리 제거. 동시에 chat·ingest 가 만든 마크가 시각·인터랙션 양면 동일.
+
+### 검증 기준 (Phase 6)
+
+Path A 가 옳게 끝났다는 신호: chat 이 만든 마크와 ingest 가 만든 마크가 같은 페이지에 공존할 때 사용자가 **둘을 구분할 수 없음** (동일 시각, 동일 Accept/Reject 동작).
 
 ---
 

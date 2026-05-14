@@ -2,7 +2,7 @@
 
 작성: 2026-05-09
 업데이트: 2026-05-10
-상태: Phase 1 + 1.5 완료, 링크 hover bar 진행 중 (UX 버그 1개 미해결)
+상태: Phase 1 / 1.5 / 2 완료. 링크 hover bar Edit/데드 존 마무리. 신뢰성 인프라 + ESLint 도입. 다음 우선순위 미정 (§13.8)
 
 ---
 
@@ -401,44 +401,66 @@ Phase 1 진입 가능. 단 다음 두 결정을 잠금:
 | Strike 버튼 | `86ff8c88` | gfm preset의 `strike_through` mark |
 | Inline Code 버튼 + proofMark-safe 토글 | `a187343a` | `inlineCodeSafe.ts` 신규 — §12.3 위험 회피 |
 
-### 13.3 진행 중 — 링크 보강
+### 13.3 완료 — 링크 보강
 
-| 항목 | 커밋 | 상태 |
+| 항목 | 커밋 | 비고 |
 |---|---|---|
-| Cmd+click 외부 열기 | `60992bcf`, `af8c6cd9` | 완료 (Tauri shell + capability + toast) |
-| `openLinkSafely` helper 추출 | `1d4e9ab2` | 완료 |
-| `linkHoverStore` + `getLinkRange` | `6f8aae4b` | 완료 |
-| `linkHoverPlugin` (감지) | `75e9d915` | 완료 — DevTools 검증 통과 |
-| `LinkHoverBar` (Open/Remove UI) | (commit 예정) | **⚠️ 미해결 버그** — §13.4 |
+| Cmd+click 외부 열기 | `60992bcf`, `af8c6cd9` | Tauri shell + capability + toast |
+| `openLinkSafely` helper 추출 | `1d4e9ab2` | — |
+| `linkHoverStore` + `getLinkRange` | `6f8aae4b` | — |
+| `linkHoverPlugin` (감지) | `75e9d915` | — |
+| `LinkHoverBar` (Open/Remove) | `5f93ce62` | — |
+| 데드 존 수정 (GAP_PX=0 + padding-top) | `950e0cec` | §13.4의 3개 변경 적용 |
+| Edit 액션 (LinkEditInput 공유) | `0b2d4f92` | FormatToolbar/HoverBar 양쪽 진입점 |
 
-### 13.4 ⚠️ 미해결 — LinkHoverBar 데드 존 버그
+### 13.4 완료 — 신뢰성 인프라
 
-**증상**: hover bar는 시각적으로 등장하지만, 사용자가 클릭하려고 마우스를 아래로 이동하는 즉시 bar가 사라져 클릭이 안 됨.
+| 항목 | 커밋 | 비고 |
+|---|---|---|
+| `setup-binaries.sh` (고정 버전 bun, idempotent) | `950e0cec` | postinstall + beforeDevCommand 훅 |
+| `pack-sidecar.sh` 멱등화 | `950e0cec` | 입력 해시 비교로 스킵 |
+| GitHub Actions CI (lint + typecheck + build 게이트) | `c5823016` | sibling proof-sdk checkout 포함 |
+| ESLint flat config — `no-restricted-imports` (`@milkdown/*`) | `c5823016` | `@milkdown/utils` 직접 import 회귀 차단 |
 
-**근본 원인**: 링크 bottom과 bar top 사이 6px 시각 갭이 mouse-event "데드 존" 형성:
-- `mouseout(link)` 발화 → 150ms `activeOutTimer` 시작
-- 갭 통과 중에는 어느 onMouseEnter도 발화 안 함
-- 사용자가 천천히 이동하면 150ms 안에 bar 도달 못 함 → 타이머 fire → `setActive(null)`
+### 13.5 완료 — Phase 2 슬래시 커맨드
 
-보조 원인:
-- `LinkHoverBar.tsx:85` `onMouseLeave={close}`가 grace 없이 즉시 종료 — bar를 살짝 벗어나면 즉사
+| 항목 | 커밋 | 비고 |
+|---|---|---|
+| `slashStore` (zustand) | `f4a0eea0` | 평면 구조: open/query/coords/items |
+| `slashItems` 정적 카탈로그 | `f4a0eea0` | 10개 항목 (Text/H1-3/Bullet/Numbered/Todo/Quote/Code/Divider) |
+| `slashTriggerPlugin` (PM 트리거) | `f4a0eea0` | `/` 입력 감지 + 좌표 push |
+| `SlashMenu` 컴포넌트 (cmdk) | `51b85cf0` | ↑↓/Enter/Esc 키보드 네비 |
+| `wrapInTaskList` 단일 트랜잭션 | `c41398ab` | wrap + setNodeMarkup capture+compose |
 
-**다음 작업 (정공법)**:
-1. `GAP_PX = 0` + bar에 `padding-top` (시각 분리는 visual로, hit area는 연속)
-2. `HOVER_OUT_MS` 150 → 300
-3. bar `onMouseLeave` → 즉시 close 대신 `releaseLinkHoverAlive`만 호출, plugin 타이머가 정리
+### 13.6 완료 — Task list / list 동작
 
-대안: `markHoverPlugin` 패턴 참고 — Floating UI 사용해 anchor에 직접 붙이고 React가 leave timer 자체 관리.
+| 항목 | 커밋 | 비고 |
+|---|---|---|
+| `listItemBlockComponent` 등록 + `listItemConfig` (Tabler SVG) | `c41398ab` | Vue NodeView, shadcn 토큰 기반 |
+| `listKeymap` — Enter (split with attrs / lift on empty) | `c41398ab` | task `checked` 보존 |
+| `listKeymap` — Backspace (`liftListItem` 한 stroke) | `c41398ab` | PM 기본 두 stroke 회피 |
+| 체크 mark 크기·간격 미세 튜닝 | `7bb490a9` | path width, line-height |
 
-### 13.5 다음 작업 큐
+### 13.7 완료 — 셀렉션 페인트 사족 제거
 
-순서대로 (Phase 2 진입 전):
-1. **§13.4 데드 존 수정** — 정공법 3개 변경
-2. **링크 hover bar — Edit 액션** — `FormatToolbar`의 LinkButton popover를 store-driven으로 분리해 hover bar에서도 띄우기
-3. **`Cmd+K` 재할당** — CommandPalette → `Cmd+Shift+P`, Link → `Cmd+K` (노션 일치)
-4. **Phase 2 슬래시 커맨드** — trigger plugin → 카탈로그 + popover → Todo 토글 명령
+이 브랜치 마지막 트랙. cross-block 셀렉션 페인트가 본문에 어색한 가로 줄을 만들던 두 원인을 제거.
 
-확정 결정 (사용자 답변 잠금):
-- `Cmd+K` 링크에 양보 (CommandPalette는 `Cmd+Shift+P`로)
-- 슬래시 메뉴에 Todo 포함 (직접 토글 명령 작성)
-- 슬래시 메뉴에 AI 카테고리 미포함 (채팅 패널/proofMark과 분리, Phase 3에서 재검토)
+| 항목 | 커밋 | 원인 / 수정 |
+|---|---|---|
+| list-item 사이 가로 줄 | `bafef19c` | `.list-item` 안쪽 li margin이 editable flex row 안에 있어 cross-block selection이 페인트. Crepe 패턴(`.milkdown-list-item-block`에 0 spacing) 채택 |
+| `.label-wrapper user-select: none` | `bafef19c` | icon 열이 selection 사각형에 끼지 않게 |
+| frozen-selection 데코 페인트 제거 | `df66ecf2` | blur 트리거가 너무 광범위해서 stale 녹색 박스가 본문에 영구로 남음. 시각 표시는 ChatPanel chip이 이미 담당 → 페인트는 사족. snapshot/`getFrozenRange` 로직과 self-heal은 유지 |
+
+### 13.8 다음 작업 큐
+
+doc이 명시한 큐는 Phase 1 / 1.5 / 2 모두 닫힘. 다음 우선순위는 명시되지 않음. 후보:
+
+- **A. 슬래시 메뉴 카탈로그 보강** — §6.2가 언급한 Image 진입점 추가 (Wikilink는 `[[`로 별도 진입). 항목 그루핑 검토
+- **B. proofMark 협업 검증 (§8 매트릭스 미완)** — 두 클라이언트 동시 편집으로 mark 전파·라운드트립 정식 통과 기록
+- **C. Phase 3 신규 인라인 (§7)** — highlight, sub/super, 링크 hover preview
+- **D. doc에 없는 새 우선순위** — 사용자 결정
+
+확정 결정 (잠금):
+- `Cmd+K` 재할당은 **취소** (사용자가 "원래대로 되돌려줘"로 reverted)
+- 슬래시 메뉴에 Todo 포함 ✓ 적용됨
+- 슬래시 메뉴에 AI 카테고리 미포함 (Phase 3에서 재검토)

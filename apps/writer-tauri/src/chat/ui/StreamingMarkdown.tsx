@@ -1,10 +1,21 @@
 import type React from 'react'
 import { Streamdown } from 'streamdown'
+import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
+import { useDocsStore } from '@/state/docsStore'
+import {
+  isWikilinkHref,
+  slugFromWikilinkHref,
+} from '@/editor/wikilinkPalettePlugin'
 
 // Streamdown renders raw markdown progressively (handles incomplete blocks
 // during streaming) and memoizes per-block, so we don't need to gate
 // markdown rendering on stream-vs-done. The component overrides below align
 // inline element styling with the rest of the chat surface.
+//
+// Anchors with `note:<slug>` hrefs are wiki citations (LLM-emitted `[[Title]]`
+// gets rewritten upstream by resolveWikilinksInMarkdown). They're rendered
+// as in-app navigation buttons instead of real anchors so click activates
+// the target doc tab without trying to navigate the browser.
 const markdownComponents: React.ComponentProps<typeof Streamdown>['components'] = {
   p: ({ children }) => <p className="leading-relaxed">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
@@ -12,6 +23,37 @@ const markdownComponents: React.ComponentProps<typeof Streamdown>['components'] 
   code: ({ children }) => (
     <code className="bg-muted text-foreground text-xs rounded px-1 py-0.5 font-mono">{children}</code>
   ),
+  a: ({ href, children, ...rest }) => {
+    if (typeof href === 'string' && isWikilinkHref(href)) {
+      const slug = slugFromWikilinkHref(href)
+      return (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            const store = useDocsStore.getState()
+            const target = store.knownDocs.find((d) => d.slug === slug)
+            if (!target || target.archivedAt) return
+            store.setActive(slug)
+          }}
+          className="inline text-foreground underline decoration-foreground/40 underline-offset-2 hover:decoration-foreground"
+        >
+          {children}
+        </button>
+      )
+    }
+    return (
+      <a
+        {...rest}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-foreground underline decoration-foreground/40 underline-offset-2 hover:decoration-foreground"
+      >
+        {children}
+      </a>
+    )
+  },
 }
 
 // Streamdown's documented streaming pattern: pass content straight through,
@@ -32,6 +74,13 @@ export function StreamingMarkdown({
   content: string
   isStreaming: boolean
 }) {
+  // Rewrite [[Title]] citations the LLM emits (from the /ask wiki Q&A
+  // mode, or anywhere the cross-link prompt rule is in play) into real
+  // markdown links pointing at note:<slug>. Streamdown renders those
+  // as anchors which our markdownComponents.a override turns into
+  // in-app navigation. Partial `[[Tit` mid-stream is left untouched —
+  // the regex only matches when `]]` arrives.
+  const resolved = resolveWikilinksInMarkdown(content)
   return (
     <div className="leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
       <Streamdown
@@ -39,7 +88,7 @@ export function StreamingMarkdown({
         isAnimating={isStreaming}
         components={markdownComponents}
       >
-        {content}
+        {resolved}
       </Streamdown>
     </div>
   )

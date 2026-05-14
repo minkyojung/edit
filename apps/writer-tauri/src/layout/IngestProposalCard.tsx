@@ -9,13 +9,11 @@
 // closed an earlier one.
 //
 // Review action: navigates to the first target wiki page. The
-// useApplyPendingMarks hook (mounted at App root) sees the active
-// page change, materializes the queued proposals as proofSuggestion
-// marks in that page's editor, and removes them from the queue. The
-// user reviews via the existing MarkPopoverLayer (accept / reject
-// inline), same affordance as AI suggestions in chat. Other targets
-// stay queued — the card persists with a smaller count until the
-// user navigates to those pages too.
+// WikiPageBanner (mounted inside the /notes route) renders an
+// in-page inbox card for each pending proposal targeting that
+// page's type, with Accept/Reject buttons. Other targets stay
+// queued — the card persists with a smaller count until the user
+// navigates to those pages too.
 
 import { useNavigate } from 'react-router-dom'
 import { IconX } from '@tabler/icons-react'
@@ -77,11 +75,10 @@ export function IngestProposalCard() {
 
   const onReview = () => {
     // Find the first target type that has a wiki page in the
-    // catalog, then navigate to it. useApplyPendingMarks (App root)
-    // takes over from there: when the editor mounts for that doc,
-    // it stamps the queued proposals as marks. We don't materialize
-    // here because the apply flow needs an EditorView, which only
-    // exists once the doc is active and Milkdown has mounted.
+    // catalog, then navigate to it. WikiPageBanner (mounted inside
+    // the /notes route) takes over from there: it filters
+    // pendingProposals to the active page's type and renders the
+    // inbox cards in place.
     const docs = useDocsStore.getState().knownDocs
     for (const proposal of proposals) {
       const doc = docs.find(
@@ -103,7 +100,7 @@ export function IngestProposalCard() {
   return (
     <div
       className={cn(
-        'relative mx-2 mb-2 rounded-lg border border-border bg-card/80 p-3 shadow-sm',
+        'relative rounded-lg border border-border bg-card/80 p-3 shadow-sm',
         'transition-shadow hover:shadow-md',
       )}
     >
@@ -133,7 +130,7 @@ export function IngestProposalCard() {
           'outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring/40',
         )}
       >
-        <h4 className="text-[13px] font-medium text-foreground">
+        <h4 className="text-sm font-medium text-foreground">
           Wiki updates ready
         </h4>
         <p className="text-[12px] leading-snug text-muted-foreground">

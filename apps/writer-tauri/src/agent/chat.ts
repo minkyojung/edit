@@ -36,16 +36,21 @@ import type {
   ToolPart,
 } from '@/chat/types'
 import { useChatRuns } from '@/stores/chatRuns'
+import { useDocsStore } from '@/state/docsStore'
+import { useEditorViewStore } from '@/state/editorViewStore'
+import { usePendingProposals } from '@/state/pendingProposalsStore'
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 const DOC_CHAR_CAP = 60_000
 
-// Maps Anthropic model id → the agent identifier we stamp on marks created
-// from a turn. The agent id is read by mark UI to attribute proposals.
+// Maps Anthropic model id → the agent identifier we stamp on marks
+// created from a turn. The agent id is read by mark UI to attribute
+// proposals. We pass the full id through (e.g. "claude-haiku-4-5-
+// 20251001") instead of collapsing it to the family name, so display
+// surfaces can render the family AND the version. formatModel in
+// lib/formatModel.ts handles the user-facing collapse.
 function agentIdForModel(model: string): string {
-  if (model.includes('haiku')) return 'ai:claude-haiku'
-  if (model.includes('opus')) return 'ai:claude-opus'
-  return 'ai:claude-sonnet'
+  return `ai:${model}`
 }
 
 export interface ToolCallRecord {
@@ -58,6 +63,12 @@ export interface ToolCallRecord {
 export interface RunChatArgs {
   view: EditorView
   ydoc: Y.Doc
+  /** Slug of the doc this run was started against. Used at proposal-
+   * apply time to route to the currently-mounted view (if the user is
+   * still on this doc) or to the pending queue (if they've switched
+   * away). The captured `view` becomes stale after doc switch since
+   * MilkdownEditor unmounts on key change — slug is the stable id. */
+  slug: string
   /** Owning thread — runs are aborted as a group when their thread is archived. */
   threadId: string
   /** Prior turns up to AND INCLUDING the user message that triggered this run.
@@ -243,7 +254,12 @@ function shouldResumeSession(
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const {
     view,
-    ydoc,
+    // ydoc is intentionally not destructured: the proposal listener now
+    // looks up the live ydoc via useDocsStore by slug, since the
+    // captured ydoc could be destroyed by closeDoc while a run is
+    // in flight. Keeping ydoc in RunChatArgs preserves the call-site
+    // shape so existing callers (useChatRunner) need no change.
+    slug,
     threadId,
     history,
     prompt: promptOverride,
@@ -316,7 +332,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     else signal.addEventListener('abort', () => controller.abort(), { once: true })
   }
   const runs = useChatRuns.getState()
-  runs.start(threadId, runId, controller)
+  runs.start(threadId, runId, controller, slug)
 
   const toolCalls: ToolCallRecord[] = []
 
@@ -343,6 +359,24 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const findToolPartByCallId = (toolCallId: string): ToolPart | undefined => {
     for (const p of partsById.values()) {
       if (p.type === 'tool' && p.toolCallId === toolCallId) return p
+    }
+    return undefined
+  }
+  // Find the propose_change ToolPart that just triggered a proposal
+  // event. The sidecar's `claude:proposal` notification has no
+  // tool_use_id (MCP relay handlers don't receive the Anthropic-side
+  // correlator), so we correlate by order: the SDK invokes the relay
+  // handler only after a tool_use block has been emitted, and tool_use
+  // blocks land in partsById in the order the model produced them.
+  // Map iteration preserves insertion order, so the first unstamped
+  // propose_change part is always the one this event belongs to.
+  const findPendingProposalPart = (): ToolPart | undefined => {
+    for (const p of partsById.values()) {
+      if (p.type !== 'tool') continue
+      if (p.toolName !== 'propose_change') continue
+      const existing = (p.output ?? {}) as { markId?: string }
+      if (existing.markId) continue
+      return p
     }
     return undefined
   }
@@ -470,10 +504,21 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 const tool = findToolPartByCallId(b.tool_use_id)
                 if (tool) {
                   const isError = !!b.is_error
+                  // propose_change parts may have already had their
+                  // output stamped with a markId by the proposal
+                  // listener above. The SDK's tool_result carries only
+                  // the relay handler's ack text, so blindly overwriting
+                  // would erase the markId and break the chat → editor
+                  // click-to-scroll path. Preserve the stamped markId
+                  // when one is present.
+                  const existing = (tool.output ?? {}) as { markId?: string }
+                  const stampedMarkId = !isError ? existing.markId : undefined
                   upsertPart({
                     ...tool,
                     state: isError ? 'output-error' : 'output-available',
-                    output: b.content,
+                    output: stampedMarkId
+                      ? { ok: true, markId: stampedMarkId, content: b.content }
+                      : b.content,
                     errorText: isError ? extractErrorText(b.content) : undefined,
                   })
                 }
@@ -500,10 +545,35 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       }),
       listen<ProposalEvent>('claude:proposal', (e) => {
         if (e.payload.runId !== runId) return
-        const outcome = applyProposal(view, ydoc, e.payload.input, {
-          runId,
-          agentId,
-        })
+        // Route by current state of the target doc:
+        //   1) doc is gone (closed/archived) → drop with a warn,
+        //      sidecar still sends events for a beat after cancel.
+        //   2) doc's editor is currently mounted (activeSlug matches
+        //      AND a live view exists) → apply now, same as before.
+        //   3) doc is still open but the editor for it is unmounted
+        //      (user switched away) → enqueue; MilkdownEditor drains
+        //      on its next mount for this slug.
+        // Captured `view` from runChat args is intentionally NOT used
+        // here — it becomes a stale reference after doc switch since
+        // `<MilkdownEditor key={activeSlug} />` re-mounts on change.
+        const docsState = useDocsStore.getState()
+        const handle = docsState.handles[slug]
+        if (!handle) {
+          console.warn('[chat] proposal for closed doc dropped', { slug, runId })
+          return
+        }
+        const meta = { runId, agentId }
+        const liveView =
+          docsState.activeSlug === slug
+            ? useEditorViewStore.getState().view
+            : null
+        let outcome: ApplyOutcome
+        if (liveView) {
+          outcome = applyProposal(liveView, handle.ydoc, e.payload.input, meta)
+        } else {
+          usePendingProposals.getState().enqueue(slug, e.payload.input, meta)
+          outcome = { ok: false, reason: 'queued' }
+        }
         const record: ToolCallRecord = {
           id: crypto.randomUUID(),
           name: 'propose_change',
@@ -512,6 +582,23 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         }
         toolCalls.push(record)
         onToolApplied?.(record)
+        // Stamp the markId onto the matching ToolPart so the chat
+        // panel's click-to-scroll handler can find it. The SDK's own
+        // tool_result that arrives a beat later carries only the ack
+        // text from the relay handler, not the markId — without this
+        // patch, every propose_change step would render as a dead
+        // click. Re-applies the ack text shape so adapter.ts and any
+        // future consumers keep seeing both fields.
+        if (outcome.ok) {
+          const part = findPendingProposalPart()
+          if (part) {
+            upsertPart({
+              ...part,
+              state: 'output-available',
+              output: { ok: true, markId: outcome.markId, content: 'Proposal recorded.' },
+            })
+          }
+        }
       }),
       listen<DoneEvent>('claude:done', (e) => {
         if (e.payload.runId !== runId) return

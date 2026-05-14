@@ -6,15 +6,17 @@
 // clicks work, but the visible text is wrong.
 //
 // This module provides a React hook that, while the parent's editor
-// view is mounted, subscribes to each warm child's Y.Text('title')
+// view is mounted, subscribes to each warm child's body fragment
 // and rewrites the matching wikilink text in the parent body
-// whenever it changes. Updates flow through a single PM transaction
-// so collab sees one cohesive change.
+// whenever the child's derived label changes (see lib/docLabel.ts —
+// the label is the body's first non-empty block). Updates flow
+// through a single PM transaction so collab sees one cohesive change.
 
 import { useEffect } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { Mark } from '@milkdown/kit/prose/model'
 import { useDocsStore } from '@/state/docsStore'
+import { deriveLabel } from '@/lib/docLabel'
 import {
   WIKILINK_HREF_PREFIX,
   isWikilinkHref,
@@ -30,7 +32,7 @@ export function useWikilinkTitleSync(
   useEffect(() => {
     if (!parentView || !parentSlug) return
 
-    // Only watch children of the active parent. Other docs' titles
+    // Only watch children of the active parent. Other docs' bodies
     // can change too but they don't affect this body.
     const children = knownDocs.filter(
       (d) =>
@@ -44,19 +46,23 @@ export function useWikilinkTitleSync(
     for (const child of children) {
       const handle = handles[child.slug]
       if (!handle) continue
-      const ytext = handle.ydoc.getText('title')
+      const fragment = handle.ydoc.getXmlFragment('prosemirror')
+      const labelFor = () => deriveLabel(fragment) || child.title || ''
 
-      // Run once on mount in case the title was changed while this
+      // Run once on mount in case the label changed while this
       // parent wasn't open — the body might already be stale when
       // the user comes back to it.
-      syncLabel(parentView, child.slug, ytext.toString())
+      syncLabel(parentView, child.slug, labelFor())
 
       const onChange = () => {
         if (!parentView) return
-        syncLabel(parentView, child.slug, ytext.toString())
+        syncLabel(parentView, child.slug, labelFor())
       }
-      ytext.observe(onChange)
-      cleanups.push(() => ytext.unobserve(onChange))
+      // observeDeep so edits inside block text children fire even when
+      // the fragment's top-level structure is unchanged — the label
+      // lives inside the first block's text, not the block list.
+      fragment.observeDeep(onChange)
+      cleanups.push(() => fragment.unobserveDeep(onChange))
     }
 
     return () => {

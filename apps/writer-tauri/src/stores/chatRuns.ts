@@ -12,24 +12,39 @@ import { create } from 'zustand'
 interface ChatRun {
   runId: string
   threadId: string
+  /** Slug of the doc this run is bound to (captured at runChat start).
+   * Set when `slug` is provided to start(); legacy callers that don't
+   * pass it leave it undefined, in which case abortBySlug never matches
+   * the run. */
+  slug?: string
   controller: AbortController
   startedAt: number
 }
 
 interface ChatRunsStore {
   runs: Map<string, ChatRun>
-  start: (threadId: string, runId: string, controller: AbortController) => void
+  start: (
+    threadId: string,
+    runId: string,
+    controller: AbortController,
+    slug?: string,
+  ) => void
   end: (runId: string) => void
   abortByThread: (threadId: string) => void
+  /** Abort every run bound to `slug`. Called from docsStore when the
+   * owning doc is closed/archived — the captured ydoc is about to be
+   * destroyed, so writes from late proposals would land on a dead
+   * fragment. */
+  abortBySlug: (slug: string) => void
   abortAll: () => void
 }
 
 export const useChatRuns = create<ChatRunsStore>((set, get) => ({
   runs: new Map(),
-  start: (threadId, runId, controller) => {
+  start: (threadId, runId, controller, slug) => {
     set((s) => {
       const next = new Map(s.runs)
-      next.set(runId, { runId, threadId, controller, startedAt: Date.now() })
+      next.set(runId, { runId, threadId, slug, controller, startedAt: Date.now() })
       return { runs: next }
     })
   },
@@ -55,6 +70,18 @@ export const useChatRuns = create<ChatRunsStore>((set, get) => ({
     // Entries are removed via `end()` from the runChat finally-block when the
     // CANCELLED notification arrives. Keeping the entry until then lets late
     // events still find their owner thread.
+  },
+  abortBySlug: (slug) => {
+    const { runs } = get()
+    for (const run of runs.values()) {
+      if (run.slug === slug) {
+        try {
+          run.controller.abort()
+        } catch {
+          // best-effort — listener teardown on CANCELLED
+        }
+      }
+    }
   },
   abortAll: () => {
     const { runs } = get()

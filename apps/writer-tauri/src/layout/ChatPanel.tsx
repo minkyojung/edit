@@ -92,6 +92,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   const runner = useChatRunner({
     editorView,
     ydoc,
+    slug,
     activeId,
     activeThreadModel,
     activeThreadEffort,
@@ -281,8 +282,14 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     const overrides: RunOverrides = {
       systemPrompt,
       // Need a non-empty user message — the SDK won't accept ''. Args go
-      // straight through; otherwise a synthetic kickoff line.
-      prompt: args.trim() || `Run /${cmd.name}.`,
+      // straight through when present. When absent, use a slash-free
+      // kickoff line: the underlying Claude Agent SDK scans user
+      // messages for `/<name>` patterns and routes them to its own
+      // skill registry, which doesn't know our command names. A bare
+      // `Run /${cmd.name}.` would be intercepted and rejected with
+      // "skill not available" instead of falling through to the
+      // system prompt we already set above.
+      prompt: args.trim() || 'Begin.',
       model: cmd.model,
       effort: cmd.effort,
       relayTools: kind.relayTools,
@@ -508,14 +515,14 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           left; reserved for model / account / right-sidebar toggle on
           the right once those land. */}
       <div
-        className="flex shrink-0 items-center gap-2 border-b border-border bg-background px-3"
+        className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-3"
         style={{ height: 'var(--header-h)' }}
       >
         <ReviewProgressBadge ydoc={ydoc} />
       </div>
 
       <div
-        className="flex shrink-0 items-stretch bg-background px-2 shadow-[inset_0_-1px_0_var(--border)]"
+        className="flex shrink-0 items-stretch border-b border-border bg-background px-2"
         style={{ height: 'var(--header-h)' }}
       >
         <ThreadTabs
@@ -557,6 +564,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           <MessageRow
             key={turn.id}
             turn={turn}
+            slug={slug}
             onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
           />
         ))}

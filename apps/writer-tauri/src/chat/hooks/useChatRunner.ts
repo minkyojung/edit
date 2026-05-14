@@ -33,6 +33,10 @@ export type RunOverrides = {
 interface UseChatRunnerDeps {
   editorView: EditorView | null
   ydoc: Y.Doc | null
+  /** Slug of the doc this chat is attached to. Forwarded to runChat so
+   * the proposal listener can route by slug instead of relying on a
+   * captured (and soon-stale) view reference after doc switch. */
+  slug: string | null
   activeId: string | null
   activeThreadModel: ChatModel
   activeThreadEffort: ChatEffort
@@ -69,6 +73,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
   const {
     editorView,
     ydoc,
+    slug,
     activeId,
     activeThreadModel,
     activeThreadEffort,
@@ -76,6 +81,13 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
     markSessionStarted,
     sessionStarted,
   } = deps
+
+  // No view-change abort: a run started against doc A keeps running
+  // after the user switches to doc B. chat.ts's proposal listener
+  // routes by slug — proposals for the (now unmounted) original doc
+  // land in pendingProposalsStore and drain when the user comes back.
+  // closeDoc / archiveDoc in docsStore aborts runs whose owning slug
+  // is removed, so a truly-destroyed ydoc never receives a write.
 
   const run = useCallback(
     async (threadId: string, history: ChatTurn[], overrides?: RunOverrides) => {
@@ -187,6 +199,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         const result = await runChat({
           view: editorView!,
           ydoc: ydoc!,
+          slug: slug!,
           threadId,
           history,
           prompt: overrides?.prompt,
@@ -227,7 +240,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [editorView, ydoc, activeId, activeThreadModel, activeThreadEffort, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
+    [editorView, ydoc, slug, activeId, activeThreadModel, activeThreadEffort, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
   return { status, streaming, run }

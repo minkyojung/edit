@@ -4,18 +4,28 @@
 // the bar itself, fades 150ms after both are left.
 
 import { useEffect, useState } from 'react'
-import { IconExternalLink, IconUnlink } from '@tabler/icons-react'
+import { IconExternalLink, IconPencil, IconUnlink } from '@tabler/icons-react'
 
 import { Button } from '@/components/ui/button'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { useLinkHoverStore } from '@/state/linkHoverStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import {
   keepLinkHoverAlive,
   releaseLinkHoverAlive,
 } from './linkHoverPlugin'
-import { openLinkSafely } from './linkUtils'
+import { LinkEditInput } from './LinkEditInput'
+import { applyLinkMark, openLinkSafely } from './linkUtils'
 
-const GAP_PX = 6
+// 0px so the bar's hit area sits flush with the link's bottom edge.
+// Visual separation comes from padding-top on the bar itself —
+// connecting the hit area is what kills the dead zone.
+const GAP_PX = 0
+const BAR_PAD_TOP_PX = 8
 
 function shortHostname(href: string): string {
   try {
@@ -31,6 +41,10 @@ export function LinkHoverBar() {
   const active = useLinkHoverStore((s) => s.active)
   const view = useEditorViewStore((s) => s.view)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+  // While the edit popover is open, the bar must NOT close on
+  // mouseleave / hover-timer expiry — the popover is anchored to a
+  // button inside the bar, so unmounting the bar would orphan it.
+  const [editOpen, setEditOpen] = useState(false)
 
   // Recompute position whenever active changes, and re-align on
   // scroll/resize so the bar tracks the link as the editor moves.
@@ -64,6 +78,14 @@ export function LinkHoverBar() {
     useLinkHoverStore.getState().setActive(null)
   }
 
+  const handleWrapperMouseLeave = () => {
+    // The edit popover renders into a portal — moving the cursor into
+    // it fires mouseleave on this wrapper. Closing here would unmount
+    // the bar and orphan the popover, so suppress while editing.
+    if (editOpen) return
+    close()
+  }
+
   const handleOpen = () => {
     openLinkSafely(active.href)
     close()
@@ -71,40 +93,76 @@ export function LinkHoverBar() {
 
   const handleRemove = () => {
     if (!view) return
-    const linkType = view.state.schema.marks.link
-    if (!linkType) return
-    view.dispatch(view.state.tr.removeMark(active.from, active.to, linkType))
+    applyLinkMark(view, { from: active.from, to: active.to }, '')
+    close()
+  }
+
+  const handleApplyEdit = (href: string) => {
+    if (!view) return
+    applyLinkMark(view, { from: active.from, to: active.to }, href)
+    setEditOpen(false)
     close()
   }
 
   return (
+    // Outer wrapper carries the hover handlers and a transparent
+    // padding-top that bridges the visual gap to the link, so the
+    // cursor never crosses a dead zone on its way down.
     <div
-      role="toolbar"
-      aria-label="Link actions"
       onMouseEnter={keepLinkHoverAlive}
-      onMouseLeave={close}
-      style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 50 }}
-      className="flex items-center gap-0.5 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+      onMouseLeave={handleWrapperMouseLeave}
+      style={{
+        position: 'fixed',
+        top: pos.top,
+        left: pos.left,
+        paddingTop: BAR_PAD_TOP_PX,
+        zIndex: 50,
+      }}
     >
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={handleOpen}
-        className="h-7 gap-1.5 px-2 text-[12px] font-medium"
-        title={active.href}
+      <div
+        role="toolbar"
+        aria-label="Link actions"
+        className="flex items-center gap-0.5 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
       >
-        <IconExternalLink size={13} stroke={2} />
-        <span className="max-w-[180px] truncate">{shortHostname(active.href)}</span>
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={handleRemove}
-        aria-label="Remove link"
-        className="h-7 w-7"
-      >
-        <IconUnlink size={13} stroke={2} />
-      </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleOpen}
+          className="h-7 gap-1.5 px-2 text-[12px] font-medium"
+          title={active.href}
+        >
+          <IconExternalLink size={13} stroke={2} />
+          <span className="max-w-[180px] truncate">{shortHostname(active.href)}</span>
+        </Button>
+        <Popover open={editOpen} onOpenChange={setEditOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Edit link"
+              className="h-7 w-7"
+            >
+              <IconPencil size={13} stroke={2} />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" sideOffset={6} className="w-72 p-2">
+            <LinkEditInput
+              initialValue={active.href}
+              onApply={handleApplyEdit}
+              onCancel={() => setEditOpen(false)}
+            />
+          </PopoverContent>
+        </Popover>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={handleRemove}
+          aria-label="Remove link"
+          className="h-7 w-7"
+        >
+          <IconUnlink size={13} stroke={2} />
+        </Button>
+      </div>
     </div>
   )
 }

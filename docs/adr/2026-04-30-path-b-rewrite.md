@@ -80,6 +80,6 @@
 ## Related
 
 - `docs/adr/2026-04-30-tauri-over-electron.md` (Tauri 전환 결정 — 동시 진행)
-- `docs/proof-sdk-integration-notes.md` (현재 통합에서 배운 점)
-- `docs/proof-sdk-integration-plan.md` (이전 Path A 계획 — 참조용으로 보존)
-- `docs/path-b-rewrite-plan.md` (실행 계획)
+- `docs/archive/proof-sdk-integration-notes.md` (현재 통합에서 배운 점)
+- `docs/archive/proof-sdk-integration-plan.md` (이전 Path A 계획 — 참조용으로 보존)
+- `docs/archive/path-b-rewrite-plan.md` (실행 계획)

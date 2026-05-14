@@ -23,7 +23,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { IngestProposal } from '@/agent/ingest'
+import type { IngestProposal, IndexUpdate } from '@/agent/ingest'
 import { useDocsStore } from './docsStore'
 
 /** A proposal waiting for the user to accept or skip. Adds a stable
@@ -58,17 +58,50 @@ export interface PendingLogEntry {
   proposedAt: number
 }
 
+/** A pending index summary update — one line for `wiki:index`.
+ * Drained lazily when the user visits wiki:index (same lazy-on-
+ * active pattern logs and proposals use). The apply layer dedups
+ * by target so a stale update for the same page never appends a
+ * duplicate line. */
+export interface PendingIndexUpdate extends IndexUpdate {
+  id: string
+  sourceSlug: string
+  proposedAt: number
+}
+
 interface IngestState {
   // Persisted
   pendingProposals: PendingProposal[]
   pendingLogs: PendingLogEntry[]
-  /** Per-note watermark: the doc body length we last ran ingest on.
-   * Idle trigger only re-runs when current length exceeds this by
-   * the configured threshold (default 200 chars). Map keyed by
-   * note slug. ms-since-epoch isn't stored separately — the
-   * watermark is the body length itself, which is the meaningful
-   * signal (time alone doesn't matter if the user hasn't typed). */
+  pendingIndexUpdates: PendingIndexUpdate[]
+  /** @deprecated Old growth-based watermark. Superseded by the
+   * lastEditedAt / lastIngestedAt pair below — left in the interface
+   * so existing persisted state rehydrates without runtime warnings;
+   * new code paths never read or write it. */
   lastIngestedLength: Record<string, number>
+  /** Per-note ms-since-epoch of the most recent observed edit to the
+   * note body. Bumped by an XmlFragment observer installed in
+   * docsStore.buildHandle once IDB has finished hydrating (so the
+   * initial replay doesn't register as a fresh edit). Idle trigger
+   * compares this against `lastIngestedAt[slug]` — if the doc has
+   * been edited since the last successful ingest, it becomes a
+   * candidate again, no matter how small the edit was. */
+  lastEditedAt: Record<string, number>
+  /** Per-note ms-since-epoch of the most recent successful ingest
+   * pass. Set after the LLM returns valid output (even when the
+   * output had zero proposals — "we looked and judged nothing"
+   * still counts). Used as the watermark the idle trigger compares
+   * `lastEditedAt` against. */
+  lastIngestedAt: Record<string, number>
+  /** Per-note hashes of markdown blocks already forwarded to the
+   * LLM in some prior ingest pass. Persisted as `string[]` because
+   * Set isn't JSON-serializable; runIngest builds a Set at use
+   * time for O(1) membership tests. Re-stored as the full current
+   * hash list after each pass — that "current snapshot, not
+   * cumulative log" shape lets deletions self-heal (a paragraph
+   * dropped from the body falls out of the hash set, so re-paste
+   * is correctly treated as new content). */
+  ingestedBlockHashes: Record<string, string[]>
   dismissed: boolean
   /** Idle minutes before the trigger fires. User-configurable;
    * defaults to 5 (matches Karpathy "step away briefly" cadence). */
@@ -79,14 +112,19 @@ interface IngestState {
    * (clears `dismissed`) so the user notices the new batch. */
   enqueue: (args: {
     proposals: IngestProposal[]
+    indexUpdates: IndexUpdate[]
     logEntry: string | null
     sourceSlug: string
     sourceLabel: string
   }) => void
-  /** Drop the listed proposal ids from the queue (after they've
-   * been applied OR explicitly skipped — same operation either way).
-   * `appliedLogId`, if given, also clears that log entry. */
-  remove: (args: { proposalIds: string[]; logIds?: string[] }) => void
+  /** Drop the listed proposal / log / index-update ids from the
+   * queue (after they've been applied OR explicitly skipped — same
+   * operation either way). */
+  remove: (args: {
+    proposalIds: string[]
+    logIds?: string[]
+    indexUpdateIds?: string[]
+  }) => void
   /** Update a single proposal in place. Used by the apply layer
    * when it materializes a `suggestNewPage` proposal — it creates
    * the new wiki page, then patches the proposal's `target` to the
@@ -98,9 +136,9 @@ interface IngestState {
    * (page archived since enqueue, legacy seed-page targets like
    * `wiki:people` left over from before the seed pages were
    * removed, etc.). Without this, dead proposals sit in the queue
-   * forever — applyPendingForActive's knownByType check just
-   * silently no-ops them. Idempotent; safe to call on every idle
-   * pass. */
+   * forever — the banner inbox simply never shows them because
+   * the target page can't be opened. Idempotent; safe to call on
+   * every idle pass. */
   pruneDeadProposals: () => void
   /** Hide the card without touching the queue. Reopens automatically
    * the next time enqueue lands new content. */
@@ -111,10 +149,27 @@ interface IngestState {
    * a stray dev-tools edit can't accidentally schedule an ingest
    * every second or once a day. */
   setIdleMinutes: (n: number) => void
-  /** Update the per-note watermark after a successful ingest pass.
-   * Idle trigger uses this to skip notes that haven't grown enough
-   * since last time. */
+  /** Stamp `lastEditedAt[slug]` to now. Called by the XmlFragment
+   * observer installed per-handle so any observed edit (typing,
+   * remote sync, mark accept) makes the note re-eligible for the
+   * next idle pass. No-op for wiki:* slugs — those aren't ingest
+   * sources, bumping their state would waste persistence writes. */
+  markEdited: (slug: string) => void
+  /** Update the per-note watermarks after a successful ingest pass.
+   * Sets `lastIngestedAt[slug]` so the next idle pass compares
+   * `lastEditedAt` against this fresh value. The `bodyLength` arg
+   * is legacy (used to populate the deprecated length-based gate);
+   * still recorded for diagnostics but no live gate reads it. */
   markIngested: (slug: string, bodyLength: number) => void
+  /** Replace the persisted block-hash snapshot for `slug`. Called
+   * after a successful ingest pass with the *full* current hash
+   * list of the note's body (not just the newly-sent blocks) — see
+   * the field comment for why the cumulative-vs-snapshot shape
+   * matters for deletion handling. Separate from markIngested
+   * because the two persistences carry different concerns
+   * (timestamp vs content fingerprint) and update independently
+   * during force-runs. */
+  setIngestedBlockHashes: (slug: string, hashes: string[]) => void
   /** Wipe all pending state. Useful for a "clear queue" affordance
    * and for tests. */
   reset: () => void
@@ -129,12 +184,23 @@ export const useIngestStore = create<IngestState>()(
     (set) => ({
       pendingProposals: [],
       pendingLogs: [],
+      pendingIndexUpdates: [],
       lastIngestedLength: {},
+      lastEditedAt: {},
+      lastIngestedAt: {},
+      ingestedBlockHashes: {},
       dismissed: false,
       idleMinutes: DEFAULT_IDLE,
 
-      enqueue: ({ proposals, logEntry, sourceSlug, sourceLabel }) => {
-        if (proposals.length === 0 && !logEntry) return
+      enqueue: ({ proposals, indexUpdates, logEntry, sourceSlug, sourceLabel }) => {
+        console.log('[ingest:queue] enqueue called', {
+          proposals: proposals.length,
+          indexUpdates: indexUpdates.length,
+          logEntry: !!logEntry,
+          sourceSlug,
+          targets: proposals.map((p) => p.target ?? `new:${p.suggestNewPage}`),
+        })
+        if (proposals.length === 0 && indexUpdates.length === 0 && !logEntry) return
         const now = Date.now()
         const newProposals: PendingProposal[] = proposals.map((p) => ({
           ...p,
@@ -160,24 +226,50 @@ export const useIngestStore = create<IngestState>()(
               },
             ]
           : []
-        if (newProposals.length === 0 && newLogs.length === 0) return
+        // Index summary updates follow the same lazy pattern —
+        // they're drained when the user visits wiki:index. Each
+        // entry carries the proposed summary plus its target; the
+        // apply layer dedups by target so a stale update never
+        // creates a duplicate line.
+        const newIndexUpdates: PendingIndexUpdate[] = indexUpdates.map((u) => ({
+          ...u,
+          id: crypto.randomUUID(),
+          sourceSlug,
+          proposedAt: now,
+        }))
+        if (
+          newProposals.length === 0 &&
+          newLogs.length === 0 &&
+          newIndexUpdates.length === 0
+        ) return
         set((s) => ({
           pendingProposals: [...s.pendingProposals, ...newProposals],
           pendingLogs: [...s.pendingLogs, ...newLogs],
+          pendingIndexUpdates: [...s.pendingIndexUpdates, ...newIndexUpdates],
           // Wake the card on every fresh batch so the user notices
           // the new wiki additions waiting for review.
           dismissed: false,
         }))
+        console.log('[ingest:queue] enqueued', {
+          newProposals: newProposals.length,
+          newLogs: newLogs.length,
+          newIndexUpdates: newIndexUpdates.length,
+          ids: newProposals.map((p) => p.id),
+        })
       },
 
-      remove: ({ proposalIds, logIds }) => {
+      remove: ({ proposalIds, logIds, indexUpdateIds }) => {
         const propSet = new Set(proposalIds)
         const logSet = new Set(logIds ?? [])
+        const idxSet = new Set(indexUpdateIds ?? [])
         set((s) => ({
           pendingProposals: s.pendingProposals.filter(
             (p) => !propSet.has(p.id),
           ),
           pendingLogs: s.pendingLogs.filter((l) => !logSet.has(l.id)),
+          pendingIndexUpdates: s.pendingIndexUpdates.filter(
+            (u) => !idxSet.has(u.id),
+          ),
         }))
       },
 
@@ -216,26 +308,57 @@ export const useIngestStore = create<IngestState>()(
         set({ idleMinutes: clamped })
       },
 
+      markEdited: (slug) => {
+        // Caller is responsible for type-gating (slug is a random
+        // UUID, not a type id, so prefix checks here never matched).
+        // docsStore's XmlFragment observer in `buildHandle` filters
+        // agent-managed pages via `isWikiDoc(known)` before calling
+        // in, so this just records the timestamp.
+        set((s) => ({
+          lastEditedAt: { ...s.lastEditedAt, [slug]: Date.now() },
+        }))
+      },
+
       markIngested: (slug, bodyLength) =>
         set((s) => ({
           lastIngestedLength: { ...s.lastIngestedLength, [slug]: bodyLength },
+          lastIngestedAt: { ...s.lastIngestedAt, [slug]: Date.now() },
+        })),
+
+      setIngestedBlockHashes: (slug, hashes) =>
+        set((s) => ({
+          ingestedBlockHashes: { ...s.ingestedBlockHashes, [slug]: hashes },
         })),
 
       reset: () =>
         set({
           pendingProposals: [],
           pendingLogs: [],
+          pendingIndexUpdates: [],
           lastIngestedLength: {},
+          lastEditedAt: {},
+          lastIngestedAt: {},
+          ingestedBlockHashes: {},
           dismissed: false,
         }),
     }),
     {
       name: 'writer-tauri:ingest',
-      version: 1,
+      // v2: adds `ingestedBlockHashes` for source-side dedup. v1
+      // state hydrates without it — the field defaults to an empty
+      // object via the initial state, which means the next ingest
+      // pass treats every block as new (acceptable one-shot cost
+      // for existing users; stabilizes after the first successful
+      // pass).
+      version: 2,
       partialize: (s) => ({
         pendingProposals: s.pendingProposals,
         pendingLogs: s.pendingLogs,
+        pendingIndexUpdates: s.pendingIndexUpdates,
         lastIngestedLength: s.lastIngestedLength,
+        lastEditedAt: s.lastEditedAt,
+        lastIngestedAt: s.lastIngestedAt,
+        ingestedBlockHashes: s.ingestedBlockHashes,
         dismissed: s.dismissed,
         idleMinutes: s.idleMinutes,
       }),

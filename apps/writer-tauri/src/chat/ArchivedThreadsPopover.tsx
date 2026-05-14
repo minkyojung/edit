@@ -16,6 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { formatRelative } from '@/lib/formatRelative'
 import { MAX_ACTIVE_THREADS, type ThreadMeta } from './types'
 
 interface Props {
@@ -101,15 +102,3 @@ export function ArchivedThreadsPopover({
   )
 }
 
-function formatRelative(ts: number): string {
-  const diffMs = Date.now() - ts
-  const m = Math.round(diffMs / 60_000)
-  if (m < 1) return 'just now'
-  if (m < 60) return `${m}m ago`
-  const h = Math.round(m / 60)
-  if (h < 24) return `${h}h ago`
-  const d = Math.round(h / 24)
-  if (d < 30) return `${d}d ago`
-  const mo = Math.round(d / 30)
-  return `${mo}mo ago`
-}

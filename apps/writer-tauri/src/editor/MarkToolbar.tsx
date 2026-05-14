@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import * as Y from 'yjs'
 import type { SelectionInfo } from './selectionPlugin'
 import type { StoredMark } from '../hooks/useCollabDoc'
@@ -17,6 +17,44 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
   const [mode, setMode] = useState<Mode>('pick')
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+
+  // Reset transient state whenever the selected range changes (or
+  // clears). Standard product convention: an unsaved comment / replace
+  // draft is discarded the moment the user moves to a different
+  // anchor, so the next selection always opens in the neutral 'pick'
+  // mode. Without this the toolbar's React instance stays mounted
+  // (the parent always renders it while a doc is open), so `mode` and
+  // `input` would carry over from the previous selection.
+  //
+  // The dependency is the (from, to) pair, not the SelectionInfo
+  // object reference — the selectionPlugin emits a fresh object on
+  // every dispatch (including no-op selection updates while typing
+  // inside the composer input), so depending on the object would
+  // wipe the user's in-progress typing mid-keystroke.
+  useEffect(() => {
+    setMode('pick')
+    setInput('')
+    setLoading(false)
+  }, [selection?.from, selection?.to])
+
+  // Global Escape — input's own keydown only fires while the input is
+  // focused. Esc after clicking elsewhere (or just after clicking the
+  // Comment button before focus settled) would otherwise leave the
+  // composer half-open. A window-scoped listener catches both cases.
+  // Bound only while the toolbar is showing so we don't shadow Esc
+  // for anything else when the toolbar isn't visible.
+  useEffect(() => {
+    if (!selection) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      setMode('pick')
+      setInput('')
+      setLoading(false)
+      onDismiss()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selection, onDismiss])
 
   if (!selection) return null
 
@@ -59,7 +97,7 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
       return false
     }
     const attrs = kind === 'comment'
-      ? { id: markId, by: 'owner' }
+      ? { id: markId, by: 'owner', ...extraAttrs }
       : { id: markId, kind, by: 'owner', ...extraAttrs }
     view.dispatch(view.state.tr.addMark(selection!.from, selection!.to, markType.create(attrs)))
     return true
@@ -82,28 +120,46 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
     const now = new Date().toISOString()
     setLoading(true)
     try {
-      if (mode === 'comment') {
-        if (!stampInlineMark(markId, 'comment')) { setLoading(false); return }
-        writeMarkToYMap(markId, {
-          kind: 'comment',
-          by: 'owner',
-          quote: selection!.text,
-          text: input.trim() || '.',
-          ...anchors,
-          at: now,
-        } as StoredMark)
-      } else if (mode === 'replace') {
-        const content = input.trim()
-        if (!stampInlineMark(markId, 'replace', { content })) { setLoading(false); return }
-        writeMarkToYMap(markId, {
-          kind: 'replace',
-          by: 'owner',
-          quote: selection!.text,
-          content,
-          status: 'pending',
-          ...anchors,
-          at: now,
-        } as StoredMark)
+      // PM stamp + Y.Map write share one Yjs transaction with the
+      // 'mark-action' origin so Cmd+Z restores the mark and metadata
+      // together — mirrors accept/reject in markActions.ts.
+      let stamped = false
+      ydoc.transact(() => {
+        if (mode === 'comment') {
+          const text = input.trim() || '.'
+          const quote = selection!.text
+          // Stamp body + quote on the PM mark so PM undo can restore the
+          // comment intact (single source of truth). Y.Map mirror below
+          // is kept for legacy readers (e.g. DocumentInfoDialog stats);
+          // the popover now reads from the mark itself.
+          if (!stampInlineMark(markId, 'comment', { text, quote })) return
+          writeMarkToYMap(markId, {
+            kind: 'comment',
+            by: 'owner',
+            quote,
+            text,
+            ...anchors,
+            at: now,
+          } as StoredMark)
+          stamped = true
+        } else if (mode === 'replace') {
+          const content = input.trim()
+          if (!stampInlineMark(markId, 'replace', { content })) return
+          writeMarkToYMap(markId, {
+            kind: 'replace',
+            by: 'owner',
+            quote: selection!.text,
+            content,
+            status: 'pending',
+            ...anchors,
+            at: now,
+          } as StoredMark)
+          stamped = true
+        }
+      }, 'mark-action')
+      if (!stamped) {
+        setLoading(false)
+        return
       }
       reset()
     } catch (err) {
@@ -124,15 +180,23 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
     const now = new Date().toISOString()
     setLoading(true)
     try {
-      if (!stampInlineMark(markId, 'delete')) { setLoading(false); return }
-      writeMarkToYMap(markId, {
-        kind: 'delete',
-        by: 'owner',
-        quote: selection!.text,
-        status: 'pending',
-        ...anchors,
-        at: now,
-      } as StoredMark)
+      let stamped = false
+      ydoc.transact(() => {
+        if (!stampInlineMark(markId, 'delete')) return
+        writeMarkToYMap(markId, {
+          kind: 'delete',
+          by: 'owner',
+          quote: selection!.text,
+          status: 'pending',
+          ...anchors,
+          at: now,
+        } as StoredMark)
+        stamped = true
+      }, 'mark-action')
+      if (!stamped) {
+        setLoading(false)
+        return
+      }
       reset()
     } catch (err) {
       console.error('[mark] create failed', err)

@@ -1,78 +1,298 @@
-// Wiki pages section for the sidebar — belief / entity / episode
-// docs and any user-defined wiki pages. Lives below the date-axis
-// date view because wiki content is agent-synthesized memory,
-// not user-authored notes on the time spine; mixing them blurs the
-// write-ownership split (see isWikiDoc in docsStore).
+// Wiki pages section for the sidebar — split into two groups that
+// mirror Karpathy's schema-vs-wiki separation:
+//
+//   System  → agent meta surface (conventions / log / index).
+//             Read-only from the user's perspective — the LLM
+//             writes / maintains these pages on dedicated prompt
+//             channels (not via the wiki catalog), so they get
+//             their own visual region with no `+` button. System
+//             pages stay flat: they're a small fixed set, no
+//             nesting affordance is useful here.
+//
+//   Wiki    → user-accumulated content pages (`wiki:custom-*`).
+//             Rendered as a tree (DocTreeNode) so the user can
+//             organise pages under category pages like "Work" or
+//             "People" — Anthropic's filesystem-style nesting
+//             pattern, not a separate tag / category schema.
+//             Created via the group-level `+` button (root page)
+//             or the per-row `+` action (child of an existing
+//             wiki page).
+//
+// Lives below the date-axis date view because both groups are
+// agent-managed memory, not user-authored notes on the time
+// spine; mixing them blurs the write-ownership split (see
+// isWikiDoc in docsStore).
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { IconFileDescription, IconPlus } from '@tabler/icons-react'
+import {
+  IconFileDescription,
+  IconPlus,
+  IconRefresh,
+  IconLoader2,
+} from '@tabler/icons-react'
+import {
+  DndContext,
+  PointerSensor,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
 import { cn } from '@/lib/utils'
-import { useDocsStore, isWikiDoc, type KnownDoc } from '@/state/docsStore'
+import { useDocsStore, getDocPolicy, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { createCustomWikiPage } from '@/state/wikiService'
+import { notify } from '@/lib/notify'
+import { syncTodayManually } from '@/hooks/useIdleTrigger'
+import { DocTreeNode, indexChildren, type MoveTarget } from './DocTreeNode'
+import {
+  SidebarGroup,
+  SidebarGroupAction,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from '@/components/ui/sidebar'
+
+/** dnd-kit identifier for the "promote to root" drop target. Real
+ * wiki slugs are uuids so any non-uuid sentinel works; this string
+ * lives next to its only consumer (the drop handler below) so a
+ * future rename stays local. */
+const ROOT_DROP_ID = 'wiki:__root__'
 
 export function WikiSection() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const activeSlug = useDocsStore((s) => s.activeSlug)
   const setActive = useDocsStore((s) => s.setActive)
+  const archiveDoc = useDocsStore((s) => s.archiveDoc)
+  const moveDoc = useDocsStore((s) => s.moveDoc)
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
-  const wikiDocs = useMemo(
-    () => knownDocs.filter((d) => !d.archivedAt && isWikiDoc(d)),
+  const systemDocs = useMemo(
+    () =>
+      knownDocs.filter(
+        (d) => !d.archivedAt && getDocPolicy(d).sidebarGroup === 'system',
+      ),
     [knownDocs],
   )
+  // Live wiki pages — the universe DocTreeNode walks. childrenByParent
+  // is keyed across this whole set, so a node at any depth gets its
+  // direct children in O(1).
+  const wikiDocs = useMemo(
+    () =>
+      knownDocs.filter(
+        (d) => !d.archivedAt && getDocPolicy(d).sidebarGroup === 'wiki',
+      ),
+    [knownDocs],
+  )
+  const childrenByParent = useMemo(
+    () => indexChildren(wikiDocs),
+    [wikiDocs],
+  )
+  // Only roots render at the top level — descendants come in via
+  // DocTreeNode's recursion. Filtering by `!parentId` keeps a child
+  // from being drawn twice when its parent is also live.
+  const rootWikiDocs = useMemo(
+    () => wikiDocs.filter((d) => !d.parentId),
+    [wikiDocs],
+  )
+  // Move-to targets surfaced in each row's context menu: the
+  // top-level wiki pages (which act as categories) plus a Root
+  // option for promoting a nested page back up. Top-level only
+  // means cycle prevention is trivial — a root page can't be a
+  // descendant of any moved doc — and matches Phase 2's "pick a
+  // category by title" mental model. Deeper-tree moves are the
+  // drag-and-drop surface's job (Phase 3-3+).
+  const moveTargets = useMemo<MoveTarget[]>(() => {
+    const targets: MoveTarget[] = [{ slug: null, label: '(Root)' }]
+    for (const d of rootWikiDocs) {
+      const title = (d.title ?? '').trim() || d.type.replace(/^wiki:custom-/, '')
+      targets.push({ slug: d.slug, label: title })
+    }
+    return targets
+  }, [rootWikiDocs])
+  const handleMoveTo = (slug: string, newParentId: string | null) => {
+    moveDoc(slug, newParentId)
+  }
+
+  // Pointer sensor with a small activation distance so the row's
+  // single-click "open this doc" gesture isn't accidentally read
+  // as the start of a drag. 8px is the dnd-kit default reference;
+  // it survives a quick mouseup before the drag overlay engages.
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+  )
+
+  // Drop handler. dnd-kit routes the source's `id` and the over
+  // target's `id` here; we translate ROOT_DROP_ID to a null parent,
+  // then defer all validation (cycle, system parent, archived) to
+  // moveDoc. A false return surfaces the refusal toast — context-
+  // menu items self-disable so they don't reach this path.
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over) return
+    const sourceSlug = String(active.id)
+    const newParentId = over.id === ROOT_DROP_ID ? null : String(over.id)
+    const ok = moveDoc(sourceSlug, newParentId)
+    if (!ok) notify.cantMoveDoc()
+  }
 
   const ensureNotesRoute = () => {
     if (!pathname.startsWith('/notes')) navigate('/notes')
   }
 
-  const handleNew = async () => {
-    // Untitled by design: the new doc gets a title input the user
-    // fills in immediately. Notion-style — no modal, no prompt, the
-    // empty title field IS the prompt. Custom-* slug ensures it
-    // never collides with a seed wiki type.
-    const slug = await createCustomWikiPage('Untitled')
+  const [syncing, setSyncing] = useState(false)
+  const handleSyncClick = async () => {
+    if (syncing) return
+    setSyncing(true)
+    try {
+      const proposals = await syncTodayManually()
+      if (proposals === null) {
+        // No daily for today — bootstrap probably hasn't caught
+        // up. Stay quiet; the next click after bootstrap will
+        // work normally.
+        return
+      }
+      notify.wikiSynced({ proposals })
+    } catch (err) {
+      console.warn('[wiki] manual sync failed', err)
+      notify.wikiSyncFailed()
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const handleNewRoot = async () => {
+    // Root creation: no parent. User then either types a title in
+    // place or renames in their own time. Notion-style — empty title
+    // IS the prompt; useDocLabel falls back to 'Untitled' in the
+    // sidebar until something real is typed.
+    const slug = await createCustomWikiPage('')
     if (!slug) return
     setActive(slug)
     ensureNotesRoute()
   }
 
+  const handleNewChild = async (parentSlug: string) => {
+    // Child creation through the per-row `+` action. createCustomWiki
+    // Page validates the parent (must be a live wiki:custom-*) so a
+    // stale slug degrades to root rather than failing.
+    const slug = await createCustomWikiPage('', undefined, { parentId: parentSlug })
+    if (!slug) return
+    setActive(slug)
+    ensureNotesRoute()
+  }
+
+  const onSelectDoc = (slug: string) => {
+    setActive(slug)
+    ensureNotesRoute()
+  }
+  const onArchiveDoc = (slug: string) => {
+    archiveDoc(slug)
+  }
+
+  // System rows are intentionally simple: no nesting, no add button,
+  // no archive (those are agent-managed). Keep them as plain rows so
+  // they read as a meta region rather than a peer of the content
+  // tree below.
+  const renderSystemRow = (doc: KnownDoc) => (
+    <SidebarMenuItem key={doc.slug} data-slug={doc.slug}>
+      <SystemRow
+        doc={doc}
+        isActive={doc.slug === activeSlug}
+        onSelect={() => onSelectDoc(doc.slug)}
+      />
+    </SidebarMenuItem>
+  )
+
   return (
-    <div className="pt-3">
-      <div className="flex items-center justify-between px-2 pb-1">
-        <span className="text-[13px] font-medium text-muted-foreground">
-          Wiki
-        </span>
-        <button
-          type="button"
-          onClick={handleNew}
-          aria-label="New wiki page"
-          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-        >
-          <IconPlus size={13} stroke={1.75} />
-        </button>
-      </div>
-      <ul className="flex flex-col">
-        {wikiDocs.map((doc) => (
-          <li key={doc.slug} data-slug={doc.slug}>
-            <WikiRow
-              doc={doc}
-              isActive={doc.slug === activeSlug}
-              onSelect={() => {
-                setActive(doc.slug)
-                ensureNotesRoute()
-              }}
-            />
-          </li>
-        ))}
-      </ul>
-    </div>
+    <>
+      {systemDocs.length > 0 && (
+        <SidebarGroup>
+          <SidebarGroupLabel>System</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{systemDocs.map(renderSystemRow)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      )}
+      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+        <SidebarGroup>
+          <SidebarGroupLabel>Wiki</SidebarGroupLabel>
+          {/* Sync button sits left of the `+` action so the
+              destructive-leaning "create new page" stays at the
+              edge and the safer "sync today's daily" action gets
+              the inner slot. SidebarGroupAction is absolute-
+              positioned at right-3; the override shifts this one
+              left by the icon-width + gap so the two don't
+              overlap. */}
+          <SidebarGroupAction
+            className="right-9"
+            onClick={handleSyncClick}
+            disabled={syncing}
+            aria-label="Sync today's daily to wiki"
+          >
+            {syncing ? (
+              <IconLoader2 className="animate-spin" />
+            ) : (
+              <IconRefresh />
+            )}
+          </SidebarGroupAction>
+          <SidebarGroupAction onClick={handleNewRoot} aria-label="New wiki page">
+            <IconPlus />
+          </SidebarGroupAction>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {rootWikiDocs.map((doc) => (
+                <DocTreeNode
+                  key={doc.slug}
+                  doc={doc}
+                  childrenByParent={childrenByParent}
+                  activeSlug={activeSlug}
+                  onSelect={onSelectDoc}
+                  onAddChild={handleNewChild}
+                  onArchive={onArchiveDoc}
+                  moveTargets={moveTargets}
+                  onMoveTo={handleMoveTo}
+                  draggable
+                />
+              ))}
+              <RootDropZone />
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </DndContext>
+    </>
   )
 }
 
-function WikiRow({
+/** Tail-of-list drop target that promotes a dragged doc to the
+ * root by setting parentId = null. Rendered as a thin spacer below
+ * the last wiki row — large enough to land a drag on without
+ * stealing visual real estate from real content. dnd-kit's isOver
+ * paints a subtle highlight so the user sees what the drop will
+ * mean. */
+function RootDropZone() {
+  const { isOver, setNodeRef } = useDroppable({ id: ROOT_DROP_ID })
+  return (
+    <li
+      ref={setNodeRef}
+      data-slot="wiki-root-drop"
+      aria-label="Drop here to move to top level"
+      className={cn(
+        'mx-2 my-1 h-6 rounded-md border border-dashed border-transparent',
+        'transition-colors',
+        isOver && 'border-sidebar-accent-foreground/50 bg-sidebar-accent/20',
+      )}
+    />
+  )
+}
+
+function SystemRow({
   doc,
   isActive,
   onSelect,
@@ -82,28 +302,16 @@ function WikiRow({
   onSelect: () => void
 }) {
   const label = useDocLabel(doc.slug)
-  // Strip the `wiki:` prefix for a tidy default when the doc has no
-  // user-set title yet ("belief" reads better than "wiki:belief").
-  const fallback = doc.type.replace(/^wiki:/, '')
+  // Strip the agent prefix for a tidy default when the doc has no
+  // user-set title yet ("log" reads better than "system:log",
+  // "belief" reads better than "wiki:belief"). useDocLabel already
+  // handles this for system / custom pages — fallback is just the
+  // last-resort path in case label resolution returns empty.
+  const fallback = doc.type.replace(/^(?:wiki|system):/, '')
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        'group flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[13px] font-medium transition-colors',
-        'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-        isActive
-          ? 'bg-accent text-foreground'
-          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-      )}
-    >
-      <span
-        className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground"
-        aria-hidden
-      >
-        <IconFileDescription size={12} stroke={1.75} />
-      </span>
-      <span className="truncate">{label || fallback}</span>
-    </button>
+    <SidebarMenuButton onClick={onSelect} isActive={isActive}>
+      <IconFileDescription />
+      <span>{label || fallback}</span>
+    </SidebarMenuButton>
   )
 }

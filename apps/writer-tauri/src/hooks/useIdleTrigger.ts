@@ -1,42 +1,51 @@
-// Idle-trigger ingest — Karpathy "Memories" pattern. While the user
-// types we stay completely out of the way; only after they step
-// away (mouse / keyboard / focus all quiet for `idleMinutes`) does
-// the wiki bookkeeper wake up, read what's new, and queue proposals
-// for review.
+// Wiki ingest triggers — when to fire a pass against a daily note.
 //
-// Mounted once at app root via `useIdleTrigger()`. Holds a single
-// timer; activity events reset it. When the timer fires it ingests
-// the active doc (and only the active doc — the user's most recent
-// focus is the most natural unit, matches Karpathy's "ingest one
-// source at a time" style and avoids parallel sidecar load).
+// Karpathy's LLM wiki pattern is "user drops a source, tells the
+// LLM to process it" — a deliberate user-initiated event. Earlier
+// versions of this hook automated the trigger (5-min idle, then
+// active-doc-change + 30-min polling) which caused chained
+// problems: small per-pass contexts made the LLM judge content as
+// "transient" more often, every pass still emitted a log line,
+// and "no durable content" entries piled up in wiki:log.
 //
-// Watermark gate: an ingest pass marks the doc's body length, and
-// subsequent passes skip unless the body has grown by at least
-// MIN_GROWTH chars. Editing-and-deleting the same paragraph twice
-// shouldn't burn tokens; meaningful new content does.
+// Now the trigger is user-initiated by default:
+//
+//   1. `syncTodayManually()` — exposed for the sidebar Sync
+//      button. The deliberate path. One ingest per click.
+//   2. 23:59 single-shot timer — safety net for forgotten days.
+//      Fires once per day with today's daily as the target. If
+//      the user already synced manually, the block-hash filter
+//      short-circuits (no new blocks → no LLM call).
+//   3. Boot-time catch-up — if yesterday's daily was edited but
+//      never ingested (app closed overnight before 23:59 fired),
+//      run one pass against it.
+//
+// Source-side dedup (`lib/blockHash`) stays as insurance: the two
+// automatic surfaces above can technically double-fire (manual at
+// 5 PM + 23:59 timer), and block-hash ensures the second call is
+// a no-op without burning tokens. On the deliberate path it never
+// kicks in.
+//
+// Mounted once at app root via `useIdleTrigger()` (name kept for
+// the call site even though the idle policy is gone).
 
 import { useEffect, useRef } from 'react'
 import { runIngest } from '@/agent/ingest'
-import { useDocsStore } from '@/state/docsStore'
+import { useDocsStore, isWikiDoc, isUserOwnedWiki } from '@/state/docsStore'
 import { useIngestStore } from '@/state/ingestStore'
 import {
   ensureLogWikiSlug,
   createCustomWikiPage,
 } from '@/state/wikiService'
-import type { IngestProposal } from '@/agent/ingest'
+import type { IngestProposal, IndexUpdate } from '@/agent/ingest'
+import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
+import { effectiveLength } from '@/lib/markdownText'
 import { todayLocalDate } from '@/hooks/useDocMeta'
+import { extractErrorCode } from '@/chat/utils/errorMessage'
+import { notify } from '@/lib/notify'
+import { useConnectDialog } from '@/stores/connectDialog'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
-/** Minimum new chars since last ingest before the trigger will run
- * again on the same doc. Keeps short edits / typo fixes from
- * burning Haiku calls — the wiki only cares about substantive
- * additions. Tuned at 200 chars ≈ a short paragraph. */
-const MIN_GROWTH = 200
-/** Throttle window for mousemove handling. mousemove fires per
- * pixel of motion; without this the listener pegs a CPU on idle
- * trigger reset thrash. 1s is invisible to humans but spares the
- * timer hot-path. */
-const MOUSEMOVE_THROTTLE_MS = 1000
 
 interface RunOptions {
   /** Skip the watermark gate. Used by the dev console hook
@@ -46,28 +55,29 @@ interface RunOptions {
 }
 
 /** Split an ingest pass into "create a new page with this content"
- * vs "stamp this content as a mark on an existing page". The former
- * goes through createCustomWikiPage(name, body) — the page is born
- * with the content already in its body, no mark is created, no
- * placeholder scaffolding is needed. The latter is just the existing
- * target-based proposals passed straight through to the queue.
+ * vs "append this content to an existing page". The former goes
+ * through createCustomWikiPage(name, body) — the page is born with
+ * content already in its body, no banner card is needed. The
+ * latter is just the existing target-based proposals passed
+ * straight through to the queue for in-page banner review.
  *
- * Why the asymmetry: marks are a review surface for *inline*
- * suggestions on top of existing content. A brand-new page has
- * nothing to review against — there is no surrounding text to
- * disambiguate from. Forcing it through the mark system meant
- * stamping a placeholder anchor, which left visible cruft and
- * triggered a server/client sync race when the mark's content
- * leaked into the doc body. Creating the page with content
- * directly keeps the create and review paths on disjoint surfaces.
+ * suggestNewPage / target rewrite: when the LLM creates a new
+ * page, the indexUpdates entry it emitted references the new page
+ * by its proposed `name` (e.g. "Books") since the real type id
+ * didn't exist at LLM-call time. We collect a name → realType map
+ * here and apply it to indexUpdates below, so by the time the
+ * queue sees them every target is a real wiki:* type id and the
+ * apply layer can resolve the title via knownDocs.
+ *
  * Proposals whose page creation fails are dropped (better to lose
  * one than send the LLM's "make a Books page" content to a random
  * existing target). */
 async function materializeNewPageProposals(
   proposals: IngestProposal[],
   sourceLabel: string,
-): Promise<IngestProposal[]> {
+): Promise<{ proposals: IngestProposal[]; nameToType: Map<string, string> }> {
   const out: IngestProposal[] = []
+  const nameToType = new Map<string, string>()
   for (const p of proposals) {
     if (p.target) {
       out.push(p)
@@ -80,10 +90,51 @@ async function materializeNewPageProposals(
     // glance (e.g. "this is Alex's career — why is it on a Chris
     // page?") and either keep the page or archive it. They can
     // delete the footer themselves once they've confirmed.
+    //
+    // resolveWikilinks rewrites [[Other Page]] tokens to real
+    // markdown links — without this the LLM-emitted brackets land
+    // as literal text in the new page's body. Only the content
+    // portion is rewritten; sourceQuote stays verbatim because it
+    // mirrors the user's note (no LLM-side rewriting allowed
+    // there).
+    const resolvedContent = resolveWikilinksInMarkdown(p.content)
     const body = p.sourceQuote
-      ? `${p.content}\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
-      : p.content
-    const newSlug = await createCustomWikiPage(name, body)
+      ? `${resolvedContent}\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
+      : resolvedContent
+
+    // Resolve suggestNewPageParent (a page type id) to a slug by
+    // exact-equality lookup against the live catalog, limited to
+    // user content pages (wiki:custom-*). The system prompt asks
+    // the model to copy the id verbatim from the WIKI block
+    // header, so there's no title-fallback heuristic — a miss
+    // means typo / hallucination and we'd rather log + root-
+    // create than guess. createCustomWikiPage runs its own
+    // validation too.
+    let parentId: string | undefined
+    if (p.suggestNewPageParent) {
+      const parent = useDocsStore
+        .getState()
+        .knownDocs.find(
+          (d) =>
+            !d.archivedAt &&
+            isUserOwnedWiki(d) &&
+            d.type === p.suggestNewPageParent,
+        )
+      if (parent) {
+        parentId = parent.slug
+      } else {
+        console.warn(
+          '[ingest] suggestNewPageParent did not resolve; creating at root',
+          p.suggestNewPageParent,
+        )
+      }
+    }
+
+    const newSlug = await createCustomWikiPage(
+      name,
+      body,
+      parentId ? { parentId } : undefined,
+    )
     if (!newSlug) {
       console.warn(
         '[ingest] suggestNewPage failed; dropping proposal',
@@ -91,12 +142,17 @@ async function materializeNewPageProposals(
       )
       continue
     }
+    // Lookup the type id the catalog just assigned (createCustomWikiPage
+    // mints a `wiki:custom-<id>` and registers it). Used below to
+    // rewrite indexUpdates that referenced this page by name.
+    const known = useDocsStore.getState().knownDocs.find((d) => d.slug === newSlug)
+    if (known) nameToType.set(name, known.type)
     // Page is now in the catalog with its content already in the
     // body. No queue entry — there's no mark to apply. The user
     // sees the new page in the sidebar; if they don't like it,
     // archiving is a one-click rejection.
   }
-  return out
+  return { proposals: out, nameToType }
 }
 
 /** Read a doc's markdown via the canonical proof-server route.
@@ -109,59 +165,93 @@ async function readDocLength(slug: string): Promise<number> {
     )
     if (!res.ok) return 0
     const json = (await res.json()) as { markdown?: string }
-    const md = (json.markdown ?? '').replace(/[​\s]/g, '')
-    return md.length
+    return effectiveLength(json.markdown ?? '')
   } catch {
     return 0
   }
 }
 
-/** Run an ingest pass against the currently active note. Returns
- * the number of proposals enqueued (0 if skipped or empty). Wrapped
- * in a singleton guard at the call site so two timers can't fire
- * concurrent passes on the same doc. */
-async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
+/** Run an ingest pass against a specific note slug. Returns the
+ * number of proposals enqueued (0 if skipped or empty). Callers
+ * arrange the single-flight guarding at the trigger site — this
+ * function is purely the pipeline. */
+async function runIngestForSlug(
+  slug: string,
+  opts: RunOptions = {},
+): Promise<number> {
+  console.log('[ingest:trigger] start', { force: !!opts.force, slug })
   const docs = useDocsStore.getState()
-  const activeSlug = docs.activeSlug
-  if (!activeSlug) return 0
-  const activeKnown = docs.knownDocs.find((d) => d.slug === activeSlug)
-  if (!activeKnown) return 0
-
-  // Pick the doc to ingest FROM. Active doc is the user's most
-  // recent focus, so it's the natural default — except wiki pages,
-  // which are the agent's output: ingesting one would feed the
-  // wiki's own content back into itself. Falling back to today's
-  // daily covers the common pattern where the user writes in the
-  // daily, opens a wiki page to review the result, then walks away;
-  // without this fallback the idle trigger would silently no-op on
-  // their daily's new content.
-  let slug = activeSlug
-  let known = activeKnown
-  if (activeKnown.type.startsWith('wiki:')) {
-    const today = todayLocalDate()
-    const todayDaily = docs.knownDocs.find(
-      (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
-    )
-    if (!todayDaily) return 0
-    slug = todayDaily.slug
-    known = todayDaily
+  const known = docs.knownDocs.find((d) => d.slug === slug)
+  if (!known) {
+    console.log('[ingest:trigger] bail: slug not in catalog', { slug })
+    return 0
   }
-  if (known.archivedAt) return 0
+  // Agent-managed pages (system:* + wiki:*) are LLM output, not
+  // input — ingesting one would feed the wiki's content back into
+  // itself. Trigger sites should already filter these out, but
+  // guard here so a misplaced call (dev console, future trigger
+  // surface) can't accidentally poison the wiki.
+  if (isWikiDoc(known)) {
+    console.log('[ingest:trigger] bail: slug is agent-managed', { slug, type: known.type })
+    return 0
+  }
+  if (known.archivedAt) {
+    console.log('[ingest:trigger] bail: source doc archived', { slug })
+    return 0
+  }
 
   const length = await readDocLength(slug)
-  if (length === 0) return 0
+  if (length === 0) {
+    console.log('[ingest:trigger] bail: source doc empty', { slug })
+    return 0
+  }
 
   if (!opts.force) {
+    // Dirty-bit gate: re-ingest only if the note has been edited
+    // since the last successful pass. The XmlFragment observer in
+    // docsStore.buildHandle bumps `lastEditedAt[slug]` on any
+    // change; `markIngested` below stamps `lastIngestedAt[slug]`
+    // on successful return. First ingest (no prior `lastIngestedAt`)
+    // always falls through — the length=0 short-circuit above
+    // already caught the empty case. This replaces the old growth-
+    // based MIN_GROWTH watermark; a small but meaningful edit (a
+    // new bullet under an existing entity) used to fall under the
+    // 200-char threshold and silently skip.
     const ingest = useIngestStore.getState()
-    const watermark = ingest.lastIngestedLength[slug] ?? 0
-    if (length - watermark < MIN_GROWTH) return 0
+    const editedAt = ingest.lastEditedAt[slug] ?? 0
+    const ingestedAt = ingest.lastIngestedAt[slug] ?? 0
+    if (ingestedAt > 0 && editedAt <= ingestedAt) {
+      console.log('[ingest:trigger] bail: no edits since last ingest', {
+        slug,
+        editedAt,
+        ingestedAt,
+      })
+      return 0
+    }
   }
+  console.log('[ingest:trigger] passed gates → calling LLM', { slug, length })
 
   let result
   try {
     result = await runIngest(slug)
   } catch (err) {
     console.warn('[ingest] runIngest failed', slug, err)
+    // Auth errors are the one ingest failure that doesn't auto-
+    // recover — the OAuth token has expired and the user must
+    // sign in again before any future pass can succeed. Surface
+    // it as a toast with a Reconnect action so the silent
+    // background failure becomes visible. Every other error
+    // (NETWORK / RATE_LIMIT / IDLE_TIMEOUT / SIDECAR_DIED /
+    // malformed / transient 5xx) clears on the next idle window
+    // without user action, so interrupting them with a toast
+    // would be noise. Same classifier (`extractErrorCode`) the
+    // chat ErrorCard uses, so the two surfaces agree on what
+    // counts as auth.
+    if (extractErrorCode(err) === 'AUTH') {
+      notify.claudeSessionExpired({
+        onReconnect: () => useConnectDialog.getState().setOpen(true),
+      })
+    }
     return 0
   }
   // Update the watermark unconditionally on a successful call —
@@ -169,16 +259,39 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
   // judged nothing notable", and re-asking on the same content
   // would be wasted tokens.
   useIngestStore.getState().markIngested(slug, length)
+  // Persist the block-hash snapshot so the next pass can filter
+  // already-seen blocks out before the LLM ever sees them. Skip
+  // on malformed runs (the LLM didn't actually consume anything;
+  // we want to retry the same content next time). Empty arrays
+  // are fine to store — they correctly reflect a doc with no
+  // hashable blocks.
+  if (!result.malformed) {
+    useIngestStore.getState().setIngestedBlockHashes(slug, result.ingestedHashes)
+  }
   // Sweep out any proposals that target archived / no-longer-extant
   // pages. Cheap, idempotent, and keeps the queue from accumulating
   // legacy targets across schema changes.
   useIngestStore.getState().pruneDeadProposals()
 
   if (result.malformed) {
-    console.warn('[ingest] malformed response, skipping enqueue', result.raw)
+    console.warn('[ingest:producer] malformed response, skipping enqueue', result.raw)
     return 0
   }
-  if (result.proposals.length === 0 && !result.logEntry) return 0
+  // Karpathy's invariant: 1 ingest = 1 meaningful wiki diff = 1
+  // log line. If a pass produces no proposals AND no index updates,
+  // the LLM looked at the daily and judged nothing worth filing —
+  // its logEntry (when emitted at all) would just be a per-pass
+  // "nothing notable" verdict that piles up in wiki:log over time.
+  // Suppress the entire enqueue so the log page only ever shows
+  // real wiki changes. The console line above still records the
+  // pass for diagnostics — the audit trail moves from a user-
+  // visible page to dev tooling, which is where it belongs.
+  if (result.proposals.length === 0 && result.indexUpdates.length === 0) {
+    console.log('[ingest:producer] empty result — suppressing logEntry to keep wiki:log clean', {
+      hadLogEntry: !!result.logEntry,
+    })
+    return 0
+  }
 
   // wiki:log is the only system-owned wiki page and is created
   // lazily on first need. Without this, a logEntry would queue but
@@ -198,13 +311,42 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
       : known.title?.trim() || slug
-  const proposalsForQueue = await materializeNewPageProposals(
-    result.proposals,
-    sourceLabel,
+  const { proposals: proposalsForQueue, nameToType } =
+    await materializeNewPageProposals(result.proposals, sourceLabel)
+
+  // Rewrite indexUpdates so every target is a real wiki:* type id.
+  // The LLM emitted them with the new page's *name* (e.g. "Books")
+  // when it didn't have an id yet; materializeNewPageProposals just
+  // created the real pages and gave us the name → type map. Drop
+  // any indexUpdate whose name didn't resolve — the matching page
+  // creation must have failed, so its summary line has nothing to
+  // anchor to.
+  const validTypes = new Set<string>(
+    useDocsStore
+      .getState()
+      .knownDocs.filter((d) => !d.archivedAt)
+      .map((d) => d.type),
   )
+  const indexUpdatesForQueue: IndexUpdate[] = []
+  for (const u of result.indexUpdates) {
+    if (validTypes.has(u.target)) {
+      indexUpdatesForQueue.push(u)
+      continue
+    }
+    const rewritten = nameToType.get(u.target)
+    if (rewritten) {
+      indexUpdatesForQueue.push({ target: rewritten, summary: u.summary })
+    } else {
+      console.warn(
+        '[ingest] indexUpdate target did not resolve to a real page; dropping',
+        u.target,
+      )
+    }
+  }
 
   useIngestStore.getState().enqueue({
     proposals: proposalsForQueue,
+    indexUpdates: indexUpdatesForQueue,
     logEntry: result.logEntry,
     sourceSlug: slug,
     sourceLabel,
@@ -212,83 +354,155 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
   return result.proposals.length
 }
 
-/** Mounts the idle trigger. Call once near the app root. Reads
- * `idleMinutes` from the ingest store on every reset so a settings
- * change takes effect on the next idle window without remounting. */
+/** Find today's daily entry in the catalog. Returns null when the
+ * daily hasn't been bootstrapped yet (rare — bootstrap runs at app
+ * start) or has been archived. Used by the manual sync button and
+ * the 23:59 fallback timer; both target "the day's daily" rather
+ * than the user's currently-active doc. */
+function findTodayDaily(): { slug: string } | null {
+  const today = todayLocalDate()
+  const docs = useDocsStore.getState()
+  const found = docs.knownDocs.find(
+    (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
+  )
+  return found ? { slug: found.slug } : null
+}
+
+/** Find yesterday's daily entry, used by the boot-time catch-up
+ * path. Returns null when there's no yesterday daily — first-time
+ * user, or yesterday was a non-writing day. */
+function findYesterdayDaily(): { slug: string } | null {
+  const today = new Date()
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  const y = yesterday.getFullYear()
+  const m = String(yesterday.getMonth() + 1).padStart(2, '0')
+  const d = String(yesterday.getDate()).padStart(2, '0')
+  const yDate = `${y}-${m}-${d}`
+  const docs = useDocsStore.getState()
+  const found = docs.knownDocs.find(
+    (doc) => doc.type === 'daily' && doc.date === yDate && !doc.archivedAt,
+  )
+  return found ? { slug: found.slug } : null
+}
+
+/** Manual sync entry point. Resolves today's daily and runs one
+ * ingest pass against it. The sidebar Sync button calls this; so
+ * does the 23:59 fallback timer below. Returns the proposal count
+ * (0 when no new blocks since last sync, or when no daily exists
+ * to target) so the caller can shape its UX accordingly — toast
+ * copy differs between "synced — 2 new" and "synced — nothing new
+ * today". Returns null when there's no daily to target at all
+ * (caller can show "no daily to sync" or just stay quiet). */
+export async function syncTodayManually(): Promise<number | null> {
+  const today = findTodayDaily()
+  if (!today) {
+    console.log('[ingest:sync] no today daily to target')
+    return null
+  }
+  return runIngestForSlug(today.slug, { force: true })
+}
+
+/** Mounts the wiki ingest fallback timers. Call once near the app
+ * root. Three things happen here:
+ *
+ *   1. One-time pruning of stale proposals (left over from
+ *      archived pages, legacy seed types, etc.) — same maintenance
+ *      sweep the old auto-trigger did.
+ *   2. Boot catch-up: if yesterday has a daily and it was edited
+ *      since its last successful ingest, fire one pass against
+ *      it. This covers the "app was closed overnight before the
+ *      23:59 timer could run" case.
+ *   3. Daily 23:59 single-shot timer: every day at 23:59 local
+ *      time, run sync against today's daily. Block-hash dedup
+ *      makes this safe even when the user already pressed the
+ *      Sync button earlier in the day (no-op short-circuit).
+ *
+ * Single-flight guard (`runningRef`) covers the case where the
+ * user presses Sync at exactly 23:59 — only one of the two passes
+ * actually hits the LLM. */
 export function useIdleTrigger(): void {
-  // Hold the timer in a ref so each effect cycle can clear and
-  // restart it without re-binding all DOM listeners. A single
-  // timer + a single set of listeners across the hook's lifetime
-  // is the lightest setup.
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Single-flight guard: keeps a second timer-fire from kicking off
-  // a parallel runActiveIngest while the first is still in flight.
-  // The lock auto-releases in the finally block.
   const runningRef = useRef(false)
-  // Last mousemove handled. mousemove fires per pixel; we throttle
-  // to MOUSEMOVE_THROTTLE_MS to stop the timer-reset hot path from
-  // chewing CPU when the cursor drifts.
-  const lastMoveRef = useRef(0)
 
   useEffect(() => {
-    // One-time sweep at app start so any persisted proposals
-    // pointing at types that no longer exist (archived pages,
-    // legacy seeds) drop out of the queue before the user sees a
-    // stale review card.
     useIngestStore.getState().pruneDeadProposals()
 
-    const reset = () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
-      const minutes = useIngestStore.getState().idleMinutes
-      timerRef.current = setTimeout(() => {
-        if (runningRef.current) return
-        runningRef.current = true
-        void runActiveIngest()
-          .catch((err) => console.warn('[ingest] idle pass failed', err))
-          .finally(() => {
-            runningRef.current = false
-            // Don't auto-restart the timer here — we wait for the
-            // user's next bit of activity. Otherwise a fully idle
-            // browser would loop forever burning calls on the same
-            // doc (the watermark blocks it, but the call itself
-            // still fires).
+    const fire = async (slug: string) => {
+      if (runningRef.current) return
+      runningRef.current = true
+      try {
+        await runIngestForSlug(slug)
+      } catch (err) {
+        console.warn('[ingest:fallback] pass failed', err)
+      } finally {
+        runningRef.current = false
+      }
+    }
+
+    // (1) Boot catch-up. Fire-and-forget — we don't want app
+    // startup to block on an LLM call. The edit-vs-ingest gate
+    // inside runIngestForSlug guarantees we only call the LLM
+    // when yesterday's daily actually has new content; otherwise
+    // it short-circuits silently.
+    const yesterday = findYesterdayDaily()
+    if (yesterday) {
+      const ingest = useIngestStore.getState()
+      const editedAt = ingest.lastEditedAt[yesterday.slug] ?? 0
+      const ingestedAt = ingest.lastIngestedAt[yesterday.slug] ?? 0
+      if (editedAt > ingestedAt) {
+        console.log('[ingest:fallback] boot catch-up: yesterday has unsynced edits')
+        void fire(yesterday.slug)
+      }
+    }
+
+    // (2) 23:59 daily fallback. Compute ms until the next 23:59
+    // and use a one-shot setTimeout. After firing, schedule the
+    // next 23:59 (24h later, modulo local-time edge cases like
+    // DST — Date arithmetic handles those correctly). One-shot is
+    // simpler than setInterval here because the wall-clock target
+    // moves with the date, not the elapsed-time clock.
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const scheduleNext1159 = () => {
+      const now = new Date()
+      const next = new Date(now)
+      next.setHours(23, 59, 0, 0)
+      if (next.getTime() <= now.getTime()) {
+        next.setDate(next.getDate() + 1)
+      }
+      const delay = next.getTime() - now.getTime()
+      console.log('[ingest:fallback] next 23:59 in', Math.round(delay / 60_000), 'min')
+      timer = setTimeout(() => {
+        console.log('[ingest:fallback] 23:59 timer firing')
+        const today = findTodayDaily()
+        if (today) {
+          void fire(today.slug).finally(() => {
+            scheduleNext1159()
           })
-      }, minutes * 60_000)
+        } else {
+          // No daily today (rare — maybe the user hasn't booted
+          // the app in days and bootstrap is catching up). Just
+          // reschedule and try again tomorrow.
+          scheduleNext1159()
+        }
+      }, delay)
     }
-
-    const onActivity = () => reset()
-    const onMove = (e: MouseEvent) => {
-      void e
-      const now = Date.now()
-      if (now - lastMoveRef.current < MOUSEMOVE_THROTTLE_MS) return
-      lastMoveRef.current = now
-      reset()
-    }
-
-    // Start the first window the moment the hook mounts so a user
-    // who immediately walks away gets an ingest pass — no need to
-    // touch the keyboard once first.
-    reset()
-
-    window.addEventListener('keydown', onActivity)
-    window.addEventListener('focus', onActivity)
-    window.addEventListener('click', onActivity)
-    window.addEventListener('mousemove', onMove)
+    scheduleNext1159()
 
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
-      window.removeEventListener('keydown', onActivity)
-      window.removeEventListener('focus', onActivity)
-      window.removeEventListener('click', onActivity)
-      window.removeEventListener('mousemove', onMove)
+      if (timer) clearTimeout(timer)
     }
   }, [])
 }
 
-// Dev-only console hook so a tester can fire an ingest immediately
-// without waiting `idleMinutes` and without typing 200 chars. Skips
-// the watermark; otherwise identical to the timer path.
+// Dev-only console hooks. `__triggerIdle` still hits today's daily
+// (same as the manual button) so existing test workflows keep
+// working without rewrites. `__syncToday` is the explicit alias
+// matching the new function name.
 if (import.meta.env.DEV) {
-  ;(window as unknown as { __triggerIdle: () => Promise<number> }).__triggerIdle =
-    () => runActiveIngest({ force: true })
+  const w = window as unknown as {
+    __triggerIdle: () => Promise<number | null>
+    __syncToday: () => Promise<number | null>
+  }
+  w.__triggerIdle = syncTodayManually
+  w.__syncToday = syncTodayManually
 }

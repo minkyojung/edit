@@ -14,6 +14,7 @@ import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
+import { SidebarGroup } from '@/components/ui/sidebar'
 
 const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const
 
@@ -54,20 +55,21 @@ export function MonthView() {
   }
 
   return (
-    <div className="px-1">
+    <SidebarGroup className="p-0 px-2">
       <div className="flex items-center justify-between px-1 pb-1">
         <button
           type="button"
           onClick={() => shiftMonth(-1)}
           aria-label="Previous month"
           className={cn(
-            'flex h-5 w-5 items-center justify-center rounded text-muted-foreground/70 hover:bg-accent/40 hover:text-foreground',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+            'flex h-5 w-5 items-center justify-center rounded-sm transition-colors',
+            'text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+            'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
           )}
         >
           <IconChevronLeft size={12} stroke={1.75} />
         </button>
-        <span className="text-[12px] font-medium text-foreground">
+        <span className="text-xs font-medium text-sidebar-foreground">
           {headerLabel}
         </span>
         <button
@@ -75,8 +77,9 @@ export function MonthView() {
           onClick={() => shiftMonth(1)}
           aria-label="Next month"
           className={cn(
-            'flex h-5 w-5 items-center justify-center rounded text-muted-foreground/70 hover:bg-accent/40 hover:text-foreground',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+            'flex h-5 w-5 items-center justify-center rounded-sm transition-colors',
+            'text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+            'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
           )}
         >
           <IconChevronRight size={12} stroke={1.75} />
@@ -87,7 +90,7 @@ export function MonthView() {
         {WEEKDAY_LABELS.map((label, i) => (
           <div
             key={i}
-            className="flex h-5 items-center justify-center text-[10px] font-medium text-muted-foreground/60"
+            className="flex h-5 items-center justify-center text-[10px] font-medium text-sidebar-foreground/50"
           >
             {label}
           </div>
@@ -102,19 +105,19 @@ export function MonthView() {
               type="button"
               onClick={() => handlePick(cell.date!)}
               className={cn(
-                'relative flex aspect-square flex-col items-center justify-center rounded text-[11px] tabular-nums transition-colors',
-                'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                'relative flex aspect-square flex-col items-center justify-center rounded-md text-xs tabular-nums transition-colors',
+                'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
                 cell.isToday
-                  ? 'bg-accent font-semibold text-foreground'
+                  ? 'bg-sidebar-accent font-semibold text-sidebar-accent-foreground'
                   : cell.hasEntry
-                    ? 'text-foreground hover:bg-accent/50'
-                    : 'text-muted-foreground/40 hover:bg-accent/30 hover:text-muted-foreground',
+                    ? 'font-medium text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground'
+                    : 'font-medium text-sidebar-foreground/35 hover:bg-sidebar-accent/30 hover:text-sidebar-foreground/70',
               )}
             >
               <span className="leading-none">{cell.day}</span>
               {cell.hasEntry && !cell.isToday && (
                 <span
-                  className="absolute bottom-1 h-[3px] w-[3px] rounded-full bg-foreground/70"
+                  className="absolute bottom-1 h-[3px] w-[3px] rounded-full bg-sidebar-foreground/70"
                   aria-hidden
                 />
               )}
@@ -124,7 +127,7 @@ export function MonthView() {
           ),
         )}
       </div>
-    </div>
+    </SidebarGroup>
   )
 }
 

@@ -25,8 +25,17 @@ import {
   IconPlus,
 } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
-import { useDocsStore, shiftDayAnchor } from '@/state/docsStore'
+import { useDocsStore, shiftDayAnchor, isWikiDoc } from '@/state/docsStore'
 import { DocTreeNode, indexChildren } from '../DocTreeNode'
+import {
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from '@/components/ui/sidebar'
+import { Button } from '@/components/ui/button'
 
 export function DayView() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
@@ -53,7 +62,7 @@ export function DayView() {
   // walks the full graph once so DocTreeNode's recursive lookups stay
   // O(1) per level.
   const liveDocs = useMemo(
-    () => knownDocs.filter((d) => !d.archivedAt && !d.type.startsWith('wiki:')),
+    () => knownDocs.filter((d) => !d.archivedAt && !isWikiDoc(d)),
     [knownDocs],
   )
   const childrenByParent = useMemo(() => indexChildren(liveDocs), [liveDocs])
@@ -94,101 +103,93 @@ export function DayView() {
   const dateLabel = formatDayLabel(dayAnchor)
 
   return (
-    <div>
+    <SidebarGroup className="p-0">
       <div
         className={cn(
-          'group flex items-center gap-0.5 pr-1 transition-colors',
+          'group mx-2 flex items-center gap-0.5 rounded-xl pr-1 transition-colors',
           anchoredDaily
-            ? 'text-foreground hover:bg-accent/50'
-            : 'text-muted-foreground/70 hover:bg-accent/50 hover:text-foreground',
+            ? 'text-sidebar-foreground hover:bg-sidebar-accent/50'
+            : 'text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
         )}
         style={{ height: 'var(--header-h)' }}
       >
-        <button
-          type="button"
-          onClick={onLabelClick}
-          className={cn(
-            'flex min-w-0 flex-1 items-center self-stretch px-2 text-left text-[13px] font-medium',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          )}
+        <SidebarGroupLabel
+          asChild
+          className="flex-1 min-w-0 h-full px-2 rounded-none text-sm font-medium text-current"
         >
-          <span className="truncate">{dateLabel}</span>
-        </button>
-        <button
-          type="button"
+          <button type="button" onClick={onLabelClick} className="text-left">
+            <span className="truncate">{dateLabel}</span>
+          </button>
+        </SidebarGroupLabel>
+        {/* Day navigators sized down to icon-xs (24px) so the header
+            stays compact. Color tokens overridden to sidebar palette
+            since the default ghost variant uses generic `muted`. */}
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={() => handleShift(-1)}
           aria-label="Previous day"
-          className={cn(
-            'flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors',
-            'text-muted-foreground/70 hover:bg-foreground/10 hover:text-foreground',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          )}
+          className="rounded-md text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground dark:hover:bg-sidebar-accent"
         >
-          <IconChevronLeft size={12} stroke={1.75} />
-        </button>
-        <button
-          type="button"
+          <IconChevronLeft stroke={1.75} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={() => handleShift(1)}
           aria-label="Next day"
-          className={cn(
-            'flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors',
-            'text-muted-foreground/70 hover:bg-foreground/10 hover:text-foreground',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          )}
+          className="rounded-md text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground dark:hover:bg-sidebar-accent"
         >
-          <IconChevronRight size={12} stroke={1.75} />
-        </button>
+          <IconChevronRight stroke={1.75} />
+        </Button>
       </div>
 
-      {anchoredDaily && children.length > 0 && (
-        <ul className="relative flex flex-col gap-0.5 pt-0.5">
-          <span
-            aria-hidden
-            className="absolute left-2 top-0.5 bottom-0 w-px bg-border"
-          />
-          {children.map((child) => (
-            <DocTreeNode
-              key={child.slug}
-              doc={child}
-              childrenByParent={childrenByParent}
-              activeSlug={activeSlug}
-              depth={1}
-              onSelect={(slug) => {
-                setActive(slug)
-                ensureNotesRoute()
-              }}
-              onAddChild={async (parentSlug) => {
-                await createChildNote(parentSlug)
-                ensureNotesRoute()
-              }}
-              onArchive={(slug) => archiveDoc(slug)}
-            />
-          ))}
-        </ul>
-      )}
+      <SidebarGroupContent className="px-2">
+        {anchoredDaily && children.length > 0 && (
+          <SidebarMenu className="pt-0.5">
+            {children.map((child) => (
+              <DocTreeNode
+                key={child.slug}
+                doc={child}
+                childrenByParent={childrenByParent}
+                activeSlug={activeSlug}
+                onSelect={(slug) => {
+                  setActive(slug)
+                  ensureNotesRoute()
+                }}
+                onAddChild={async (parentSlug) => {
+                  await createChildNote(parentSlug)
+                  ensureNotesRoute()
+                }}
+                onArchive={(slug) => archiveDoc(slug)}
+              />
+            ))}
+          </SidebarMenu>
+        )}
 
-      {anchoredDaily ? (
-        <button
-          type="button"
-          onClick={async () => {
-            await createChildNote(anchoredDaily.slug)
-            ensureNotesRoute()
-          }}
-          className={cn(
-            'mt-1 flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[12px]',
-            'text-muted-foreground/70 transition-colors hover:bg-accent/40 hover:text-foreground',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          )}
-        >
-          <IconPlus size={12} stroke={2} />
-          <span>New note</span>
-        </button>
-      ) : (
-        <div className="mt-1 px-2 py-1.5 text-[12px] text-muted-foreground/60">
-          No entry for this day
-        </div>
-      )}
-    </div>
+        {anchoredDaily ? (
+          <SidebarMenu className="mt-1">
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                size="sm"
+                onClick={async () => {
+                  await createChildNote(anchoredDaily.slug)
+                  ensureNotesRoute()
+                }}
+                className="text-[12px] text-sidebar-foreground/60 hover:text-sidebar-accent-foreground"
+              >
+                <IconPlus />
+                <span>New note</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        ) : (
+          <div className="mt-1 px-2 py-1.5 text-[12px] text-sidebar-foreground/50">
+            No entry for this day
+          </div>
+        )}
+      </SidebarGroupContent>
+    </SidebarGroup>
   )
 }
 

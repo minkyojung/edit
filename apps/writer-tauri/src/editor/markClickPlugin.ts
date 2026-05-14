@@ -7,9 +7,10 @@
 
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
+import { INTERACTIVE_PROOF_MARK_NAMES } from './markTypes'
 
 const key = new PluginKey('markClickListener')
-const TRACKED_TYPES = new Set(['proofSuggestion', 'proofComment', 'proofFlagged', 'proofApproved'])
+const TRACKED_TYPES: ReadonlySet<string> = new Set(INTERACTIVE_PROOF_MARK_NAMES)
 
 export const MARK_CLICKED_EVENT = 'writer-tauri:mark-clicked'
 

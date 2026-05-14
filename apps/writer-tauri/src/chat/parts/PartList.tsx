@@ -1,40 +1,51 @@
-import type { MessagePart } from '@/chat/types'
-import { PROPOSE_CHANGE_TOOL } from '@/chat/parts/proposeChangeTool'
-import { StepStart } from '@/chat/parts/StepStart'
+import type {
+  MessagePart,
+  ReasoningPart,
+  ToolPart,
+  TextPart as TextPartType,
+} from '@/chat/types'
 import { TextPart } from '@/chat/parts/TextPart'
-import { ReasoningPart } from '@/chat/parts/ReasoningPart'
-import { ToolPart } from '@/chat/parts/ToolPart'
-import { ProposeChangePart } from '@/chat/parts/ProposeChangePart'
+import { ProcessChain } from '@/chat/parts/ProcessChain'
 
-/** Walks an assistant turn's timeline. Each part type maps to its own
- * sub-component; unknown types fall through to a debug pill so coverage
- * gaps stay visible during development. */
+/** Walks an assistant turn's timeline and reshapes it for rendering.
+ * All "process" parts (reasoning + tool calls) feed into a single
+ * ProcessChain at the top of the turn — one outer collapsible whose
+ * inner rows each have their own click-to-expand detail. Text parts
+ * render in order below as the body. step-start parts are no-ops
+ * (sidecar never emits them today; the schema reserves the slot). */
 export function PartList({
   parts,
   isStreaming,
+  slug,
 }: {
   parts: MessagePart[]
   isStreaming: boolean
+  slug: string | null
 }) {
+  const processParts: Array<ReasoningPart | ToolPart> = []
+  const textParts: TextPartType[] = []
+  for (const part of parts) {
+    switch (part.type) {
+      case 'reasoning':
+      case 'tool':
+        processParts.push(part)
+        break
+      case 'text':
+        textParts.push(part)
+        break
+      case 'step-start':
+        break
+    }
+  }
+
   return (
     <>
-      {parts.map((part) => {
-        switch (part.type) {
-          case 'text':
-            return <TextPart key={part.id} part={part} isStreaming={isStreaming} />
-          case 'reasoning':
-            return <ReasoningPart key={part.id} part={part} isStreaming={isStreaming} />
-          case 'tool':
-            // Built-in MCP tool: render with a domain-aware preview instead
-            // of the generic JSON dump.
-            if (part.toolName === PROPOSE_CHANGE_TOOL) {
-              return <ProposeChangePart key={part.id} part={part} />
-            }
-            return <ToolPart key={part.id} part={part} />
-          case 'step-start':
-            return <StepStart key={part.id} />
-        }
-      })}
+      {processParts.length > 0 && (
+        <ProcessChain parts={processParts} isStreaming={isStreaming} slug={slug} />
+      )}
+      {textParts.map((part) => (
+        <TextPart key={part.id} part={part} isStreaming={isStreaming} />
+      ))}
     </>
   )
 }
