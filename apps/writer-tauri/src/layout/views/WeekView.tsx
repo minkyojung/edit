@@ -32,10 +32,13 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
   SidebarMenuSub,
 } from '@/components/ui/sidebar'
+import {
+  TreeRow,
+  TreeRowLabel,
+  TreeRowLead,
+} from '@/components/ui/tree-row'
 import {
   Collapsible,
   CollapsibleContent,
@@ -228,15 +231,8 @@ function DayItem({
         ? 'text-sidebar-foreground/40 hover:bg-sidebar-accent/40 hover:text-sidebar-foreground/70'
         : 'text-sidebar-foreground/60'
 
-  const button = (
-    // pr-3!: SidebarMenuButton's variant auto-adds pr-8 when its
-    // SidebarMenuItem contains any descendant SidebarMenuAction. When
-    // the day is expanded its child DocTreeNodes carry archive/+
-    // actions, which are descendants of this day's SidebarMenuItem and
-    // would push the count text leftward by ~20px. The day itself has
-    // no right-side action, so override back to pr-3 with !important
-    // (the :has() selector outranks the unconditional class).
-    <SidebarMenuButton onClick={onJump} className={cn('pl-8 pr-3!', stateClass)}>
+  const labelContent = (
+    <>
       <span className="truncate">{row.label}</span>
       <span
         className={cn(
@@ -246,20 +242,21 @@ function DayItem({
       >
         {hasChildren ? `${row.childCount} · ${row.weekday}` : row.weekday}
       </span>
-    </SidebarMenuButton>
+    </>
   )
 
   if (!hasChildren) {
     return (
-      <SidebarMenuItem>
-        <span
-          aria-hidden
-          className="absolute top-2 left-2 z-10 flex h-4 w-4 items-center justify-center text-sidebar-foreground/50"
-        >
-          <IconCalendar size={16} stroke={1.75} />
-        </span>
-        {button}
-      </SidebarMenuItem>
+      <li>
+        <TreeRow className={stateClass}>
+          <TreeRowLead asChild>
+            <span aria-hidden>
+              <IconCalendar size={16} stroke={1.75} />
+            </span>
+          </TreeRowLead>
+          <TreeRowLabel onClick={onJump}>{labelContent}</TreeRowLabel>
+        </TreeRow>
+      </li>
     )
   }
 
@@ -271,26 +268,22 @@ function DayItem({
         if (open !== isExpanded) onToggle()
       }}
     >
-      <SidebarMenuItem>
-        <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            aria-label={isExpanded ? 'Collapse day' : 'Expand day'}
-            onClick={(e) => e.stopPropagation()}
-            className={cn(
-              'absolute top-2 left-2 z-10 flex h-4 w-4 items-center justify-center rounded-sm',
-              'text-sidebar-foreground/60 hover:text-sidebar-accent-foreground',
-              'outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
-            )}
-          >
-            <IconChevronRight
-              size={16}
-              stroke={1.75}
-              className="transition-transform data-[state=open]:rotate-90"
-            />
-          </button>
-        </CollapsibleTrigger>
-        {button}
+      <li>
+        <TreeRow className={stateClass}>
+          <CollapsibleTrigger asChild>
+            <TreeRowLead
+              aria-label={isExpanded ? 'Collapse day' : 'Expand day'}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <IconChevronRight
+                size={16}
+                stroke={1.75}
+                className="transition-transform data-[state=open]:rotate-90"
+              />
+            </TreeRowLead>
+          </CollapsibleTrigger>
+          <TreeRowLabel onClick={onJump}>{labelContent}</TreeRowLabel>
+        </TreeRow>
         <CollapsibleContent asChild>
           <SidebarMenuSub className="mr-0 pr-0">
             {subChildren.map((child) => (
@@ -306,7 +299,7 @@ function DayItem({
             ))}
           </SidebarMenuSub>
         </CollapsibleContent>
-      </SidebarMenuItem>
+      </li>
     </Collapsible>
   )
 }

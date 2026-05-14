@@ -96,14 +96,19 @@ function TreeRowLead({
 }
 
 /**
- * The doc-title button. Takes the remaining row width with truncate
- * + ellipsis so long titles don't overflow into Trail. h-full makes
- * the entire row's middle clickable, not just the text height —
- * matches SidebarMenuButton's "click anywhere on the row" feel.
+ * The doc-title button. Flex container so children can compose freely
+ * (single label with truncate, or label + right-aligned trailing
+ * content like a count badge). h-full makes the entire row's middle
+ * clickable, not just the text height — matches SidebarMenuButton's
+ * "click anywhere on the row" feel.
+ *
+ * Caller is responsible for truncation: pass `<span className="truncate">
+ * {label}</span>` for the simple case so the ellipsis honors the
+ * row's available width. The button itself is `min-w-0 overflow-hidden`
+ * which is what lets the inner truncate work in a flex context.
  */
 function TreeRowLabel({
   className,
-  children,
   ...props
 }: React.ComponentProps<'button'>) {
   return (
@@ -111,15 +116,13 @@ function TreeRowLabel({
       type="button"
       data-slot="tree-row-label"
       className={cn(
-        'mx-2 flex h-full min-w-0 flex-1 items-center',
+        'mx-2 flex h-full min-w-0 flex-1 items-center gap-2 overflow-hidden',
         'text-left text-inherit',
         'outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
         className,
       )}
       {...props}
-    >
-      <span className="truncate">{children}</span>
-    </button>
+    />
   )
 }
 

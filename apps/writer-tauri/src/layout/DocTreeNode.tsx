@@ -193,7 +193,7 @@ export function DocTreeNode({
                 </span>
               </TreeRowLead>
               <TreeRowLabel onClick={() => onSelect(doc.slug)}>
-                {label}
+                <span className="truncate">{label}</span>
               </TreeRowLabel>
               <TreeRowTrail
                 showOnHover
@@ -245,7 +245,7 @@ export function DocTreeNode({
                 </TreeRowLead>
               </CollapsibleTrigger>
               <TreeRowLabel onClick={() => onSelect(doc.slug)}>
-                {label}
+                <span className="truncate">{label}</span>
               </TreeRowLabel>
               <TreeRowTrail
                 showOnHover
