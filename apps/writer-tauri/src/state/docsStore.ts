@@ -29,6 +29,8 @@ import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
 import { deriveLabel } from '@/lib/docLabel'
 import { useIngestStore } from './ingestStore'
+import { usePendingProposals } from './pendingProposalsStore'
+import { useChatRuns } from '@/stores/chatRuns'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
 
@@ -506,6 +508,11 @@ export const useDocsStore = create<DocsState>()(
           const idx = openSlugs.indexOf(slug)
           nextActive = next[idx] ?? next[idx - 1] ?? null
         }
+        // Stop any chat run bound to this slug and drop its pending
+        // proposal queue BEFORE destroying the ydoc — a late proposal
+        // would otherwise try to dispatch into a dead fragment.
+        useChatRuns.getState().abortBySlug(slug)
+        usePendingProposals.getState().clear(slug)
         const handle = handles[slug]
         if (handle) {
           handle.provider?.destroy()
@@ -710,6 +717,15 @@ export const useDocsStore = create<DocsState>()(
             state.openSlugs.slice(idx + 1).find((s) => !groupSet.has(s)) ??
             [...state.openSlugs.slice(0, idx)].reverse().find((s) => !groupSet.has(s)) ??
             null
+        }
+        // Cancel chat runs + drop pending queues for the whole cascade
+        // before tearing handles down. Same reasoning as closeDoc: late
+        // proposals must not race past a destroyed ydoc.
+        const chatRuns = useChatRuns.getState()
+        const pending = usePendingProposals.getState()
+        for (const s of groupSlugs) {
+          chatRuns.abortBySlug(s)
+          pending.clear(s)
         }
         const nextHandles = { ...state.handles }
         const nextStatus = { ...state.status }

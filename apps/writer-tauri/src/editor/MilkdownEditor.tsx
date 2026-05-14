@@ -47,6 +47,8 @@ import { SlashMenu } from './SlashMenu'
 import { proofMarkPlugins } from './proofMarkSchemas'
 import { dailyGuardPlugin } from './dailyGuardPlugin'
 import { useEditorViewStore } from '@/state/editorViewStore'
+import { usePendingProposals } from '@/state/pendingProposalsStore'
+import { applyProposal } from '@/agent/applyProposal'
 import { EditorFooter } from '@/components/EditorFooter'
 
 interface Props {
@@ -332,6 +334,16 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
         editor.action((ctx) => {
           const parser = ctx.get(parserCtx)
           useEditorViewStore.getState().setParser(parser)
+          // Drain proposals that arrived while this slug's editor was
+          // unmounted (user switched away mid-chat). drain() pops the
+          // whole queue atomically before invoking apply, so a Strict
+          // Mode second mount sees nothing left to do. Runs after the
+          // parser is registered because applyProposal's empty-doc
+          // insert path reads parser from the store.
+          const view = ctx.get(editorViewCtx)
+          usePendingProposals.getState().drain(handle.slug, ({ proposal, meta }) =>
+            applyProposal(view, ydoc, proposal, meta),
+          )
         })
       })
 

@@ -92,6 +92,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
   const runner = useChatRunner({
     editorView,
     ydoc,
+    slug,
     activeId,
     activeThreadModel,
     activeThreadEffort,

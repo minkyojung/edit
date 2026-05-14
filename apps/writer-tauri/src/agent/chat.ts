@@ -36,6 +36,9 @@ import type {
   ToolPart,
 } from '@/chat/types'
 import { useChatRuns } from '@/stores/chatRuns'
+import { useDocsStore } from '@/state/docsStore'
+import { useEditorViewStore } from '@/state/editorViewStore'
+import { usePendingProposals } from '@/state/pendingProposalsStore'
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 const DOC_CHAR_CAP = 60_000
@@ -60,6 +63,12 @@ export interface ToolCallRecord {
 export interface RunChatArgs {
   view: EditorView
   ydoc: Y.Doc
+  /** Slug of the doc this run was started against. Used at proposal-
+   * apply time to route to the currently-mounted view (if the user is
+   * still on this doc) or to the pending queue (if they've switched
+   * away). The captured `view` becomes stale after doc switch since
+   * MilkdownEditor unmounts on key change — slug is the stable id. */
+  slug: string
   /** Owning thread — runs are aborted as a group when their thread is archived. */
   threadId: string
   /** Prior turns up to AND INCLUDING the user message that triggered this run.
@@ -245,7 +254,12 @@ function shouldResumeSession(
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const {
     view,
-    ydoc,
+    // ydoc is intentionally not destructured: the proposal listener now
+    // looks up the live ydoc via useDocsStore by slug, since the
+    // captured ydoc could be destroyed by closeDoc while a run is
+    // in flight. Keeping ydoc in RunChatArgs preserves the call-site
+    // shape so existing callers (useChatRunner) need no change.
+    slug,
     threadId,
     history,
     prompt: promptOverride,
@@ -318,7 +332,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     else signal.addEventListener('abort', () => controller.abort(), { once: true })
   }
   const runs = useChatRuns.getState()
-  runs.start(threadId, runId, controller)
+  runs.start(threadId, runId, controller, slug)
 
   const toolCalls: ToolCallRecord[] = []
 
@@ -502,10 +516,35 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       }),
       listen<ProposalEvent>('claude:proposal', (e) => {
         if (e.payload.runId !== runId) return
-        const outcome = applyProposal(view, ydoc, e.payload.input, {
-          runId,
-          agentId,
-        })
+        // Route by current state of the target doc:
+        //   1) doc is gone (closed/archived) → drop with a warn,
+        //      sidecar still sends events for a beat after cancel.
+        //   2) doc's editor is currently mounted (activeSlug matches
+        //      AND a live view exists) → apply now, same as before.
+        //   3) doc is still open but the editor for it is unmounted
+        //      (user switched away) → enqueue; MilkdownEditor drains
+        //      on its next mount for this slug.
+        // Captured `view` from runChat args is intentionally NOT used
+        // here — it becomes a stale reference after doc switch since
+        // `<MilkdownEditor key={activeSlug} />` re-mounts on change.
+        const docsState = useDocsStore.getState()
+        const handle = docsState.handles[slug]
+        if (!handle) {
+          console.warn('[chat] proposal for closed doc dropped', { slug, runId })
+          return
+        }
+        const meta = { runId, agentId }
+        const liveView =
+          docsState.activeSlug === slug
+            ? useEditorViewStore.getState().view
+            : null
+        let outcome: ApplyOutcome
+        if (liveView) {
+          outcome = applyProposal(liveView, handle.ydoc, e.payload.input, meta)
+        } else {
+          usePendingProposals.getState().enqueue(slug, e.payload.input, meta)
+          outcome = { ok: false, reason: 'queued' }
+        }
         const record: ToolCallRecord = {
           id: crypto.randomUUID(),
           name: 'propose_change',

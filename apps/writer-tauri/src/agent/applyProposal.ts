@@ -17,7 +17,7 @@ import type { StoredMark } from '../hooks/useCollabDoc'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import type { Proposal } from './proposals'
 
-interface ApplyMeta {
+export interface ApplyMeta {
   runId: string
   agentId: string
   focusAreaId?: string
