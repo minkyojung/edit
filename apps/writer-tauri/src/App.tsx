@@ -71,9 +71,10 @@ function AppContent() {
   const statusMap = useDocsStore((s) => s.status)
   const [view, setView] = useState<EditorView | null>(null)
 
-  // Karpathy "Memories" idle pass — runs ingest in the background
-  // after the user has been quiet for `idleMinutes`. Mounted once
-  // here at the root so a single timer covers the whole session.
+  // Karpathy "Memories" ingest — fires in the background when the
+  // user navigates away from a daily, or when the local date rolls
+  // over. Mounted once here at the root so subscriptions and the
+  // date-poll timer share a single lifetime across the session.
   useIdleTrigger()
   // Drains queued log entries / index updates into their respective
   // system pages when the user navigates there. One hook, one

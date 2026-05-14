@@ -1,19 +1,28 @@
-// Idle-trigger ingest — Karpathy "Memories" pattern. While the user
-// types we stay completely out of the way; only after they step
-// away (mouse / keyboard / focus all quiet for `idleMinutes`) does
-// the wiki bookkeeper wake up, read what's new, and queue proposals
-// for review.
+// Wiki ingest triggers — when to fire a pass against a daily note.
 //
-// Mounted once at app root via `useIdleTrigger()`. Holds a single
-// timer; activity events reset it. When the timer fires it ingests
-// the active doc (and only the active doc — the user's most recent
-// focus is the most natural unit, matches Karpathy's "ingest one
-// source at a time" style and avoids parallel sidecar load).
+// Replaces the previous 5-minute idle trigger that was firing
+// repeatedly on the same growing daily and stamping duplicate
+// rows into the wiki. Now we trigger on natural "unit closed"
+// signals instead:
 //
-// Watermark gate: an ingest pass marks the doc's body length, and
-// subsequent passes skip unless the body has grown by at least
-// MIN_GROWTH chars. Editing-and-deleting the same paragraph twice
-// shouldn't burn tokens; meaningful new content does.
+//   1. Active doc changes away from a daily — the user just
+//      finished a writing session on that note, so it's the
+//      natural moment to file what they wrote.
+//   2. Local date crosses (midnight rollover) — yesterday's
+//      daily is permanently sealed by the day boundary even if
+//      the user never closes the tab. A 30-minute polling loop
+//      detects the crossing.
+//
+// Source-side dedup (`lib/blockHash`) guards against the case
+// where one of these triggers ends up re-processing a daily that
+// gained edits since its last successful ingest: only blocks
+// whose hash isn't already in `ingestStore.ingestedBlockHashes`
+// reach the LLM. The trigger says "look at this note"; the
+// block-hash filter decides "and here's the part you haven't
+// seen."
+//
+// Mounted once at app root via `useIdleTrigger()` (name kept for
+// the call site even though the idle policy is gone).
 
 import { useEffect, useRef } from 'react'
 import { runIngest } from '@/agent/ingest'
@@ -32,11 +41,11 @@ import { notify } from '@/lib/notify'
 import { useConnectDialog } from '@/stores/connectDialog'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
-/** Throttle window for mousemove handling. mousemove fires per
- * pixel of motion; without this the listener pegs a CPU on idle
- * trigger reset thrash. 1s is invisible to humans but spares the
- * timer hot-path. */
-const MOUSEMOVE_THROTTLE_MS = 1000
+/** How often to check whether the local date has rolled over.
+ * Half-hourly is more than fine — the trigger only needs to fire
+ * "eventually after midnight," not at any precise moment. Keeps
+ * the polling cost negligible (one Date comparison every 30 min). */
+const DATE_POLL_MS = 30 * 60_000
 
 interface RunOptions {
   /** Skip the watermark gate. Used by the dev console hook
@@ -162,47 +171,29 @@ async function readDocLength(slug: string): Promise<number> {
   }
 }
 
-/** Run an ingest pass against the currently active note. Returns
- * the number of proposals enqueued (0 if skipped or empty). Wrapped
- * in a singleton guard at the call site so two timers can't fire
- * concurrent passes on the same doc. */
-async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
+/** Run an ingest pass against a specific note slug. Returns the
+ * number of proposals enqueued (0 if skipped or empty). Callers
+ * arrange the single-flight guarding at the trigger site — this
+ * function is purely the pipeline. */
+async function runIngestForSlug(
+  slug: string,
+  opts: RunOptions = {},
+): Promise<number> {
+  console.log('[ingest:trigger] start', { force: !!opts.force, slug })
   const docs = useDocsStore.getState()
-  const activeSlug = docs.activeSlug
-  console.log('[ingest:trigger] start', { force: !!opts.force, activeSlug })
-  if (!activeSlug) {
-    console.log('[ingest:trigger] bail: no activeSlug')
+  const known = docs.knownDocs.find((d) => d.slug === slug)
+  if (!known) {
+    console.log('[ingest:trigger] bail: slug not in catalog', { slug })
     return 0
   }
-  const activeKnown = docs.knownDocs.find((d) => d.slug === activeSlug)
-  if (!activeKnown) {
-    console.log('[ingest:trigger] bail: activeKnown not in catalog', { activeSlug })
+  // Agent-managed pages (system:* + wiki:*) are LLM output, not
+  // input — ingesting one would feed the wiki's content back into
+  // itself. Trigger sites should already filter these out, but
+  // guard here so a misplaced call (dev console, future trigger
+  // surface) can't accidentally poison the wiki.
+  if (isWikiDoc(known)) {
+    console.log('[ingest:trigger] bail: slug is agent-managed', { slug, type: known.type })
     return 0
-  }
-
-  // Pick the doc to ingest FROM. Active doc is the user's most
-  // recent focus, so it's the natural default — except agent-
-  // managed pages (system:* + wiki:*), which are the agent's
-  // output: ingesting one would feed the wiki's own content back
-  // into itself. Falling back to today's daily covers the common
-  // pattern where the user writes in the daily, opens a wiki
-  // page to review the result, then walks away; without this
-  // fallback the idle trigger would silently no-op on their
-  // daily's new content.
-  let slug = activeSlug
-  let known = activeKnown
-  if (isWikiDoc(activeKnown)) {
-    const today = todayLocalDate()
-    const todayDaily = docs.knownDocs.find(
-      (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
-    )
-    if (!todayDaily) {
-      console.log('[ingest:trigger] bail: active is wiki, no today-daily fallback')
-      return 0
-    }
-    slug = todayDaily.slug
-    known = todayDaily
-    console.log('[ingest:trigger] rerouted active wiki → today daily', { slug })
   }
   if (known.archivedAt) {
     console.log('[ingest:trigger] bail: source doc archived', { slug })
@@ -268,6 +259,15 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
   // judged nothing notable", and re-asking on the same content
   // would be wasted tokens.
   useIngestStore.getState().markIngested(slug, length)
+  // Persist the block-hash snapshot so the next pass can filter
+  // already-seen blocks out before the LLM ever sees them. Skip
+  // on malformed runs (the LLM didn't actually consume anything;
+  // we want to retry the same content next time). Empty arrays
+  // are fine to store — they correctly reflect a doc with no
+  // hashable blocks.
+  if (!result.malformed) {
+    useIngestStore.getState().setIngestedBlockHashes(slug, result.ingestedHashes)
+  }
   // Sweep out any proposals that target archived / no-longer-extant
   // pages. Cheap, idempotent, and keeps the queue from accumulating
   // legacy targets across schema changes.
@@ -343,23 +343,41 @@ async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
   return result.proposals.length
 }
 
-/** Mounts the idle trigger. Call once near the app root. Reads
- * `idleMinutes` from the ingest store on every reset so a settings
- * change takes effect on the next idle window without remounting. */
+/** Wrapper that resolves "the active note" → slug and dispatches to
+ * runIngestForSlug. Kept around as the dev-console entry point
+ * (__triggerIdle) and as the obvious "run on the user's current
+ * focus" call for any future surface. Returns 0 when there's no
+ * active doc or the active doc is a wiki page (no daily fallback —
+ * the explicit triggers below handle the wiki-active scenario by
+ * targeting yesterday's daily directly). */
+async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
+  const slug = useDocsStore.getState().activeSlug
+  if (!slug) {
+    console.log('[ingest:trigger] active: no slug')
+    return 0
+  }
+  return runIngestForSlug(slug, opts)
+}
+
+/** Mounts the wiki ingest triggers. Call once near the app root.
+ *
+ * Two firing conditions, each independent:
+ *
+ *   1. activeSlug subscription — when the user navigates away from
+ *      a daily (or any non-wiki note), ingest the slug they just
+ *      left. The block-hash filter (see `lib/blockHash`) ensures
+ *      we only forward newly-written content even if the user
+ *      bounces in and out of the same daily multiple times.
+ *   2. Date polling — every 30 minutes, compare today's local
+ *      date against the last date we processed. On a crossing,
+ *      ingest yesterday's daily so the day's writing reliably
+ *      gets filed even if the user never switched tabs.
+ *
+ * Both share a single in-flight guard (`runningRef`) — wiki state
+ * isn't safe to mutate from two concurrent passes against the
+ * same source. */
 export function useIdleTrigger(): void {
-  // Hold the timer in a ref so each effect cycle can clear and
-  // restart it without re-binding all DOM listeners. A single
-  // timer + a single set of listeners across the hook's lifetime
-  // is the lightest setup.
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Single-flight guard: keeps a second timer-fire from kicking off
-  // a parallel runActiveIngest while the first is still in flight.
-  // The lock auto-releases in the finally block.
   const runningRef = useRef(false)
-  // Last mousemove handled. mousemove fires per pixel; we throttle
-  // to MOUSEMOVE_THROTTLE_MS to stop the timer-reset hot path from
-  // chewing CPU when the cursor drifts.
-  const lastMoveRef = useRef(0)
 
   useEffect(() => {
     // One-time sweep at app start so any persisted proposals
@@ -368,57 +386,69 @@ export function useIdleTrigger(): void {
     // stale review card.
     useIngestStore.getState().pruneDeadProposals()
 
-    const reset = () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
-      const minutes = useIngestStore.getState().idleMinutes
-      timerRef.current = setTimeout(() => {
-        if (runningRef.current) return
-        runningRef.current = true
-        void runActiveIngest()
-          .catch((err) => console.warn('[ingest] idle pass failed', err))
-          .finally(() => {
-            runningRef.current = false
-            // Don't auto-restart the timer here — we wait for the
-            // user's next bit of activity. Otherwise a fully idle
-            // browser would loop forever burning calls on the same
-            // doc (the watermark blocks it, but the call itself
-            // still fires).
-          })
-      }, minutes * 60_000)
+    const fire = async (slug: string) => {
+      if (runningRef.current) return
+      runningRef.current = true
+      try {
+        await runIngestForSlug(slug)
+      } catch (err) {
+        console.warn('[ingest] trigger pass failed', err)
+      } finally {
+        runningRef.current = false
+      }
     }
 
-    const onActivity = () => reset()
-    const onMove = (e: MouseEvent) => {
-      void e
-      const now = Date.now()
-      if (now - lastMoveRef.current < MOUSEMOVE_THROTTLE_MS) return
-      lastMoveRef.current = now
-      reset()
+    // (1) activeSlug subscription. Zustand fires the callback with
+    // (current, previous) on every state change; we filter to the
+    // slug field and ignore renders where it didn't actually move.
+    // We ingest the *previous* slug — that's the note the user
+    // just finished with. Skip when the outgoing doc isn't a
+    // user-authored source (wiki:* / system:* are agent output).
+    const unsubActive = useDocsStore.subscribe((state, prev) => {
+      if (state.activeSlug === prev.activeSlug) return
+      const leaving = prev.activeSlug
+      if (!leaving) return
+      const known = state.knownDocs.find((d) => d.slug === leaving)
+      if (!known || isWikiDoc(known) || known.archivedAt) return
+      void fire(leaving)
+    })
+
+    // (2) Date polling for midnight rollover. lastDate starts as
+    // "today at mount time"; the first crossing detected is when
+    // the *next* day arrives. We fire against yesterday's daily —
+    // the unit that just closed — which lets a user who left the
+    // app open overnight still get the previous day's writing
+    // filed without re-opening the tab.
+    let lastDate = todayLocalDate()
+    const checkDate = () => {
+      const now = todayLocalDate()
+      if (now === lastDate) return
+      const yesterday = lastDate
+      lastDate = now
+      console.log('[ingest:trigger] date crossed', { from: yesterday, to: now })
+      const docs = useDocsStore.getState()
+      const yesterdayDaily = docs.knownDocs.find(
+        (d) => d.type === 'daily' && d.date === yesterday && !d.archivedAt,
+      )
+      if (!yesterdayDaily) {
+        console.log('[ingest:trigger] no yesterday daily to ingest', { yesterday })
+        return
+      }
+      void fire(yesterdayDaily.slug)
     }
-
-    // Start the first window the moment the hook mounts so a user
-    // who immediately walks away gets an ingest pass — no need to
-    // touch the keyboard once first.
-    reset()
-
-    window.addEventListener('keydown', onActivity)
-    window.addEventListener('focus', onActivity)
-    window.addEventListener('click', onActivity)
-    window.addEventListener('mousemove', onMove)
+    const dateTimer = setInterval(checkDate, DATE_POLL_MS)
 
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
-      window.removeEventListener('keydown', onActivity)
-      window.removeEventListener('focus', onActivity)
-      window.removeEventListener('click', onActivity)
-      window.removeEventListener('mousemove', onMove)
+      unsubActive()
+      clearInterval(dateTimer)
     }
   }, [])
 }
 
 // Dev-only console hook so a tester can fire an ingest immediately
-// without waiting `idleMinutes` and without typing 200 chars. Skips
-// the watermark; otherwise identical to the timer path.
+// without waiting for a trigger event. Hits the active doc, skips
+// the edit watermark; the block-hash filter still applies (force
+// means "ignore timing gates," not "send duplicates").
 if (import.meta.env.DEV) {
   ;(window as unknown as { __triggerIdle: () => Promise<number> }).__triggerIdle =
     () => runActiveIngest({ force: true })

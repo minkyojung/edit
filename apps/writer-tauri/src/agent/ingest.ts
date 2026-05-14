@@ -18,7 +18,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
+import { useIngestStore } from '@/state/ingestStore'
 import { isEffectivelyEmpty } from '@/lib/markdownText'
+import { pickNewBlocks } from '@/lib/blockHash'
 import {
   readWikiContext,
   readConventions,
@@ -110,6 +112,14 @@ export interface IngestResult {
    * JSON. Caller can show a soft warning rather than treating as
    * a hard error. */
   malformed: boolean
+  /** Full snapshot of the source note's block hashes at the moment
+   * this pass ran. Caller persists into
+   * ingestStore.ingestedBlockHashes so the next pass can filter
+   * already-seen blocks out before reaching the LLM. Empty when
+   * the pass short-circuited before reading the note (unknown
+   * doc, empty body, etc.); callers should skip the persist call
+   * in that case to avoid clobbering a valid prior snapshot. */
+  ingestedHashes: string[]
 }
 
 /** Static, system-owned rules that never move into the user's
@@ -464,16 +474,53 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     throw new Error(`refusing to ingest an agent-managed page: ${noteSlug}`)
   }
 
-  const noteMarkdown = await readDocMarkdown(noteSlug)
-  if (!noteMarkdown) {
+  const fullMarkdown = await readDocMarkdown(noteSlug)
+  if (!fullMarkdown) {
     return {
       proposals: [],
       indexUpdates: [],
       logEntry: null,
       raw: '',
       malformed: false,
+      ingestedHashes: [],
     }
   }
+
+  // Block-hash filter: only forward blocks the LLM hasn't seen
+  // before. This is the structural dedup guard — without it, the
+  // same paragraph re-sent on a later pass would re-trigger
+  // proposals the user already accepted, stamping duplicate rows
+  // into the wiki. `allHashes` is the *full* current snapshot
+  // (not just new ones); caller persists it so deletions and
+  // edits both self-heal.
+  const seen = new Set(
+    useIngestStore.getState().ingestedBlockHashes[noteSlug] ?? [],
+  )
+  const { newBlocks, allHashes } = await pickNewBlocks(fullMarkdown, seen)
+  if (newBlocks.length === 0) {
+    console.log('[ingest:producer] no new blocks since last pass', {
+      noteSlug,
+      totalBlocks: allHashes.length,
+    })
+    return {
+      proposals: [],
+      indexUpdates: [],
+      logEntry: null,
+      raw: '',
+      malformed: false,
+      // Return the current snapshot anyway — the caller persists
+      // it to reflect deletions (any hash that disappeared from
+      // the body falls out of the stored set).
+      ingestedHashes: allHashes,
+    }
+  }
+  const noteMarkdown = newBlocks.map((b) => b.text).join('\n\n')
+  console.log('[ingest:producer] block filter', {
+    noteSlug,
+    new: newBlocks.length,
+    total: allHashes.length,
+  })
+
   const wikiSnapshot = await readWikiContext()
   // Seed the conventions page on first need so the user has
   // something to edit, then read its body to prepend onto the
@@ -527,12 +574,16 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
       '[ingest:producer] submit_ingest_result tool was not called',
       { textPreview: outcome.text.slice(0, 200) },
     )
+    // Malformed pass: don't persist the hash snapshot — the LLM
+    // never "consumed" these blocks, so leave the store as-is so
+    // the next pass retries with the same content.
     return {
       proposals: [],
       indexUpdates: [],
       logEntry: null,
       raw: outcome.text,
       malformed: true,
+      ingestedHashes: [],
     }
   }
   const { proposals, indexUpdates, logEntry } = sanitizeIngestResult(
@@ -550,6 +601,7 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     logEntry,
     raw: outcome.text,
     malformed: false,
+    ingestedHashes: allHashes,
   }
 }
 

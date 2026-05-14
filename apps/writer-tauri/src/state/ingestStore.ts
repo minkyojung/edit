@@ -93,6 +93,15 @@ interface IngestState {
    * still counts). Used as the watermark the idle trigger compares
    * `lastEditedAt` against. */
   lastIngestedAt: Record<string, number>
+  /** Per-note hashes of markdown blocks already forwarded to the
+   * LLM in some prior ingest pass. Persisted as `string[]` because
+   * Set isn't JSON-serializable; runIngest builds a Set at use
+   * time for O(1) membership tests. Re-stored as the full current
+   * hash list after each pass — that "current snapshot, not
+   * cumulative log" shape lets deletions self-heal (a paragraph
+   * dropped from the body falls out of the hash set, so re-paste
+   * is correctly treated as new content). */
+  ingestedBlockHashes: Record<string, string[]>
   dismissed: boolean
   /** Idle minutes before the trigger fires. User-configurable;
    * defaults to 5 (matches Karpathy "step away briefly" cadence). */
@@ -152,6 +161,15 @@ interface IngestState {
    * is legacy (used to populate the deprecated length-based gate);
    * still recorded for diagnostics but no live gate reads it. */
   markIngested: (slug: string, bodyLength: number) => void
+  /** Replace the persisted block-hash snapshot for `slug`. Called
+   * after a successful ingest pass with the *full* current hash
+   * list of the note's body (not just the newly-sent blocks) — see
+   * the field comment for why the cumulative-vs-snapshot shape
+   * matters for deletion handling. Separate from markIngested
+   * because the two persistences carry different concerns
+   * (timestamp vs content fingerprint) and update independently
+   * during force-runs. */
+  setIngestedBlockHashes: (slug: string, hashes: string[]) => void
   /** Wipe all pending state. Useful for a "clear queue" affordance
    * and for tests. */
   reset: () => void
@@ -170,6 +188,7 @@ export const useIngestStore = create<IngestState>()(
       lastIngestedLength: {},
       lastEditedAt: {},
       lastIngestedAt: {},
+      ingestedBlockHashes: {},
       dismissed: false,
       idleMinutes: DEFAULT_IDLE,
 
@@ -306,6 +325,11 @@ export const useIngestStore = create<IngestState>()(
           lastIngestedAt: { ...s.lastIngestedAt, [slug]: Date.now() },
         })),
 
+      setIngestedBlockHashes: (slug, hashes) =>
+        set((s) => ({
+          ingestedBlockHashes: { ...s.ingestedBlockHashes, [slug]: hashes },
+        })),
+
       reset: () =>
         set({
           pendingProposals: [],
@@ -314,12 +338,19 @@ export const useIngestStore = create<IngestState>()(
           lastIngestedLength: {},
           lastEditedAt: {},
           lastIngestedAt: {},
+          ingestedBlockHashes: {},
           dismissed: false,
         }),
     }),
     {
       name: 'writer-tauri:ingest',
-      version: 1,
+      // v2: adds `ingestedBlockHashes` for source-side dedup. v1
+      // state hydrates without it — the field defaults to an empty
+      // object via the initial state, which means the next ingest
+      // pass treats every block as new (acceptable one-shot cost
+      // for existing users; stabilizes after the first successful
+      // pass).
+      version: 2,
       partialize: (s) => ({
         pendingProposals: s.pendingProposals,
         pendingLogs: s.pendingLogs,
@@ -327,6 +358,7 @@ export const useIngestStore = create<IngestState>()(
         lastIngestedLength: s.lastIngestedLength,
         lastEditedAt: s.lastEditedAt,
         lastIngestedAt: s.lastIngestedAt,
+        ingestedBlockHashes: s.ingestedBlockHashes,
         dismissed: s.dismissed,
         idleMinutes: s.idleMinutes,
       }),
