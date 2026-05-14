@@ -46,15 +46,17 @@
 
 ## 수정 5 개 (권장 순서)
 
-| 순 | 수정 | 비유 | 해결되는 root | 해결되는 증상 | 분량 |
+| 순 | 수정 | 상태 | 해결되는 root | 해결되는 증상 | 분량 |
 |---|---|---|---|---|---|
-| 1 | **A — title 분리** | 책 표지 제목은 표지에 적힌 그대로. 본문 첫 줄 따로. | Root A | 1, 3 | 30 분 |
-| 2 | **B — 페이지 dedup** | 같은 이름 폴더 있으면 새로 안 만들고 그쪽에 추가 | Root B | 1 (중복), 6 일부 | 30 분 |
-| 3 | **D — 내용 dedup** | 중복 메일 자동 거름 | Root D | 2 | 30 분 |
-| 4 | **C — apply 통일** | 모든 부서가 같은 인쇄소 사용 | Root C | 4 | 1 시간 |
-| 5 | **E — body seed 정리** | 새 노트가 깨끗한 첫 줄에서 시작 | (Root C 파생) | 5 | 20 분 |
+| 1 | **A — title 분리** | ✅ 완료 (0c8adbbe) | Root A | 1, 3 | 30 분 |
+| 2 | **B — 페이지 dedup** | ⏳ 미진행 | Root B | 1 (중복), 6 일부 | 30 분 |
+| 3 | **D — 내용 dedup** | ✅ 완료 (b91bc9b4) — sink-side 큐 필터가 아닌 source-side 블록 해시 + 단위-닫힘 트리거로 구조적 해결 | Root D | 2 | (실제 ~3 시간) |
+| 4 | **C — apply 통일** | ⏳ 미진행 | Root C | 4 | 1 시간 |
+| 5 | **E — body seed 정리** | ⏳ 미진행 | (Root C 파생) | 5 | 20 분 |
 
-**총 약 3 시간** 에 6 개 문제 + 4 개 root 동시 해결.
+A + D 완료로 가장 큰 증상 (중복 누적, raw 텍스트 제목) 해소.
+
+남은 B / C / E 는 작은 corner case (같은 이름 새 페이지 매번 생성, log 페이지 markdown 안 꾸며짐, 새 페이지 첫 줄 빈 칸).
 
 (Root 5 / 증상 6 의 onboarding UI 는 별도 1+ 시간, 우선순위 낮음.)
 
@@ -96,19 +98,18 @@ const newSlug = await createCustomWikiPage(name, body, ...)
 
 ---
 
-### D — 내용 dedup
+### D — 내용 dedup ✅ 완료 (b91bc9b4)
 
-**문제**: `enqueue` 가 같은 content 의 proposal 도 중복 추가.
+**원래 계획**: `enqueue` 에서 sink-side 큐 필터링.
 
-**현재 코드** (`state/ingestStore.ts:enqueue`):
-```ts
-const newProposals = proposals.map((p) => ({ ...p, id: crypto.randomUUID(), ... }))
-// 기존 큐와 비교 없음
-```
+**실제 해결**: 더 근본적인 source-side 구조로 대체.
 
-**수정**: 새 proposal 의 (target + content trimmed) 또는 (sourceQuote) 가 기존 큐에 있으면 skip.
+1. **블록 해시** (`lib/blockHash.ts`): 데일리 본문을 문단 단위로 split → SHA-256 → `ingestStore.ingestedBlockHashes` 에 persist. `runIngest` 가 안 본 블록만 LLM 에 전달.
+2. **트리거 재설계**: 5분 idle 폐기. 대신 (a) active doc 변경 (zustand subscribe), (b) 자정 / 날짜 바뀜 (30분 polling) — "단위 닫힘" 시점에만 발화.
 
-**효과**: 같은 fact 가 두 번 큐에 안 들어감.
+**이유**: 원래 계획은 LLM 이 중복 제안 만든 후 큐에서 거르는 사후 처리. 그런데 같은 데일리 전체를 매 5분마다 LLM 에 다시 보내는 게 원인이라 source-side 가 정공법. 같은 블록이 LLM 에 두 번 도달하는 것 자체가 코드 차원에서 불가능.
+
+**효과**: 글자 중복 100% 차단 (해시 비교). 의미 중복은 lint pass 가 사후 정리 (별도 phase). 토큰 비용도 동시 감소.
 
 ---
 
