@@ -1312,7 +1312,22 @@ function installTitleMirror(
   get: () => DocsState,
 ): void {
   const known = get().knownDocs.find((d) => d.slug === slug)
-  if (known?.type === 'daily') return
+  if (!known) return
+  // Title mirror runs only for user-authored `writing` notes — the
+  // doc kind whose body's first block IS the title by user
+  // intuition (Notion-style "header-as-first-line"). Daily entries
+  // derive their label from meta.date; wiki:* content pages and
+  // system:* meta pages carry an explicit title in the catalog
+  // (set by createCustomWikiPage / ensureSystemPage), and that
+  // title is the source of truth — body edits must NOT overwrite
+  // it. Letting them did, in practice:
+  //   - AI's "Daniel" wiki page got its title overwritten by the
+  //     first bullet under it the moment the user opened the doc;
+  //   - system:index's title became the raw markdown index line
+  //     the moment a single update merged into the body.
+  // Restricting the mirror to writing-type docs keeps everything
+  // else stable while preserving the writing-note UX.
+  if (known.type !== 'writing') return
 
   const fragment = handle.ydoc.getXmlFragment('prosemirror')
   const sync = () => {
@@ -1321,7 +1336,11 @@ function installTitleMirror(
       const idx = s.knownDocs.findIndex((d) => d.slug === slug)
       if (idx < 0) return s
       const cur = s.knownDocs[idx]
-      if (cur.type === 'daily') return s
+      // Defense in depth — the outer gate above already excludes
+      // non-writing types, but a future change that calls sync()
+      // from a different path shouldn't accidentally clobber
+      // catalog titles on wiki / system docs.
+      if (cur.type !== 'writing') return s
       if ((cur.title ?? '') === next) return s
       const list = [...s.knownDocs]
       list[idx] = { ...cur, title: next }
