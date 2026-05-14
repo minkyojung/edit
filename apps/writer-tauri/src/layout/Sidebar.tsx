@@ -67,7 +67,7 @@ function accountDisplayName(email: string | null): string | null {
 }
 
 type PaletteOption = {
-  value: 'charcoal' | 'olive' | 'paper'
+  value: 'charcoal' | 'graphite' | 'olive' | 'paper' | 'mist'
   label: string
   swatch: { bg: string; fg: string; accent: string; border: string }
 }
@@ -79,6 +79,11 @@ const PALETTE_OPTIONS: PaletteOption[] = [
     swatch: { bg: '#141414', fg: '#ECECEC', accent: '#262626', border: '#333333' },
   },
   {
+    value: 'graphite',
+    label: 'Graphite',
+    swatch: { bg: '#1D2024', fg: '#ECECEE', accent: '#2B2C32', border: '#383940' },
+  },
+  {
     value: 'olive',
     label: 'Olive',
     swatch: { bg: '#111001', fg: '#E8E4D0', accent: '#26230C', border: '#3A3520' },
@@ -87,6 +92,11 @@ const PALETTE_OPTIONS: PaletteOption[] = [
     value: 'paper',
     label: 'Paper',
     swatch: { bg: '#D2D2D2', fg: '#1A1A1A', accent: '#BCBCBC', border: '#A8A8A8' },
+  },
+  {
+    value: 'mist',
+    label: 'Mist',
+    swatch: { bg: '#E9EAEC', fg: '#1D2024', accent: '#CFD1D4', border: '#B8BABE' },
   },
 ]
 

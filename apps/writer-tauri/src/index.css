@@ -613,8 +613,10 @@
 /* ── Palettes ──────────────────────────────────────────────────────────
    각 팔레트는 완전한 토큰 셋을 정의한다.
    - charcoal : #191919 베이스, 뉴트럴 다크
+   - graphite : #1D2024 베이스, 살짝 푸른빛 도는 다크 그레이
    - olive    : #111001 베이스, 따뜻한 다크 (페이퍼 톤)
-   - paper    : #D2D2D2 베이스, 라이트 그레이
+   - paper    : #D2D2D2 베이스, 라이트 그레이 (warm-neutral, 종이 톤)
+   - mist     : #E9EAEC 베이스, 차가운 라이트 그레이 (graphite의 라이트 카운터파트)
    theme-provider 가 <html> 에 `palette-*` 클래스를 부여한다.
    다크 계열 팔레트는 Tailwind `dark:` variant 호환을 위해 `.dark` 도 함께 부여. */
 
@@ -649,6 +651,37 @@
   --proof-ai: oklch(0.68 0.12 270 / 0.30);
 }
 
+.palette-graphite {
+  --background: oklch(0.225 0.007 258);
+  --foreground: oklch(0.93 0.003 258);
+  --card: oklch(0.255 0.007 258);
+  --card-foreground: oklch(0.93 0.003 258);
+  --popover: oklch(0.255 0.007 258);
+  --popover-foreground: oklch(0.93 0.003 258);
+  --primary: oklch(0.93 0.003 258);
+  --primary-foreground: oklch(0.225 0.007 258);
+  --secondary: oklch(0.285 0.007 258);
+  --secondary-foreground: oklch(0.93 0.003 258);
+  --muted: oklch(0.285 0.007 258);
+  --muted-foreground: oklch(0.62 0.005 258);
+  --accent: oklch(0.32 0.007 258);
+  --accent-foreground: oklch(0.93 0.003 258);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.47 0.01 258);
+  --sidebar: oklch(0.225 0.007 258);
+  --sidebar-foreground: oklch(0.93 0.003 258);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.93 0.003 258);
+  --sidebar-accent: oklch(1 0 0 / 10%);
+  --sidebar-accent-foreground: oklch(0.93 0.003 258);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.47 0.01 258);
+  --sidebar-trigger: oklch(0.51 0.005 258);
+  --proof-ai: oklch(0.68 0.12 270 / 0.30);
+}
+
 .palette-olive {
   --background: oklch(0.165 0.015 100);
   --foreground: oklch(0.91 0.025 95);
@@ -678,6 +711,37 @@
   --sidebar-ring: oklch(0.45 0.04 100);
   --sidebar-trigger: oklch(0.55 0.03 100);
   --proof-ai: oklch(0.7 0.12 95 / 0.25);
+}
+
+.palette-mist {
+  --background: oklch(0.93 0.005 258);
+  --foreground: oklch(0.23 0.008 258);
+  --card: oklch(0.97 0.004 258);
+  --card-foreground: oklch(0.23 0.008 258);
+  --popover: oklch(0.985 0.003 258);
+  --popover-foreground: oklch(0.23 0.008 258);
+  --primary: oklch(0.23 0.008 258);
+  --primary-foreground: oklch(0.97 0.004 258);
+  --secondary: oklch(0.88 0.006 258);
+  --secondary-foreground: oklch(0.23 0.008 258);
+  --muted: oklch(0.88 0.006 258);
+  --muted-foreground: oklch(0.5 0.008 258);
+  --accent: oklch(0.85 0.006 258);
+  --accent-foreground: oklch(0.23 0.008 258);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.23 0.008 258 / 10%);
+  --input: oklch(0.23 0.008 258 / 13%);
+  --ring: oklch(0.55 0.01 258);
+  --sidebar: oklch(0.93 0.005 258);
+  --sidebar-foreground: oklch(0.23 0.008 258);
+  --sidebar-primary: oklch(0.23 0.008 258);
+  --sidebar-primary-foreground: oklch(0.97 0.004 258);
+  --sidebar-accent: oklch(0.23 0.008 258 / 6%);
+  --sidebar-accent-foreground: oklch(0.23 0.008 258);
+  --sidebar-border: oklch(0.23 0.008 258 / 10%);
+  --sidebar-ring: oklch(0.55 0.01 258);
+  --sidebar-trigger: oklch(0.45 0.008 258);
+  --proof-ai: oklch(0.5 0.15 270 / 0.18);
 }
 
 .palette-paper {
