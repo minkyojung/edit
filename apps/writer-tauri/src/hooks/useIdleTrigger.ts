@@ -1,25 +1,30 @@
 // Wiki ingest triggers — when to fire a pass against a daily note.
 //
-// Replaces the previous 5-minute idle trigger that was firing
-// repeatedly on the same growing daily and stamping duplicate
-// rows into the wiki. Now we trigger on natural "unit closed"
-// signals instead:
+// Karpathy's LLM wiki pattern is "user drops a source, tells the
+// LLM to process it" — a deliberate user-initiated event. Earlier
+// versions of this hook automated the trigger (5-min idle, then
+// active-doc-change + 30-min polling) which caused chained
+// problems: small per-pass contexts made the LLM judge content as
+// "transient" more often, every pass still emitted a log line,
+// and "no durable content" entries piled up in wiki:log.
 //
-//   1. Active doc changes away from a daily — the user just
-//      finished a writing session on that note, so it's the
-//      natural moment to file what they wrote.
-//   2. Local date crosses (midnight rollover) — yesterday's
-//      daily is permanently sealed by the day boundary even if
-//      the user never closes the tab. A 30-minute polling loop
-//      detects the crossing.
+// Now the trigger is user-initiated by default:
 //
-// Source-side dedup (`lib/blockHash`) guards against the case
-// where one of these triggers ends up re-processing a daily that
-// gained edits since its last successful ingest: only blocks
-// whose hash isn't already in `ingestStore.ingestedBlockHashes`
-// reach the LLM. The trigger says "look at this note"; the
-// block-hash filter decides "and here's the part you haven't
-// seen."
+//   1. `syncTodayManually()` — exposed for the sidebar Sync
+//      button. The deliberate path. One ingest per click.
+//   2. 23:59 single-shot timer — safety net for forgotten days.
+//      Fires once per day with today's daily as the target. If
+//      the user already synced manually, the block-hash filter
+//      short-circuits (no new blocks → no LLM call).
+//   3. Boot-time catch-up — if yesterday's daily was edited but
+//      never ingested (app closed overnight before 23:59 fired),
+//      run one pass against it.
+//
+// Source-side dedup (`lib/blockHash`) stays as insurance: the two
+// automatic surfaces above can technically double-fire (manual at
+// 5 PM + 23:59 timer), and block-hash ensures the second call is
+// a no-op without burning tokens. On the deliberate path it never
+// kicks in.
 //
 // Mounted once at app root via `useIdleTrigger()` (name kept for
 // the call site even though the idle policy is gone).
@@ -41,11 +46,6 @@ import { notify } from '@/lib/notify'
 import { useConnectDialog } from '@/stores/connectDialog'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
-/** How often to check whether the local date has rolled over.
- * Half-hourly is more than fine — the trigger only needs to fire
- * "eventually after midnight," not at any precise moment. Keeps
- * the polling cost negligible (one Date comparison every 30 min). */
-const DATE_POLL_MS = 30 * 60_000
 
 interface RunOptions {
   /** Skip the watermark gate. Used by the dev console hook
@@ -277,8 +277,19 @@ async function runIngestForSlug(
     console.warn('[ingest:producer] malformed response, skipping enqueue', result.raw)
     return 0
   }
-  if (result.proposals.length === 0 && !result.logEntry) {
-    console.log('[ingest:producer] empty result (no proposals, no logEntry) — nothing to enqueue')
+  // Karpathy's invariant: 1 ingest = 1 meaningful wiki diff = 1
+  // log line. If a pass produces no proposals AND no index updates,
+  // the LLM looked at the daily and judged nothing worth filing —
+  // its logEntry (when emitted at all) would just be a per-pass
+  // "nothing notable" verdict that piles up in wiki:log over time.
+  // Suppress the entire enqueue so the log page only ever shows
+  // real wiki changes. The console line above still records the
+  // pass for diagnostics — the audit trail moves from a user-
+  // visible page to dev tooling, which is where it belongs.
+  if (result.proposals.length === 0 && result.indexUpdates.length === 0) {
+    console.log('[ingest:producer] empty result — suppressing logEntry to keep wiki:log clean', {
+      hadLogEntry: !!result.logEntry,
+    })
     return 0
   }
 
@@ -343,47 +354,77 @@ async function runIngestForSlug(
   return result.proposals.length
 }
 
-/** Wrapper that resolves "the active note" → slug and dispatches to
- * runIngestForSlug. Kept around as the dev-console entry point
- * (__triggerIdle) and as the obvious "run on the user's current
- * focus" call for any future surface. Returns 0 when there's no
- * active doc or the active doc is a wiki page (no daily fallback —
- * the explicit triggers below handle the wiki-active scenario by
- * targeting yesterday's daily directly). */
-async function runActiveIngest(opts: RunOptions = {}): Promise<number> {
-  const slug = useDocsStore.getState().activeSlug
-  if (!slug) {
-    console.log('[ingest:trigger] active: no slug')
-    return 0
-  }
-  return runIngestForSlug(slug, opts)
+/** Find today's daily entry in the catalog. Returns null when the
+ * daily hasn't been bootstrapped yet (rare — bootstrap runs at app
+ * start) or has been archived. Used by the manual sync button and
+ * the 23:59 fallback timer; both target "the day's daily" rather
+ * than the user's currently-active doc. */
+function findTodayDaily(): { slug: string } | null {
+  const today = todayLocalDate()
+  const docs = useDocsStore.getState()
+  const found = docs.knownDocs.find(
+    (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
+  )
+  return found ? { slug: found.slug } : null
 }
 
-/** Mounts the wiki ingest triggers. Call once near the app root.
+/** Find yesterday's daily entry, used by the boot-time catch-up
+ * path. Returns null when there's no yesterday daily — first-time
+ * user, or yesterday was a non-writing day. */
+function findYesterdayDaily(): { slug: string } | null {
+  const today = new Date()
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  const y = yesterday.getFullYear()
+  const m = String(yesterday.getMonth() + 1).padStart(2, '0')
+  const d = String(yesterday.getDate()).padStart(2, '0')
+  const yDate = `${y}-${m}-${d}`
+  const docs = useDocsStore.getState()
+  const found = docs.knownDocs.find(
+    (doc) => doc.type === 'daily' && doc.date === yDate && !doc.archivedAt,
+  )
+  return found ? { slug: found.slug } : null
+}
+
+/** Manual sync entry point. Resolves today's daily and runs one
+ * ingest pass against it. The sidebar Sync button calls this; so
+ * does the 23:59 fallback timer below. Returns the proposal count
+ * (0 when no new blocks since last sync, or when no daily exists
+ * to target) so the caller can shape its UX accordingly — toast
+ * copy differs between "synced — 2 new" and "synced — nothing new
+ * today". Returns null when there's no daily to target at all
+ * (caller can show "no daily to sync" or just stay quiet). */
+export async function syncTodayManually(): Promise<number | null> {
+  const today = findTodayDaily()
+  if (!today) {
+    console.log('[ingest:sync] no today daily to target')
+    return null
+  }
+  return runIngestForSlug(today.slug, { force: true })
+}
+
+/** Mounts the wiki ingest fallback timers. Call once near the app
+ * root. Three things happen here:
  *
- * Two firing conditions, each independent:
+ *   1. One-time pruning of stale proposals (left over from
+ *      archived pages, legacy seed types, etc.) — same maintenance
+ *      sweep the old auto-trigger did.
+ *   2. Boot catch-up: if yesterday has a daily and it was edited
+ *      since its last successful ingest, fire one pass against
+ *      it. This covers the "app was closed overnight before the
+ *      23:59 timer could run" case.
+ *   3. Daily 23:59 single-shot timer: every day at 23:59 local
+ *      time, run sync against today's daily. Block-hash dedup
+ *      makes this safe even when the user already pressed the
+ *      Sync button earlier in the day (no-op short-circuit).
  *
- *   1. activeSlug subscription — when the user navigates away from
- *      a daily (or any non-wiki note), ingest the slug they just
- *      left. The block-hash filter (see `lib/blockHash`) ensures
- *      we only forward newly-written content even if the user
- *      bounces in and out of the same daily multiple times.
- *   2. Date polling — every 30 minutes, compare today's local
- *      date against the last date we processed. On a crossing,
- *      ingest yesterday's daily so the day's writing reliably
- *      gets filed even if the user never switched tabs.
- *
- * Both share a single in-flight guard (`runningRef`) — wiki state
- * isn't safe to mutate from two concurrent passes against the
- * same source. */
+ * Single-flight guard (`runningRef`) covers the case where the
+ * user presses Sync at exactly 23:59 — only one of the two passes
+ * actually hits the LLM. */
 export function useIdleTrigger(): void {
   const runningRef = useRef(false)
 
   useEffect(() => {
-    // One-time sweep at app start so any persisted proposals
-    // pointing at types that no longer exist (archived pages,
-    // legacy seeds) drop out of the queue before the user sees a
-    // stale review card.
     useIngestStore.getState().pruneDeadProposals()
 
     const fire = async (slug: string) => {
@@ -392,64 +433,76 @@ export function useIdleTrigger(): void {
       try {
         await runIngestForSlug(slug)
       } catch (err) {
-        console.warn('[ingest] trigger pass failed', err)
+        console.warn('[ingest:fallback] pass failed', err)
       } finally {
         runningRef.current = false
       }
     }
 
-    // (1) activeSlug subscription. Zustand fires the callback with
-    // (current, previous) on every state change; we filter to the
-    // slug field and ignore renders where it didn't actually move.
-    // We ingest the *previous* slug — that's the note the user
-    // just finished with. Skip when the outgoing doc isn't a
-    // user-authored source (wiki:* / system:* are agent output).
-    const unsubActive = useDocsStore.subscribe((state, prev) => {
-      if (state.activeSlug === prev.activeSlug) return
-      const leaving = prev.activeSlug
-      if (!leaving) return
-      const known = state.knownDocs.find((d) => d.slug === leaving)
-      if (!known || isWikiDoc(known) || known.archivedAt) return
-      void fire(leaving)
-    })
-
-    // (2) Date polling for midnight rollover. lastDate starts as
-    // "today at mount time"; the first crossing detected is when
-    // the *next* day arrives. We fire against yesterday's daily —
-    // the unit that just closed — which lets a user who left the
-    // app open overnight still get the previous day's writing
-    // filed without re-opening the tab.
-    let lastDate = todayLocalDate()
-    const checkDate = () => {
-      const now = todayLocalDate()
-      if (now === lastDate) return
-      const yesterday = lastDate
-      lastDate = now
-      console.log('[ingest:trigger] date crossed', { from: yesterday, to: now })
-      const docs = useDocsStore.getState()
-      const yesterdayDaily = docs.knownDocs.find(
-        (d) => d.type === 'daily' && d.date === yesterday && !d.archivedAt,
-      )
-      if (!yesterdayDaily) {
-        console.log('[ingest:trigger] no yesterday daily to ingest', { yesterday })
-        return
+    // (1) Boot catch-up. Fire-and-forget — we don't want app
+    // startup to block on an LLM call. The edit-vs-ingest gate
+    // inside runIngestForSlug guarantees we only call the LLM
+    // when yesterday's daily actually has new content; otherwise
+    // it short-circuits silently.
+    const yesterday = findYesterdayDaily()
+    if (yesterday) {
+      const ingest = useIngestStore.getState()
+      const editedAt = ingest.lastEditedAt[yesterday.slug] ?? 0
+      const ingestedAt = ingest.lastIngestedAt[yesterday.slug] ?? 0
+      if (editedAt > ingestedAt) {
+        console.log('[ingest:fallback] boot catch-up: yesterday has unsynced edits')
+        void fire(yesterday.slug)
       }
-      void fire(yesterdayDaily.slug)
     }
-    const dateTimer = setInterval(checkDate, DATE_POLL_MS)
+
+    // (2) 23:59 daily fallback. Compute ms until the next 23:59
+    // and use a one-shot setTimeout. After firing, schedule the
+    // next 23:59 (24h later, modulo local-time edge cases like
+    // DST — Date arithmetic handles those correctly). One-shot is
+    // simpler than setInterval here because the wall-clock target
+    // moves with the date, not the elapsed-time clock.
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const scheduleNext1159 = () => {
+      const now = new Date()
+      const next = new Date(now)
+      next.setHours(23, 59, 0, 0)
+      if (next.getTime() <= now.getTime()) {
+        next.setDate(next.getDate() + 1)
+      }
+      const delay = next.getTime() - now.getTime()
+      console.log('[ingest:fallback] next 23:59 in', Math.round(delay / 60_000), 'min')
+      timer = setTimeout(() => {
+        console.log('[ingest:fallback] 23:59 timer firing')
+        const today = findTodayDaily()
+        if (today) {
+          void fire(today.slug).finally(() => {
+            scheduleNext1159()
+          })
+        } else {
+          // No daily today (rare — maybe the user hasn't booted
+          // the app in days and bootstrap is catching up). Just
+          // reschedule and try again tomorrow.
+          scheduleNext1159()
+        }
+      }, delay)
+    }
+    scheduleNext1159()
 
     return () => {
-      unsubActive()
-      clearInterval(dateTimer)
+      if (timer) clearTimeout(timer)
     }
   }, [])
 }
 
-// Dev-only console hook so a tester can fire an ingest immediately
-// without waiting for a trigger event. Hits the active doc, skips
-// the edit watermark; the block-hash filter still applies (force
-// means "ignore timing gates," not "send duplicates").
+// Dev-only console hooks. `__triggerIdle` still hits today's daily
+// (same as the manual button) so existing test workflows keep
+// working without rewrites. `__syncToday` is the explicit alias
+// matching the new function name.
 if (import.meta.env.DEV) {
-  ;(window as unknown as { __triggerIdle: () => Promise<number> }).__triggerIdle =
-    () => runActiveIngest({ force: true })
+  const w = window as unknown as {
+    __triggerIdle: () => Promise<number | null>
+    __syncToday: () => Promise<number | null>
+  }
+  w.__triggerIdle = syncTodayManually
+  w.__syncToday = syncTodayManually
 }

@@ -113,6 +113,26 @@ export const notify = {
   linkOpenFailed() {
     toast.error("Couldn't open link")
   },
+
+  // ── Wiki sync ─────────────────────────────────────────────────
+  /** Manual sync finished. Branches on whether anything new was
+   * filed so the copy matches what actually changed — generic
+   * "Synced" alone leaves the user wondering whether their click
+   * did anything when the daily was already up to date. */
+  wikiSynced(args: { proposals: number }) {
+    if (args.proposals > 0) {
+      const noun = args.proposals === 1 ? 'update' : 'updates'
+      toast.success(`Synced — ${args.proposals} new wiki ${noun}`)
+    } else {
+      toast.success('Synced — nothing new today')
+    }
+  },
+  /** Manual sync threw. Surfaces the rare error path (auth toasts
+   * have their own dedicated handler higher in the call chain;
+   * this one covers everything else). */
+  wikiSyncFailed() {
+    toast.error('Sync failed', { description: 'See console for details' })
+  },
 }
 
 // Dev-only console handle so smoke testing can fire each toast without

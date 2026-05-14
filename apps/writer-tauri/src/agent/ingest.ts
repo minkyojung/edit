@@ -161,7 +161,9 @@ When you're done analyzing the note, call the \`submit_ingest_result\` tool **ex
 
 For \`suggestNewPage\` proposals, the indexUpdates entry uses the proposed page name (the same string you put in \`suggestNewPage\`) as the target — the apply layer rewrites it to the real wiki type id after the page is created.
 
-If you found nothing worth filing, still call the tool: pass empty arrays for proposals and indexUpdates and a one-line logEntry like "## [2026-05-07] ingest | daily/2026-05-07: nothing notable". A pass without a tool call is treated as malformed and discarded.`
+If you found nothing worth filing, still call the tool — but pass empty arrays for proposals and indexUpdates AND pass \`null\` (not a string) for logEntry. The host suppresses empty passes entirely so they don't pile up in wiki:log; sending a "nothing notable" string just wastes tokens. The pass is still recorded for diagnostics on the host side. A pass without a tool call is treated as malformed and discarded.
+
+When you DO have something to file (proposals or indexUpdates is non-empty), the logEntry must be a single line summarizing what got filed — one entry per ingest, never per-block verdicts. "added Sarah's role; created Books page" is right; enumerating "block A: kept, block B: transient, block C: filed" is wrong. The log is for what happened, not what you considered.`
 
 /** Compose the full system prompt. The user-editable conventions
  * page (Karpathy's CLAUDE.md pattern) is prepended so it shadows

@@ -23,9 +23,14 @@
 // spine; mixing them blurs the write-ownership split (see
 // isWikiDoc in docsStore).
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { IconFileDescription, IconPlus } from '@tabler/icons-react'
+import {
+  IconFileDescription,
+  IconPlus,
+  IconRefresh,
+  IconLoader2,
+} from '@tabler/icons-react'
 import {
   DndContext,
   PointerSensor,
@@ -39,6 +44,7 @@ import { useDocsStore, getDocPolicy, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { createCustomWikiPage } from '@/state/wikiService'
 import { notify } from '@/lib/notify'
+import { syncTodayManually } from '@/hooks/useIdleTrigger'
 import { DocTreeNode, indexChildren, type MoveTarget } from './DocTreeNode'
 import {
   SidebarGroup,
@@ -140,6 +146,27 @@ export function WikiSection() {
     if (!pathname.startsWith('/notes')) navigate('/notes')
   }
 
+  const [syncing, setSyncing] = useState(false)
+  const handleSyncClick = async () => {
+    if (syncing) return
+    setSyncing(true)
+    try {
+      const proposals = await syncTodayManually()
+      if (proposals === null) {
+        // No daily for today — bootstrap probably hasn't caught
+        // up. Stay quiet; the next click after bootstrap will
+        // work normally.
+        return
+      }
+      notify.wikiSynced({ proposals })
+    } catch (err) {
+      console.warn('[wiki] manual sync failed', err)
+      notify.wikiSyncFailed()
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   const handleNewRoot = async () => {
     // Root creation: no parent. User then either types a title in
     // place or renames in their own time. Notion-style — empty title
@@ -196,6 +223,25 @@ export function WikiSection() {
       <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
         <SidebarGroup>
           <SidebarGroupLabel>Wiki</SidebarGroupLabel>
+          {/* Sync button sits left of the `+` action so the
+              destructive-leaning "create new page" stays at the
+              edge and the safer "sync today's daily" action gets
+              the inner slot. SidebarGroupAction is absolute-
+              positioned at right-3; the override shifts this one
+              left by the icon-width + gap so the two don't
+              overlap. */}
+          <SidebarGroupAction
+            className="right-9"
+            onClick={handleSyncClick}
+            disabled={syncing}
+            aria-label="Sync today's daily to wiki"
+          >
+            {syncing ? (
+              <IconLoader2 className="animate-spin" />
+            ) : (
+              <IconRefresh />
+            )}
+          </SidebarGroupAction>
           <SidebarGroupAction onClick={handleNewRoot} aria-label="New wiki page">
             <IconPlus />
           </SidebarGroupAction>
