@@ -17,9 +17,34 @@ import { WikiPageBanner } from '@/layout/WikiPageBanner'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
-import { useApplyPendingLogs } from '@/hooks/useApplyPendingLogs'
-import { useApplyPendingIndexUpdates } from '@/hooks/useApplyPendingIndexUpdates'
+import {
+  useLazyMaterialize,
+  type LazyMaterializeConfig,
+} from '@/hooks/useLazyMaterialize'
 import { useMigrateLegacyIngestMarks } from '@/hooks/useMigrateLegacyIngestMarks'
+import {
+  applyPendingLogsForView,
+  applyPendingIndexUpdatesForView,
+} from '@/agent/applyIngest'
+
+// Module-scope so the configs array reference is stable across
+// renders — required by useLazyMaterialize's caller contract
+// (configs.length must be constant; React enforces it for the
+// per-config hook calls inside).
+const SYSTEM_DRAIN_CONFIGS: LazyMaterializeConfig[] = [
+  {
+    matchType: 'system:log',
+    queueSelector: (s) => s.pendingLogs,
+    applyForView: applyPendingLogsForView,
+    signaturePrefix: 'log',
+  },
+  {
+    matchType: 'system:index',
+    queueSelector: (s) => s.pendingIndexUpdates,
+    applyForView: applyPendingIndexUpdatesForView,
+    signaturePrefix: 'index',
+  },
+]
 
 export function App() {
   return (
@@ -50,15 +75,13 @@ function AppContent() {
   // after the user has been quiet for `idleMinutes`. Mounted once
   // here at the root so a single timer covers the whole session.
   useIdleTrigger()
-  // Drains queued wiki:log entries when the user navigates to the
-  // log page. Wiki proposal review moved off the mark surface — see
-  // WikiPageBanner (mounted inside the /notes route) for the
-  // in-page inbox. This hook is now log-drain-only.
-  useApplyPendingLogs()
-  // Drains queued index summary updates into wiki:index when the
-  // user navigates there. One line per wiki page, dedup-keyed on
-  // target (Karpathy's index.md pattern, Phase 1-B).
-  useApplyPendingIndexUpdates()
+  // Drains queued log entries / index updates into their respective
+  // system pages when the user navigates there. One hook, one
+  // configs table — adding system:about or system:lint later is a
+  // single config row above. Wiki proposal review (the third
+  // ingest output) stays on the in-page banner surface, not in
+  // this lazy-drain pipeline.
+  useLazyMaterialize(SYSTEM_DRAIN_CONFIGS)
   // One-time cleanup of legacy ingest-origin proofSuggestion marks
   // left over from the pre-banner era. Runs per wiki page on first
   // mount post-upgrade; no-op afterwards.
