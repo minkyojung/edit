@@ -160,4 +160,31 @@ function TreeRowTrail({
   )
 }
 
-export { TreeRow, TreeRowLead, TreeRowLabel, TreeRowTrail }
+/**
+ * Container <ul> for a TreeRow's expanded children. Drops in as a
+ * direct sibling of TreeRow inside the same <li>, typically wrapped
+ * by Radix CollapsibleContent for the show/hide toggle.
+ *
+ * Mirrors shadcn's SidebarMenuSub visually (same color, padding,
+ * border-l guide) but only insets on the left so child rows can
+ * still extend their hover background to the sidebar's right wall.
+ * SidebarMenuSub uses `mx-3.5 px-2.5` (left + right inset) which
+ * forced a `mr-0 pr-0` className override at every call site —
+ * TreeSub bakes the asymmetric spacing into its base.
+ */
+function TreeSub({ className, ...props }: React.ComponentProps<'ul'>) {
+  return (
+    <ul
+      data-slot="tree-sub"
+      className={cn(
+        'flex min-w-0 translate-x-px flex-col gap-0.5 py-0.5',
+        'ml-3.5 pl-2.5',
+        'border-l border-sidebar-border',
+        className,
+      )}
+      {...props}
+    />
+  )
+}
+
+export { TreeRow, TreeRowLead, TreeRowLabel, TreeRowTrail, TreeSub }

@@ -38,12 +38,12 @@ import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
-import { SidebarMenuSub } from '@/components/ui/sidebar'
 import {
   TreeRow,
   TreeRowLabel,
   TreeRowLead,
   TreeRowTrail,
+  TreeSub,
 } from '@/components/ui/tree-row'
 import {
   Collapsible,
@@ -260,7 +260,7 @@ export function DocTreeNode({
               </TreeRowTrail>
             </TreeRow>
             <CollapsibleContent asChild>
-              <SidebarMenuSub className="mr-0 pr-0">
+              <TreeSub>
                 {children.map((child) => (
                   <DocTreeNode
                     key={child.slug}
@@ -275,7 +275,7 @@ export function DocTreeNode({
                     draggable={draggable}
                   />
                 ))}
-              </SidebarMenuSub>
+              </TreeSub>
             </CollapsibleContent>
           </li>
         </Collapsible>
