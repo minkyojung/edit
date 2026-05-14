@@ -32,12 +32,12 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarMenu,
-  SidebarMenuSub,
 } from '@/components/ui/sidebar'
 import {
   TreeRow,
   TreeRowLabel,
   TreeRowLead,
+  TreeSub,
 } from '@/components/ui/tree-row'
 import {
   Collapsible,
@@ -285,7 +285,7 @@ function DayItem({
           <TreeRowLabel onClick={onJump}>{labelContent}</TreeRowLabel>
         </TreeRow>
         <CollapsibleContent asChild>
-          <SidebarMenuSub className="mr-0 pr-0">
+          <TreeSub>
             {subChildren.map((child) => (
               <DocTreeNode
                 key={child.slug}
@@ -297,7 +297,7 @@ function DayItem({
                 onArchive={onArchive}
               />
             ))}
-          </SidebarMenuSub>
+          </TreeSub>
         </CollapsibleContent>
       </li>
     </Collapsible>
