@@ -135,7 +135,7 @@ Nesting: when emitting \`suggestNewPage\`, optionally also emit \`suggestNewPage
 
 The INDEX block (above WIKI) is the current one-line summary of each wiki page. For every page you propose to modify (\`target\`) or create (\`suggestNewPage\`), also emit an "indexUpdates" entry with a short summary. The summary is one sentence describing what the page is *about*, not what just changed. Reuse the existing summary verbatim when the page's nature didn't really change — only emit an updated summary if the new content meaningfully shifts what the page is about. For \`suggestNewPage\` you must always provide a fresh summary since no line exists yet. Use the same target type id you used in proposals.
 
-Output strictly this JSON shape, with no surrounding prose, code fences, or commentary. Each proposal uses *either* \`target\` (existing page) *or* \`suggestNewPage\` (create a new page) — never both.
+When you're done analyzing the note, call the \`submit_ingest_result\` tool **exactly once** with the structured result. Do not emit JSON in your text response — the tool is the only channel that lands in the wiki. Each proposal uses *either* \`target\` (existing page) *or* \`suggestNewPage\` (create a new page), never both. Example arguments:
 
 {
   "proposals": [
@@ -149,9 +149,9 @@ Output strictly this JSON shape, with no surrounding prose, code fences, or comm
   "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; created The Pragmatic Programmer under Books"
 }
 
-Note: for \`suggestNewPage\` proposals, the indexUpdates entry uses the proposed page name (the same string you put in \`suggestNewPage\`) as the target — the apply layer rewrites it to the real wiki type id after the page is created.
+For \`suggestNewPage\` proposals, the indexUpdates entry uses the proposed page name (the same string you put in \`suggestNewPage\`) as the target — the apply layer rewrites it to the real wiki type id after the page is created.
 
-If proposals is empty, indexUpdates should also be empty. logEntry should still be a single line summarizing the ingest pass (e.g. "## [2026-05-07] ingest | daily/2026-05-07: nothing notable").`
+If you found nothing worth filing, still call the tool: pass empty arrays for proposals and indexUpdates and a one-line logEntry like "## [2026-05-07] ingest | daily/2026-05-07: nothing notable". A pass without a tool call is treated as malformed and discarded.`
 
 /** Compose the full system prompt. The user-editable conventions
  * page (Karpathy's CLAUDE.md pattern) is prepended so it shadows
@@ -247,37 +247,22 @@ function todayLocalDate(): string {
   return `${yyyy}-${mm}-${dd}`
 }
 
-/** Pull a stable JSON object out of the assistant's response. The
- * system prompt asks for raw JSON, but Haiku occasionally wraps it
- * in a code fence or adds a sentence; we strip those defensively. */
-function extractJson(raw: string): unknown {
-  const trimmed = raw.trim()
-  // Fast path — model followed instructions.
-  try {
-    return JSON.parse(trimmed)
-  } catch {
-    /* fall through */
-  }
-  // Strip ``` ... ``` fence if present.
-  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
-  if (fence) {
-    try {
-      return JSON.parse(fence[1])
-    } catch {
-      /* fall through */
-    }
-  }
-  // Last resort: substring from first { to last }.
-  const first = trimmed.indexOf('{')
-  const last = trimmed.lastIndexOf('}')
-  if (first >= 0 && last > first) {
-    try {
-      return JSON.parse(trimmed.slice(first, last + 1))
-    } catch {
-      /* nothing more to try */
-    }
-  }
-  return null
+/** Raw shape the sidecar relays from the model's
+ * `submit_ingest_result` tool call. Field types mirror the zod
+ * schema in sidecar/src/server.mjs — the SDK has already validated
+ * shape by the time this lands, so the only work left is semantic
+ * (sanitizeIngestResult below). */
+interface IngestToolInput {
+  proposals: Array<{
+    target?: string
+    suggestNewPage?: string
+    suggestNewPageParent?: string
+    content: string
+    rationale?: string
+    sourceQuote?: string
+  }>
+  indexUpdates: Array<{ target: string; summary: string }>
+  logEntry: string | null
 }
 
 interface ParsedIngest {
@@ -286,92 +271,84 @@ interface ParsedIngest {
   logEntry: string | null
 }
 
-/** Validate the parsed JSON against the contract. Drops anything
- * that doesn't match — better to silently skip a malformed proposal
- * than to apply garbage to the wiki later. */
-function validateParsed(value: unknown): ParsedIngest {
-  if (!value || typeof value !== 'object') {
-    return { proposals: [], indexUpdates: [], logEntry: null }
-  }
-  const obj = value as Record<string, unknown>
-  const rawProposals = Array.isArray(obj.proposals) ? obj.proposals : []
+/** Semantic filtering on top of the tool's structural validation.
+ *
+ * The zod schema guarantees field shape and required-ness, but a
+ * few invariants are cross-field or domain-specific and can't be
+ * expressed there:
+ *
+ *   - a proposal must have at least one of `target` / `suggestNewPage`;
+ *     both empty means "nowhere to land", drop it.
+ *   - when both are set, prefer `target` (less destructive — uses an
+ *     existing page rather than spawning a new one).
+ *   - `suggestNewPageParent` only applies when creating a new page;
+ *     drop it when the proposal already targets an existing page.
+ *   - `indexUpdates` pointing at a system page (conventions / log /
+ *     index) means the model hallucinated the routing — those pages
+ *     have their own channels, never a target-style summary line.
+ *
+ * Whitespace trimming for free-form strings stays here too —
+ * harmless and keeps the apply layer free of "is this empty?" gymnastics. */
+function sanitizeIngestResult(input: IngestToolInput): ParsedIngest {
+  const SYSTEM_TARGETS = new Set([
+    'system:index',
+    'system:log',
+    'system:conventions',
+  ])
+
   const proposals: IngestProposal[] = []
-  for (const p of rawProposals) {
-    if (!p || typeof p !== 'object') continue
-    const rec = p as Record<string, unknown>
-    const target = typeof rec.target === 'string' && rec.target.trim()
-      ? rec.target.trim()
-      : null
-    const suggestNewPage =
-      typeof rec.suggestNewPage === 'string' && rec.suggestNewPage.trim()
-        ? rec.suggestNewPage.trim()
-        : null
-    const content = typeof rec.content === 'string' ? rec.content : null
-    if (!content) continue
-    // Routing must specify exactly one of target / suggestNewPage.
-    // If both are present we keep target (less destructive — uses an
-    // existing page rather than spawning a new one). If neither, the
-    // proposal has nowhere to land and we drop it.
+  for (const p of input.proposals) {
+    const target = p.target?.trim() || undefined
+    const suggestNewPage = p.suggestNewPage?.trim() || undefined
     if (!target && !suggestNewPage) continue
-    const rationale =
-      typeof rec.rationale === 'string' ? rec.rationale : undefined
-    const sourceQuote =
-      typeof rec.sourceQuote === 'string' && rec.sourceQuote.trim()
-        ? rec.sourceQuote.trim()
-        : undefined
-    // Optional parent for suggestNewPage proposals. Trim + carry
-    // through if it's a non-empty string; the apply layer resolves
-    // it title → slug and filters system pages out. Ignored when
-    // the proposal uses `target` (parent applies only to brand-new
-    // pages; moving an existing page is Phase 3).
     const suggestNewPageParent =
-      typeof rec.suggestNewPageParent === 'string' &&
-      rec.suggestNewPageParent.trim()
-        ? rec.suggestNewPageParent.trim()
+      !target && p.suggestNewPageParent?.trim()
+        ? p.suggestNewPageParent.trim()
         : undefined
     proposals.push({
       ...(target ? { target } : { suggestNewPage: suggestNewPage! }),
-      ...(suggestNewPageParent && !target ? { suggestNewPageParent } : {}),
-      content,
-      rationale,
-      sourceQuote,
+      ...(suggestNewPageParent ? { suggestNewPageParent } : {}),
+      content: p.content,
+      rationale: p.rationale,
+      sourceQuote: p.sourceQuote?.trim() || undefined,
     })
   }
-  // System-owned pages must never appear in indexUpdates — they are
-  // the index/log/conventions themselves, never targets the LLM is
-  // allowed to summarize. Defensive filter even though the catalog
-  // snapshot already excludes them, so a hallucinated id can't sneak
-  // a stray summary line into the index.
-  const SYSTEM_TARGETS = new Set(['system:index', 'system:log', 'system:conventions'])
-  const rawIndex = Array.isArray(obj.indexUpdates) ? obj.indexUpdates : []
+
   const indexUpdates: IndexUpdate[] = []
-  for (const u of rawIndex) {
-    if (!u || typeof u !== 'object') continue
-    const rec = u as Record<string, unknown>
-    const target =
-      typeof rec.target === 'string' && rec.target.trim()
-        ? rec.target.trim()
-        : null
-    const summary =
-      typeof rec.summary === 'string' && rec.summary.trim()
-        ? rec.summary.trim()
-        : null
+  for (const u of input.indexUpdates) {
+    const target = u.target.trim()
+    const summary = u.summary.trim()
     if (!target || !summary) continue
     if (SYSTEM_TARGETS.has(target)) continue
     indexUpdates.push({ target, summary })
   }
-  const logEntry =
-    typeof obj.logEntry === 'string' && obj.logEntry.trim()
-      ? obj.logEntry.trim()
-      : null
+
+  const logEntry = input.logEntry?.trim() || null
+
   return { proposals, indexUpdates, logEntry }
 }
 
-/** Wait for one chat run to complete on the chat sidecar, returning
- * the accumulated assistant text. Listens to the standard claude:*
- * event channels filtered by runId; cleans up listeners on settle. */
-function awaitChatRun(runId: string): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
+interface ChatRunOutcome {
+  /** Tool input from the model's `submit_ingest_result` call, or
+   * null when the model didn't call the tool. Null counts as a
+   * malformed pass: the LLM ignored the contract. */
+  toolInput: IngestToolInput | null
+  /** Any free-form assistant text. With the tool active the model
+   * shouldn't say much (a brief acknowledgment at most), but we
+   * still capture it for diagnostics when toolInput ends up null. */
+  text: string
+}
+
+/** Wait for one chat run to complete on the chat sidecar. With the
+ * `submit_ingest_result` tool enabled, the model's structured
+ * output arrives via an `ingest:result` notification (relayed
+ * through Rust as a Tauri event); free-form text deltas still
+ * stream on `claude:event` and we accumulate them for diagnostics.
+ * Either branch is sufficient to call the run "settled" — we
+ * resolve on `claude:done` with whatever we captured. */
+function awaitChatRun(runId: string): Promise<ChatRunOutcome> {
+  return new Promise<ChatRunOutcome>((resolve, reject) => {
+    let toolInput: IngestToolInput | null = null
     let assistantText = ''
     const unlistens: UnlistenFn[] = []
     let settled = false
@@ -385,11 +362,11 @@ function awaitChatRun(runId: string): Promise<string> {
         }
       }
     }
-    const settleOk = (text: string) => {
+    const settleOk = () => {
       if (settled) return
       settled = true
       cleanup()
-      resolve(text)
+      resolve({ toolInput, text: assistantText })
     }
     const settleErr = (err: unknown) => {
       if (settled) return
@@ -399,6 +376,16 @@ function awaitChatRun(runId: string): Promise<string> {
     }
 
     Promise.all([
+      // The structured-output channel: sidecar relays the tool input
+      // here when the model calls submit_ingest_result. We expect
+      // at most one of these per run.
+      listen<{ runId: string; input: IngestToolInput }>(
+        'ingest:result',
+        (e) => {
+          if (e.payload.runId !== runId) return
+          toolInput = e.payload.input
+        },
+      ),
       listen<{
         runId: string
         event: {
@@ -412,7 +399,6 @@ function awaitChatRun(runId: string): Promise<string> {
       }>('claude:event', (e) => {
         if (e.payload.runId !== runId) return
         const ev = e.payload.event
-        // Stream-event path — accumulate text deltas as they arrive.
         if (ev?.type === 'stream_event') {
           const inner = ev.event
           if (
@@ -424,9 +410,6 @@ function awaitChatRun(runId: string): Promise<string> {
           }
           return
         }
-        // Final assistant message — fallback path. The SDK emits both,
-        // but if for some reason stream events were missed, this
-        // recovers the full content from the consolidated message.
         if (ev?.type === 'assistant') {
           const blocks = ev.message?.content ?? []
           if (Array.isArray(blocks) && assistantText.length === 0) {
@@ -442,7 +425,7 @@ function awaitChatRun(runId: string): Promise<string> {
         'claude:done',
         (e) => {
           if (e.payload.runId !== runId) return
-          settleOk(assistantText)
+          settleOk()
         },
       ),
       listen<{ runId: string; code: string; message: string }>(
@@ -529,26 +512,45 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
       model: INGEST_MODEL,
       systemPrompt,
       prompt,
-      relayTools: [],
+      // Enable the structured-output tool. The sidecar registers
+      // it as an MCP tool on the writer-relay server; the model
+      // calls it exactly once with the full ingest result, which
+      // we receive via the `ingest:result` event in awaitChatRun.
+      relayTools: ['submit_ingest_result'],
       effort: 'low',
       sessionId,
     },
   })
-  const raw = await finished
-  console.log('[ingest:producer] LLM responded', { rawLength: raw.length })
-  const parsedJson = extractJson(raw)
-  if (!parsedJson) {
-    console.warn('[ingest:producer] could not extract JSON from response')
-    return { proposals: [], indexUpdates: [], logEntry: null, raw, malformed: true }
+  const outcome = await finished
+  if (!outcome.toolInput) {
+    console.warn(
+      '[ingest:producer] submit_ingest_result tool was not called',
+      { textPreview: outcome.text.slice(0, 200) },
+    )
+    return {
+      proposals: [],
+      indexUpdates: [],
+      logEntry: null,
+      raw: outcome.text,
+      malformed: true,
+    }
   }
-  const { proposals, indexUpdates, logEntry } = validateParsed(parsedJson)
-  console.log('[ingest:producer] validated', {
+  const { proposals, indexUpdates, logEntry } = sanitizeIngestResult(
+    outcome.toolInput,
+  )
+  console.log('[ingest:producer] tool result accepted', {
     proposals: proposals.length,
     indexUpdates: indexUpdates.length,
     logEntry: !!logEntry,
     targets: proposals.map((p) => p.target ?? `new:${p.suggestNewPage}`),
   })
-  return { proposals, indexUpdates, logEntry, raw, malformed: false }
+  return {
+    proposals,
+    indexUpdates,
+    logEntry,
+    raw: outcome.text,
+    malformed: false,
+  }
 }
 
 /** Convenience for console testing: run ingest against today's
