@@ -1,16 +1,19 @@
-import { IconLoader2 } from '@tabler/icons-react'
 import type { MessagePart, ToolPart } from '@/chat/types'
 import { PROPOSE_CHANGE_TOOL } from '@/chat/parts/proposeChangeTool'
+import { ChatRunningIcon } from '@/components/icons/ChatRunningIcon'
 
 /** Top-of-turn activity indicator. Reads the parts timeline to pick a
  * natural-language label for what the model is currently doing —
  * "Thinking…" → "Suggesting an edit…" → "Reading the document…" — so the
  * user gets a human description of progress instead of a generic spinner.
- * Lives in a stable slot; only the label text changes on re-render. */
+ * Lives in a stable slot; only the label text changes on re-render. The
+ * dot-matrix icon mirrors the one painted onto the doc's tab while a
+ * run is in flight, so the user sees the same "AI is working" signal
+ * in both surfaces. */
 export function ActivityStatus({ parts }: { parts?: MessagePart[] }) {
   return (
     <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-      <IconLoader2 size={12} className="shrink-0 animate-spin" />
+      <ChatRunningIcon size={12} className="shrink-0" />
       <span className="transition-opacity duration-150">{activityLabel(parts)}</span>
     </div>
   )

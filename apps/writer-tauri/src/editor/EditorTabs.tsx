@@ -20,6 +20,8 @@ import {
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
+import { useChatRunningForSlug } from '@/hooks/useChatRunningForSlug'
+import { ChatRunningIcon } from '@/components/icons/ChatRunningIcon'
 
 export function EditorTabs() {
   const openSlugs = useDocsStore((s) => s.openSlugs)
@@ -106,6 +108,7 @@ function DocTab({
   onClose: () => void
 }) {
   const label = useDocLabel(slug)
+  const isRunning = useChatRunningForSlug(slug)
   // Every tab is closeable, including today's daily. closeDoc (and the
   // archive/delete paths in docsStore) reopens today's daily in the
   // same tick if the strip would otherwise be empty, so this surface
@@ -126,7 +129,11 @@ function DocTab({
           : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground',
       )}
     >
-      <IconFileDescription size={14} stroke={1.75} className="shrink-0 opacity-70" />
+      {isRunning ? (
+        <ChatRunningIcon size={14} className="shrink-0 opacity-70" />
+      ) : (
+        <IconFileDescription size={14} stroke={1.75} className="shrink-0 opacity-70" />
+      )}
       <span className="min-w-0 flex-1 truncate">{label}</span>
       <span
         role="button"
