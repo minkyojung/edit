@@ -26,6 +26,7 @@
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 
+import { bridgeFetch } from './proofBridge'
 import { serialize, type SerializerInput } from './serializer'
 import type { MarkKind, MarksSidecarFile } from './types'
 
@@ -158,9 +159,7 @@ async function fetchMarkdown(slug: string): Promise<string> {
 }
 
 async function fetchMarks(slug: string): Promise<ProofSdkMark[]> {
-  const res = await fetch(
-    `${PROOF_BASE_URL}/documents/${encodeURIComponent(slug)}/bridge/marks`,
-  )
+  const res = await bridgeFetch(slug, '/marks')
   if (!res.ok) throw new Error(`GET /bridge/marks/${slug} → ${res.status}`)
   const json = (await res.json()) as { marks?: ProofSdkMark[] }
   return Array.isArray(json.marks) ? json.marks : []

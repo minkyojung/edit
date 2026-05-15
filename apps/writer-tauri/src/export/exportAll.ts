@@ -28,6 +28,7 @@ import {
 } from '@/state/docsStore'
 
 import { buildSidecar } from './exportPage'
+import { bridgeFetch } from './proofBridge'
 
 const PROOF_BASE_URL = 'http://localhost:4000'
 
@@ -145,9 +146,7 @@ async function fetchMarkdown(slug: string): Promise<string> {
 async function fetchMarks(
   slug: string,
 ): Promise<Parameters<typeof buildSidecar>[1]> {
-  const res = await fetch(
-    `${PROOF_BASE_URL}/documents/${encodeURIComponent(slug)}/bridge/marks`,
-  )
+  const res = await bridgeFetch(slug, '/marks')
   if (!res.ok) throw new Error(`GET /bridge/marks/${slug} → ${res.status}`)
   const json = (await res.json()) as {
     marks?: Parameters<typeof buildSidecar>[1]
