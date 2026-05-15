@@ -76,7 +76,7 @@ export function MarkPopoverLayer({ editorView, ydoc }: Props) {
     if (!editorView || !ydoc || !active) return
     const slug = useDocsStore.getState().activeSlug
     if (!slug) return
-    void rejectMark(slug, editorView, ydoc, active.markId)
+    void rejectMark(slug, editorView, active.markId)
     close()
   }
 
