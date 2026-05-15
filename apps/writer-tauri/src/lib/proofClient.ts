@@ -119,14 +119,22 @@ export const proofClient = {
 
 // ── ops types ───────────────────────────────────────────────────
 
+/**
+ * Ops payload shape matches proof-sdk's document-engine field names —
+ * specifically `markId` everywhere a mark is referenced. The earlier
+ * draft used `suggestionId` / `commentId` which the server's
+ * document-engine.ts ignores (it reads `body.markId`), producing a
+ * silent 400 "Missing markId". Names corrected before the first real
+ * caller wires in.
+ */
 export type OpsPayload =
   | { type: 'comment.add'; quote: string; text: string; by: string }
-  | { type: 'comment.reply'; commentId: string; text: string; by: string }
-  | { type: 'comment.resolve'; commentId: string; by: string }
-  | { type: 'comment.unresolve'; commentId: string; by: string }
+  | { type: 'comment.reply'; markId: string; text: string; by: string }
+  | { type: 'comment.resolve'; markId: string; by: string }
+  | { type: 'comment.unresolve'; markId: string; by: string }
   | { type: 'suggestion.add'; kind: 'insert' | 'delete' | 'replace'; quote: string; content?: string; by: string; status?: 'accepted' }
-  | { type: 'suggestion.accept'; suggestionId: string; by: string }
-  | { type: 'suggestion.reject'; suggestionId: string; by: string }
+  | { type: 'suggestion.accept'; markId: string; by: string }
+  | { type: 'suggestion.reject'; markId: string; by: string }
   | { type: 'rewrite.apply'; content: string; by: string }
 
 export interface OpsResponse {

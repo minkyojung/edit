@@ -33,6 +33,7 @@ import {
 import { MARK_HOVER_EVENT, type MarkHoverDetail } from '@/editor/markHoverPlugin'
 import { getMarkEndRect } from '@/editor/markHoverGeometry'
 import { useMarks } from '@/hooks/useMarks'
+import { useDocsStore } from '@/state/docsStore'
 import { formatActor } from '@/lib/formatActor'
 import { formatRelative } from '@/lib/formatRelative'
 
@@ -135,14 +136,21 @@ export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
 
   function handleAccept() {
     if (!editorView || !ydoc || !activeMarkId) return
-    acceptMark(editorView, ydoc, activeMarkId)
+    const slug = useDocsStore.getState().activeSlug
+    if (!slug) return
+    // Fire-and-forget: server-driven state change syncs back via the
+    // WebSocket; we close the toolbar immediately so the cursor isn't
+    // blocked by the floating UI while the ops round-trip resolves.
+    void acceptMark(slug, editorView, ydoc, activeMarkId)
     cancelClose()
     setActiveMarkId(null)
   }
 
   function handleReject() {
     if (!editorView || !ydoc || !activeMarkId) return
-    rejectMark(editorView, ydoc, activeMarkId)
+    const slug = useDocsStore.getState().activeSlug
+    if (!slug) return
+    void rejectMark(slug, editorView, activeMarkId)
     cancelClose()
     setActiveMarkId(null)
   }

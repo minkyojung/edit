@@ -13,6 +13,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { MarkPopover } from './MarkPopover'
 import { MARK_CLICKED_EVENT, type MarkClickedDetail } from '@/editor/markClickPlugin'
 import { acceptMark, getProofCommentMark, rejectMark } from '@/editor/markActions'
+import { useDocsStore } from '@/state/docsStore'
 import type { Proposal } from '@/agent/proposals'
 
 interface Props {
@@ -61,13 +62,21 @@ export function MarkPopoverLayer({ editorView, ydoc }: Props) {
 
   function handleAccept() {
     if (!editorView || !ydoc || !active) return
-    acceptMark(editorView, ydoc, active.markId)
+    const slug = useDocsStore.getState().activeSlug
+    if (!slug) return
+    // Fire-and-forget: the server's ops call drives the state change;
+    // local UI catches up via the WebSocket round-trip. Errors route
+    // through notify.* inside acceptMark, so awaiting here would only
+    // delay the popover close without changing the outcome.
+    void acceptMark(slug, editorView, ydoc, active.markId)
     close()
   }
 
   function handleReject() {
     if (!editorView || !ydoc || !active) return
-    rejectMark(editorView, ydoc, active.markId)
+    const slug = useDocsStore.getState().activeSlug
+    if (!slug) return
+    void rejectMark(slug, editorView, active.markId)
     close()
   }
 

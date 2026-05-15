@@ -438,9 +438,13 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       // stamps fresh ones — pressing Regenerate means "throw out what
       // I just got". Without this, a re-`/proofread` would leave stale
       // marks layered under the new ones on the same words.
-      if (targetTurn.appliedMarkIds && editorView && ydoc) {
+      if (targetTurn.appliedMarkIds && slug && ydoc) {
+        // Fire-and-forget cleanup — the rerun shouldn't block on the
+        // server-side reject round-trips. Errors stay in the console
+        // (cleanupMark already swallows them) so a flaky network
+        // doesn't strand the regenerate UI.
         for (const markId of targetTurn.appliedMarkIds) {
-          cleanupMark(editorView, ydoc, markId)
+          void cleanupMark(slug, ydoc, markId)
         }
       }
       turnsHook.removeTurn(assistantTurnId)
