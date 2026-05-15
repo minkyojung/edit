@@ -1,37 +1,31 @@
 /**
- * Convert a Claude `propose_change` tool call into a server-side mark.
+ * Convert a Claude `propose_change` tool call into a mark.
  *
- * Sends `POST /documents/:slug/ops` so the server creates the mark
- * canonically and broadcasts the resulting Yjs update through
- * Hocuspocus. The local PM editor + Y.Map catch up via the existing
- * WebSocket — no client-side Y.Doc writes here.
+ * Phase 2.4 — re-routed from `proofClient.ops(/suggestion.add/comment.add)`
+ * to `markStore.add`. The previous /ops round-trip was what surfaced the
+ * 409 Conflict the user hit on /proofread: proof-server's projection
+ * repair couldn't serialize our Y.XmlFragment (`node.children.some`
+ * crash class), so the server held the doc in PROJECTION_STALE and
+ * rejected every /ops call against it.
  *
- * Why this matters (Track 1.2 second attempt):
- *   The previous client-side path (Y.Map.set + tr.addMark wrapped in
- *   `ydoc.transact(..., 'mark-action')`) only persisted to the
- *   server's marks JSON via the Yjs binary sync. When the WebSocket
- *   was momentarily disconnected (token expiry, network blip) the
- *   mark stayed local; subsequent /ops mutations would fail with
- *   "Mark not found". The drift detector layered on top of that —
- *   server projection repair occasionally reverted client-originated
- *   writes, the source of split-tr / anchor-on-existing-text
- *   workarounds.
+ * Going through markStore writes the mark directly into the local
+ * Y.Doc + ProseMirror under a single 'mark-action' origin. proof-server
+ * keeps running in the background — its projection repair still fails
+ * in its own logs, but the user-visible mark life-cycle is now
+ * decoupled from that failure. Phase 3 removes the server entirely.
  *
- *   Going through /ops makes the server originate the mark. WebSocket
- *   disconnect no longer matters for mark creation (the HTTP call
- *   carries the full payload); drift detection can't fire on changes
- *   the server itself produced.
- *
- * One known regression deferred for v2:
- *   - `proposal.rationale` (shown above the Keep/Reject hover bar)
- *     isn't preserved through /ops because proof-sdk's mark schema
- *     doesn't carry it. If usage demands the rationale text back,
- *     add a sibling `Y.Map('marksRationale')` keyed by mark id, the
- *     same pattern as `Y.Map('authoredMeta')`. Leaving it out for
- *     now keeps the migration narrow.
+ * Validation responsibilities split:
+ *   - This file: domain validation that callers (chat.ts) already
+ *     have stable reason codes for ('quote_empty', 'content_empty',
+ *     'noop_replace', 'comment_empty'). Kept verbatim.
+ *   - markStore.add: anchor existence, view readiness, internal
+ *     shape. Its failure reasons (`view_not_ready`, `anchor_not_found`,
+ *     `invalid_args`, `noop`) are translated to ApplyOutcome reasons
+ *     below so the call site doesn't have to learn the new vocab.
  */
 
-import { proofClient, OpsError, type OpsResponse } from '@/lib/proofClient'
+import { markStore } from '@/domain/markStoreInstance'
+import type { AddMarkFailureReason } from '@/domain/markStore'
 import type { Proposal } from './proposals'
 
 export interface ApplyMeta {
@@ -52,29 +46,26 @@ export async function applyProposal(
   const reason = validate(proposal)
   if (reason) return { ok: false, reason }
 
-  try {
-    if (proposal.kind === 'suggestion') {
-      const response = await proofClient.ops(slug, null, {
-        type: 'suggestion.add',
-        kind: proposal.suggestionType ?? 'replace',
-        quote: proposal.quote,
-        content: proposal.content,
-        by: meta.agentId,
-      })
-      return toOutcome(response)
-    }
+  const result =
+    proposal.kind === 'suggestion'
+      ? await markStore.add({
+          slug,
+          kind: 'suggestion',
+          suggestionType: proposal.suggestionType,
+          quote: proposal.quote,
+          content: proposal.content,
+          by: meta.agentId,
+        })
+      : await markStore.add({
+          slug,
+          kind: 'comment',
+          quote: proposal.quote,
+          text: proposal.text,
+          by: meta.agentId,
+        })
 
-    // proposal.kind === 'comment'
-    const response = await proofClient.ops(slug, null, {
-      type: 'comment.add',
-      quote: proposal.quote,
-      text: proposal.text,
-      by: meta.agentId,
-    })
-    return toOutcome(response)
-  } catch (err) {
-    return toFailure(err)
-  }
+  if (result.ok) return { ok: true, markId: result.markId }
+  return { ok: false, reason: translateReason(result.reason) }
 }
 
 function validate(proposal: Proposal): string | null {
@@ -96,25 +87,21 @@ function validate(proposal: Proposal): string | null {
   return null
 }
 
-/**
- * proof-server returns `{ markId, ... }` for both suggestion.add and
- * comment.add (see proof-sdk/server/document-engine.ts:1357 / 1563).
- * A missing markId would be a server-side regression — we treat it
- * as a failure so the caller doesn't log a phantom success.
- */
-function toOutcome(response: OpsResponse): ApplyOutcome {
-  const markId = response.markId
-  if (typeof markId !== 'string' || !markId.trim()) {
-    return { ok: false, reason: 'no_mark_id_in_response' }
+/** Map markStore.add failure reasons to the reason strings chat.ts /
+ * the banner UI already understand. `view_not_ready` and `anchor_not_
+ * found` are the two new cases the legacy /ops path couldn't surface;
+ * keeping their codes verbatim so the chat logger and any future
+ * filters (e.g. "retry on view_not_ready") can branch on them
+ * directly. */
+function translateReason(reason: AddMarkFailureReason): string {
+  switch (reason) {
+    case 'view_not_ready':
+      return 'view_not_ready'
+    case 'anchor_not_found':
+      return 'anchor_not_found'
+    case 'noop':
+      return 'noop_replace'
+    case 'invalid_args':
+      return 'invalid_args'
   }
-  return { ok: true, markId }
-}
-
-/** Map an OpsError code (ANCHOR_NOT_FOUND, STALE_REVISION, etc.) to
- * a stable reason string the chat logger / banner can act on. */
-function toFailure(err: unknown): ApplyOutcome {
-  if (err instanceof OpsError) {
-    return { ok: false, reason: err.code ?? `ops_${err.status}` }
-  }
-  return { ok: false, reason: 'ops_failed' }
 }

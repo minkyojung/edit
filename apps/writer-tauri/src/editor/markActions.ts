@@ -23,10 +23,10 @@
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { Mark } from '@milkdown/kit/prose/model'
 import * as Y from 'yjs'
-import { proofClient } from '@/lib/proofClient'
-import type { AuthoredMeta, StoredMark } from '../hooks/useCollabDoc'
+import type { StoredMark } from '../hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
 import { ANCHOR_PROOF_MARK_NAMES } from './markTypes'
+import { markStore } from '@/domain/markStoreInstance'
 
 interface FoundAnchor {
   from: number
@@ -93,102 +93,58 @@ export function getProofCommentMark(
 /**
  * Accept a `proofSuggestion` mark.
  *
- * Calls `POST /ops { type: 'suggestion.accept' }`; the server applies
- * the content (insert / delete / replace), flips the mark to
- * `status: 'accepted'`, and broadcasts the resulting Yjs update.
- * The local doc catches up via the existing HocuspocusProvider
- * WebSocket — no client-side PM mutation needed.
+ * Phase 2.3 — re-routed off `proofClient.ops` to `markStore.accept`.
+ * The server path failed with 404 ("Mark not found") whenever the
+ * mark was created locally via markStore.add (Phase 2.4), since the
+ * server never saw it. Both add + accept now flow through markStore;
+ * the server is bypassed for the entire suggestion lifecycle.
  *
- * Post-success we write the app-specific breadcrumb (sourceSlug,
- * model, acceptedAt) into `Y.Map('authoredMeta')`. Those fields
- * aren't part of proof-sdk's mark schema, so the server doesn't
- * carry them; keeping them client-side preserves the "where did
- * this come from?" hover that EditorFooter and the popover read.
+ * markStore.accept handles internally:
+ *   - drift check (mark.quote vs current text → status='stale' if
+ *     diverged, no body mutation, returns false)
+ *   - body mutation per suggestionType (insert / delete / replace)
+ *   - authored breadcrumb mark stamped over the inserted range
+ *   - everything under a single 'mark-action' Yjs origin so the
+ *     UndoManager reverses it as one Cmd+Z step
  *
- * Returns true on a 2xx response. Fail-fast on missing anchor
- * (mark already gone) so the user sees a clean "no longer applies"
- * toast instead of a 404 from the server.
+ * `view` and `ydoc` parameters are kept on the signature for caller
+ * compatibility (Phase 2 migration ground rule — change one thing at
+ * a time). They are unused now; the markStore resolves them from
+ * the store registry internally.
  */
 export async function acceptMark(
   slug: string,
-  view: EditorView,
-  ydoc: Y.Doc,
+  _view: EditorView,
+  _ydoc: Y.Doc,
   markId: string,
   by: string = 'human:unknown',
 ): Promise<boolean> {
-  const anchor = findInlineAnchor(view, markId, 'proofSuggestion')
-  if (!anchor) {
-    console.error('[markActions] accept: anchor not found', markId)
+  const ok = await markStore.accept({ slug, markId, by })
+  if (!ok) {
     notify.markCantApply()
-    return false
   }
-
-  // Snapshot the client-side metadata before the server's accept
-  // round-trip. The Y.Map entry may get cleaned up by markCleanup
-  // once the server-originated update strips the inline mark, so we
-  // capture sourceSlug / model / etc. now and stamp authoredMeta
-  // only after the ops call succeeds.
-  const stored = ydoc.getMap<StoredMark>('marks').get(markId)
-
-  try {
-    await proofClient.ops(slug, null, {
-      type: 'suggestion.accept',
-      markId,
-      by,
-    })
-  } catch (err) {
-    console.error('[markActions] accept failed', err)
-    notify.markCantApply()
-    return false
-  }
-
-  if (stored) {
-    ydoc.getMap<AuthoredMeta>('authoredMeta').set(markId, {
-      sourceSlug: stored.sourceSlug,
-      sourceLabel: stored.sourceLabel,
-      sourceQuote: stored.sourceQuote,
-      createdAt: stored.createdAt ?? stored.proposedAt ?? stored.at,
-      acceptedAt: new Date().toISOString(),
-      model: stored.model,
-    })
-  }
-
-  return true
+  return ok
 }
 
 /**
  * Reject a `proofSuggestion` mark.
  *
- * Calls `POST /ops { type: 'suggestion.reject' }`. Server drops the
- * inline mark and broadcasts the update. No local metadata stamp —
- * unlike accept, reject has nothing to breadcrumb.
+ * Phase 2.2 — re-routed off `proofClient.ops` to `markStore.reject`.
+ * Symmetric with acceptMark above. Reject is the simpler of the two
+ * (no body mutation, no drift check) — just removes the inline PM
+ * mark and the Y.Map entry under a single 'mark-action' origin.
  */
 export async function rejectMark(
   slug: string,
-  view: EditorView,
+  _view: EditorView,
   markId: string,
   by: string = 'human:unknown',
 ): Promise<boolean> {
-  const anchor = findInlineAnchor(view, markId, 'proofSuggestion')
-  if (!anchor) {
-    console.error('[markActions] reject: anchor not found', markId)
+  const ok = await markStore.reject({ slug, markId, by })
+  if (!ok) {
     notify.markCantDismiss()
-    return false
   }
-
-  try {
-    await proofClient.ops(slug, null, {
-      type: 'suggestion.reject',
-      markId,
-      by,
-    })
-  } catch (err) {
-    console.error('[markActions] reject failed', err)
-    notify.markCantDismiss()
-    return false
-  }
-
-  return true
+  return ok
 }
 
 /**
@@ -197,9 +153,25 @@ export async function rejectMark(
  * discarded — e.g. handleRegenerate clearing the prior run's marks
  * before the rerun stamps fresh ones.
  *
- * Same surface as reject for suggestions, `comment.resolve` for
- * comments. No user-facing toast on failure; the rerun path
- * shouldn't be interrupted by mark cleanup hiccups.
+ * Two paths:
+ *   1. Fast path — slug is active. The markStore resolves the live
+ *      EditorView and removes both the PM mark and the Y.Map entry
+ *      under a single 'mark-action' origin (so UndoManager sees one
+ *      step). For comments, this calls accept() which is the
+ *      resolved-equivalent.
+ *   2. Fallback — slug isn't active (regenerate fired on a chat whose
+ *      target doc isn't currently mounted). We can't dispatch a PM
+ *      transaction without a view, so we delete just the Y.Map entry.
+ *      markCleanupPlugin handles PM mark removal the next time the
+ *      user opens the doc.
+ *
+ * No user-facing toast on failure; the rerun path shouldn't be
+ * interrupted by mark cleanup hiccups.
+ *
+ * Phase 2.1 — first call site migrated off proofClient.ops. The
+ * `ydoc` parameter is retained for the fallback path; once Phase 3
+ * lands and proof-server is gone, the live-only markStore path will
+ * handle every meaningful case and the fallback can collapse.
  */
 export async function cleanupMark(
   slug: string,
@@ -207,14 +179,22 @@ export async function cleanupMark(
   markId: string,
   by: string = 'ai:unknown',
 ): Promise<void> {
-  const stored = ydoc?.getMap<StoredMark>('marks').get(markId)
-  const op: { type: 'suggestion.reject' | 'comment.resolve'; markId: string; by: string } =
-    stored?.kind === 'comment'
-      ? { type: 'comment.resolve', markId, by }
-      : { type: 'suggestion.reject', markId, by }
-  try {
-    await proofClient.ops(slug, null, op)
-  } catch (err) {
-    console.warn('[markActions] cleanup failed', err)
+  const stored = markStore.get(slug, markId)
+  if (stored) {
+    if (stored.kind === 'comment') {
+      await markStore.accept({ slug, markId, by })
+    } else {
+      await markStore.reject({ slug, markId, by })
+    }
+    return
   }
+
+  // Fallback: slug isn't active or markStore couldn't resolve it.
+  // Drop the Y.Map metadata so the entry doesn't orphan; the inline
+  // PM mark gets swept by markCleanupPlugin on next mount.
+  if (!ydoc) return
+  if (!ydoc.getMap<StoredMark>('marks').has(markId)) return
+  ydoc.transact(() => {
+    ydoc.getMap<StoredMark>('marks').delete(markId)
+  }, 'mark-action')
 }
