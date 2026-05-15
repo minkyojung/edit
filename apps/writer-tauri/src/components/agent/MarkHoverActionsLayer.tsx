@@ -150,7 +150,7 @@ export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
     if (!editorView || !ydoc || !activeMarkId) return
     const slug = useDocsStore.getState().activeSlug
     if (!slug) return
-    void rejectMark(slug, editorView, activeMarkId)
+    void rejectMark(slug, editorView, ydoc, activeMarkId)
     cancelClose()
     setActiveMarkId(null)
   }
