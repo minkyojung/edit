@@ -23,18 +23,35 @@ import type { Node as PMNode } from '@milkdown/kit/prose/model'
  * nodes instead of literal text. */
 export type MarkdownParser = (md: string) => PMNode
 
+/** PM doc node → markdown string, the inverse of MarkdownParser. Uses
+ * Milkdown's own serializer (registered via serializerCtx in
+ * MilkdownEditor.tsx) so the output matches the formatting the
+ * commonmark+gfm parser would round-trip back to the same PM tree.
+ *
+ * Stored alongside the parser because the export path needs to read
+ * what the user currently sees in the editor as portable markdown.
+ * Reading from proof-server's projected `documents.markdown` column
+ * lags by the persist debounce and was observed to come back empty
+ * for writing-type docs whose projection had never been populated —
+ * the live editor is the authoritative source. */
+export type MarkdownSerializer = (doc: PMNode) => string
+
 interface EditorViewState {
   /** The view of the currently-active doc, or null when no doc is
    * open or the editor is mid-transition between docs. */
   view: EditorView | null
   parser: MarkdownParser | null
+  serializer: MarkdownSerializer | null
   setView: (view: EditorView | null) => void
   setParser: (parser: MarkdownParser | null) => void
+  setSerializer: (serializer: MarkdownSerializer | null) => void
 }
 
 export const useEditorViewStore = create<EditorViewState>((set) => ({
   view: null,
   parser: null,
+  serializer: null,
   setView: (view) => set({ view }),
   setParser: (parser) => set({ parser }),
+  setSerializer: (serializer) => set({ serializer }),
 }))
