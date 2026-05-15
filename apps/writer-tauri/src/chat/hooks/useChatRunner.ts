@@ -84,10 +84,12 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
 
   // No view-change abort: a run started against doc A keeps running
   // after the user switches to doc B. chat.ts's proposal listener
-  // routes by slug — proposals for the (now unmounted) original doc
-  // land in pendingProposalsStore and drain when the user comes back.
-  // closeDoc / archiveDoc in docsStore aborts runs whose owning slug
-  // is removed, so a truly-destroyed ydoc never receives a write.
+  // routes by slug — proposals for any open slug land on proof-server
+  // via /ops, which broadcasts the resulting mark back through
+  // Hocuspocus regardless of whether the doc's editor is currently
+  // mounted on this client. closeDoc / archiveDoc in docsStore aborts
+  // runs whose owning slug is removed, so a truly-destroyed ydoc
+  // never receives a late mark broadcast.
 
   const run = useCallback(
     async (threadId: string, history: ChatTurn[], overrides?: RunOverrides) => {
