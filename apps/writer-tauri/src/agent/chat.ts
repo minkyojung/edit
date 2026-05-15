@@ -37,8 +37,6 @@ import type {
 } from '@/chat/types'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
-import { useEditorViewStore } from '@/state/editorViewStore'
-import { usePendingProposals } from '@/state/pendingProposalsStore'
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 const DOC_CHAR_CAP = 60_000
@@ -543,37 +541,28 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // drop anything outside the whitelist on the floor. If we ever
         // need to surface a new content type, add a route above.
       }),
-      listen<ProposalEvent>('claude:proposal', (e) => {
+      listen<ProposalEvent>('claude:proposal', async (e) => {
         if (e.payload.runId !== runId) return
-        // Route by current state of the target doc:
-        //   1) doc is gone (closed/archived) → drop with a warn,
-        //      sidecar still sends events for a beat after cancel.
-        //   2) doc's editor is currently mounted (activeSlug matches
-        //      AND a live view exists) → apply now, same as before.
-        //   3) doc is still open but the editor for it is unmounted
-        //      (user switched away) → enqueue; MilkdownEditor drains
-        //      on its next mount for this slug.
-        // Captured `view` from runChat args is intentionally NOT used
-        // here — it becomes a stale reference after doc switch since
-        // `<MilkdownEditor key={activeSlug} />` re-mounts on change.
-        const docsState = useDocsStore.getState()
-        const handle = docsState.handles[slug]
+        // applyProposal POSTs to /ops, so the mark is created
+        // server-side regardless of whether this client's editor
+        // for `slug` is currently mounted. The earlier "live view
+        // OR enqueue" branch is gone — proof-server delivers the
+        // resulting mark via Hocuspocus broadcast to whichever
+        // clients have the doc open (now or later), which is the
+        // canonical multi-client flow proof-sdk's agent docs assume.
+        //
+        // Still drop proposals for handles we don't track in this
+        // session (slug closed / archived). The sidecar emits
+        // events for a beat after run cancel; the guard keeps a
+        // late event from mutating a doc the user clearly walked
+        // away from.
+        const handle = useDocsStore.getState().handles[slug]
         if (!handle) {
           console.warn('[chat] proposal for closed doc dropped', { slug, runId })
           return
         }
         const meta = { runId, agentId }
-        const liveView =
-          docsState.activeSlug === slug
-            ? useEditorViewStore.getState().view
-            : null
-        let outcome: ApplyOutcome
-        if (liveView) {
-          outcome = applyProposal(liveView, handle.ydoc, e.payload.input, meta)
-        } else {
-          usePendingProposals.getState().enqueue(slug, e.payload.input, meta)
-          outcome = { ok: false, reason: 'queued' }
-        }
+        const outcome: ApplyOutcome = await applyProposal(slug, e.payload.input, meta)
         const record: ToolCallRecord = {
           id: crypto.randomUUID(),
           name: 'propose_change',
@@ -583,12 +572,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         toolCalls.push(record)
         onToolApplied?.(record)
         // Stamp the markId onto the matching ToolPart so the chat
-        // panel's click-to-scroll handler can find it. The SDK's own
-        // tool_result that arrives a beat later carries only the ack
-        // text from the relay handler, not the markId — without this
-        // patch, every propose_change step would render as a dead
-        // click. Re-applies the ack text shape so adapter.ts and any
-        // future consumers keep seeing both fields.
+        // panel's click-to-scroll handler can find it. The SDK's
+        // tool_result that arrives a beat later only carries the
+        // ack text from the relay handler.
         if (outcome.ok) {
           const part = findPendingProposalPart()
           if (part) {

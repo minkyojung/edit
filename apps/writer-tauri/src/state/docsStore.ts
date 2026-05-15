@@ -29,7 +29,6 @@ import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
 import { deriveLabel } from '@/lib/docLabel'
 import { useIngestStore } from './ingestStore'
-import { usePendingProposals } from './pendingProposalsStore'
 import { useChatRuns } from '@/stores/chatRuns'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
@@ -590,11 +589,12 @@ export const useDocsStore = create<DocsState>()(
           const idx = openSlugs.indexOf(slug)
           nextActive = next[idx] ?? next[idx - 1] ?? null
         }
-        // Stop any chat run bound to this slug and drop its pending
-        // proposal queue BEFORE destroying the ydoc — a late proposal
-        // would otherwise try to dispatch into a dead fragment.
+        // Stop any chat run bound to this slug BEFORE destroying the
+        // ydoc — a late proposal would otherwise try to apply against
+        // a slug we've already torn down. (The pendingProposals queue
+        // is gone with Track 1.2 reapply; proposals now route via
+        // /ops directly, so no client-side queue to clear.)
         useChatRuns.getState().abortBySlug(slug)
-        usePendingProposals.getState().clear(slug)
         const handle = handles[slug]
         if (handle) {
           handle.provider?.destroy()
@@ -800,14 +800,14 @@ export const useDocsStore = create<DocsState>()(
             [...state.openSlugs.slice(0, idx)].reverse().find((s) => !groupSet.has(s)) ??
             null
         }
-        // Cancel chat runs + drop pending queues for the whole cascade
-        // before tearing handles down. Same reasoning as closeDoc: late
-        // proposals must not race past a destroyed ydoc.
+        // Cancel chat runs for the whole cascade before tearing
+        // handles down. Same reasoning as closeDoc: late proposals
+        // must not race past a destroyed ydoc. (Pending-proposal
+        // queues are gone with Track 1.2 reapply; /ops handles
+        // application server-side now.)
         const chatRuns = useChatRuns.getState()
-        const pending = usePendingProposals.getState()
         for (const s of groupSlugs) {
           chatRuns.abortBySlug(s)
-          pending.clear(s)
         }
         const nextHandles = { ...state.handles }
         const nextStatus = { ...state.status }

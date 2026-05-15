@@ -61,10 +61,8 @@ import { SlashMenu } from './SlashMenu'
 import { proofSchemaPlugins } from './proofMarks'
 import { dailyGuardPlugin } from './dailyGuardPlugin'
 import { useEditorViewStore } from '@/state/editorViewStore'
-import { usePendingProposals } from '@/state/pendingProposalsStore'
 import { usePendingScroll } from '@/state/pendingScrollStore'
 import { scrollToMark } from '@/editor/scrollToMark'
-import { applyProposal } from '@/agent/applyProposal'
 import { EditorFooter } from '@/components/EditorFooter'
 
 interface Props {
@@ -356,22 +354,15 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
         editor.action((ctx) => {
           const parser = ctx.get(parserCtx)
           useEditorViewStore.getState().setParser(parser)
-          // Drain proposals that arrived while this slug's editor was
-          // unmounted (user switched away mid-chat). drain() pops the
-          // whole queue atomically before invoking apply, so a Strict
-          // Mode second mount sees nothing left to do. Runs after the
-          // parser is registered because applyProposal's empty-doc
-          // insert path reads parser from the store.
-          const view = ctx.get(editorViewCtx)
-          usePendingProposals.getState().drain(handle.slug, ({ proposal, meta }) =>
-            applyProposal(view, ydoc, proposal, meta),
-          )
           // Drain a pending "scroll to this mark" target queued by the
-          // chat panel before this slug's editor was mounted. Runs after
-          // the proposal drain above so a freshly-applied mark from the
-          // same chat session is reachable. rAF defers one paint so the
-          // decoration plugins finish their first build pass and the
-          // target mark has stable coordinates.
+          // chat panel before this slug's editor was mounted. (The
+          // earlier pendingProposalsStore drain is gone — Track 1.2's
+          // /ops path creates marks server-side regardless of editor
+          // mount state, so there's no client-side queue to flush.)
+          // rAF defers one paint so the decoration plugins finish
+          // their first build pass and the target mark has stable
+          // coordinates.
+          const view = ctx.get(editorViewCtx)
           const pendingMarkId = usePendingScroll.getState().drain(handle.slug)
           if (pendingMarkId) {
             requestAnimationFrame(() => scrollToMark(view, pendingMarkId))
