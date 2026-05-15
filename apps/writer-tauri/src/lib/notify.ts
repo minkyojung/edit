@@ -133,6 +133,58 @@ export const notify = {
   wikiSyncFailed() {
     toast.error('Sync failed', { description: 'See console for details' })
   },
+
+  // ── Markdown export ───────────────────────────────────────────
+  /** Per-page export succeeded. `filePath` shows up as the
+   * description so the user can find where it landed even after the
+   * dialog has closed. */
+  exportPageOk(args: { filePath: string; marksExported?: number }) {
+    toast.success('Exported as Markdown', {
+      description: args.filePath,
+    })
+  },
+  /** Per-page export bailed because the page is effectively empty —
+   * an empty `.md` would just be noise on the user's disk. */
+  exportPageEmpty() {
+    toast.warning('Nothing to export', {
+      description: 'This page is empty',
+    })
+  },
+  /** Per-page export hit a fetch/write error. Generic copy because
+   * the underlying failure mode (network, permission, disk full) is
+   * rarely meaningful to surface — the console carries the detail. */
+  exportPageFailed() {
+    toast.error("Couldn't export page", {
+      description: 'See console for details',
+    })
+  },
+  /** Whole-wiki export succeeded. Mentions partial failures inline
+   * so a `12/13 pages` outcome reads honestly instead of as a clean
+   * success. */
+  exportAllOk(args: {
+    rootPath: string
+    pagesExported: number
+    failedCount?: number
+  }) {
+    const failedSuffix = args.failedCount
+      ? ` · ${args.failedCount} skipped`
+      : ''
+    toast.success(`Exported ${args.pagesExported} pages${failedSuffix}`, {
+      description: args.rootPath,
+    })
+  },
+  /** Folder picked but no eligible pages existed. */
+  exportAllEmpty() {
+    toast.warning('No pages to export', {
+      description: 'Your wiki has no content pages yet',
+    })
+  },
+  /** Whole-wiki export failed before any page was written. */
+  exportAllFailed() {
+    toast.error("Couldn't export wiki", {
+      description: 'See console for details',
+    })
+  },
 }
 
 // Dev-only console handle so smoke testing can fire each toast without
