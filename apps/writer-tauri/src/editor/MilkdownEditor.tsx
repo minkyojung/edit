@@ -407,7 +407,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
         status={status}
         provider={handle?.provider ?? null}
       />
-      {handle && <MarkToolbar selection={selection} ydoc={handle.ydoc} onDismiss={() => setSelection(null)} />}
+      {handle && <MarkToolbar slug={handle.slug} selection={selection} onDismiss={() => setSelection(null)} />}
       <LinkHoverBar />
       <SlashMenu />
       <WikilinkPalette

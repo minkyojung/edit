@@ -29,13 +29,15 @@ import { createMarkStore, type MarkStoreHandle } from './markStoreImpl'
 
 function resolveHandle(slug: string): MarkStoreHandle | null {
   const docs = useDocsStore.getState()
-  if (docs.activeSlug !== slug) return null
-
   const handle = docs.handles[slug]
   if (!handle) return null
 
-  const view = useEditorViewStore.getState().view
-  if (!view) return null
+  // EditorView only exists for the currently-active doc — and only
+  // after MilkdownEditor's onViewReady has run. Read-side callers
+  // (subscribe / list / get) work with `view: null`; PM-mutating
+  // callers receive `view_not_ready` and can retry or queue.
+  const view =
+    docs.activeSlug === slug ? useEditorViewStore.getState().view : null
 
   return { view, ydoc: handle.ydoc }
 }

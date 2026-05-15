@@ -64,6 +64,14 @@ export interface Mark {
    * for other kinds. */
   text?: string
 
+  /** Short author-supplied reason for the proposal. Surfaced to the
+   * user in the hover bar (suggestions) and the popover header
+   * (comments) so reviewers can understand intent without re-reading
+   * the original quote. Optional — human-created marks usually leave
+   * it blank; AI proposals routinely carry a one-line rationale
+   * (e.g. "missing article", "spelling"). */
+  rationale?: string
+
   /** Lifecycle state. `stale` is set when an accept attempt finds
    * the live text no longer matches `quote` — see drift policy. */
   status: MarkStatus
@@ -185,6 +193,7 @@ export function isValidMark(value: unknown): value is Mark {
 
   // Optional fields, when present, must be strings:
   if (value.acceptedAt !== undefined && typeof value.acceptedAt !== 'string') return false
+  if (value.rationale !== undefined && typeof value.rationale !== 'string') return false
   if (value.sourceSlug !== undefined && typeof value.sourceSlug !== 'string') return false
   if (value.sourceLabel !== undefined && typeof value.sourceLabel !== 'string') return false
   if (value.sourceQuote !== undefined && typeof value.sourceQuote !== 'string') return false

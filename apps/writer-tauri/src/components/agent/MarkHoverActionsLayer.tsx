@@ -32,7 +32,7 @@ import {
 } from '@/editor/markActions'
 import { MARK_HOVER_EVENT, type MarkHoverDetail } from '@/editor/markHoverPlugin'
 import { getMarkEndRect } from '@/editor/markHoverGeometry'
-import { useMarks } from '@/hooks/useMarks'
+import { useDocMark } from '@/hooks/useDocMarks'
 import { useDocsStore } from '@/state/docsStore'
 import { formatActor } from '@/lib/formatActor'
 import { formatRelative } from '@/lib/formatRelative'
@@ -53,7 +53,8 @@ const OFFSCREEN_RECT: DOMRect = new DOMRect(-9999, -9999, 0, 0)
 export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
   const [activeMarkId, setActiveMarkId] = useState<string | null>(null)
   const leaveTimer = useRef<number | null>(null)
-  const marks = useMarks(ydoc)
+  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const activeMark = useDocMark(activeSlug, activeMarkId)
 
   function cancelClose() {
     if (leaveTimer.current !== null) {
@@ -116,19 +117,20 @@ export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
   })
 
   if (!activeMarkId || !editorView || !ydoc) return null
-  // Visibility authority is the live PM mark, NOT Y.Map. PM undo
-  // restores the mark; Y.Map mutations from accept/reject aren't on
-  // PM's undo stack, so a Y.Map-gated check would hide the toolbar
-  // after Cmd+Z even though the suggestion is back in the doc. See
-  // markCleanupPlugin.ts:1-7 for the codebase-wide invariant this
-  // mirrors.
+  // Visibility authority is the live PM mark, NOT the domain Mark map.
+  // PM undo restores the mark; markStore mutations from accept/reject
+  // aren't on PM's undo stack via the same path, so a map-gated check
+  // would hide the toolbar after Cmd+Z even though the suggestion is
+  // back in the doc. See markCleanupPlugin.ts:1-7 for the codebase-wide
+  // invariant this mirrors.
   if (!hasProofSuggestionInDoc(editorView, activeMarkId)) return null
-  // Y.Map metadata is optional decoration: rationale text shows when
+  // Domain Mark is optional decoration: rationale text shows when
   // it's there, the toolbar still works when it isn't.
-  const stored = marks[activeMarkId]
-  const rationale = stored?.note?.trim() || null
-  const actor = formatActor(stored?.by)
-  const proposedAt = stored?.at ? formatRelative(stored.at) : null
+  const rationale = activeMark?.rationale?.trim() || null
+  const actor = formatActor(activeMark?.by)
+  const proposedAt = activeMark?.createdAt
+    ? formatRelative(activeMark.createdAt)
+    : null
   // Author label sits to the left of the action buttons. We hide
   // the whole row when neither piece of metadata is known so the
   // bar stays clean for marks that were seeded without provenance.

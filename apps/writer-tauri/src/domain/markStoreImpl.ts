@@ -49,11 +49,17 @@ import {
   schemaNameForKind,
 } from './internal/schemaMap'
 
-/** Per-slug handle the factory needs to operate on a doc. The
- * caller (app bootstrap) resolves these from useDocsStore + the
- * editor-view store at the moment of the call. */
+/** Per-slug handle the factory needs to operate on a doc.
+ *
+ * `view` is nullable because read methods (get / list / subscribe)
+ * only need the Y.Doc — they observe the marks Y.Map directly. The
+ * EditorView is required only for PM mutations (add / accept /
+ * reject), so a handle with `view: null` is still useful for
+ * reactive UI that subscribes before the editor mounts (typical
+ * React render-then-effect order). PM-mutating methods surface
+ * `view_not_ready` to the caller when the view is missing. */
 export interface MarkStoreHandle {
-  view: EditorView
+  view: EditorView | null
   ydoc: Y.Doc
 }
 
@@ -87,10 +93,15 @@ export function createMarkStore(deps: MarkStoreDeps): MarkStore {
     if (argReason) return { ok: false, reason: argReason }
 
     const handle = getHandle(args.slug)
-    if (!handle) return { ok: false, reason: 'view_not_ready' }
+    if (!handle || !handle.view) return { ok: false, reason: 'view_not_ready' }
     const { view, ydoc } = handle
 
-    const anchor = findQuoteInDoc(view, args.quote)
+    // Selection-driven callers (MarkToolbar) pass an explicit range
+    // because the same `quote` text may appear multiple times in
+    // the doc and searching would land the mark on the wrong copy.
+    // AI-emitted proposals omit it; we search for the first match
+    // of the quote in that case.
+    const anchor = args.anchor ?? findQuoteInDoc(view, args.quote)
     if (!anchor) return { ok: false, reason: 'anchor_not_found' }
 
     let startRel: string
@@ -116,6 +127,7 @@ export function createMarkStore(deps: MarkStoreDeps): MarkStore {
       endRel,
       content: args.content,
       text: args.text,
+      rationale: args.rationale,
       status: 'pending',
       by: args.by,
       createdAt,
@@ -134,10 +146,19 @@ export function createMarkStore(deps: MarkStoreDeps): MarkStore {
       return { ok: false, reason: 'invalid_args' }
     }
 
+    // Hover / popover surfaces (MarkPopoverLayer, MarkHoverActionsLayer)
+    // read body / quote / content directly off the PM mark attrs —
+    // PM is the single source of truth for what the mark says, so
+    // Cmd+Z restores both the mark and its contents atomically without
+    // a Y.Map round-trip. The attrs we stamp here must therefore cover
+    // every field those surfaces read. Mirrors the previous MarkToolbar
+    // stampInlineMark shape verbatim.
+    const pmAttrs = buildPMAttrs(mark)
+
     ydoc.transact(() => {
       marksMapOf(ydoc).set(id, mark)
       const tr = view.state.tr
-        .addMark(anchor.from, anchor.to, markType.create({ id }))
+        .addMark(anchor.from, anchor.to, markType.create(pmAttrs))
         .setMeta(MARK_ORIGIN, { kind: 'add', id })
       view.dispatch(tr)
     }, MARK_ORIGIN)
@@ -153,10 +174,14 @@ export function createMarkStore(deps: MarkStoreDeps): MarkStore {
     const mark = map.get(args.markId)
     if (!mark) return false
 
-    const range = findMarkRange(view, args.markId, mark.kind)
+    // View may be absent — e.g. the user switched away from this
+    // slug between proposal and reject. Drop the Y.Map entry so the
+    // metadata doesn't orphan; the PM mark on this doc gets swept by
+    // markCleanupPlugin when the user next opens it.
+    const range = view ? findMarkRange(view, args.markId, mark.kind) : null
 
     ydoc.transact(() => {
-      if (range) {
+      if (view && range) {
         const schemaName = schemaNameForKind(mark.kind)
         const markType = view.state.schema.marks[schemaName]
         if (markType) {
@@ -174,7 +199,7 @@ export function createMarkStore(deps: MarkStoreDeps): MarkStore {
 
   async function accept(args: ActOnMarkArgs): Promise<boolean> {
     const handle = getHandle(args.slug)
-    if (!handle) return false
+    if (!handle || !handle.view) return false
     const { view, ydoc } = handle
     const map = marksMapOf(ydoc)
     const mark = map.get(args.markId)
@@ -237,7 +262,14 @@ export function createMarkStore(deps: MarkStoreDeps): MarkStore {
     const result: Mark[] = []
     map.forEach((rawMark) => {
       if (!isValidMark(rawMark)) return
-      const refreshed = refreshDriftStatus(view, ydoc, map, rawMark)
+      // Drift check needs the live PM doc. When view isn't mounted
+      // (read-before-editor-ready), return the stored mark as-is —
+      // the next call after view mount will refresh status, and the
+      // PM-bound mark in the doc tells the user the same thing
+      // visually.
+      const refreshed = view
+        ? refreshDriftStatus(view, ydoc, map, rawMark)
+        : rawMark
       if (options?.status && refreshed.status !== options.status) return
       result.push(refreshed)
     })
@@ -258,6 +290,36 @@ export function createMarkStore(deps: MarkStoreDeps): MarkStore {
   }
 
   return { add, accept, reject, get, list, subscribe }
+}
+
+/** Compose the attrs we stamp onto the inline PM mark. Hover popovers
+ * + the click-popover read straight from these attrs (see
+ * MarkPopoverLayer.tsx:54-56 and the hover bar), so every user-visible
+ * field — quote, body text, suggestion content, by — has to be here
+ * even though it's also in the Y.Map entry.
+ *
+ * The `kind` attr on the suggestion mark carries the sub-type
+ * (insert/delete/replace) to match proof-sdk's schema, which models
+ * those three as a single proofSuggestion mark with a kind attr
+ * rather than three separate marks. */
+function buildPMAttrs(mark: Mark): Record<string, unknown> {
+  const base = { id: mark.id, by: mark.by }
+  if (mark.kind === 'comment') {
+    return {
+      ...base,
+      quote: mark.quote,
+      text: mark.text ?? '',
+    }
+  }
+  if (mark.kind === 'suggestion') {
+    return {
+      ...base,
+      kind: mark.suggestionType ?? 'replace',
+      quote: mark.quote,
+      content: mark.content ?? '',
+    }
+  }
+  return base
 }
 
 // ── internal helpers ──────────────────────────────────────────────

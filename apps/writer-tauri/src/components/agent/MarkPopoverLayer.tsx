@@ -1,19 +1,26 @@
 // Listens for inline-mark clicks and shows a MarkPopover anchored to the
-// clicked range. Reads the current proposal shape from Y.Map so it works
-// independently of whatever proposed it (chat history, manual mark, etc.).
+// clicked range. The popover reads its content from markStore (Y.Map-
+// backed Mark domain object), not from PM mark.attrs.
 //
-// Scope: this surface now handles **comments only**. proofSuggestion marks
-// (replace / insert / delete) carry their rationale + Keep/Reject inside
-// the hover-driven floating bar (MarkHoverActionsLayer); rendering the
-// popover for them too would duplicate the action UI on a single click.
+// Why not PM mark.attrs: proof-sdk's proofComment schema only defines
+// `id` and `by` as mark attrs (see proof-marks.ts:184-186). ProseMirror
+// silently drops attrs not in the schema's declared list, so writing
+// `text`/`quote`/`note` to mark.create({...}) doesn't persist them.
+// markStore.get returns the full Mark, where `text` and `quote` are
+// first-class fields — that's the single source of truth.
+//
+// Scope: this surface handles comments only. proofSuggestion marks
+// surface via the hover bar (MarkHoverActionsLayer); a click-popover
+// for suggestions would duplicate that.
 
 import { useEffect, useState } from 'react'
 import * as Y from 'yjs'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { MarkPopover } from './MarkPopover'
 import { MARK_CLICKED_EVENT, type MarkClickedDetail } from '@/editor/markClickPlugin'
-import { acceptMark, getProofCommentMark, rejectMark } from '@/editor/markActions'
+import { acceptMark, rejectMark } from '@/editor/markActions'
 import { useDocsStore } from '@/state/docsStore'
+import { markStore } from '@/domain/markStoreInstance'
 import type { Proposal } from '@/agent/proposals'
 
 interface Props {
@@ -28,6 +35,7 @@ interface Active {
 
 export function MarkPopoverLayer({ editorView, ydoc }: Props) {
   const [active, setActive] = useState<Active | null>(null)
+  const activeSlug = useDocsStore((s) => s.activeSlug)
 
   useEffect(() => {
     function onClicked(e: Event) {
@@ -41,19 +49,19 @@ export function MarkPopoverLayer({ editorView, ydoc }: Props) {
     return () => window.removeEventListener(MARK_CLICKED_EVENT, onClicked)
   }, [])
 
-  if (!active || !editorView) return null
-  // Read body / quote / rationale straight off the PM mark. PM is the
-  // single source of truth for whether the comment exists AND for its
-  // contents — Cmd+Z after a resolve restores both atomically (no
-  // dual-source race with Y.Map). Suggestions are intentionally not
-  // handled here; the hover bar owns their surface.
-  const mark = getProofCommentMark(editorView, active.markId)
-  if (!mark) return null
+  if (!active || !editorView || !activeSlug) return null
+
+  // Read the domain Mark, not PM attrs. markStore returns null when
+  // the mark id isn't in the store OR when the kind isn't comment —
+  // either way we skip rendering (suggestion marks are owned by the
+  // hover bar).
+  const mark = markStore.get(activeSlug, active.markId)
+  if (!mark || mark.kind !== 'comment') return null
+
   const proposal: Proposal = {
     kind: 'comment',
-    quote: typeof mark.attrs.quote === 'string' ? mark.attrs.quote : '',
-    text: typeof mark.attrs.text === 'string' ? mark.attrs.text : '',
-    rationale: typeof mark.attrs.note === 'string' ? mark.attrs.note : undefined,
+    quote: mark.quote,
+    text: mark.text ?? '',
   }
 
   function close() {
@@ -61,22 +69,14 @@ export function MarkPopoverLayer({ editorView, ydoc }: Props) {
   }
 
   function handleAccept() {
-    if (!editorView || !ydoc || !active) return
-    const slug = useDocsStore.getState().activeSlug
-    if (!slug) return
-    // Fire-and-forget: the server's ops call drives the state change;
-    // local UI catches up via the WebSocket round-trip. Errors route
-    // through notify.* inside acceptMark, so awaiting here would only
-    // delay the popover close without changing the outcome.
-    void acceptMark(slug, editorView, ydoc, active.markId)
+    if (!editorView || !ydoc || !active || !activeSlug) return
+    void acceptMark(activeSlug, editorView, ydoc, active.markId)
     close()
   }
 
   function handleReject() {
-    if (!editorView || !ydoc || !active) return
-    const slug = useDocsStore.getState().activeSlug
-    if (!slug) return
-    void rejectMark(slug, editorView, active.markId)
+    if (!editorView || !ydoc || !active || !activeSlug) return
+    void rejectMark(activeSlug, editorView, active.markId)
     close()
   }
 

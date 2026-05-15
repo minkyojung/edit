@@ -40,10 +40,21 @@ export interface AddMarkArgs {
   /** Required when kind === 'suggestion'. */
   suggestionType?: SuggestionType
 
-  /** Text the mark anchors to. The implementation finds this in the
-   * doc and resolves it to a RelativePosition. Required because
-   * every mark anchors to something — there is no "floating" mark. */
+  /** Text the mark anchors to. Required because every mark anchors
+   * to something — there is no "floating" mark. The implementation
+   * uses this to recover the anchor if `anchor` (below) isn't passed,
+   * AND stores it on the mark for drift detection regardless. */
   quote: string
+
+  /** Explicit PM range to anchor at. Optional. When omitted, the
+   * implementation searches the live doc for the first occurrence
+   * of `quote`. Pass this from selection-driven flows (MarkToolbar)
+   * where the caller already knows the exact range — without it,
+   * a quote like "the" would land on the first "the" in the doc,
+   * not the one the user selected. AI-emitted proposals leave it
+   * blank because the model only knows the quote text, not a PM
+   * position. */
+  anchor?: { from: number; to: number }
 
   /** New text for the suggestion. Required for suggestion of type
    * 'insert' or 'replace'. */
@@ -51,6 +62,10 @@ export interface AddMarkArgs {
 
   /** Body of the comment. Required when kind === 'comment'. */
   text?: string
+
+  /** Short author-supplied reason ("missing article", "spelling").
+   * Surfaced in the hover bar and popover. Optional. */
+  rationale?: string
 
   /** Attribution. See Mark.by. */
   by: string

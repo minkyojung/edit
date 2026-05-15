@@ -54,6 +54,7 @@ export async function applyProposal(
           suggestionType: proposal.suggestionType,
           quote: proposal.quote,
           content: proposal.content,
+          rationale: proposal.rationale,
           by: meta.agentId,
         })
       : await markStore.add({
@@ -61,6 +62,7 @@ export async function applyProposal(
           kind: 'comment',
           quote: proposal.quote,
           text: proposal.text,
+          rationale: proposal.rationale,
           by: meta.agentId,
         })
 
