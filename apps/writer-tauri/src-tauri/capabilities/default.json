@@ -13,6 +13,17 @@
         { "url": "http://**" },
         { "url": "mailto:**" }
       ]
+    },
+    "dialog:default",
+    "fs:allow-write-text-file",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$DOCUMENT/**" },
+        { "path": "$DESKTOP/**" }
+      ]
     }
   ]
 }
