@@ -37,6 +37,8 @@ import type {
 } from '@/chat/types'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
+import { useEditorViewStore } from '@/state/editorViewStore'
+import { usePendingProposals } from '@/state/pendingProposalsStore'
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 const DOC_CHAR_CAP = 60_000
@@ -541,28 +543,37 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // drop anything outside the whitelist on the floor. If we ever
         // need to surface a new content type, add a route above.
       }),
-      listen<ProposalEvent>('claude:proposal', async (e) => {
+      listen<ProposalEvent>('claude:proposal', (e) => {
         if (e.payload.runId !== runId) return
-        // applyProposal now POSTs to /ops, so the mark is created
-        // server-side regardless of whether the target doc's editor
-        // is mounted on this client. Earlier behavior gated on a
-        // mounted EditorView and queued for later when the user had
-        // switched away (pendingProposalsStore). That path is gone
-        // — server broadcast through Hocuspocus delivers the mark
-        // to whichever clients have the doc open, now or later.
-        //
-        // Still drop proposals for handles we don't track (slug
-        // archived / closed in this session). Sidecar emits events
-        // for a beat after a run is cancelled; without the guard
-        // a late event would mutate a doc the user clearly stepped
-        // away from.
-        const handle = useDocsStore.getState().handles[slug]
+        // Route by current state of the target doc:
+        //   1) doc is gone (closed/archived) → drop with a warn,
+        //      sidecar still sends events for a beat after cancel.
+        //   2) doc's editor is currently mounted (activeSlug matches
+        //      AND a live view exists) → apply now, same as before.
+        //   3) doc is still open but the editor for it is unmounted
+        //      (user switched away) → enqueue; MilkdownEditor drains
+        //      on its next mount for this slug.
+        // Captured `view` from runChat args is intentionally NOT used
+        // here — it becomes a stale reference after doc switch since
+        // `<MilkdownEditor key={activeSlug} />` re-mounts on change.
+        const docsState = useDocsStore.getState()
+        const handle = docsState.handles[slug]
         if (!handle) {
           console.warn('[chat] proposal for closed doc dropped', { slug, runId })
           return
         }
         const meta = { runId, agentId }
-        const outcome: ApplyOutcome = await applyProposal(slug, e.payload.input, meta)
+        const liveView =
+          docsState.activeSlug === slug
+            ? useEditorViewStore.getState().view
+            : null
+        let outcome: ApplyOutcome
+        if (liveView) {
+          outcome = applyProposal(liveView, handle.ydoc, e.payload.input, meta)
+        } else {
+          usePendingProposals.getState().enqueue(slug, e.payload.input, meta)
+          outcome = { ok: false, reason: 'queued' }
+        }
         const record: ToolCallRecord = {
           id: crypto.randomUUID(),
           name: 'propose_change',
@@ -576,7 +587,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // tool_result that arrives a beat later carries only the ack
         // text from the relay handler, not the markId — without this
         // patch, every propose_change step would render as a dead
-        // click.
+        // click. Re-applies the ack text shape so adapter.ts and any
+        // future consumers keep seeing both fields.
         if (outcome.ok) {
           const part = findPendingProposalPart()
           if (part) {
