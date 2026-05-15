@@ -45,14 +45,20 @@ import { useDocLabel } from '../hooks/useDocLabel'
 import { MarkToolbar } from './MarkToolbar'
 import { LinkHoverBar } from './LinkHoverBar'
 import { SlashMenu } from './SlashMenu'
-// Proof mark schemas come from proof-sdk via a thin adapter so client
-// and server share one canonical definition. The previous local copy
-// (./proofMarkSchemas) drifted out of sync — proof-sdk's
-// proofSuggestion now carries 17 attrs (content/status/runId/
-// agentId/...), our copy carried only 7, and the resulting
-// Y.XmlFragment crashed proof-server's projection-repair pass
-// (`node.children.some`). See ./proofMarks.ts for adapter notes.
-import { proofMarkPlugins } from './proofMarks'
+// Proof schemas come from proof-sdk via a thin adapter so client and
+// server share one canonical definition. The previous local copy
+// drifted out of sync; restoring the canonical schemas closed the
+// projection-repair crash class. The bundle covers three plugins:
+//   - proofMarkPlugins        — 7 mark types (proofSuggestion / etc.)
+//   - codeBlockExtPlugins     — redefines `code_block` to allow
+//                                 proof marks inside (without this
+//                                 our code_block node shape diverges
+//                                 from the server's)
+//   - frontmatterSchema       — block-level YAML frontmatter node
+//                                 (we don't emit one, but registering
+//                                 keeps the two schemas symmetric)
+// See ./proofMarks.ts for adapter notes.
+import { proofSchemaPlugins } from './proofMarks'
 import { dailyGuardPlugin } from './dailyGuardPlugin'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { usePendingProposals } from '@/state/pendingProposalsStore'
@@ -199,7 +205,12 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       // collab so remote (y-prosemirror) transactions already carry
       // the ySyncPluginKey meta by the time our filter inspects them.
       .use(isDaily ? [dailyGuardPlugin] : [])
-      .use(proofMarkPlugins)
+      // proofSchemaPlugins == proofMarks + codeBlockExt + frontmatter
+      // (see ./proofMarks.ts). Registration order mirrors
+      // proof-sdk/server/milkdown-headless.ts:150-158 so marks are
+      // available before code_block_ext references them in its `marks: '...'`
+      // content spec.
+      .use(proofSchemaPlugins)
       .use(createMarkDecoPlugin(ydoc))
       .use(createMarkCleanupPlugin(ydoc))
       .use(createMarkClickPlugin())

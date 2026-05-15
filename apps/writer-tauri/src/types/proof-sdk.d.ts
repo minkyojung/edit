@@ -30,3 +30,28 @@ declare module '@proof-sdk/editor/schema/proof-marks' {
    */
   export const proofMarkPlugins: unknown[]
 }
+
+declare module '@proof-sdk/editor/schema/code-block-ext' {
+  /**
+   * `code_block` schema extension. proof-sdk redefines the
+   * commonmark `code_block` node so it accepts proofAuthored /
+   * proofSuggestion / proofComment / proofFlagged / proofApproved
+   * marks (necessary for proof-marked code spans to survive the
+   * markdown round-trip). Without this on the client, our
+   * code_block schema differs from the server's, which is the
+   * shape of mismatch that broke projection repair.
+   */
+  export const codeBlockExtPlugins: unknown[]
+}
+
+declare module '@proof-sdk/editor/schema/frontmatter' {
+  /**
+   * `frontmatter` block node. proof-sdk registers a YAML-style
+   * frontmatter node so docs with `---\ntitle: ...\n---` headers
+   * round-trip cleanly. We don't currently emit frontmatter
+   * client-side, but the server expects this node type in its
+   * schema; registering it on our side keeps the two schemas
+   * structurally identical.
+   */
+  export const frontmatterSchema: unknown
+}

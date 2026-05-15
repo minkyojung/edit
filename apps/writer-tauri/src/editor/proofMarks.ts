@@ -1,31 +1,63 @@
 /**
- * Thin adapter for proof-sdk's mark plugins.
+ * Thin adapter for proof-sdk's schema plugins.
  *
- * Why this exists:
- *   - proof-sdk publishes its plugin array as `[Attr, $markSchema-tuple,
- *     Attr, $markSchema-tuple, ...]`. Milkdown's `.use()` expects a flat
- *     `MilkdownPlugin[]`. proof-sdk's own editor builds compile under a
- *     looser tsconfig where the mixed array shape passes; under our
- *     strict config the tuple objects don't satisfy MilkdownPlugin
- *     directly.
- *   - proof-sdk's internal `serializeProofMark` helper also has a few
- *     loose-typed signatures (the SerializerState shape doesn't line up
- *     with @milkdown/transformer's strict types). Those checks live in
- *     proof-sdk source, not our code path.
+ * Purpose:
+ *   - Pull mark schemas (`proofMarkPlugins`) and node schema
+ *     extensions (`codeBlockExtPlugins`, `frontmatterSchema`) from
+ *     proof-sdk source so the client and server share one schema.
+ *   - Flatten + cast to `MilkdownPlugin[]` so Editor.use() accepts
+ *     them under our strict tsconfig. proof-sdk's own builds compile
+ *     under a looser tsconfig where the mixed-array / tuple shapes
+ *     pass; here we need an explicit narrowing.
  *
- * The adapter:
- *   1. Imports the canonical mark plugin objects from proof-sdk so the
- *      schema (proofSuggestion's 17 attrs, etc.) is identical to the
- *      server's. No more drift.
- *   2. Flattens + casts to MilkdownPlugin[] so Editor.use() accepts it.
+ * Why three plugins:
+ *   - `proofMarkPlugins`: the seven proof marks. Their attr set has
+ *     to match the server's stored marks JSON shape, or projection
+ *     repair crashes on the round-trip.
+ *   - `codeBlockExtPlugins`: redefines the `code_block` node to
+ *     allow proof marks as content. Without this on the client, a
+ *     code block in our Y.XmlFragment is structurally different
+ *     from what the server's schema expects, and the server's
+ *     Yjs-fragment-to-PM conversion fails.
+ *   - `frontmatterSchema`: a YAML-frontmatter block node. We don't
+ *     emit one client-side, but registering the node keeps the two
+ *     schemas symmetric so server-originated docs (e.g. via
+ *     /rewrite.apply) can land without surprises.
  *
- * If proof-sdk tightens its own types or exposes a pre-flattened
- * plugin export, this file becomes a one-line re-export.
+ * If proof-sdk later publishes a pre-flattened, strictly-typed
+ * bundle that satisfies MilkdownPlugin[] directly, this whole file
+ * collapses to a `export * from '@proof-sdk/...'`.
  */
 
 import type { MilkdownPlugin } from '@milkdown/kit/ctx'
-import { proofMarkPlugins as proofSdkMarkPlugins } from '@proof-sdk/editor/schema/proof-marks'
+import { proofMarkPlugins as rawProofMarkPlugins } from '@proof-sdk/editor/schema/proof-marks'
+import { codeBlockExtPlugins as rawCodeBlockExt } from '@proof-sdk/editor/schema/code-block-ext'
+import { frontmatterSchema as rawFrontmatter } from '@proof-sdk/editor/schema/frontmatter'
 
 export const proofMarkPlugins: MilkdownPlugin[] = (
-  proofSdkMarkPlugins as unknown as MilkdownPlugin[]
+  rawProofMarkPlugins as unknown as MilkdownPlugin[]
 ).flat()
+
+export const codeBlockExtPlugins: MilkdownPlugin[] = (
+  rawCodeBlockExt as unknown as MilkdownPlugin[]
+).flat()
+
+/** Frontmatter is a single `$nodeSchema` (returns a tuple-like
+ * plugin object). We spread it into an array here for consistency
+ * with the other schema bundles. */
+export const frontmatterSchema: MilkdownPlugin[] = [
+  rawFrontmatter as unknown as MilkdownPlugin,
+].flat()
+
+/**
+ * Combined schema bundle — register this single export in
+ * MilkdownEditor to keep the schema surface in one place. Order
+ * follows proof-sdk/server/milkdown-headless.ts:150-158: marks
+ * register before code-block extensions (which reference the mark
+ * types in their `marks: '...'` spec).
+ */
+export const proofSchemaPlugins: MilkdownPlugin[] = [
+  ...proofMarkPlugins,
+  ...codeBlockExtPlugins,
+  ...frontmatterSchema,
+]
