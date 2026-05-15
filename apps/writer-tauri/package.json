@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "preview": "vite preview",
@@ -22,10 +24,13 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.7.0",
+    "@vitest/expect": "^4.1.6",
     "eslint": "^10.3.0",
+    "jsdom": "^29.1.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.59.2",
-    "vite": "^6.4.2"
+    "vite": "^6.4.2",
+    "vitest": "^4.1.6"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
