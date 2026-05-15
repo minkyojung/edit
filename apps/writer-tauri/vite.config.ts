@@ -18,6 +18,18 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // Direct import of proof-sdk source modules so client and server
+      // share a single mark-schema definition. The previous local copy
+      // (apps/writer-tauri/src/editor/proofMarkSchemas.ts) drifted out
+      // of sync with proof-sdk/src/editor/schema/proof-marks.ts — the
+      // server's mark schema accepts 17 attrs on proofSuggestion
+      // (content/status/runId/agentId/...), our copy carried only 7,
+      // and the resulting Y.XmlFragment couldn't be parsed back to
+      // markdown server-side (the projection-repair `node.children.some`
+      // crash). Importing from the canonical source eliminates the
+      // drift surface entirely; proof-sdk updates land here on the
+      // next pnpm install.
+      "@proof-sdk": path.resolve(__dirname, "../../../proof-sdk/src"),
     },
   },
   clearScreen: false,

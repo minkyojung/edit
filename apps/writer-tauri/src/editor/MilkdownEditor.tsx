@@ -45,7 +45,14 @@ import { useDocLabel } from '../hooks/useDocLabel'
 import { MarkToolbar } from './MarkToolbar'
 import { LinkHoverBar } from './LinkHoverBar'
 import { SlashMenu } from './SlashMenu'
-import { proofMarkPlugins } from './proofMarkSchemas'
+// Proof mark schemas come from proof-sdk via a thin adapter so client
+// and server share one canonical definition. The previous local copy
+// (./proofMarkSchemas) drifted out of sync — proof-sdk's
+// proofSuggestion now carries 17 attrs (content/status/runId/
+// agentId/...), our copy carried only 7, and the resulting
+// Y.XmlFragment crashed proof-server's projection-repair pass
+// (`node.children.some`). See ./proofMarks.ts for adapter notes.
+import { proofMarkPlugins } from './proofMarks'
 import { dailyGuardPlugin } from './dailyGuardPlugin'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { usePendingProposals } from '@/state/pendingProposalsStore'
