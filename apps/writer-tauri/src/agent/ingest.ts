@@ -62,8 +62,18 @@ export interface IngestProposal {
    * somewhere unintended. System pages are filtered out at the
    * createCustomWikiPage layer too. */
   suggestNewPageParent?: string
-  /** Markdown to append to the target page's body. */
-  content: string
+  /** Topic the bullets are about — e.g. a person's name, a book
+   * title, a project. Used as the `### {entity}` sub-heading when
+   * appending to an existing `target` page; ignored when creating
+   * a `suggestNewPage` (the page title is the topic). */
+  entity: string
+  /** Bullet bodies the model wants to record under `entity`. Plain
+   * text — no leading `-`, no nested markdown structure. The host
+   * assembles the final `### {entity}\n- {b}\n...` shape at apply
+   * time. Splitting `content: string` into this atomic shape is
+   * what blocks the model from re-emitting page-level headers
+   * (e.g. "## People") that doubled up on every accept. */
+  bullets: string[]
   /** Short reason the LLM gave for proposing this. Optional. */
   rationale?: string
   /** The exact daily-line snippet this content was derived from,
@@ -74,6 +84,32 @@ export interface IngestProposal {
    * buried inside the wiki body. Optional because some proposals
    * legitimately stand on aggregated context, not a single line. */
   sourceQuote?: string
+}
+
+/** Assemble the markdown to insert for a proposal. Encapsulates the
+ * one rule the new schema enforces: headings come from the host, not
+ * the model. Used by both the new-page body builder and the in-page
+ * accept flow so the two paths can't drift on formatting.
+ *
+ * `withEntityHeading`: include `### {entity}` above the bullets.
+ * - target case (append to existing page): true — the entity heading
+ *   groups bullets that came from the same ingest pass.
+ * - suggestNewPage case (new page is born about this entity): false —
+ *   the page title already carries the topic; a body-level heading
+ *   would render redundantly under it.
+ */
+export function assembleProposalMarkdown(
+  proposal: Pick<IngestProposal, 'entity' | 'bullets'>,
+  options: { withEntityHeading: boolean },
+): string {
+  const bullets = proposal.bullets
+    .map((b) => b.trim())
+    .filter((b) => b.length > 0)
+    .map((b) => `- ${b}`)
+    .join('\n')
+  if (!bullets) return ''
+  if (!options.withEntityHeading) return bullets
+  return `### ${proposal.entity.trim()}\n${bullets}`
 }
 
 /** One summary line in `wiki:index` — Karpathy's index.md pattern.
@@ -136,10 +172,11 @@ Invariants (do not violate):
 - Each proposal "target" is the wiki page's full \`type\` id (e.g. "wiki:custom-7nt..."). Take it verbatim from the WIKI block headers — do not invent ids.
 - Each WIKI block header looks like \`[<type-id> — <title>]\`. Read each page's body to understand what shape it has and what kind of content belongs there. The user's conventions (above) guide the broad strokes; the page's own body is the ground truth for its current pattern.
 - Always include a log entry summarizing what you did (or "nothing notable today" if proposals is empty).
+- Each proposal is atomic: ONE \`entity\` (the topic name — a person, a book, a project) and a list of \`bullets\` (the facts about that entity). DO NOT emit page-level or sub-section headings inside bullets — the host assembles \`### {entity}\\n- {bullet}\` automatically. Bullets are plain text only: no leading \`-\`, no nested headings, no \`##\` or \`###\`.
 
 Always include "sourceQuote": the exact sentence (or short clause) from the new note that this proposal was derived from. Echo it verbatim — it's the user's audit trail for verifying the proposal landed in the right page. If the proposal aggregates several lines, quote the most representative one.
 
-Cross-link: when a proposal's content mentions another wiki page that already exists in the WIKI block, wrap that page's title with double-brackets so it renders as a clickable link. Use the title exactly as it appears in the block header — \`[<type-id> — <title>]\` — for the inner text. Skip the link when the page being mentioned is the same one you're writing to (no self-links). Skip the link when no existing page matches the mention (don't invent links). Example: if "Alex" is the title of \`wiki:custom-9k4...\`, write \`Working with [[Alex]] on the project\`, not \`Working with Alex on the project\`. This applies to both \`target\`-bound and \`suggestNewPage\` proposals.
+Cross-link: when a bullet mentions another wiki page that already exists in the WIKI block, wrap that page's title with double-brackets so it renders as a clickable link. Use the title exactly as it appears in the block header — \`[<type-id> — <title>]\` — for the inner text. Skip the link when the page being mentioned is the same one you're writing to (no self-links — don't link \`entity\` from inside its own bullets either). Skip the link when no existing page matches the mention (don't invent links). Example: if "Alex" is the title of \`wiki:custom-9k4...\`, a bullet should read \`Working with [[Alex]] on the project\`, not \`Working with Alex on the project\`. This applies to both \`target\`-bound and \`suggestNewPage\` proposals.
 
 Nesting: when emitting \`suggestNewPage\`, optionally also emit \`suggestNewPageParent\` with the exact type id (same format as \`target\` — e.g. \`wiki:custom-7nt...\`) of an existing wiki page to file the new page under. Copy the id verbatim from a WIKI block header — \`[<type-id> — <title>]\` — never use the title or invent an id. If no existing page is a good fit, leave \`suggestNewPageParent\` null and the new page is created at the root (the user can move it later). The user's conventions page declares which top-level pages act as categories; respect that hierarchy. Never nest under a system page; system surfaces don't accept children. Ignored when the proposal uses \`target\` instead of \`suggestNewPage\` — moving an existing page is a separate workflow.
 
@@ -149,8 +186,8 @@ When you're done analyzing the note, call the \`submit_ingest_result\` tool **ex
 
 {
   "proposals": [
-    { "target": "wiki:custom-7ntdvj41", "content": "- Direct report", "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
-    { "suggestNewPage": "The Pragmatic Programmer", "suggestNewPageParent": "wiki:custom-bk44a1z9", "content": "- Software craftsmanship", "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "fits under existing Books category (wiki:custom-bk44a1z9)" }
+    { "target": "wiki:custom-7ntdvj41", "entity": "Sarah", "bullets": ["Now reports directly to me"], "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
+    { "suggestNewPage": "The Pragmatic Programmer", "suggestNewPageParent": "wiki:custom-bk44a1z9", "entity": "The Pragmatic Programmer", "bullets": ["Software craftsmanship", "Started reading this week"], "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "fits under existing Books category (wiki:custom-bk44a1z9)" }
   ],
   "indexUpdates": [
     { "target": "wiki:custom-7ntdvj41", "summary": "Direct reports and their roles" },
@@ -269,7 +306,8 @@ interface IngestToolInput {
     target?: string
     suggestNewPage?: string
     suggestNewPageParent?: string
-    content: string
+    entity: string
+    bullets: string[]
     rationale?: string
     sourceQuote?: string
   }>
@@ -317,10 +355,23 @@ function sanitizeIngestResult(input: IngestToolInput): ParsedIngest {
       !target && p.suggestNewPageParent?.trim()
         ? p.suggestNewPageParent.trim()
         : undefined
+    // Zod guarantees entity is a non-empty string and bullets is a
+    // non-empty array, but the model can still ship whitespace-only
+    // values inside those slots. Trim + filter here so the apply
+    // layer never sees an entity that's just spaces or a bullet
+    // that would render as a blank `-`. A proposal that ends up
+    // with zero usable bullets is dropped — same policy the old
+    // shape applied to empty `content`.
+    const entity = p.entity.trim()
+    const bullets = p.bullets
+      .map((b) => b.trim())
+      .filter((b) => b.length > 0)
+    if (!entity || bullets.length === 0) continue
     proposals.push({
       ...(target ? { target } : { suggestNewPage: suggestNewPage! }),
       ...(suggestNewPageParent ? { suggestNewPageParent } : {}),
-      content: p.content,
+      entity,
+      bullets,
       rationale: p.rationale,
       sourceQuote: p.sourceQuote?.trim() || undefined,
     })

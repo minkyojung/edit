@@ -58,7 +58,15 @@ function buildSubmitIngestResultTool(runId, emit) {
           target: z.string().optional(),
           suggestNewPage: z.string().optional(),
           suggestNewPageParent: z.string().optional(),
-          content: z.string(),
+          // Atomic schema (replaces free-form `content: string`): the
+          // topic the bullets are about, plus the bullet bodies. No
+          // headings, no sub-sections — the host assembles the final
+          // markdown at apply time. Removing the "anywhere markdown"
+          // slot was the only way to stop the model from re-emitting
+          // page-level headers like "## People" that doubled up on
+          // every accept.
+          entity: z.string(),
+          bullets: z.array(z.string()).min(1),
           rationale: z.string().optional(),
           sourceQuote: z.string().optional(),
         }),

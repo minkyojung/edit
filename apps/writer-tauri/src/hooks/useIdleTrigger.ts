@@ -30,7 +30,7 @@
 // the call site even though the idle policy is gone).
 
 import { useEffect, useRef } from 'react'
-import { runIngest } from '@/agent/ingest'
+import { runIngest, assembleProposalMarkdown } from '@/agent/ingest'
 import { useDocsStore, isWikiDoc, isUserOwnedWiki } from '@/state/docsStore'
 import { useIngestStore } from '@/state/ingestStore'
 import {
@@ -85,6 +85,11 @@ async function materializeNewPageProposals(
     }
     const name = p.suggestNewPage?.trim()
     if (!name) continue
+    // Assemble the bullets into markdown. The new page is born
+    // about this entity, so its body skips the `### {entity}`
+    // sub-heading — the page title already carries the topic, and
+    // a heading inside the body would render redundantly under it.
+    //
     // Append a provenance footer so the page is born showing where
     // its content came from. The user can verify the routing at a
     // glance (e.g. "this is Alex's career — why is it on a Chris
@@ -93,11 +98,12 @@ async function materializeNewPageProposals(
     //
     // resolveWikilinks rewrites [[Other Page]] tokens to real
     // markdown links — without this the LLM-emitted brackets land
-    // as literal text in the new page's body. Only the content
-    // portion is rewritten; sourceQuote stays verbatim because it
-    // mirrors the user's note (no LLM-side rewriting allowed
-    // there).
-    const resolvedContent = resolveWikilinksInMarkdown(p.content)
+    // as literal text in the new page's body. Only the assembled
+    // bullet content is rewritten; sourceQuote stays verbatim
+    // because it mirrors the user's note (no LLM-side rewriting
+    // allowed there).
+    const assembled = assembleProposalMarkdown(p, { withEntityHeading: false })
+    const resolvedContent = resolveWikilinksInMarkdown(assembled)
     const body = p.sourceQuote
       ? `${resolvedContent}\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
       : resolvedContent

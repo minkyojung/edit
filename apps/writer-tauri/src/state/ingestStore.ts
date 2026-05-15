@@ -344,13 +344,17 @@ export const useIngestStore = create<IngestState>()(
     }),
     {
       name: 'writer-tauri:ingest',
-      // v2: adds `ingestedBlockHashes` for source-side dedup. v1
-      // state hydrates without it — the field defaults to an empty
-      // object via the initial state, which means the next ingest
-      // pass treats every block as new (acceptable one-shot cost
-      // for existing users; stabilizes after the first successful
-      // pass).
-      version: 2,
+      // v3: IngestProposal switched from `content: string` to the
+      // atomic `entity: string + bullets: string[]` shape so the
+      // model can no longer emit page-level headings inside the
+      // payload. Old v2 entries carry `content` and would crash the
+      // UI (entity/bullets undefined) — zustand discards on version
+      // mismatch when no migrate is provided, which is what we want
+      // here. The pending queue is transient; the next ingest pass
+      // re-generates anything that was waiting.
+      //
+      // v2: adds `ingestedBlockHashes` for source-side dedup.
+      version: 3,
       partialize: (s) => ({
         pendingProposals: s.pendingProposals,
         pendingLogs: s.pendingLogs,

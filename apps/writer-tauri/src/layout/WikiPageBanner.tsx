@@ -18,6 +18,7 @@
 import { useDocsStore, isUserOwnedWiki } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore, type PendingProposal } from '@/state/ingestStore'
+import { assembleProposalMarkdown } from '@/agent/ingest'
 import type { AuthoredMeta } from '@/hooks/useCollabDoc'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type * as Y from 'yjs'
@@ -48,11 +49,19 @@ function acceptProposal(
     notify.markEditorNotReady()
     return false
   }
-  // Resolve [[Page Title]] tokens before parse — the LLM emits them
-  // verbatim in content, and unless we rewrite to standard markdown
-  // link syntax the parser produces literal `[[X]]` text. Unresolved
+  // Assemble the markdown from atomic (entity, bullets) fields. The
+  // target case ("append to existing page") keeps the `### {entity}`
+  // sub-heading so multiple ingest passes group cleanly. Resolve
+  // [[Page Title]] tokens before parse — the LLM emits them verbatim
+  // in bullets, and unless we rewrite to standard markdown link
+  // syntax the parser produces literal `[[X]]` text. Unresolved
   // titles stay as literals so the user can fix typos manually.
-  const content = resolveWikilinksInMarkdown(proposal.content)
+  const assembled = assembleProposalMarkdown(proposal, { withEntityHeading: true })
+  if (!assembled) {
+    notify.markCantRead()
+    return false
+  }
+  const content = resolveWikilinksInMarkdown(assembled)
   const prep = prepareMarkdownAppend(view, content)
   if (!prep) {
     notify.markCantRead()
@@ -164,9 +173,21 @@ function ProposalCard({
           <div className="mb-1 text-[11px] text-muted-foreground">
             {proposal.sourceLabel}
           </div>
-          <pre className="whitespace-pre-wrap break-words font-sans text-[13px] leading-snug text-foreground">
-            {proposal.content}
-          </pre>
+          {/* entity is the topic of the bullets — render as a small
+              heading so the user reads "Sarah: <facts>" at a glance.
+              Replaces the prior <pre>{proposal.content}</pre> dump,
+              which leaked raw markdown (asterisks, hyphens) into the
+              review surface. */}
+          <div className="text-[13px] font-medium leading-snug text-foreground">
+            {proposal.entity}
+          </div>
+          <ul className="mt-0.5 list-disc pl-4 text-[13px] leading-snug text-foreground">
+            {proposal.bullets.map((bullet, i) => (
+              <li key={i} className="break-words">
+                {bullet}
+              </li>
+            ))}
+          </ul>
           {proposal.sourceQuote && (
             <div className="mt-1 border-l-2 border-border/60 pl-2 text-[11.5px] italic leading-snug text-muted-foreground/80">
               “{proposal.sourceQuote}”
