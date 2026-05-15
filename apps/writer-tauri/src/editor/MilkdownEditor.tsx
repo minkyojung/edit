@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Editor, rootCtx, editorViewOptionsCtx, editorViewCtx, parserCtx, serializerCtx } from '@milkdown/kit/core'
+import { Editor, rootCtx, editorViewOptionsCtx, editorViewCtx, parserCtx } from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
@@ -331,20 +331,13 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
           onViewReady?.(view)
         })
 
-        // Expose the markdown parser AND serializer so non-React
-        // consumers can both turn LLM-emitted markdown into real PM
-        // nodes (parser — mark accept, ingest seed) and turn the
-        // live PM tree back into markdown (serializer — export). The
-        // serializer is the export path's source of truth because
-        // proof-server's projected `documents.markdown` lags by the
-        // persist debounce and can come back empty for writing-type
-        // docs whose projection has never been populated. Cleared
-        // on unmount alongside the view.
+        // Expose the markdown parser so non-React consumers (mark
+        // accept, ingest seed) can turn LLM-emitted markdown into
+        // real PM nodes instead of plain text. Cleared on unmount
+        // alongside the view.
         editor.action((ctx) => {
           const parser = ctx.get(parserCtx)
-          const serializer = ctx.get(serializerCtx)
           useEditorViewStore.getState().setParser(parser)
-          useEditorViewStore.getState().setSerializer(serializer)
           // Drain proposals that arrived while this slug's editor was
           // unmounted (user switched away mid-chat). drain() pops the
           // whole queue atomically before invoking apply, so a Strict
@@ -381,7 +374,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       setPmView(null)
       onViewReady?.(null)
       useEditorViewStore.getState().setParser(null)
-      useEditorViewStore.getState().setSerializer(null)
     }
   }, [handle])
 

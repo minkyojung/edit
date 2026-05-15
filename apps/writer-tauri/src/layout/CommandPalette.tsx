@@ -23,7 +23,6 @@ import {
   IconArchive,
   IconCalendar,
   IconCalendarTime,
-  IconDownload,
   IconFileDescription,
 } from '@tabler/icons-react'
 import {
@@ -43,36 +42,8 @@ import {
   formatLocalDate,
   todayLocalDate,
 } from '@/hooks/useDocMeta'
-import { exportAll } from '@/export/exportAll'
-import { notify } from '@/lib/notify'
 
 type Mode = 'any' | 'date'
-
-/**
- * Glue between the "Export wiki" command and the exportAll flow.
- * Module-scope so the palette can fire-and-forget without holding
- * React state across the await — the dialog closes on click, the
- * native folder picker takes over, and the toast appears whenever
- * the disk write settles. Silent on 'cancelled' (user dismissed the
- * folder picker; toasting that would feel like nagging).
- */
-async function runExportAll(): Promise<void> {
-  const result = await exportAll()
-  if (result.ok && result.rootPath !== undefined) {
-    notify.exportAllOk({
-      rootPath: result.rootPath,
-      pagesExported: result.pagesExported ?? 0,
-      failedCount: result.failedSlugs?.length,
-    })
-    return
-  }
-  if (result.reason === 'cancelled') return
-  if (result.reason === 'no_pages') {
-    notify.exportAllEmpty()
-    return
-  }
-  notify.exportAllFailed()
-}
 
 interface DateResult {
   kind: 'date'
@@ -239,13 +210,11 @@ export function CommandPalette() {
         onValueChange={setQuery}
       />
       <CommandList>
-        {/* Actions group. "Archive current note" only surfaces when
-            there's a writing-type active doc (dailies aren't
-            archivable, blank state has nothing to act on); "Export
-            wiki" is always visible because exporting can run against
-            the catalog without any active doc. */}
-        <CommandGroup heading="Actions">
-          {activeDoc && (
+        {/* Actions on the active note. Only surfaces when there's a
+            writing-type active doc — dailies aren't archivable and
+            blank state has nothing to act on. */}
+        {activeDoc && (
+          <CommandGroup heading="Actions">
             <CommandItem
               value="action:archive-active"
               onSelect={() => {
@@ -259,22 +228,8 @@ export function CommandPalette() {
                 Archive “{activeDoc.title || 'Untitled'}”
               </span>
             </CommandItem>
-          )}
-          <CommandItem
-            value="action:export-wiki"
-            onSelect={() => {
-              setOpen(false)
-              // Close palette first, then trigger the folder dialog
-              // — running them in parallel makes the native dialog
-              // race with the palette's exit animation on macOS and
-              // occasionally swallows focus on return.
-              void runExportAll()
-            }}
-          >
-            <IconDownload size={16} stroke={1.75} />
-            <span className="flex-1 truncate">Export wiki as Markdown</span>
-          </CommandItem>
-        </CommandGroup>
+          </CommandGroup>
+        )}
         {dateResult && (
           <CommandGroup heading="Jump to date">
             <ResultRow
