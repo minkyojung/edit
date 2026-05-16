@@ -1,34 +1,19 @@
-// Explicit page-title input for user-owned wiki pages.
+// Explicit page-title input for any doc whose title is user-editable
+// (user-owned wiki pages + writing docs). The previous Wiki-only
+// gate left writing pages without a title surface, which split the
+// header system into two patterns — one path showed an input, the
+// other rendered nothing and relied on the body's first line. This
+// component is now agnostic to doc kind; PageHeader decides whether
+// to render it.
 //
-// Sits above the editor body, mirroring the daily-date label position
-// in MilkdownEditor. Notion-style: title and body are separate
-// surfaces, the title is an explicit field, and renaming the page
-// happens here rather than via "first body line magic".
+// Reads / writes `knownDocs[].title` via setDocTitle. Empty input
+// commits as cleared title (sidebar falls back to 'Untitled').
 //
-// Why this exists:
-//   The previous "title is the body's first line" rule conflated
-//   two things — the page's name and its content. When ingest wrote
-//   bullets into a page named "Michael", the sidebar started reading
-//   the first bullet ("Joined as new manager") as the page name.
-//   Worse, with proofAuthored marks, the raw mark wrapper leaked
-//   into labels. Splitting them apart matches Notion / Obsidian /
-//   Linear and unblocks the user-rename UX the sidebar `+` button
-//   was meant to provide.
-//
-// Behavior:
-//   - Reads / writes `knownDocs[].title` via setDocTitle.
-//   - Empty input commits as cleared title (sidebar shows
-//     'Untitled').
-//   - Local controlled state so typing feels instant; commits to
-//     the store on every change (store is in-memory, no debounce
-//     cost). Persistence is handled by the docs catalog's IDB
-//     snapshot the same way other doc mutations are.
-//   - Only renders for user-owned wiki pages. System pages
-//     (system:log / system:conventions / system:index) have fixed
-//     labels and aren't user-renameable.
+// File name preserved for diff stability; consider renaming to
+// PageTitle in a follow-up cleanup pass.
 
 import { useEffect, useState } from 'react'
-import { isUserOwnedWiki, useDocsStore } from '@/state/docsStore'
+import { useDocsStore } from '@/state/docsStore'
 
 interface Props {
   slug: string
@@ -50,7 +35,7 @@ export function WikiPageTitle({ slug }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, known?.title])
 
-  if (!known || !isUserOwnedWiki(known)) return null
+  if (!known) return null
 
   function handleChange(next: string) {
     setLocal(next)

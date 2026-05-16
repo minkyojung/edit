@@ -11,7 +11,7 @@ import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { MarkPopoverLayer } from '@/components/agent/MarkPopoverLayer'
 import { MarkHoverActionsLayer } from '@/components/agent/MarkHoverActionsLayer'
 import { AppShell } from '@/layout/AppShell'
-import { MilkdownEditor } from '@/editor/MilkdownEditor'
+import { Page } from '@/layout/Page'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { WikiPageBanner } from '@/layout/WikiPageBanner'
 import { useDocsStore } from '@/state/docsStore'
@@ -115,7 +115,7 @@ function AppContent() {
                       so it doesn't shift layout when it appears/
                       disappears. */}
                   <WikiPageBanner />
-                  <MilkdownEditor
+                  <Page
                     key={activeSlug ?? 'no-doc'}
                     handle={activeHandle}
                     status={activeStatus}

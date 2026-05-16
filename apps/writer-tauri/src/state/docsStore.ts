@@ -35,6 +35,8 @@ import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { notify } from '@/lib/notify'
 import { deriveLabel } from '@/lib/docLabel'
 import { useIngestStore } from './ingestStore'
+import { useEditorViewStore } from './editorViewStore'
+import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
 import { useChatRuns } from '@/stores/chatRuns'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
@@ -272,6 +274,15 @@ interface DocsState {
    * trimmed; empty string clears the title so the sidebar falls
    * back to 'Untitled' or a type-derived label. */
   setDocTitle: (slug: string, title: string) => void
+  /** Seed a new doc's body from a markdown string. Used by
+   * createCustomWikiPage / ensureSystemPage to plant initial content
+   * — the role proof-server's createDoc(name, body) filled before
+   * Phase 3.B. Ensures the handle (IDB shard + Y.Doc) exists first,
+   * then applies a markdown → PM → Y.Doc update under the
+   * 'doc-init' origin so the seed stays out of the undo stack.
+   * No-op when the markdown is empty or when the editor parser
+   * isn't mounted yet (caller should retry once a doc is active). */
+  seedDocBody: (slug: string, markdown: string) => Promise<boolean>
   /** Switch the sidebar date view. */
   setSidebarTab: (tab: 'day' | 'week' | 'month') => void
   /** Set the Month view's anchor month (YYYY-MM). */
@@ -948,6 +959,41 @@ export const useDocsStore = create<DocsState>()(
         }))
       },
 
+      seedDocBody: async (slug, markdown) => {
+        if (!markdown.trim()) return false
+        await ensureHandle(slug, set, get)
+        const handle = get().handles[slug]
+        if (!handle) return false
+        // Wait for IndexedDB hydration to complete before reading
+        // or writing the fragment. Without this we race: the read
+        // path (deriveLabel below) sees an empty fragment, the
+        // seed lands a fresh update, and the IDB hydrate that
+        // arrives microseconds later merges in the pre-existing
+        // schema-fill paragraph alongside it. Outcome depends on
+        // which doc is active, which is why "case A failed, case
+        // B succeeded" was non-deterministic.
+        await handle.idbSynced
+        const parser = useEditorViewStore.getState().parser
+        if (!parser) {
+          // Caller is responsible for retrying once a parser is
+          // available (e.g. after mounting any doc). We log instead
+          // of throw so the calling ingest pipeline doesn't crash.
+          console.warn('[docs] seedDocBody: parser not ready, skipping', slug)
+          return false
+        }
+        // Don't double-seed. The check looks at user-visible text,
+        // not raw XML. fragment.toString() returns wrappers like
+        // `<paragraph></paragraph>` for the schema's empty-doc
+        // fill (planted by MilkdownEditor.tsx:280-292 the first
+        // time the doc is mounted), so a naive trim().length > 0
+        // would skip every doc that's been opened once. deriveLabel
+        // walks Y.XmlText.toDelta inserts only — a non-empty result
+        // means real text exists.
+        const labelText = deriveLabel(handle.ydoc.getXmlFragment('prosemirror'))
+        if (labelText.length > 0) return false
+        return seedMarkdownIntoYDoc(handle.ydoc, markdown, parser)
+      },
+
       emptyArchive: async () => {
         const archived = get().knownDocs.filter((d) => d.archivedAt)
         if (archived.length === 0) return
@@ -1272,34 +1318,61 @@ function installTitleMirror(
 ): void {
   const known = get().knownDocs.find((d) => d.slug === slug)
   if (!known) return
-  // Title mirror runs only for user-authored `writing` notes — the
-  // doc kind whose body's first block IS the title by user
-  // intuition (Notion-style "header-as-first-line"). Daily entries
-  // derive their label from meta.date; wiki:* content pages and
-  // system:* meta pages carry an explicit title in the catalog
-  // (set by createCustomWikiPage / ensureSystemPage), and that
-  // title is the source of truth — body edits must NOT overwrite
-  // it. Letting them did, in practice:
-  //   - AI's "Daniel" wiki page got its title overwritten by the
-  //     first bullet under it the moment the user opened the doc;
-  //   - system:index's title became the raw markdown index line
-  //     the moment a single update merged into the body.
-  // Restricting the mirror to writing-type docs keeps everything
-  // else stable while preserving the writing-note UX.
-  if (known.type !== 'writing') return
+  // Title-mirror runs for any user-editable doc: writing notes
+  // AND user-owned wiki:custom-* pages. Both follow the same rule
+  // now: the body's first non-empty block is the title, and the
+  // sidebar / palette read it from knownDocs.title which this
+  // mirror keeps in sync.
+  //
+  // Excluded:
+  //   - daily       → label comes from meta.date, body is free
+  //   - system:*    → agent-managed meta pages; their title is
+  //                   fixed by the type id
+  //
+  // The previous regression where wiki pages got renamed by their
+  // first bullet (e.g. "Michael" → "Joined as new manager") is
+  // prevented at the *content* layer: ingest now writes
+  // `# {entity}` as the body's first line (see useIdleTrigger
+  // materializeNewPageProposals). The mirror still extracts the
+  // first block's plain text — but that text IS the entity name
+  // when the heading is in place.
+  const eligible =
+    known.type === 'writing' ||
+    (known.type.startsWith('wiki:custom-'))
+  if (!eligible) return
 
   const fragment = handle.ydoc.getXmlFragment('prosemirror')
   const sync = () => {
-    const next = deriveLabel(fragment)
     set((s) => {
       const idx = s.knownDocs.findIndex((d) => d.slug === slug)
       if (idx < 0) return s
       const cur = s.knownDocs[idx]
-      // Defense in depth — the outer gate above already excludes
-      // non-writing types, but a future change that calls sync()
-      // from a different path shouldn't accidentally clobber
-      // catalog titles on wiki / system docs.
-      if (cur.type !== 'writing') return s
+      // Same eligibility guard as the outer setup. A future code
+      // path that calls sync() from elsewhere shouldn't clobber
+      // titles on daily / system docs.
+      const stillEligible =
+        cur.type === 'writing' ||
+        cur.type.startsWith('wiki:custom-')
+      if (!stillEligible) return s
+
+      // Wiki pages: only mirror when the body's first block is a
+      // heading. Legacy ingest-created pages have bullet-first
+      // bodies — mirroring them would copy the first bullet
+      // ("새 매니저로 합류") into the catalog title and rename
+      // the page (the "Michael → Joined as new manager" regression).
+      // The new ingest layer writes `# {entity}` as the first line,
+      // so future pages pass this guard automatically. Existing
+      // pages keep their cached title until the user types a
+      // heading at the top — at which point mirror takes over.
+      if (cur.type.startsWith('wiki:custom-')) {
+        const children = fragment.toArray()
+        const first = children[0]
+        const isHeading =
+          first instanceof Y.XmlElement && first.nodeName === 'heading'
+        if (!isHeading) return s
+      }
+
+      const next = deriveLabel(fragment)
       if ((cur.title ?? '') === next) return s
       const list = [...s.knownDocs]
       list[idx] = { ...cur, title: next }

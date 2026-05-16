@@ -18,11 +18,12 @@ import { generateClientSlug } from '@/lib/slug'
 import { isEffectivelyEmpty } from '@/lib/markdownText'
 import {
   useDocsStore,
-  isUserOwnedWiki,
   type KnownDoc,
 } from './docsStore'
+import { useEditorViewStore } from './editorViewStore'
 
-const PROOF_BASE_URL = 'http://localhost:4000'
+// PROOF_BASE_URL removed (Phase 3.A.2). All wiki body reads go
+// through the local Y.Doc + Milkdown serializer now.
 
 /** The agent's append-only timeline. Held in a constant so the
  * lazy-create path (`ensureLogWikiSlug`) and the read path
@@ -58,33 +59,40 @@ const INDEX_TYPE = 'system:index' as const
  * guidance even before the user customizes anything. */
 const DEFAULT_CONVENTIONS = `## Conventions
 
-These are the rules I follow when adding to my wiki. Edit this page to teach the LLM how my wiki should grow.
+This wiki is my external memory. The LLM reads my daily notes and keeps the wiki up to date. Edit this page to teach the LLM how my wiki should grow.
 
-### Page shapes
+### One page per entity
 
-- **entity** — pages of distinct subjects (people, orgs, tools). Use \`### Name\` headings with bullets underneath. New subject → write the full block. Existing subject → bullet only.
-- **list** — flat bullets, no \`###\` headings. One bullet per item.
-- **timeline** — append-only date log. Lines look like \`## [YYYY-MM-DD] kind | short summary\`.
-- **prose** — free-form paragraphs.
+Each distinct subject is ONE page. The page's name IS the entity's name:
 
-### How to decide
+- a person  → page named after that person  ("Sarah", "Tom")
+- a book    → page named after the title    ("The Pragmatic Programmer")
+- a project → page named after it           ("Project X")
+- a concept → page named after it           ("Distributed Systems")
 
-- Look at each page's existing body. Match its shape. Don't introduce a new shape mid-page.
-- If a fact doesn't clearly belong on any existing page, emit \`suggestNewPage: "PageName"\` instead of \`target\`. Pick a short, descriptive name. The system will create that page and stamp the content there as a mark for me to review.
-- Only fall back to leaving \`proposals\` empty (with a \`logEntry\` note) if you genuinely can't tell what the content is about — \`suggestNewPage\` is preferred over silence.
-- Skip transient stuff (mood, weather, small talk). Only durable info belongs in the wiki.
+The page's body is a flat list of facts about that subject — one bullet per fact, plain prose, no nested headings.
+
+### Adding new info
+
+When ingesting a daily note:
+
+- The fact is about an existing page (look at the WIKI block headers) → emit \`target: <type-id>\` with the bullets to append. Copy the type id verbatim from \`[<type-id> — <title>]\`.
+- The fact is about a NEW subject not in the WIKI → emit \`suggestNewPage: "<entity name>"\`. The entity name goes here, NOT a category ("Sarah", not "People").
+- The fact is transient (mood, weather, small talk) → skip it. Only durable info belongs in the wiki.
+
+Never invent type ids; copy them verbatim.
+
+### Linking
+
+When a bullet mentions another page that already exists in the WIKI block, wrap that page's title with double-brackets so it renders as a clickable link: \`Working with [[Sarah]] on the project\`. Use the title exactly as it appears in the block header. Skip the link when no existing page matches the mention — don't invent links. Never self-link (don't link \`entity\` from inside its own page).
 
 ### Length
 
-- Keep each proposal's content concise — one bullet line or a short block of two or three lines, not a wall of text. If a fact deserves more than a few lines, split it into multiple proposals or summarize aggressively. I can always re-ingest later for missing detail.
+Each proposal's content is concise — one bullet or a short block of two or three lines. If a fact deserves more, split it into multiple proposals. The wiki accumulates; over-stuffing one bullet ages worse than splitting.
 
-### Categories
+### Index
 
-I organize my wiki by creating top-level pages that act as categories — for me these are e.g. \`Work\`, \`People\`, \`Study\`, but pick whatever shows up as a top-level page in my actual WIKI block.
-
-When you create a new page via \`suggestNewPage\`, also pick the most fitting existing top-level page as its parent and emit its type id (the part before the em-dash in the WIKI block header — e.g. \`wiki:custom-7nt...\`) as \`suggestNewPageParent\`. Copy the id verbatim from the header; never use the title and never invent an id. If nothing fits, leave \`suggestNewPageParent\` null and the page is created at the root for me to file later.
-
-A page that already has children naturally acts as a category. Don't create a category page yourself unless I clearly need one and I haven't made it — propose with \`suggestNewPage\` and a short name like "Books", and I'll review.
+After updating pages, emit \`indexUpdates\` — one short sentence per page touched, describing what the page is *about* (not what just changed). Reuse the existing summary verbatim when the page's nature didn't really change.
 `
 
 /** Lazy-create shape for an agent-managed `system:*` page. Each one
@@ -130,15 +138,42 @@ async function ensureSystemPage(
   const existing = useDocsStore
     .getState()
     .knownDocs.find((d) => d.type === config.type && !d.archivedAt)
-  if (existing) return existing.slug
+  if (existing) {
+    // Legacy fix-up: a page created during the Phase 3.B window
+    // (before this transaction-style seed) is still blank in its
+    // Y.Doc. seedDocBody is a no-op when the body already has
+    // content (deriveLabel check inside), so this is safe and
+    // recovers the seed on next ingest pass.
+    if (config.initialBody) {
+      try {
+        await useDocsStore.getState().seedDocBody(existing.slug, config.initialBody)
+      } catch (err) {
+        console.warn(
+          `[wiki] ensureSystemPage(${config.type}) re-seed failed`,
+          err,
+        )
+      }
+    }
+    return existing.slug
+  }
   const slug = generateClientSlug()
   const meta: KnownDoc = { slug, type: config.type, title: config.title }
   useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-  // Phase 3.B — proof-server registration removed. System pages live
-  // in the local catalog only. `config.initialBody` seeding is plumbed
-  // through ensureHandle's body bootstrap when the page is first
-  // opened; ingest seeds it via the SEED_BODY_TARGET map there.
-  void config
+  // Seed body as part of the create transaction — function does
+  // not return until the Y.Doc has the initial content and IDB
+  // has persisted. The previous fire-and-forget pattern produced
+  // race conditions where the LLM read an empty conventions page
+  // depending on which doc was active when ingest ran.
+  if (config.initialBody) {
+    try {
+      await useDocsStore.getState().seedDocBody(slug, config.initialBody)
+    } catch (err) {
+      console.warn(
+        `[wiki] ensureSystemPage(${config.type}) seed failed`,
+        err,
+      )
+    }
+  }
   return slug
 }
 
@@ -185,7 +220,7 @@ export async function readIndexContext(): Promise<string> {
     .getState()
     .knownDocs.find((d) => d.type === INDEX_TYPE && !d.archivedAt)
   if (!doc) return ''
-  const md = await readWikiMarkdown(doc.slug)
+  const md = readWikiMarkdown(doc.slug)
   if (!md) return ''
   return md
 }
@@ -203,31 +238,24 @@ export async function ensureWikiDocs(): Promise<void> {
  * if the user picks the same name twice and decouples the type
  * (immutable identity) from the title (renameable label).
  *
- * `body` is the initial markdown content. Default is a ZWS so the
- * server's blank-body guard accepts the doc; callers that already
- * know what should live on the page (the ingest layer materializing
- * a `suggestNewPage` proposal) pass real markdown so the page is
- * "born" with content. Seeding via `body` here, instead of stamping
- * the content as a mark afterwards, keeps the create path and the
- * inline-review path on disjoint surfaces — the mark system never
- * has to deal with empty-page placeholder scaffolding.
+ * `body` is the initial markdown content. Empty by default; callers
+ * that already know what should live on the page (the ingest layer
+ * materializing a `suggestNewPage` proposal) pass real markdown.
+ * Seeding via `body` (rather than stamping marks afterwards) keeps
+ * the create path and the review path on disjoint surfaces.
  *
- * `options.parentId` nests the new page under an existing wiki:
- * custom-* doc. Used by the in-row `+` affordance ("create child
- * page") and by ingest's auto-categorization (Phase 2). The parent
- * must exist, be live (not archived), and itself be a wiki:custom-*
- * page — system:* pages refuse children since they're agent meta
- * surfaces, not content categories. Invalid parent is treated as
- * a programmer error and dropped (page still created at root) so
- * callers don't accidentally lose a write because of a stale slug.
+ * Wiki pages are flat — there is no parent / category nesting.
+ * Sidebar groups them with the wiki:custom-* type prefix; entity
+ * pages (Sarah, The Pragmatic Programmer, Project X) live side by
+ * side. The previous parent option was removed when ingest's
+ * `suggestNewPageParent` flow was dropped.
  *
- * Returns the new doc's slug, or null on failure (proof-server
- * error). The created doc is registered in the catalog but NOT
- * auto-opened — the caller decides whether to navigate. */
+ * Returns the new doc's slug, or null on failure. The created doc
+ * is registered in the catalog but NOT auto-opened — the caller
+ * decides whether to navigate. */
 export async function createCustomWikiPage(
   name: string,
   body?: string,
-  options?: { parentId?: string },
 ): Promise<string | null> {
   const trimmed = name.trim()
   // 8 hex chars = 32 bits. Collision probability is negligible at the
@@ -235,78 +263,76 @@ export async function createCustomWikiPage(
   // the birthday-collision threshold.
   const id = Math.random().toString(36).slice(2, 10)
   const type = `wiki:custom-${id}` as `wiki:${string}`
-  // Empty body when no real content is given. proof-server accepts
-  // blank bodies; sending a ZWS placeholder here (the legacy guard
-  // workaround) gave fresh wiki pages an invisible-char paragraph
-  // that placeholderPlugin's hint check sometimes missed — same
-  // path as daily / writing creation now.
   const initialBody = body && body.trim().length > 0 ? body : ''
   const slug = generateClientSlug()
-
-  // Validate parentId before writing the catalog entry. A bad
-  // parent quietly degrades to root creation — we still want the
-  // page to exist so the caller's write isn't lost.
-  let parentId: string | undefined
-  if (options?.parentId) {
-    const parent = useDocsStore
-      .getState()
-      .knownDocs.find((d) => d.slug === options.parentId)
-    const valid = parent && !parent.archivedAt && isUserOwnedWiki(parent)
-    if (valid) {
-      parentId = parent.slug
-    } else {
-      console.warn(
-        '[wiki] createCustomWikiPage: invalid parentId, creating at root',
-        options.parentId,
-      )
-    }
-  }
 
   // Empty title is stored as undefined rather than '' so the catalog
   // entry omits the key entirely; useDocLabel falls back to 'Untitled'
   // when both the live body label and the cached title are empty.
-  const baseMeta: KnownDoc = trimmed
+  const meta: KnownDoc = trimmed
     ? { slug, type, title: trimmed }
     : { slug, type }
-  const meta: KnownDoc = parentId ? { ...baseMeta, parentId } : baseMeta
   useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-  // Phase 3.B — proof-server registration removed. The doc lives in
-  // the local catalog (useDocsStore.knownDocs), and its Y.Doc + IDB
-  // shard come into being lazily on first ensureHandle. The
-  // `initialBody` seed is now plumbed via the handle bootstrap below
-  // when truly needed; today every caller passes empty so the lazy
-  // path covers it.
-  void initialBody
+  // Seed body as part of the create transaction. Caller awaits
+  // this function, so on return the page is fully ready: catalog
+  // entry exists, Y.Doc has the body, IDB has persisted it. ingest
+  // / banner accept / sidebar `+` all rely on that contract — no
+  // "the page is here but empty for a beat" race.
+  if (initialBody) {
+    try {
+      await useDocsStore.getState().seedDocBody(slug, initialBody)
+    } catch (err) {
+      console.warn('[wiki] createCustomWikiPage seed failed', err)
+    }
+  }
   return slug
 }
 
-/** Fetch the markdown body of a wiki doc by slug. Returns '' when the
- * doc is empty (or just the ZWS placeholder), the slug is unknown,
- * or the proof-server is unreachable.
+/** Read a wiki doc's markdown body from the client side.
  *
- * Endpoint is `GET /documents/:slug` (canonical doc resource served
- * by proof-sdk's apiRoutes). Response body has `markdown: string`.
- * The bridge sub-route `/documents/:slug/state` is metadata-only and
- * intentionally does NOT include markdown. */
-async function readWikiMarkdown(slug: string | null): Promise<string> {
+ * Phase 3.A continued — the proof-server fetch this used to do has
+ * the same projection failure as the daily-note read in
+ * agent/ingest.ts: server's deriveMarkdownFromFragment crashes on
+ * our Y.XmlFragment, so the `markdown` column stays empty no
+ * matter what's in the page. Reading the live Y.Doc is the only
+ * path that reflects what the user (or ingest accept) actually
+ * wrote.
+ *
+ * Strategy mirrors agent/ingest.ts:readDocMarkdown:
+ *   - Active doc → Milkdown's serializer on view.state.doc
+ *     (full markdown round-trip).
+ *   - Non-active doc → Y.XmlFragment.toString() fallback (loses
+ *     markdown structure but preserves text — fine for the LLM,
+ *     which only reads it to understand "what exists on this
+ *     page" for routing decisions).
+ *
+ * Returns '' for missing handles, empty bodies, or anything that
+ * the shared isEffectivelyEmpty predicate considers blank. */
+function readWikiMarkdown(slug: string | null): string {
   if (!slug) return ''
-  try {
-    const res = await fetch(
-      `${PROOF_BASE_URL}/documents/${encodeURIComponent(slug)}`,
-    )
-    if (!res.ok) return ''
-    const json = (await res.json()) as { markdown?: string }
-    const md = (json.markdown ?? '').trim()
-    // Treat zero-width / whitespace-only bodies as empty — shared
-    // isEffectivelyEmpty covers the variants the server occasionally
-    // produces. Without this, a stray invisible char would pollute
-    // the cacheable system-prompt prefix.
-    if (isEffectivelyEmpty(md)) return ''
-    return md
-  } catch (err) {
-    console.warn('[wiki] readWikiMarkdown failed', slug, err)
-    return ''
+
+  const docs = useDocsStore.getState()
+  const handle = docs.handles[slug]
+  if (!handle) return ''
+
+  if (docs.activeSlug === slug) {
+    const view = useEditorViewStore.getState().view
+    const serializer = useEditorViewStore.getState().serializer
+    if (view && serializer) {
+      try {
+        const md = serializer(view.state.doc).trim()
+        if (isEffectivelyEmpty(md)) return ''
+        return md
+      } catch {
+        // fall through to fragment fallback
+      }
+    }
   }
+
+  const fragment = handle.ydoc.getXmlFragment('prosemirror')
+  const text = fragment.toString().trim()
+  if (isEffectivelyEmpty(text)) return ''
+  return text
 }
 
 /** Read every wiki:* page in the catalog and return one cacheable
@@ -349,9 +375,8 @@ export async function readWikiContext(): Promise<string> {
   const head = docs.filter((d) => d.type !== LOG_TYPE)
   const tail = docs.filter((d) => d.type === LOG_TYPE)
 
-  const sections = await Promise.all(
-    [...head, ...tail].map(async (doc) => {
-      const md = await readWikiMarkdown(doc.slug)
+  const sections = [...head, ...tail].map((doc) => {
+      const md = readWikiMarkdown(doc.slug)
       const title = (doc.title ?? '').trim() || doc.type.replace(/^wiki:/, '')
       if (!md) {
         // Empty pages still appear in the catalog so the LLM can
@@ -365,8 +390,7 @@ export async function readWikiContext(): Promise<string> {
       // page. Karpathy: "the model sees what you see; it doesn't
       // need your enum."
       return `[${doc.type} — ${title}]\n${body}`
-    }),
-  )
+    })
   return sections.filter(Boolean).join('\n\n')
 }
 

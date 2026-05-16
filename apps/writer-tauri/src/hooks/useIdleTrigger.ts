@@ -31,7 +31,7 @@
 
 import { useEffect, useRef } from 'react'
 import { runIngest, assembleProposalMarkdown } from '@/agent/ingest'
-import { useDocsStore, isWikiDoc, isUserOwnedWiki } from '@/state/docsStore'
+import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
 import {
@@ -103,43 +103,26 @@ async function materializeNewPageProposals(
     // allowed there).
     const assembled = assembleProposalMarkdown(p, { withEntityHeading: false })
     const resolvedContent = resolveWikilinksInMarkdown(assembled)
-    const body = p.sourceQuote
-      ? `${resolvedContent}\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
-      : resolvedContent
+    // First line of the body MUST be the page title as a level-1
+    // heading. The title-mirror (installTitleMirror) walks the first
+    // non-empty block and copies its plain text into knownDocs.title,
+    // so the sidebar / palette / breadcrumb read it as the page name.
+    // Without this heading the mirror would catch the first bullet
+    // ("- 새 매니저로 합류") and rename the page to that. This is
+    // the regression the previous title-input pattern worked around;
+    // doing the same thing as a body-first heading aligns wiki and
+    // writing pages on one rule ("body first line is the title").
+    const titleHeading = `# ${p.suggestNewPage?.trim() ?? p.entity}`
+    const provenanceFooter = p.sourceQuote
+      ? `\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
+      : ''
+    const body = `${titleHeading}\n\n${resolvedContent}${provenanceFooter}`
 
-    // Resolve suggestNewPageParent (a page type id) to a slug by
-    // exact-equality lookup against the live catalog, limited to
-    // user content pages (wiki:custom-*). The system prompt asks
-    // the model to copy the id verbatim from the WIKI block
-    // header, so there's no title-fallback heuristic — a miss
-    // means typo / hallucination and we'd rather log + root-
-    // create than guess. createCustomWikiPage runs its own
-    // validation too.
-    let parentId: string | undefined
-    if (p.suggestNewPageParent) {
-      const parent = useDocsStore
-        .getState()
-        .knownDocs.find(
-          (d) =>
-            !d.archivedAt &&
-            isUserOwnedWiki(d) &&
-            d.type === p.suggestNewPageParent,
-        )
-      if (parent) {
-        parentId = parent.slug
-      } else {
-        console.warn(
-          '[ingest] suggestNewPageParent did not resolve; creating at root',
-          p.suggestNewPageParent,
-        )
-      }
-    }
-
-    const newSlug = await createCustomWikiPage(
-      name,
-      body,
-      parentId ? { parentId } : undefined,
-    )
+    // Karpathy-style flat wiki: every entity is its own page at
+    // the same level. We deliberately don't pass a parent — the
+    // sidebar shows the catalog as a flat list and the LLM finds
+    // pages via the WIKI / INDEX blocks, not via tree navigation.
+    const newSlug = await createCustomWikiPage(name, body)
     if (!newSlug) {
       console.warn(
         '[ingest] suggestNewPage failed; dropping proposal',

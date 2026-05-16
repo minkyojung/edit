@@ -51,16 +51,6 @@ export interface IngestProposal {
    * because no existing page is a good home for this content. The
    * apply layer turns this into a real `wiki:custom-<id>` page. */
   suggestNewPage?: string
-  /** Type id of an existing wiki page to nest the new page under.
-   * Used only with `suggestNewPage`. Uses the SAME format as
-   * `target` (e.g. `wiki:custom-7nt...`) — picked from the WIKI
-   * block headers the LLM sees (`[<type-id> — <title>]`). Strict
-   * type-id lookup, no title fallback: the system prompt asks the
-   * model to copy the id verbatim, and a miss degrades to root
-   * creation (logged) so a typo doesn't silently land the page
-   * somewhere unintended. System pages are filtered out at the
-   * createCustomWikiPage layer too. */
-  suggestNewPageParent?: string
   /** Topic the bullets are about — e.g. a person's name, a book
    * title, a project. Used as the `### {entity}` sub-heading when
    * appending to an existing `target` page; ignored when creating
@@ -177,7 +167,7 @@ Always include "sourceQuote": the exact sentence (or short clause) from the new 
 
 Cross-link: when a bullet mentions another wiki page that already exists in the WIKI block, wrap that page's title with double-brackets so it renders as a clickable link. Use the title exactly as it appears in the block header — \`[<type-id> — <title>]\` — for the inner text. Skip the link when the page being mentioned is the same one you're writing to (no self-links — don't link \`entity\` from inside its own bullets either). Skip the link when no existing page matches the mention (don't invent links). Example: if "Alex" is the title of \`wiki:custom-9k4...\`, a bullet should read \`Working with [[Alex]] on the project\`, not \`Working with Alex on the project\`. This applies to both \`target\`-bound and \`suggestNewPage\` proposals.
 
-Nesting: when emitting \`suggestNewPage\`, optionally also emit \`suggestNewPageParent\` with the exact type id (same format as \`target\` — e.g. \`wiki:custom-7nt...\`) of an existing wiki page to file the new page under. Copy the id verbatim from a WIKI block header — \`[<type-id> — <title>]\` — never use the title or invent an id. If no existing page is a good fit, leave \`suggestNewPageParent\` null and the new page is created at the root (the user can move it later). The user's conventions page declares which top-level pages act as categories; respect that hierarchy. Never nest under a system page; system surfaces don't accept children. Ignored when the proposal uses \`target\` instead of \`suggestNewPage\` — moving an existing page is a separate workflow.
+The wiki is FLAT — every entity is its own page at the same level. Do not create category pages. Each fact about a person belongs on a page named after that person, not on a shared "People" page. Same for books, projects, concepts.
 
 The INDEX block (above WIKI) is the current one-line summary of each wiki page. For every page you propose to modify (\`target\`) or create (\`suggestNewPage\`), also emit an "indexUpdates" entry with a short summary. The summary is one sentence describing what the page is *about*, not what just changed. Reuse the existing summary verbatim when the page's nature didn't really change — only emit an updated summary if the new content meaningfully shifts what the page is about. For \`suggestNewPage\` you must always provide a fresh summary since no line exists yet. Use the same target type id you used in proposals.
 
@@ -186,13 +176,13 @@ When you're done analyzing the note, call the \`submit_ingest_result\` tool **ex
 {
   "proposals": [
     { "target": "wiki:custom-7ntdvj41", "entity": "Sarah", "bullets": ["Now reports directly to me"], "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
-    { "suggestNewPage": "The Pragmatic Programmer", "suggestNewPageParent": "wiki:custom-bk44a1z9", "entity": "The Pragmatic Programmer", "bullets": ["Software craftsmanship", "Started reading this week"], "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "fits under existing Books category (wiki:custom-bk44a1z9)" }
+    { "suggestNewPage": "The Pragmatic Programmer", "entity": "The Pragmatic Programmer", "bullets": ["Software craftsmanship", "Started reading this week"], "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "new entity not in WIKI yet" }
   ],
   "indexUpdates": [
     { "target": "wiki:custom-7ntdvj41", "summary": "Direct reports and their roles" },
     { "target": "The Pragmatic Programmer", "summary": "Core ideas from The Pragmatic Programmer" }
   ],
-  "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; created The Pragmatic Programmer under Books"
+  "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; created The Pragmatic Programmer page"
 }
 
 For \`suggestNewPage\` proposals, the indexUpdates entry uses the proposed page name (the same string you put in \`suggestNewPage\`) as the target — the apply layer rewrites it to the real wiki type id after the page is created.
@@ -367,6 +357,10 @@ interface IngestToolInput {
   proposals: Array<{
     target?: string
     suggestNewPage?: string
+    /** Legacy field — accepted for backward compatibility with a
+     * previous schema generation but ignored at sanitize time. Wiki
+     * is now flat; nesting under a parent isn't a concept the model
+     * needs to reason about. */
     suggestNewPageParent?: string
     entity: string
     bullets: string[]
@@ -393,8 +387,8 @@ interface ParsedIngest {
  *     both empty means "nowhere to land", drop it.
  *   - when both are set, prefer `target` (less destructive — uses an
  *     existing page rather than spawning a new one).
- *   - `suggestNewPageParent` only applies when creating a new page;
- *     drop it when the proposal already targets an existing page.
+ *   - `suggestNewPageParent` is now stripped — the wiki is flat,
+ *     parent nesting isn't part of the data model.
  *   - `indexUpdates` pointing at a system page (conventions / log /
  *     index) means the model hallucinated the routing — those pages
  *     have their own channels, never a target-style summary line.
@@ -413,10 +407,7 @@ function sanitizeIngestResult(input: IngestToolInput): ParsedIngest {
     const target = p.target?.trim() || undefined
     const suggestNewPage = p.suggestNewPage?.trim() || undefined
     if (!target && !suggestNewPage) continue
-    const suggestNewPageParent =
-      !target && p.suggestNewPageParent?.trim()
-        ? p.suggestNewPageParent.trim()
-        : undefined
+    // p.suggestNewPageParent intentionally ignored — see file header.
     // Zod guarantees entity is a non-empty string and bullets is a
     // non-empty array, but the model can still ship whitespace-only
     // values inside those slots. Trim + filter here so the apply
@@ -431,7 +422,6 @@ function sanitizeIngestResult(input: IngestToolInput): ParsedIngest {
     if (!entity || bullets.length === 0) continue
     proposals.push({
       ...(target ? { target } : { suggestNewPage: suggestNewPage! }),
-      ...(suggestNewPageParent ? { suggestNewPageParent } : {}),
       entity,
       bullets,
       rationale: p.rationale,

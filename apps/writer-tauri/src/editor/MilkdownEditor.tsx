@@ -41,9 +41,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { normalizeDailyBody } from '@/lib/docTitle'
-import { useDocLabel } from '../hooks/useDocLabel'
 import { MarkToolbar } from './MarkToolbar'
-import { WikiPageTitle } from '@/layout/WikiPageTitle'
 import { LinkHoverBar } from './LinkHoverBar'
 import { SlashMenu } from './SlashMenu'
 // Proof schemas come from proof-sdk via a thin adapter so client and
@@ -71,9 +69,15 @@ interface Props {
   status: CollabStatus
   onMarkdownChange?: (md: string) => void
   onViewReady?: (view: EditorView | null) => void
+  /** Slot rendered above the body, inside the same scrollable
+   * column. Owned by the parent (typically <Page>) so doc-kind
+   * branching for the title surface lives outside the editor.
+   * The editor itself is now agnostic to whether this is a daily
+   * date label, a system page name, or an editable wiki title. */
+  header?: React.ReactNode
 }
 
-export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }: Props) {
+export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, header }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<Editor | null>(null)
   const onChangeRef = useRef(onMarkdownChange)
@@ -96,7 +100,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     handle ? s.knownDocs.find((d) => d.slug === handle.slug) : undefined,
   )
   const isDaily = knownDoc?.type === 'daily'
-  const dailyLabel = useDocLabel(handle?.slug ?? null)
 
   // Live-rewrite wikilinks in this body whenever the referenced
   // child's title changes, so anchor text never drifts from the
@@ -395,16 +398,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     <div className="relative flex h-full w-full flex-col">
       <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="mx-auto max-w-2xl px-8 pt-12 pb-12">
-          {isDaily ? (
-            <div
-              aria-label="Daily date"
-              className="mb-6 w-full text-3xl font-semibold leading-tight text-foreground"
-            >
-              {dailyLabel}
-            </div>
-          ) : handle ? (
-            <WikiPageTitle slug={handle.slug} />
-          ) : null}
+          {header}
           <div ref={rootRef} />
         </div>
       </div>
