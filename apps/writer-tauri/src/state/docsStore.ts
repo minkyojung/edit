@@ -269,11 +269,6 @@ interface DocsState {
    * UI callers can ignore the boolean and just react to the
    * sidebar re-render; surfaces that want to surface a refusal
    * (drag-and-drop drop targets) can read the return value. */
-  moveDoc: (slug: string, newParentId: string | null) => boolean
-  /** Set the displayed title for a wiki / writing doc. Whitespace-
-   * trimmed; empty string clears the title so the sidebar falls
-   * back to 'Untitled' or a type-derived label. */
-  setDocTitle: (slug: string, title: string) => void
   /** Seed a new doc's body from a markdown string. Used by
    * createCustomWikiPage / ensureSystemPage to plant initial content
    * — the role proof-server's createDoc(name, body) filled before
@@ -888,76 +883,6 @@ export const useDocsStore = create<DocsState>()(
 
       shiftDay: (delta) =>
         set((s) => ({ dayAnchor: shiftDayAnchor(s.dayAnchor, delta) })),
-
-      moveDoc: (slug, newParentId) => {
-        const state = get()
-        const doc = state.knownDocs.find((d) => d.slug === slug)
-        if (!doc) return false
-        if (doc.archivedAt) return false
-        // Only user-owned wiki pages can be re-parented. System pages,
-        // dailies, and writing notes have their own placement rules
-        // and aren't draggable in the Wiki tree.
-        if (!isUserOwnedWiki(doc)) return false
-
-        // No-op when the requested parent is already the current
-        // parent. We return true so callers (drag handlers, context
-        // menus) treat this as a successful "already there".
-        const currentParentId = doc.parentId ?? null
-        if (currentParentId === newParentId) return true
-
-        if (newParentId !== null) {
-          if (newParentId === slug) return false
-          const parent = state.knownDocs.find((d) => d.slug === newParentId)
-          if (!parent) return false
-          if (parent.archivedAt) return false
-          // Parent must be a live user-owned wiki page. Refusing
-          // system / daily / writing parents keeps the wiki region
-          // self-contained and prevents weird trees like a wiki
-          // nested under a daily.
-          if (!isUserOwnedWiki(parent)) return false
-
-          // Cycle check: walk the prospective parent's ancestry; if
-          // we hit `slug`, the move would create a loop. Bounded by
-          // knownDocs.length so a corrupt parentId chain can't hang.
-          const docs = state.knownDocs
-          let cursor: KnownDoc | undefined = parent
-          for (let i = 0; i < docs.length && cursor; i += 1) {
-            if (cursor.slug === slug) return false
-            const nextParentSlug: string | undefined = cursor.parentId
-            if (!nextParentSlug) break
-            cursor = docs.find((d) => d.slug === nextParentSlug)
-          }
-        }
-
-        set((s) => ({
-          knownDocs: s.knownDocs.map((d) =>
-            d.slug === slug
-              ? { ...d, parentId: newParentId ?? undefined }
-              : d,
-          ),
-        }))
-        return true
-      },
-
-      setDocTitle: (slug, title) => {
-        const trimmed = title.trim()
-        set((s) => ({
-          knownDocs: s.knownDocs.map((d) =>
-            d.slug === slug
-              ? trimmed
-                ? { ...d, title: trimmed }
-                : // Stored as undefined (not '') so the catalog
-                  // entry omits the key — same shape useDocLabel /
-                  // createCustomWikiPage produce.
-                  (() => {
-                    const { title: _title, ...rest } = d
-                    void _title
-                    return rest
-                  })()
-              : d,
-          ),
-        }))
-      },
 
       seedDocBody: async (slug, markdown) => {
         if (!markdown.trim()) return false

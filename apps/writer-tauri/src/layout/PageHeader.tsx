@@ -1,30 +1,16 @@
 /**
  * PageHeader — single header surface for every kind of doc.
  *
- * Sits above the editor body in MilkdownEditor. Reads the doc's
- * known meta and decides what to render — same visual slot for every
- * kind so the page always opens with "what is this page" answered.
+ * Sits above the editor body. Decides what to render based on doc
+ * kind; the editor itself stays agnostic.
  *
- * Decisions:
- *
- *   daily      → date label (read-only). The date is the anchor;
- *                no other name is meaningful.
- *   system     → type-derived label, read-only ("Conventions",
- *                "Log", "Index"). System pages are managed surfaces
- *                that the user doesn't rename.
- *   wiki       → WikiPageTitle (editable input). The cached title
- *                lives in knownDocs and is written by setDocTitle.
- *   writing    → no header. The body's first line is the natural
- *                title slot for free-form writing; rendering a
- *                separate input would compete with that affordance.
- *
- * Why this exists:
- *   The previous "MilkdownEditor decides which header to show"
- *   pattern put the doc-type switch inside an editor component. Each
- *   new doc kind grew the conditional. Centralizing here keeps the
- *   editor focused on the body, and the sidebar / palette / breadcrumb
- *   surfaces that read useDocLabel stay in sync because they read
- *   from the same knownDocs.title field WikiPageTitle writes to.
+ *   daily   → read-only date label ("Saturday, May 16")
+ *   system  → read-only type label ("Conventions" / "Log" / "Index")
+ *   wiki + writing → no header. The body's first line plays the
+ *                    title role (Bear / iA Writer pattern). The
+ *                    title mirror (docsStore.installTitleMirror)
+ *                    promotes the first block into knownDocs.title
+ *                    so sidebar / palette stay in sync.
  */
 
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
@@ -63,8 +49,8 @@ export function PageHeader({ slug }: Props) {
   return null
 }
 
-/** Read-only label rendered to match WikiPageTitle's visual weight,
- * so users see the same "page title" affordance regardless of kind. */
+/** Read-only label rendered with the same visual weight across kinds
+ * so the page always opens with a clear "what is this" anchor. */
 function ReadOnlyHeader({
   label,
   ariaLabel,
