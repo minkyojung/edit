@@ -52,12 +52,35 @@ function collectText(el: Y.XmlElement): string {
   let out = ''
   for (const child of iter) {
     if (child instanceof Y.XmlText) {
-      out += child.toString()
+      out += extractPlainText(child)
     } else if (child instanceof Y.XmlElement) {
       out += collectText(child)
     }
     // Bail early on pathological inputs (e.g. a single huge text node).
     if (out.length >= MAX_LEN * 2) break
+  }
+  return out
+}
+
+/** Pull the plain-text insert payload from a Y.XmlText, ignoring all
+ * inline marks.
+ *
+ * Why this matters: `Y.XmlText.toString()` serializes inline marks as
+ * raw XML wrappers (e.g. `<proofAuthored by="ai:wiki-ingest">…</...>`).
+ * Sidebar labels and tab titles render that string directly, so a
+ * proof-marked first line surfaced as the literal `<proofAuthored …>`
+ * tag in the UI. Yjs's `toDelta()` returns the ordered ops with marks
+ * separated into `attributes`; we keep only the inserts and drop the
+ * mark metadata so what ships to the UI is the same characters the
+ * user sees in the editor. */
+function extractPlainText(text: Y.XmlText): string {
+  const ops = (text as Y.Text).toDelta() as Array<{
+    insert?: unknown
+    attributes?: unknown
+  }>
+  let out = ''
+  for (const op of ops) {
+    if (typeof op.insert === 'string') out += op.insert
   }
   return out
 }

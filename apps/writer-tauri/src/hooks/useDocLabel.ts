@@ -2,26 +2,30 @@
 // every surface that renders a doc reference (tabs, sidebar tree,
 // breadcrumb, wikilink palette, unlinked-notes list, dialog title).
 //
-// Resolution order:
+// Policy (Notion-style — explicit title wins, body-extraction is a
+// last-resort fallback for writing docs only):
+//
 //   1. Daily entry  → meta.date (anchor; no editable title at all).
-//   2. Wiki entry   → live body label (deriveLabel) if non-empty,
-//      else the cached knownDocs.title (set at create time for both
-//      seeds and custom pages), else a type-derived label. Wiki docs
-//      are bootstrapped with an empty body, so without this fallback
-//      they'd all read as 'Untitled'. The cached-title fallback is
-//      what lets a custom 'wiki:custom-<id>' page show its real
-//      user-given name ('people') instead of the opaque suffix.
-//   3. Warm writing → live body label (deriveLabel via useDocTitle).
-//      Reflects every keystroke, including across collab peers. If
-//      the body is empty, falls through to the cached knownDocs.title
-//      so wikilink children don't flicker to 'Untitled' the moment
-//      the user opens them — the cached label persists until they
-//      type a real first line.
-//   4. Cold writing → knownDocs.title, the persisted mirror set at
-//      create time and kept in sync by the per-handle body observer
-//      installed in docsStore.ensureHandle. Lets closed/unopened
-//      docs still show their real label without N WebSockets.
-//   5. Fallback     → 'Untitled'.
+//   2. Wiki entry   → the cached knownDocs.title set at
+//      createCustomWikiPage time (e.g. "Michael"). This is the
+//      canonical name. We do NOT scan the body anymore — body
+//      mutations (adding bullets, accepting AI proposals, etc.)
+//      must not rename the page. If no title was set at create
+//      time, fall through to a type-derived label or 'Untitled'.
+//   3. Writing      → first heading.textContent / first paragraph
+//      .textContent of the body, plain text only (deriveLabel
+//      strips inline marks via Y.Text.toDelta). Reflects every
+//      keystroke. If the body is empty, falls through to the
+//      cached knownDocs.title.
+//   4. Fallback     → 'Untitled'.
+//
+// Why the wiki branch dropped body extraction: ingest writes
+// proofAuthored marks + bullet lists into wiki pages. The previous
+// "first body line" rule pulled the first bullet's text (or, before
+// the deriveLabel fix, the raw `<proofAuthored …>` tag) into the
+// sidebar — so a page named "Michael" displayed as
+// "Joined as new manager" or worse. Notion / Obsidian / Linear all
+// keep title in an explicit field; this brings us in line.
 
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useDocTitle } from './useDocTitle'
@@ -50,18 +54,16 @@ export function useDocLabel(slug: string | null): string {
 
   if (known?.type === 'daily' && known.date) return formatDailyLabel(known.date)
   if (known && isWikiDoc(known)) {
-    const live = title.trim()
-    if (live) return live
+    // Explicit title is canonical. Body content does not rename a
+    // wiki page — see file-level doc.
     const cached = known.title?.trim()
     if (cached) return cached
-    // Custom content pages (wiki:custom-<id>) have meaningless
-    // type suffixes — fall back to 'Untitled' like the rest of the
-    // app. System pages (system:log / system:conventions /
-    // system:index) carry meaningful suffixes — surface them as
-    // the label so the sidebar reads as 'log' / 'Conventions' /
-    // 'index' rather than the raw type id.
-    if (known.type.startsWith('wiki:custom-')) return 'Untitled'
+    // No title was set at create time (rare — pre-rename legacy
+    // pages, or programmatic creators that bypassed the title
+    // field). System pages carry a meaningful suffix in their type;
+    // custom pages don't, so they read as 'Untitled' until renamed.
     if (known.type.startsWith('system:')) return known.type.replace(/^system:/, '')
+    if (known.type.startsWith('wiki:custom-')) return 'Untitled'
     return known.type.replace(/^wiki:/, '')
   }
   if (handle) return title || known?.title || 'Untitled'
