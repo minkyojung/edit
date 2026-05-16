@@ -23,18 +23,29 @@ import type { Node as PMNode } from '@milkdown/kit/prose/model'
  * nodes instead of literal text. */
 export type MarkdownParser = (md: string) => PMNode
 
+/** PM doc → markdown string. Stored alongside `parser` so consumers
+ * that need to read the active doc's body as markdown (chiefly
+ * ingest — Phase 3.A removed its proof-server round-trip in favor
+ * of this) can serialize without standing up a parallel toMarkdown
+ * pipeline. */
+export type MarkdownSerializer = (doc: PMNode) => string
+
 interface EditorViewState {
   /** The view of the currently-active doc, or null when no doc is
    * open or the editor is mid-transition between docs. */
   view: EditorView | null
   parser: MarkdownParser | null
+  serializer: MarkdownSerializer | null
   setView: (view: EditorView | null) => void
   setParser: (parser: MarkdownParser | null) => void
+  setSerializer: (serializer: MarkdownSerializer | null) => void
 }
 
 export const useEditorViewStore = create<EditorViewState>((set) => ({
   view: null,
   parser: null,
+  serializer: null,
   setView: (view) => set({ view }),
   setParser: (parser) => set({ parser }),
+  setSerializer: (serializer) => set({ serializer }),
 }))

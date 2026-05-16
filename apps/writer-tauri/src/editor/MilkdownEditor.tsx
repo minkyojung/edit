@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Editor, rootCtx, editorViewOptionsCtx, editorViewCtx, parserCtx } from '@milkdown/kit/core'
+import { Editor, rootCtx, editorViewOptionsCtx, editorViewCtx, parserCtx, serializerCtx } from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
@@ -347,13 +347,16 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
           onViewReady?.(view)
         })
 
-        // Expose the markdown parser so non-React consumers (mark
-        // accept, ingest seed) can turn LLM-emitted markdown into
-        // real PM nodes instead of plain text. Cleared on unmount
-        // alongside the view.
+        // Expose the markdown parser AND serializer so non-React
+        // consumers (mark accept, ingest seed, ingest source read)
+        // can convert between LLM-emitted markdown and real PM nodes
+        // without standing up a parallel pipeline. Both are cleared
+        // on unmount alongside the view.
         editor.action((ctx) => {
           const parser = ctx.get(parserCtx)
+          const serializer = ctx.get(serializerCtx)
           useEditorViewStore.getState().setParser(parser)
+          useEditorViewStore.getState().setSerializer(serializer)
           // Drain a pending "scroll to this mark" target queued by the
           // chat panel before this slug's editor was mounted. (The
           // earlier pendingProposalsStore drain is gone — Track 1.2's
@@ -383,6 +386,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       setPmView(null)
       onViewReady?.(null)
       useEditorViewStore.getState().setParser(null)
+      useEditorViewStore.getState().setSerializer(null)
     }
   }, [handle])
 

@@ -32,6 +32,7 @@
 import { useEffect, useRef } from 'react'
 import { runIngest, assembleProposalMarkdown } from '@/agent/ingest'
 import { useDocsStore, isWikiDoc, isUserOwnedWiki } from '@/state/docsStore'
+import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
 import {
   ensureLogWikiSlug,
@@ -44,8 +45,6 @@ import { todayLocalDate } from '@/hooks/useDocMeta'
 import { extractErrorCode } from '@/chat/utils/errorMessage'
 import { notify } from '@/lib/notify'
 import { useConnectDialog } from '@/stores/connectDialog'
-
-const PROOF_BASE_URL = 'http://localhost:4000'
 
 interface RunOptions {
   /** Skip the watermark gate. Used by the dev console hook
@@ -164,17 +163,31 @@ async function materializeNewPageProposals(
 /** Read a doc's markdown via the canonical proof-server route.
  * Returns '' on failure so the watermark check treats unreachable
  * docs as "no growth" and skips them silently. */
-async function readDocLength(slug: string): Promise<number> {
-  try {
-    const res = await fetch(
-      `${PROOF_BASE_URL}/documents/${encodeURIComponent(slug)}`,
-    )
-    if (!res.ok) return 0
-    const json = (await res.json()) as { markdown?: string }
-    return effectiveLength(json.markdown ?? '')
-  } catch {
-    return 0
+/** Effective length of the doc's body, client-side.
+ *
+ * Phase 3.A — replaced the proof-server round-trip. Same reasoning
+ * as readDocMarkdown in agent/ingest.ts: the server's markdown
+ * column is wedged at empty due to a deriveMarkdownFromFragment
+ * crash on our client's Y.XmlFragment, so a client-side read is
+ * the only path that reflects what the user actually typed.
+ *
+ * Reads from the live PM doc when the slug is active, otherwise
+ * from the Y.XmlFragment. Returns 0 when no handle exists. */
+function readDocLength(slug: string): number {
+  const docs = useDocsStore.getState()
+  const handle = docs.handles[slug]
+  if (!handle) return 0
+
+  if (docs.activeSlug === slug) {
+    const view = useEditorViewStore.getState().view
+    if (view) return effectiveLength(view.state.doc.textContent)
   }
+
+  // Fallback: count the Y.XmlFragment's serialized text. Loses
+  // structural markdown but only the visible characters matter
+  // for the gate.
+  const fragment = handle.ydoc.getXmlFragment('prosemirror')
+  return effectiveLength(fragment.toString())
 }
 
 /** Run an ingest pass against a specific note slug. Returns the
@@ -206,7 +219,7 @@ async function runIngestForSlug(
     return 0
   }
 
-  const length = await readDocLength(slug)
+  const length = readDocLength(slug)
   if (length === 0) {
     console.log('[ingest:trigger] bail: source doc empty', { slug })
     return 0
