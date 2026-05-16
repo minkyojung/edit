@@ -31,8 +31,7 @@
     "targets": "all",
     "icon": [],
     "externalBin": [
-      "binaries/bun",
-      "binaries/proof-server"
+      "binaries/bun"
     ],
     "resources": ["../sidecar-pkg/**/*"]
   }
