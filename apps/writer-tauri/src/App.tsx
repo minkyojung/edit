@@ -4,7 +4,6 @@ import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppToaster } from '@/components/AppToaster'
-import { EngineGate } from '@/components/EngineGate'
 import { BootGate } from '@/components/BootGate'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { FullPageErrorFallback } from '@/components/ErrorFallback'
@@ -50,21 +49,21 @@ export function App() {
   return (
     <ThemeProvider defaultPalette="charcoal" storageKey="writer-palette">
       <TooltipProvider delayDuration={200}>
-        <EngineGate>
-          <BootGate>
-            <AppContent />
-          </BootGate>
-        </EngineGate>
+        <BootGate>
+          <AppContent />
+        </BootGate>
         <AppToaster />
       </TooltipProvider>
     </ThemeProvider>
   )
 }
 
-// Everything inside EngineGate + BootGate — by the time this renders,
-// proof-server is healthy AND the catalog bootstrap has finished, so
-// React subscriptions land on a stable store and the sidebar's first
-// paint already reflects the user's real data.
+// Everything inside BootGate — by the time this renders, the catalog
+// bootstrap has finished, so React subscriptions land on a stable
+// store and the sidebar's first paint reflects the user's real data.
+// proof-server health check (previously a separate EngineGate above
+// this) is gone in Phase 3.D — the app no longer depends on a sidecar
+// being up.
 function AppContent() {
   const activeSlug = useDocsStore((s) => s.activeSlug)
   const handles = useDocsStore((s) => s.handles)
