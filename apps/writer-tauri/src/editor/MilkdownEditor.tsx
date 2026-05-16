@@ -125,33 +125,28 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
   // must not duplicate it. Idempotent via meta.titleNormalizedV2 —
   // see lib/docTitle.ts. Non-daily docs run no normalization.
   //
-  // Gated on (provider.synced OR idb.synced) AND meta.type being populated.
+  // Gated on idb.synced AND meta.type being populated.
   // Local-disk hydration is enough to run normalization — the title
-  // structure lives in the Y.Doc that idb just restored. Waiting for the
-  // server is unnecessary and would stall this on cold/offline launches.
-  // provider may be null (offline tab) — in that case idb is the only
-  // signal we'll ever get; the OR-gate handles both cases uniformly.
+  // structure lives in the Y.Doc that idb restored.
   useEffect(() => {
     if (!handle || !pmView) return
     if (!isDaily) return
-    const { ydoc, provider, idb } = handle
+    const { ydoc, idb } = handle
     const view = pmView
     const metaMap = ydoc.getMap('meta')
     const opts = { date: knownDoc?.date }
     let ran = false
     const tryRun = () => {
       if (ran) return
-      if (!provider?.isSynced && !idb.synced) return
+      if (!idb.synced) return
       if (!metaMap.get('type')) return
       ran = true
       normalizeDailyBody(ydoc, view, opts)
     }
     tryRun()
-    provider?.on('synced', tryRun)
     idb.on('synced', tryRun)
     metaMap.observe(tryRun)
     return () => {
-      provider?.off('synced', tryRun)
       idb.off('synced', tryRun)
       metaMap.unobserve(tryRun)
     }
@@ -170,7 +165,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
     if (!rootRef.current || !handle) return
 
     let mounted = true
-    const { ydoc, provider } = handle
+    const { ydoc } = handle
 
     Editor.make()
       .config((ctx) => {
@@ -338,10 +333,8 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
           })
           collabService.setOptions({ yUndoOpts: { undoManager } })
           const service = collabService.bindDoc(ydoc)
-          // Awareness is the multi-cursor / presence layer. It only
-          // exists once the WebSocket provider has attached; offline
-          // tabs simply skip it and the editor still works locally.
-          if (provider?.awareness) service.setAwareness(provider.awareness)
+          // No awareness (multi-cursor / presence) since Phase 3.C
+          // removed the WebSocket provider — local-only editor.
           service.connect()
         })
 
@@ -406,7 +399,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         view={pmView}
         parentSlug={handle?.slug ?? null}
         status={status}
-        provider={handle?.provider ?? null}
       />
       {handle && <MarkToolbar slug={handle.slug} selection={selection} onDismiss={() => setSelection(null)} />}
       <LinkHoverBar />

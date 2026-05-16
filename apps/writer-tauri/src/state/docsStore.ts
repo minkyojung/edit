@@ -1,12 +1,11 @@
 // Multi-document tab registry. Holds the set of open documents (slug
 // list + active slug, persisted) and their live collab handles
-// (ydoc + provider, runtime only — too live to serialize).
+// (ydoc + idb, runtime only — too live to serialize).
 //
 // Strategy: lazy-with-cache. Only the active doc gets a handle eagerly
 // on bootstrap; switching to a tab that hasn't been opened yet
-// triggers a one-shot setup (collab session + provider + ydoc) and
-// keeps it warm. Closing a tab tears its handle down to release the
-// WebSocket and free the ydoc memory.
+// triggers a one-shot setup (ydoc + idb persistence) and keeps it
+// warm. Closing a tab tears its handle down to free the ydoc memory.
 //
 // Eager-everything is the Cursor-style ideal but costs N parallel
 // WebSocket connections on app start; for a writer with 5–9 docs
@@ -20,12 +19,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import * as Y from 'yjs'
-// HocuspocusProvider import removed (Phase 3.C). The WebSocket sync
-// path is gone; IndexedDB is the single durable surface. Multi-device
-// sync via a self-hosted Hocuspocus instance can be added back later
-// without touching this module — provider attachment was already
-// optional (handle.provider could be null forever) before Phase 3.C,
-// so the per-handle observers / undo wiring keep working as-is.
+// HocuspocusProvider removed in Phase 3.C; CollabHandle.provider field
+// removed in Phase 3.F.4. IndexedDB is the single durable surface.
 import { IndexeddbPersistence } from 'y-indexeddb'
 // proofClient + waitUntilReady removed (Phase 3.C). All HTTP /
 // WebSocket paths to the proof-server are gone from this module.
@@ -305,7 +300,6 @@ function buildHandle(
   const idb = new IndexeddbPersistence(slug, ydoc)
   const handle: CollabHandle = {
     ydoc,
-    provider: null,
     idb,
     idbSynced: idb.whenSynced.then(() => undefined),
     slug,
@@ -560,7 +554,6 @@ export const useDocsStore = create<DocsState>()(
         useChatRuns.getState().abortBySlug(slug)
         const handle = handles[slug]
         if (handle) {
-          handle.provider?.destroy()
           handle.idb.destroy()
           handle.ydoc.destroy()
         }
@@ -769,7 +762,6 @@ export const useDocsStore = create<DocsState>()(
         for (const s of groupSlugs) {
           const h = nextHandles[s]
           if (h) {
-            h.provider?.destroy()
             h.idb.destroy()
             h.ydoc.destroy()
           }
@@ -1170,13 +1162,8 @@ async function ensureHandle(
 ): Promise<void> {
   if (get().handles[slug]) return
   // Local-only handle is ready immediately (Y.Doc + IndexedDB are sync).
-  // The WebSocket provider attaches in the background via
-  // attachProviderWhenReady — by which time the editor is already
-  // rendering and the user may have typed several characters. Those
-  // characters land in IndexedDB first, then merge into the server's
-  // state once the provider arrives. If the server never arrives the
-  // tab stays local-only forever; no toast or error gate, since "I
-  // can keep writing offline" is the contract this pattern offers.
+  // No server sync layer since Phase 3.C — every doc operation runs
+  // against the local Y.Doc + IDB.
   const handle = buildHandle(
     slug,
     set as (fn: (s: DocsState) => Partial<DocsState>) => void,
@@ -1310,22 +1297,18 @@ function installTitleMirror(
     // cache, not just structural changes at the fragment root.
     fragment.observeDeep(sync)
   }
-  if (handle.provider?.isSynced || handle.idb.synced) {
+  if (handle.idb.synced) {
     start()
     return
   }
-  // Either signal triggers the mirror: idb hydrates the same fragment
-  // the server would have sent, so sidebar titles populate on cold/
-  // offline launches without waiting for proof-server. provider may
-  // never arrive (offline-only tab) — that's fine, idb alone covers it.
+  // IDB is the single durable surface since Phase 3.C — its 'synced'
+  // event fires once the local store has hydrated the ydoc.
   let started = false
   const onceReady = () => {
     if (started) return
     started = true
-    handle.provider?.off('synced', onceReady)
     handle.idb.off('synced', onceReady)
     start()
   }
-  handle.provider?.on('synced', onceReady)
   handle.idb.on('synced', onceReady)
 }

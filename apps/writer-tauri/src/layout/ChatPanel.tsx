@@ -13,7 +13,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
 import { TextSelection } from '@milkdown/kit/prose/state'
-import type { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useThreads } from '@/hooks/useThreads'
@@ -55,11 +54,10 @@ function parseSlashInvocation(text: string): { name: string; args: string } | nu
 interface Props {
   editorView: EditorView | null
   ydoc: Y.Doc | null
-  provider: HocuspocusProvider | null
   slug: string | null
 }
 
-export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
+export function ChatPanel({ editorView, ydoc, slug }: Props) {
   const { account } = useClaudeAuth()
   const threads = useThreads(ydoc)
   const { activeId, setActiveId } = useActiveThread(slug, threads.active)
@@ -109,32 +107,17 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     setPinned(distance < 80)
   }, [])
 
-  // Track Hocuspocus initial sync so we don't auto-create a thread before the
-  // server has had a chance to send us the existing list — that race produces
-  // duplicate threads on every reload.
-  const [synced, setSynced] = useState(false)
+  // Auto-create the first thread once threads hydrate from the doc's
+  // Y.Doc + IDB. Phase 3.C removed the server-sync gate (we used to
+  // wait for Hocuspocus's initial 'synced' event to avoid racing with
+  // server-sent threads); threads.ready is now the only readiness
+  // signal — it flips true once useThreads has observed the Y.Array.
   useEffect(() => {
-    setSynced(false)
-    if (!provider) return
-    if (provider.synced) {
-      setSynced(true)
-      return
-    }
-    const onSynced = () => setSynced(true)
-    provider.on('synced', onSynced)
-    return () => {
-      provider.off('synced', onSynced)
-    }
-  }, [provider])
-
-  // Auto-create the first thread only after we've synced — and only if the
-  // document genuinely has none.
-  useEffect(() => {
-    if (!synced || !threads.ready) return
+    if (!threads.ready) return
     if (threads.threads.length === 0) {
       threads.createThread()
     }
-  }, [synced, threads])
+  }, [threads])
 
   // Auto-scroll only when the user is already pinned to the bottom — if they
   // scrolled up to read history, leave them alone. Streaming uses 'auto' (no

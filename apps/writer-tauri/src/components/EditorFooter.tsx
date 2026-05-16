@@ -27,7 +27,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import type { HocuspocusProvider } from '@hocuspocus/provider'
 import { IconSparklesFilled, IconUserFilled } from '@tabler/icons-react'
 import {
   useEditorFooter,
@@ -50,10 +49,9 @@ interface Props {
   view: EditorView | null
   parentSlug: string | null
   status: CollabStatus
-  provider: HocuspocusProvider | null
 }
 
-export function EditorFooter({ view, parentSlug, status, provider }: Props) {
+export function EditorFooter({ view, parentSlug, status }: Props) {
   const hovered = useEditorFooter((s) => s.hovered)
   const stats = useEditorFooter((s) => s.stats)
   const setStats = useEditorFooter((s) => s.setStats)
@@ -111,7 +109,7 @@ export function EditorFooter({ view, parentSlug, status, provider }: Props) {
   // hover beats the default stats; the default stats are last.
   const showProblem = status === 'error' || (status === 'connecting' && connectingStuck)
   const content = showProblem
-    ? <ConnectionProblem status={status} provider={provider} />
+    ? <ConnectionProblem status={status} />
     : hovered
     ? <HoverContent hovered={hovered} />
     : (
@@ -191,13 +189,7 @@ function DefaultContent({
   )
 }
 
-function ConnectionProblem({
-  status,
-  provider,
-}: {
-  status: CollabStatus
-  provider: HocuspocusProvider | null
-}) {
+function ConnectionProblem({ status }: { status: CollabStatus }) {
   const isError = status === 'error'
   return (
     <span className="inline-flex items-center gap-1.5">
@@ -205,18 +197,6 @@ function ConnectionProblem({
         ●
       </span>
       <span>{isError ? 'Offline' : 'Connecting…'}</span>
-      {isError && provider && (
-        <>
-          <span className="opacity-40">·</span>
-          <button
-            type="button"
-            onClick={() => provider.connect()}
-            className="text-foreground/90 underline-offset-2 outline-none transition-colors hover:text-foreground hover:underline focus-visible:underline"
-          >
-            Retry
-          </button>
-        </>
-      )}
     </span>
   )
 }

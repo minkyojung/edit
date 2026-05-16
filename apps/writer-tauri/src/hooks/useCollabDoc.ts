@@ -4,7 +4,6 @@
 // the file remains as a pure type surface; the runtime hook + its
 // 'My Document' default-title bootstrap are gone.
 import type * as Y from 'yjs'
-import type { HocuspocusProvider } from '@hocuspocus/provider'
 import type { IndexeddbPersistence } from 'y-indexeddb'
 
 export type CollabStatus = 'initializing' | 'connecting' | 'connected' | 'error'
@@ -54,20 +53,10 @@ export interface StoredMark {
 
 export interface CollabHandle {
   ydoc: Y.Doc
-  /** WebSocket sync layer. Null while we're offline or waiting for the
-   * proof-server health check / collab-session; gets attached in the
-   * background once the server is reachable. Consumers must null-check
-   * before reading provider.synced / awareness / etc — the editor still
-   * works (writes flow through `idb`) without a provider. */
-  provider: HocuspocusProvider | null
   slug: string
-  /** Client-side IndexedDB persistence layer. Writes every Y.Doc update
-   * to local disk synchronously with the in-memory CRDT, so the editor
-   * survives any failure mode of the proof-server (graceful exit,
-   * SIGKILL, crash, network drop). Without this, all data survival
-   * depends on round-tripping every change through the WebSocket and
-   * out the proof-server's 250ms debounce — the path that drops the
-   * last keystrokes on Ctrl+C. */
+  /** Client-side IndexedDB persistence layer. Single durable surface
+   * since Phase 3.C removed the WebSocket sync — every Y.Doc update
+   * is written to local disk synchronously with the in-memory CRDT. */
   idb: IndexeddbPersistence
   /** Resolves once the IndexedDB layer has hydrated the ydoc from its
    * local cache (or confirmed there's nothing cached for this slug).

@@ -109,7 +109,6 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
               <ChatPanel
                 editorView={editorView ?? null}
                 ydoc={collabHandle?.ydoc ?? null}
-                provider={collabHandle?.provider ?? null}
                 slug={collabHandle?.slug ?? null}
               />
             </ErrorBoundary>
