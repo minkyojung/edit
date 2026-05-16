@@ -14,7 +14,6 @@
 // the first time an ingest produces a logEntry — see
 // `ensureLogWikiSlug` below.
 
-import { proofClient } from '@/lib/proofClient'
 import { generateClientSlug } from '@/lib/slug'
 import { isEffectivelyEmpty } from '@/lib/markdownText'
 import {
@@ -135,14 +134,11 @@ async function ensureSystemPage(
   const slug = generateClientSlug()
   const meta: KnownDoc = { slug, type: config.type, title: config.title }
   useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-  void proofClient
-    .createDoc(config.title, config.initialBody, { slug })
-    .catch((err) => {
-      console.warn(
-        `[wiki] ensureSystemPage(${config.type}) background register failed`,
-        err,
-      )
-    })
+  // Phase 3.B — proof-server registration removed. System pages live
+  // in the local catalog only. `config.initialBody` seeding is plumbed
+  // through ensureHandle's body bootstrap when the page is first
+  // opened; ingest seeds it via the SEED_BODY_TARGET map there.
+  void config
   return slug
 }
 
@@ -274,9 +270,13 @@ export async function createCustomWikiPage(
     : { slug, type }
   const meta: KnownDoc = parentId ? { ...baseMeta, parentId } : baseMeta
   useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-  void proofClient.createDoc(trimmed, initialBody, { slug }).catch((err) => {
-    console.warn('[wiki] createCustomWikiPage background register failed', err)
-  })
+  // Phase 3.B — proof-server registration removed. The doc lives in
+  // the local catalog (useDocsStore.knownDocs), and its Y.Doc + IDB
+  // shard come into being lazily on first ensureHandle. The
+  // `initialBody` seed is now plumbed via the handle bootstrap below
+  // when truly needed; today every caller passes empty so the lazy
+  // path covers it.
+  void initialBody
   return slug
 }
 

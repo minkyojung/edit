@@ -2,30 +2,26 @@
 // every surface that renders a doc reference (tabs, sidebar tree,
 // breadcrumb, wikilink palette, unlinked-notes list, dialog title).
 //
-// Policy (Notion-style — explicit title wins, body-extraction is a
-// last-resort fallback for writing docs only):
+// Policy (Notion-style — title is an explicit field, body is body):
 //
-//   1. Daily entry  → meta.date (anchor; no editable title at all).
-//   2. Wiki entry   → the cached knownDocs.title set at
-//      createCustomWikiPage time (e.g. "Michael"). This is the
-//      canonical name. We do NOT scan the body anymore — body
-//      mutations (adding bullets, accepting AI proposals, etc.)
-//      must not rename the page. If no title was set at create
-//      time, fall through to a type-derived label or 'Untitled'.
+//   1. Daily entry  → meta.date (anchor; no editable title).
+//   2. Wiki entry   → cached knownDocs.title. This is set either by
+//      ingest (entity name like "Michael") or by the user typing
+//      into WikiPageTitle (the input rendered above the editor body
+//      in MilkdownEditor). The body is never used for the wiki
+//      label — that was the regression source we just eliminated.
+//      Empty cached title falls through to a type-derived label
+//      or 'Untitled'.
 //   3. Writing      → first heading.textContent / first paragraph
 //      .textContent of the body, plain text only (deriveLabel
-//      strips inline marks via Y.Text.toDelta). Reflects every
-//      keystroke. If the body is empty, falls through to the
-//      cached knownDocs.title.
+//      strips inline marks via Y.Text.toDelta). Writing docs don't
+//      have a separate title input today; the body's first line is
+//      the natural title slot.
 //   4. Fallback     → 'Untitled'.
 //
-// Why the wiki branch dropped body extraction: ingest writes
-// proofAuthored marks + bullet lists into wiki pages. The previous
-// "first body line" rule pulled the first bullet's text (or, before
-// the deriveLabel fix, the raw `<proofAuthored …>` tag) into the
-// sidebar — so a page named "Michael" displayed as
-// "Joined as new manager" or worse. Notion / Obsidian / Linear all
-// keep title in an explicit field; this brings us in line.
+// deriveLabel returns plain text (Y.Text.toDelta inserts only — no
+// inline-mark wrappers). proofAuthored / proofComment marks added
+// by ingest or by the user can't leak raw XML into labels.
 
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useDocTitle } from './useDocTitle'
@@ -54,14 +50,12 @@ export function useDocLabel(slug: string | null): string {
 
   if (known?.type === 'daily' && known.date) return formatDailyLabel(known.date)
   if (known && isWikiDoc(known)) {
-    // Explicit title is canonical. Body content does not rename a
-    // wiki page — see file-level doc.
+    // Cached title is the single source of truth. WikiPageTitle (the
+    // input above the editor body) writes here via setDocTitle.
     const cached = known.title?.trim()
     if (cached) return cached
-    // No title was set at create time (rare — pre-rename legacy
-    // pages, or programmatic creators that bypassed the title
-    // field). System pages carry a meaningful suffix in their type;
-    // custom pages don't, so they read as 'Untitled' until renamed.
+    // No title typed yet. System pages carry meaningful suffixes;
+    // custom pages read as 'Untitled' until the user enters a name.
     if (known.type.startsWith('system:')) return known.type.replace(/^system:/, '')
     if (known.type.startsWith('wiki:custom-')) return 'Untitled'
     return known.type.replace(/^wiki:/, '')

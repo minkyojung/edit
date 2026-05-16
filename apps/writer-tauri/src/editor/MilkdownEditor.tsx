@@ -43,6 +43,7 @@ import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { normalizeDailyBody } from '@/lib/docTitle'
 import { useDocLabel } from '../hooks/useDocLabel'
 import { MarkToolbar } from './MarkToolbar'
+import { WikiPageTitle } from '@/layout/WikiPageTitle'
 import { LinkHoverBar } from './LinkHoverBar'
 import { SlashMenu } from './SlashMenu'
 // Proof schemas come from proof-sdk via a thin adapter so client and
@@ -401,6 +402,8 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
             >
               {dailyLabel}
             </div>
+          ) : handle ? (
+            <WikiPageTitle slug={handle.slug} />
           ) : null}
           <div ref={rootRef} />
         </div>

@@ -20,9 +20,15 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import * as Y from 'yjs'
-import { HocuspocusProvider } from '@hocuspocus/provider'
+// HocuspocusProvider import removed (Phase 3.C). The WebSocket sync
+// path is gone; IndexedDB is the single durable surface. Multi-device
+// sync via a self-hosted Hocuspocus instance can be added back later
+// without touching this module — provider attachment was already
+// optional (handle.provider could be null forever) before Phase 3.C,
+// so the per-handle observers / undo wiring keep working as-is.
 import { IndexeddbPersistence } from 'y-indexeddb'
-import { proofClient, waitUntilReady } from '@/lib/proofClient'
+// proofClient + waitUntilReady removed (Phase 3.C). All HTTP /
+// WebSocket paths to the proof-server are gone from this module.
 import { generateClientSlug } from '@/lib/slug'
 import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
@@ -262,6 +268,10 @@ interface DocsState {
    * sidebar re-render; surfaces that want to surface a refusal
    * (drag-and-drop drop targets) can read the return value. */
   moveDoc: (slug: string, newParentId: string | null) => boolean
+  /** Set the displayed title for a wiki / writing doc. Whitespace-
+   * trimmed; empty string clears the title so the sidebar falls
+   * back to 'Untitled' or a type-derived label. */
+  setDocTitle: (slug: string, title: string) => void
   /** Switch the sidebar date view. */
   setSidebarTab: (tab: 'day' | 'week' | 'month') => void
   /** Set the Month view's anchor month (YYYY-MM). */
@@ -312,68 +322,18 @@ function buildHandle(
       useIngestStore.getState().markEdited(slug)
     })
   })
-  // 'connecting' on launch reads as "we're trying to reach the server";
-  // the background task below promotes to 'connected' or 'error' once
-  // the outcome is known. Callers that only need local writes don't
-  // care — they read from `ydoc` / `idb` immediately.
+  // Phase 3.C — WebSocket attach removed. IndexedDB is the only
+  // durable surface; status flips to 'connected' as soon as IDB
+  // finishes hydrating (which is what the rest of the app reads as
+  // "ready to write"). The 'connected' label is a slight misnomer
+  // post-removal — there's no server connection to speak of — but
+  // keeping the existing CollabStatus enum spares us a wave of
+  // call-site changes; a follow-up cleanup can introduce a 'local'
+  // status if the distinction starts mattering somewhere.
   onStatus('connecting')
-  void attachProviderWhenReady(slug, handle, set, onStatus)
+  void handle.idbSynced.then(() => onStatus('connected'))
+  void set
   return handle
-}
-
-/** Second phase of handle construction: probe the server, fetch a collab
- * session, then build a HocuspocusProvider and splice it into the handle.
- * Failures (proof-server down, network blip) leave handle.provider null
- * forever — IndexedDB keeps everything alive locally, and the user can
- * retry by closing/reopening the tab once the server is back. */
-async function attachProviderWhenReady(
-  slug: string,
-  handle: CollabHandle,
-  set: (fn: (s: DocsState) => Partial<DocsState>) => void,
-  onStatus: (status: CollabStatus) => void,
-): Promise<void> {
-  // Wait for IndexedDB to finish hydrating the ydoc before attaching the
-  // WebSocket provider. If we attach earlier, the server sends its baseline
-  // (which for a newly-registered empty-markdown doc is a fresh-clientId
-  // empty fragment from seedLegacyDocumentToPersistedYjsAsync) and that
-  // merges *alongside* the soon-to-arrive IDB fragment instead of into it
-  // — fragment root accumulates one extra paragraph per launch, which is
-  // exactly the 1→2→4→8 doubling regression. Order matters: IDB first,
-  // server second.
-  await handle.idbSynced
-  const ready = await waitUntilReady(15_000)
-  if (!ready) {
-    onStatus('error')
-    return
-  }
-  let session: Awaited<ReturnType<typeof proofClient.getCollabSession>>['session']
-  try {
-    const res = await proofClient.getCollabSession(slug)
-    session = res.session
-  } catch (err) {
-    console.error('[docs] failed to get collab session', err)
-    onStatus('error')
-    return
-  }
-  const url = new URL(session.collabWsUrl)
-  url.searchParams.set('token', session.token)
-  url.searchParams.set('role', session.role)
-  const provider = new HocuspocusProvider({
-    url: url.toString(),
-    name: slug,
-    document: handle.ydoc,
-    token: session.token,
-    onStatus: ({ status }) => {
-      onStatus(status === 'connected' ? 'connected' : 'connecting')
-    },
-  })
-  // Mutate the handle in place, then re-publish into the store so any
-  // selector subscribed to handles[slug] re-renders with the WebSocket
-  // attached. We can't replace the handle object wholesale because other
-  // observers (sidebar title mirror, mark plugins) already hold a
-  // reference to this exact instance.
-  handle.provider = provider
-  set((s) => ({ handles: { ...s.handles, [slug]: handle } }))
 }
 
 // Re-entrancy guard for bootstrap().
@@ -453,9 +413,8 @@ export const useDocsStore = create<DocsState>()(
           const meta: KnownDoc = { slug, type: 'daily', date: today }
           todaysDaily = meta
           set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-          void proofClient.createDoc(today, '', { slug }).catch((err) => {
-            console.warn('[docs] background register failed for today daily', err)
-          })
+          // Phase 3.B — proof-server register removed. New daily's
+          // Y.Doc + IDB shard come into being on first ensureHandle.
         }
 
         // Add today to openSlugs if it isn't already there, and make
@@ -500,9 +459,7 @@ export const useDocsStore = create<DocsState>()(
               const slug = generateClientSlug()
               const meta: KnownDoc = { slug, type: 'daily', date }
               set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-              void proofClient.createDoc(date, '', { slug }).catch((err) => {
-                console.warn('[docs] backfill daily register failed', date, err)
-              })
+              // Phase 3.B — proof-server register removed.
             }
             cursor.setDate(cursor.getDate() + 1)
           }
@@ -645,9 +602,7 @@ export const useDocsStore = create<DocsState>()(
             createdAt: new Date().toISOString(),
           })
         }
-        void proofClient.createDoc('', '', { slug }).catch((err) => {
-          console.warn('[docs] background register failed for new note', err)
-        })
+        // Phase 3.B — proof-server register removed.
       },
 
       openDaily: async (date) => {
@@ -663,9 +618,7 @@ export const useDocsStore = create<DocsState>()(
           const slug = generateClientSlug()
           known = { slug, type: 'daily', date: targetDate }
           set((s) => ({ knownDocs: [...s.knownDocs, known!] }))
-          void proofClient.createDoc(targetDate, '', { slug }).catch((err) => {
-            console.warn('[docs] openDaily background register failed', err)
-          })
+          // Phase 3.B — proof-server register removed.
         }
         const slug = known.slug
         if (!get().openSlugs.includes(slug)) {
@@ -719,9 +672,7 @@ export const useDocsStore = create<DocsState>()(
             createdAt: new Date().toISOString(),
           })
         }
-        void proofClient.createDoc('', '', { slug }).catch((err) => {
-          console.warn('[docs] createChildNote background register failed', err)
-        })
+        // Phase 3.B — proof-server register removed.
         return slug
       },
 
@@ -748,9 +699,7 @@ export const useDocsStore = create<DocsState>()(
         // stack so Cmd+Z right after opening doesn't strip the name.
         await ensureHandle(slug, set, get, { seedFirstLine: title })
         const handle = get().handles[slug]
-        void proofClient.createDoc(title, '', { slug }).catch((err) => {
-          console.warn('[docs] createWritingChild background register failed', err)
-        })
+        // Phase 3.B — proof-server register removed.
         if (handle) {
           writeDocMeta(handle.ydoc, {
             type: 'writing',
@@ -895,15 +844,10 @@ export const useDocsStore = create<DocsState>()(
         // orphaned trash entries.
         let failed = 0
         for (const s of groupSlugs) {
-          try {
-            await proofClient.deleteDocForever(s)
-          } catch (err) {
-            console.error('[docs] deleteDocForever failed', s, err)
-            failed += 1
-          }
-          // Erase the local IndexedDB shard for this slug. Without this the
-          // cached Y.Doc updates would outlive the server row — a future tab
-          // re-using the same slug would resurrect deleted content.
+          // Phase 3.B — proof-server hard-delete removed. IDB shard
+          // wipe below is the only durable side effect now; without
+          // it a future tab re-using the same slug would resurrect
+          // the cached Y.Doc updates.
           indexedDB.deleteDatabase(s)
         }
         const groupSet = new Set(groupSlugs)
@@ -984,17 +928,32 @@ export const useDocsStore = create<DocsState>()(
         return true
       },
 
+      setDocTitle: (slug, title) => {
+        const trimmed = title.trim()
+        set((s) => ({
+          knownDocs: s.knownDocs.map((d) =>
+            d.slug === slug
+              ? trimmed
+                ? { ...d, title: trimmed }
+                : // Stored as undefined (not '') so the catalog
+                  // entry omits the key — same shape useDocLabel /
+                  // createCustomWikiPage produce.
+                  (() => {
+                    const { title: _title, ...rest } = d
+                    void _title
+                    return rest
+                  })()
+              : d,
+          ),
+        }))
+      },
+
       emptyArchive: async () => {
         const archived = get().knownDocs.filter((d) => d.archivedAt)
         if (archived.length === 0) return
         let failed = 0
         for (const d of archived) {
-          try {
-            await proofClient.deleteDocForever(d.slug)
-          } catch (err) {
-            console.error('[docs] emptyArchive item failed', d.slug, err)
-            failed += 1
-          }
+          // Phase 3.B — proof-server hard-delete removed.
           indexedDB.deleteDatabase(d.slug)
         }
         const archivedSet = new Set(archived.map((d) => d.slug))
