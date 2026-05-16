@@ -30,9 +30,9 @@
  */
 
 import type { MilkdownPlugin } from '@milkdown/kit/ctx'
-import { proofMarkPlugins as rawProofMarkPlugins } from '@proof-sdk/editor/schema/proof-marks'
-import { codeBlockExtPlugins as rawCodeBlockExt } from '@proof-sdk/editor/schema/code-block-ext'
-import { frontmatterSchema as rawFrontmatter } from '@proof-sdk/editor/schema/frontmatter'
+import { proofMarkPlugins as rawProofMarkPlugins } from './schema/proof-marks'
+import { codeBlockExtPlugins as rawCodeBlockExt } from './schema/code-block-ext'
+import { frontmatterSchema as rawFrontmatter } from './schema/frontmatter'
 
 export const proofMarkPlugins: MilkdownPlugin[] = (
   rawProofMarkPlugins as unknown as MilkdownPlugin[]
