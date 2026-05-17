@@ -85,7 +85,7 @@ function AppContent() {
   useMigrateLegacyIngestMarks()
 
   const activeHandle = activeSlug ? handles[activeSlug] ?? null : null
-  const activeStatus = activeSlug ? statusMap[activeSlug] ?? 'initializing' : 'initializing'
+  const activeStatus = activeSlug ? statusMap[activeSlug] ?? 'loading' : 'loading'
 
   return (
     <ErrorBoundary

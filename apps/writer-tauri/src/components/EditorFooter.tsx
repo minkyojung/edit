@@ -39,11 +39,11 @@ import { formatRelative } from '@/lib/formatRelative'
 import { formatModel } from '@/lib/formatModel'
 import type { CollabStatus } from '@/hooks/useCollabDoc'
 
-// "Connecting…" is suppressed for short transient periods because
-// every doc open passes through it on the way to "connected" — a
-// flash of warning text on every page load would be pure noise.
-// Past this threshold we treat the connecting state as stuck.
-const CONNECTING_GRACE_MS = 5_000
+// "Loading…" is suppressed during the short window every doc open
+// passes through (IDB hydration is normally <50ms). Past this
+// threshold something's actually wrong — locked file, throttled
+// disk, browser bug — and the footer surfaces the state.
+const LOADING_GRACE_MS = 5_000
 
 interface Props {
   view: EditorView | null
@@ -91,23 +91,23 @@ export function EditorFooter({ view, parentSlug, status }: Props) {
     return () => window.clearInterval(id)
   }, [])
 
-  // Track whether the connecting state has outlived its grace
-  // window. Reset whenever status changes — a fresh "connecting"
-  // gets its own grace period.
-  const [connectingStuck, setConnectingStuck] = useState(false)
+  // Track whether the loading state has outlived its grace window.
+  // Reset on every status transition so a fresh 'loading' gets its
+  // own grace period.
+  const [loadingStuck, setLoadingStuck] = useState(false)
   useEffect(() => {
-    if (status !== 'connecting') {
-      setConnectingStuck(false)
+    if (status !== 'loading') {
+      setLoadingStuck(false)
       return
     }
-    const id = window.setTimeout(() => setConnectingStuck(true), CONNECTING_GRACE_MS)
+    const id = window.setTimeout(() => setLoadingStuck(true), LOADING_GRACE_MS)
     return () => window.clearTimeout(id)
   }, [status])
 
   // Single-slot left content with strict priority: a real
-  // connection problem takes over the bar; below that, a mark
-  // hover beats the default stats; the default stats are last.
-  const showProblem = status === 'error' || (status === 'connecting' && connectingStuck)
+  // problem takes over the bar; below that, a mark hover beats
+  // the default stats; the default stats are last.
+  const showProblem = status === 'error' || (status === 'loading' && loadingStuck)
   const content = showProblem
     ? <ConnectionProblem status={status} />
     : hovered
@@ -196,7 +196,7 @@ function ConnectionProblem({ status }: { status: CollabStatus }) {
       <span aria-hidden style={{ color: 'var(--warning)' }}>
         ●
       </span>
-      <span>{isError ? 'Offline' : 'Connecting…'}</span>
+      <span>{isError ? 'Local storage unavailable' : 'Loading…'}</span>
     </span>
   )
 }

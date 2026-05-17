@@ -6,7 +6,7 @@
 import type * as Y from 'yjs'
 import type { IndexeddbPersistence } from 'y-indexeddb'
 
-export type CollabStatus = 'initializing' | 'connecting' | 'connected' | 'error'
+export type CollabStatus = 'loading' | 'ready' | 'error'
 
 export type StoredMarkStatus = 'pending' | 'accepted' | 'rejected'
 export type MarkKind =

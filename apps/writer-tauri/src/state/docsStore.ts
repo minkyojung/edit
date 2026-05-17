@@ -315,16 +315,19 @@ function buildHandle(
       useIngestStore.getState().markEdited(slug)
     })
   })
-  // Phase 3.C — WebSocket attach removed. IndexedDB is the only
-  // durable surface; status flips to 'connected' as soon as IDB
-  // finishes hydrating (which is what the rest of the app reads as
-  // "ready to write"). The 'connected' label is a slight misnomer
-  // post-removal — there's no server connection to speak of — but
-  // keeping the existing CollabStatus enum spares us a wave of
-  // call-site changes; a follow-up cleanup can introduce a 'local'
-  // status if the distinction starts mattering somewhere.
-  onStatus('connecting')
-  void handle.idbSynced.then(() => onStatus('connected'))
+  // IndexedDB is the single durable surface — status flips to 'ready'
+  // once IDB hydrates the ydoc. 'error' covers the rare IDB failure
+  // (Safari private mode / quota exhausted / browser bug) so the
+  // footer can surface "storage unavailable" instead of leaving the
+  // user silently writing into a session that won't persist.
+  onStatus('loading')
+  handle.idbSynced.then(
+    () => onStatus('ready'),
+    (err) => {
+      console.error('[collab] IDB hydrate failed', err)
+      onStatus('error')
+    },
+  )
   void set
   return handle
 }

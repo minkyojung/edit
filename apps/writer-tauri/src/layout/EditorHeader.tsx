@@ -42,10 +42,9 @@ interface EditorHeaderProps {
 }
 
 const STATUS_LABEL: Record<CollabStatus, string | null> = {
-  initializing: 'Starting…',
-  connecting: 'Connecting…',
-  connected: null,
-  error: 'Offline',
+  loading: 'Starting…',
+  ready: null,
+  error: 'Storage error',
 }
 
 export function EditorHeader({
