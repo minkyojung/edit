@@ -6,8 +6,8 @@
  */
 
 import { $markSchema, $markAttr } from '@milkdown/kit/utils';
-import type { Attrs, Mark } from '@milkdown/kit/prose/model';
-import type { SerializerState, MarkdownNode } from '@milkdown/kit/transformer';
+import type { Attrs } from '@milkdown/kit/prose/model';
+import type { MarkdownNode } from '@milkdown/kit/transformer';
 
 type ProofSuggestionKind = 'insert' | 'delete' | 'replace';
 
@@ -37,13 +37,17 @@ function buildCommonDomAttrs(mark: { attrs: { id?: string | null; by?: string | 
   return attrs;
 }
 
-function serializeProofMark(
-  state: SerializerState,
-  mark: Mark,
-  proof: string,
-  attrs: Record<string, string | null>
-): void {
-  state.withMark(mark, 'proofMark', undefined, { proof, attrs });
+// Marks are intentionally NOT serialised into markdown. Their identity
+// + metadata ride in the sidecar JSON file written alongside each .md
+// (Phase 4 — see lib/docFileSync.ts). On load, markResolver re-anchors
+// marks against the body text via quote + context + occurrence.
+//
+// This keeps the body markdown clean for external tools (vim, qmd,
+// git diff, Obsidian) — no `<span data-proof="...">` clutter — and
+// matches the on-disk layout decision documented in
+// docs/refactor-proof-sdk-removal/07-file-based-pivot.md (결정 3).
+const skipMarkSerialize = (): void => {
+  /* no-op: mark is silent at the markdown layer */
 }
 
 // Suggestion mark
@@ -105,13 +109,7 @@ export const proofSuggestionSchema = $markSchema('proofSuggestion', (ctx) => ({
   },
   toMarkdown: {
     match: (mark) => mark.type.name === 'proofSuggestion',
-    runner: (state, mark) => {
-      serializeProofMark(state, mark, 'suggestion', {
-        id: mark.attrs.id ?? null,
-        by: mark.attrs.by ?? null,
-        kind: normalizeSuggestionKind(mark.attrs.kind),
-      });
-    },
+    runner: skipMarkSerialize,
   },
 }));
 
@@ -158,12 +156,7 @@ export const proofCommentSchema = $markSchema('proofComment', (ctx) => ({
   },
   toMarkdown: {
     match: (mark) => mark.type.name === 'proofComment',
-    runner: (state, mark) => {
-      serializeProofMark(state, mark, 'comment', {
-        id: mark.attrs.id ?? null,
-        by: mark.attrs.by ?? null,
-      });
-    },
+    runner: skipMarkSerialize,
   },
 }));
 
@@ -225,12 +218,7 @@ export const proofFlaggedSchema = $markSchema('proofFlagged', (ctx) => ({
   },
   toMarkdown: {
     match: (mark) => mark.type.name === 'proofFlagged',
-    runner: (state, mark) => {
-      serializeProofMark(state, mark, 'flagged', {
-        id: mark.attrs.id ?? null,
-        by: mark.attrs.by ?? null,
-      });
-    },
+    runner: skipMarkSerialize,
   },
 }));
 
@@ -285,12 +273,7 @@ export const proofAuthoredSchema = $markSchema('proofAuthored', (ctx) => ({
   },
   toMarkdown: {
     match: (mark) => mark.type.name === 'proofAuthored',
-    runner: (state, mark) => {
-      serializeProofMark(state, mark, 'authored', {
-        by: mark.attrs.by ?? null,
-        id: mark.attrs.id ?? null,
-      });
-    },
+    runner: skipMarkSerialize,
   },
 }));
 
