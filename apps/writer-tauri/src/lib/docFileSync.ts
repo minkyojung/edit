@@ -33,6 +33,7 @@ import { pathForDoc, sidecarPathForDoc } from '@/lib/docPaths'
 import { readVaultFile, vaultFileExists, writeVaultFile } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
+import { deriveLabel } from '@/lib/docLabel'
 
 /** Result shape of {@link serializeDocToFiles} — the two strings we
  * would write side-by-side to disk (body + sidecar). Mirrors
@@ -324,10 +325,25 @@ export async function applyVaultToHandle(slug: string): Promise<ApplyVaultOutcom
   if (!loaded) return 'no-file'
 
   const fragment = handle.ydoc.getXmlFragment('prosemirror')
-  if (fragment.length > 0) return 'not-empty'
+  // Refuse to merge over real text. deriveLabel walks XmlText inserts,
+  // so a one-paragraph stub from MilkdownEditor's mount fill counts as
+  // "still empty" and we proceed. fragment.length alone would flip to 1
+  // the moment that stub lands and we'd skip every vault load.
+  if (deriveLabel(fragment).length > 0) return 'not-empty'
 
   const parser = useEditorViewStore.getState().parser
   if (!parser) return 'no-parser'
+
+  // Drop the empty-paragraph stub before applyUpdate. Without this, Yjs
+  // CRDT-merges the stub with the seeded content, producing a leading
+  // blank paragraph on every vault-loaded doc. The delete shares the
+  // 'doc-init' origin with seedMarkdownIntoYDoc so neither step enters
+  // the UndoManager.
+  if (fragment.length > 0) {
+    handle.ydoc.transact(() => {
+      fragment.delete(0, fragment.length)
+    }, 'doc-init')
+  }
 
   const ok = seedMarkdownIntoYDoc(handle.ydoc, loaded.md, parser)
   if (!ok) return 'no-parser'
@@ -458,4 +474,6 @@ if (import.meta.env.DEV) {
     return applyVaultToHandle(target)
   }
   ;(window as unknown as { __applyVault: typeof applyHandle }).__applyVault = applyHandle
+  ;(window as unknown as { __activeSlug: () => string | null }).__activeSlug = () =>
+    useDocsStore.getState().activeSlug
 }

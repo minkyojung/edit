@@ -29,7 +29,7 @@ import { deriveLabel } from '@/lib/docLabel'
 import { useIngestStore } from './ingestStore'
 import { useEditorViewStore } from './editorViewStore'
 import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
-import { installDocSync } from '@/lib/docFileSync'
+import { applyVaultToHandle, installDocSync } from '@/lib/docFileSync'
 import { useChatRuns } from '@/stores/chatRuns'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
@@ -318,13 +318,36 @@ function buildHandle(
   })
 
   // Vault file sync — observers that mark this slug dirty on any
-  // Y.Doc mutation. The auto-flush tick (Phase 4.B.1.b.iv.2+) reads
-  // dirtySlugs and writes the .md + .marks.json pair. Installed
-  // post-IDB-hydrate so the initial replay doesn't dirty the slug.
-  // Disposer is stashed on the handle so closeDoc can tear it down
-  // alongside the ydoc.
+  // Y.Doc mutation, plus a vault-to-memory load when IDB had nothing
+  // for this slug. The auto-flush tick (Phase 4.B.1.b.iv.2+) reads
+  // dirtySlugs and writes the .md + .marks.json pair. Disposer is
+  // stashed on the handle so closeDoc can tear it down alongside
+  // the ydoc.
+  //
+  // Vault load policy (Phase 4.B.1.c.iii):
+  //   IDB takes priority — if it had data for this slug, we use that
+  //   and skip the vault read. Only when the fragment is still empty
+  //   after IDB sync (fresh launch with cleared IDB, or a slug that
+  //   was first created on disk) do we hydrate from the vault. This
+  //   is the conservative pivot: existing user data can't be lost,
+  //   and Phase 4.E (file watcher) will introduce the symmetric
+  //   "outside edit wins" path for vim/external changes.
   let vaultSyncDisposer: (() => void) | null = null
-  void idb.whenSynced.then(() => {
+  void idb.whenSynced.then(async () => {
+    const fragment = ydoc.getXmlFragment('prosemirror')
+    // Use deriveLabel (text-walking) rather than fragment.length to
+    // recognize "effectively empty". MilkdownEditor.tsx:281-290 fills
+    // an empty fragment with a one-paragraph stub on mount; that mount
+    // can race ahead of this .then callback, leaving fragment.length===1
+    // even when no real text exists. seedDocBody handles the same
+    // ambiguity the same way — keeping the rule consistent across both
+    // seeding paths.
+    if (deriveLabel(fragment).length === 0) {
+      const outcome = await applyVaultToHandle(slug)
+      if (outcome === 'applied') {
+        console.log(`[vault:load] hydrated ${slug} from vault`)
+      }
+    }
     vaultSyncDisposer = installDocSync(slug, ydoc)
   })
   // Expose disposer via the handle's destroy chain by piggy-backing
