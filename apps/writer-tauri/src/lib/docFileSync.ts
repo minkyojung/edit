@@ -29,7 +29,7 @@ import type { Mark } from '@/domain/marks'
 import { markToSidecar } from '@/export/markAdapter'
 import type { AnchorSpec, MarkSidecar, MarksSidecarFile } from '@/export/types'
 import { pathForDoc, sidecarPathForDoc } from '@/lib/docPaths'
-import { writeVaultFile } from '@/lib/vault'
+import { readVaultFile, vaultFileExists, writeVaultFile } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
 
 /** Result shape of {@link serializeDocToFiles} — the two strings we
@@ -220,6 +220,71 @@ export function installDocSync(slug: string, ydoc: Y.Doc): () => void {
 const FLUSH_INTERVAL_MS = 2000
 let flushTimerId: number | null = null
 
+/** Read a doc's vault files (`.md` + `.marks.json`) from disk and
+ * return them as raw data. Inverse of {@link serializeDocToFiles}
+ * — at the data layer, before any Y.Doc / markStore mutation.
+ *
+ * Returns null when there's no `.md` for this doc — caller treats
+ * that as "no on-disk copy yet, fall back to whatever the in-memory
+ * source provides" (currently IDB; eventually a fresh empty doc).
+ *
+ * Sidecar handling:
+ *   - missing `.marks.json`  → returns `{md, sidecar: {version: 1, marks: []}}`
+ *     (a vault that was edited only by an external markdown-aware
+ *     tool wouldn't have our sidecar; this is the graceful path)
+ *   - malformed JSON         → same as missing, but logged once
+ *   - unsupported version    → same; sidecar evolution will add
+ *     a migrate hook here
+ *
+ * The function is pure read — no Y.Doc, no markStore. Wiring into
+ * the doc lifecycle is the next sub-step (4.B.1.c.ii+). */
+export async function loadDocFromFiles(
+  slug: string,
+): Promise<SerializedDocFiles | null> {
+  if (!getActiveVaultPath()) return null
+  const docs = useDocsStore.getState()
+  const known = docs.knownDocs.find((d) => d.slug === slug)
+  if (!known) return null
+  const mdPath = pathForDoc(known)
+  const sidecarPath = sidecarPathForDoc(known)
+  if (!mdPath || !sidecarPath) return null
+
+  if (!(await vaultFileExists(mdPath))) return null
+  let md: string
+  try {
+    md = await readVaultFile(mdPath)
+  } catch (err) {
+    console.warn('[vault:load] read md failed for', slug, err)
+    return null
+  }
+
+  let sidecar: MarksSidecarFile = { version: 1, marks: [] }
+  if (await vaultFileExists(sidecarPath)) {
+    try {
+      const raw = await readVaultFile(sidecarPath)
+      const parsed = JSON.parse(raw) as unknown
+      if (isSidecarFile(parsed)) {
+        sidecar = parsed
+      } else {
+        console.warn('[vault:load] sidecar shape unrecognised, ignoring', slug)
+      }
+    } catch (err) {
+      console.warn('[vault:load] sidecar parse failed for', slug, err)
+    }
+  }
+
+  return { md, sidecar }
+}
+
+/** Narrow a JSON.parse result to MarksSidecarFile. Defensive — the
+ * file on disk could have been hand-edited or written by an older /
+ * future version of the app. */
+function isSidecarFile(value: unknown): value is MarksSidecarFile {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Partial<MarksSidecarFile>
+  return v.version === 1 && Array.isArray(v.marks)
+}
+
 /** Walk dirty slugs once and persist each to its vault file pair.
  * Called from the periodic flush timer. Errors are isolated per
  * slug — a single failed write doesn't block the others — and the
@@ -303,4 +368,10 @@ if (import.meta.env.DEV) {
   }).__serializeDoc = handle
   ;(window as unknown as { __listMarks: typeof listMarks }).__listMarks = listMarks
   ;(window as unknown as { __dirtySlugs: () => string[] }).__dirtySlugs = getDirtySlugs
+  const loadHandle = async (slug?: string): Promise<SerializedDocFiles | null> => {
+    const target = slug ?? useDocsStore.getState().activeSlug
+    if (!target) return null
+    return loadDocFromFiles(target)
+  }
+  ;(window as unknown as { __loadDoc: typeof loadHandle }).__loadDoc = loadHandle
 }
