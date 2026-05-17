@@ -123,6 +123,16 @@ export const notify = {
   wikiSyncFailed() {
     toast.error('Sync failed', { description: 'See console for details' })
   },
+
+  // ── Vault ─────────────────────────────────────────────────────
+  /** User picked a folder that isn't empty and isn't an existing
+   * Writer vault. Vaults are "one folder = one app" so dropping our
+   * structure into ~/Documents would pollute their personal files. */
+  vaultFolderNotAcceptable(folderPath: string) {
+    toast.error('That folder is not empty', {
+      description: `${folderPath} has files we don't recognise. Pick an empty folder or an existing Writer vault.`,
+    })
+  },
 }
 
 // Dev-only console handle so smoke testing can fire each toast without

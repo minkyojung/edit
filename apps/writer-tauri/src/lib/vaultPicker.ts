@@ -10,30 +10,75 @@
 // access to within the fs:scope capability ($HOME / $DOCUMENT / etc).
 
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { exists, mkdir, readDir } from '@tauri-apps/plugin-fs'
 import { documentDir, join } from '@tauri-apps/api/path'
 import { useSettingsStore } from '@/state/settingsStore'
+import { VAULT_SUBDIRS } from '@/lib/vault'
+import { notify } from '@/lib/notify'
 
-/** Suggest the default vault location on first launch.
- * Falls back to undefined (Tauri uses OS default) if the platform
- * doesn't expose documentDir. */
-async function defaultVaultHint(): Promise<string | undefined> {
+/** Compute the default vault location (`~/Documents/Writer` on macOS,
+ * platform-equivalent elsewhere). Returns null when the platform
+ * doesn't expose documentDir so callers can fall back gracefully. */
+async function defaultVaultPath(): Promise<string | null> {
   try {
     const docs = await documentDir()
     return await join(docs, 'Writer')
   } catch {
-    return undefined
+    return null
   }
 }
 
+/** Ensure the default vault folder exists on disk so the OS picker
+ * can navigate INTO it (instead of dropping the user at ~/Documents
+ * and asking them to type "Writer" themselves). Side effect only —
+ * does not register anything in settingsStore. Returns the path on
+ * success, null when documentDir is unavailable. */
+async function ensureDefaultVaultFolder(): Promise<string | null> {
+  const path = await defaultVaultPath()
+  if (!path) return null
+  if (!(await exists(path))) {
+    await mkdir(path, { recursive: true })
+  }
+  return path
+}
+
+/** Decide whether a user-picked folder is acceptable as a vault.
+ *
+ * Policy: "one folder = one Writer vault". The folder is acceptable
+ * when it's empty (a fresh vault) or it's already a Writer vault
+ * (some/all of our four standard subdirectories present, no foreign
+ * files). Anything else gets rejected so the user doesn't drop our
+ * structure into ~/Documents or another folder with their own files,
+ * which would mix our metadata into their personal tree.
+ *
+ * Hidden entries (starting with `.`) are ignored — `.DS_Store`,
+ * `.git/`, etc. don't count as "foreign content". */
+async function isAcceptableVaultFolder(path: string): Promise<boolean> {
+  const entries = await readDir(path)
+  const visible = entries.filter((e) => !e.name.startsWith('.'))
+  if (visible.length === 0) return true
+
+  const ourDirs = new Set<string>(VAULT_SUBDIRS)
+  return visible.every((e) => e.isDirectory && ourDirs.has(e.name))
+}
+
 /** Open the OS folder picker and persist the selection. Returns the
- * chosen absolute path on success, or null when the user cancels.
+ * chosen absolute path on success, or null when the user cancels or
+ * picks an unacceptable folder.
+ *
+ * Acceptable folder = empty, or already a Writer vault. See
+ * {@link isAcceptableVaultFolder}.
  *
  * Side effect on success: settingsStore.setActiveVaultPath(path).
  * Tauri auto-adds the picked path to the fs scope for this session
  * (see plugin-dialog docs); subsequent app launches re-add via the
  * static fs:scope in capabilities/default.json. */
 export async function pickVault(): Promise<string | null> {
-  const defaultPath = await defaultVaultHint()
+  // Pre-create the default vault folder so the picker opens INSIDE it
+  // (the user can just click "Choose" without typing a folder name).
+  // Picking a different location still works — the user navigates
+  // away from the default in the dialog as usual.
+  const defaultPath = (await ensureDefaultVaultFolder()) ?? undefined
   const result = await openDialog({
     title: 'Select Vault Folder',
     directory: true,
@@ -44,6 +89,11 @@ export async function pickVault(): Promise<string | null> {
   if (result === null || Array.isArray(result)) {
     // Cancel → null. Array would mean multiple:true which we don't
     // set; treat defensively as cancel.
+    return null
+  }
+  const acceptable = await isAcceptableVaultFolder(result)
+  if (!acceptable) {
+    notify.vaultFolderNotAcceptable(result)
     return null
   }
   useSettingsStore.getState().setActiveVaultPath(result)
