@@ -112,6 +112,20 @@ export interface ActOnMarkArgs {
   by: string
 }
 
+/** Arguments for `MarkStore.restore`. The caller supplies the
+ * complete pre-existing Mark plus the resolved PM range; the store
+ * re-encodes startRel/endRel and writes the Y.Map + PM mark atomically. */
+export interface RestoreMarkArgs {
+  slug: string
+  /** Complete Mark with original id / metadata. `startRel` and
+   * `endRel` from this object are ignored — restore re-encodes them
+   * from the resolved anchor below, since the saved positions were
+   * encoded against a different Y.Doc instance. */
+  mark: Mark
+  /** Resolved PM range from markResolver. */
+  anchor: { from: number; to: number }
+}
+
 /** Filter options for `MarkStore.list`. */
 export interface ListMarksOptions {
   /** When provided, return only marks whose status matches. Omit
@@ -231,6 +245,32 @@ export interface MarkStore {
    * to UI without requiring a separate poll loop.
    */
   list(slug: string, options?: ListMarksOptions): Mark[]
+
+  /**
+   * Restore a previously-serialised mark to a known anchor.
+   *
+   * Use case: Phase 4.B vault load — the sidecar .marks.json carries
+   * full mark metadata (id, status, createdAt, by, content, ...) and
+   * a semantic anchor (quote + context + occurrence). The caller
+   * (docFileSync) resolves the semantic anchor against the live doc
+   * text via markResolver, then calls restore() with the resolved
+   * PM range plus the original Mark.
+   *
+   * Difference from add():
+   *   - id is preserved (not regenerated) — sidecars round-trip
+   *     identity across save/load cycles
+   *   - status, createdAt, by, etc. preserved
+   *   - startRel/endRel are RE-ENCODED from the resolved anchor
+   *     (the sidecar's saved values were Y.RelativePositions in a
+   *     prior Y.Doc instance; they're meaningless here)
+   *
+   * Idempotent — calling twice for the same mark id is harmless
+   * (Y.Map.set overwrites, PM addMark is no-op on identical range).
+   *
+   * Returns true on success, false when the view/schema isn't ready
+   * or the anchor falls outside the doc.
+   */
+  restore(args: RestoreMarkArgs): Promise<boolean>
 
   /**
    * Subscribe to mark changes for a doc. The listener is called

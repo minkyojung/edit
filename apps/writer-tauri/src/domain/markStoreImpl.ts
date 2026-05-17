@@ -41,6 +41,7 @@ import type {
   ListMarksOptions,
   MarkStore,
   MarksListener,
+  RestoreMarkArgs,
 } from './markStore'
 import { decodeAnchor, encodeAnchor } from './internal/anchor'
 import { findQuoteInDoc, readQuoteAt } from './internal/quote'
@@ -289,7 +290,42 @@ export function createMarkStore(deps: MarkStoreDeps): MarkStore {
     return () => map.unobserve(notify)
   }
 
-  return { add, accept, reject, get, list, subscribe }
+  async function restore(args: RestoreMarkArgs): Promise<boolean> {
+    const handle = getHandle(args.slug)
+    if (!handle || !handle.view) return false
+    const { view, ydoc } = handle
+    const schemaName = schemaNameForKind(args.mark.kind)
+    const markType = view.state.schema.marks[schemaName]
+    if (!markType) return false
+
+    // Re-encode the anchor against THIS Y.Doc — the sidecar's saved
+    // startRel/endRel were Y.RelativePositions in a prior Y.Doc
+    // instance and don't survive serialisation.
+    let startRel: string
+    let endRel: string
+    try {
+      startRel = encodeAnchor(view, args.anchor.from)
+      endRel = encodeAnchor(view, args.anchor.to)
+    } catch (e) {
+      void e
+      return false
+    }
+
+    const mark: Mark = { ...args.mark, startRel, endRel }
+    const pmAttrs = buildPMAttrs(mark)
+
+    ydoc.transact(() => {
+      marksMapOf(ydoc).set(mark.id, mark)
+      const tr = view.state.tr
+        .addMark(args.anchor.from, args.anchor.to, markType.create(pmAttrs))
+        .setMeta(MARK_ORIGIN, { kind: 'restore', id: mark.id })
+      view.dispatch(tr)
+    }, MARK_ORIGIN)
+
+    return true
+  }
+
+  return { add, accept, reject, get, list, subscribe, restore }
 }
 
 /** Compose the attrs we stamp onto the inline PM mark.
