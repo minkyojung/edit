@@ -543,19 +543,12 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       }),
       listen<ProposalEvent>('claude:proposal', async (e) => {
         if (e.payload.runId !== runId) return
-        // applyProposal POSTs to /ops, so the mark is created
-        // server-side regardless of whether this client's editor
-        // for `slug` is currently mounted. The earlier "live view
-        // OR enqueue" branch is gone — proof-server delivers the
-        // resulting mark via Hocuspocus broadcast to whichever
-        // clients have the doc open (now or later), which is the
-        // canonical multi-client flow proof-sdk's agent docs assume.
-        //
-        // Still drop proposals for handles we don't track in this
-        // session (slug closed / archived). The sidecar emits
-        // events for a beat after run cancel; the guard keeps a
-        // late event from mutating a doc the user clearly walked
-        // away from.
+        // applyProposal writes directly to the doc's Y.Doc + Y.Map.
+        // The handle for `slug` must be open in this session — if
+        // it isn't (slug closed / archived), drop the proposal.
+        // The sidecar emits events for a beat after run cancel; the
+        // guard keeps a late event from mutating a doc the user
+        // clearly walked away from.
         const handle = useDocsStore.getState().handles[slug]
         if (!handle) {
           console.warn('[chat] proposal for closed doc dropped', { slug, runId })

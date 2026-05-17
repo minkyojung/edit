@@ -61,9 +61,6 @@ export function App() {
 // Everything inside BootGate — by the time this renders, the catalog
 // bootstrap has finished, so React subscriptions land on a stable
 // store and the sidebar's first paint reflects the user's real data.
-// proof-server health check (previously a separate EngineGate above
-// this) is gone in Phase 3.D — the app no longer depends on a sidecar
-// being up.
 function AppContent() {
   const activeSlug = useDocsStore((s) => s.activeSlug)
   const handles = useDocsStore((s) => s.handles)

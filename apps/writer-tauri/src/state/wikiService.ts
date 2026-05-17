@@ -1,5 +1,4 @@
-// Wiki bootstrap — Karpathy "wiki grows from use" structure on top of
-// proof-sdk.
+// Wiki bootstrap — Karpathy "wiki grows from use" structure.
 //
 // We do NOT pre-seed any wiki pages on first launch. Empty seed pages
 // with abstract names (belief / entity / episode) just confused the
@@ -126,12 +125,9 @@ const SYSTEM_PAGE_INDEX: SystemPageConfig = {
 }
 
 /** Shared body for the three lazy-create helpers below. Probes the
- * catalog, then on first-need mints a client-side slug so the page
- * exists locally even when proof-server is unreachable. The server
- * register call is fire-and-forget — failures leave the page local
- * until the next online boot. Empty body is the post-relaxation
- * default for system pages (ZWS placeholder caused the placeholder-
- * hint regression in commit 046a0701). */
+ * catalog, then on first-need mints a client-side slug. Empty body
+ * is the default for system pages (a ZWS placeholder caused the
+ * placeholder-hint regression in commit 046a0701). */
 async function ensureSystemPage(
   config: SystemPageConfig,
 ): Promise<string | null> {
@@ -289,14 +285,6 @@ export async function createCustomWikiPage(
 }
 
 /** Read a wiki doc's markdown body from the client side.
- *
- * Phase 3.A continued — the proof-server fetch this used to do has
- * the same projection failure as the daily-note read in
- * agent/ingest.ts: server's deriveMarkdownFromFragment crashes on
- * our Y.XmlFragment, so the `markdown` column stays empty no
- * matter what's in the page. Reading the live Y.Doc is the only
- * path that reflects what the user (or ingest accept) actually
- * wrote.
  *
  * Strategy mirrors agent/ingest.ts:readDocMarkdown:
  *   - Active doc → Milkdown's serializer on view.state.doc

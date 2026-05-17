@@ -1,5 +1,5 @@
 // Shared types for the chat surface (threads + turns).
-// Stored in the document's Y.Doc so they sync across devices via Hocuspocus.
+// Stored in the document's Y.Doc; persisted locally via IndexedDB.
 
 /** Models the user can pick from in the PromptInput model selector.
  * Kept narrow + explicit so the UI can display friendly labels without

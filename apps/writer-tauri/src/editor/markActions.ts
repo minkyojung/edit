@@ -1,23 +1,19 @@
 /**
  * Mark actions: accept / reject / dismiss.
  *
- * State changes (accept = apply suggestion content + flip mark to
- * accepted, reject = drop the suggestion) route through proof-server's
- * canonical mutation surface (`POST /documents/:slug/ops`) so the
- * server originates the Yjs update. Drift detection can't fire on
- * changes the server itself produced, which retires the split-tr +
- * anchor-on-existing-text workarounds the previous direct-Y.Map path
- * needed to dodge revert races.
+ * Accept = apply suggestion content + flip mark to accepted.
+ * Reject = drop the suggestion. Both go through markStore which
+ * coordinates the PM transaction and the Y.Map('marks') update under
+ * a single 'mark-action' origin so UndoManager folds them into one
+ * undo step.
  *
  * Auxiliary `Y.Map('authoredMeta')` writes (sourceSlug / model /
- * acceptedAt — fields proof-sdk doesn't model) stay client-side after
- * a successful accept. The server treats that map as opaque binary
- * (per the comment in `useCollabDoc.AuthoredMeta`), so writing it
- * locally doesn't trigger any reconciliation path.
+ * acceptedAt) ride sibling to Y.Map('marks') — see useCollabDoc
+ * for the AuthoredMeta shape.
  *
  * Read-only helpers (findInlineAnchor / hasProofSuggestionInDoc /
- * getProofCommentMark) stay unchanged — they're how the hover bar and
- * popover decide visibility off the live PM mark.
+ * getProofCommentMark) read the live PM mark; the hover bar and
+ * popover use them for visibility decisions.
  */
 
 import type { EditorView } from '@milkdown/kit/prose/view'
@@ -93,12 +89,6 @@ export function getProofCommentMark(
 /**
  * Accept a `proofSuggestion` mark.
  *
- * Phase 2.3 — re-routed off `proofClient.ops` to `markStore.accept`.
- * The server path failed with 404 ("Mark not found") whenever the
- * mark was created locally via markStore.add (Phase 2.4), since the
- * server never saw it. Both add + accept now flow through markStore;
- * the server is bypassed for the entire suggestion lifecycle.
- *
  * markStore.accept handles internally:
  *   - drift check (mark.quote vs current text → status='stale' if
  *     diverged, no body mutation, returns false)
@@ -107,10 +97,8 @@ export function getProofCommentMark(
  *   - everything under a single 'mark-action' Yjs origin so the
  *     UndoManager reverses it as one Cmd+Z step
  *
- * `view` and `ydoc` parameters are kept on the signature for caller
- * compatibility (Phase 2 migration ground rule — change one thing at
- * a time). They are unused now; the markStore resolves them from
- * the store registry internally.
+ * `view` and `ydoc` parameters are unused but kept on the signature
+ * for caller compatibility; markStore resolves them internally.
  */
 export async function acceptMark(
   slug: string,
@@ -127,12 +115,10 @@ export async function acceptMark(
 }
 
 /**
- * Reject a `proofSuggestion` mark.
- *
- * Phase 2.2 — re-routed off `proofClient.ops` to `markStore.reject`.
- * Symmetric with acceptMark above. Reject is the simpler of the two
- * (no body mutation, no drift check) — just removes the inline PM
- * mark and the Y.Map entry under a single 'mark-action' origin.
+ * Reject a `proofSuggestion` mark. Symmetric with acceptMark — simpler
+ * because there's no body mutation and no drift check. Removes the
+ * inline PM mark and the Y.Map entry under a single 'mark-action'
+ * origin.
  */
 export async function rejectMark(
   slug: string,
@@ -167,11 +153,6 @@ export async function rejectMark(
  *
  * No user-facing toast on failure; the rerun path shouldn't be
  * interrupted by mark cleanup hiccups.
- *
- * Phase 2.1 — first call site migrated off proofClient.ops. The
- * `ydoc` parameter is retained for the fallback path; once Phase 3
- * lands and proof-server is gone, the live-only markStore path will
- * handle every meaningful case and the fallback can collapse.
  */
 export async function cleanupMark(
   slug: string,

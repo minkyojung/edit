@@ -1,23 +1,14 @@
 /**
  * Convert a Claude `propose_change` tool call into a mark.
  *
- * Phase 2.4 — re-routed from `proofClient.ops(/suggestion.add/comment.add)`
- * to `markStore.add`. The previous /ops round-trip was what surfaced the
- * 409 Conflict the user hit on /proofread: proof-server's projection
- * repair couldn't serialize our Y.XmlFragment (`node.children.some`
- * crash class), so the server held the doc in PROJECTION_STALE and
- * rejected every /ops call against it.
- *
- * Going through markStore writes the mark directly into the local
- * Y.Doc + ProseMirror under a single 'mark-action' origin. proof-server
- * keeps running in the background — its projection repair still fails
- * in its own logs, but the user-visible mark life-cycle is now
- * decoupled from that failure. Phase 3 removes the server entirely.
+ * Writes the mark directly into the doc's Y.Doc + ProseMirror via
+ * markStore.add (single 'mark-action' Yjs origin so UndoManager
+ * folds it into one undo step).
  *
  * Validation responsibilities split:
  *   - This file: domain validation that callers (chat.ts) already
  *     have stable reason codes for ('quote_empty', 'content_empty',
- *     'noop_replace', 'comment_empty'). Kept verbatim.
+ *     'noop_replace', 'comment_empty').
  *   - markStore.add: anchor existence, view readiness, internal
  *     shape. Its failure reasons (`view_not_ready`, `anchor_not_found`,
  *     `invalid_args`, `noop`) are translated to ApplyOutcome reasons

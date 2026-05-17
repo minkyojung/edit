@@ -136,10 +136,9 @@ export type MarksListener = (marks: Mark[]) => void
  *   └──────────────┘           └───────────┘    sees both halves)
  *
  * The store does not own a backing data structure; mutations land in
- * the doc's existing Y.Doc + Y.Map('marks'), and Yjs handles the
- * propagation (IDB persistence + HocuspocusProvider sync if present).
- * The store is a façade — its job is to ensure both mutations always
- * happen together under the right origin.
+ * the doc's existing Y.Doc + Y.Map('marks'), and Yjs handles
+ * persistence (IDB). The store is a façade — its job is to ensure
+ * both mutations always happen together under the right origin.
  *
  * Read methods (`get`, `list`, `subscribe`) are thin wrappers around
  * the same Y.Map, with the value-shape validation from `isValidMark`

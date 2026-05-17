@@ -108,10 +108,9 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
   }, [])
 
   // Auto-create the first thread once threads hydrate from the doc's
-  // Y.Doc + IDB. Phase 3.C removed the server-sync gate (we used to
-  // wait for Hocuspocus's initial 'synced' event to avoid racing with
-  // server-sent threads); threads.ready is now the only readiness
-  // signal — it flips true once useThreads has observed the Y.Array.
+  // Y.Doc + IDB. threads.ready flips true after useThreads observes
+  // the Y.Array — the single readiness signal we need now that the
+  // doc is local-only (no server response to race against).
   useEffect(() => {
     if (!threads.ready) return
     if (threads.threads.length === 0) {

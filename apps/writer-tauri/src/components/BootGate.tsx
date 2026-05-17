@@ -1,9 +1,4 @@
-// Blocks the app UI until docsStore.bootstrap() finishes — same
-// shape as EngineGate, second floor up in the gate stack:
-//
-//   EngineGate (proof-server health)
-//     └─ BootGate (catalog bootstrap)
-//          └─ AppContent
+// Blocks the app UI until docsStore.bootstrap() finishes.
 //
 // What bootstrap() does, and why we wait for it before any UI
 // renders:
@@ -11,9 +6,9 @@
 //   1. Migrate the legacy single-slug localStorage entry into a
 //      catalog-shaped daily so existing content survives the
 //      multi-doc rewrite.
-//   2. Ensure today's daily exists in the catalog (creating it on
-//      the server if missing).
-//   3. Wire the active slug + connect its collab handle.
+//   2. Ensure today's daily exists in the catalog (creating it if
+//      missing).
+//   3. Wire the active slug + open its collab handle.
 //
 // Until those land, knownDocs is empty or half-populated and the
 // sidebar shows a stale shape — a user clicking "New Note" mid-
@@ -30,7 +25,7 @@ import { useEffect, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocsStore } from '@/state/docsStore'
 
-const LOADER_DELAY_MS = 400 // same as EngineGate — keep flashes off fast boots
+const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
 interface Props {
   children: React.ReactNode
@@ -50,7 +45,7 @@ export function BootGate({ children }: Props) {
   }, [bootstrap])
 
   // Delay the visual loader by 400 ms so a fast bootstrap doesn't
-  // produce a spinner flash. Matches EngineGate's behaviour.
+  // produce a spinner flash.
   useEffect(() => {
     if (!bootstrapping) return
     const t = window.setTimeout(() => setShowLoader(true), LOADER_DELAY_MS)

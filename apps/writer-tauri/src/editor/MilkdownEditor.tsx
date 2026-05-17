@@ -318,9 +318,8 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
           //                     into one undo step, so Cmd+Z is one
           //                     keystroke either way.
           //
-          // Anything outside these origins (e.g. server reconciliation
-          // updates from Hocuspocus) stays out of the undo stack so a
-          // remote write can't be undone into existence.
+          // Anything outside these origins stays out of the undo stack
+          // so a programmatic write can't be undone into existence.
           const xmlFragment = ydoc.getXmlFragment('prosemirror')
           const marksMap = ydoc.getMap('marks')
           const undoManager = new UndoManager([xmlFragment, marksMap], {

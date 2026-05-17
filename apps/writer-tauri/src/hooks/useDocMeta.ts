@@ -2,10 +2,9 @@
 // Captures `type` (daily / writing / wiki:*) and, for daily
 // entries, the ISO date the entry anchors to.
 //
-// Lives in ydoc.getMap('meta') so it syncs over Hocuspocus next to
-// the body and title; the docsStore mirrors a slim copy in
-// localStorage for sidebar listings without forcing every doc to
-// open its provider.
+// Lives in ydoc.getMap('meta') so it sits next to the body and title;
+// the docsStore mirrors a slim copy in localStorage for sidebar
+// listings without forcing every doc handle to be open.
 
 import * as Y from 'yjs'
 

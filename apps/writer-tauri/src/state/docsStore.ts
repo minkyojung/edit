@@ -19,11 +19,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import * as Y from 'yjs'
-// HocuspocusProvider removed in Phase 3.C; CollabHandle.provider field
-// removed in Phase 3.F.4. IndexedDB is the single durable surface.
+// IndexedDB is the single durable surface — there's no WebSocket sync.
 import { IndexeddbPersistence } from 'y-indexeddb'
-// proofClient + waitUntilReady removed (Phase 3.C). All HTTP /
-// WebSocket paths to the proof-server are gone from this module.
 import { generateClientSlug } from '@/lib/slug'
 import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
@@ -265,11 +262,10 @@ interface DocsState {
    * sidebar re-render; surfaces that want to surface a refusal
    * (drag-and-drop drop targets) can read the return value. */
   /** Seed a new doc's body from a markdown string. Used by
-   * createCustomWikiPage / ensureSystemPage to plant initial content
-   * — the role proof-server's createDoc(name, body) filled before
-   * Phase 3.B. Ensures the handle (IDB shard + Y.Doc) exists first,
-   * then applies a markdown → PM → Y.Doc update under the
-   * 'doc-init' origin so the seed stays out of the undo stack.
+   * createCustomWikiPage / ensureSystemPage to plant initial content.
+   * Ensures the handle (IDB shard + Y.Doc) exists first, then applies
+   * a markdown → PM → Y.Doc update under the 'doc-init' origin so the
+   * seed stays out of the undo stack.
    * No-op when the markdown is empty or when the editor parser
    * isn't mounted yet (caller should retry once a doc is active). */
   seedDocBody: (slug: string, markdown: string) => Promise<boolean>
@@ -287,10 +283,7 @@ interface DocsState {
 
 // Synchronous local-only handle construction. The Y.Doc + IndexedDB
 // layer come up immediately so the editor can mount and the user can
-// type — even when proof-server is unreachable. WebSocket sync is
-// strictly background; see attachProviderWhenReady for the second
-// phase. This is the offline-first pattern used by Tldraw/Affine/Linear:
-// local writes never block on the network.
+// type. Local writes never block on the network.
 function buildHandle(
   slug: string,
   set: (fn: (s: DocsState) => Partial<DocsState>) => void,
@@ -340,11 +333,10 @@ function buildHandle(
 //
 // React Strict Mode intentionally double-invokes effects in dev, so
 // BootGate's `useEffect(() => bootstrap(), [])` fires twice in quick
-// succession. The first call awaits proofClient.createDoc(today, ...)
-// for a ~100ms round-trip; in that window the second call sees the
-// catalog still empty and ALSO calls createDoc. Two server-side docs
-// for the same date, two sidebar tabs, every boot. Catalog audit
-// confirmed this pattern: 12 of 14 days carried exactly 2 dailies.
+// succession. Without a guard, the second call sees the catalog
+// half-built and races to create a duplicate daily — historically
+// 12 of 14 days carried exactly 2 dailies. This module-level flag
+// short-circuits the second call.
 //
 // Module-level flag (not in store state) so it lives across the
 // store's set() updates — store-state guard would race with the same
@@ -407,14 +399,12 @@ export const useDocsStore = create<DocsState>()(
           // must always greet the user with "today".
           //
           // Empty body — dailies derive their label from meta.date,
-          // so the body must not seed a heading that would duplicate
-          // it. proof-server accepts empty bodies post-relaxation.
+          // so the body must not seed a heading that would duplicate it.
+          // Y.Doc + IDB shard come into being on first ensureHandle.
           const slug = generateClientSlug()
           const meta: KnownDoc = { slug, type: 'daily', date: today }
           todaysDaily = meta
           set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-          // Phase 3.B — proof-server register removed. New daily's
-          // Y.Doc + IDB shard come into being on first ensureHandle.
         }
 
         // Add today to openSlugs if it isn't already there, and make
@@ -459,7 +449,6 @@ export const useDocsStore = create<DocsState>()(
               const slug = generateClientSlug()
               const meta: KnownDoc = { slug, type: 'daily', date }
               set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-              // Phase 3.B — proof-server register removed.
             }
             cursor.setDate(cursor.getDate() + 1)
           }
@@ -601,7 +590,6 @@ export const useDocsStore = create<DocsState>()(
             createdAt: new Date().toISOString(),
           })
         }
-        // Phase 3.B — proof-server register removed.
       },
 
       openDaily: async (date) => {
@@ -611,13 +599,10 @@ export const useDocsStore = create<DocsState>()(
         )
         if (!known) {
           // Empty body — dailies derive their label from meta.date, so
-          // the body stays visually clean. Client-side slug + fire-and-
-          // forget keeps "I can always open the daily for any date"
-          // true even when proof-server is unreachable.
+          // the body stays visually clean.
           const slug = generateClientSlug()
           known = { slug, type: 'daily', date: targetDate }
           set((s) => ({ knownDocs: [...s.knownDocs, known!] }))
-          // Phase 3.B — proof-server register removed.
         }
         const slug = known.slug
         if (!get().openSlugs.includes(slug)) {
@@ -671,7 +656,6 @@ export const useDocsStore = create<DocsState>()(
             createdAt: new Date().toISOString(),
           })
         }
-        // Phase 3.B — proof-server register removed.
         return slug
       },
 
@@ -698,7 +682,6 @@ export const useDocsStore = create<DocsState>()(
         // stack so Cmd+Z right after opening doesn't strip the name.
         await ensureHandle(slug, set, get, { seedFirstLine: title })
         const handle = get().handles[slug]
-        // Phase 3.B — proof-server register removed.
         if (handle) {
           writeDocMeta(handle.ydoc, {
             type: 'writing',
@@ -837,15 +820,11 @@ export const useDocsStore = create<DocsState>()(
         const groupSlugs = state.knownDocs
           .filter((d) => d.archivedAt === stamp)
           .map((d) => d.slug)
-        // Best-effort sidecar deletion. If a slug fails (already gone,
-        // 404, network blip), keep going so the user isn't stuck with
-        // orphaned trash entries.
+        // Wipe each slug's IDB shard. Without this, a future tab
+        // re-using the same slug would resurrect the cached Y.Doc
+        // updates.
         let failed = 0
         for (const s of groupSlugs) {
-          // Phase 3.B — proof-server hard-delete removed. IDB shard
-          // wipe below is the only durable side effect now; without
-          // it a future tab re-using the same slug would resurrect
-          // the cached Y.Doc updates.
           indexedDB.deleteDatabase(s)
         }
         const groupSet = new Set(groupSlugs)
@@ -916,7 +895,6 @@ export const useDocsStore = create<DocsState>()(
         if (archived.length === 0) return
         let failed = 0
         for (const d of archived) {
-          // Phase 3.B — proof-server hard-delete removed.
           indexedDB.deleteDatabase(d.slug)
         }
         const archivedSet = new Set(archived.map((d) => d.slug))
