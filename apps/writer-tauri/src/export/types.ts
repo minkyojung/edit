@@ -84,3 +84,32 @@ export interface SerializedDoc {
   md: string
   sidecar: MarksSidecarFile
 }
+
+/**
+ * Per-mark resolution result after deserialize + resolve.
+ *
+ * `range` is null when status is 'orphaned'. The mark id is preserved either
+ * way so the caller can show "this mark lost its anchor".
+ */
+export interface ResolvedMark {
+  id: string
+  kind: MarkKind
+  attrs: Record<string, string | null | undefined>
+  status: ResolutionStatus
+  range: { from: number; to: number } | null
+  /** Echo of the original anchor — useful for orphaned UX (show user
+   * what we were looking for). */
+  anchor: AnchorSpec
+}
+
+/**
+ * Full deserialize output: the document plain text + per-mark resolution.
+ *
+ * `plainText` is the markdown-parsed text (not a PM doc); resolved ranges
+ * are char offsets into it. The wrapping flow turns this back into a real
+ * PM doc + Y.Doc when importing.
+ */
+export interface DeserializedDoc {
+  plainText: string
+  marks: ResolvedMark[]
+}
