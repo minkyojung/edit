@@ -292,32 +292,21 @@ export function createMarkStore(deps: MarkStoreDeps): MarkStore {
   return { add, accept, reject, get, list, subscribe }
 }
 
-/** Compose the attrs we stamp onto the inline PM mark. Hover popovers
- * + the click-popover read straight from these attrs (see
- * MarkPopoverLayer.tsx:54-56 and the hover bar), so every user-visible
- * field — quote, body text, suggestion content, by — has to be here
- * even though it's also in the Y.Map entry.
+/** Compose the attrs we stamp onto the inline PM mark.
  *
- * The `kind` attr on the suggestion mark carries the sub-type
- * (insert/delete/replace) to match proof-sdk's schema, which models
- * those three as a single proofSuggestion mark with a kind attr
- * rather than three separate marks. */
+ * Schema-narrowed surface (Phase 3.G.2): PM marks carry only the
+ * anchor identity (`id` + `by`) and, for suggestions, the visual
+ * sub-type (`kind` — insert/delete/replace, drives the deco CSS
+ * class and accept-branch selection in markStoreImpl). Rich
+ * metadata (quote / content / status / createdAt / sourceLabel / …)
+ * lives on the domain Mark in Y.Map('marks'), keyed by `id`. Hover
+ * popover + click-popover both read from the Y.Map domain object —
+ * see MarkPopoverLayer.tsx header comment ("backed Mark domain
+ * object, not from PM mark.attrs"). */
 function buildPMAttrs(mark: Mark): Record<string, unknown> {
   const base = { id: mark.id, by: mark.by }
-  if (mark.kind === 'comment') {
-    return {
-      ...base,
-      quote: mark.quote,
-      text: mark.text ?? '',
-    }
-  }
   if (mark.kind === 'suggestion') {
-    return {
-      ...base,
-      kind: mark.suggestionType ?? 'replace',
-      quote: mark.quote,
-      content: mark.content ?? '',
-    }
+    return { ...base, kind: mark.suggestionType ?? 'replace' }
   }
   return base
 }
