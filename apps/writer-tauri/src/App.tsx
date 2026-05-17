@@ -32,7 +32,13 @@ import {
 // their actual API and the dev handles fall away.
 import '@/lib/vaultPicker'
 import '@/lib/vault'
-import '@/lib/docFileSync'
+import { startAutoFlush } from '@/lib/docFileSync'
+
+// Phase 4.B.1.b.iv.2 — begin the periodic vault flush loop on app
+// load. Idempotent: safe under React StrictMode's double-mount and
+// against any future caller that might also start it. Currently a
+// dummy console-log tick; iv.3 swaps in the real save pipeline.
+startAutoFlush()
 
 // Module-scope so the configs array reference is stable across
 // renders — required by useLazyMaterialize's caller contract

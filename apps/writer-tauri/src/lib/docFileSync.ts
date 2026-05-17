@@ -187,6 +187,49 @@ export function installDocSync(slug: string, ydoc: Y.Doc): () => void {
   }
 }
 
+// ── Auto-flush timer ─────────────────────────────────────────────
+//
+// Obsidian-style periodic flush: every FLUSH_INTERVAL_MS the timer
+// checks `dirtySlugs` and (in a later sub-phase) writes the changed
+// docs to the vault. This module owns the timer lifecycle so the
+// rest of the app sees a simple start/stop API.
+//
+// In this sub-phase (iv.2) the timer body is a dummy console log —
+// we want to verify the cadence first, then replace the callback
+// with the real serialize-and-write pipeline in iv.3.
+//
+// The 2000ms interval matches what Obsidian observes in practice
+// (~2s periodic flush during continuous typing, per its plugin
+// surface). It's the "natural feel" point — short enough that
+// power loss won't lose more than a couple of seconds of typing,
+// long enough that a fast typist doesn't trigger constant disk
+// I/O.
+
+const FLUSH_INTERVAL_MS = 2000
+let flushTimerId: number | null = null
+
+/** Begin the periodic flush loop. Idempotent — calling twice is a
+ * no-op so multiple boot paths can call it without coordination. */
+export function startAutoFlush(): void {
+  if (flushTimerId !== null) return
+  flushTimerId = window.setInterval(() => {
+    const dirty = getDirtySlugs()
+    if (dirty.length === 0) return
+    // iv.3 will replace this with the real serialize+write pipeline.
+    console.log('[vault:flush] tick — dirty slugs:', dirty)
+  }, FLUSH_INTERVAL_MS)
+}
+
+/** Stop the periodic flush loop. Idempotent. Called on app teardown
+ * (Tauri ExitRequested) so the timer doesn't leak into a closing
+ * window. iv.4 will also drive a final synchronous flush from this
+ * path so unsaved dirty slugs land on disk before exit. */
+export function stopAutoFlush(): void {
+  if (flushTimerId === null) return
+  window.clearInterval(flushTimerId)
+  flushTimerId = null
+}
+
 // Dev-only console handle. Pass a slug, or omit to use the active
 // doc. Returns null when no doc is active or the serializer isn't
 // ready yet.
