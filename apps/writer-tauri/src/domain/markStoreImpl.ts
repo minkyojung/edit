@@ -450,6 +450,24 @@ function applySuggestion(
 
   const acceptedAt = new Date().toISOString()
 
+  // Per-branch responsibility for removing the suggestion's inline
+  // mark:
+  //   - delete:  tr.delete drops the entire range; the mark dies with
+  //              its anchor text. No follow-up removeMark needed.
+  //   - insert:  tr.insertText leaves the original [from, to] text
+  //              (still carrying the suggestion mark) untouched. We
+  //              MUST strip the mark off it after stamping the
+  //              authored breadcrumb on the inserted content.
+  //   - replace: tr.replaceWith swaps the marked content for fresh
+  //              text; like delete, the mark dies with the original.
+  //              No follow-up removeMark needed.
+  //
+  // The previous unified `tr.removeMark(range.from, range.to, ...)`
+  // at the bottom looked symmetric but did different things per
+  // branch — and crucially, was buggy for replace at end-of-doc:
+  // after replaceWith shrinks the doc, range.to may now point past
+  // doc.content.size, which trips PM's bounds check when walking
+  // children for the mark removal.
   ydoc.transact(() => {
     let tr = view.state.tr
 
@@ -480,6 +498,7 @@ function applySuggestion(
           model: mark.model,
         })
       }
+      tr = tr.removeMark(range.from, range.to, suggestionMarkType)
     } else {
       // replace
       const text = mark.content ?? ''
@@ -505,10 +524,7 @@ function applySuggestion(
       }
     }
 
-    // Remove the original suggestion's inline mark + Y.Map entry.
-    tr = tr
-      .removeMark(range.from, range.to, suggestionMarkType)
-      .setMeta(MARK_ORIGIN, { kind: 'accept', id: mark.id })
+    tr = tr.setMeta(MARK_ORIGIN, { kind: 'accept', id: mark.id })
     view.dispatch(tr)
     map.delete(mark.id)
     void acceptedBy
