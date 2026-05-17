@@ -32,6 +32,7 @@ import {
 // their actual API and the dev handles fall away.
 import '@/lib/vaultPicker'
 import '@/lib/vault'
+import '@/lib/docFileSync'
 
 // Module-scope so the configs array reference is stable across
 // renders — required by useLazyMaterialize's caller contract
