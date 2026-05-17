@@ -28,6 +28,9 @@ import { markStore } from '@/domain/markStoreInstance'
 import type { Mark } from '@/domain/marks'
 import { markToSidecar } from '@/export/markAdapter'
 import type { AnchorSpec, MarkSidecar, MarksSidecarFile } from '@/export/types'
+import { pathForDoc, sidecarPathForDoc } from '@/lib/docPaths'
+import { writeVaultFile } from '@/lib/vault'
+import { getActiveVaultPath } from '@/state/settingsStore'
 
 /** Result shape of {@link serializeDocToFiles} — the two strings we
  * would write side-by-side to disk (body + sidecar). Mirrors
@@ -180,6 +183,15 @@ export function installDocSync(slug: string, ydoc: Y.Doc): () => void {
   const onChange = () => markDirty(slug)
   fragment.observeDeep(onChange)
   marksMap.observe(onChange)
+  // Mark dirty on install so the first flush tick mirrors this doc
+  // to disk regardless of whether the user edits it. Without this,
+  // a doc the user opens (or that was already open at boot) but
+  // never types into would never reach the vault — leaving gaps
+  // between what the sidebar shows and what's on disk. Idempotent
+  // — clearDirty after the flush completes leaves the doc clean
+  // until the next edit. The cost is one write per doc-mount event;
+  // overwrite is benign even when the file already matches.
+  markDirty(slug)
   return () => {
     fragment.unobserveDeep(onChange)
     marksMap.unobserve(onChange)
@@ -208,15 +220,53 @@ export function installDocSync(slug: string, ydoc: Y.Doc): () => void {
 const FLUSH_INTERVAL_MS = 2000
 let flushTimerId: number | null = null
 
+/** Walk dirty slugs once and persist each to its vault file pair.
+ * Called from the periodic flush timer. Errors are isolated per
+ * slug — a single failed write doesn't block the others — and the
+ * slug stays dirty so the next tick retries.
+ *
+ * Skip conditions (all silent — leave dirty for next tick or clear
+ * outright depending on whether the cause is transient):
+ *   - vault not selected           → skip all (transient)
+ *   - slug no longer in knownDocs  → clear (no point retrying)
+ *   - pathForDoc returns null      → clear (doc type has no on-disk
+ *                                    placement — e.g. 'writing')
+ *   - serializeDocToFiles null     → skip (active not ready,
+ *                                    transient — wait for view) */
+export async function flushDirty(): Promise<void> {
+  if (!getActiveVaultPath()) return
+  const docs = useDocsStore.getState()
+  for (const slug of getDirtySlugs()) {
+    const known = docs.knownDocs.find((d) => d.slug === slug)
+    if (!known) {
+      clearDirty(slug)
+      continue
+    }
+    const mdPath = pathForDoc(known)
+    const sidecarPath = sidecarPathForDoc(known)
+    if (!mdPath || !sidecarPath) {
+      clearDirty(slug)
+      continue
+    }
+    const result = serializeDocToFiles(slug)
+    if (!result) continue
+    try {
+      await writeVaultFile(mdPath, result.md)
+      await writeVaultFile(sidecarPath, JSON.stringify(result.sidecar, null, 2))
+      clearDirty(slug)
+    } catch (err) {
+      console.warn('[vault:flush] write failed for', slug, err)
+      // Leave dirty so the next tick retries.
+    }
+  }
+}
+
 /** Begin the periodic flush loop. Idempotent — calling twice is a
  * no-op so multiple boot paths can call it without coordination. */
 export function startAutoFlush(): void {
   if (flushTimerId !== null) return
   flushTimerId = window.setInterval(() => {
-    const dirty = getDirtySlugs()
-    if (dirty.length === 0) return
-    // iv.3 will replace this with the real serialize+write pipeline.
-    console.log('[vault:flush] tick — dirty slugs:', dirty)
+    void flushDirty()
   }, FLUSH_INTERVAL_MS)
 }
 
