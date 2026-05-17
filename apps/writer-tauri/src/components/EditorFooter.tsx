@@ -4,14 +4,14 @@
 // line:
 //
 //   Default — no mark under the cursor. Shows the AI-vs-human writing
-//             ratio for the active doc (computed from proofProvenance
+//             ratio for the active doc (computed from proofAuthored
 //             coverage). Stable, glanceable; the kind of always-on
 //             stat you'd see in an IDE status bar.
 //
 //   Hover   — cursor is over a proofSuggestion / proofComment /
-//             proofProvenance mark. The footer's content is replaced
+//             proofAuthored mark. The footer's content is replaced
 //             with a one-line description of that mark (source +
-//             accepted-at + model for provenance, etc). Leaves the
+//             accepted-at + model for authored, etc). Leaves the
 //             mouse out → back to the default ratio.
 //
 // Data flow:
@@ -21,7 +21,7 @@
 //                          → footer reads
 //
 // The recompute walks the ProseMirror doc once per change, summing
-// chars covered by proofProvenance marks. For our doc sizes (a few
+// chars covered by proofAuthored marks. For our doc sizes (a few
 // thousand chars at most) this is cheap; if it ever shows up in a
 // profile, we can debounce or maintain an incremental count.
 

@@ -123,7 +123,7 @@ export const codeBlockSchemaExt = $nodeSchema('code_block', (ctx) => {
   return {
     content: 'text*',
     group: 'block',
-    marks: 'proofAuthored proofSuggestion proofComment proofFlagged proofApproved',
+    marks: 'proofAuthored proofSuggestion proofComment proofFlagged',
     defining: true,
     code: true,
     attrs: {

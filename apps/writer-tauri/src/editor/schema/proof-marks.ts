@@ -227,7 +227,22 @@ export const proofCommentSchema = $markSchema('proofComment', (ctx) => ({
   },
 }));
 
-// Flagged mark
+// Flagged mark — RESERVED.
+//
+// Schema is defined but currently has no mutation path: markStore
+// doesn't expose a `flag()` API, MarkKind has no 'flagged' value,
+// schemaMap.ts doesn't map to it, and no UI surface creates one.
+// Kept as a placeholder for the future fact-check / contradiction-
+// detection feature (Karpathy plan Phase 4 — Wiki Lint). When that
+// feature lands, wire MarkKind → schemaMap → markStore.add the same
+// way 'comment' / 'suggestion' / 'authored' are wired.
+//
+// Structurally this is twin to proofComment (same attrs, same DOM
+// shape, same serialization). The two diverge only on the
+// data-proof tag string ("comment" vs "flagged") so a future UI
+// can branch on mark type and render different colors / icons /
+// priority. CSS deco class `.mark-deco--flagged` is already wired
+// in markDecoPlugin.ts for the same reason.
 export const proofFlaggedAttr = $markAttr('proofFlagged', () => ({
   id: {},
   by: {},
@@ -272,58 +287,6 @@ export const proofFlaggedSchema = $markSchema('proofFlagged', (ctx) => ({
     match: (mark) => mark.type.name === 'proofFlagged',
     runner: (state, mark) => {
       serializeProofMark(state, mark, 'flagged', {
-        id: mark.attrs.id ?? null,
-        by: mark.attrs.by ?? null,
-      });
-    },
-  },
-}));
-
-// Approved mark
-export const proofApprovedAttr = $markAttr('proofApproved', () => ({
-  id: {},
-  by: {},
-}));
-
-export const proofApprovedSchema = $markSchema('proofApproved', (ctx) => ({
-  attrs: {
-    id: { default: null },
-    by: { default: 'unknown' },
-  },
-  inclusive: false,
-  spanning: true,
-  parseDOM: [
-    {
-      tag: 'span[data-proof="approved"]',
-      getAttrs: (dom: HTMLElement): Attrs => parseCommonAttrs(dom),
-    },
-  ],
-  toDOM: (mark) => {
-    const attrs = ctx.get(proofApprovedAttr.key)(mark);
-    const domAttrs: Record<string, string> = {
-      'data-proof': 'approved',
-      ...buildCommonDomAttrs(mark),
-      ...attrs,
-    };
-    return ['span', domAttrs, 0];
-  },
-  parseMarkdown: {
-    match: (node) => (node as ProofNode).type === 'proofMark' && (node as ProofNode).proof === 'approved',
-    runner: (state, node, markType) => {
-      const proofNode = node as ProofNode;
-      const attrs = proofNode.attrs || {};
-      state.openMark(markType, {
-        id: attrs.id ?? null,
-        by: attrs.by ?? 'unknown',
-      });
-      state.next(proofNode.children || []);
-      state.closeMark(markType);
-    },
-  },
-  toMarkdown: {
-    match: (mark) => mark.type.name === 'proofApproved',
-    runner: (state, mark) => {
-      serializeProofMark(state, mark, 'approved', {
         id: mark.attrs.id ?? null,
         by: mark.attrs.by ?? null,
       });
@@ -398,8 +361,6 @@ export const proofMarkPlugins = [
   proofCommentSchema,
   proofFlaggedAttr,
   proofFlaggedSchema,
-  proofApprovedAttr,
-  proofApprovedSchema,
   proofAuthoredAttr,
   proofAuthoredSchema,
 ];

@@ -60,31 +60,19 @@ export interface CollabHandle {
   idb: IndexeddbPersistence
   /** Resolves once the IndexedDB layer has hydrated the ydoc from its
    * local cache (or confirmed there's nothing cached for this slug).
-   * Gates downstream consumers (editor render, mark application) that
-   * previously waited only on `provider.synced` — with this we can
-   * paint immediately on cold boot even when the server is unreachable. */
+   * Gates downstream consumers (editor render, mark application) so
+   * they paint against the real saved state, not an empty one. */
   idbSynced: Promise<void>
 }
 
 /**
  * Per-authored-mark metadata, keyed by mark id in Y.Map('authoredMeta').
  *
- * Background: proof-server only canonicalizes the seven mark kinds
- * it ships with (authored / approved / flagged / comment / insert /
- * delete / replace). Our old `proofProvenance` mark was a custom
- * kind layered on top to carry wiki-source breadcrumbs + accept
- * timestamps; the server didn't recognize it, so its HTML→markdown
- * projection mangled spans carrying that mark, which the drift
- * detector then read as a projection wipe and reverted the accept.
- * The split-tr workaround in markActions.ts was a defensive
- * sequencing trick to dodge that — never a proper fix.
- *
- * The portable path is to use the standard `proofAuthored` mark for
- * the inline anchor (server understands it, single-tr accept stays
- * safe) and park the extra metadata in a sibling Y.Map keyed by the
- * same mark id. Yjs syncs the Y.Map as opaque binary, so the server
- * never has to parse it — drift detection can't fire on metadata
- * the server doesn't read.
+ * The inline anchor is a `proofAuthored` mark (carries id + by);
+ * the rich provenance fields (sourceSlug / sourceLabel / acceptedAt /
+ * model) ride in this sibling Y.Map keyed by the same mark id. Split
+ * this way so the mark schema stays minimal — adding new metadata
+ * fields doesn't require a schema migration.
  *
  * Wire shape:
  *   ydoc.getMap<AuthoredMeta>('authoredMeta').set(markId, { ... })

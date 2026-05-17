@@ -4,25 +4,23 @@
 //
 //   1. Mark hover — the editor's mark-hover plugin pushes the current
 //      hovered mark's metadata here as the cursor moves over a
-//      proofProvenance / proofSuggestion / proofComment span. The
+//      proofAuthored / proofSuggestion / proofComment span. The
 //      footer renders source / kind / quote info while it's set.
 //
 //   2. Doc stats — the AI-vs-human writing ratio for the active doc.
-//      Computed on doc change by a small subscriber in
-//      EditorFooter (walks the doc, sums chars under proofProvenance
-//      marks). Lives here so the footer's two states (hover vs
-//      default) read from one place.
+//      Computed on doc change by a small subscriber in EditorFooter
+//      (walks the doc, sums chars under proofAuthored marks). Lives
+//      here so the footer's two states (hover vs default) read from
+//      one place.
 
 import { create } from 'zustand'
 
-// 'authored' is the unified hover kind for any AI-authored span,
-// whether the inline anchor is a proofAuthored mark (the proof-sdk
-// standard kind, used for new accepts) or a legacy proofProvenance
-// mark (our prior custom kind, still present on docs accepted before
-// the schema migration). The hover plugin emits 'authored' for both
-// — they trigger the same footer UX ("From X · accepted Y ago ·
-// model Z"), and we don't want callers to branch on the underlying
-// mark type.
+// 'authored' is the hover kind for any AI-authored span. The inline
+// anchor is a proofAuthored mark (set on accept). The hover plugin
+// emits 'authored' regardless of whether the AuthoredMeta sibling
+// map carries source / acceptedAt data — the footer UX is the same
+// ("From X · accepted Y ago · model Z"), it just shows fewer fields
+// when the metadata is missing.
 export type HoveredMarkKind = 'authored' | 'suggestion' | 'comment'
 
 /** Shape pushed by the mark-hover plugin. Strings are extracted from
@@ -53,7 +51,7 @@ export interface DocStats {
   totalChars: number
   aiChars: number
   wordCount: number
-  /** Newest acceptedAt across all proofProvenance marks in the doc,
+  /** Newest acceptedAt across all proofAuthored marks in the doc,
    * or null when nothing AI-authored has been kept. The display
    * decides whether to render it; this is just the raw fact. */
   lastAcceptedAt: string | null
