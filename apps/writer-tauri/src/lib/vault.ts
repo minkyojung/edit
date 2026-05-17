@@ -15,7 +15,6 @@
 //     command for atomic writes) is a one-file change
 //
 // Out of scope for this file:
-//   - atomic write (write-tmp-then-rename) — Phase 4.A Step 5
 //   - file watcher (external change detection)  — Phase 4.E
 //   - mark sidecar JSON shape                   — Phase 4.C
 //
@@ -29,6 +28,7 @@ import {
   readDir,
   readTextFile,
   remove,
+  rename,
   writeTextFile,
 } from '@tauri-apps/plugin-fs'
 import { join } from '@tauri-apps/api/path'
@@ -99,13 +99,80 @@ export async function readVaultFile(relPath: string): Promise<string> {
   return await readTextFile(path)
 }
 
-/** Write a vault file as UTF-8 text. Overwrites if the file exists.
- * Phase 4.A Step 5 will add an atomic variant; for now this is a
- * direct overwrite (good enough for individual page saves where the
- * worst case is a partial write on app crash). */
+/** Window (ms) during which a file we just wrote should be treated as
+ * "our recent write" by file-watcher consumers. Generous compared to
+ * typical write+rename latency (~20ms) and fsevents propagation
+ * (~100ms) so we don't miss echoes on a slow disk; short enough that
+ * a genuine external edit landing right after our save isn't
+ * suppressed. Tune if echoes start leaking through. */
+const RECENT_WRITE_WINDOW_MS = 1000
+
+/** Track the timestamp of each vault path we recently wrote so the
+ * file watcher (Phase 4.E) can ignore the resulting echo events.
+ * Without this filter our own writes would fire the "external
+ * change" path and either trigger noisy reload, an unsaved-changes
+ * modal, or in the worst case an infinite write→event→write loop. */
+const recentWrites = new Map<string, number>()
+
+function markOurRecentWrite(relPath: string): void {
+  recentWrites.set(relPath, Date.now())
+}
+
+/** Did we write `relPath` within the recent-write window? Used by
+ * the file watcher (and tests) to filter echo events. Lazily prunes
+ * stale entries so the Map doesn't grow unbounded over a long
+ * session. */
+export function isOurRecentWrite(relPath: string): boolean {
+  const t = recentWrites.get(relPath)
+  if (t === undefined) return false
+  if (Date.now() - t > RECENT_WRITE_WINDOW_MS) {
+    recentWrites.delete(relPath)
+    return false
+  }
+  return true
+}
+
+/** Atomic file write — content lands on disk as a complete file or
+ * not at all, never as a half-written partial.
+ *
+ * Strategy: write everything to a sibling `<path>.tmp` first, then
+ * atomically rename it over the destination. POSIX rename(2) is
+ * atomic when the two paths share a filesystem (which they do here
+ * — sibling files in the same directory).
+ *
+ * If the rename fails after a successful tmp write, the tmp file is
+ * cleaned up so the vault doesn't accumulate `.tmp` cruft. The
+ * `recentWrites` flag is set BEFORE rename so the watcher event for
+ * the rename is reliably caught — see comment on
+ * RECENT_WRITE_WINDOW_MS for the timing budget. */
+async function atomicWriteText(absPath: string, content: string): Promise<void> {
+  const tmp = `${absPath}.tmp`
+  await writeTextFile(tmp, content)
+  try {
+    await rename(tmp, absPath)
+  } catch (err) {
+    // Best-effort cleanup so a failed rename doesn't litter the
+    // vault. Swallow secondary errors — the primary failure is what
+    // the caller needs to see.
+    try {
+      await remove(tmp)
+    } catch {
+      // ignore
+    }
+    throw err
+  }
+}
+
+/** Write a vault file as UTF-8 text, atomically. Existing file is
+ * replaced as one operation — consumers never see a partial write
+ * even if the process crashes mid-rename. Also stamps the path into
+ * {@link recentWrites} so the file watcher's echo filter
+ * ({@link isOurRecentWrite}) can suppress the inevitable fsevents
+ * fire that follows. */
 export async function writeVaultFile(relPath: string, content: string): Promise<void> {
   const path = await resolveVaultPath(relPath)
-  await writeTextFile(path, content)
+  markOurRecentWrite(relPath)
+  await atomicWriteText(path, content)
 }
 
 /** List entries (files + directories) inside a vault directory.
@@ -162,5 +229,6 @@ if (import.meta.env.DEV) {
     list: listVaultDir,
     exists: vaultFileExists,
     delete: deleteVaultFile,
+    isRecentWrite: isOurRecentWrite,
   }
 }
