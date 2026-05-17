@@ -26,8 +26,9 @@ import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { markStore } from '@/domain/markStoreInstance'
 import type { Mark } from '@/domain/marks'
-import { markToSidecar } from '@/export/markAdapter'
+import { markToSidecar, sidecarToMark } from '@/export/markAdapter'
 import type { AnchorSpec, MarkSidecar, MarksSidecarFile } from '@/export/types'
+import { findQuoteInDoc } from '@/domain/internal/quote'
 import { pathForDoc, sidecarPathForDoc } from '@/lib/docPaths'
 import { readVaultFile, vaultFileExists, writeVaultFile } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
@@ -330,6 +331,29 @@ export async function applyVaultToHandle(slug: string): Promise<ApplyVaultOutcom
 
   const ok = seedMarkdownIntoYDoc(handle.ydoc, loaded.md, parser)
   if (!ok) return 'no-parser'
+
+  // Restore marks from the sidecar. Requires the active EditorView
+  // (markStore.restore writes a PM transaction). When loading a
+  // non-active doc the marks are skipped on this pass and the next
+  // attempt (after the user activates the doc) will pick them up.
+  // Body is already on disk + memory, so the only thing we may be
+  // missing temporarily is the inline mark layer.
+  const view = useEditorViewStore.getState().view
+  const isActive = useDocsStore.getState().activeSlug === slug
+  if (isActive && view && loaded.sidecar.marks.length > 0) {
+    for (const sidecarMark of loaded.sidecar.marks) {
+      const mark = sidecarToMark(sidecarMark)
+      if (!mark) continue
+      // v1 anchor resolution: find the quote in the freshly-seeded
+      // PM doc. First match wins — same simplification used during
+      // serialize (occurrence: 0). Phase 4.E (file watcher) will
+      // promote this to the full markResolver context+occurrence
+      // strategy so external edits don't drop marks unnecessarily.
+      const anchor = findQuoteInDoc(view, mark.quote)
+      if (!anchor) continue
+      await markStore.restore({ slug, mark, anchor })
+    }
+  }
 
   // The observer that watches this fragment for dirty-tracking fired
   // during applyUpdate; clear that here so the loaded content
