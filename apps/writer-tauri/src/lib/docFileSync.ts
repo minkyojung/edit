@@ -21,6 +21,7 @@
 // whether the markdown / sidecar shape is right before wiring
 // auto-save on top.
 
+import type * as Y from 'yjs'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { markStore } from '@/domain/markStoreInstance'
@@ -134,6 +135,58 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
   return { md, sidecar }
 }
 
+// ── Dirty tracking ───────────────────────────────────────────────
+//
+// Each open doc's Y.Doc gets an observer that marks the slug "dirty"
+// on any content or mark mutation. A future auto-flush tick (Phase
+// 4.B.1.b.iv.2-3) walks `dirtySlugs` periodically and writes the
+// changed docs to vault files.
+//
+// This sub-phase (iv.1) installs only the observers and the set —
+// no disk I/O yet, so we can verify the dirty signal in DevTools
+// before wiring the actual flush.
+
+const dirtySlugs = new Set<string>()
+
+function markDirty(slug: string): void {
+  dirtySlugs.add(slug)
+}
+
+/** Mark `slug` clean — called by the flush tick after a successful
+ * write. Exposed for tests and the future flushDirty implementation
+ * (iv.3). */
+export function clearDirty(slug: string): void {
+  dirtySlugs.delete(slug)
+}
+
+/** Snapshot of slugs that have unsaved changes since their last
+ * successful flush. Returns a copy so callers can iterate while the
+ * underlying set mutates from background observers. */
+export function getDirtySlugs(): string[] {
+  return [...dirtySlugs]
+}
+
+/** Wire up the dirty tracker for a handle. Returns a disposer that
+ * removes observers and clears the slug from `dirtySlugs` — closeDoc
+ * should call it so a torn-down handle's leftover dirty flag doesn't
+ * trigger a flush against a destroyed ydoc.
+ *
+ * Observes both the body fragment (text edits, paste, ingest insert)
+ * and the marks map (suggestion add / accept / reject); either kind
+ * of change should produce a save. */
+export function installDocSync(slug: string, ydoc: Y.Doc): () => void {
+  const fragment = ydoc.getXmlFragment('prosemirror')
+  const marksMap = ydoc.getMap('marks')
+  const onChange = () => markDirty(slug)
+  fragment.observeDeep(onChange)
+  marksMap.observe(onChange)
+  return () => {
+    fragment.unobserveDeep(onChange)
+    marksMap.unobserve(onChange)
+    dirtySlugs.delete(slug)
+  }
+}
+
 // Dev-only console handle. Pass a slug, or omit to use the active
 // doc. Returns null when no doc is active or the serializer isn't
 // ready yet.
@@ -156,4 +209,5 @@ if (import.meta.env.DEV) {
     __listMarks: typeof listMarks
   }).__serializeDoc = handle
   ;(window as unknown as { __listMarks: typeof listMarks }).__listMarks = listMarks
+  ;(window as unknown as { __dirtySlugs: () => string[] }).__dirtySlugs = getDirtySlugs
 }

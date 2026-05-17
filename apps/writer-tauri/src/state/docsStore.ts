@@ -29,6 +29,7 @@ import { deriveLabel } from '@/lib/docLabel'
 import { useIngestStore } from './ingestStore'
 import { useEditorViewStore } from './editorViewStore'
 import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
+import { installDocSync } from '@/lib/docFileSync'
 import { useChatRuns } from '@/stores/chatRuns'
 
 const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
@@ -315,6 +316,27 @@ function buildHandle(
       useIngestStore.getState().markEdited(slug)
     })
   })
+
+  // Vault file sync — observers that mark this slug dirty on any
+  // Y.Doc mutation. The auto-flush tick (Phase 4.B.1.b.iv.2+) reads
+  // dirtySlugs and writes the .md + .marks.json pair. Installed
+  // post-IDB-hydrate so the initial replay doesn't dirty the slug.
+  // Disposer is stashed on the handle so closeDoc can tear it down
+  // alongside the ydoc.
+  let vaultSyncDisposer: (() => void) | null = null
+  void idb.whenSynced.then(() => {
+    vaultSyncDisposer = installDocSync(slug, ydoc)
+  })
+  // Expose disposer via the handle's destroy chain by piggy-backing
+  // on ydoc.destroy. closeDoc already calls ydoc.destroy(); add the
+  // disposer call before destroying so observer cleanup runs while
+  // the doc is still mountable.
+  const originalDestroy = ydoc.destroy.bind(ydoc)
+  ydoc.destroy = () => {
+    vaultSyncDisposer?.()
+    vaultSyncDisposer = null
+    originalDestroy()
+  }
   // IndexedDB is the single durable surface — status flips to 'ready'
   // once IDB hydrates the ydoc. 'error' covers the rare IDB failure
   // (Safari private mode / quota exhausted / browser bug) so the
