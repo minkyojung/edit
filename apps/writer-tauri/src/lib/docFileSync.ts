@@ -31,6 +31,7 @@ import type { AnchorSpec, MarkSidecar, MarksSidecarFile } from '@/export/types'
 import { pathForDoc, sidecarPathForDoc } from '@/lib/docPaths'
 import { readVaultFile, vaultFileExists, writeVaultFile } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
+import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
 
 /** Result shape of {@link serializeDocToFiles} — the two strings we
  * would write side-by-side to disk (body + sidecar). Mirrors
@@ -285,6 +286,59 @@ function isSidecarFile(value: unknown): value is MarksSidecarFile {
   return v.version === 1 && Array.isArray(v.marks)
 }
 
+/** Outcome of {@link applyVaultToHandle} so callers can react to
+ * each reason for not applying. v1 is informational only — c.iii
+ * will use it to pick the right fallback (e.g. IDB read). */
+export type ApplyVaultOutcome =
+  | 'applied'         // body landed in Y.Doc
+  | 'no-vault'        // vault not selected; nothing to load from
+  | 'no-handle'       // doc isn't open in memory yet
+  | 'no-file'         // .md doesn't exist on disk
+  | 'no-parser'       // editor hasn't mounted yet → no markdown parser
+  | 'not-empty'       // Y.Doc already has content; refuse to merge
+
+/** Apply a vault doc's markdown body into the live Y.Doc. Marks are
+ * NOT processed in this sub-step (c.ii.A) — that's c.ii.B. The
+ * markStore stays untouched.
+ *
+ * Safety: this function only operates on an EMPTY Y.Doc. If the
+ * fragment already has content (IDB hydrated something, or the
+ * editor seeded a fresh doc) we refuse rather than merge — Yjs
+ * CRDT would otherwise concatenate the file's content with the
+ * existing content, producing duplicate paragraphs. The wiring in
+ * c.iii will choose the right moment to call this (before IDB
+ * hydrate, or on demand).
+ *
+ * The write uses the 'doc-init' origin (see seedMarkdown.ts) so the
+ * UndoManager skips it. We also clear the dirty flag after applying
+ * since the observer fires on the fragment change and would
+ * otherwise schedule a re-save of identical content. */
+export async function applyVaultToHandle(slug: string): Promise<ApplyVaultOutcome> {
+  if (!getActiveVaultPath()) return 'no-vault'
+  const docs = useDocsStore.getState()
+  const handle = docs.handles[slug]
+  if (!handle) return 'no-handle'
+
+  const loaded = await loadDocFromFiles(slug)
+  if (!loaded) return 'no-file'
+
+  const fragment = handle.ydoc.getXmlFragment('prosemirror')
+  if (fragment.length > 0) return 'not-empty'
+
+  const parser = useEditorViewStore.getState().parser
+  if (!parser) return 'no-parser'
+
+  const ok = seedMarkdownIntoYDoc(handle.ydoc, loaded.md, parser)
+  if (!ok) return 'no-parser'
+
+  // The observer that watches this fragment for dirty-tracking fired
+  // during applyUpdate; clear that here so the loaded content
+  // doesn't immediately bounce back into a save cycle.
+  clearDirty(slug)
+
+  return 'applied'
+}
+
 /** Walk dirty slugs once and persist each to its vault file pair.
  * Called from the periodic flush timer. Errors are isolated per
  * slug — a single failed write doesn't block the others — and the
@@ -374,4 +428,10 @@ if (import.meta.env.DEV) {
     return loadDocFromFiles(target)
   }
   ;(window as unknown as { __loadDoc: typeof loadHandle }).__loadDoc = loadHandle
+  const applyHandle = async (slug?: string): Promise<ApplyVaultOutcome> => {
+    const target = slug ?? useDocsStore.getState().activeSlug
+    if (!target) return 'no-handle'
+    return applyVaultToHandle(target)
+  }
+  ;(window as unknown as { __applyVault: typeof applyHandle }).__applyVault = applyHandle
 }
