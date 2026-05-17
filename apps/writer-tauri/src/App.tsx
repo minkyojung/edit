@@ -25,10 +25,13 @@ import {
   applyPendingLogsForView,
   applyPendingIndexUpdatesForView,
 } from '@/agent/applyIngest'
-// Phase 4.A Step 3 — imports vaultPicker purely for its side-effect
-// (registers window.__pickVault() in dev). Will be replaced by real
-// UI wiring (settings panel / boot-time prompt) in a later Step.
+// Phase 4.A — dev-only side-effect imports. Each module registers
+// a `window.__X` handle so the picker / vault I/O is reachable from
+// DevTools before real UI wiring lands. Real callers (settings
+// panel, boot-time prompt, file watcher) will import these for
+// their actual API and the dev handles fall away.
 import '@/lib/vaultPicker'
+import '@/lib/vault'
 
 // Module-scope so the configs array reference is stable across
 // renders — required by useLazyMaterialize's caller contract
