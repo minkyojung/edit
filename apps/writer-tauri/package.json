@@ -37,7 +37,6 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@floating-ui/react-dom": "^2.1.8",
     "@fontsource-variable/geist": "^5.2.8",
-    "@hocuspocus/provider": "^2.15.3",
     "@milkdown/core": "^7.20.0",
     "@milkdown/kit": "^7.20.0",
     "@milkdown/plugin-collab": "^7.20.0",
