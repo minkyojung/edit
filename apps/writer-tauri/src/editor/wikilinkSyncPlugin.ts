@@ -1,22 +1,22 @@
 // Live label sync between a parent doc and its referenced children.
 //
 // When a wikilink is inserted, its anchor text is captured at insert
-// time. If the user later renames the child, the parent's body
-// would otherwise show a stale label — the slug still resolves so
-// clicks work, but the visible text is wrong.
+// time. If the child is later renamed via the explicit rename action
+// (Step 4: title-input or Command Palette → Rename), the parent's
+// body would otherwise show the old name. This hook keeps the parent's
+// wikilink anchor text in sync with the child's current
+// `knownDocs.title`.
 //
-// This module provides a React hook that, while the parent's editor
-// view is mounted, subscribes to each warm child's body fragment
-// and rewrites the matching wikilink text in the parent body
-// whenever the child's derived label changes (see lib/docLabel.ts —
-// the label is the body's first non-empty block). Updates flow
-// through a single PM transaction so collab sees one cohesive change.
+// Path C Step 4: source of truth is `knownDocs[child].title` — the
+// filename. Body content is irrelevant to wikilink labels. The hook
+// re-runs whenever the catalog changes (re-render trigger via the
+// knownDocs zustand subscription) so a rename anywhere propagates to
+// every parent's body within the same React tick.
 
 import { useEffect } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { Mark } from '@milkdown/kit/prose/model'
 import { useDocsStore } from '@/state/docsStore'
-import { deriveLabel } from '@/lib/docLabel'
 import {
   WIKILINK_HREF_PREFIX,
   isWikilinkHref,
@@ -27,48 +27,25 @@ export function useWikilinkTitleSync(
   parentSlug: string | null,
 ): void {
   const knownDocs = useDocsStore((s) => s.knownDocs)
-  const handles = useDocsStore((s) => s.handles)
 
   useEffect(() => {
     if (!parentView || !parentSlug) return
 
-    // Only watch children of the active parent. Other docs' bodies
-    // can change too but they don't affect this body.
+    // Apply current titles to every wikilink in the parent body. The
+    // effect re-runs on every knownDocs change (rename, new doc,
+    // archive), which is what makes this Obsidian-style rename
+    // propagation work: the moment renameDoc updates knownDocs.title,
+    // every open parent's body gets its anchor text rewritten.
     const children = knownDocs.filter(
       (d) =>
         d.parentId === parentSlug &&
         d.type === 'writing' &&
         !d.archivedAt,
     )
-
-    const cleanups: Array<() => void> = []
-
     for (const child of children) {
-      const handle = handles[child.slug]
-      if (!handle) continue
-      const fragment = handle.ydoc.getXmlFragment('prosemirror')
-      const labelFor = () => deriveLabel(fragment) || child.title || ''
-
-      // Run once on mount in case the label changed while this
-      // parent wasn't open — the body might already be stale when
-      // the user comes back to it.
-      syncLabel(parentView, child.slug, labelFor())
-
-      const onChange = () => {
-        if (!parentView) return
-        syncLabel(parentView, child.slug, labelFor())
-      }
-      // observeDeep so edits inside block text children fire even when
-      // the fragment's top-level structure is unchanged — the label
-      // lives inside the first block's text, not the block list.
-      fragment.observeDeep(onChange)
-      cleanups.push(() => fragment.unobserveDeep(onChange))
+      syncLabel(parentView, child.slug, child.title ?? '')
     }
-
-    return () => {
-      for (const fn of cleanups) fn()
-    }
-  }, [parentView, parentSlug, knownDocs, handles])
+  }, [parentView, parentSlug, knownDocs])
 }
 
 /** Walk the parent doc, find every link mark whose href is

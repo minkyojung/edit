@@ -33,7 +33,12 @@ import { deriveLabel } from '@/lib/docLabel'
 import { useIngestStore } from './ingestStore'
 import { useEditorViewStore } from './editorViewStore'
 import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
-import { applyVaultToHandle, installDocSync } from '@/lib/docFileSync'
+import {
+  applyVaultToHandle,
+  flushDirty,
+  installDocSync,
+  markSlugDirty,
+} from '@/lib/docFileSync'
 import { scanVault } from '@/lib/scanVault'
 import { useChatRuns } from '@/stores/chatRuns'
 
@@ -273,6 +278,15 @@ interface DocsState {
    * No-op when the markdown is empty or when the editor parser
    * isn't mounted yet (caller should retry once a doc is active). */
   seedDocBody: (slug: string, markdown: string) => Promise<boolean>
+  /** Rename a user-owned doc. Updates `knownDocs[slug].title`; the
+   * auto-flush rename-on-change machinery (Phase 4.B.1.c.vi) then
+   * moves the .md + .marks.json on disk on the next tick.
+   *
+   * Refuses (returns false) for daily / system docs — their titles
+   * are derived from type and aren't user-editable. Trim whitespace
+   * and refuse empty strings; the caller's UI should validate
+   * before calling, but this is a hard backstop. */
+  renameDoc: (slug: string, newTitle: string) => boolean
   /** Switch the sidebar date view. */
   setSidebarTab: (tab: 'day' | 'week' | 'month') => void
   /** Set the Month view's anchor month (YYYY-MM). */
@@ -878,6 +892,33 @@ export const useDocsStore = create<DocsState>()(
       shiftDay: (delta) =>
         set((s) => ({ dayAnchor: shiftDayAnchor(s.dayAnchor, delta) })),
 
+      renameDoc: (slug, newTitle) => {
+        const trimmed = newTitle.trim()
+        if (trimmed.length === 0) return false
+        const idx = get().knownDocs.findIndex((d) => d.slug === slug)
+        if (idx < 0) return false
+        const cur = get().knownDocs[idx]
+        // Only user-editable doc types can be renamed. Daily titles
+        // are derived from date; system page titles are derived from
+        // the type suffix.
+        const eligible =
+          cur.type === 'writing' || cur.type.startsWith('wiki:custom-')
+        if (!eligible) return false
+        if (cur.title === trimmed) return true
+        const list = [...get().knownDocs]
+        list[idx] = { ...cur, title: trimmed }
+        set({ knownDocs: list })
+        // Mark dirty + fire an immediate flush so the rename lands on
+        // disk right away. The 2s timer-based flush would also catch
+        // it eventually, but for an explicit user action like Rename
+        // the UI expectation is that Finder reflects the change now,
+        // not 2s later. flushDirty walks dirtySlugs and applies the
+        // rename-on-change machinery (Phase 4.B.1.c.vi).
+        markSlugDirty(slug)
+        void flushDirty()
+        return true
+      },
+
       seedDocBody: async (slug, markdown) => {
         if (!markdown.trim()) return false
         await ensureHandle(slug, set, get)
@@ -1179,7 +1220,12 @@ async function ensureHandle(
   }
   set((s) => ({ handles: { ...s.handles, [slug]: handle } }))
   seedMetaFromCatalog(handle, get().knownDocs.find((d) => d.slug === slug))
-  installTitleMirror(slug, handle, set, get)
+  // Path C Step 4: title-mirror removed (Obsidian model). Body and
+  // filename are decoupled — typing in the body never changes the
+  // doc's title. Title changes go through the explicit renameDoc
+  // action (Command Palette → "Rename current note") which updates
+  // knownDocs.title; the existing rename-on-change machinery (Phase
+  // 4.B.1.c.vi) then moves the file on disk.
 }
 
 /** Mirror catalog-level type/date into the doc's Y.Map('meta') the
@@ -1207,106 +1253,12 @@ function seedMetaFromCatalog(handle: CollabHandle, known: KnownDoc | undefined):
   })
 }
 
-/** Mirror the doc's derived label back into knownDocs.title so closed
- * docs still show their real label in the sidebar / palette / etc.
- * The label comes from the body's first non-empty block (see
- * lib/docLabel.ts), not specifically the first h1.
- *
- * Gated by provider sync to avoid the pre-bootstrap window where the
- * local state is incomplete. Once sync completes, the ydoc state is
- * authoritative and every change — including transitions to empty —
- * is mirrored straight through. Display callers fall back to
- * 'Untitled' in one place (hooks/useDocLabel.ts).
- *
- * Daily entries are skipped: their label comes from `meta.date`, not
- * the body. Cleanup happens implicitly when handle.ydoc.destroy() in
- * closeDoc tears down all observers. */
-function installTitleMirror(
-  slug: string,
-  handle: CollabHandle,
-  set: (
-    fn:
-      | Partial<DocsState>
-      | ((s: DocsState) => Partial<DocsState>),
-  ) => void,
-  get: () => DocsState,
-): void {
-  const known = get().knownDocs.find((d) => d.slug === slug)
-  if (!known) return
-  // Title-mirror runs for any user-editable doc: writing notes
-  // AND user-owned wiki:custom-* pages. Both follow the same rule
-  // now: the body's first non-empty block is the title, and the
-  // sidebar / palette read it from knownDocs.title which this
-  // mirror keeps in sync.
-  //
-  // Excluded:
-  //   - daily       → label comes from meta.date, body is free
-  //   - system:*    → agent-managed meta pages; their title is
-  //                   fixed by the type id
-  //
-  // The previous regression where wiki pages got renamed by their
-  // first bullet (e.g. "Michael" → "Joined as new manager") is
-  // prevented at the *content* layer: ingest now writes
-  // `# {entity}` as the body's first line (see useIdleTrigger
-  // materializeNewPageProposals). The mirror still extracts the
-  // first block's plain text — but that text IS the entity name
-  // when the heading is in place.
-  const eligible =
-    known.type === 'writing' ||
-    (known.type.startsWith('wiki:custom-'))
-  if (!eligible) return
-
-  const fragment = handle.ydoc.getXmlFragment('prosemirror')
-  const sync = () => {
-    set((s) => {
-      const idx = s.knownDocs.findIndex((d) => d.slug === slug)
-      if (idx < 0) return s
-      const cur = s.knownDocs[idx]
-      // Same eligibility guard as the outer setup. A future code
-      // path that calls sync() from elsewhere shouldn't clobber
-      // titles on daily / system docs.
-      const stillEligible =
-        cur.type === 'writing' ||
-        cur.type.startsWith('wiki:custom-')
-      if (!stillEligible) return s
-
-      // Wiki pages: only mirror when the body's first block is a
-      // heading. Legacy ingest-created pages have bullet-first
-      // bodies — mirroring them would copy the first bullet
-      // ("새 매니저로 합류") into the catalog title and rename
-      // the page (the "Michael → Joined as new manager" regression).
-      // The new ingest layer writes `# {entity}` as the first line,
-      // so future pages pass this guard automatically. Existing
-      // pages keep their cached title until the user types a
-      // heading at the top — at which point mirror takes over.
-      if (cur.type.startsWith('wiki:custom-')) {
-        const children = fragment.toArray()
-        const first = children[0]
-        const isHeading =
-          first instanceof Y.XmlElement && first.nodeName === 'heading'
-        if (!isHeading) return s
-      }
-
-      const next = deriveLabel(fragment)
-      if ((cur.title ?? '') === next) return s
-      const list = [...s.knownDocs]
-      list[idx] = { ...cur, title: next }
-      return { knownDocs: list }
-    })
-  }
-  let started = false
-  const start = () => {
-    if (started) return
-    started = true
-    sync()
-    // observeDeep so edits inside block text children update the
-    // cache, not just structural changes at the fragment root.
-    fragment.observeDeep(sync)
-  }
-  // contentReady spans both IDB hydrate and vault load (Path C). A
-  // resolved promise fires the .then on the next microtask, so this
-  // works whether the handle is brand-new (still loading) or already
-  // hydrated. No event subscription needed — the promise replaces
-  // IDB's 'synced' event surface.
-  void handle.contentReady.then(start)
-}
+// installTitleMirror — removed in Path C Step 4.
+//
+// Previously this observer kept knownDocs[*].title in sync with the
+// body's first line. Path C decoupled body and title (Obsidian model):
+// the body is free-form content, the title / filename is changed only
+// by the explicit renameDoc action below. That eliminates the class
+// of bugs where AI / user edits to the body silently renamed the file
+// on disk, and removes the wiki-only heading-guard branch that
+// existed to mitigate the worst case of the same regression.

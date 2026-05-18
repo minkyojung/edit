@@ -4,17 +4,19 @@
  * Sits above the editor body. Decides what to render based on doc
  * kind; the editor itself stays agnostic.
  *
- *   daily   → read-only date label ("Saturday, May 16")
- *   system  → read-only type label ("Conventions" / "Log" / "Index")
- *   wiki + writing → no header. The body's first line plays the
- *                    title role (Bear / iA Writer pattern). The
- *                    title mirror (docsStore.installTitleMirror)
- *                    promotes the first block into knownDocs.title
- *                    so sidebar / palette stay in sync.
+ *   daily          → read-only date label ("Saturday, May 16")
+ *   system         → read-only type label ("Conventions" / "Log" / ...)
+ *   wiki + writing → editable input (Obsidian / Notion pattern). The
+ *                    input value IS the file's name on disk; editing
+ *                    commits via renameDoc → fs.rename. Body is
+ *                    independent — Path C Step 4 decoupled body and
+ *                    title so AI / user body edits don't silently
+ *                    rename the file.
  */
 
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
+import { EditableTitleInput } from './EditableTitleInput'
 
 interface Props {
   slug: string
@@ -38,15 +40,10 @@ export function PageHeader({ slug }: Props) {
     return <ReadOnlyHeader label={label} ariaLabel="System page" />
   }
 
-  // User-editable docs (user-owned wiki + writing) follow a
-  // single pattern: no separate header surface. The body's first
-  // line plays the title role — visually it's the biggest text
-  // on the page (heading style), and the title-mirror keeps
-  // knownDocs.title in sync from the body's first block. This
-  // matches Bear / iA Writer / Ulysses for writing and removes
-  // the previous split between "wiki has an input" and "writing
-  // has the body's first line". One rule everywhere.
-  return null
+  // User-editable docs (user-owned wiki + writing) get an inline
+  // text input that doubles as the file's name on disk. See
+  // EditableTitleInput for commit semantics (Enter / Blur).
+  return <EditableTitleInput slug={slug} currentTitle={known.title} />
 }
 
 /** Read-only label rendered with the same visual weight across kinds

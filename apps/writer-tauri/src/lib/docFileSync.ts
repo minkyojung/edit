@@ -183,6 +183,13 @@ function markDirty(slug: string): void {
   dirtySlugs.add(slug)
 }
 
+/** Public surface for marking a doc dirty without a Y.Doc mutation.
+ * Used by knownDocs-only changes (rename) so the next flush picks
+ * the slug up and the rename-on-change path moves the file on disk. */
+export function markSlugDirty(slug: string): void {
+  markDirty(slug)
+}
+
 /** Mark `slug` clean — called by the flush tick after a successful
  * write. Exposed for tests and the future flushDirty implementation
  * (iv.3). */

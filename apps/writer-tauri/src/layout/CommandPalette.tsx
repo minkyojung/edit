@@ -23,6 +23,7 @@ import {
   IconArchive,
   IconCalendar,
   IconCalendarTime,
+  IconEdit,
   IconFileDescription,
 } from '@tabler/icons-react'
 import {
@@ -69,6 +70,7 @@ export function CommandPalette() {
   const setActive = useDocsStore((s) => s.setActive)
   const setSidebarTab = useDocsStore((s) => s.setSidebarTab)
   const archiveDoc = useDocsStore((s) => s.archiveDoc)
+  const renameDoc = useDocsStore((s) => s.renameDoc)
   const navigate = useNavigate()
 
   // Active doc — used by the "Archive current note" action. Only
@@ -77,6 +79,18 @@ export function CommandPalette() {
     if (!activeSlug) return null
     const d = knownDocs.find((x) => x.slug === activeSlug)
     return d && d.type === 'writing' && !d.archivedAt ? d : null
+  }, [knownDocs, activeSlug])
+
+  // Renameable active doc — writing notes AND user-owned wiki pages.
+  // System pages (fixed names) and dailies (date-derived) refused
+  // by renameDoc anyway, but filter here so they don't appear in
+  // the Actions group at all.
+  const renameableDoc = useMemo(() => {
+    if (!activeSlug) return null
+    const d = knownDocs.find((x) => x.slug === activeSlug)
+    if (!d || d.archivedAt) return null
+    if (d.type !== 'writing' && !d.type.startsWith('wiki:custom-')) return null
+    return d
   }, [knownDocs, activeSlug])
 
   // Global shortcuts. ⌘K opens in any-mode, ⌘G opens in date-mode.
@@ -210,24 +224,53 @@ export function CommandPalette() {
         onValueChange={setQuery}
       />
       <CommandList>
-        {/* Actions on the active note. Only surfaces when there's a
-            writing-type active doc — dailies aren't archivable and
-            blank state has nothing to act on. */}
-        {activeDoc && (
+        {/* Actions on the active note. Rename works for wiki + writing;
+            archive only for writing (dailies aren't archivable). */}
+        {(renameableDoc || activeDoc) && (
           <CommandGroup heading="Actions">
-            <CommandItem
-              value="action:archive-active"
-              onSelect={() => {
-                archiveDoc(activeDoc.slug)
-                setOpen(false)
-              }}
-              className="text-destructive data-[selected=true]:text-destructive"
-            >
-              <IconArchive size={16} stroke={1.75} />
-              <span className="flex-1 truncate">
-                Archive “{activeDoc.title || 'Untitled'}”
-              </span>
-            </CommandItem>
+            {renameableDoc && (
+              <CommandItem
+                value="action:rename-active"
+                onSelect={() => {
+                  setOpen(false)
+                  // Defer the prompt so the dialog dismiss animation
+                  // doesn't race the native modal — without this the
+                  // prompt can appear before the palette has cleared
+                  // focus, leading to two stacked dialogs on some
+                  // window managers.
+                  setTimeout(() => {
+                    const input = window.prompt(
+                      'Rename note',
+                      renameableDoc.title ?? '',
+                    )
+                    if (input === null) return
+                    const trimmed = input.trim()
+                    if (trimmed.length === 0) return
+                    renameDoc(renameableDoc.slug, trimmed)
+                  }, 0)
+                }}
+              >
+                <IconEdit size={16} stroke={1.75} />
+                <span className="flex-1 truncate">
+                  Rename “{renameableDoc.title || 'Untitled'}”
+                </span>
+              </CommandItem>
+            )}
+            {activeDoc && (
+              <CommandItem
+                value="action:archive-active"
+                onSelect={() => {
+                  archiveDoc(activeDoc.slug)
+                  setOpen(false)
+                }}
+                className="text-destructive data-[selected=true]:text-destructive"
+              >
+                <IconArchive size={16} stroke={1.75} />
+                <span className="flex-1 truncate">
+                  Archive “{activeDoc.title || 'Untitled'}”
+                </span>
+              </CommandItem>
+            )}
           </CommandGroup>
         )}
         {dateResult && (

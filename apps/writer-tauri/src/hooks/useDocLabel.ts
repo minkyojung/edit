@@ -2,27 +2,22 @@
 // every surface that renders a doc reference (tabs, sidebar, palette,
 // breadcrumb, wikilink palette, unlinked-notes list, dialog title).
 //
-// Policy (Bear / iA Writer style — body's first line is the title):
+// Policy (Obsidian model — title is independent of body):
 //
 //   1. Daily entry  → meta.date (anchor; no editable title).
-//   2. Wiki entry   → cached knownDocs.title, maintained by the
-//      title mirror (docsStore.installTitleMirror) from the body's
-//      first non-empty block. The body's first line IS the title.
-//      Wiki mirror is gated on the first block being a heading —
-//      bullet-first bodies stay with the cached title until the
-//      user adds a heading (prevents the "Michael → Joined as new
-//      manager" regression where a bullet got promoted to title).
-//   3. Writing      → first heading.textContent / first paragraph
-//      .textContent of the body, plain text only (deriveLabel
-//      strips inline marks via Y.Text.toDelta).
-//   4. Fallback     → 'Untitled' / type-derived label for system pages.
+//   2. System page  → fixed name derived from the `system:*` type id.
+//   3. Wiki / Writing → `knownDocs[slug].title`. This IS the filename
+//      on disk (Path C Step 4); the only way to change it is the
+//      explicit renameDoc action, never via body edits.
+//   4. Fallback     → 'Untitled' when title is absent.
 //
-// deriveLabel returns plain text (Y.Text.toDelta inserts only — no
-// inline-mark wrappers). proofAuthored / proofComment marks added
-// by ingest or by the user can't leak raw XML into labels.
+// Pre-Step-4 the writing branch fell back to the body's first line
+// when title was empty. That branch is gone — the body and the title
+// are decoupled, period. A doc with no title displays as 'Untitled'
+// regardless of what the body contains. To name it, use the inline
+// title input (PageHeader) or the Command Palette's Rename.
 
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
-import { useDocTitle } from './useDocTitle'
 
 const DAILY_LABEL_FMT = new Intl.DateTimeFormat('en-US', {
   weekday: 'long',
@@ -40,25 +35,25 @@ function formatDailyLabel(date: string): string {
 }
 
 export function useDocLabel(slug: string | null): string {
-  const handle = useDocsStore((s) => (slug ? s.handles[slug] : undefined))
   const known = useDocsStore((s) =>
     slug ? s.knownDocs.find((d) => d.slug === slug) : undefined,
   )
-  const title = useDocTitle(handle?.ydoc ?? null)
 
-  if (known?.type === 'daily' && known.date) return formatDailyLabel(known.date)
-  if (known && isWikiDoc(known)) {
-    // Cached title is the canonical source. The title mirror
-    // (docsStore.installTitleMirror) keeps it in sync with the
-    // body's first block.
+  if (!known) return 'Untitled'
+
+  if (known.type === 'daily' && known.date) return formatDailyLabel(known.date)
+
+  if (isWikiDoc(known)) {
     const cached = known.title?.trim()
     if (cached) return cached
-    // No title typed yet. System pages carry meaningful suffixes;
-    // custom pages read as 'Untitled' until the user enters a name.
+    // System pages have a meaningful suffix to fall back on
+    // ('conventions' / 'log' / 'index'). Custom wiki pages with no
+    // title yet display as 'Untitled' until the user renames.
     if (known.type.startsWith('system:')) return known.type.replace(/^system:/, '')
-    if (known.type.startsWith('wiki:custom-')) return 'Untitled'
-    return known.type.replace(/^wiki:/, '')
+    return 'Untitled'
   }
-  if (handle) return title || known?.title || 'Untitled'
-  return known?.title || 'Untitled'
+
+  // Writing notes — body decoupled from title (Step 4). Title is
+  // whatever renameDoc has set, or 'Untitled'.
+  return known.title?.trim() || 'Untitled'
 }
