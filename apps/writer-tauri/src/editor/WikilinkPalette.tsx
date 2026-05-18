@@ -64,15 +64,24 @@ export function WikilinkPalette({ parentSlug, keyHandlerRef }: Props) {
       )
   }, [])
 
+  const findDailyAncestorSlug = useDocsStore((s) => s.findDailyAncestorSlug)
+  // Anchor every palette interaction (candidate filter + create) on
+  // the daily ancestor. Writings nest only 1-deep under a daily, so
+  // resolving here means a [[link]] typed from inside a writing sees
+  // its siblings under the same daily — and any new doc lands as a
+  // sibling, not a (forbidden) grandchild. When the active doc is
+  // itself a daily this resolves to its own slug.
+  const dailySlug = parentSlug ? findDailyAncestorSlug(parentSlug) : null
+
   const candidates = useMemo<Candidate[]>(() => {
-    if (!info || !parentSlug) return []
+    if (!info || !dailySlug) return []
     const q = info.query.trim().toLowerCase()
     // Children of the active parent — the only docs the palette
     // resolves against. Filter by title prefix when a query is set;
     // the title cache lives in knownDocs once the child has had its
     // ydoc opened at least once.
     const children = knownDocs.filter(
-      (d) => d.parentId === parentSlug && !d.archivedAt,
+      (d) => d.parentId === dailySlug && !d.archivedAt,
     )
     const matches = children
       .map((doc) => ({ doc, title: titleFor(doc) }))
@@ -90,7 +99,7 @@ export function WikilinkPalette({ parentSlug, keyHandlerRef }: Props) {
         ? [{ kind: 'create', label: info.query.trim() || 'Untitled' }]
         : []
     return [...matches, ...create]
-  }, [info, parentSlug, knownDocs])
+  }, [info, dailySlug, knownDocs])
 
   // Clamp selectedIndex when the candidate list shrinks.
   const safeIndex = candidates.length === 0
@@ -137,7 +146,7 @@ export function WikilinkPalette({ parentSlug, keyHandlerRef }: Props) {
     }
   }, [info, candidates, safeIndex, keyHandlerRef])
 
-  if (!info || !parentSlug) return null
+  if (!info || !dailySlug) return null
 
   // Position popup just below the caret. Use viewport coords from
   // the plugin's coordsAtPos and offset by 2px so it doesn't kiss
@@ -215,15 +224,24 @@ async function commit(info: WikilinkPaletteInfo, pick: Candidate) {
   }
   if (pick.kind === 'create') {
     const store = useDocsStore.getState()
-    const parentSlug = store.activeSlug
-    if (!parentSlug) {
+    const activeSlug = store.activeSlug
+    if (!activeSlug) {
+      cancelWikilink(info.view)
+      return
+    }
+    // Resolve to the active doc's daily ancestor — writings nest only
+    // 1-deep under a daily, so a [[link]] typed from inside a writing
+    // creates a sibling under the same daily rather than a (forbidden)
+    // grandchild. When the active doc is itself a daily this is a no-op.
+    const dailyParent = store.findDailyAncestorSlug(activeSlug)
+    if (!dailyParent) {
       cancelWikilink(info.view)
       return
     }
     // Goes through the store action so the title field gets seeded
     // and the handle is warmed; otherwise sidebar / tab labels
     // would render "Untitled" until the user opened the child.
-    const slug = await store.createWritingChild(parentSlug, pick.label)
+    const slug = await store.createWritingChild(dailyParent, pick.label)
     if (!slug) {
       cancelWikilink(info.view)
       return

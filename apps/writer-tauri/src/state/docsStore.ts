@@ -225,16 +225,30 @@ interface DocsState {
   /** Find or create the daily entry for the given local date and make
    * it the active tab. Returns the slug. */
   openDaily: (date?: string) => Promise<string | null>
-  /** Create a new writing-type note nested under `parentSlug`,
-   * register it in knownDocs with parentId set, open its tab, and
-   * activate. Returns the new slug. */
+  /** Create a new writing-type note nested under `parentSlug`. The
+   * parent MUST be a daily entry — writings only nest 1-deep so the
+   * UI tree matches the on-disk flat layout (Karpathy wiki pattern:
+   * connection via [[links]], not folder depth). Returns null when
+   * the parent is anything other than a daily. Callers wanting to
+   * "add a sibling" from inside a writing should resolve to the
+   * writing's daily ancestor first via {@link findDailyAncestorSlug}.
+   * Returns the new slug on success. */
   createChildNote: (parentSlug: string) => Promise<string | null>
   /** Create a writing child without activating its tab. Used by the
    * wikilink palette so creating a link doesn't yank the user out of
-   * the parent doc mid-sentence. Seeds the child's Y.Text title with
-   * the provided label so sidebar listings stop showing "Untitled"
-   * for nodes the user explicitly named. Returns the new slug. */
+   * the parent doc mid-sentence. Same 1-deep restriction as
+   * {@link createChildNote} — parent must be a daily. Seeds the
+   * child's Y.Text title with the provided label so sidebar listings
+   * stop showing "Untitled" for nodes the user explicitly named.
+   * Returns the new slug on success, null otherwise. */
   createWritingChild: (parentSlug: string, title: string) => Promise<string | null>
+  /** Walk up `parentId` from `slug` to find the nearest daily ancestor.
+   * Returns its slug, or null when no daily is in the chain (orphan).
+   * Used by callers of {@link createChildNote} / {@link createWritingChild}
+   * who hold a non-daily slug (e.g. "+ note" pressed while a writing
+   * is active) and need to resolve to the daily where the new note
+   * should land. */
+  findDailyAncestorSlug: (slug: string) => string | null
   /** Toggle the sidebar fold for a given doc. */
   toggleExpanded: (slug: string) => void
   reorder: (slugs: string[]) => void
@@ -669,8 +683,14 @@ export const useDocsStore = create<DocsState>()(
         // slug from the UI.
         const parent = get().knownDocs.find((d) => d.slug === parentSlug)
         if (!parent) return null
-        // Wiki pages are roots; user notes don't hang off them.
-        if (isWikiDoc(parent)) return null
+        // Writings only nest 1-deep under a daily. Wiki pages are
+        // roots. Anything else (including another writing) is refused
+        // — the Karpathy wiki pattern relies on flat-on-disk +
+        // [[link]] connections rather than folder depth. Callers
+        // holding a non-daily slug (e.g. ⌘N pressed while a writing
+        // is active) must resolve to the writing's daily ancestor
+        // first via findDailyAncestorSlug.
+        if (parent.type !== 'daily') return null
         // Empty title + empty body. The displayed label falls back to
         // 'Untitled' in useDocLabel.
         const slug = generateClientSlug()
@@ -701,7 +721,11 @@ export const useDocsStore = create<DocsState>()(
       createWritingChild: async (parentSlug, title) => {
         const parent = get().knownDocs.find((d) => d.slug === parentSlug)
         if (!parent) return null
-        if (isWikiDoc(parent)) return null
+        // Same 1-deep-under-daily rule as createChildNote. The wikilink
+        // palette callsite resolves to the active doc's daily ancestor
+        // before calling this, so a non-daily parent here is a coding
+        // bug rather than user-reachable state.
+        if (parent.type !== 'daily') return null
         // Empty body — server accepts it and the editor renders the
         // body placeholder. The title comes from the palette input.
         const slug = generateClientSlug()
@@ -729,6 +753,19 @@ export const useDocsStore = create<DocsState>()(
           })
         }
         return slug
+      },
+
+      findDailyAncestorSlug: (slug) => {
+        const docs = get().knownDocs
+        const visited = new Set<string>()
+        let current = docs.find((d) => d.slug === slug)
+        while (current && !visited.has(current.slug)) {
+          visited.add(current.slug)
+          if (current.type === 'daily') return current.slug
+          if (!current.parentId) return null
+          current = docs.find((d) => d.slug === current!.parentId)
+        }
+        return null
       },
 
       toggleExpanded: (slug) =>

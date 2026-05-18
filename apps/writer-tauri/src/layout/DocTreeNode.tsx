@@ -114,6 +114,12 @@ export function DocTreeNode({
   const hasChildren = children.length > 0
   const isExpanded = expandedDocSlugs.includes(doc.slug)
   const isActive = doc.slug === activeSlug
+  // Writings nest only 1-deep under a daily (Karpathy wiki pattern:
+  // flat-on-disk + [[link]] connections rather than folder depth).
+  // The "+ add child" affordance is therefore daily-only — surfacing
+  // it on writing rows would invite a state the store refuses to
+  // create.
+  const canAddChild = doc.type === 'daily'
 
   // dnd-kit hooks must be called unconditionally to satisfy the
   // Rules of Hooks. When draggable=false the `disabled` option
@@ -195,17 +201,19 @@ export function DocTreeNode({
               <TreeRowLabel onClick={() => onSelect(doc.slug)}>
                 <span className="truncate">{label}</span>
               </TreeRowLabel>
-              <TreeRowTrail
-                showOnHover
-                aria-label="Add note"
-                onClick={(e: MouseEvent) => {
-                  e.stopPropagation()
-                  onAddChild(doc.slug)
-                  if (!isExpanded) toggleExpanded(doc.slug)
-                }}
-              >
-                <IconPlus stroke={2} />
-              </TreeRowTrail>
+              {canAddChild && (
+                <TreeRowTrail
+                  showOnHover
+                  aria-label="Add note"
+                  onClick={(e: MouseEvent) => {
+                    e.stopPropagation()
+                    onAddChild(doc.slug)
+                    if (!isExpanded) toggleExpanded(doc.slug)
+                  }}
+                >
+                  <IconPlus stroke={2} />
+                </TreeRowTrail>
+              )}
             </TreeRow>
           </li>
         </ContextMenuTrigger>
@@ -247,17 +255,19 @@ export function DocTreeNode({
               <TreeRowLabel onClick={() => onSelect(doc.slug)}>
                 <span className="truncate">{label}</span>
               </TreeRowLabel>
-              <TreeRowTrail
-                showOnHover
-                aria-label="Add note"
-                onClick={(e: MouseEvent) => {
-                  e.stopPropagation()
-                  onAddChild(doc.slug)
-                  if (!isExpanded) toggleExpanded(doc.slug)
-                }}
-              >
-                <IconPlus stroke={2} />
-              </TreeRowTrail>
+              {canAddChild && (
+                <TreeRowTrail
+                  showOnHover
+                  aria-label="Add note"
+                  onClick={(e: MouseEvent) => {
+                    e.stopPropagation()
+                    onAddChild(doc.slug)
+                    if (!isExpanded) toggleExpanded(doc.slug)
+                  }}
+                >
+                  <IconPlus stroke={2} />
+                </TreeRowTrail>
+              )}
             </TreeRow>
             <CollapsibleContent asChild>
               <TreeSub>

@@ -131,6 +131,7 @@ export function AppSidebar() {
 
   const openDaily = useDocsStore((s) => s.openDaily)
   const createChildNote = useDocsStore((s) => s.createChildNote)
+  const findDailyAncestorSlug = useDocsStore((s) => s.findDailyAncestorSlug)
   const navigate = useNavigate()
 
   // Global doc shortcuts:
@@ -170,7 +171,14 @@ export function AppSidebar() {
         e.preventDefault()
         const activeSlug = useDocsStore.getState().activeSlug
         if (!activeSlug) return
-        createChildNote(activeSlug).catch((err) =>
+        // Writings nest only 1-deep under a daily. If a writing is
+        // currently active, ⌘N creates a sibling under the same daily
+        // rather than a (forbidden) grandchild. Daily / wiki active
+        // pass through unchanged: daily → child writing, wiki → null
+        // (createChildNote refuses, ⌘N becomes a no-op on wiki pages).
+        const target =
+          findDailyAncestorSlug(activeSlug) ?? activeSlug
+        createChildNote(target).catch((err) =>
           console.error('[docs] ⌘N createChildNote failed', err),
         )
         if (!pathname.startsWith('/notes')) navigate('/notes')
@@ -182,7 +190,7 @@ export function AppSidebar() {
     // over local input handling.
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [openDaily, createChildNote, navigate, pathname])
+  }, [openDaily, createChildNote, findDailyAncestorSlug, navigate, pathname])
 
   return (
     <Sidebar>
