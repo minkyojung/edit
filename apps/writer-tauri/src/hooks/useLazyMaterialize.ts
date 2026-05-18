@@ -59,24 +59,16 @@ export interface LazyMaterializeConfig {
 }
 
 function waitForLocalReady(handle: {
-  idb: {
-    synced: boolean
-    on: (e: 'synced', f: () => void) => void
-    off: (e: 'synced', f: () => void) => void
-  }
+  contentReady: Promise<void>
 }): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const finish = () => setTimeout(resolve, 50)
-    if (handle.idb.synced) {
-      finish()
-      return
-    }
-    const onSynced = () => {
-      handle.idb.off('synced', onSynced)
-      finish()
-    }
-    handle.idb.on('synced', onSynced)
-  })
+  // Small post-resolution delay so y-prosemirror's initial PM↔Y
+  // reconcile finishes its microtask flush before the caller starts
+  // walking the doc. Same 50ms cushion the previous IDB-event path
+  // used — empirical, kept identical so timing-sensitive consumers
+  // (system page drain) don't observe a different paint cadence.
+  return handle.contentReady.then(
+    () => new Promise<void>((resolve) => setTimeout(resolve, 50)),
+  )
 }
 
 /** Hook variant for a single config. Internal use only — the public

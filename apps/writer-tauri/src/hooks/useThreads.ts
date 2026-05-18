@@ -37,26 +37,26 @@ export interface UseThreadsResult {
 
 export function useThreads(
   ydoc: Y.Doc | null,
-  idbSynced: Promise<void> | null,
+  contentReady: Promise<void> | null,
 ): UseThreadsResult {
   const [threads, setThreads] = useState<ThreadMeta[]>([])
-  // Tracks IDB hydration completion. `ready` must wait on this so callers
+  // Tracks doc-content hydration. `ready` waits on this so callers
   // (e.g. ChatPanel's auto-create effect) don't see a transient empty
   // thread list before persisted threads land — which would otherwise
   // produce a spurious blank thread on every doc open.
-  const [idbReady, setIdbReady] = useState(false)
+  const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
-    setIdbReady(false)
-    if (!idbSynced) return
+    setHydrated(false)
+    if (!contentReady) return
     let cancelled = false
-    idbSynced.then(() => {
-      if (!cancelled) setIdbReady(true)
+    contentReady.then(() => {
+      if (!cancelled) setHydrated(true)
     })
     return () => {
       cancelled = true
     }
-  }, [idbSynced])
+  }, [contentReady])
 
   useEffect(() => {
     if (!ydoc) {
@@ -69,6 +69,30 @@ export function useThreads(
     yThreads.observe(sync)
     return () => yThreads.unobserve(sync)
   }, [ydoc])
+
+  // One-shot cleanup: remove accumulated blank threads (no title and no
+  // turns) that earlier doc opens created before `ready` was gated on
+  // IDB hydration. Runs once per doc open, after IDB hydration finishes
+  // and before ChatPanel's auto-create effect fires (same hook, so
+  // React orders the effects in declaration order).
+  useEffect(() => {
+    if (!ydoc || !hydrated) return
+    const yThreads = ydoc.getArray<ThreadMeta>(THREADS_KEY)
+    const arr = yThreads.toArray()
+    const emptyIndices: number[] = []
+    arr.forEach((t, i) => {
+      if (t.title !== '') return
+      const yTurns = ydoc.getArray(`thread:${t.id}`)
+      if (yTurns.length === 0) emptyIndices.push(i)
+    })
+    if (emptyIndices.length === 0) return
+    // Delete high-to-low so earlier deletes don't shift later indices.
+    ydoc.transact(() => {
+      for (let k = emptyIndices.length - 1; k >= 0; k--) {
+        yThreads.delete(emptyIndices[k], 1)
+      }
+    }, 'chat-meta')
+  }, [ydoc, hydrated])
 
   const findIndex = useCallback(
     (id: string) => {
@@ -213,7 +237,7 @@ export function useThreads(
   }, [threads])
 
   return {
-    ready: !!ydoc && idbReady,
+    ready: !!ydoc && hydrated,
     threads,
     active,
     archived,

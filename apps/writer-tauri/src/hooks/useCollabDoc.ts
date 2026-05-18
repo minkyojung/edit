@@ -54,15 +54,23 @@ export interface StoredMark {
 export interface CollabHandle {
   ydoc: Y.Doc
   slug: string
-  /** Client-side IndexedDB persistence layer. Single durable surface
-   * since Phase 3.C removed the WebSocket sync — every Y.Doc update
-   * is written to local disk synchronously with the in-memory CRDT. */
+  /** Client-side IndexedDB persistence layer. Will be removed in Path C
+   * Step 3b — for the transitional window we keep it as a fallback
+   * surface alongside the vault-driven `contentReady`. */
   idb: IndexeddbPersistence
-  /** Resolves once the IndexedDB layer has hydrated the ydoc from its
-   * local cache (or confirmed there's nothing cached for this slug).
-   * Gates downstream consumers (editor render, mark application) so
-   * they paint against the real saved state, not an empty one. */
+  /** @deprecated Use {@link CollabHandle.contentReady}. Kept while
+   * Step 3a migrates callers; removed in 3b with the IDB layer. */
   idbSynced: Promise<void>
+  /** Resolves once the doc's body + marks have been hydrated into the
+   * ydoc. Sources, in order of authority:
+   *   1. The vault file (.md + .marks.json)  ← Path C primary
+   *   2. (legacy) IDB cache, until Step 3b removes it
+   *   3. Empty (for brand-new docs with no on-disk file yet)
+   *
+   * Callers that need to read/write content-dependent state (editor
+   * binding, mark application, dirty-bit observers) should await this
+   * instead of `idbSynced`. */
+  contentReady: Promise<void>
 }
 
 /**

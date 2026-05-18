@@ -257,13 +257,15 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         // Wait for IndexedDB to finish hydrating the ydoc before binding
         // the collab service. y-prosemirror's sync plugin runs an initial
         // PM↔Y reconcile the moment it sees a ydoc; if we bind while the
-        // fragment is empty (pre-hydrate) and IDB then fills it after,
+        // fragment is empty (pre-hydrate) and content fills in after,
         // PM ends up with a doc where the hydrated paragraphs sit
         // alongside new client items the initial reconcile created — the
-        // 1→2→4→8 doubling regression. Binding after idbSynced means PM
-        // sees the fully-populated fragment from frame one and the
-        // initial reconcile is a no-op.
-        await handle.idbSynced
+        // 1→2→4→8 doubling regression. Binding after contentReady means
+        // PM sees the fully-populated fragment from frame one and the
+        // initial reconcile is a no-op. contentReady spans IDB hydrate
+        // AND vault load (Path C) so binding waits for vault-sourced
+        // body + marks to land, not just the in-browser cache.
+        await handle.contentReady
         if (!mounted) return
 
         // If hydration left the fragment empty (brand-new note), pre-seed

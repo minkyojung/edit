@@ -291,64 +291,55 @@ function buildHandle(
 ): CollabHandle {
   const ydoc = new Y.Doc()
   const idb = new IndexeddbPersistence(slug, ydoc)
-  const handle: CollabHandle = {
-    ydoc,
-    idb,
-    idbSynced: idb.whenSynced.then(() => undefined),
-    slug,
-  }
-  // Install the ingest dirty-bit tracker after IDB finishes hydrating
-  // so the initial replay doesn't register as a fresh edit. From that
-  // point on, any XmlFragment change (typing, mark accept, remote
-  // sync) bumps ingestStore.lastEditedAt[slug] — that's the watermark
-  // useIdleTrigger compares against lastIngestedAt to decide whether
-  // the note is a candidate for re-ingest. Agent-managed pages
-  // (`system:*` + `wiki:*`) are filtered out here via isWikiDoc so
-  // ingest sources stay clean — those pages are output, not input.
-  // No explicit unobserve: ydoc.destroy() in closeDoc tears down all
-  // observers attached to fragments it owns.
-  void idb.whenSynced.then(() => {
+  const idbSynced = idb.whenSynced.then(() => undefined)
+
+  // contentReady: doc-hydration signal that consumers await before
+  // touching content-dependent state (editor binding, mark store
+  // reads, dirty observers, chat threads). Spans:
+  //   1. IDB hydrate    (current — removed in Path C 3b)
+  //   2. Vault load     (Path C primary — .md + sidecar → Y.Doc)
+  //   3. installDocSync (start watching for dirty-mark observers)
+  //
+  // Folding (3) into the same chain means dirty tracking only begins
+  // AFTER the initial hydrate, so the seed doesn't register as an
+  // edit. Ingest's "edited slug" tracker (below) joins the same
+  // chain for the same reason.
+  let vaultSyncDisposer: (() => void) | null = null
+  const contentReady = idbSynced.then(async () => {
     const fragment = ydoc.getXmlFragment('prosemirror')
+    // Use deriveLabel (text-walking) rather than fragment.length —
+    // MilkdownEditor's mount fills an empty fragment with a
+    // paragraph stub that can race ahead, leaving length===1 even
+    // when no real text exists.
+    if (deriveLabel(fragment).length === 0) {
+      const outcome = await applyVaultToHandle(slug).catch((err) => {
+        console.warn('[vault:load] failed for', slug, err)
+        return 'no-vault' as const
+      })
+      if (outcome === 'applied') {
+        console.log(`[vault:load] hydrated ${slug} from vault`)
+      }
+    }
+    vaultSyncDisposer = installDocSync(slug, ydoc)
+
+    // Ingest dirty-bit observer. Installed AFTER hydrate so the
+    // initial seed doesn't register as a fresh edit. Agent-managed
+    // pages (system:* + wiki:*) are filtered out — those pages are
+    // output, not input. No explicit unobserve: ydoc.destroy() in
+    // closeDoc tears down all observers attached to its fragments.
     fragment.observeDeep(() => {
       const known = useDocsStore.getState().knownDocs.find((d) => d.slug === slug)
       if (!known || isWikiDoc(known)) return
       useIngestStore.getState().markEdited(slug)
     })
   })
-
-  // Vault file sync — observers that mark this slug dirty on any
-  // Y.Doc mutation, plus a vault-to-memory load when IDB had nothing
-  // for this slug. The auto-flush tick (Phase 4.B.1.b.iv.2+) reads
-  // dirtySlugs and writes the .md + .marks.json pair. Disposer is
-  // stashed on the handle so closeDoc can tear it down alongside
-  // the ydoc.
-  //
-  // Vault load policy (Phase 4.B.1.c.iii):
-  //   IDB takes priority — if it had data for this slug, we use that
-  //   and skip the vault read. Only when the fragment is still empty
-  //   after IDB sync (fresh launch with cleared IDB, or a slug that
-  //   was first created on disk) do we hydrate from the vault. This
-  //   is the conservative pivot: existing user data can't be lost,
-  //   and Phase 4.E (file watcher) will introduce the symmetric
-  //   "outside edit wins" path for vim/external changes.
-  let vaultSyncDisposer: (() => void) | null = null
-  void idb.whenSynced.then(async () => {
-    const fragment = ydoc.getXmlFragment('prosemirror')
-    // Use deriveLabel (text-walking) rather than fragment.length to
-    // recognize "effectively empty". MilkdownEditor.tsx:281-290 fills
-    // an empty fragment with a one-paragraph stub on mount; that mount
-    // can race ahead of this .then callback, leaving fragment.length===1
-    // even when no real text exists. seedDocBody handles the same
-    // ambiguity the same way — keeping the rule consistent across both
-    // seeding paths.
-    if (deriveLabel(fragment).length === 0) {
-      const outcome = await applyVaultToHandle(slug)
-      if (outcome === 'applied') {
-        console.log(`[vault:load] hydrated ${slug} from vault`)
-      }
-    }
-    vaultSyncDisposer = installDocSync(slug, ydoc)
-  })
+  const handle: CollabHandle = {
+    ydoc,
+    idb,
+    idbSynced,
+    contentReady,
+    slug,
+  }
   // Expose disposer via the handle's destroy chain by piggy-backing
   // on ydoc.destroy. closeDoc already calls ydoc.destroy(); add the
   // disposer call before destroying so observer cleanup runs while
@@ -359,16 +350,16 @@ function buildHandle(
     vaultSyncDisposer = null
     originalDestroy()
   }
-  // IndexedDB is the single durable surface — status flips to 'ready'
-  // once IDB hydrates the ydoc. 'error' covers the rare IDB failure
-  // (Safari private mode / quota exhausted / browser bug) so the
-  // footer can surface "storage unavailable" instead of leaving the
-  // user silently writing into a session that won't persist.
+  // Status flips to 'ready' once the doc's body + marks are fully
+  // hydrated into the ydoc (IDB cache today, vault load layered on top
+  // in Path C). 'error' covers the rare hydrate failure so the footer
+  // can surface "storage unavailable" instead of leaving the user
+  // silently writing into a session that won't persist.
   onStatus('loading')
-  handle.idbSynced.then(
+  handle.contentReady.then(
     () => onStatus('ready'),
     (err) => {
-      console.error('[collab] IDB hydrate failed', err)
+      console.error('[collab] content hydrate failed', err)
       onStatus('error')
     },
   )
@@ -882,7 +873,7 @@ export const useDocsStore = create<DocsState>()(
         // schema-fill paragraph alongside it. Outcome depends on
         // which doc is active, which is why "case A failed, case
         // B succeeded" was non-deterministic.
-        await handle.idbSynced
+        await handle.contentReady
         const parser = useEditorViewStore.getState().parser
         if (!parser) {
           // Caller is responsible for retrying once a parser is
@@ -1286,24 +1277,19 @@ function installTitleMirror(
       return { knownDocs: list }
     })
   }
+  let started = false
   const start = () => {
+    if (started) return
+    started = true
     sync()
     // observeDeep so edits inside block text children update the
     // cache, not just structural changes at the fragment root.
     fragment.observeDeep(sync)
   }
-  if (handle.idb.synced) {
-    start()
-    return
-  }
-  // IDB is the single durable surface since Phase 3.C — its 'synced'
-  // event fires once the local store has hydrated the ydoc.
-  let started = false
-  const onceReady = () => {
-    if (started) return
-    started = true
-    handle.idb.off('synced', onceReady)
-    start()
-  }
-  handle.idb.on('synced', onceReady)
+  // contentReady spans both IDB hydrate and vault load (Path C). A
+  // resolved promise fires the .then on the next microtask, so this
+  // works whether the handle is brand-new (still loading) or already
+  // hydrated. No event subscription needed — the promise replaces
+  // IDB's 'synced' event surface.
+  void handle.contentReady.then(start)
 }
