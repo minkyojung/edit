@@ -164,6 +164,11 @@ export interface DocsState {
    * so a self-write echoed back through the watcher can't double-add
    * the doc we just created. */
   addKnownDoc: (doc: KnownDoc) => void
+  /** Drop a doc from the catalog because its file vanished from disk.
+   * Delegates to {@link closeDoc} for the tab + handle cleanup when
+   * the doc is currently open, so the existing tear-down ordering
+   * (ydoc destroy, ensureNonEmptyTabStrip, etc.) is reused. */
+  removeKnownDoc: (slug: string) => void
   setActive: (slug: string) => void
   closeDoc: (slug: string) => void
   createNew: () => Promise<void>

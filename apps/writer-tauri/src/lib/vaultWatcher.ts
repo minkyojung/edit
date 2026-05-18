@@ -245,12 +245,26 @@ function handleExternalAdd(rel: string): void {
     })
 }
 
-/** Stub: a watched .md disappeared. In Phase 4.E.3 this will remove
- * the doc from `knownDocs` (and close its tab if open). Trash /
- * archive flows go through the app and are filtered by the echo
- * guard before reaching here. */
+/** A watched `.md` disappeared from disk. Decision tree:
+ *
+ *   1. Path doesn't map to any known slug → ignore. Either an
+ *      unrecognised file we never tracked, or the matching half of an
+ *      atomic-write rename whose `add` leg already reached us.
+ *   2. Otherwise → `removeKnownDoc(slug)`. The action closes the tab
+ *      (if any), tears down the ydoc, scrubs handles/status, and
+ *      drops the slug from knownDocs + expandedDocSlugs in one go.
+ *
+ * Obsidian / iA Writer convention: external deletion is a direct
+ * user action, so we trust it even when the local doc had unsaved
+ * edits. The user moved the file to the trash deliberately; second-
+ * guessing them with a confirm dialog would feel paternalistic.
+ */
 function handleExternalRemove(rel: string): void {
-  console.log('[router] remove candidate:', rel)
+  const state = useDocsStore.getState()
+  const slug = findSlugByVaultPath(state.knownDocs, rel)
+  if (!slug) return
+  console.log('[vault:remove] external doc removed', { rel, slug })
+  state.removeKnownDoc(slug)
 }
 
 /** True for vault-relative paths we want the router to consider.

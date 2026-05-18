@@ -55,6 +55,13 @@ export interface HandlesSlice {
    * already present — protects against the race where our own
    * create flow's `.md` write echoes back as a watch event. */
   addKnownDoc: (doc: KnownDoc) => void
+  /** Drop a doc from the catalog after its file disappeared from
+   * disk. If the doc is currently open as a tab, closes it first so
+   * the ydoc tear-down + tab-strip invariants run through their
+   * existing path (closeDoc) rather than a parallel implementation
+   * here. Also scrubs `expandedDocSlugs` so the sidebar tree doesn't
+   * keep referencing a slug that no longer exists. */
+  removeKnownDoc: (slug: string) => void
 }
 
 export const createHandlesSlice = (
@@ -103,6 +110,23 @@ export const createHandlesSlice = (
       if (s.knownDocs.some((d) => d.slug === doc.slug)) return s
       return { knownDocs: [...s.knownDocs, doc] }
     })
+  },
+
+  removeKnownDoc: (slug) => {
+    // If the doc has an open tab, close it first. closeDoc handles
+    // ydoc.destroy, openSlugs / activeSlug shift, handles / status
+    // cleanup, and the non-empty-tab-strip invariant — re-implementing
+    // those here would duplicate the careful ordering closeDoc already
+    // gets right. We just need to make sure closeDoc runs BEFORE we
+    // drop the doc from knownDocs, since some of its sub-steps (e.g.
+    // ensureHandle on a fallback tab) read the catalog.
+    if (get().openSlugs.includes(slug)) {
+      get().closeDoc(slug)
+    }
+    set((s) => ({
+      knownDocs: s.knownDocs.filter((d) => d.slug !== slug),
+      expandedDocSlugs: s.expandedDocSlugs.filter((s2) => s2 !== slug),
+    }))
   },
 })
 
