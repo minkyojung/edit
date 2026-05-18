@@ -23,8 +23,8 @@
  * involvement, no async. Safe to import from anywhere.
  */
 
-import { formatLocalDate } from '@/hooks/useDocMeta'
-import type { DocPolicy, KnownDoc } from './types'
+import { formatLocalDate, todayLocalDate } from '@/hooks/useDocMeta'
+import type { DocPolicy, DocsState, KnownDoc } from './types'
 
 // ── Doc policy table ───────────────────────────────────────────────
 
@@ -117,6 +117,45 @@ export function shiftMonthAnchor(anchor: string, delta: number): string {
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   return `${yyyy}-${mm}`
 }
+
+// ── Tab-strip invariant ────────────────────────────────────────────
+
+/** Apply the "tab strip is never empty" invariant to a state patch
+ * about to be passed to set(). If the patch (or current state, if
+ * the patch doesn't touch openSlugs) would leave openSlugs empty,
+ * today's daily slug is folded back in synchronously and made active
+ * — so the user never sees a blank tab strip, regardless of whether
+ * any follow-up async work succeeds or fails.
+ *
+ * The invariant lives here rather than scattered across each
+ * mutation (closeDoc / archiveDoc / deleteForever / emptyArchive)
+ * because the policy is identical at every site: "if removing this
+ * slug would empty the strip, fall back to today's daily."
+ *
+ * No-op when today's daily isn't in the catalog (bootstrap hasn't
+ * run yet, or the day rolled over since bootstrap). In that edge
+ * case the strip stays empty for the moment — caller's own async
+ * follow-up (ensureHandle, openDaily) is the next line of defense,
+ * but it's not relied on for the common path. */
+export function ensureNonEmptyTabStrip(
+  state: DocsState,
+  patch: Partial<DocsState>,
+): Partial<DocsState> {
+  const nextOpen = patch.openSlugs ?? state.openSlugs
+  if (nextOpen.length > 0) return patch
+  const today = todayLocalDate()
+  const todayDaily = state.knownDocs.find(
+    (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
+  )
+  if (!todayDaily) return patch
+  return {
+    ...patch,
+    openSlugs: [todayDaily.slug],
+    activeSlug: todayDaily.slug,
+  }
+}
+
+// ── Date helpers ───────────────────────────────────────────────────
 
 /** Compute the Monday-anchored start of the calendar week
  * containing `date` (YYYY-MM-DD). ISO-week convention. */

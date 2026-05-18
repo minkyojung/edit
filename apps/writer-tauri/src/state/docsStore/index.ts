@@ -26,7 +26,6 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { generateClientSlug } from '@/lib/slug'
 import { todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
-import { notify } from '@/lib/notify'
 import { scanVault } from '@/lib/scanVault'
 import { useChatRuns } from '@/stores/chatRuns'
 
@@ -54,12 +53,13 @@ export {
   shiftMonthAnchor,
   weekStartFor,
 } from './helpers'
-import { isUserOwnedWiki, isWikiDoc } from './helpers'
+import { ensureNonEmptyTabStrip } from './helpers'
 import { createDateNavSlice } from './dateNavSlice'
 import { createSidebarSlice } from './sidebarSlice'
 import { createEditSlice } from './editSlice'
 import { createHandlesSlice, scrubDailyTitleArtifacts } from './handlesSlice'
 import { createCreateSlice } from './createSlice'
+import { createArchiveSlice } from './archiveSlice'
 
 // DocsState lives in ./types — every action signature documented there.
 
@@ -93,6 +93,7 @@ export const useDocsStore = create<DocsState>()(
       ...createEditSlice(set, get),
       ...createHandlesSlice(set, get),
       ...createCreateSlice(set, get),
+      ...createArchiveSlice(set, get),
 
       bootstrap: async () => {
         // Skip if another bootstrap is mid-flight (see the comment on
@@ -273,172 +274,6 @@ export const useDocsStore = create<DocsState>()(
 
       reorder: (slugs) => set({ openSlugs: slugs }),
 
-      archiveDoc: (slug) => {
-        const state = get()
-        const target = state.knownDocs.find((d) => d.slug === slug)
-        if (!target) return false
-        // Daily entries are time-axis spine, not user-authored docs.
-        // Refuse so the sidebar/breadcrumb invariants stay intact.
-        if (target.type === 'daily') return false
-        // Agent-managed wiki/system pages are protected from accidental
-        // wipe (Karpathy write-ownership invariant). User-spawned
-        // wiki:custom-* pages are the user's own writing surface, so
-        // they follow the regular ownership rule and can be archived.
-        if (isWikiDoc(target) && !isUserOwnedWiki(target)) return false
-        if (target.archivedAt) return false
-
-        const groupSlugs = collectDescendantSlugs(state.knownDocs, slug)
-        const stamp = Date.now()
-        const groupSet = new Set(groupSlugs)
-
-        // Close any open tabs in the group, destroy their handles, and
-        // pick a sensible new activeSlug if the active was inside.
-        const nextOpen = state.openSlugs.filter((s) => !groupSet.has(s))
-        let nextActive = state.activeSlug
-        if (state.activeSlug && groupSet.has(state.activeSlug)) {
-          const idx = state.openSlugs.indexOf(state.activeSlug)
-          // First non-group slug at or after idx; else most recent before.
-          nextActive =
-            state.openSlugs.slice(idx + 1).find((s) => !groupSet.has(s)) ??
-            [...state.openSlugs.slice(0, idx)].reverse().find((s) => !groupSet.has(s)) ??
-            null
-        }
-        // Cancel chat runs for the whole cascade before tearing
-        // handles down. Same reasoning as closeDoc: late proposals
-        // must not race past a destroyed ydoc. (Pending-proposal
-        // queues are gone with Track 1.2 reapply; /ops handles
-        // application server-side now.)
-        const chatRuns = useChatRuns.getState()
-        for (const s of groupSlugs) {
-          chatRuns.abortBySlug(s)
-        }
-        const nextHandles = { ...state.handles }
-        const nextStatus = { ...state.status }
-        for (const s of groupSlugs) {
-          const h = nextHandles[s]
-          if (h) {
-            h.ydoc.destroy()
-          }
-          delete nextHandles[s]
-          delete nextStatus[s]
-        }
-
-        const nextKnown = state.knownDocs.map((d) =>
-          groupSet.has(d.slug)
-            ? {
-                ...d,
-                archivedAt: stamp,
-                archivedFromParent: d.parentId,
-                parentId: undefined,
-              }
-            : d,
-        )
-
-        // The empty-strip invariant uses the *post-archive* catalog
-        // (so today's daily must still be archive-free in nextKnown).
-        // Pass a synthesized state to ensureNonEmptyTabStrip rather
-        // than the live one so the lookup sees nextKnown.
-        const postState: DocsState = { ...state, knownDocs: nextKnown }
-        set(ensureNonEmptyTabStrip(postState, {
-          knownDocs: nextKnown,
-          openSlugs: nextOpen,
-          activeSlug: nextActive,
-          handles: nextHandles,
-          status: nextStatus,
-        }))
-        // Warm whichever slug ended up active — whether nextActive
-        // survived or the invariant fell back to today's daily.
-        const finalActive = get().activeSlug
-        if (finalActive && !get().handles[finalActive]) {
-          get().ensureHandle(finalActive).catch((err) =>
-            console.error('[docs] post-archive ensureHandle failed', err),
-          )
-        }
-        return true
-      },
-
-      unarchiveDoc: (slug) => {
-        const state = get()
-        const target = state.knownDocs.find((d) => d.slug === slug)
-        if (!target?.archivedAt) return
-        const stamp = target.archivedAt
-        // Restore everything archived in the same batch (same
-        // timestamp) so a cascade is undone as a unit.
-        const nextKnown = state.knownDocs.map((d) =>
-          d.archivedAt === stamp
-            ? {
-                ...d,
-                parentId: d.archivedFromParent,
-                archivedAt: undefined,
-                archivedFromParent: undefined,
-              }
-            : d,
-        )
-        set({ knownDocs: nextKnown })
-      },
-
-      deleteForever: async (slug) => {
-        const state = get()
-        const target = state.knownDocs.find((d) => d.slug === slug)
-        if (!target?.archivedAt) return
-        // Agent-managed wiki/system pages can't reach this code path
-        // today (archive is refused above) but assert it anyway so a
-        // future regression can't silently wipe agent memory. User-
-        // spawned wiki:custom-* pages reach archive, so they're
-        // allowed through here and follow normal hard-delete.
-        if (isWikiDoc(target) && !isUserOwnedWiki(target)) return
-        const stamp = target.archivedAt
-        const groupSlugs = state.knownDocs
-          .filter((d) => d.archivedAt === stamp)
-          .map((d) => d.slug)
-        // Path C: no IDB shards to clean. Vault file deletion is the
-        // only durable cleanup needed, but that's not wired yet — the
-        // user removes files from Finder if they want the disk freed.
-        // Legacy IDB shards (pre-Path-C) get cleared by a one-time
-        // wipe path during migration; not handled here.
-        const failed = 0
-        const groupSet = new Set(groupSlugs)
-        const cur = get()
-        const nextKnown = cur.knownDocs.filter((d) => !groupSet.has(d.slug))
-        const nextOpen = cur.openSlugs.filter((sl) => !groupSet.has(sl))
-        const nextExpanded = cur.expandedDocSlugs.filter((sl) => !groupSet.has(sl))
-        const postState: DocsState = { ...cur, knownDocs: nextKnown }
-        set(ensureNonEmptyTabStrip(postState, {
-          knownDocs: nextKnown,
-          openSlugs: nextOpen,
-          expandedDocSlugs: nextExpanded,
-        }))
-        if (failed > 0) {
-          notify.cantDeleteNote({ onRetry: () => get().deleteForever(slug) })
-        }
-      },
-
-      emptyArchive: async () => {
-        const archived = get().knownDocs.filter((d) => d.archivedAt)
-        if (archived.length === 0) return
-        // Path C: no IDB shards to clean. Vault files stay on disk —
-        // user removes them from Finder if they want the space back.
-        const failed = 0
-        const archivedSet = new Set(archived.map((d) => d.slug))
-        const cur = get()
-        const nextKnown = cur.knownDocs.filter((d) => !archivedSet.has(d.slug))
-        const nextOpen = cur.openSlugs.filter((sl) => !archivedSet.has(sl))
-        const nextExpanded = cur.expandedDocSlugs.filter((sl) => !archivedSet.has(sl))
-        const postState: DocsState = { ...cur, knownDocs: nextKnown }
-        set(ensureNonEmptyTabStrip(postState, {
-          knownDocs: nextKnown,
-          openSlugs: nextOpen,
-          expandedDocSlugs: nextExpanded,
-        }))
-        if (get().openSlugs.length === 0) {
-          void get().openDaily().catch((err) =>
-            console.error('[docs] post-emptyArchive openDaily failed', err),
-          )
-        }
-        if (failed > 0) {
-          notify.cantEmptyTrash({ onRetry: () => get().emptyArchive() })
-        }
-      },
     }),
     {
       name: 'writer-tauri:docs',
@@ -502,70 +337,6 @@ export const useDocsStore = create<DocsState>()(
     },
   ),
 )
-
-/** BFS over knownDocs to collect `root` plus every descendant via
- * parentId. Used by archiveDoc to assemble the cascade group in one
- * pass. Skips already-archived entries so a re-archive of a subtree
- * doesn't double-batch. */
-function collectDescendantSlugs(docs: KnownDoc[], root: string): string[] {
-  const out: string[] = [root]
-  const queue: string[] = [root]
-  while (queue.length) {
-    const parent = queue.shift()!
-    for (const d of docs) {
-      if (d.parentId === parent && !d.archivedAt && !out.includes(d.slug)) {
-        out.push(d.slug)
-        queue.push(d.slug)
-      }
-    }
-  }
-  return out
-}
-
-/** Daily entries derive their displayed title from meta.date — they
- * have no editable title of their own. Earlier versions seeded the
- * date into Y.Text('title'), which raced with collab sync and
- * sometimes produced duplicated values like "2026-05-042026-05-04".
- * This scrubber clears any leftover Y.Text('title') content for a
- * daily; the label everywhere (tabs, sidebar, breadcrumb, header)
- * now reads from meta.date instead, so clearing the Y.Text is safe
- * and removes the legacy artifact in one shot. */
-/** Apply the "tab strip is never empty" invariant to a state patch
- * about to be passed to set(). If the patch (or current state, if
- * the patch doesn't touch openSlugs) would leave openSlugs empty,
- * today's daily slug is folded back in synchronously and made active
- * — so the user never sees a blank tab strip, regardless of whether
- * any follow-up async work succeeds or fails.
- *
- * The store-level invariant lives here rather than scattered across
- * each mutation (closeDoc / archiveDoc / deleteForever / emptyArchive)
- * because the policy is identical at every site: "if removing this
- * slug would empty the strip, fall back to today's daily." Putting it
- * in one helper means the rule has one definition and one place to
- * change.
- *
- * No-op when today's daily isn't in the catalog (bootstrap hasn't
- * run yet, or the day rolled over since bootstrap). In that edge
- * case the strip stays empty for the moment — caller's own async
- * follow-up (ensureHandle, openDaily) is the next line of defense,
- * but it's not relied on for the common path. */
-function ensureNonEmptyTabStrip(
-  state: DocsState,
-  patch: Partial<DocsState>,
-): Partial<DocsState> {
-  const nextOpen = patch.openSlugs ?? state.openSlugs
-  if (nextOpen.length > 0) return patch
-  const today = todayLocalDate()
-  const todayDaily = state.knownDocs.find(
-    (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
-  )
-  if (!todayDaily) return patch
-  return {
-    ...patch,
-    openSlugs: [todayDaily.slug],
-    activeSlug: todayDaily.slug,
-  }
-}
 
 // installTitleMirror — removed in Path C Step 4.
 //
