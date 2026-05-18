@@ -35,8 +35,28 @@ export interface UseThreadsResult {
   markSessionStarted: (id: string) => void
 }
 
-export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
+export function useThreads(
+  ydoc: Y.Doc | null,
+  idbSynced: Promise<void> | null,
+): UseThreadsResult {
   const [threads, setThreads] = useState<ThreadMeta[]>([])
+  // Tracks IDB hydration completion. `ready` must wait on this so callers
+  // (e.g. ChatPanel's auto-create effect) don't see a transient empty
+  // thread list before persisted threads land — which would otherwise
+  // produce a spurious blank thread on every doc open.
+  const [idbReady, setIdbReady] = useState(false)
+
+  useEffect(() => {
+    setIdbReady(false)
+    if (!idbSynced) return
+    let cancelled = false
+    idbSynced.then(() => {
+      if (!cancelled) setIdbReady(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [idbSynced])
 
   useEffect(() => {
     if (!ydoc) {
@@ -193,7 +213,7 @@ export function useThreads(ydoc: Y.Doc | null): UseThreadsResult {
   }, [threads])
 
   return {
-    ready: !!ydoc,
+    ready: !!ydoc && idbReady,
     threads,
     active,
     archived,

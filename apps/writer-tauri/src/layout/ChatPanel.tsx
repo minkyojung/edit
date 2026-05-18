@@ -55,11 +55,15 @@ interface Props {
   editorView: EditorView | null
   ydoc: Y.Doc | null
   slug: string | null
+  /** Resolves once the doc's IndexedDB layer has hydrated. useThreads
+   * gates its `ready` flag on this so the auto-create-first-thread
+   * effect below can't fire before persisted threads land. */
+  idbSynced: Promise<void> | null
 }
 
-export function ChatPanel({ editorView, ydoc, slug }: Props) {
+export function ChatPanel({ editorView, ydoc, slug, idbSynced }: Props) {
   const { account } = useClaudeAuth()
-  const threads = useThreads(ydoc)
+  const threads = useThreads(ydoc, idbSynced)
   const { activeId, setActiveId } = useActiveThread(slug, threads.active)
   const turnsHook = useThreadTurns(ydoc, activeId)
   const bottomRef = useRef<HTMLDivElement>(null)

@@ -110,6 +110,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
                 editorView={editorView ?? null}
                 ydoc={collabHandle?.ydoc ?? null}
                 slug={collabHandle?.slug ?? null}
+                idbSynced={collabHandle?.idbSynced ?? null}
               />
             </ErrorBoundary>
           </ResizablePanel>
