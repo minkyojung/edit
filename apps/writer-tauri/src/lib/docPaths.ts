@@ -30,6 +30,21 @@
 
 import type { KnownDoc } from '@/state/docsStore'
 
+/**
+ * Doc identity sidecar — the `<stem>.meta.json` file that scanVault
+ * reads at boot to recover each doc's persistent slug across sessions
+ * and external file moves.
+ *
+ * The mark data lives in `<stem>.ydoc` (Yjs binary); the `.meta.json`
+ * sidecar carries only identity. Bumping `version` is the migration
+ * lever — a future field addition reads as `undefined` on old files
+ * and the migrate step rewrites with the new shape.
+ */
+export interface DocMetaFile {
+  version: 1
+  slug: string
+}
+
 /** Lookup a doc by slug. Required by {@link pathForDoc} only for
  * `writing` docs (we need to walk parentId up to the daily ancestor
  * to pick the day folder). Other doc types ignore it. */

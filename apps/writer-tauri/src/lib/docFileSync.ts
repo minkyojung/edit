@@ -26,8 +26,12 @@ import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { markStore } from '@/domain/markStoreInstance'
 import type { Mark } from '@/domain/marks'
-import type { DocMetaFile } from '@/export/types'
-import { metaPathForDoc, pathForDoc, ydocPathForDoc } from '@/lib/docPaths'
+import {
+  metaPathForDoc,
+  pathForDoc,
+  ydocPathForDoc,
+  type DocMetaFile,
+} from '@/lib/docPaths'
 import {
   readVaultBinary,
   readVaultFile,
