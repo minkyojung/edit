@@ -21,16 +21,23 @@
 // whether the markdown / sidecar shape is right before wiring
 // auto-save on top.
 
-import type * as Y from 'yjs'
+import * as Y from 'yjs'
+import { IndexeddbPersistence } from 'y-indexeddb'
+import { yXmlFragmentToProseMirrorRootNode } from 'y-prosemirror'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { markStore } from '@/domain/markStoreInstance'
-import type { Mark } from '@/domain/marks'
+import { isValidMark, type Mark } from '@/domain/marks'
 import { markToSidecar, sidecarToMark } from '@/export/markAdapter'
 import type { AnchorSpec, MarkSidecar, MarksSidecarFile } from '@/export/types'
 import { findQuoteInDoc } from '@/domain/internal/quote'
 import { pathForDoc, sidecarPathForDoc } from '@/lib/docPaths'
-import { readVaultFile, vaultFileExists, writeVaultFile } from '@/lib/vault'
+import {
+  readVaultFile,
+  renameVaultFile,
+  vaultFileExists,
+  writeVaultFile,
+} from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
 import { deriveLabel } from '@/lib/docLabel'
@@ -154,6 +161,23 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
 
 const dirtySlugs = new Set<string>()
 
+// Tracks where each slug was last successfully written. Lets the
+// flush path detect "the doc's filename changed since last write"
+// (e.g. an Untitled note gained a title, a wiki page was renamed)
+// and emit a filesystem rename rather than create a new file and
+// orphan the old one. Matches the standard pattern in disk-backed
+// editors (Obsidian rename, VS Code rename) where the on-disk file
+// follows the title through renames instead of multiplying.
+//
+// Cleared on app reload (in-memory only). That's safe: the next
+// flush after reload writes to the current path with no rename
+// needed, and rename tracking resumes from there. Stale orphans
+// left from pre-rename versions of the app stay where they are
+// until the user cleans them — we don't try to retroactively
+// reconcile across restarts (would need a vault-wide slug→file
+// index, out of scope).
+const lastWrittenPath = new Map<string, string>()
+
 function markDirty(slug: string): void {
   dirtySlugs.add(slug)
 }
@@ -248,8 +272,9 @@ export async function loadDocFromFiles(
   const docs = useDocsStore.getState()
   const known = docs.knownDocs.find((d) => d.slug === slug)
   if (!known) return null
-  const mdPath = pathForDoc(known)
-  const sidecarPath = sidecarPathForDoc(known)
+  const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
+  const mdPath = pathForDoc(known, getDoc)
+  const sidecarPath = sidecarPathForDoc(known, getDoc)
   if (!mdPath || !sidecarPath) return null
 
   if (!(await vaultFileExists(mdPath))) return null
@@ -395,14 +420,15 @@ export async function applyVaultToHandle(slug: string): Promise<ApplyVaultOutcom
 export async function flushDirty(): Promise<void> {
   if (!getActiveVaultPath()) return
   const docs = useDocsStore.getState()
+  const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
   for (const slug of getDirtySlugs()) {
     const known = docs.knownDocs.find((d) => d.slug === slug)
     if (!known) {
       clearDirty(slug)
       continue
     }
-    const mdPath = pathForDoc(known)
-    const sidecarPath = sidecarPathForDoc(known)
+    const mdPath = pathForDoc(known, getDoc)
+    const sidecarPath = sidecarPathForDoc(known, getDoc)
     if (!mdPath || !sidecarPath) {
       clearDirty(slug)
       continue
@@ -410,8 +436,27 @@ export async function flushDirty(): Promise<void> {
     const result = serializeDocToFiles(slug)
     if (!result) continue
     try {
+      // Rename-on-change: if this slug was last written at a
+      // different path (Untitled note gained a title, wiki page
+      // renamed, daily child note re-titled), move the existing
+      // files to the new path rather than write a fresh copy and
+      // orphan the old one. Standard pattern in disk-backed editors
+      // (Obsidian / VS Code rename). Skipped silently when the old
+      // file is already gone (user deleted it externally, or first
+      // write of the session).
+      const oldMd = lastWrittenPath.get(slug)
+      if (oldMd && oldMd !== mdPath) {
+        const oldSidecar = oldMd.replace(/\.md$/, '.marks.json')
+        if (await vaultFileExists(oldMd)) {
+          await renameVaultFile(oldMd, mdPath)
+        }
+        if (await vaultFileExists(oldSidecar)) {
+          await renameVaultFile(oldSidecar, sidecarPath)
+        }
+      }
       await writeVaultFile(mdPath, result.md)
       await writeVaultFile(sidecarPath, JSON.stringify(result.sidecar, null, 2))
+      lastWrittenPath.set(slug, mdPath)
       clearDirty(slug)
     } catch (err) {
       console.warn('[vault:flush] write failed for', slug, err)
@@ -437,6 +482,163 @@ export function stopAutoFlush(): void {
   if (flushTimerId === null) return
   window.clearInterval(flushTimerId)
   flushTimerId = null
+}
+
+// ── One-shot IDB → vault backfill ────────────────────────────────
+//
+// Closes the gap left by Phase 4 landing on top of an existing IDB:
+// docs that were created before this codebase existed (or before the
+// user picked a vault) live in IDB but never reached disk, so they
+// show in the sidebar yet are invisible to CLI / Finder / git.
+//
+// Strategy per slug:
+//   1. Compute its vault path. Skip if the doc type has no on-disk
+//      placement (e.g. 'writing') or if the .md already exists.
+//   2. Open a SHORT-LIVED Y.Doc + IDB persistence with the same slug
+//      key — IDB hydrates the body and marks Map exactly like the
+//      live handle would.
+//   3. Read the fragment + marks Map directly off that temp doc and
+//      serialize via the shared editor schema + Milkdown serializer.
+//   4. Atomic-write .md + .marks.json, then destroy the temp handle.
+//
+// Why a temp handle instead of going through ensureHandle:
+//   ensureHandle registers the handle in docsStore and installs the
+//   dirty observer permanently. We'd end up holding N ydocs in memory
+//   for the rest of the session, defeating the lazy-with-cache design.
+//   The temp Y.Doc lives only long enough to read + serialize.
+//
+// Why direct serialize instead of mounting the editor for each slug:
+//   Cycling the EditorView through every closed doc would flash the UI
+//   and cost a full Milkdown setup per page. We already have the schema
+//   and serializer from the active editor — those are constants across
+//   docs, so we can serialize any PM node built from any Y.Doc using
+//   them.
+
+/** Read the marks Y.Map directly from a (possibly inactive) Y.Doc and
+ * convert valid entries to sidecar form. Mirrors the markStore.list +
+ * buildSidecarMarks pipeline but bypasses the handle registry so it
+ * works on the backfill's temp ydoc. */
+function buildSidecarMarksFromYDoc(ydoc: Y.Doc, md: string): MarkSidecar[] {
+  const marksMap = ydoc.getMap<Mark>('marks')
+  const out: MarkSidecar[] = []
+  marksMap.forEach((raw) => {
+    if (!isValidMark(raw)) return
+    const anchor = buildAnchorForMark(md, raw)
+    if (!anchor) return
+    out.push(markToSidecar(raw, anchor))
+  })
+  return out
+}
+
+/** Backfill a single slug. Returns true when a write happened. Silent
+ * skips: doc type has no path, file already on disk, IDB empty, or
+ * serializer not ready yet. The caller logs the aggregate result. */
+async function backfillOneSlug(
+  slug: string,
+  schema: import('@milkdown/kit/prose/model').Schema,
+  serializer: (doc: import('@milkdown/kit/prose/model').Node) => string,
+): Promise<boolean> {
+  const docs = useDocsStore.getState()
+  const known = docs.knownDocs.find((d) => d.slug === slug)
+  if (!known) return false
+  const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
+  const mdPath = pathForDoc(known, getDoc)
+  const sidecarPath = sidecarPathForDoc(known, getDoc)
+  if (!mdPath || !sidecarPath) return false
+  if (await vaultFileExists(mdPath)) return false
+
+  const ydoc = new Y.Doc()
+  const idb = new IndexeddbPersistence(slug, ydoc)
+  try {
+    await idb.whenSynced
+    const fragment = ydoc.getXmlFragment('prosemirror')
+    // Effective-empty: IDB had nothing real for this slug. Common for
+    // catalog entries that were created but never typed into (e.g.
+    // week-ahead daily placeholders bootstrap seeds). Skip rather than
+    // writing an empty .md that would pollute the vault.
+    if (deriveLabel(fragment).length === 0) return false
+
+    let md: string
+    try {
+      const pmNode = yXmlFragmentToProseMirrorRootNode(fragment, schema)
+      md = serializer(pmNode)
+    } catch (err) {
+      console.warn('[backfill] serialize failed', slug, err)
+      return false
+    }
+
+    const sidecar: MarksSidecarFile = {
+      version: 1,
+      marks: buildSidecarMarksFromYDoc(ydoc, md),
+    }
+
+    try {
+      await writeVaultFile(mdPath, md)
+      await writeVaultFile(
+        sidecarPath,
+        `${JSON.stringify(sidecar, null, 2)}\n`,
+      )
+      // Seed the rename tracker so a later title change moves this
+      // file rather than creating a duplicate. Without this, the
+      // first flush after the user edits a backfilled doc would see
+      // no oldPath and emit a fresh write.
+      lastWrittenPath.set(slug, mdPath)
+    } catch (err) {
+      console.error('[backfill] write failed', slug, err)
+      return false
+    }
+    return true
+  } finally {
+    idb.destroy()
+    ydoc.destroy()
+  }
+}
+
+/** One-shot pass: write every IDB-resident doc that doesn't yet exist
+ * on disk. Idempotent — a re-run after the first finds existing files
+ * and skips them, so callers can fire it on every boot.
+ *
+ * Returns a summary so the caller can log it. Failure of any single
+ * slug is logged internally and counted; it doesn't abort the rest.
+ *
+ * Preconditions: vault selected + an editor view mounted (we need its
+ * schema + serializer). Both are met right after BootGate flips, since
+ * bootstrap eagerly opens today's daily. */
+export async function backfillVaultFromIdb(): Promise<{
+  total: number
+  wrote: number
+  skipped: number
+  failed: number
+}> {
+  if (!getActiveVaultPath()) {
+    return { total: 0, wrote: 0, skipped: 0, failed: 0 }
+  }
+  const { view, serializer } = useEditorViewStore.getState()
+  if (!view || !serializer) {
+    return { total: 0, wrote: 0, skipped: 0, failed: 0 }
+  }
+  const schema = view.state.schema
+
+  const allKnown = useDocsStore.getState().knownDocs
+  const getDoc = (s: string) => allKnown.find((d) => d.slug === s)
+  const knownDocs = allKnown.filter(
+    (d) => !d.archivedAt && pathForDoc(d, getDoc) !== null,
+  )
+
+  let wrote = 0
+  let skipped = 0
+  let failed = 0
+  for (const doc of knownDocs) {
+    try {
+      const ok = await backfillOneSlug(doc.slug, schema, serializer)
+      if (ok) wrote++
+      else skipped++
+    } catch (err) {
+      console.error('[backfill] slug failed', doc.slug, err)
+      failed++
+    }
+  }
+  return { total: knownDocs.length, wrote, skipped, failed }
 }
 
 // Dev-only console handle. Pass a slug, or omit to use the active
@@ -476,4 +678,7 @@ if (import.meta.env.DEV) {
   ;(window as unknown as { __applyVault: typeof applyHandle }).__applyVault = applyHandle
   ;(window as unknown as { __activeSlug: () => string | null }).__activeSlug = () =>
     useDocsStore.getState().activeSlug
+  ;(window as unknown as {
+    __backfill: typeof backfillVaultFromIdb
+  }).__backfill = backfillVaultFromIdb
 }

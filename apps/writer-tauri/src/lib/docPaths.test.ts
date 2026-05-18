@@ -8,7 +8,12 @@ function known(partial: Partial<KnownDoc> & { type: KnownDoc['type'] }): KnownDo
     type: partial.type,
     date: partial.date,
     title: partial.title,
+    parentId: partial.parentId,
   }
+}
+
+function lookupFrom(docs: KnownDoc[]): (slug: string) => KnownDoc | undefined {
+  return (slug) => docs.find((d) => d.slug === slug)
 }
 
 describe('pathForDoc', () => {
@@ -59,8 +64,50 @@ describe('pathForDoc', () => {
     ).toBe('wiki/카파시.md')
   })
 
-  it('returns null for unknown doc types', () => {
-    expect(pathForDoc(known({ type: 'writing' as KnownDoc['type'] }))).toBeNull()
+  it('places writing notes under their daily ancestor folder', () => {
+    const daily = known({ slug: 'd1', type: 'daily', date: '2026-05-18' })
+    const note = known({
+      slug: 'n1',
+      type: 'writing',
+      title: 'My note',
+      parentId: 'd1',
+    })
+    expect(pathForDoc(note, lookupFrom([daily, note]))).toBe(
+      'daily/2026-05-18/My note.md',
+    )
+  })
+
+  it('flattens nested writings under the same daily folder', () => {
+    const daily = known({ slug: 'd1', type: 'daily', date: '2026-05-18' })
+    const parent = known({
+      slug: 'p1',
+      type: 'writing',
+      title: 'Parent',
+      parentId: 'd1',
+    })
+    const child = known({
+      slug: 'c1',
+      type: 'writing',
+      title: 'Child',
+      parentId: 'p1',
+    })
+    expect(pathForDoc(child, lookupFrom([daily, parent, child]))).toBe(
+      'daily/2026-05-18/Child.md',
+    )
+  })
+
+  it('returns null for orphan writing (no daily ancestor)', () => {
+    const note = known({
+      slug: 'n1',
+      type: 'writing',
+      title: 'Orphan',
+    })
+    expect(pathForDoc(note, lookupFrom([note]))).toBeNull()
+  })
+
+  it('returns null for writing when no lookup is provided', () => {
+    const note = known({ slug: 'n1', type: 'writing', title: 'No lookup' })
+    expect(pathForDoc(note)).toBeNull()
   })
 })
 

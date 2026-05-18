@@ -6,10 +6,19 @@
 // browsing ~/Documents/Writer/ in Finder gets an immediately
 // recognisable layout:
 //
-//   wiki/Tom.md              ← entity page (wiki:custom-*)
-//   wiki/Tom.marks.json      ← sidecar
-//   daily/2026-05-17.md      ← daily journal (daily)
-//   _system/conventions.md   ← agent-managed meta (system:conventions)
+//   wiki/Tom.md                        ← entity page (wiki:custom-*)
+//   wiki/Tom.marks.json                ← sidecar
+//   daily/2026-05-17.md                ← daily journal (daily)
+//   daily/2026-05-17/My note.md        ← writing note under a daily
+//   _system/conventions.md             ← agent-managed meta (system:*)
+//
+// Writing notes live in a per-day subfolder so they group with their
+// daily on disk. The subfolder only materialises when the day has at
+// least one child — empty days stay as a single file. Multi-level
+// nesting (writing under writing under daily) flattens on disk: every
+// descendant of the same daily becomes its sibling under that day's
+// folder. The tree structure stays in `knownDocs.parentId` (UI source
+// of truth); disk stays flat so CLI listing remains useful.
 //
 // This module is the only place those mappings are defined. Vault
 // helpers (vault.ts) take vault-relative strings and don't care how
@@ -21,10 +30,15 @@
 
 import type { KnownDoc } from '@/state/docsStore'
 
-/** Vault-relative path of a doc's markdown body. Returns null for
- * doc types we don't know how to place on disk yet (currently
- * `writing` — handled in a future sub-phase if we keep that type). */
-export function pathForDoc(doc: KnownDoc): string | null {
+/** Lookup a doc by slug. Required by {@link pathForDoc} only for
+ * `writing` docs (we need to walk parentId up to the daily ancestor
+ * to pick the day folder). Other doc types ignore it. */
+export type DocLookup = (slug: string) => KnownDoc | undefined
+
+/** Vault-relative path of a doc's markdown body. Returns null when
+ * the doc has no placement (a daily without a date, a writing whose
+ * parent chain doesn't reach a daily). */
+export function pathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null {
   if (doc.type === 'daily') {
     if (!doc.date) return null
     return `daily/${doc.date}.md`
@@ -37,16 +51,39 @@ export function pathForDoc(doc: KnownDoc): string | null {
     const filename = sanitizeFilename(doc.title?.trim() || 'Untitled')
     return `wiki/${filename}.md`
   }
+  if (doc.type === 'writing') {
+    if (!getDoc) return null
+    const dailyAncestor = findDailyAncestor(doc, getDoc)
+    if (!dailyAncestor?.date) return null
+    const filename = sanitizeFilename(doc.title?.trim() || 'Untitled')
+    return `daily/${dailyAncestor.date}/${filename}.md`
+  }
   return null
 }
 
 /** Vault-relative path of a doc's sidecar marks file. Same stem as
  * the markdown body, `.marks.json` suffix instead of `.md`. Returns
  * null when {@link pathForDoc} returns null. */
-export function sidecarPathForDoc(doc: KnownDoc): string | null {
-  const md = pathForDoc(doc)
+export function sidecarPathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null {
+  const md = pathForDoc(doc, getDoc)
   if (!md) return null
   return md.replace(/\.md$/, '.marks.json')
+}
+
+/** Walk parentId up the chain until we hit a daily. Returns null if
+ * the chain ends without one (orphan writing) or contains a cycle
+ * (defensive — KnownDoc invariants forbid it, but we don't want a
+ * pathological catalog to lock up the call site). */
+function findDailyAncestor(doc: KnownDoc, getDoc: DocLookup): KnownDoc | null {
+  const visited = new Set<string>()
+  let current: KnownDoc | undefined = doc
+  while (current && !visited.has(current.slug)) {
+    visited.add(current.slug)
+    if (current.type === 'daily') return current
+    if (!current.parentId) return null
+    current = getDoc(current.parentId)
+  }
+  return null
 }
 
 /** Strip filesystem-reserved characters from a filename component.

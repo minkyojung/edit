@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
@@ -32,7 +32,7 @@ import {
 // their actual API and the dev handles fall away.
 import '@/lib/vaultPicker'
 import '@/lib/vault'
-import { startAutoFlush } from '@/lib/docFileSync'
+import { backfillVaultFromIdb, startAutoFlush } from '@/lib/docFileSync'
 
 // Phase 4.B.1.b.iv.2 — begin the periodic vault flush loop on app
 // load. Idempotent: safe under React StrictMode's double-mount and
@@ -97,6 +97,30 @@ function AppContent() {
   // left over from the pre-banner era. Runs per wiki page on first
   // mount post-upgrade; no-op afterwards.
   useMigrateLegacyIngestMarks()
+
+  // Phase 4.B.1.c.iv — one-shot pass to write any IDB-resident doc
+  // that doesn't yet exist in the vault. Closes the "sidebar shows
+  // it but Finder doesn't" gap left by Phase 4 landing on top of an
+  // existing IDB.
+  //
+  // Fires once the first editor view + serializer become available
+  // (they're prerequisites — backfill needs the shared schema and
+  // markdown serializer to convert each doc's Y.Doc into a .md
+  // string without mounting an editor per slug). Per-session ref
+  // gate keeps it from re-running after later view remounts (every
+  // tab switch fires onViewReady).
+  const backfillFiredRef = useRef(false)
+  useEffect(() => {
+    if (backfillFiredRef.current || !view) return
+    const { serializer } = useEditorViewStore.getState()
+    if (!serializer) return
+    backfillFiredRef.current = true
+    void backfillVaultFromIdb().then((result) => {
+      if (result.wrote > 0 || result.failed > 0) {
+        console.log('[backfill]', result)
+      }
+    })
+  }, [view])
 
   const activeHandle = activeSlug ? handles[activeSlug] ?? null : null
   const activeStatus = activeSlug ? statusMap[activeSlug] ?? 'loading' : 'loading'

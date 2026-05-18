@@ -31,7 +31,7 @@ import {
   rename,
   writeTextFile,
 } from '@tauri-apps/plugin-fs'
-import { join } from '@tauri-apps/api/path'
+import { dirname, join } from '@tauri-apps/api/path'
 import { getActiveVaultPath } from '@/state/settingsStore'
 
 /** Four subdirectories the app expects inside a vault. Created on
@@ -171,8 +171,36 @@ async function atomicWriteText(absPath: string, content: string): Promise<void> 
  * fire that follows. */
 export async function writeVaultFile(relPath: string, content: string): Promise<void> {
   const path = await resolveVaultPath(relPath)
+  // Ensure the parent directory exists. Nested doc layouts —
+  // `daily/2026-05-18/note.md`, future `wiki/<area>/<page>.md` — write
+  // into folders that aren't part of the four root subdirs ensured at
+  // vault creation. `recursive: true` is a no-op when the path already
+  // exists, so this stays idempotent on the common steady-state write.
+  const parent = await dirname(path)
+  await mkdir(parent, { recursive: true })
   markOurRecentWrite(relPath)
   await atomicWriteText(path, content)
+}
+
+/** Move a vault file from one relative path to another. Used by the
+ * rename-on-title-change path so a doc whose filename changes keeps
+ * the same on-disk identity (same approach Obsidian / VS Code use).
+ * Without this, every title edit would create a fresh file and
+ * orphan the old one.
+ *
+ * Both the source and destination get marked in {@link recentWrites}
+ * so the future file watcher's echo filter suppresses both events. */
+export async function renameVaultFile(
+  fromRel: string,
+  toRel: string,
+): Promise<void> {
+  const fromAbs = await resolveVaultPath(fromRel)
+  const toAbs = await resolveVaultPath(toRel)
+  const parent = await dirname(toAbs)
+  await mkdir(parent, { recursive: true })
+  markOurRecentWrite(fromRel)
+  markOurRecentWrite(toRel)
+  await rename(fromAbs, toAbs)
 }
 
 /** List entries (files + directories) inside a vault directory.
