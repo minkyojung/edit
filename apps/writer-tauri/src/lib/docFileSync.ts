@@ -322,42 +322,48 @@ function isSidecarFile(value: unknown): value is MarksSidecarFile {
 }
 
 /** Outcome of {@link applyVaultToHandle} so callers can react to
- * each reason for not applying. v1 is informational only — c.iii
- * will use it to pick the right fallback (e.g. IDB read). */
+ * each reason for not applying. The 'no-handle' case is gone in
+ * Step 5 — callers now pass the Y.Doc directly, so a missing handle
+ * is a caller-side concern (caller chose not to call). */
 export type ApplyVaultOutcome =
   | 'applied'         // body landed in Y.Doc
   | 'no-vault'        // vault not selected; nothing to load from
-  | 'no-handle'       // doc isn't open in memory yet
   | 'no-file'         // .md doesn't exist on disk
   | 'no-parser'       // editor hasn't mounted yet → no markdown parser
   | 'not-empty'       // Y.Doc already has content; refuse to merge
 
-/** Apply a vault doc's markdown body into the live Y.Doc. Marks are
- * NOT processed in this sub-step (c.ii.A) — that's c.ii.B. The
- * markStore stays untouched.
+/** Apply a vault doc's markdown body into the given Y.Doc. Marks are
+ * also restored when the active EditorView is available (otherwise
+ * skipped — the next call after the user activates the doc picks
+ * them up).
+ *
+ * Signature change (Path C Step 5): takes the Y.Doc directly rather
+ * than looking it up via `docsStore.handles[slug]`. The lookup used
+ * to race buildHandle's set() that registers the handle, producing
+ * 'no-handle' on every first call and forcing a `Promise.resolve()`
+ * yield in the caller as a workaround. Passing the doc directly
+ * makes the dependency explicit and lets future callers (Phase 4.E
+ * file watcher) reuse the same path without the race.
  *
  * Safety: this function only operates on an EMPTY Y.Doc. If the
- * fragment already has content (IDB hydrated something, or the
- * editor seeded a fresh doc) we refuse rather than merge — Yjs
+ * fragment already has content we refuse rather than merge — Yjs
  * CRDT would otherwise concatenate the file's content with the
- * existing content, producing duplicate paragraphs. The wiring in
- * c.iii will choose the right moment to call this (before IDB
- * hydrate, or on demand).
+ * existing content, producing duplicate paragraphs.
  *
  * The write uses the 'doc-init' origin (see seedMarkdown.ts) so the
  * UndoManager skips it. We also clear the dirty flag after applying
  * since the observer fires on the fragment change and would
  * otherwise schedule a re-save of identical content. */
-export async function applyVaultToHandle(slug: string): Promise<ApplyVaultOutcome> {
+export async function applyVaultToHandle(
+  ydoc: Y.Doc,
+  slug: string,
+): Promise<ApplyVaultOutcome> {
   if (!getActiveVaultPath()) return 'no-vault'
-  const docs = useDocsStore.getState()
-  const handle = docs.handles[slug]
-  if (!handle) return 'no-handle'
 
   const loaded = await loadDocFromFiles(slug)
   if (!loaded) return 'no-file'
 
-  const fragment = handle.ydoc.getXmlFragment('prosemirror')
+  const fragment = ydoc.getXmlFragment('prosemirror')
   // Refuse to merge over real text. deriveLabel walks XmlText inserts,
   // so a one-paragraph stub from MilkdownEditor's mount fill counts as
   // "still empty" and we proceed. fragment.length alone would flip to 1
@@ -373,12 +379,12 @@ export async function applyVaultToHandle(slug: string): Promise<ApplyVaultOutcom
   // 'doc-init' origin with seedMarkdownIntoYDoc so neither step enters
   // the UndoManager.
   if (fragment.length > 0) {
-    handle.ydoc.transact(() => {
+    ydoc.transact(() => {
       fragment.delete(0, fragment.length)
     }, 'doc-init')
   }
 
-  const ok = seedMarkdownIntoYDoc(handle.ydoc, loaded.md, parser)
+  const ok = seedMarkdownIntoYDoc(ydoc, loaded.md, parser)
   if (!ok) return 'no-parser'
 
   // Restore marks from the sidecar. Requires the active EditorView
@@ -679,10 +685,14 @@ if (import.meta.env.DEV) {
     return loadDocFromFiles(target)
   }
   ;(window as unknown as { __loadDoc: typeof loadHandle }).__loadDoc = loadHandle
-  const applyHandle = async (slug?: string): Promise<ApplyVaultOutcome> => {
+  const applyHandle = async (
+    slug?: string,
+  ): Promise<ApplyVaultOutcome | 'no-handle'> => {
     const target = slug ?? useDocsStore.getState().activeSlug
     if (!target) return 'no-handle'
-    return applyVaultToHandle(target)
+    const handle = useDocsStore.getState().handles[target]
+    if (!handle) return 'no-handle'
+    return applyVaultToHandle(handle.ydoc, target)
   }
   ;(window as unknown as { __applyVault: typeof applyHandle }).__applyVault = applyHandle
   ;(window as unknown as { __activeSlug: () => string | null }).__activeSlug = () =>

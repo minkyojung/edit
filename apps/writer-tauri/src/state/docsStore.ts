@@ -337,33 +337,17 @@ function buildHandle(
   // a fresh edit.
   let vaultSyncDisposer: (() => void) | null = null
   const contentReady = (async () => {
-    // TODO (Path C Step 5 cleanup): refactor applyVaultToHandle /
-    // markStore.restore to take ydoc + view directly instead of
-    // looking up the handle via docsStore.handles[slug]. That
-    // removes the race condition this yield papers over and lets
-    // Phase 4.E (file watcher) call into the same path without
-    // re-introducing the same hack.
-    //
-    // Why the yield: ensureHandle's set() — which registers this
-    // handle in the store — runs synchronously after buildHandle
-    // returns. The IIFE here runs synchronously through its first
-    // await, so without this microtask hop applyVaultToHandle would
-    // call docsStore.handles[slug] before the set() completes and
-    // get back undefined ('no-handle'). installDocSync below would
-    // then never run → no dirty observer → flush never sees this
-    // slug → typing doesn't persist.
-    //
-    // Pre-3b this was implicit (the chain started from
-    // idb.whenSynced, a real async signal); 3b removed that delay
-    // and exposed the layering issue.
-    await Promise.resolve()
     const fragment = ydoc.getXmlFragment('prosemirror')
     // Use deriveLabel (text-walking) rather than fragment.length —
     // MilkdownEditor's mount fills an empty fragment with a
     // paragraph stub that can race ahead, leaving length===1 even
     // when no real text exists.
     if (deriveLabel(fragment).length === 0) {
-      const outcome = await applyVaultToHandle(slug).catch((err) => {
+      // Pass ydoc directly (Step 5). Pre-Step-5 the function looked
+      // the doc up via docsStore.handles[slug], which raced the set()
+      // that registers this very handle — forcing a microtask yield
+      // here as a workaround. Direct ydoc passing eliminates the race.
+      const outcome = await applyVaultToHandle(ydoc, slug).catch((err) => {
         console.warn('[vault:load] failed for', slug, err)
         return 'no-vault' as const
       })
