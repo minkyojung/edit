@@ -33,7 +33,15 @@ import {
 import '@/lib/vaultPicker'
 import '@/lib/vault'
 import '@/lib/scanVault'
+import { initHeadlessParser } from '@/lib/headlessMilkdown'
 import { backfillVaultFromIdb, startAutoFlush } from '@/lib/docFileSync'
+
+// Path C Step 3c — boot the headless Milkdown so parser / serializer
+// land in editorViewStore before any doc-loading code runs. Without
+// this, applyVaultToHandle (called from buildHandle's contentReady)
+// would race the per-doc MilkdownEditor mount and silently fall back
+// to 'no-parser', leaving the body empty on every fresh open.
+void initHeadlessParser()
 
 // Phase 4.B.1.b.iv.2 — begin the periodic vault flush loop on app
 // load. Idempotent: safe under React StrictMode's double-mount and

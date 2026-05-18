@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Editor, rootCtx, editorViewOptionsCtx, editorViewCtx, parserCtx, serializerCtx } from '@milkdown/kit/core'
+import { Editor, rootCtx, editorViewOptionsCtx, editorViewCtx } from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
@@ -59,7 +59,6 @@ import { SlashMenu } from './SlashMenu'
 // See ./proofMarks.ts for adapter notes.
 import { proofSchemaPlugins } from './proofMarks'
 import { dailyGuardPlugin } from './dailyGuardPlugin'
-import { useEditorViewStore } from '@/state/editorViewStore'
 import { usePendingScroll } from '@/state/pendingScrollStore'
 import { scrollToMark } from '@/editor/scrollToMark'
 import { EditorFooter } from '@/components/EditorFooter'
@@ -125,29 +124,31 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
   // must not duplicate it. Idempotent via meta.titleNormalizedV2 —
   // see lib/docTitle.ts. Non-daily docs run no normalization.
   //
-  // Gated on idb.synced AND meta.type being populated.
-  // Local-disk hydration is enough to run normalization — the title
-  // structure lives in the Y.Doc that idb restored.
+  // Gated on contentReady AND meta.type being populated. The title
+  // structure lives in the Y.Doc that vault load (or fresh creation)
+  // populated; normalization runs after both signals are in.
   useEffect(() => {
     if (!handle || !pmView) return
     if (!isDaily) return
-    const { ydoc, idb } = handle
+    const { ydoc, contentReady } = handle
     const view = pmView
     const metaMap = ydoc.getMap('meta')
     const opts = { date: knownDoc?.date }
     let ran = false
+    let hydrated = false
     const tryRun = () => {
       if (ran) return
-      if (!idb.synced) return
+      if (!hydrated) return
       if (!metaMap.get('type')) return
       ran = true
       normalizeDailyBody(ydoc, view, opts)
     }
-    tryRun()
-    idb.on('synced', tryRun)
+    void contentReady.then(() => {
+      hydrated = true
+      tryRun()
+    })
     metaMap.observe(tryRun)
     return () => {
-      idb.off('synced', tryRun)
       metaMap.unobserve(tryRun)
     }
   }, [handle, pmView, isDaily, knownDoc?.date])
@@ -345,25 +346,17 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
           onViewReady?.(view)
         })
 
-        // Expose the markdown parser AND serializer so non-React
-        // consumers (mark accept, ingest seed, ingest source read)
-        // can convert between LLM-emitted markdown and real PM nodes
-        // without standing up a parallel pipeline. Both are cleared
-        // on unmount alongside the view.
+        // Parser / serializer come from the headless Milkdown built
+        // at app boot (lib/headlessMilkdown.ts) — populated globally
+        // in editorViewStore before any doc opens. Per-doc editor
+        // instances no longer publish them, removing the race that
+        // left vault load waiting on parser-not-set.
         editor.action((ctx) => {
-          const parser = ctx.get(parserCtx)
-          const serializer = ctx.get(serializerCtx)
-          useEditorViewStore.getState().setParser(parser)
-          useEditorViewStore.getState().setSerializer(serializer)
-          // Drain a pending "scroll to this mark" target queued by the
-          // chat panel before this slug's editor was mounted. (The
-          // earlier pendingProposalsStore drain is gone — Track 1.2's
-          // /ops path creates marks server-side regardless of editor
-          // mount state, so there's no client-side queue to flush.)
-          // rAF defers one paint so the decoration plugins finish
-          // their first build pass and the target mark has stable
-          // coordinates.
           const view = ctx.get(editorViewCtx)
+          // Drain a pending "scroll to this mark" target queued by
+          // the chat panel before this slug's editor was mounted.
+          // rAF defers one paint so decoration plugins finish their
+          // first build pass and the target mark has stable coords.
           const pendingMarkId = usePendingScroll.getState().drain(handle.slug)
           if (pendingMarkId) {
             requestAnimationFrame(() => scrollToMark(view, pendingMarkId))
@@ -383,8 +376,9 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       setSelection(null)
       setPmView(null)
       onViewReady?.(null)
-      useEditorViewStore.getState().setParser(null)
-      useEditorViewStore.getState().setSerializer(null)
+      // Parser / serializer are owned by the headless Milkdown
+      // (lib/headlessMilkdown.ts) for the app's lifetime — don't
+      // null them on per-doc unmount.
     }
   }, [handle])
 

@@ -4,7 +4,6 @@
 // the file remains as a pure type surface; the runtime hook + its
 // 'My Document' default-title bootstrap are gone.
 import type * as Y from 'yjs'
-import type { IndexeddbPersistence } from 'y-indexeddb'
 
 export type CollabStatus = 'loading' | 'ready' | 'error'
 
@@ -54,22 +53,19 @@ export interface StoredMark {
 export interface CollabHandle {
   ydoc: Y.Doc
   slug: string
-  /** Client-side IndexedDB persistence layer. Will be removed in Path C
-   * Step 3b — for the transitional window we keep it as a fallback
-   * surface alongside the vault-driven `contentReady`. */
-  idb: IndexeddbPersistence
-  /** @deprecated Use {@link CollabHandle.contentReady}. Kept while
-   * Step 3a migrates callers; removed in 3b with the IDB layer. */
-  idbSynced: Promise<void>
   /** Resolves once the doc's body + marks have been hydrated into the
-   * ydoc. Sources, in order of authority:
-   *   1. The vault file (.md + .marks.json)  ← Path C primary
-   *   2. (legacy) IDB cache, until Step 3b removes it
-   *   3. Empty (for brand-new docs with no on-disk file yet)
+   * ydoc. Sources, in order:
+   *   1. The vault file (.md + .marks.json) via applyVaultToHandle
+   *   2. Empty (for brand-new docs with no on-disk file yet — the
+   *      auto-flush pipeline writes the first version on the next tick)
    *
    * Callers that need to read/write content-dependent state (editor
-   * binding, mark application, dirty-bit observers) should await this
-   * instead of `idbSynced`. */
+   * binding, mark application, dirty-bit observers, chat threads)
+   * await this before touching the ydoc.
+   *
+   * Path C: this is the ONLY hydration signal — IDB persistence is
+   * gone, so the ydoc lives only in memory for the session and the
+   * vault file is the durable surface. */
   contentReady: Promise<void>
 }
 

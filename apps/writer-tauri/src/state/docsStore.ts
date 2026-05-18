@@ -1,11 +1,17 @@
 // Multi-document tab registry. Holds the set of open documents (slug
 // list + active slug, persisted) and their live collab handles
-// (ydoc + idb, runtime only — too live to serialize).
+// (ydoc, runtime only — too live to serialize).
 //
 // Strategy: lazy-with-cache. Only the active doc gets a handle eagerly
 // on bootstrap; switching to a tab that hasn't been opened yet
-// triggers a one-shot setup (ydoc + idb persistence) and keeps it
+// triggers a one-shot setup (fresh ydoc + vault load) and keeps it
 // warm. Closing a tab tears its handle down to free the ydoc memory.
+//
+// Path C: the vault folder is the single durable source. There is no
+// IndexedDB layer — each handle's Y.Doc is built fresh on first open
+// and hydrated from the .md + sidecar pair on disk. The catalog
+// (knownDocs) is derived from a vault scan at bootstrap, not
+// persisted to localStorage. See scanVault.ts.
 //
 // Eager-everything is the Cursor-style ideal but costs N parallel
 // WebSocket connections on app start; for a writer with 5–9 docs
@@ -19,8 +25,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import * as Y from 'yjs'
-// IndexedDB is the single durable surface — there's no WebSocket sync.
-import { IndexeddbPersistence } from 'y-indexeddb'
 import { generateClientSlug } from '@/lib/slug'
 import { formatLocalDate, todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
@@ -281,31 +285,50 @@ interface DocsState {
   shiftDay: (delta: number) => void
 }
 
-// Synchronous local-only handle construction. The Y.Doc + IndexedDB
-// layer come up immediately so the editor can mount and the user can
-// type. Local writes never block on the network.
+// Synchronous local-only handle construction. The Y.Doc comes up
+// immediately so the editor can mount; content arrives async via the
+// vault load chained on contentReady. There is no IndexedDB layer in
+// Path C — the vault file is the only durable surface and the ydoc
+// lives only in memory for the session.
 function buildHandle(
   slug: string,
   set: (fn: (s: DocsState) => Partial<DocsState>) => void,
   onStatus: (status: CollabStatus) => void,
 ): CollabHandle {
   const ydoc = new Y.Doc()
-  const idb = new IndexeddbPersistence(slug, ydoc)
-  const idbSynced = idb.whenSynced.then(() => undefined)
 
   // contentReady: doc-hydration signal that consumers await before
   // touching content-dependent state (editor binding, mark store
   // reads, dirty observers, chat threads). Spans:
-  //   1. IDB hydrate    (current — removed in Path C 3b)
-  //   2. Vault load     (Path C primary — .md + sidecar → Y.Doc)
-  //   3. installDocSync (start watching for dirty-mark observers)
+  //   1. Vault load        (.md + sidecar → Y.Doc)
+  //   2. installDocSync    (start watching for dirty-mark observers)
+  //   3. ingest observer   (mark this slug "edited" on any change)
   //
-  // Folding (3) into the same chain means dirty tracking only begins
-  // AFTER the initial hydrate, so the seed doesn't register as an
-  // edit. Ingest's "edited slug" tracker (below) joins the same
-  // chain for the same reason.
+  // Folding (2) and (3) into the same chain means dirty tracking only
+  // begins AFTER the initial hydrate, so the seed doesn't register as
+  // a fresh edit.
   let vaultSyncDisposer: (() => void) | null = null
-  const contentReady = idbSynced.then(async () => {
+  const contentReady = (async () => {
+    // TODO (Path C Step 5 cleanup): refactor applyVaultToHandle /
+    // markStore.restore to take ydoc + view directly instead of
+    // looking up the handle via docsStore.handles[slug]. That
+    // removes the race condition this yield papers over and lets
+    // Phase 4.E (file watcher) call into the same path without
+    // re-introducing the same hack.
+    //
+    // Why the yield: ensureHandle's set() — which registers this
+    // handle in the store — runs synchronously after buildHandle
+    // returns. The IIFE here runs synchronously through its first
+    // await, so without this microtask hop applyVaultToHandle would
+    // call docsStore.handles[slug] before the set() completes and
+    // get back undefined ('no-handle'). installDocSync below would
+    // then never run → no dirty observer → flush never sees this
+    // slug → typing doesn't persist.
+    //
+    // Pre-3b this was implicit (the chain started from
+    // idb.whenSynced, a real async signal); 3b removed that delay
+    // and exposed the layering issue.
+    await Promise.resolve()
     const fragment = ydoc.getXmlFragment('prosemirror')
     // Use deriveLabel (text-walking) rather than fragment.length —
     // MilkdownEditor's mount fills an empty fragment with a
@@ -332,11 +355,9 @@ function buildHandle(
       if (!known || isWikiDoc(known)) return
       useIngestStore.getState().markEdited(slug)
     })
-  })
+  })()
   const handle: CollabHandle = {
     ydoc,
-    idb,
-    idbSynced,
     contentReady,
     slug,
   }
@@ -548,7 +569,6 @@ export const useDocsStore = create<DocsState>()(
         useChatRuns.getState().abortBySlug(slug)
         const handle = handles[slug]
         if (handle) {
-          handle.idb.destroy()
           handle.ydoc.destroy()
         }
         const nextHandles = { ...handles }
@@ -750,7 +770,6 @@ export const useDocsStore = create<DocsState>()(
         for (const s of groupSlugs) {
           const h = nextHandles[s]
           if (h) {
-            h.idb.destroy()
             h.ydoc.destroy()
           }
           delete nextHandles[s]
@@ -825,13 +844,12 @@ export const useDocsStore = create<DocsState>()(
         const groupSlugs = state.knownDocs
           .filter((d) => d.archivedAt === stamp)
           .map((d) => d.slug)
-        // Wipe each slug's IDB shard. Without this, a future tab
-        // re-using the same slug would resurrect the cached Y.Doc
-        // updates.
-        let failed = 0
-        for (const s of groupSlugs) {
-          indexedDB.deleteDatabase(s)
-        }
+        // Path C: no IDB shards to clean. Vault file deletion is the
+        // only durable cleanup needed, but that's not wired yet — the
+        // user removes files from Finder if they want the disk freed.
+        // Legacy IDB shards (pre-Path-C) get cleared by a one-time
+        // wipe path during migration; not handled here.
+        const failed = 0
         const groupSet = new Set(groupSlugs)
         const cur = get()
         const nextKnown = cur.knownDocs.filter((d) => !groupSet.has(d.slug))
@@ -898,10 +916,9 @@ export const useDocsStore = create<DocsState>()(
       emptyArchive: async () => {
         const archived = get().knownDocs.filter((d) => d.archivedAt)
         if (archived.length === 0) return
-        let failed = 0
-        for (const d of archived) {
-          indexedDB.deleteDatabase(d.slug)
-        }
+        // Path C: no IDB shards to clean. Vault files stay on disk —
+        // user removes them from Finder if they want the space back.
+        const failed = 0
         const archivedSet = new Set(archived.map((d) => d.slug))
         const cur = get()
         const nextKnown = cur.knownDocs.filter((d) => !archivedSet.has(d.slug))
