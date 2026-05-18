@@ -35,9 +35,7 @@ import { useEditorViewStore } from '../editorViewStore'
 import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
 import {
   applyVaultBodyToYDoc,
-  flushDirty,
   installDocSync,
-  markSlugDirty,
 } from '@/lib/docFileSync'
 import { scanVault } from '@/lib/scanVault'
 import { useChatRuns } from '@/stores/chatRuns'
@@ -68,6 +66,8 @@ export {
 } from './helpers'
 import { isUserOwnedWiki, isWikiDoc } from './helpers'
 import { createDateNavSlice } from './dateNavSlice'
+import { createSidebarSlice } from './sidebarSlice'
+import { createEditSlice } from './editSlice'
 
 // DocsState lives in ./types — every action signature documented there.
 
@@ -182,12 +182,13 @@ export const useDocsStore = create<DocsState>()(
       openSlugs: [],
       activeSlug: null,
       knownDocs: [],
-      expandedDocSlugs: [],
       handles: {},
       status: {},
       bootstrapping: true,
 
+      ...createSidebarSlice(set),
       ...createDateNavSlice(set),
+      ...createEditSlice(set, get),
 
       bootstrap: async () => {
         // Skip if another bootstrap is mid-flight (see the comment on
@@ -510,13 +511,6 @@ export const useDocsStore = create<DocsState>()(
         return null
       },
 
-      toggleExpanded: (slug) =>
-        set((s) => ({
-          expandedDocSlugs: s.expandedDocSlugs.includes(slug)
-            ? s.expandedDocSlugs.filter((x) => x !== slug)
-            : [...s.expandedDocSlugs, slug],
-        })),
-
       reorder: (slugs) => set({ openSlugs: slugs }),
 
       archiveDoc: (slug) => {
@@ -657,33 +651,6 @@ export const useDocsStore = create<DocsState>()(
         if (failed > 0) {
           notify.cantDeleteNote({ onRetry: () => get().deleteForever(slug) })
         }
-      },
-
-      renameDoc: (slug, newTitle) => {
-        const trimmed = newTitle.trim()
-        if (trimmed.length === 0) return false
-        const idx = get().knownDocs.findIndex((d) => d.slug === slug)
-        if (idx < 0) return false
-        const cur = get().knownDocs[idx]
-        // Only user-editable doc types can be renamed. Daily titles
-        // are derived from date; system page titles are derived from
-        // the type suffix.
-        const eligible =
-          cur.type === 'writing' || cur.type.startsWith('wiki:custom-')
-        if (!eligible) return false
-        if (cur.title === trimmed) return true
-        const list = [...get().knownDocs]
-        list[idx] = { ...cur, title: trimmed }
-        set({ knownDocs: list })
-        // Mark dirty + fire an immediate flush so the rename lands on
-        // disk right away. The 2s timer-based flush would also catch
-        // it eventually, but for an explicit user action like Rename
-        // the UI expectation is that Finder reflects the change now,
-        // not 2s later. flushDirty walks dirtySlugs and applies the
-        // rename-on-change machinery (Phase 4.B.1.c.vi).
-        markSlugDirty(slug)
-        void flushDirty()
-        return true
       },
 
       seedDocBody: async (slug, markdown) => {
