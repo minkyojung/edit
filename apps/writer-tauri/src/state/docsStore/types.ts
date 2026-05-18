@@ -138,6 +138,20 @@ export interface DocsState {
 
   // Actions
   bootstrap: () => Promise<void>
+  /** Lazy-create the in-memory handle for `slug` if it doesn't
+   * already exist, register it on `handles`, and route status
+   * updates back into `status`. Idempotent — a second call for
+   * the same slug returns immediately.
+   *
+   * `opts.seedFirstLine`: when supplied (only by brand-new-doc
+   * create paths), the body fragment is seeded with one paragraph
+   * containing `text` (or an empty paragraph if `text` is '')
+   * BEFORE the handle is published to the store. That ordering
+   * is the race fix: by the time MilkdownEditor sees the handle,
+   * the fragment is already non-empty, so its schema-fill branch
+   * never fires. Reopen paths must NOT pass this option — the
+   * seed would land on top of whatever the vault load brings in. */
+  ensureHandle: (slug: string, opts?: { seedFirstLine?: string }) => Promise<void>
   setActive: (slug: string) => void
   closeDoc: (slug: string) => void
   createNew: () => Promise<void>
