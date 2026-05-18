@@ -24,6 +24,7 @@
     "fs:allow-exists",
     "fs:allow-remove",
     "fs:allow-rename",
+    "fs:allow-watch",
     {
       "identifier": "fs:scope",
       "allow": [

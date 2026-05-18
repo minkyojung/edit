@@ -101,13 +101,15 @@ export async function readVaultFile(relPath: string): Promise<string> {
   return await readTextFile(path)
 }
 
-/** Window (ms) during which a file we just wrote should be treated as
- * "our recent write" by file-watcher consumers. Generous compared to
- * typical write+rename latency (~20ms) and fsevents propagation
- * (~100ms) so we don't miss echoes on a slow disk; short enough that
- * a genuine external edit landing right after our save isn't
- * suppressed. Tune if echoes start leaking through. */
-const RECENT_WRITE_WINDOW_MS = 1000
+/** Window (ms) during which a file we just wrote should be treated
+ * as "our recent write" by file-watcher consumers. macOS fsevents
+ * can coalesce + delay events under load by 1-3 seconds, so the
+ * window must comfortably cover that. The cost of a false negative
+ * (genuine external edit suppressed because it lands within N seconds
+ * of our save) is "user has to wait N seconds before the edit is
+ * picked up" — far cheaper than the false positive (our own write
+ * looks external, triggering a reload that wipes in-memory state). */
+const RECENT_WRITE_WINDOW_MS = 5000
 
 /** Track the timestamp of each vault path we recently wrote so the
  * file watcher (Phase 4.E) can ignore the resulting echo events.
@@ -116,8 +118,21 @@ const RECENT_WRITE_WINDOW_MS = 1000
  * modal, or in the worst case an infinite write→event→write loop. */
 const recentWrites = new Map<string, number>()
 
+/** Stamp `relPath` AND its `.tmp` companion as "we just wrote it"
+ * so the file watcher's echo filter ({@link isOurRecentWrite})
+ * suppresses every fsevent the atomic-write pattern produces:
+ *
+ *   write   → create  `<relPath>.tmp`
+ *   rename  → remove  `<relPath>.tmp`
+ *           → create  `<relPath>`
+ *
+ * Without the tmp stamp the .tmp events would leak through the
+ * filter as "external" — vault.ts owns the atomic-write contract
+ * so it's the right place to register both paths. */
 function markOurRecentWrite(relPath: string): void {
-  recentWrites.set(relPath, Date.now())
+  const now = Date.now()
+  recentWrites.set(relPath, now)
+  recentWrites.set(`${relPath}.tmp`, now)
 }
 
 /** Did we write `relPath` within the recent-write window? Used by

@@ -35,6 +35,7 @@ import '@/lib/vault'
 import '@/lib/scanVault'
 import { initHeadlessParser } from '@/lib/headlessMilkdown'
 import { startAutoFlush } from '@/lib/docFileSync'
+import { startVaultWatcher } from '@/lib/vaultWatcher'
 
 // Path C Step 3c — boot the headless Milkdown so parser / serializer
 // land in editorViewStore before any doc-loading code runs. Without
@@ -48,6 +49,15 @@ void initHeadlessParser()
 // against any future caller that might also start it. Currently a
 // dummy console-log tick; iv.3 swaps in the real save pipeline.
 startAutoFlush()
+
+// Phase 4.E.1 — start watching the vault folder for external edits.
+// Logging-only for now (no mutations); we use this baseline to
+// verify the Tauri watch API works on macOS and to observe the
+// shape of fsevents before wiring 4.E.2's router. The watcher is
+// gated on getActiveVaultPath() inside startVaultWatcher — when
+// BootGate's auto-picker is still up, it logs an inert message and
+// no-ops. Re-invocation after the picker completes lands in 4.E.2.
+void startVaultWatcher()
 
 // Module-scope so the configs array reference is stable across
 // renders — required by useLazyMaterialize's caller contract
