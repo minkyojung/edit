@@ -30,9 +30,8 @@ import { useIngestStore } from './ingestStore'
 import { useEditorViewStore } from './editorViewStore'
 import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
 import { applyVaultToHandle, installDocSync } from '@/lib/docFileSync'
+import { scanVault } from '@/lib/scanVault'
 import { useChatRuns } from '@/stores/chatRuns'
-
-const LEGACY_SLUG_KEY = 'writer-tauri:doc-slug'
 
 /** Slim metadata mirrored into localStorage so the sidebar can list
  * docs (especially closed dailies whose ydoc isn't loaded). The
@@ -415,140 +414,107 @@ export const useDocsStore = create<DocsState>()(
         if (bootstrapInFlight) return
         bootstrapInFlight = true
         try {
-        const today = todayLocalDate()
+          const today = todayLocalDate()
 
-        // First, migrate the legacy single-slug localStorage entry. We
-        // adopt it as today's daily so the user's existing content is
-        // preserved at the obvious anchor (today). Tomorrow they'll
-        // get a fresh blank daily and yesterday's content stays
-        // accessible at its anchor.
-        const legacy = localStorage.getItem(LEGACY_SLUG_KEY)
-        let { openSlugs, activeSlug, knownDocs } = get()
-        if (legacy && knownDocs.length === 0) {
-          knownDocs = [{ slug: legacy, type: 'daily', date: today }]
-          if (openSlugs.length === 0) {
-            openSlugs = [legacy]
-            activeSlug = legacy
-          }
-          set({ openSlugs, activeSlug, knownDocs })
-        }
-
-        // Make sure today's daily exists. If knownDocs has one for
-        // today, use it; otherwise create a fresh one.
-        let todaysDaily = knownDocs.find(
-          (d) => d.type === 'daily' && d.date === today,
-        )
-        if (!todaysDaily) {
-          // Client picks the slug locally so today's daily exists in the
-          // catalog (and on disk via IndexedDB) before the server is
-          // even reached. Registration is fire-and-forget — failures
-          // just mean the doc stays local-only until the next online
-          // boot, which is the right behavior for a daily journal that
-          // must always greet the user with "today".
+          // Path C: vault folder is the catalog. scanVault walks the
+          // active vault, reads each sidecar to recover its slug, and
+          // returns a KnownDoc[] that drops straight into the store.
+          // No localStorage-persisted knownDocs to reconcile — the
+          // vault is single source of truth across restarts.
           //
-          // Empty body — dailies derive their label from meta.date,
-          // so the body must not seed a heading that would duplicate it.
-          // Y.Doc + IDB shard come into being on first ensureHandle.
-          const slug = generateClientSlug()
-          const meta: KnownDoc = { slug, type: 'daily', date: today }
-          todaysDaily = meta
-          set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-        }
+          // Empty result when no vault is selected (degraded mode —
+          // boot still proceeds so the user can see the app and pick
+          // a vault from the picker that BootGate auto-triggered).
+          const scanned = await scanVault()
+          set({ knownDocs: scanned })
 
-        // Add today to openSlugs if it isn't already there, and make
-        // it the active tab. "Always land on today" is the design
-        // promise of the daily journal. Also force-add today's slug
-        // to expandedDocSlugs so the sidebar greets the user with
-        // the day's notes already visible (yesterday becomes its own
-        // slug tomorrow, so this auto-rolls).
-        if (todaysDaily) {
-          openSlugs = get().openSlugs
+          // Make sure today's daily exists in the catalog. If scan
+          // found one on disk we reuse its slug; otherwise we mint a
+          // new slug here and add it in-memory only. The auto-flush
+          // pipeline writes the file (plus sidecar with this slug) on
+          // the next 2s tick, so the entry stabilises onto disk
+          // without bootstrap having to do disk I/O itself.
+          let todaysDaily = scanned.find(
+            (d) => d.type === 'daily' && d.date === today,
+          )
+          if (!todaysDaily) {
+            const slug = generateClientSlug()
+            const meta: KnownDoc = { slug, type: 'daily', date: today }
+            todaysDaily = meta
+            set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+          }
+
+          // Validate persisted tab state against the freshly hydrated
+          // catalog. Slugs that don't have a backing KnownDoc are
+          // dropped — they refer to docs deleted externally between
+          // sessions (or remembered from a pre-Path-C build where
+          // knownDocs persisted and could diverge from disk).
+          const knownSlugs = new Set(get().knownDocs.map((d) => d.slug))
+          let openSlugs = get().openSlugs.filter((s) => knownSlugs.has(s))
+          let activeSlug: string | null = openSlugs.includes(
+            get().activeSlug ?? '',
+          )
+            ? get().activeSlug
+            : null
+
+          // Today's daily is always promoted into the tab strip
+          // ("always land on today" is the journal's design promise).
           if (!openSlugs.includes(todaysDaily.slug)) {
             openSlugs = [...openSlugs, todaysDaily.slug]
           }
-          set({ openSlugs, activeSlug: todaysDaily.slug })
+          if (!activeSlug) activeSlug = todaysDaily.slug
+          set({ openSlugs, activeSlug })
           set((s) => ({
             expandedDocSlugs: s.expandedDocSlugs.includes(todaysDaily!.slug)
               ? s.expandedDocSlugs
               : [...s.expandedDocSlugs, todaysDaily!.slug],
           }))
-        }
 
-        // Backfill: ensure every day in the current calendar week
-        // has a real daily entry, so the Week view (sliding 7 days
-        // from today) and the Month view both render with their
-        // markers populated rather than blooming in slowly. Fire-and-
-        // forget so the editor opens at full speed; the sidebar
-        // reacts as each create lands.
-        const currentWeekStart = weekStartFor(today)
-        void (async () => {
-          const cursor = new Date(currentWeekStart)
-          const weekEnd = new Date(currentWeekStart)
-          weekEnd.setDate(weekEnd.getDate() + 6)
-          while (cursor <= weekEnd) {
-            const yyyy = cursor.getFullYear()
-            const mm = String(cursor.getMonth() + 1).padStart(2, '0')
-            const dd = String(cursor.getDate()).padStart(2, '0')
-            const date = `${yyyy}-${mm}-${dd}`
-            const exists = get().knownDocs.some(
-              (k) => k.type === 'daily' && k.date === date,
-            )
-            if (!exists) {
-              const slug = generateClientSlug()
-              const meta: KnownDoc = { slug, type: 'daily', date }
-              set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
-            }
-            cursor.setDate(cursor.getDate() + 1)
+          // Defensive: ensure activeSlug still points somewhere real
+          // after the validation pass above. Edge case — openSlugs
+          // ended up empty after filtering AND today's daily insert
+          // somehow didn't land. Picks any tab to avoid a null-active
+          // session that breaks the editor mount.
+          const finalState = get()
+          if (
+            !finalState.activeSlug ||
+            !finalState.openSlugs.includes(finalState.activeSlug)
+          ) {
+            set({ activeSlug: finalState.openSlugs[0] ?? null })
           }
-        })()
 
-        // Defensive: ensure activeSlug points at something real.
-        const finalState = get()
-        if (
-          !finalState.activeSlug ||
-          !finalState.openSlugs.includes(finalState.activeSlug)
-        ) {
-          set({ activeSlug: finalState.openSlugs[0] ?? null })
-        }
-
-        // Eagerly connect the active slug. Once connected, write meta
-        // back to its ydoc if it's a daily that doesn't yet have meta
-        // (covers the legacy migration path). Other tabs stay lazy.
-        const slugToOpen = get().activeSlug
-        if (slugToOpen) {
-          await ensureHandle(slugToOpen, set, get)
-          const handle = get().handles[slugToOpen]
-          const known = get().knownDocs.find((d) => d.slug === slugToOpen)
-          if (handle && known?.type === 'daily' && known.date) {
-            const metaMap = handle.ydoc.getMap('meta')
-            if (!metaMap.get('type')) {
-              writeDocMeta(handle.ydoc, {
-                type: 'daily',
-                date: known.date,
-                createdAt: new Date().toISOString(),
-              })
+          // Eagerly connect the active slug so first paint shows
+          // content. Daily docs get their meta seeded if missing
+          // (covers the path where today's daily is brand new and
+          // has no meta map yet).
+          const slugToOpen = get().activeSlug
+          if (slugToOpen) {
+            await ensureHandle(slugToOpen, set, get)
+            const handle = get().handles[slugToOpen]
+            const known = get().knownDocs.find((d) => d.slug === slugToOpen)
+            if (handle && known?.type === 'daily' && known.date) {
+              const metaMap = handle.ydoc.getMap('meta')
+              if (!metaMap.get('type')) {
+                writeDocMeta(handle.ydoc, {
+                  type: 'daily',
+                  date: known.date,
+                  createdAt: new Date().toISOString(),
+                })
+              }
+              scrubDailyTitleArtifacts(handle.ydoc)
             }
-            scrubDailyTitleArtifacts(handle.ydoc)
           }
-        }
 
-        // Legacy key cleanup once migration is durable.
-        if (legacy && get().openSlugs.includes(legacy)) {
-          localStorage.removeItem(LEGACY_SLUG_KEY)
-        }
+          // System pages stub — currently a no-op (see wikiService).
+          // Kept so a future "ensure conventions / log / index" pass
+          // has a wired entry point.
+          void import('./wikiService').then(({ ensureWikiDocs }) =>
+            ensureWikiDocs(),
+          ).catch((err) =>
+            console.error('[wiki] bootstrap wiki failed', err),
+          )
 
-        // Ensure the user's wiki pages (belief / entity / episode)
-        // exist. Fire-and-forget so first paint isn't blocked on
-        // these round-trips. The chat runner reads wiki content
-        // lazily before each turn, so even if a create lands a
-        // moment after bootstrap, the next chat picks it up.
-        void import('./wikiService').then(({ ensureWikiDocs }) =>
-          ensureWikiDocs(),
-        ).catch((err) =>
-          console.error('[wiki] bootstrap wiki failed', err),
-        )
-
-        set({ bootstrapping: false })
+          set({ bootstrapping: false })
         } finally {
           bootstrapInFlight = false
         }
@@ -972,7 +938,10 @@ export const useDocsStore = create<DocsState>()(
       partialize: (s) => ({
         openSlugs: s.openSlugs,
         activeSlug: s.activeSlug,
-        knownDocs: s.knownDocs,
+        // knownDocs no longer persisted (Path C): the source of truth
+        // is the vault folder, hydrated on every boot via scanVault().
+        // This eliminates the "two catalogs drift" class of bugs that
+        // the title-mirror / backfill machinery existed to paper over.
         expandedDocSlugs: s.expandedDocSlugs,
       }),
       migrate: (persisted, version) => {

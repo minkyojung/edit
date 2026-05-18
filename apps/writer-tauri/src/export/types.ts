@@ -67,9 +67,18 @@ export interface MarkSidecar {
  * `version: 1` is the current schema. A future Level 4 (two-way sync)
  * extension will bump this and add a `migrate(from)` step at the import
  * boundary — existing v1 sidecars will keep working untouched.
+ *
+ * `slug` is the doc's persistent identity. Bound to the sidecar (not
+ * to a filename or path) so rename / move keeps the same slug across
+ * sessions. This is what lets us drop `knownDocs` from localStorage:
+ * the boot-time `scanVault()` reads each sidecar to recover the slug
+ * for every doc on disk. Missing slug means the file was created by
+ * an external tool (vim / git) — scanVault generates a fresh one and
+ * writes it back, so identity stabilises on first sight.
  */
 export interface MarksSidecarFile {
   version: 1
+  slug?: string
   marks: MarkSidecar[]
 }
 

@@ -142,6 +142,7 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
 
   const sidecar: MarksSidecarFile = {
     version: 1,
+    slug,
     marks: buildSidecarMarks(slug, md),
   }
 
@@ -569,6 +570,7 @@ async function backfillOneSlug(
 
     const sidecar: MarksSidecarFile = {
       version: 1,
+      slug,
       marks: buildSidecarMarksFromYDoc(ydoc, md),
     }
 

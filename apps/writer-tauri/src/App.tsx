@@ -32,6 +32,7 @@ import {
 // their actual API and the dev handles fall away.
 import '@/lib/vaultPicker'
 import '@/lib/vault'
+import '@/lib/scanVault'
 import { backfillVaultFromIdb, startAutoFlush } from '@/lib/docFileSync'
 
 // Phase 4.B.1.b.iv.2 — begin the periodic vault flush loop on app

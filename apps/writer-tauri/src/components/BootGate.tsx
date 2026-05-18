@@ -24,6 +24,8 @@
 import { useEffect, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocsStore } from '@/state/docsStore'
+import { getActiveVaultPath } from '@/state/settingsStore'
+import { pickVault } from '@/lib/vaultPicker'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
@@ -40,8 +42,22 @@ export function BootGate({ children }: Props) {
   // (it short-circuits when the catalog already has today's daily),
   // but React's Strict Mode would still double-call this useEffect —
   // hence the idempotency on the store side, not a guard here.
+  //
+  // Path C precondition: a vault must be selected before bootstrap so
+  // every doc the bootstrap touches (today's daily + system pages) can
+  // immediately reach disk. We block on the OS picker until the user
+  // chooses a folder; cancelling falls through to bootstrap-without-
+  // vault, which silent-skips every disk write. That's a degraded but
+  // recoverable state — user can re-run picker from DevTools, or quit
+  // and relaunch to get the prompt again.
   useEffect(() => {
-    bootstrap()
+    const init = async () => {
+      if (!getActiveVaultPath()) {
+        await pickVault()
+      }
+      bootstrap()
+    }
+    void init()
   }, [bootstrap])
 
   // Delay the visual loader by 400 ms so a fast bootstrap doesn't
