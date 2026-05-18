@@ -83,6 +83,28 @@ export interface MarksSidecarFile {
 }
 
 /**
+ * Doc identity sidecar — replaces the `.marks.json` "marks" surface
+ * after Path C Stage 3. Marks now live in `<stem>.ydoc` (Y.Doc binary)
+ * which preserves Yjs RelativePosition anchors across restarts. The
+ * sidecar's only remaining job is **persistent doc identity**: scanVault
+ * reads this file to recover each doc's slug at boot so `knownDocs`
+ * stays consistent across sessions and external file moves.
+ *
+ * File name on disk: `<stem>.meta.json` (renamed from `.marks.json` so
+ * the file's intent is obvious at a glance — no more "why is it called
+ * marks but has no marks").
+ *
+ * Bumping `version` later means an upgrade hook (e.g. when we add a
+ * `createdAt` field or rename `slug`). Old `.marks.json` files are read
+ * during the Stage 3 migration window — scanVault honors them and
+ * writes a fresh `.meta.json` alongside.
+ */
+export interface DocMetaFile {
+  version: 1
+  slug: string
+}
+
+/**
  * Output of a serialize step: the two strings we'd write side-by-side.
  *
  * The serializer is pure — it produces strings in memory; the Tauri

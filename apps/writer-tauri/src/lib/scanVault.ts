@@ -32,41 +32,60 @@ import {
   writeVaultFile,
 } from '@/lib/vault'
 import type { KnownDoc } from '@/state/docsStore'
-import type { MarksSidecarFile } from '@/export/types'
+import type { DocMetaFile, MarksSidecarFile } from '@/export/types'
 
-/** Read the sidecar's slug, or assign a fresh one if missing. The
- * sidecar is written back so subsequent scans see the same identity.
- * This is what makes vim-created files "adopt" into the app's
- * identity scheme on first encounter. */
+/** Read the doc's persistent slug from its on-disk meta sidecar, or
+ * mint one + write it back if missing. Three-tier lookup:
+ *
+ *   1. `.meta.json` (current) — slim file with just the slug
+ *   2. `.marks.json` (Stage 3 migration) — legacy sidecar; read slug
+ *      out of it, write a fresh `.meta.json` so future scans skip the
+ *      legacy path
+ *   3. neither exists — externally created file; mint a slug, write
+ *      `.meta.json`, identity stabilises on this scan
+ *
+ * Legacy `.marks.json` files are LEFT IN PLACE on disk — flushDirty
+ * stops writing them but doesn't actively delete user files. They
+ * become inert and the user can clean them up manually. */
 async function getOrAssignSlug(mdRel: string): Promise<string> {
-  const sidecarRel = mdRel.replace(/\.md$/, '.marks.json')
-  if (await vaultFileExists(sidecarRel)) {
+  const metaRel = mdRel.replace(/\.md$/, '.meta.json')
+  const legacyRel = mdRel.replace(/\.md$/, '.marks.json')
+
+  // Tier 1 — current .meta.json.
+  if (await vaultFileExists(metaRel)) {
     try {
-      const raw = await readVaultFile(sidecarRel)
-      const parsed = JSON.parse(raw) as Partial<MarksSidecarFile>
+      const raw = await readVaultFile(metaRel)
+      const parsed = JSON.parse(raw) as Partial<DocMetaFile>
       if (typeof parsed.slug === 'string' && parsed.slug.length > 0) {
         return parsed.slug
       }
-      // Sidecar exists but lacks a slug field — older sidecars written
-      // before Path C step 2. Mint a slug and write it back, preserving
-      // any marks already there.
-      const slug = generateClientSlug()
-      const updated: MarksSidecarFile = {
-        version: 1,
-        slug,
-        marks: Array.isArray(parsed.marks) ? parsed.marks : [],
-      }
-      await writeVaultFile(sidecarRel, `${JSON.stringify(updated, null, 2)}\n`)
-      return slug
     } catch {
-      // Corrupted sidecar — treat as missing.
+      // Corrupted .meta.json — fall through to legacy / fresh.
     }
   }
-  // No sidecar yet (common for externally-created files). Write a fresh
-  // one so the file's identity is durable from this scan onwards.
+
+  // Tier 2 — legacy .marks.json migration. Read the slug, write a
+  // fresh .meta.json so subsequent scans see the canonical file.
+  if (await vaultFileExists(legacyRel)) {
+    try {
+      const raw = await readVaultFile(legacyRel)
+      const parsed = JSON.parse(raw) as Partial<MarksSidecarFile>
+      if (typeof parsed.slug === 'string' && parsed.slug.length > 0) {
+        const meta: DocMetaFile = { version: 1, slug: parsed.slug }
+        await writeVaultFile(metaRel, `${JSON.stringify(meta, null, 2)}\n`)
+        return parsed.slug
+      }
+    } catch {
+      // Corrupted .marks.json — fall through to fresh.
+    }
+  }
+
+  // Tier 3 — externally-created file (vim / git) or first scan of a
+  // brand-new doc. Mint a slug, persist it. Identity is stable from
+  // this scan forwards.
   const slug = generateClientSlug()
-  const sidecar: MarksSidecarFile = { version: 1, slug, marks: [] }
-  await writeVaultFile(sidecarRel, `${JSON.stringify(sidecar, null, 2)}\n`)
+  const meta: DocMetaFile = { version: 1, slug }
+  await writeVaultFile(metaRel, `${JSON.stringify(meta, null, 2)}\n`)
   return slug
 }
 

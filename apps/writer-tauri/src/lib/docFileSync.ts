@@ -28,10 +28,19 @@ import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { markStore } from '@/domain/markStoreInstance'
 import { isValidMark, type Mark } from '@/domain/marks'
-import { markToSidecar, sidecarToMark } from '@/export/markAdapter'
-import type { AnchorSpec, MarkSidecar, MarksSidecarFile } from '@/export/types'
-import { findQuoteInDoc } from '@/domain/internal/quote'
-import { pathForDoc, sidecarPathForDoc, ydocPathForDoc } from '@/lib/docPaths'
+import { markToSidecar } from '@/export/markAdapter'
+import type {
+  AnchorSpec,
+  DocMetaFile,
+  MarkSidecar,
+  MarksSidecarFile,
+} from '@/export/types'
+import {
+  legacySidecarPathForDoc,
+  metaPathForDoc,
+  pathForDoc,
+  ydocPathForDoc,
+} from '@/lib/docPaths'
 import {
   readVaultBinary,
   readVaultFile,
@@ -44,13 +53,19 @@ import { getActiveVaultPath } from '@/state/settingsStore'
 import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
 import { deriveLabel } from '@/lib/docLabel'
 
-/** Result shape of {@link serializeDocToFiles} — the two strings we
- * would write side-by-side to disk (body + sidecar). Mirrors
- * `SerializedDoc` from `export/types.ts` so the data flows straight
- * into the file-write step once that's wired. */
+/** Result shape of {@link serializeDocToFiles} — the artefacts a
+ * flush tick writes to disk for one doc:
+ *   - `md`   — clean markdown body, written to `<stem>.md`
+ *   - `meta` — slim identity sidecar (slug only), written to
+ *              `<stem>.meta.json`
+ *
+ * Marks are not in this shape anymore — they live in the `.ydoc`
+ * binary which flushDirty assembles separately from the handle's
+ * Y.Doc. Path C Stage 3 removed the `.marks.json` payload (text-search
+ * anchoring) in favor of `.ydoc` (CRDT RelativePosition anchoring). */
 export interface SerializedDocFiles {
   md: string
-  sidecar: MarksSidecarFile
+  meta: DocMetaFile
 }
 
 const CONTEXT_WINDOW = 32
@@ -86,22 +101,6 @@ function buildAnchorForMark(text: string, mark: Mark): AnchorSpec | null {
     ),
     occurrence: 0,
   }
-}
-
-/** Pull marks out of markStore and convert them to sidecar entries.
- * Marks that can't be re-anchored against the current body
- * (`buildAnchorForMark` returns null) drop out — they'd be flagged
- * as `orphaned` on load anyway, and quietly skipping them now
- * keeps the sidecar honest about what's on this page right now. */
-function buildSidecarMarks(slug: string, md: string): MarkSidecar[] {
-  const marks = markStore.list(slug)
-  const out: MarkSidecar[] = []
-  for (const mark of marks) {
-    const anchor = buildAnchorForMark(md, mark)
-    if (!anchor) continue
-    out.push(markToSidecar(mark, anchor))
-  }
-  return out
 }
 
 /** Serialize one open doc to the on-disk pair `{md, sidecar}`.
@@ -142,13 +141,8 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
     return null
   }
 
-  const sidecar: MarksSidecarFile = {
-    version: 1,
-    slug,
-    marks: buildSidecarMarks(slug, md),
-  }
-
-  return { md, sidecar }
+  const meta: DocMetaFile = { version: 1, slug }
+  return { md, meta }
 }
 
 // ── Dirty tracking ───────────────────────────────────────────────
@@ -275,16 +269,26 @@ let flushTimerId: number | null = null
  *
  * The function is pure read — no Y.Doc, no markStore. Wiring into
  * the doc lifecycle is the next sub-step (4.B.1.c.ii+). */
+/** Result shape for {@link loadDocFromFiles}. Distinct from
+ * {@link SerializedDocFiles} (the write side) because the read side
+ * still produces the legacy marks-bearing sidecar for the few
+ * remaining callers (backfill devtools handle). Stage 3.3 deletes
+ * those callers and this type along with the function. */
+export interface LoadedDocFiles {
+  md: string
+  sidecar: MarksSidecarFile
+}
+
 export async function loadDocFromFiles(
   slug: string,
-): Promise<SerializedDocFiles | null> {
+): Promise<LoadedDocFiles | null> {
   if (!getActiveVaultPath()) return null
   const docs = useDocsStore.getState()
   const known = docs.knownDocs.find((d) => d.slug === slug)
   if (!known) return null
   const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
   const mdPath = pathForDoc(known, getDoc)
-  const sidecarPath = sidecarPathForDoc(known, getDoc)
+  const sidecarPath = legacySidecarPathForDoc(known, getDoc)
   if (!mdPath || !sidecarPath) return null
 
   if (!(await vaultFileExists(mdPath))) return null
@@ -433,45 +437,6 @@ export async function applyVaultBodyToYDoc(
   return 'applied'
 }
 
-/** Read the sidecar for `slug` and restore every still-anchorable
- * mark into the live EditorView. Called from MilkdownEditor's mount
- * AFTER the editor is created and view is in editorViewStore — by
- * that point the body has been seeded (applyVaultBodyToYDoc ran in
- * buildHandle's contentReady) so quote-based anchor resolution can
- * find the marks in the PM doc.
- *
- * v1 anchor resolution: find the quote in the current PM doc, first
- * match wins (occurrence: 0). Marks whose quote no longer appears in
- * the body drop silently — the body is the source of truth, marks
- * that can't anchor against it are stale. Phase 4.E (file watcher)
- * will promote this to the full markResolver context + occurrence
- * strategy so external edits to the body don't drop marks
- * unnecessarily.
- *
- * Returns the count of marks successfully restored. Zero when:
- *   - vault not selected
- *   - no .marks.json file
- *   - sidecar empty
- *   - none of the recorded quotes survive in the current body */
-export async function restoreMarksFromSidecar(
-  view: import('@milkdown/kit/prose/view').EditorView,
-  slug: string,
-): Promise<number> {
-  if (!getActiveVaultPath()) return 0
-  const loaded = await loadDocFromFiles(slug)
-  if (!loaded || loaded.sidecar.marks.length === 0) return 0
-  let restored = 0
-  for (const sidecarMark of loaded.sidecar.marks) {
-    const mark = sidecarToMark(sidecarMark)
-    if (!mark) continue
-    const anchor = findQuoteInDoc(view, mark.quote)
-    if (!anchor) continue
-    const ok = await markStore.restore({ slug, mark, anchor })
-    if (ok) restored++
-  }
-  return restored
-}
-
 /** Walk dirty slugs once and persist each to its vault file pair.
  * Called from the periodic flush timer. Errors are isolated per
  * slug — a single failed write doesn't block the others — and the
@@ -496,19 +461,17 @@ export async function flushDirty(): Promise<void> {
       continue
     }
     const mdPath = pathForDoc(known, getDoc)
-    const sidecarPath = sidecarPathForDoc(known, getDoc)
+    const metaPath = metaPathForDoc(known, getDoc)
     const ydocPath = ydocPathForDoc(known, getDoc)
-    if (!mdPath || !sidecarPath || !ydocPath) {
+    if (!mdPath || !metaPath || !ydocPath) {
       clearDirty(slug)
       continue
     }
     const result = serializeDocToFiles(slug)
     if (!result) continue
     // Y.Doc binary snapshot — captures the full CRDT state including
-    // RelativePosition mark anchors that text-search sidecar can't
-    // express. The handle's ydoc is the live in-memory copy that
-    // flush serializes from. Stage 1 writes alongside .marks.json;
-    // Stage 2 will switch the load path to prefer .ydoc.
+    // RelativePosition mark anchors. The handle's ydoc is the live
+    // in-memory copy.
     const handle = docs.handles[slug]
     const ydocBinary = handle ? Y.encodeStateAsUpdate(handle.ydoc) : null
     try {
@@ -516,26 +479,24 @@ export async function flushDirty(): Promise<void> {
       // different path (Untitled note gained a title, wiki page
       // renamed, daily child note re-titled), move the existing
       // files to the new path rather than write a fresh copy and
-      // orphan the old one. Standard pattern in disk-backed editors
-      // (Obsidian / VS Code rename). Skipped silently when the old
-      // file is already gone (user deleted it externally, or first
-      // write of the session).
+      // orphan the old one. Skipped silently when the old file is
+      // already gone.
       const oldMd = lastWrittenPath.get(slug)
       if (oldMd && oldMd !== mdPath) {
-        const oldSidecar = oldMd.replace(/\.md$/, '.marks.json')
+        const oldMeta = oldMd.replace(/\.md$/, '.meta.json')
         const oldYdoc = oldMd.replace(/\.md$/, '.ydoc')
         if (await vaultFileExists(oldMd)) {
           await renameVaultFile(oldMd, mdPath)
         }
-        if (await vaultFileExists(oldSidecar)) {
-          await renameVaultFile(oldSidecar, sidecarPath)
+        if (await vaultFileExists(oldMeta)) {
+          await renameVaultFile(oldMeta, metaPath)
         }
         if (await vaultFileExists(oldYdoc)) {
           await renameVaultFile(oldYdoc, ydocPath)
         }
       }
       await writeVaultFile(mdPath, result.md)
-      await writeVaultFile(sidecarPath, JSON.stringify(result.sidecar, null, 2))
+      await writeVaultFile(metaPath, JSON.stringify(result.meta, null, 2))
       if (ydocBinary) {
         await writeVaultBinary(ydocPath, ydocBinary)
       }
@@ -626,7 +587,7 @@ async function backfillOneSlug(
   if (!known) return false
   const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
   const mdPath = pathForDoc(known, getDoc)
-  const sidecarPath = sidecarPathForDoc(known, getDoc)
+  const sidecarPath = legacySidecarPathForDoc(known, getDoc)
   if (!mdPath || !sidecarPath) return false
   if (await vaultFileExists(mdPath)) return false
 
@@ -748,7 +709,7 @@ if (import.meta.env.DEV) {
   }).__serializeDoc = handle
   ;(window as unknown as { __listMarks: typeof listMarks }).__listMarks = listMarks
   ;(window as unknown as { __dirtySlugs: () => string[] }).__dirtySlugs = getDirtySlugs
-  const loadHandle = async (slug?: string): Promise<SerializedDocFiles | null> => {
+  const loadHandle = async (slug?: string): Promise<LoadedDocFiles | null> => {
     const target = slug ?? useDocsStore.getState().activeSlug
     if (!target) return null
     return loadDocFromFiles(target)

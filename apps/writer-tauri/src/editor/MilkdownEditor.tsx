@@ -38,7 +38,6 @@ import {
 } from './wikilinkBrokenPlugin'
 import { createPlaceholderPlugin } from './placeholderPlugin'
 import { useDocsStore } from '@/state/docsStore'
-import { restoreMarksFromSidecar } from '@/lib/docFileSync'
 import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { normalizeDailyBody } from '@/lib/docTitle'
@@ -341,50 +340,11 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
           service.connect()
         })
 
-        let capturedView: EditorView | null = null
         editor.action((ctx) => {
           const view = ctx.get(editorViewCtx)
-          capturedView = view
           setPmView(view)
           onViewReady?.(view)
         })
-
-        // Restore marks from the LEGACY .marks.json sidecar — only
-        // when Y.Map<Mark> is still empty. Stage 2 of Path C made the
-        // .ydoc binary the primary persistence: if applyVaultBodyToYDoc
-        // restored from .ydoc, marks are already in Y.Map (and
-        // y-prosemirror has rendered the PM marks from the XmlFragment
-        // attributes). Calling restoreMarksFromSidecar in that state
-        // would re-create duplicate marks via text search.
-        //
-        // Empty Y.Map means we came in via the markdown fallback (no
-        // .ydoc on disk yet — first session after Stage 1 deploy, or
-        // an externally-created .md). In that case we still try the
-        // .marks.json text-search path so old data isn't lost.
-        if (capturedView) {
-          const marksMap = handle.ydoc.getMap('marks')
-          if (marksMap.size === 0) {
-            void restoreMarksFromSidecar(capturedView, handle.slug)
-              .then((count) => {
-                if (count > 0) {
-                  console.log(
-                    `[vault:load] restored ${count} marks from legacy sidecar for ${handle.slug}`,
-                  )
-                }
-              })
-              .catch((err) => {
-                console.warn(
-                  '[vault:load] legacy mark restore failed for',
-                  handle.slug,
-                  err,
-                )
-              })
-          } else {
-            console.log(
-              `[vault:load] ${marksMap.size} marks loaded from .ydoc for ${handle.slug}`,
-            )
-          }
-        }
 
         // Parser / serializer come from the headless Milkdown built
         // at app boot (lib/headlessMilkdown.ts) — populated globally

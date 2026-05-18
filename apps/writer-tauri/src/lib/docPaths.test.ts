@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { KnownDoc } from '@/state/docsStore'
-import { pathForDoc, sanitizeFilename, sidecarPathForDoc } from './docPaths'
+import { metaPathForDoc, pathForDoc, sanitizeFilename } from './docPaths'
 
 function known(partial: Partial<KnownDoc> & { type: KnownDoc['type'] }): KnownDoc {
   return {
@@ -111,18 +111,18 @@ describe('pathForDoc', () => {
   })
 })
 
-describe('sidecarPathForDoc', () => {
-  it('mirrors the body path with .marks.json suffix', () => {
-    expect(sidecarPathForDoc(known({ type: 'daily', date: '2026-05-17' }))).toBe(
-      'daily/2026-05-17.marks.json',
+describe('metaPathForDoc', () => {
+  it('mirrors the body path with .meta.json suffix', () => {
+    expect(metaPathForDoc(known({ type: 'daily', date: '2026-05-17' }))).toBe(
+      'daily/2026-05-17.meta.json',
     )
     expect(
-      sidecarPathForDoc(known({ type: 'wiki:custom-abc', title: 'Tom' })),
-    ).toBe('wiki/Tom.marks.json')
+      metaPathForDoc(known({ type: 'wiki:custom-abc', title: 'Tom' })),
+    ).toBe('wiki/Tom.meta.json')
   })
 
   it('returns null when the body path is null', () => {
-    expect(sidecarPathForDoc(known({ type: 'daily' }))).toBeNull()
+    expect(metaPathForDoc(known({ type: 'daily' }))).toBeNull()
   })
 })
 
