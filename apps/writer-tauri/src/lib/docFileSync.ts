@@ -22,25 +22,12 @@
 // auto-save on top.
 
 import * as Y from 'yjs'
-import { IndexeddbPersistence } from 'y-indexeddb'
-import { yXmlFragmentToProseMirrorRootNode } from 'y-prosemirror'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { markStore } from '@/domain/markStoreInstance'
-import { isValidMark, type Mark } from '@/domain/marks'
-import { markToSidecar } from '@/export/markAdapter'
-import type {
-  AnchorSpec,
-  DocMetaFile,
-  MarkSidecar,
-  MarksSidecarFile,
-} from '@/export/types'
-import {
-  legacySidecarPathForDoc,
-  metaPathForDoc,
-  pathForDoc,
-  ydocPathForDoc,
-} from '@/lib/docPaths'
+import type { Mark } from '@/domain/marks'
+import type { DocMetaFile } from '@/export/types'
+import { metaPathForDoc, pathForDoc, ydocPathForDoc } from '@/lib/docPaths'
 import {
   readVaultBinary,
   readVaultFile,
@@ -66,41 +53,6 @@ import { deriveLabel } from '@/lib/docLabel'
 export interface SerializedDocFiles {
   md: string
   meta: DocMetaFile
-}
-
-const CONTEXT_WINDOW = 32
-
-/** Build the semantic anchor for one mark by re-locating its quote
- * inside the serialised markdown. Mirrors prototype-git-storage's
- * resolver so save / load stay symmetric: a sidecar produced here
- * can be re-anchored by markResolver without translation.
- *
- * Strategy
- *   - First occurrence wins (occurrence=0). Same-quote duplicates on
- *     the same page are disambiguated on load via contextBefore /
- *     contextAfter + the recorded occurrence ordinal.
- *   - Returns null when the quote isn't in the body — caller drops
- *     that mark from the sidecar rather than persisting a broken
- *     anchor that would only flag as orphan on every load.
- *
- * v1 limitation: a mark whose quote appears N > 1 times on the page
- * always serialises with occurrence=0. The wrapping flow (next
- * step) will look at the mark's PM range to pick the right
- * occurrence; for the simple sidecar build here it's the first
- * match. */
-function buildAnchorForMark(text: string, mark: Mark): AnchorSpec | null {
-  if (!mark.quote) return null
-  const idx = text.indexOf(mark.quote)
-  if (idx === -1) return null
-  return {
-    quote: mark.quote,
-    contextBefore: text.slice(Math.max(0, idx - CONTEXT_WINDOW), idx),
-    contextAfter: text.slice(
-      idx + mark.quote.length,
-      Math.min(text.length, idx + mark.quote.length + CONTEXT_WINDOW),
-    ),
-    occurrence: 0,
-  }
 }
 
 /** Serialize one open doc to the on-disk pair `{md, sidecar}`.
@@ -269,64 +221,6 @@ let flushTimerId: number | null = null
  *
  * The function is pure read — no Y.Doc, no markStore. Wiring into
  * the doc lifecycle is the next sub-step (4.B.1.c.ii+). */
-/** Result shape for {@link loadDocFromFiles}. Distinct from
- * {@link SerializedDocFiles} (the write side) because the read side
- * still produces the legacy marks-bearing sidecar for the few
- * remaining callers (backfill devtools handle). Stage 3.3 deletes
- * those callers and this type along with the function. */
-export interface LoadedDocFiles {
-  md: string
-  sidecar: MarksSidecarFile
-}
-
-export async function loadDocFromFiles(
-  slug: string,
-): Promise<LoadedDocFiles | null> {
-  if (!getActiveVaultPath()) return null
-  const docs = useDocsStore.getState()
-  const known = docs.knownDocs.find((d) => d.slug === slug)
-  if (!known) return null
-  const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
-  const mdPath = pathForDoc(known, getDoc)
-  const sidecarPath = legacySidecarPathForDoc(known, getDoc)
-  if (!mdPath || !sidecarPath) return null
-
-  if (!(await vaultFileExists(mdPath))) return null
-  let md: string
-  try {
-    md = await readVaultFile(mdPath)
-  } catch (err) {
-    console.warn('[vault:load] read md failed for', slug, err)
-    return null
-  }
-
-  let sidecar: MarksSidecarFile = { version: 1, marks: [] }
-  if (await vaultFileExists(sidecarPath)) {
-    try {
-      const raw = await readVaultFile(sidecarPath)
-      const parsed = JSON.parse(raw) as unknown
-      if (isSidecarFile(parsed)) {
-        sidecar = parsed
-      } else {
-        console.warn('[vault:load] sidecar shape unrecognised, ignoring', slug)
-      }
-    } catch (err) {
-      console.warn('[vault:load] sidecar parse failed for', slug, err)
-    }
-  }
-
-  return { md, sidecar }
-}
-
-/** Narrow a JSON.parse result to MarksSidecarFile. Defensive — the
- * file on disk could have been hand-edited or written by an older /
- * future version of the app. */
-function isSidecarFile(value: unknown): value is MarksSidecarFile {
-  if (typeof value !== 'object' || value === null) return false
-  const v = value as Partial<MarksSidecarFile>
-  return v.version === 1 && Array.isArray(v.marks)
-}
-
 /** Outcome of {@link applyVaultBodyToYDoc} so callers can react to
  * each reason for not applying. The 'no-handle' case is gone in
  * Step 5 — callers now pass the Y.Doc directly, so a missing handle
@@ -416,10 +310,21 @@ export async function applyVaultBodyToYDoc(
     }
   }
 
-  // Tier 2 — legacy markdown path. Body only; marks restored later
-  // by restoreMarksFromSidecar after view ready.
-  const loaded = await loadDocFromFiles(slug)
-  if (!loaded) return 'no-file'
+  // Tier 2 — markdown-only path. Used when no .ydoc exists yet
+  // (externally-created .md, or first session after a vault wipe).
+  // Marks aren't restored — the .marks.json legacy path was removed
+  // in Stage 3.2. New marks the user creates will be persisted in
+  // .ydoc on the next flush.
+  const mdPath = pathForDoc(known, getDoc)
+  if (!mdPath || !(await vaultFileExists(mdPath))) return 'no-file'
+
+  let md: string
+  try {
+    md = await readVaultFile(mdPath)
+  } catch (err) {
+    console.warn('[vault:load] read md failed for', slug, err)
+    return 'no-file'
+  }
 
   const parser = useEditorViewStore.getState().parser
   if (!parser) return 'no-parser'
@@ -430,7 +335,7 @@ export async function applyVaultBodyToYDoc(
     }, 'doc-init')
   }
 
-  const ok = seedMarkdownIntoYDoc(ydoc, loaded.md, parser)
+  const ok = seedMarkdownIntoYDoc(ydoc, md, parser)
   if (!ok) return 'no-parser'
 
   clearDirty(slug)
@@ -528,164 +433,6 @@ export function stopAutoFlush(): void {
   flushTimerId = null
 }
 
-// ── One-shot IDB → vault backfill ────────────────────────────────
-//
-// Closes the gap left by Phase 4 landing on top of an existing IDB:
-// docs that were created before this codebase existed (or before the
-// user picked a vault) live in IDB but never reached disk, so they
-// show in the sidebar yet are invisible to CLI / Finder / git.
-//
-// Strategy per slug:
-//   1. Compute its vault path. Skip if the doc type has no on-disk
-//      placement (e.g. 'writing') or if the .md already exists.
-//   2. Open a SHORT-LIVED Y.Doc + IDB persistence with the same slug
-//      key — IDB hydrates the body and marks Map exactly like the
-//      live handle would.
-//   3. Read the fragment + marks Map directly off that temp doc and
-//      serialize via the shared editor schema + Milkdown serializer.
-//   4. Atomic-write .md + .marks.json, then destroy the temp handle.
-//
-// Why a temp handle instead of going through ensureHandle:
-//   ensureHandle registers the handle in docsStore and installs the
-//   dirty observer permanently. We'd end up holding N ydocs in memory
-//   for the rest of the session, defeating the lazy-with-cache design.
-//   The temp Y.Doc lives only long enough to read + serialize.
-//
-// Why direct serialize instead of mounting the editor for each slug:
-//   Cycling the EditorView through every closed doc would flash the UI
-//   and cost a full Milkdown setup per page. We already have the schema
-//   and serializer from the active editor — those are constants across
-//   docs, so we can serialize any PM node built from any Y.Doc using
-//   them.
-
-/** Read the marks Y.Map directly from a (possibly inactive) Y.Doc and
- * convert valid entries to sidecar form. Mirrors the markStore.list +
- * buildSidecarMarks pipeline but bypasses the handle registry so it
- * works on the backfill's temp ydoc. */
-function buildSidecarMarksFromYDoc(ydoc: Y.Doc, md: string): MarkSidecar[] {
-  const marksMap = ydoc.getMap<Mark>('marks')
-  const out: MarkSidecar[] = []
-  marksMap.forEach((raw) => {
-    if (!isValidMark(raw)) return
-    const anchor = buildAnchorForMark(md, raw)
-    if (!anchor) return
-    out.push(markToSidecar(raw, anchor))
-  })
-  return out
-}
-
-/** Backfill a single slug. Returns true when a write happened. Silent
- * skips: doc type has no path, file already on disk, IDB empty, or
- * serializer not ready yet. The caller logs the aggregate result. */
-async function backfillOneSlug(
-  slug: string,
-  schema: import('@milkdown/kit/prose/model').Schema,
-  serializer: (doc: import('@milkdown/kit/prose/model').Node) => string,
-): Promise<boolean> {
-  const docs = useDocsStore.getState()
-  const known = docs.knownDocs.find((d) => d.slug === slug)
-  if (!known) return false
-  const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
-  const mdPath = pathForDoc(known, getDoc)
-  const sidecarPath = legacySidecarPathForDoc(known, getDoc)
-  if (!mdPath || !sidecarPath) return false
-  if (await vaultFileExists(mdPath)) return false
-
-  const ydoc = new Y.Doc()
-  const idb = new IndexeddbPersistence(slug, ydoc)
-  try {
-    await idb.whenSynced
-    const fragment = ydoc.getXmlFragment('prosemirror')
-    // Effective-empty: IDB had nothing real for this slug. Common for
-    // catalog entries that were created but never typed into (e.g.
-    // week-ahead daily placeholders bootstrap seeds). Skip rather than
-    // writing an empty .md that would pollute the vault.
-    if (deriveLabel(fragment).length === 0) return false
-
-    let md: string
-    try {
-      const pmNode = yXmlFragmentToProseMirrorRootNode(fragment, schema)
-      md = serializer(pmNode)
-    } catch (err) {
-      console.warn('[backfill] serialize failed', slug, err)
-      return false
-    }
-
-    const sidecar: MarksSidecarFile = {
-      version: 1,
-      slug,
-      marks: buildSidecarMarksFromYDoc(ydoc, md),
-    }
-
-    try {
-      await writeVaultFile(mdPath, md)
-      await writeVaultFile(
-        sidecarPath,
-        `${JSON.stringify(sidecar, null, 2)}\n`,
-      )
-      // Seed the rename tracker so a later title change moves this
-      // file rather than creating a duplicate. Without this, the
-      // first flush after the user edits a backfilled doc would see
-      // no oldPath and emit a fresh write.
-      lastWrittenPath.set(slug, mdPath)
-    } catch (err) {
-      console.error('[backfill] write failed', slug, err)
-      return false
-    }
-    return true
-  } finally {
-    idb.destroy()
-    ydoc.destroy()
-  }
-}
-
-/** One-shot pass: write every IDB-resident doc that doesn't yet exist
- * on disk. Idempotent — a re-run after the first finds existing files
- * and skips them, so callers can fire it on every boot.
- *
- * Returns a summary so the caller can log it. Failure of any single
- * slug is logged internally and counted; it doesn't abort the rest.
- *
- * Preconditions: vault selected + an editor view mounted (we need its
- * schema + serializer). Both are met right after BootGate flips, since
- * bootstrap eagerly opens today's daily. */
-export async function backfillVaultFromIdb(): Promise<{
-  total: number
-  wrote: number
-  skipped: number
-  failed: number
-}> {
-  if (!getActiveVaultPath()) {
-    return { total: 0, wrote: 0, skipped: 0, failed: 0 }
-  }
-  const { view, serializer } = useEditorViewStore.getState()
-  if (!view || !serializer) {
-    return { total: 0, wrote: 0, skipped: 0, failed: 0 }
-  }
-  const schema = view.state.schema
-
-  const allKnown = useDocsStore.getState().knownDocs
-  const getDoc = (s: string) => allKnown.find((d) => d.slug === s)
-  const knownDocs = allKnown.filter(
-    (d) => !d.archivedAt && pathForDoc(d, getDoc) !== null,
-  )
-
-  let wrote = 0
-  let skipped = 0
-  let failed = 0
-  for (const doc of knownDocs) {
-    try {
-      const ok = await backfillOneSlug(doc.slug, schema, serializer)
-      if (ok) wrote++
-      else skipped++
-    } catch (err) {
-      console.error('[backfill] slug failed', doc.slug, err)
-      failed++
-    }
-  }
-  return { total: knownDocs.length, wrote, skipped, failed }
-}
-
 // Dev-only console handle. Pass a slug, or omit to use the active
 // doc. Returns null when no doc is active or the serializer isn't
 // ready yet.
@@ -709,12 +456,6 @@ if (import.meta.env.DEV) {
   }).__serializeDoc = handle
   ;(window as unknown as { __listMarks: typeof listMarks }).__listMarks = listMarks
   ;(window as unknown as { __dirtySlugs: () => string[] }).__dirtySlugs = getDirtySlugs
-  const loadHandle = async (slug?: string): Promise<LoadedDocFiles | null> => {
-    const target = slug ?? useDocsStore.getState().activeSlug
-    if (!target) return null
-    return loadDocFromFiles(target)
-  }
-  ;(window as unknown as { __loadDoc: typeof loadHandle }).__loadDoc = loadHandle
   const applyHandle = async (
     slug?: string,
   ): Promise<ApplyVaultOutcome | 'no-handle'> => {
@@ -727,7 +468,4 @@ if (import.meta.env.DEV) {
   ;(window as unknown as { __applyVault: typeof applyHandle }).__applyVault = applyHandle
   ;(window as unknown as { __activeSlug: () => string | null }).__activeSlug = () =>
     useDocsStore.getState().activeSlug
-  ;(window as unknown as {
-    __backfill: typeof backfillVaultFromIdb
-  }).__backfill = backfillVaultFromIdb
 }

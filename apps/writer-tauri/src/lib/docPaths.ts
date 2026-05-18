@@ -74,19 +74,6 @@ export function metaPathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null
   return md.replace(/\.md$/, '.meta.json')
 }
 
-/** Legacy `.marks.json` path — kept for the Stage 3 migration window
- * so scanVault can pick up slugs from existing sidecars and
- * flushDirty's rename-on-change can move old files along with their
- * new `.meta.json` counterpart. Stage 4 (full removal) will drop this. */
-export function legacySidecarPathForDoc(
-  doc: KnownDoc,
-  getDoc?: DocLookup,
-): string | null {
-  const md = pathForDoc(doc, getDoc)
-  if (!md) return null
-  return md.replace(/\.md$/, '.marks.json')
-}
-
 /** Vault-relative path of a doc's Y.Doc binary sidecar. Same stem as
  * the markdown body, `.ydoc` suffix instead of `.md`. Stores the full
  * Yjs CRDT state — body fragment + marks Y.Map + RelativePositions —
