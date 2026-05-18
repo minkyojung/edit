@@ -24,6 +24,7 @@
  */
 
 import { formatLocalDate, todayLocalDate } from '@/hooks/useDocMeta'
+import { pathForDoc } from '@/lib/docPaths'
 import type { DocPolicy, DocsState, KnownDoc } from './types'
 
 // ── Doc policy table ───────────────────────────────────────────────
@@ -88,6 +89,36 @@ export function isWikiDoc(doc: Pick<KnownDoc, 'type'>): boolean {
  * is true exactly for the category the user can wipe. */
 export function isUserOwnedWiki(doc: Pick<KnownDoc, 'type'>): boolean {
   return getDocPolicy(doc).category === 'wiki-content'
+}
+
+// ── Vault path lookup ──────────────────────────────────────────────
+
+/** Reverse-lookup a doc's slug from a vault-relative `.md` path.
+ *
+ * The watcher receives paths like `daily/2026-05-18.md` or
+ * `wiki/Tom.md`; reload / remove handlers need to find the matching
+ * doc to address its handle. We compute each known doc's vault path
+ * via {@link pathForDoc} and compare. Linear scan is fine — knownDocs
+ * sizes (hundreds, low thousands) make this a sub-ms loop and the
+ * watcher fires at most a few times per second.
+ *
+ * Returns null when the path corresponds to a doc the catalog doesn't
+ * know about (typical for the `add` flow — caller should mint a new
+ * KnownDoc instead). Archived docs are excluded from the search so a
+ * still-on-disk file under `wiki/` doesn't shadow a live wiki page
+ * with the same title.
+ */
+export function findSlugByVaultPath(
+  knownDocs: KnownDoc[],
+  rel: string,
+): string | null {
+  const bySlug = new Map(knownDocs.map((d) => [d.slug, d]))
+  const getDoc = (slug: string) => bySlug.get(slug)
+  for (const doc of knownDocs) {
+    if (doc.archivedAt) continue
+    if (pathForDoc(doc, getDoc) === rel) return doc.slug
+  }
+  return null
 }
 
 // ── Date arithmetic ────────────────────────────────────────────────

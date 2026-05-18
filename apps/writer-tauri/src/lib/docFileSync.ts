@@ -156,6 +156,14 @@ export function getDirtySlugs(): string[] {
   return [...dirtySlugs]
 }
 
+/** True iff `slug` has unsaved local edits queued for the next flush
+ * tick. Read-only view onto `dirtySlugs` for callers that need to
+ * gate side effects (e.g. vault watcher skipping an external-reload
+ * when the local copy is dirty) without iterating the whole set. */
+export function isDirty(slug: string): boolean {
+  return dirtySlugs.has(slug)
+}
+
 /** Wire up the dirty tracker for a handle. Returns a disposer that
  * removes observers and clears the slug from `dirtySlugs` — closeDoc
  * should call it so a torn-down handle's leftover dirty flag doesn't
@@ -271,6 +279,7 @@ export type ApplyVaultOutcome =
 export async function applyVaultBodyToYDoc(
   ydoc: Y.Doc,
   slug: string,
+  opts: { reload?: boolean } = {},
 ): Promise<ApplyVaultOutcome> {
   if (!getActiveVaultPath()) return 'no-vault'
 
@@ -280,18 +289,30 @@ export async function applyVaultBodyToYDoc(
   const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
 
   const fragment = ydoc.getXmlFragment('prosemirror')
-  // Refuse to merge over real text. deriveLabel walks XmlText inserts,
-  // so a one-paragraph stub from MilkdownEditor's mount fill counts as
-  // "still empty" and we proceed. fragment.length alone would flip to 1
-  // the moment that stub lands and we'd skip every vault load.
-  if (deriveLabel(fragment).length > 0) return 'not-empty'
+  // Initial hydrate: refuse to merge over real text. deriveLabel walks
+  // XmlText inserts, so a one-paragraph stub from MilkdownEditor's
+  // mount fill counts as "still empty" and we proceed. fragment.length
+  // alone would flip to 1 the moment that stub lands and we'd skip
+  // every vault load.
+  //
+  // Reload (vault watcher → external edit): skip the guard — the
+  // caller is explicitly asking for the on-disk body to replace what's
+  // in memory because someone modified the .md outside the app.
+  if (!opts.reload && deriveLabel(fragment).length > 0) return 'not-empty'
 
   // Tier 1 — try .ydoc binary first. Brings body + marks +
   // RelativePosition anchors in one Y.applyUpdate. y-prosemirror
   // syncs the marks into PM automatically on editor mount since
   // they're attributes on text nodes in the XmlFragment.
+  //
+  // On reload we skip this tier: the .ydoc on disk reflects the last
+  // app-side flush (i.e. the OLD body), so applying it would either
+  // be a no-op (CRDT recognises the state it already has) or — worse
+  // — overwrite the external edit with the stale state. The external
+  // .md is the only source that knows about the change, so we go
+  // straight to Tier 2.
   const ydocPath = ydocPathForDoc(known, getDoc)
-  if (ydocPath && (await vaultFileExists(ydocPath))) {
+  if (!opts.reload && ydocPath && (await vaultFileExists(ydocPath))) {
     try {
       const binary = await readVaultBinary(ydocPath)
       if (fragment.length > 0) {

@@ -31,7 +31,10 @@
 
 import { watch } from '@tauri-apps/plugin-fs'
 import { getActiveVaultPath } from '@/state/settingsStore'
+import { useDocsStore } from '@/state/docsStore'
+import { findSlugByVaultPath } from '@/state/docsStore/helpers'
 import { isOurRecentWrite } from './vault'
+import { isDirty } from './docFileSync'
 
 let activeUnwatch: (() => void) | null = null
 
@@ -176,11 +179,33 @@ function dispatchEvent(event: { type: unknown }, paths: string[]): void {
   }
 }
 
-/** Stub: external write detected on an existing .md. In Phase 4.E.3
- * this will reload the file's Y.Doc when the doc is currently open,
- * or invalidate its cached body when it isn't. */
+/** External write landed on a known `.md`. Decision tree:
+ *
+ *   1. Path doesn't match any known slug → ignore. Either an orphan
+ *      file the user dropped in without a matching catalog entry, or
+ *      an in-flight rename whose `add` side will reach us as a
+ *      separate event.
+ *   2. Handle not yet built → no-op. The next `ensureHandle` call
+ *      will hydrate from the (now-updated) disk file naturally; no
+ *      reason to materialise a handle just to refresh it.
+ *   3. Local copy dirty → skip with a console warning. The user has
+ *      unsaved edits queued; silently overwriting them with the
+ *      external version would lose work. Phase 4.E.4 surfaces this
+ *      as a banner with a "다시 불러오기" action; for now the user
+ *      can manually close-and-reopen the tab to force a reload.
+ *   4. Clean + open → call the store's reloadFromVault action, which
+ *      re-reads the body and applies it to the live Y.Doc.
+ */
 function handleExternalReload(rel: string): void {
-  console.log('[router] reload candidate:', rel)
+  const state = useDocsStore.getState()
+  const slug = findSlugByVaultPath(state.knownDocs, rel)
+  if (!slug) return
+  if (!state.handles[slug]) return
+  if (isDirty(slug)) {
+    console.warn('[vault:reload] skipped — local dirty', { slug, rel })
+    return
+  }
+  void state.reloadFromVault(slug)
 }
 
 /** Stub: a new .md appeared under a watched subtree. In Phase 4.E.3

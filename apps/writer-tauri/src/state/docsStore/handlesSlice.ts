@@ -43,6 +43,13 @@ export interface HandlesSlice {
     slug: string,
     opts?: { seedFirstLine?: string },
   ) => Promise<void>
+  /** Re-read this doc's body from the vault and apply it to the open
+   * Y.Doc. Used by the vault watcher when an external edit lands on a
+   * file the app already has loaded. No-op when the handle isn't
+   * built yet (the next ensureHandle will hydrate from disk anyway).
+   * Caller is responsible for the dirty / conflict gate — this just
+   * does the read-and-apply. */
+  reloadFromVault: (slug: string) => Promise<void>
 }
 
 export const createHandlesSlice = (
@@ -70,6 +77,20 @@ export const createHandlesSlice = (
     // filename are decoupled — typing in the body never changes the
     // doc's title. Title changes go through the explicit renameDoc
     // action; the rename-on-change machinery moves the file on disk.
+  },
+
+  reloadFromVault: async (slug) => {
+    const handle = get().handles[slug]
+    if (!handle?.ydoc) return
+    const outcome = await applyVaultBodyToYDoc(handle.ydoc, slug, {
+      reload: true,
+    }).catch((err) => {
+      console.warn('[vault:reload] failed for', slug, err)
+      return 'no-vault' as const
+    })
+    if (outcome === 'applied') {
+      console.log(`[vault:reload] ${slug} hydrated from external edit`)
+    }
   },
 })
 

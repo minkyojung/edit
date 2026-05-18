@@ -152,6 +152,13 @@ export interface DocsState {
    * never fires. Reopen paths must NOT pass this option — the
    * seed would land on top of whatever the vault load brings in. */
   ensureHandle: (slug: string, opts?: { seedFirstLine?: string }) => Promise<void>
+  /** Re-read this doc's body from the vault and apply it to the
+   * already-open Y.Doc. The vault watcher calls this when an external
+   * edit lands on a file the app has loaded. No-op when the handle
+   * isn't built yet — the next ensureHandle will hydrate from disk
+   * naturally. Caller (the watcher) gates the call on the local dirty
+   * flag so unsaved edits aren't clobbered. */
+  reloadFromVault: (slug: string) => Promise<void>
   setActive: (slug: string) => void
   closeDoc: (slug: string) => void
   createNew: () => Promise<void>
