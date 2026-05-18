@@ -66,13 +66,8 @@ export {
   shiftMonthAnchor,
   weekStartFor,
 } from './helpers'
-import {
-  isUserOwnedWiki,
-  isWikiDoc,
-  monthAnchorOf,
-  shiftDayAnchor,
-  shiftMonthAnchor,
-} from './helpers'
+import { isUserOwnedWiki, isWikiDoc } from './helpers'
+import { createDateNavSlice } from './dateNavSlice'
 
 // DocsState lives in ./types — every action signature documented there.
 
@@ -191,9 +186,8 @@ export const useDocsStore = create<DocsState>()(
       handles: {},
       status: {},
       bootstrapping: true,
-      sidebarTab: 'day',
-      monthAnchor: monthAnchorOf(todayLocalDate()),
-      dayAnchor: todayLocalDate(),
+
+      ...createDateNavSlice(set),
 
       bootstrap: async () => {
         // Skip if another bootstrap is mid-flight (see the comment on
@@ -664,18 +658,6 @@ export const useDocsStore = create<DocsState>()(
           notify.cantDeleteNote({ onRetry: () => get().deleteForever(slug) })
         }
       },
-
-      setSidebarTab: (tab) => set({ sidebarTab: tab }),
-
-      setMonthAnchor: (anchor) => set({ monthAnchor: anchor }),
-
-      shiftMonth: (delta) =>
-        set((s) => ({ monthAnchor: shiftMonthAnchor(s.monthAnchor, delta) })),
-
-      setDayAnchor: (anchor) => set({ dayAnchor: anchor }),
-
-      shiftDay: (delta) =>
-        set((s) => ({ dayAnchor: shiftDayAnchor(s.dayAnchor, delta) })),
 
       renameDoc: (slug, newTitle) => {
         const trimmed = newTitle.trim()
