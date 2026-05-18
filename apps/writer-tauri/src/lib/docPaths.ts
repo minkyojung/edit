@@ -70,6 +70,17 @@ export function sidecarPathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | n
   return md.replace(/\.md$/, '.marks.json')
 }
 
+/** Vault-relative path of a doc's Y.Doc binary sidecar. Same stem as
+ * the markdown body, `.ydoc` suffix instead of `.md`. Stores the full
+ * Yjs CRDT state — body fragment + marks Y.Map + RelativePositions —
+ * so cross-restart mark anchoring survives without text-search
+ * fragility. Returns null when {@link pathForDoc} returns null. */
+export function ydocPathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null {
+  const md = pathForDoc(doc, getDoc)
+  if (!md) return null
+  return md.replace(/\.md$/, '.ydoc')
+}
+
 /** Walk parentId up the chain until we hit a daily. Returns null if
  * the chain ends without one (orphan writing) or contains a cycle
  * (defensive — KnownDoc invariants forbid it, but we don't want a

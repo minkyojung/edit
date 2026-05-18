@@ -31,11 +31,13 @@ import { isValidMark, type Mark } from '@/domain/marks'
 import { markToSidecar, sidecarToMark } from '@/export/markAdapter'
 import type { AnchorSpec, MarkSidecar, MarksSidecarFile } from '@/export/types'
 import { findQuoteInDoc } from '@/domain/internal/quote'
-import { pathForDoc, sidecarPathForDoc } from '@/lib/docPaths'
+import { pathForDoc, sidecarPathForDoc, ydocPathForDoc } from '@/lib/docPaths'
 import {
+  readVaultBinary,
   readVaultFile,
   renameVaultFile,
   vaultFileExists,
+  writeVaultBinary,
   writeVaultFile,
 } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
@@ -321,7 +323,7 @@ function isSidecarFile(value: unknown): value is MarksSidecarFile {
   return v.version === 1 && Array.isArray(v.marks)
 }
 
-/** Outcome of {@link applyVaultToHandle} so callers can react to
+/** Outcome of {@link applyVaultBodyToYDoc} so callers can react to
  * each reason for not applying. The 'no-handle' case is gone in
  * Step 5 — callers now pass the Y.Doc directly, so a missing handle
  * is a caller-side concern (caller chose not to call). */
@@ -332,36 +334,48 @@ export type ApplyVaultOutcome =
   | 'no-parser'       // editor hasn't mounted yet → no markdown parser
   | 'not-empty'       // Y.Doc already has content; refuse to merge
 
-/** Apply a vault doc's markdown body into the given Y.Doc. Marks are
- * also restored when the active EditorView is available (otherwise
- * skipped — the next call after the user activates the doc picks
- * them up).
+/** Apply a vault doc's persisted state into the given Y.Doc.
  *
- * Signature change (Path C Step 5): takes the Y.Doc directly rather
- * than looking it up via `docsStore.handles[slug]`. The lookup used
- * to race buildHandle's set() that registers the handle, producing
- * 'no-handle' on every first call and forcing a `Promise.resolve()`
- * yield in the caller as a workaround. Passing the doc directly
- * makes the dependency explicit and lets future callers (Phase 4.E
- * file watcher) reuse the same path without the race.
+ * Two-tier load (Path C Stage 2):
  *
- * Safety: this function only operates on an EMPTY Y.Doc. If the
- * fragment already has content we refuse rather than merge — Yjs
- * CRDT would otherwise concatenate the file's content with the
- * existing content, producing duplicate paragraphs.
+ *   Tier 1 — .ydoc binary. The full Yjs CRDT state including the
+ *     XmlFragment (body) AND the Y.Map<Mark> (mark metadata) AND
+ *     the RelativePosition anchors. Y.applyUpdate restores everything
+ *     in one shot. No text-search anchoring needed — the marks land
+ *     on the exact same characters they were anchored to in the
+ *     prior session. This is the same mechanism IDB persistence
+ *     provided before Path C Step 3b removed it; we now persist to
+ *     the vault folder instead.
+ *
+ *   Tier 2 — .md + .marks.json fallback. Used when the .ydoc file
+ *     is absent (legacy notes from before Stage 1, or external tools
+ *     creating fresh .md files). Body comes from the markdown parser;
+ *     marks must be re-anchored later via {@link restoreMarksFromSidecar}
+ *     once the EditorView is mounted.
+ *
+ * Tier 1 covers the "AI rewrites the body" case automatically —
+ * Yjs's CRDT tracks where each mark is relative to surrounding
+ * characters, so a body mutation slides the mark with the text
+ * rather than orphaning it.
+ *
+ * Safety: only operates on an EMPTY Y.Doc. If the fragment already
+ * has real text we refuse rather than merge — Yjs CRDT would
+ * otherwise concatenate.
  *
  * The write uses the 'doc-init' origin (see seedMarkdown.ts) so the
  * UndoManager skips it. We also clear the dirty flag after applying
  * since the observer fires on the fragment change and would
  * otherwise schedule a re-save of identical content. */
-export async function applyVaultToHandle(
+export async function applyVaultBodyToYDoc(
   ydoc: Y.Doc,
   slug: string,
 ): Promise<ApplyVaultOutcome> {
   if (!getActiveVaultPath()) return 'no-vault'
 
-  const loaded = await loadDocFromFiles(slug)
-  if (!loaded) return 'no-file'
+  const docs = useDocsStore.getState()
+  const known = docs.knownDocs.find((d) => d.slug === slug)
+  if (!known) return 'no-file'
+  const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
 
   const fragment = ydoc.getXmlFragment('prosemirror')
   // Refuse to merge over real text. deriveLabel walks XmlText inserts,
@@ -370,14 +384,42 @@ export async function applyVaultToHandle(
   // the moment that stub lands and we'd skip every vault load.
   if (deriveLabel(fragment).length > 0) return 'not-empty'
 
+  // Tier 1 — try .ydoc binary first. Brings body + marks +
+  // RelativePosition anchors in one Y.applyUpdate. y-prosemirror
+  // syncs the marks into PM automatically on editor mount since
+  // they're attributes on text nodes in the XmlFragment.
+  const ydocPath = ydocPathForDoc(known, getDoc)
+  if (ydocPath && (await vaultFileExists(ydocPath))) {
+    try {
+      const binary = await readVaultBinary(ydocPath)
+      if (fragment.length > 0) {
+        ydoc.transact(() => {
+          fragment.delete(0, fragment.length)
+        }, 'doc-init')
+      }
+      Y.applyUpdate(ydoc, binary, 'doc-init')
+      clearDirty(slug)
+      return 'applied'
+    } catch (err) {
+      // Corrupted .ydoc or schema mismatch — fall through to the
+      // markdown tier so the doc still opens with the body the
+      // user can see.
+      console.warn(
+        '[vault:load] .ydoc apply failed, falling back to .md',
+        slug,
+        err,
+      )
+    }
+  }
+
+  // Tier 2 — legacy markdown path. Body only; marks restored later
+  // by restoreMarksFromSidecar after view ready.
+  const loaded = await loadDocFromFiles(slug)
+  if (!loaded) return 'no-file'
+
   const parser = useEditorViewStore.getState().parser
   if (!parser) return 'no-parser'
 
-  // Drop the empty-paragraph stub before applyUpdate. Without this, Yjs
-  // CRDT-merges the stub with the seeded content, producing a leading
-  // blank paragraph on every vault-loaded doc. The delete shares the
-  // 'doc-init' origin with seedMarkdownIntoYDoc so neither step enters
-  // the UndoManager.
   if (fragment.length > 0) {
     ydoc.transact(() => {
       fragment.delete(0, fragment.length)
@@ -387,35 +429,47 @@ export async function applyVaultToHandle(
   const ok = seedMarkdownIntoYDoc(ydoc, loaded.md, parser)
   if (!ok) return 'no-parser'
 
-  // Restore marks from the sidecar. Requires the active EditorView
-  // (markStore.restore writes a PM transaction). When loading a
-  // non-active doc the marks are skipped on this pass and the next
-  // attempt (after the user activates the doc) will pick them up.
-  // Body is already on disk + memory, so the only thing we may be
-  // missing temporarily is the inline mark layer.
-  const view = useEditorViewStore.getState().view
-  const isActive = useDocsStore.getState().activeSlug === slug
-  if (isActive && view && loaded.sidecar.marks.length > 0) {
-    for (const sidecarMark of loaded.sidecar.marks) {
-      const mark = sidecarToMark(sidecarMark)
-      if (!mark) continue
-      // v1 anchor resolution: find the quote in the freshly-seeded
-      // PM doc. First match wins — same simplification used during
-      // serialize (occurrence: 0). Phase 4.E (file watcher) will
-      // promote this to the full markResolver context+occurrence
-      // strategy so external edits don't drop marks unnecessarily.
-      const anchor = findQuoteInDoc(view, mark.quote)
-      if (!anchor) continue
-      await markStore.restore({ slug, mark, anchor })
-    }
-  }
-
-  // The observer that watches this fragment for dirty-tracking fired
-  // during applyUpdate; clear that here so the loaded content
-  // doesn't immediately bounce back into a save cycle.
   clearDirty(slug)
-
   return 'applied'
+}
+
+/** Read the sidecar for `slug` and restore every still-anchorable
+ * mark into the live EditorView. Called from MilkdownEditor's mount
+ * AFTER the editor is created and view is in editorViewStore — by
+ * that point the body has been seeded (applyVaultBodyToYDoc ran in
+ * buildHandle's contentReady) so quote-based anchor resolution can
+ * find the marks in the PM doc.
+ *
+ * v1 anchor resolution: find the quote in the current PM doc, first
+ * match wins (occurrence: 0). Marks whose quote no longer appears in
+ * the body drop silently — the body is the source of truth, marks
+ * that can't anchor against it are stale. Phase 4.E (file watcher)
+ * will promote this to the full markResolver context + occurrence
+ * strategy so external edits to the body don't drop marks
+ * unnecessarily.
+ *
+ * Returns the count of marks successfully restored. Zero when:
+ *   - vault not selected
+ *   - no .marks.json file
+ *   - sidecar empty
+ *   - none of the recorded quotes survive in the current body */
+export async function restoreMarksFromSidecar(
+  view: import('@milkdown/kit/prose/view').EditorView,
+  slug: string,
+): Promise<number> {
+  if (!getActiveVaultPath()) return 0
+  const loaded = await loadDocFromFiles(slug)
+  if (!loaded || loaded.sidecar.marks.length === 0) return 0
+  let restored = 0
+  for (const sidecarMark of loaded.sidecar.marks) {
+    const mark = sidecarToMark(sidecarMark)
+    if (!mark) continue
+    const anchor = findQuoteInDoc(view, mark.quote)
+    if (!anchor) continue
+    const ok = await markStore.restore({ slug, mark, anchor })
+    if (ok) restored++
+  }
+  return restored
 }
 
 /** Walk dirty slugs once and persist each to its vault file pair.
@@ -443,12 +497,20 @@ export async function flushDirty(): Promise<void> {
     }
     const mdPath = pathForDoc(known, getDoc)
     const sidecarPath = sidecarPathForDoc(known, getDoc)
-    if (!mdPath || !sidecarPath) {
+    const ydocPath = ydocPathForDoc(known, getDoc)
+    if (!mdPath || !sidecarPath || !ydocPath) {
       clearDirty(slug)
       continue
     }
     const result = serializeDocToFiles(slug)
     if (!result) continue
+    // Y.Doc binary snapshot — captures the full CRDT state including
+    // RelativePosition mark anchors that text-search sidecar can't
+    // express. The handle's ydoc is the live in-memory copy that
+    // flush serializes from. Stage 1 writes alongside .marks.json;
+    // Stage 2 will switch the load path to prefer .ydoc.
+    const handle = docs.handles[slug]
+    const ydocBinary = handle ? Y.encodeStateAsUpdate(handle.ydoc) : null
     try {
       // Rename-on-change: if this slug was last written at a
       // different path (Untitled note gained a title, wiki page
@@ -461,15 +523,22 @@ export async function flushDirty(): Promise<void> {
       const oldMd = lastWrittenPath.get(slug)
       if (oldMd && oldMd !== mdPath) {
         const oldSidecar = oldMd.replace(/\.md$/, '.marks.json')
+        const oldYdoc = oldMd.replace(/\.md$/, '.ydoc')
         if (await vaultFileExists(oldMd)) {
           await renameVaultFile(oldMd, mdPath)
         }
         if (await vaultFileExists(oldSidecar)) {
           await renameVaultFile(oldSidecar, sidecarPath)
         }
+        if (await vaultFileExists(oldYdoc)) {
+          await renameVaultFile(oldYdoc, ydocPath)
+        }
       }
       await writeVaultFile(mdPath, result.md)
       await writeVaultFile(sidecarPath, JSON.stringify(result.sidecar, null, 2))
+      if (ydocBinary) {
+        await writeVaultBinary(ydocPath, ydocBinary)
+      }
       lastWrittenPath.set(slug, mdPath)
       clearDirty(slug)
     } catch (err) {
@@ -692,7 +761,7 @@ if (import.meta.env.DEV) {
     if (!target) return 'no-handle'
     const handle = useDocsStore.getState().handles[target]
     if (!handle) return 'no-handle'
-    return applyVaultToHandle(handle.ydoc, target)
+    return applyVaultBodyToYDoc(handle.ydoc, target)
   }
   ;(window as unknown as { __applyVault: typeof applyHandle }).__applyVault = applyHandle
   ;(window as unknown as { __activeSlug: () => string | null }).__activeSlug = () =>

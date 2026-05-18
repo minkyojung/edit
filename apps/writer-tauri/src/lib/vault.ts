@@ -26,9 +26,11 @@ import {
   exists,
   mkdir,
   readDir,
+  readFile,
   readTextFile,
   remove,
   rename,
+  writeFile,
   writeTextFile,
 } from '@tauri-apps/plugin-fs'
 import { dirname, join } from '@tauri-apps/api/path'
@@ -180,6 +182,48 @@ export async function writeVaultFile(relPath: string, content: string): Promise<
   await mkdir(parent, { recursive: true })
   markOurRecentWrite(relPath)
   await atomicWriteText(path, content)
+}
+
+/** Atomic binary write — same tmp+rename pattern as
+ * {@link atomicWriteText} but for Uint8Array payloads (Y.Doc updates,
+ * binary sidecars). Splitting the two helpers means we don't pay a
+ * UTF-8 encoding round trip for binary content and don't risk
+ * accidental TextEncoder mangling. */
+async function atomicWriteBinary(absPath: string, data: Uint8Array): Promise<void> {
+  const tmp = `${absPath}.tmp`
+  await writeFile(tmp, data)
+  try {
+    await rename(tmp, absPath)
+  } catch (err) {
+    try {
+      await remove(tmp)
+    } catch {
+      // ignore
+    }
+    throw err
+  }
+}
+
+/** Write a vault file as raw bytes, atomically. Used for the `.ydoc`
+ * sidecar (Yjs state binary) where text encoding would corrupt the
+ * payload. Same parent-mkdir + recent-write tagging as
+ * {@link writeVaultFile}. */
+export async function writeVaultBinary(
+  relPath: string,
+  data: Uint8Array,
+): Promise<void> {
+  const path = await resolveVaultPath(relPath)
+  const parent = await dirname(path)
+  await mkdir(parent, { recursive: true })
+  markOurRecentWrite(relPath)
+  await atomicWriteBinary(path, data)
+}
+
+/** Read a vault file as raw bytes. Used for the `.ydoc` sidecar
+ * (Yjs state binary). */
+export async function readVaultBinary(relPath: string): Promise<Uint8Array> {
+  const path = await resolveVaultPath(relPath)
+  return await readFile(path)
 }
 
 /** Move a vault file from one relative path to another. Used by the

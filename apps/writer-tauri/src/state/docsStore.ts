@@ -34,7 +34,7 @@ import { useIngestStore } from './ingestStore'
 import { useEditorViewStore } from './editorViewStore'
 import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
 import {
-  applyVaultToHandle,
+  applyVaultBodyToYDoc,
   flushDirty,
   installDocSync,
   markSlugDirty,
@@ -343,16 +343,17 @@ function buildHandle(
     // paragraph stub that can race ahead, leaving length===1 even
     // when no real text exists.
     if (deriveLabel(fragment).length === 0) {
-      // Pass ydoc directly (Step 5). Pre-Step-5 the function looked
-      // the doc up via docsStore.handles[slug], which raced the set()
-      // that registers this very handle — forcing a microtask yield
-      // here as a workaround. Direct ydoc passing eliminates the race.
-      const outcome = await applyVaultToHandle(ydoc, slug).catch((err) => {
+      // Body only — marks need an EditorView which hasn't mounted yet
+      // (this IIFE runs BEFORE MilkdownEditor mounts). The view-side
+      // step lives in MilkdownEditor's mount: restoreMarksFromSidecar
+      // fires after onViewReady so the marks land on the same doc
+      // they were anchored against during the previous session.
+      const outcome = await applyVaultBodyToYDoc(ydoc, slug).catch((err) => {
         console.warn('[vault:load] failed for', slug, err)
         return 'no-vault' as const
       })
       if (outcome === 'applied') {
-        console.log(`[vault:load] hydrated ${slug} from vault`)
+        console.log(`[vault:load] hydrated ${slug} body from vault`)
       }
     }
     vaultSyncDisposer = installDocSync(slug, ydoc)
