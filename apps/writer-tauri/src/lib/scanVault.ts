@@ -181,6 +181,35 @@ export async function scanVault(): Promise<KnownDoc[]> {
   return docs
 }
 
+/** Build a KnownDoc for a single externally-created `.md` file. Used
+ * by the vault watcher's `add` handler when Finder / vim / git drops
+ * a new file into the vault: we need the same slug-assignment +
+ * placement-classification pipeline scanVault runs at boot, but on a
+ * single path instead of the whole tree.
+ *
+ * Returns null when the path doesn't fit any placement rule (oddly-
+ * located file the watcher should ignore). Mints + persists a fresh
+ * `.meta.json` when none exists, so the next scan / restart reads
+ * the same slug.
+ *
+ * For `writing` types the function needs to find the parent daily's
+ * slug. Rather than re-scanning the disk we accept the live
+ * knownDocs catalog and build the date→slug map in memory — the
+ * catalog is the source of truth in-session, and the daily must
+ * already be on disk for its child to be valid (or the writing is
+ * an orphan we reject the same way scanVault does). */
+export async function buildKnownDocForExternalPath(
+  mdRel: string,
+  catalog: KnownDoc[],
+): Promise<KnownDoc | null> {
+  const slug = await getOrAssignSlug(mdRel)
+  const dailySlugByDate = new Map<string, string>()
+  for (const d of catalog) {
+    if (d.type === 'daily' && d.date) dailySlugByDate.set(d.date, d.slug)
+  }
+  return mdRelToKnownDoc(slug, mdRel, dailySlugByDate)
+}
+
 // Dev-only console handle. `await __scanVault()` to inspect what the
 // boot-time vault scan would currently see.
 if (import.meta.env.DEV) {

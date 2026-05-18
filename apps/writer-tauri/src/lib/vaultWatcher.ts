@@ -35,6 +35,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { findSlugByVaultPath } from '@/state/docsStore/helpers'
 import { isOurRecentWrite } from './vault'
 import { isDirty } from './docFileSync'
+import { buildKnownDocForExternalPath } from './scanVault'
 
 let activeUnwatch: (() => void) | null = null
 
@@ -208,12 +209,40 @@ function handleExternalReload(rel: string): void {
   void state.reloadFromVault(slug)
 }
 
-/** Stub: a new .md appeared under a watched subtree. In Phase 4.E.3
- * this will read its `.meta.json` (or synthesise one) and add the
- * doc to `knownDocs` so it shows up in the sidebar without a full
- * scanVault re-run. */
+/** New `.md` appeared under a watched subtree. Decision tree:
+ *
+ *   1. Path already maps to a known slug → no-op. Same shape as the
+ *      reload echo race: our own create flow writes the file, the
+ *      watcher fires `create`, and the echo filter usually catches
+ *      it — but if the recent-write window has lapsed by the time the
+ *      OS coalesces the event, this guard is the second line of
+ *      defense.
+ *   2. {@link buildKnownDocForExternalPath} returns null → ignore.
+ *      The file is in an unrecognised location (`screenshots/foo.md`,
+ *      a writing under a daily that isn't on disk, etc.) — same
+ *      filter scanVault uses at boot.
+ *   3. Otherwise → push the new KnownDoc into the catalog. The
+ *      sidebar selector re-renders on the next zustand notify and
+ *      the doc appears under its placement group.
+ */
 function handleExternalAdd(rel: string): void {
-  console.log('[router] add candidate:', rel)
+  const state = useDocsStore.getState()
+  if (findSlugByVaultPath(state.knownDocs, rel)) return
+  void buildKnownDocForExternalPath(rel, state.knownDocs)
+    .then((doc) => {
+      if (!doc) return
+      // The catalog may have changed between the await above and now
+      // (a near-simultaneous bootstrap rerun, or another watcher
+      // event). Re-fetch to keep the add idempotent against any other
+      // path that might have just added the same slug.
+      const live = useDocsStore.getState()
+      if (live.knownDocs.some((d) => d.slug === doc.slug)) return
+      console.log('[vault:add] external doc added', { rel, slug: doc.slug })
+      live.addKnownDoc(doc)
+    })
+    .catch((err) => {
+      console.warn('[vault:add] failed to build KnownDoc', { rel, err })
+    })
 }
 
 /** Stub: a watched .md disappeared. In Phase 4.E.3 this will remove

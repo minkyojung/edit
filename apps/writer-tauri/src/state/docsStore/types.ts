@@ -159,6 +159,11 @@ export interface DocsState {
    * naturally. Caller (the watcher) gates the call on the local dirty
    * flag so unsaved edits aren't clobbered. */
   reloadFromVault: (slug: string) => Promise<void>
+  /** Append a doc the watcher discovered to `knownDocs`. Idempotent —
+   * skips the insert when a doc with the same slug already exists,
+   * so a self-write echoed back through the watcher can't double-add
+   * the doc we just created. */
+  addKnownDoc: (doc: KnownDoc) => void
   setActive: (slug: string) => void
   closeDoc: (slug: string) => void
   createNew: () => Promise<void>

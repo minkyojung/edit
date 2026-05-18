@@ -50,6 +50,11 @@ export interface HandlesSlice {
    * Caller is responsible for the dirty / conflict gate — this just
    * does the read-and-apply. */
   reloadFromVault: (slug: string) => Promise<void>
+  /** Append a freshly-discovered doc to `knownDocs` so the sidebar
+   * picks it up immediately. No-op when a doc with the same slug is
+   * already present — protects against the race where our own
+   * create flow's `.md` write echoes back as a watch event. */
+  addKnownDoc: (doc: KnownDoc) => void
 }
 
 export const createHandlesSlice = (
@@ -91,6 +96,13 @@ export const createHandlesSlice = (
     if (outcome === 'applied') {
       console.log(`[vault:reload] ${slug} hydrated from external edit`)
     }
+  },
+
+  addKnownDoc: (doc) => {
+    set((s) => {
+      if (s.knownDocs.some((d) => d.slug === doc.slug)) return s
+      return { knownDocs: [...s.knownDocs, doc] }
+    })
   },
 })
 
