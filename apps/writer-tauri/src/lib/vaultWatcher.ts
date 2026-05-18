@@ -82,13 +82,7 @@ export async function startVaultWatcher(): Promise<() => void> {
         return
       }
 
-      console.log('[watch] external event', {
-        type: event.type,
-        paths: external,
-        // Per-path mark age so we can see if events are arriving
-        // later than RECENT_WRITE_WINDOW_MS after the write.
-        // (Remove once stable.)
-      })
+      dispatchEvent(event, external)
     },
     { recursive: true },
   )
@@ -145,6 +139,64 @@ function isActionableEvent(event: { type: unknown }): boolean {
     return kind !== 'metadata'
   }
   return false
+}
+
+/** Classify a single external fsevent and dispatch each path to the
+ * matching handler stub. Phase 4.E.2 — no mutations yet; handlers
+ * log a classification line so we can verify the router's decisions
+ * against the live event stream before wiring real reload / add /
+ * remove logic in Phase 4.E.3.
+ *
+ * macOS occasionally emits `rename` as a `create + remove` pair
+ * within a single burst; we treat each leg independently here and
+ * leave coalescing to the next phase. */
+function dispatchEvent(event: { type: unknown }, paths: string[]): void {
+  const type = event.type as
+    | { create?: unknown }
+    | { remove?: unknown }
+    | { modify?: { kind?: string } }
+    | undefined
+  if (!type) return
+
+  if ('create' in type && type.create) {
+    for (const rel of paths) handleExternalAdd(rel)
+    return
+  }
+  if ('remove' in type && type.remove) {
+    for (const rel of paths) handleExternalRemove(rel)
+    return
+  }
+  if ('modify' in type && type.modify) {
+    // `kind: 'data'` is the only modify variant that reaches here —
+    // `isActionableEvent` already filtered out `metadata`. A future
+    // `rename` kind would also land in `modify`; route it to add /
+    // remove based on shape when Phase 4.E.3 needs it.
+    for (const rel of paths) handleExternalReload(rel)
+    return
+  }
+}
+
+/** Stub: external write detected on an existing .md. In Phase 4.E.3
+ * this will reload the file's Y.Doc when the doc is currently open,
+ * or invalidate its cached body when it isn't. */
+function handleExternalReload(rel: string): void {
+  console.log('[router] reload candidate:', rel)
+}
+
+/** Stub: a new .md appeared under a watched subtree. In Phase 4.E.3
+ * this will read its `.meta.json` (or synthesise one) and add the
+ * doc to `knownDocs` so it shows up in the sidebar without a full
+ * scanVault re-run. */
+function handleExternalAdd(rel: string): void {
+  console.log('[router] add candidate:', rel)
+}
+
+/** Stub: a watched .md disappeared. In Phase 4.E.3 this will remove
+ * the doc from `knownDocs` (and close its tab if open). Trash /
+ * archive flows go through the app and are filtered by the echo
+ * guard before reaching here. */
+function handleExternalRemove(rel: string): void {
+  console.log('[router] remove candidate:', rel)
 }
 
 /** True for vault-relative paths we want the router to consider.
