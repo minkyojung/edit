@@ -95,8 +95,11 @@ async function listMdRecursive(subRel: string): Promise<string[]> {
 
 /** Build a KnownDoc from a path + slug. Returns null when the path
  * doesn't match any of our four placement rules (an oddly-located file
- * — skipped silently by the caller). */
-function mdRelToKnownDoc(
+ * — skipped silently by the caller).
+ *
+ * Exported for unit tests — the placement rules are the public
+ * contract between disk layout and the in-memory catalog. */
+export function mdRelToKnownDoc(
   slug: string,
   mdRel: string,
   dailySlugByDate: Map<string, string>,
