@@ -27,7 +27,6 @@ import { persist } from 'zustand/middleware'
 import { generateClientSlug } from '@/lib/slug'
 import { todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import { scanVault } from '@/lib/scanVault'
-import { useChatRuns } from '@/stores/chatRuns'
 
 // Type definitions live in ./types so future slice files in this
 // directory share one canonical shape without circular sibling
@@ -53,13 +52,13 @@ export {
   shiftMonthAnchor,
   weekStartFor,
 } from './helpers'
-import { ensureNonEmptyTabStrip } from './helpers'
 import { createDateNavSlice } from './dateNavSlice'
 import { createSidebarSlice } from './sidebarSlice'
 import { createEditSlice } from './editSlice'
 import { createHandlesSlice, scrubDailyTitleArtifacts } from './handlesSlice'
 import { createCreateSlice } from './createSlice'
 import { createArchiveSlice } from './archiveSlice'
+import { createTabsSlice } from './tabsSlice'
 
 // DocsState lives in ./types — every action signature documented there.
 
@@ -83,11 +82,10 @@ let bootstrapInFlight = false
 export const useDocsStore = create<DocsState>()(
   persist(
     (set, get) => ({
-      openSlugs: [],
-      activeSlug: null,
       knownDocs: [],
       bootstrapping: true,
 
+      ...createTabsSlice(set, get),
       ...createSidebarSlice(set),
       ...createDateNavSlice(set),
       ...createEditSlice(set, get),
@@ -207,72 +205,6 @@ export const useDocsStore = create<DocsState>()(
           bootstrapInFlight = false
         }
       },
-
-      setActive: (slug) => {
-        // Bring any known doc to the foreground. If it isn't yet a
-        // tab (e.g. wiki entries that live in the catalog without
-        // ever having been opened), promote it to one. Unknown
-        // slugs no-op so a stale UI handle can't corrupt activeSlug.
-        if (!get().knownDocs.some((d) => d.slug === slug)) return
-        set((s) => ({
-          activeSlug: slug,
-          openSlugs: s.openSlugs.includes(slug)
-            ? s.openSlugs
-            : [...s.openSlugs, slug],
-        }))
-        // Lazy-create the handle if this tab hasn't been touched yet.
-        if (!get().handles[slug]) {
-          get().ensureHandle(slug).catch((err) =>
-            console.error('[docs] ensureHandle failed', err),
-          )
-        }
-      },
-
-      closeDoc: (slug) => {
-        const { openSlugs, activeSlug, handles } = get()
-        const next = openSlugs.filter((s) => s !== slug)
-        let nextActive = activeSlug
-        if (activeSlug === slug) {
-          // Pick a sensible neighbor for the new active tab.
-          const idx = openSlugs.indexOf(slug)
-          nextActive = next[idx] ?? next[idx - 1] ?? null
-        }
-        // Stop any chat run bound to this slug BEFORE destroying the
-        // ydoc — a late proposal would otherwise try to apply against
-        // a slug we've already torn down. (The pendingProposals queue
-        // is gone with Track 1.2 reapply; proposals now route via
-        // /ops directly, so no client-side queue to clear.)
-        useChatRuns.getState().abortBySlug(slug)
-        const handle = handles[slug]
-        if (handle) {
-          handle.ydoc.destroy()
-        }
-        const nextHandles = { ...handles }
-        delete nextHandles[slug]
-        const nextStatus = { ...get().status }
-        delete nextStatus[slug]
-        // Single set: the empty-strip invariant is folded into the
-        // same patch via ensureNonEmptyTabStrip, so the UI never
-        // flickers through a blank state and there's no async
-        // follow-up that can fail and leave the user stuck.
-        set(ensureNonEmptyTabStrip(get(), {
-          openSlugs: next,
-          activeSlug: nextActive,
-          handles: nextHandles,
-          status: nextStatus,
-        }))
-        // Warm the new active slug's handle if it isn't loaded yet —
-        // applies whether the invariant kicked in (today's daily) or
-        // we just shifted to a neighbor.
-        const finalActive = get().activeSlug
-        if (finalActive && !get().handles[finalActive]) {
-          get().ensureHandle(finalActive).catch((err) =>
-            console.error('[docs] post-close ensureHandle failed', err),
-          )
-        }
-      },
-
-      reorder: (slugs) => set({ openSlugs: slugs }),
 
     }),
     {
