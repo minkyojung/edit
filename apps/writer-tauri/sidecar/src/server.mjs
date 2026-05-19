@@ -85,6 +85,108 @@ function buildReadPageTool(vaultPath) {
   )
 }
 
+// `search_wiki` is the "find pages by content" companion to read_page.
+// The model passes a substring query; we scan every .md in wiki/ and
+// return the paths whose title or body contains the query (case-
+// insensitive). Title matches rank first because they're a stronger
+// signal of "this page is about X".
+//
+// Result format: a markdown list of `- path — excerpt` lines so the
+// model has both the path (to feed back into read_page) and a hint
+// of why this file matched. Excerpt is the first body line that
+// contains the query, trimmed to ~80 chars.
+//
+// Cap at 20 results — the catalog (Tier 1) already gave the LLM the
+// full surface area; this tool is for "find anything mentioning X",
+// not for paginating the wiki. If the model needs more it can
+// narrow the query.
+const SEARCH_RESULT_CAP = 20
+const SEARCH_EXCERPT_MAX = 80
+
+function buildSearchWikiTool(vaultPath) {
+  return tool(
+    'search_wiki',
+    'Find wiki pages whose title or body contains a substring. Pass `query` (case-insensitive). Returns up to 20 results as `- path — excerpt` lines, ranked title-match first then body-match. Use this when the catalog\'s one-line summaries are not enough to decide which page is relevant; then call read_page on a result to read the page in full.',
+    { query: z.string() },
+    async (args) => {
+      const q = String(args.query ?? '').trim().toLowerCase()
+      if (!q) {
+        return { content: [{ type: 'text', text: '(error: empty query)' }] }
+      }
+      const wikiDir = resolvePath(vaultPath, 'wiki')
+      let entries
+      try {
+        entries = await readdir(wikiDir, { withFileTypes: true })
+      } catch (err) {
+        return {
+          content: [{ type: 'text', text: `(error reading wiki/: ${err?.message ?? err})` }],
+        }
+      }
+      const titleHits = []
+      const bodyHits = []
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith('.md')) continue
+        // Skip sidecars (.meta.json) — readdir already filters by .md but
+        // belt-and-braces in case future suffixes leak in.
+        if (entry.name.endsWith('.meta.json') || entry.name.endsWith('.ydoc')) continue
+        const filename = entry.name
+        const titleHit = filename.toLowerCase().includes(q)
+        let body = ''
+        try {
+          body = await readFile(resolvePath(wikiDir, filename), 'utf-8')
+        } catch {
+          continue // unreadable file, skip silently
+        }
+        const lower = body.toLowerCase()
+        const bodyIdx = lower.indexOf(q)
+        if (!titleHit && bodyIdx < 0) continue
+        // Build excerpt: first non-empty line that contains the query,
+        // or the first line of the body when only title matched.
+        let excerpt = ''
+        if (bodyIdx >= 0) {
+          const lines = body.split('\n')
+          for (const line of lines) {
+            if (line.toLowerCase().includes(q) && line.trim().length > 0) {
+              excerpt = line.trim()
+              break
+            }
+          }
+        }
+        if (!excerpt) {
+          for (const line of body.split('\n')) {
+            if (line.trim().length > 0) {
+              excerpt = line.trim()
+              break
+            }
+          }
+        }
+        if (excerpt.length > SEARCH_EXCERPT_MAX) {
+          excerpt = excerpt.slice(0, SEARCH_EXCERPT_MAX).trimEnd() + '…'
+        }
+        const entryLine = `- wiki/${filename} — ${excerpt || '(empty)'}`
+        if (titleHit) titleHits.push(entryLine)
+        else bodyHits.push(entryLine)
+      }
+      const all = [...titleHits.sort(), ...bodyHits.sort()].slice(
+        0,
+        SEARCH_RESULT_CAP,
+      )
+      if (all.length === 0) {
+        return {
+          content: [{ type: 'text', text: `(no wiki pages match "${args.query}")` }],
+        }
+      }
+      const truncated =
+        titleHits.length + bodyHits.length > SEARCH_RESULT_CAP
+          ? `\n\n(showing first ${SEARCH_RESULT_CAP} of ${titleHits.length + bodyHits.length} matches; narrow the query for more.)`
+          : ''
+      return {
+        content: [{ type: 'text', text: all.join('\n') + truncated }],
+      }
+    },
+  )
+}
+
 function buildProposeChangeTool(runId, emit) {
   return tool(
     'propose_change',
@@ -404,6 +506,14 @@ export class Server {
           continue
         }
         relayDefs.push(buildReadPageTool(vaultPath))
+      } else if (name === 'search_wiki') {
+        if (!vaultPath) {
+          console.warn(
+            `[sidecar] search_wiki requested but vaultPath not provided; skipping (runId=${runId})`,
+          )
+          continue
+        }
+        relayDefs.push(buildSearchWikiTool(vaultPath))
       }
     }
     if (relayDefs.length > 0) {
