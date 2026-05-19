@@ -27,7 +27,7 @@ import {
   type LoadedCommand,
 } from '@/chat/commands'
 import { useChatRuns } from '@/stores/chatRuns'
-import { ThreadTabs } from '@/chat/ThreadTabs'
+import { ThreadPicker } from '@/chat/ThreadPicker'
 import { PromptInput } from '@/chat/PromptInput'
 import {
   DEFAULT_CHAT_EFFORT,
@@ -516,7 +516,7 @@ export function ChatPanel({ editorView, ydoc, slug, contentReady }: Props) {
         className="flex shrink-0 items-stretch border-b border-border bg-background px-2"
         style={{ height: 'var(--header-h)' }}
       >
-        <ThreadTabs
+        <ThreadPicker
           active={threads.active}
           archived={threads.archived}
           activeId={activeId}
