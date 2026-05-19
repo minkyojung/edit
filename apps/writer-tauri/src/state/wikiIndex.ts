@@ -158,16 +158,19 @@ function truncate(text: string, max: number): string {
  * page. Replaces the prior LLM-edited `wiki:index` body with a fresh,
  * deterministic snapshot.
  *
- * Line format: `- <path> — <title>: <summary> | links: <N>`
+ * Line format: `- <path> [<type-id>] — <title>: <summary> | links: <N>`
  *
  * The path comes first because that's what the LLM needs to feed
- * back into the `read_page` / `search_wiki` tools. Title + summary
- * follow for human-readable scanning. Slug is no longer surfaced —
- * the path serves as both the identifier (Karpathy-style: "the
- * filesystem IS the addressing scheme") and the disk reference.
+ * back into the `read_page` / `search_wiki` tools. The `[<type-id>]`
+ * bracket immediately after is the verbatim source the ingest LLM
+ * reads when constructing a proposal's `target` — without it the
+ * model has no way to address an existing page (file paths and
+ * titles aren't stable identifiers across renames; type ids are).
+ * Title + summary follow for human-readable scanning.
  *
  * Source preference for each column:
  *   - path   : pathForDoc(doc) → e.g. `wiki/Sarah Kim.md`
+ *   - type   : `KnownDoc.type` → e.g. `wiki:custom-7n2dvj41`
  *   - title  : `KnownDoc.title` (Bear/Obsidian first-body-line)
  *   - summary: `sidecar.aiSummary` (populated by Phase A5 ingest hook)
  *              → fallback to the body's first content line after the
@@ -208,7 +211,7 @@ export async function buildWikiIndex(): Promise<string> {
     const title = (doc.title ?? '').trim() || 'Untitled'
     const linked = counts.get(doc.slug) ?? 0
     lines.push(
-      `- ${path} — ${title}: ${truncate(summary, SUMMARY_MAX_LEN)} | links: ${linked}`,
+      `- ${path} [${doc.type}] — ${title}: ${truncate(summary, SUMMARY_MAX_LEN)} | links: ${linked}`,
     )
   }
   return lines.join('\n')
