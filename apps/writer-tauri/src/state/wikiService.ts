@@ -24,15 +24,9 @@ import { useEditorViewStore } from './editorViewStore'
 // PROOF_BASE_URL removed (Phase 3.A.2). All wiki body reads go
 // through the local Y.Doc + Milkdown serializer now.
 
-/** The agent's append-only timeline. Held in a constant so the
- * lazy-create path (`ensureLogWikiSlug`) and the read path
- * (`readWikiContext`) agree on the type id. `system:*` prefix
- * marks this as agent meta surface — see KnownDoc.type doc. */
+/** The agent's append-only timeline. `system:*` prefix marks this
+ * as agent meta surface — see KnownDoc.type doc. */
 const LOG_TYPE = 'system:log' as const
-/** Cap the log body to the last N non-empty lines when it gets fed
- * to the LLM. The timeline grows unbounded otherwise and would
- * slowly bloat every prompt. */
-const LOG_TAIL_LINES = 30
 
 /** User-editable conventions page. Karpathy's CLAUDE.md pattern:
  * the rules for how the wiki is organized live in the wiki itself,
@@ -316,80 +310,5 @@ export function readWikiMarkdown(slug: string | null): string {
   const text = fragment.toString().trim()
   if (isEffectivelyEmpty(text)) return ''
   return text
-}
-
-/** Read every wiki:* page in the catalog and return one cacheable
- * context block: each page becomes a `[type — title — shape]` block
- * followed by its body. Empty pages emit `(empty)` so the LLM knows
- * the page exists but has no content to anchor on yet — important
- * for routing decisions ("does this fact belong here? the page is
- * empty, so the only signal is the title").
- *
- * The block header carries the wiki page's `type` id directly, so
- * the LLM has one place to read both "what targets exist" and
- * "what's already in each". This used to be split across an
- * AVAILABLE-PAGES list and a separate body snapshot; merging them
- * removes a label-vs-id matching step the model had to do
- * implicitly.
- *
- * Order: catalog order, with `wiki:log` (the agent's append-only
- * timeline) pinned to the very end. Putting the timeline last means
- * a log append only invalidates its own section in the prompt
- * cache, not the more-stable identity sections above it. The log
- * body is also tail-truncated since it grows unbounded. */
-export async function readWikiContext(): Promise<string> {
-  const docs = useDocsStore
-    .getState()
-    .knownDocs.filter(
-      (d) =>
-        !d.archivedAt &&
-        // Content pages — every `wiki:custom-*` user wiki page is a
-        // valid routing target. system:conventions / system:index
-        // arrive on dedicated prompt channels (system-prompt prefix
-        // + INDEX block respectively), so they stay out of this
-        // catalog. system:log is the one system page that does sit
-        // inside the catalog block — its rolling timeline is part
-        // of the wiki's read context and the head/tail split below
-        // pins it to the end so a log append only invalidates its
-        // own cache section.
-        (d.type.startsWith('wiki:') || d.type === LOG_TYPE),
-    )
-
-  const head = docs.filter((d) => d.type !== LOG_TYPE)
-  const tail = docs.filter((d) => d.type === LOG_TYPE)
-
-  const sections = [...head, ...tail].map((doc) => {
-      const md = readWikiMarkdown(doc.slug)
-      const title = (doc.title ?? '').trim() || doc.type.replace(/^wiki:/, '')
-      if (!md) {
-        // Empty pages still appear in the catalog so the LLM can
-        // route to them by name — but we mark them empty rather
-        // than hallucinating content.
-        return `[${doc.type} — ${title}]\n(empty)`
-      }
-      const body = doc.type === LOG_TYPE ? takeLastLines(md, LOG_TAIL_LINES) : md
-      // No shape label — the LLM reads the body and infers the
-      // page's pattern itself, guided by the user's conventions
-      // page. Karpathy: "the model sees what you see; it doesn't
-      // need your enum."
-      return `[${doc.type} — ${title}]\n${body}`
-    })
-  return sections.filter(Boolean).join('\n\n')
-}
-
-/** Keep only the last N non-empty lines of a markdown body. Used by
- * sections like the timeline log whose body grows unbounded — older
- * entries fall off the prompt rather than ballooning each turn's
- * input. Empty/whitespace lines are excluded from the count so a
- * gap in the file doesn't shift real content out of view. */
-function takeLastLines(md: string, n: number): string {
-  const lines = md.split('\n')
-  const kept: string[] = []
-  let count = 0
-  for (let i = lines.length - 1; i >= 0 && count < n; i -= 1) {
-    kept.unshift(lines[i])
-    if (lines[i].trim().length > 0) count += 1
-  }
-  return kept.join('\n')
 }
 

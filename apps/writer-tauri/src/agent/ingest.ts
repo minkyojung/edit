@@ -22,12 +22,9 @@ import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
 import { isEffectivelyEmpty } from '@/lib/markdownText'
 import { pickNewBlocks } from '@/lib/blockHash'
-import {
-  readWikiContext,
-  readConventions,
-  ensureConventionsWikiSlug,
-} from '@/state/wikiService'
-import { getWikiIndex } from '@/state/wikiIndex'
+import { ensureConventionsWikiSlug } from '@/state/wikiService'
+import { assembleContext } from '@/agent/contextPipeline'
+import type { WikiPageBody } from '@/agent/contextSelector'
 import { getActiveVaultPath } from '@/state/settingsStore'
 const INGEST_MODEL = 'claude-haiku-4-5-20251001'
 
@@ -186,8 +183,8 @@ When you DO have something to file (proposals is non-empty), the logEntry must b
  * prompt (where they used to live) is what unlocks the cache —
  * user prompts are never cached. */
 function composeSystemPrompt(args: {
-  wikiSnapshot: string
   indexSnapshot: string
+  hotPages: WikiPageBody[]
   conventions: string
 }): string[] {
   const trimmedConventions = args.conventions.trim()
@@ -197,15 +194,21 @@ function composeSystemPrompt(args: {
 
   const blocks: string[] = [rules]
 
-  const wiki = args.wikiSnapshot.trim().length
-    ? args.wikiSnapshot
-    : '(no wiki pages yet — propose targets only if a clearly-named one is needed)'
-  blocks.push(`--- WIKI ---\n${wiki}`)
-
   if (args.indexSnapshot.trim().length) {
     blocks.push(
       `--- INDEX (current — one summary line per wiki page) ---\n${args.indexSnapshot}`,
     )
+  } else {
+    blocks.push(
+      '--- INDEX ---\n(no wiki pages yet — propose targets only if a clearly-named one is needed)',
+    )
+  }
+
+  // Tier 2 — bodies of pages this note's [[link]]s point at. Pinned
+  // per-block so the cache key matches when the same daily is
+  // ingested repeatedly with the same wikilinks.
+  for (const page of args.hotPages) {
+    blocks.push(`--- WIKI PAGE: ${page.title} ---\n${page.body}`)
   }
 
   return blocks
@@ -576,20 +579,23 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     total: allHashes.length,
   })
 
-  const wikiSnapshot = await readWikiContext()
   // Seed the conventions page on first need so the user has
-  // something to edit, then read its body to prepend onto the
-  // system prompt. Failures degrade gracefully — empty conventions
-  // means the static rules take over alone.
+  // something to edit; assembleContext reads the result a moment
+  // later. Failures degrade gracefully — empty conventions means
+  // the static rules take over alone.
   await ensureConventionsWikiSlug()
-  const conventions = await readConventions()
-  // Tier 1 catalog — system-built from knownDocs + sidecars on
-  // every wiki change (see state/wikiIndex.ts). The LLM gets a
-  // deterministic snapshot of every wiki page's title + one-line
-  // summary + backlink count without us paying tokens to have it
-  // re-author the same content each pass. Empty string ⇒ no wiki
-  // pages exist yet and buildPrompt skips the block.
-  const indexSnapshot = await getWikiIndex()
+  // One facade call replaces the prior three (wiki dump + index +
+  // conventions). Tier 2 hot pages come from [[link]]s in the note
+  // being ingested — same daily can mention multiple existing wiki
+  // pages, and now their bodies ride along automatically. We skip
+  // the Tier 3 tool list (enableTools: false) because ingest is
+  // single-shot — the LLM emits one submit_ingest_result call and
+  // has no room to drive read_page/search_wiki.
+  const ctx = await assembleContext({
+    docBody: noteMarkdown,
+    enableTools: false,
+  })
+
   const noteLabel =
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
@@ -601,9 +607,9 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     noteMarkdown,
   })
   const systemPrompt = composeSystemPrompt({
-    wikiSnapshot,
-    indexSnapshot,
-    conventions,
+    indexSnapshot: ctx.index,
+    hotPages: ctx.hotPages,
+    conventions: ctx.conventions,
   })
 
   const runId = crypto.randomUUID()
