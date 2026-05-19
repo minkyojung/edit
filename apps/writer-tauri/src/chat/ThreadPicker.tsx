@@ -11,9 +11,9 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   IconChevronDown,
+  IconMessageCircleFilled,
   IconPlus,
   IconRestore,
-  IconSparkles,
   IconX,
 } from '@tabler/icons-react'
 import {
@@ -85,13 +85,17 @@ export function ThreadPicker({
           <button
             type="button"
             className={cn(
-              'flex h-full flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm font-medium',
+              // min-w-0 lets the trigger shrink inside its flex parent so the
+              // title span's `truncate` actually engages — without it the
+              // button falls back to min-content width and a long title
+              // pushes the chevron out of the panel.
+              'flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm font-medium',
               'text-foreground outline-none transition-colors',
               'hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring/40',
             )}
             aria-label="Switch chat"
           >
-            <IconSparkles size={14} stroke={1.75} className="shrink-0 opacity-70" />
+            <IconMessageCircleFilled size={14} className="shrink-0 opacity-70" />
             <span className="min-w-0 flex-1 truncate">
               {activeThread?.title || 'New chat'}
             </span>
@@ -251,7 +255,7 @@ function ActiveRow({ meta, isActive, onSelect, onArchive, onRename }: ActiveRowP
           isActive ? 'bg-accent text-foreground' : 'text-foreground hover:bg-accent/60',
         )}
       >
-        <IconSparkles size={14} stroke={1.75} className="shrink-0 opacity-70" />
+        <IconMessageCircleFilled size={14} className="shrink-0 opacity-70" />
 
         {editing ? (
           <input
