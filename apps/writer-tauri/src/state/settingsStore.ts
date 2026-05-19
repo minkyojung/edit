@@ -23,6 +23,10 @@ interface SettingsState {
   vaultPaths: string[]
   /** Index into vaultPaths. v1 always 0 when a vault is selected. */
   activeVaultIndex: number
+  /** True once the user has finished (or skipped) the first-run
+   * BootstrapDialog. Persisted to localStorage so the dialog only
+   * appears once per browser profile. */
+  bootstrapCompleted: boolean
 
   /** Replace the active vault path. v1 normalises to single-entry
    * array (legacy entries get overwritten, not appended). */
@@ -30,6 +34,9 @@ interface SettingsState {
   /** Clear the active vault — used when the user explicitly resets
    * or when boot detects the saved path no longer exists. */
   clearVault: () => void
+  /** Flip bootstrapCompleted to true. Called by BootstrapDialog on
+   * Finish / Skip. Idempotent. */
+  markBootstrapCompleted: () => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -37,9 +44,11 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       vaultPaths: [],
       activeVaultIndex: 0,
+      bootstrapCompleted: false,
       setActiveVaultPath: (path) =>
         set({ vaultPaths: [path], activeVaultIndex: 0 }),
       clearVault: () => set({ vaultPaths: [], activeVaultIndex: 0 }),
+      markBootstrapCompleted: () => set({ bootstrapCompleted: true }),
     }),
     {
       name: 'writer-tauri:settings',
@@ -47,6 +56,7 @@ export const useSettingsStore = create<SettingsState>()(
       partialize: (s) => ({
         vaultPaths: s.vaultPaths,
         activeVaultIndex: s.activeVaultIndex,
+        bootstrapCompleted: s.bootstrapCompleted,
       }),
     },
   ),

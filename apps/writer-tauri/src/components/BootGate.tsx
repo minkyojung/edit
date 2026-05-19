@@ -24,8 +24,9 @@
 import { useEffect, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocsStore } from '@/state/docsStore'
-import { getActiveVaultPath } from '@/state/settingsStore'
+import { getActiveVaultPath, useSettingsStore } from '@/state/settingsStore'
 import { pickVault } from '@/lib/vaultPicker'
+import { BootstrapDialog } from '@/layout/BootstrapDialog'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
@@ -36,7 +37,13 @@ interface Props {
 export function BootGate({ children }: Props) {
   const bootstrapping = useDocsStore((s) => s.bootstrapping)
   const bootstrap = useDocsStore((s) => s.bootstrap)
+  const bootstrapCompleted = useSettingsStore((s) => s.bootstrapCompleted)
   const [showLoader, setShowLoader] = useState(false)
+  // Dialog visibility is local — once the user dismisses it we flip
+  // settingsStore.bootstrapCompleted to true (persisted) AND set this
+  // to false so the modal animates out cleanly even if the store
+  // write is async. Either signal alone suffices to hide it.
+  const [dialogOpen, setDialogOpen] = useState(true)
 
   // Fire bootstrap once on mount. The store's bootstrap is idempotent
   // (it short-circuits when the catalog already has today's daily),
@@ -68,7 +75,21 @@ export function BootGate({ children }: Props) {
     return () => window.clearTimeout(t)
   }, [bootstrapping])
 
-  if (!bootstrapping) return <>{children}</>
+  if (!bootstrapping) {
+    // First-run gate: after bootstrap finishes, hold back the main UI
+    // until the user resolves the BootstrapDialog (Skip or Finish).
+    // Once bootstrapCompleted flips true it's persisted, so the next
+    // launch falls straight through without flashing the dialog.
+    if (!bootstrapCompleted && dialogOpen) {
+      return (
+        <BootstrapDialog
+          open={dialogOpen}
+          onClose={() => setDialogOpen(false)}
+        />
+      )
+    }
+    return <>{children}</>
+  }
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-background">
