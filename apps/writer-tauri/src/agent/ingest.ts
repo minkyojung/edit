@@ -26,9 +26,8 @@ import {
   readWikiContext,
   readConventions,
   ensureConventionsWikiSlug,
-  ensureIndexWikiSlug,
-  readIndexContext,
 } from '@/state/wikiService'
+import { getWikiIndex } from '@/state/wikiIndex'
 const INGEST_MODEL = 'claude-haiku-4-5-20251001'
 
 /** A single proposed wiki edit. v1 = append-only (the LLM may not
@@ -101,31 +100,9 @@ export function assembleProposalMarkdown(
   return `### ${proposal.entity.trim()}\n${bullets}`
 }
 
-/** One summary line in `wiki:index` — Karpathy's index.md pattern.
- * The LLM emits one of these whenever a target page either gained
- * meaningful content or is being created (via `suggestNewPage`).
- * The apply layer keeps the index page deduplicated by `target`:
- * a fresh update for the same target replaces the existing line
- * instead of appending. */
-export interface IndexUpdate {
-  /** wiki:* type id of the page this summary describes. Must match
-   * an existing wiki page or one being created via suggestNewPage
-   * in the same ingest pass. */
-  target: string
-  /** One-line description of the page. Phase 1-B keeps the format
-   * loose — typically "X about Y" or "Z 관련 페이지". Phase 2 may
-   * standardize once we see what the model produces in practice. */
-  summary: string
-}
-
 export interface IngestResult {
   /** Append-only edits the LLM thinks the wiki should reflect. */
   proposals: IngestProposal[]
-  /** One-line summaries for `wiki:index`, one per touched page.
-   * Empty when nothing meaningful changed. The apply layer
-   * deduplicates by target — sending the same target's summary
-   * twice in different ingest passes replaces, doesn't append. */
-  indexUpdates: IndexUpdate[]
   /** Pre-formatted log line for wiki:log, or null if nothing was
    * meaningful enough to log. Format follows Karpathy's convention:
    * `## [YYYY-MM-DD] <kind> | <summary>`. */
@@ -169,7 +146,7 @@ Cross-link: when a bullet mentions another wiki page that already exists in the 
 
 The wiki is FLAT — every entity is its own page at the same level. Do not create category pages. Each fact about a person belongs on a page named after that person, not on a shared "People" page. Same for books, projects, concepts.
 
-The INDEX block (above WIKI) is the current one-line summary of each wiki page. For every page you propose to modify (\`target\`) or create (\`suggestNewPage\`), also emit an "indexUpdates" entry with a short summary. The summary is one sentence describing what the page is *about*, not what just changed. Reuse the existing summary verbatim when the page's nature didn't really change — only emit an updated summary if the new content meaningfully shifts what the page is about. For \`suggestNewPage\` you must always provide a fresh summary since no line exists yet. Use the same target type id you used in proposals.
+The INDEX block (above WIKI) is a system-maintained catalog of every wiki page — one line each, with title + one-line summary + backlink count. Treat it as read-only context: it tells you what pages exist and roughly what they're about so you can route proposals correctly and decide whether a \`suggestNewPage\` actually adds a new entity vs. duplicates one that's already there. Do NOT emit any structured update for the index — the host rebuilds it deterministically from page bodies + sidecar metadata.
 
 When you're done analyzing the note, call the \`submit_ingest_result\` tool **exactly once** with the structured result. Do not emit JSON in your text response — the tool is the only channel that lands in the wiki. Each proposal uses *either* \`target\` (existing page) *or* \`suggestNewPage\` (create a new page), never both. Example arguments:
 
@@ -178,18 +155,12 @@ When you're done analyzing the note, call the \`submit_ingest_result\` tool **ex
     { "target": "wiki:custom-7ntdvj41", "entity": "Sarah", "bullets": ["Now reports directly to me"], "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
     { "suggestNewPage": "The Pragmatic Programmer", "entity": "The Pragmatic Programmer", "bullets": ["Software craftsmanship", "Started reading this week"], "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "new entity not in WIKI yet" }
   ],
-  "indexUpdates": [
-    { "target": "wiki:custom-7ntdvj41", "summary": "Direct reports and their roles" },
-    { "target": "The Pragmatic Programmer", "summary": "Core ideas from The Pragmatic Programmer" }
-  ],
   "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; created The Pragmatic Programmer page"
 }
 
-For \`suggestNewPage\` proposals, the indexUpdates entry uses the proposed page name (the same string you put in \`suggestNewPage\`) as the target — the apply layer rewrites it to the real wiki type id after the page is created.
+If you found nothing worth filing, still call the tool — but pass an empty array for proposals AND pass \`null\` (not a string) for logEntry. The host suppresses empty passes entirely so they don't pile up in wiki:log; sending a "nothing notable" string just wastes tokens. The pass is still recorded for diagnostics on the host side. A pass without a tool call is treated as malformed and discarded.
 
-If you found nothing worth filing, still call the tool — but pass empty arrays for proposals and indexUpdates AND pass \`null\` (not a string) for logEntry. The host suppresses empty passes entirely so they don't pile up in wiki:log; sending a "nothing notable" string just wastes tokens. The pass is still recorded for diagnostics on the host side. A pass without a tool call is treated as malformed and discarded.
-
-When you DO have something to file (proposals or indexUpdates is non-empty), the logEntry must be a single line summarizing what got filed — one entry per ingest, never per-block verdicts. "added Sarah's role; created Books page" is right; enumerating "block A: kept, block B: transient, block C: filed" is wrong. The log is for what happened, not what you considered.`
+When you DO have something to file (proposals is non-empty), the logEntry must be a single line summarizing what got filed — one entry per ingest, never per-block verdicts. "added Sarah's role; created Books page" is right; enumerating "block A: kept, block B: transient, block C: filed" is wrong. The log is for what happened, not what you considered.`
 
 /** Compose the full system prompt. The user-editable conventions
  * page (Karpathy's CLAUDE.md pattern) is prepended so it shadows
@@ -367,13 +338,11 @@ interface IngestToolInput {
     rationale?: string
     sourceQuote?: string
   }>
-  indexUpdates: Array<{ target: string; summary: string }>
   logEntry: string | null
 }
 
 interface ParsedIngest {
   proposals: IngestProposal[]
-  indexUpdates: IndexUpdate[]
   logEntry: string | null
 }
 
@@ -389,19 +358,10 @@ interface ParsedIngest {
  *     existing page rather than spawning a new one).
  *   - `suggestNewPageParent` is now stripped — the wiki is flat,
  *     parent nesting isn't part of the data model.
- *   - `indexUpdates` pointing at a system page (conventions / log /
- *     index) means the model hallucinated the routing — those pages
- *     have their own channels, never a target-style summary line.
  *
  * Whitespace trimming for free-form strings stays here too —
  * harmless and keeps the apply layer free of "is this empty?" gymnastics. */
 function sanitizeIngestResult(input: IngestToolInput): ParsedIngest {
-  const SYSTEM_TARGETS = new Set([
-    'system:index',
-    'system:log',
-    'system:conventions',
-  ])
-
   const proposals: IngestProposal[] = []
   for (const p of input.proposals) {
     const target = p.target?.trim() || undefined
@@ -429,18 +389,9 @@ function sanitizeIngestResult(input: IngestToolInput): ParsedIngest {
     })
   }
 
-  const indexUpdates: IndexUpdate[] = []
-  for (const u of input.indexUpdates) {
-    const target = u.target.trim()
-    const summary = u.summary.trim()
-    if (!target || !summary) continue
-    if (SYSTEM_TARGETS.has(target)) continue
-    indexUpdates.push({ target, summary })
-  }
-
   const logEntry = input.logEntry?.trim() || null
 
-  return { proposals, indexUpdates, logEntry }
+  return { proposals, logEntry }
 }
 
 interface ChatRunOutcome {
@@ -583,7 +534,6 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
   if (!fullMarkdown) {
     return {
       proposals: [],
-      indexUpdates: [],
       logEntry: null,
       raw: '',
       malformed: false,
@@ -609,7 +559,6 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     })
     return {
       proposals: [],
-      indexUpdates: [],
       logEntry: null,
       raw: '',
       malformed: false,
@@ -633,12 +582,13 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
   // means the static rules take over alone.
   await ensureConventionsWikiSlug()
   const conventions = await readConventions()
-  // Seed the index page on first need; readIndexContext feeds the
-  // current summary lines into the prompt so the LLM can decide
-  // whether to update or leave each page's summary alone. Empty
-  // body means "no summaries yet" — buildPrompt skips the block.
-  await ensureIndexWikiSlug()
-  const indexSnapshot = await readIndexContext()
+  // Tier 1 catalog — system-built from knownDocs + sidecars on
+  // every wiki change (see state/wikiIndex.ts). The LLM gets a
+  // deterministic snapshot of every wiki page's title + one-line
+  // summary + backlink count without us paying tokens to have it
+  // re-author the same content each pass. Empty string ⇒ no wiki
+  // pages exist yet and buildPrompt skips the block.
+  const indexSnapshot = await getWikiIndex()
   const noteLabel =
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
@@ -684,25 +634,20 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     // the next pass retries with the same content.
     return {
       proposals: [],
-      indexUpdates: [],
       logEntry: null,
       raw: outcome.text,
       malformed: true,
       ingestedHashes: [],
     }
   }
-  const { proposals, indexUpdates, logEntry } = sanitizeIngestResult(
-    outcome.toolInput,
-  )
+  const { proposals, logEntry } = sanitizeIngestResult(outcome.toolInput)
   console.log('[ingest:producer] tool result accepted', {
     proposals: proposals.length,
-    indexUpdates: indexUpdates.length,
     logEntry: !!logEntry,
     targets: proposals.map((p) => p.target ?? `new:${p.suggestNewPage}`),
   })
   return {
     proposals,
-    indexUpdates,
     logEntry,
     raw: outcome.text,
     malformed: false,

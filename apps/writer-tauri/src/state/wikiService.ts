@@ -88,10 +88,6 @@ When a bullet mentions another page that already exists in the WIKI block, wrap 
 ### Length
 
 Each proposal's content is concise — one bullet or a short block of two or three lines. If a fact deserves more, split it into multiple proposals. The wiki accumulates; over-stuffing one bullet ages worse than splitting.
-
-### Index
-
-After updating pages, emit \`indexUpdates\` — one short sentence per page touched, describing what the page is *about* (not what just changed). Reuse the existing summary verbatim when the page's nature didn't really change.
 `
 
 /** Lazy-create shape for an agent-managed `system:*` page. Each one
@@ -188,9 +184,11 @@ export async function ensureConventionsWikiSlug(): Promise<string | null> {
   return ensureSystemPage(SYSTEM_PAGE_CONVENTIONS)
 }
 
-/** Ensure `system:index` exists. Body stays empty on create; real
- * summary lines arrive as `indexUpdates` merge into the page body
- * on first navigation. */
+/** Ensure `system:index` exists. The page body is system-owned —
+ * see state/wikiIndex.ts which writes a deterministic catalog on
+ * every wiki change. Body stays empty until the first persist tick
+ * lands; user edits to the page are tolerated but transient (next
+ * invalidation overwrites them). */
 export async function ensureIndexWikiSlug(): Promise<string | null> {
   return ensureSystemPage(SYSTEM_PAGE_INDEX)
 }
@@ -204,21 +202,6 @@ export async function readConventions(): Promise<string> {
     .knownDocs.find((d) => d.type === CONVENTIONS_TYPE && !d.archivedAt)
   if (!doc) return ''
   return readWikiMarkdown(doc.slug)
-}
-
-/** Read the wiki:index body as a labeled INDEX block for the
- * ingest prompt. The LLM sees what summaries already exist so it
- * can decide whether to emit a new `indexUpdates` entry or leave a
- * page's line untouched. Returns '' when the page is missing or
- * empty so callers can skip the block entirely. */
-export async function readIndexContext(): Promise<string> {
-  const doc = useDocsStore
-    .getState()
-    .knownDocs.find((d) => d.type === INDEX_TYPE && !d.archivedAt)
-  if (!doc) return ''
-  const md = readWikiMarkdown(doc.slug)
-  if (!md) return ''
-  return md
 }
 
 /** No-op placeholder kept so the docsStore bootstrap call site

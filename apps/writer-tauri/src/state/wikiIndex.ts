@@ -25,13 +25,27 @@
 import type { KnownDoc } from './docsStore'
 import { extractWikilinks } from '@/lib/wikilinkResolve'
 import { isEffectivelyEmpty } from '@/lib/markdownText'
-import { readWikiMarkdown } from './wikiService'
-import { metaPathForDoc, type DocMetaFile } from '@/lib/docPaths'
-import { readVaultFile, vaultFileExists } from '@/lib/vault'
+import { ensureIndexWikiSlug, readWikiMarkdown } from './wikiService'
+import {
+  metaPathForDoc,
+  pathForDoc,
+  type DocMetaFile,
+} from '@/lib/docPaths'
+import {
+  readVaultFile,
+  vaultFileExists,
+  writeVaultFile,
+} from '@/lib/vault'
 import { useDocsStore } from './docsStore'
 
 const SUMMARY_MAX_LEN = 80
 const EMPTY_PLACEHOLDER = '(empty)'
+/** Coalesce burst invalidations (e.g. multi-page flush, watcher
+ * batch) into a single disk write. 200ms is short enough that the
+ * `_system/index.md` page stays visually current as the user edits,
+ * long enough that a typing burst across multiple wiki pages
+ * collapses to one rebuild + write. */
+const PERSIST_DEBOUNCE_MS = 200
 
 /** Count how many non-archived wiki / daily / writing docs link
  * back to each wiki target via `[[Title]]` references in body
@@ -228,9 +242,79 @@ export async function getWikiIndex(): Promise<string> {
 }
 
 /** Drop the cached index so the next `getWikiIndex()` call rebuilds
- * from scratch. Callers: any code path that changes the data the
- * index depends on (wiki page body + sidecar). Cheap — just clears a
- * reference; the rebuild happens lazily on next read. */
+ * from scratch, and schedule a debounced disk persist so the
+ * user-visible `_system/index.md` page stays current.
+ *
+ * Callers: any code path that changes the data the index depends on
+ * (wiki page body + sidecar). Cheap — just clears a reference; the
+ * rebuild + disk write happen lazily inside the debounce window. */
 export function invalidateWikiIndex(): void {
   cached = null
+  scheduleWikiIndexPersist()
+}
+
+// ── Disk persistence (system-owned page) ────────────────────────
+//
+// Karpathy's index.md pattern with a twist: instead of an LLM editing
+// the page mid-ingest (the pre-2026-05-19 model), the system is the
+// single writer. We assemble the catalog deterministically and write
+// it as the body of the `system:index` page. The page is therefore
+// always fresh, always parseable by the LLM, and never drifts from
+// what the catalog actually contains.
+//
+// User edits to `_system/index.md` are tolerated but transient — the
+// next invalidation overwrites them. That's the contract: the page
+// is a read surface, not a user-authored one. Sidebar users see the
+// freshest possible catalog at all times.
+//
+// Echo handling: writeVaultFile stamps `markOurRecentWrite` so the
+// vault watcher's filter (vaultWatcher.ts:81) drops our own write
+// from the dispatch step. No invalidation loop.
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleWikiIndexPersist(): void {
+  if (persistTimer !== null) clearTimeout(persistTimer)
+  persistTimer = setTimeout(() => {
+    persistTimer = null
+    void persistWikiIndexNow().catch((err) => {
+      console.warn('[wiki:index] persist failed', err)
+    })
+  }, PERSIST_DEBOUNCE_MS)
+}
+
+/** Rebuild + write the index page body to disk now. Idempotent; safe
+ * to call directly (tests, manual dev-console refresh) outside the
+ * debounce. Lazy-creates the `system:index` catalog entry on first
+ * call so a freshly-mounted vault doesn't need a separate bootstrap
+ * step to register the page. */
+async function persistWikiIndexNow(): Promise<void> {
+  let indexDoc = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.type === 'system:index' && !d.archivedAt)
+  if (!indexDoc) {
+    await ensureIndexWikiSlug()
+    indexDoc = useDocsStore
+      .getState()
+      .knownDocs.find((d) => d.type === 'system:index' && !d.archivedAt)
+    if (!indexDoc) return // ensure failed; bail and let next tick retry
+  }
+
+  const path = pathForDoc(indexDoc)
+  if (!path) return
+
+  const content = await getWikiIndex()
+  // Trailing newline keeps the file POSIX-friendly when viewed via
+  // CLI / git diff; the parser doesn't care either way.
+  await writeVaultFile(path, content + '\n')
+
+  // If the page is currently loaded into a Y.Doc (user has it open
+  // or it was lazy-warmed earlier), refresh the in-memory copy from
+  // the just-written body so the editor reflects the new catalog.
+  // Skipped when the handle hasn't been built — the next ensureHandle
+  // hydrates from the file naturally.
+  const docs = useDocsStore.getState()
+  if (docs.handles[indexDoc.slug]) {
+    void docs.reloadFromVault(indexDoc.slug)
+  }
 }

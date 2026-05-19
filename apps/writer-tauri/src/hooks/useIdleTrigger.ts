@@ -38,7 +38,7 @@ import {
   ensureLogWikiSlug,
   createCustomWikiPage,
 } from '@/state/wikiService'
-import type { IngestProposal, IndexUpdate } from '@/agent/ingest'
+import type { IngestProposal } from '@/agent/ingest'
 import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
 import { effectiveLength } from '@/lib/markdownText'
 import { todayLocalDate } from '@/hooks/useDocMeta'
@@ -280,15 +280,15 @@ async function runIngestForSlug(
     return 0
   }
   // Karpathy's invariant: 1 ingest = 1 meaningful wiki diff = 1
-  // log line. If a pass produces no proposals AND no index updates,
-  // the LLM looked at the daily and judged nothing worth filing —
-  // its logEntry (when emitted at all) would just be a per-pass
-  // "nothing notable" verdict that piles up in wiki:log over time.
-  // Suppress the entire enqueue so the log page only ever shows
-  // real wiki changes. The console line above still records the
-  // pass for diagnostics — the audit trail moves from a user-
-  // visible page to dev tooling, which is where it belongs.
-  if (result.proposals.length === 0 && result.indexUpdates.length === 0) {
+  // log line. If a pass produces no proposals, the LLM looked at
+  // the daily and judged nothing worth filing — its logEntry (when
+  // emitted at all) would just be a per-pass "nothing notable"
+  // verdict that piles up in wiki:log over time. Suppress the
+  // entire enqueue so the log page only ever shows real wiki
+  // changes. The console line above still records the pass for
+  // diagnostics — the audit trail moves from a user-visible page
+  // to dev tooling, which is where it belongs.
+  if (result.proposals.length === 0) {
     console.log('[ingest:producer] empty result — suppressing logEntry to keep wiki:log clean', {
       hadLogEntry: !!result.logEntry,
     })
@@ -313,42 +313,13 @@ async function runIngestForSlug(
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
       : known.title?.trim() || slug
-  const { proposals: proposalsForQueue, nameToType } =
-    await materializeNewPageProposals(result.proposals, sourceLabel)
-
-  // Rewrite indexUpdates so every target is a real wiki:* type id.
-  // The LLM emitted them with the new page's *name* (e.g. "Books")
-  // when it didn't have an id yet; materializeNewPageProposals just
-  // created the real pages and gave us the name → type map. Drop
-  // any indexUpdate whose name didn't resolve — the matching page
-  // creation must have failed, so its summary line has nothing to
-  // anchor to.
-  const validTypes = new Set<string>(
-    useDocsStore
-      .getState()
-      .knownDocs.filter((d) => !d.archivedAt)
-      .map((d) => d.type),
+  const { proposals: proposalsForQueue } = await materializeNewPageProposals(
+    result.proposals,
+    sourceLabel,
   )
-  const indexUpdatesForQueue: IndexUpdate[] = []
-  for (const u of result.indexUpdates) {
-    if (validTypes.has(u.target)) {
-      indexUpdatesForQueue.push(u)
-      continue
-    }
-    const rewritten = nameToType.get(u.target)
-    if (rewritten) {
-      indexUpdatesForQueue.push({ target: rewritten, summary: u.summary })
-    } else {
-      console.warn(
-        '[ingest] indexUpdate target did not resolve to a real page; dropping',
-        u.target,
-      )
-    }
-  }
 
   useIngestStore.getState().enqueue({
     proposals: proposalsForQueue,
-    indexUpdates: indexUpdatesForQueue,
     logEntry: result.logEntry,
     sourceSlug: slug,
     sourceLabel,

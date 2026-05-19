@@ -134,7 +134,8 @@ export function WikiPageBanner() {
     (d) => d.slug === activeSlug && !d.archivedAt,
   )
   // Banner shows on user wiki content only. system:* pages have
-  // dedicated drains (useApplyPendingLogs / useApplyPendingIndexUpdates)
+  // their own write pipelines (system:log uses useApplyPendingLogs,
+  // system:index writes deterministically from state/wikiIndex.ts)
   // so they don't need an inbox — isUserOwnedWiki narrows to the
   // wiki:custom-* category and folds in the old "skip system:log"
   // guard naturally.

@@ -21,10 +21,7 @@ import {
   type LazyMaterializeConfig,
 } from '@/hooks/useLazyMaterialize'
 import { useMigrateLegacyIngestMarks } from '@/hooks/useMigrateLegacyIngestMarks'
-import {
-  applyPendingLogsForView,
-  applyPendingIndexUpdatesForView,
-} from '@/agent/applyIngest'
+import { applyPendingLogsForView } from '@/agent/applyIngest'
 // Phase 4.A — dev-only side-effect imports. Each module registers
 // a `window.__X` handle so the picker / vault I/O is reachable from
 // DevTools before real UI wiring lands. Real callers (settings
@@ -70,12 +67,8 @@ const SYSTEM_DRAIN_CONFIGS: LazyMaterializeConfig[] = [
     applyForView: applyPendingLogsForView,
     signaturePrefix: 'log',
   },
-  {
-    matchType: 'system:index',
-    queueSelector: (s) => s.pendingIndexUpdates,
-    applyForView: applyPendingIndexUpdatesForView,
-    signaturePrefix: 'index',
-  },
+  // system:index used to live here too — it now writes deterministically
+  // from state/wikiIndex.ts on every wiki change, no queue needed.
 ]
 
 export function App() {
