@@ -64,6 +64,17 @@ export interface ThreadMeta {
    * the history-shape heuristic. Absent on threads created before this
    * field existed; callers fall back to the legacy heuristic in that case. */
   sessionStarted?: boolean
+  /** Compacted form of this thread's turns — entity: fact bullets the
+   * ingest LLM can treat as a fact source alongside the daily body.
+   * Populated lazily by compactChatThread when the thread is selected
+   * for an ingest pass and `aiSummaryUpToTurnId` no longer matches the
+   * last turn. Absent on threads that have never been ingested. */
+  aiSummary?: string
+  /** Id of the last turn covered by `aiSummary`. Cache key: when a new
+   * turn arrives the id mismatches, marking the summary stale.
+   * Storing the id (not a timestamp) keeps it stable across clock
+   * skew and allows out-of-order turn handling. */
+  aiSummaryUpToTurnId?: string
 }
 
 export interface ChatTurn {
