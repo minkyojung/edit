@@ -158,6 +158,16 @@ export const createBootstrapSlice = (
         console.error('[wiki] bootstrap wiki failed', err),
       )
 
+      // Tier 1 wiki index cache is null on cold boot, but invalidate
+      // explicitly so any pre-bootstrap getWikiIndex() call (defensive
+      // — no current caller, but easy to add accidentally) doesn't
+      // cache a half-built index against an empty catalog.
+      void import('../wikiIndex').then(({ invalidateWikiIndex }) =>
+        invalidateWikiIndex(),
+      ).catch((err) =>
+        console.error('[wiki] index invalidate failed', err),
+      )
+
       set({ bootstrapping: false })
     } finally {
       bootstrapInFlight = false

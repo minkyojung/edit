@@ -33,6 +33,7 @@ import { watch } from '@tauri-apps/plugin-fs'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useDocsStore } from '@/state/docsStore'
 import { findSlugByVaultPath } from '@/state/docsStore/helpers'
+import { invalidateWikiIndex } from '@/state/wikiIndex'
 import { isOurRecentWrite } from './vault'
 import { isDirty } from './docFileSync'
 import { buildKnownDocForExternalPath } from './scanVault'
@@ -161,6 +162,16 @@ function dispatchEvent(event: { type: unknown }, paths: string[]): void {
     | { modify?: { kind?: string } }
     | undefined
   if (!type) return
+
+  // Any external change under `wiki/` shifts the Tier 1 index — body
+  // edits change summaries + backlink counts, create/remove change the
+  // catalog itself. Invalidate once per burst rather than per handler
+  // call so concurrent renames don't thrash the cache. Daily / writing
+  // changes don't affect the index (they aren't catalog targets), so
+  // we filter them out here.
+  if (paths.some((p) => p.startsWith('wiki/'))) {
+    invalidateWikiIndex()
+  }
 
   if ('create' in type && type.create) {
     for (const rel of paths) handleExternalAdd(rel)

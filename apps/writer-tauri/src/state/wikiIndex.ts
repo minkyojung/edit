@@ -187,3 +187,50 @@ export async function buildWikiIndex(): Promise<string> {
 
   return lines.join('\n')
 }
+
+// ── Memory cache ──────────────────────────────────────────────────
+//
+// `buildWikiIndex` walks the entire catalog + reads every sidecar on
+// every call. That's cheap at 10 pages but becomes wasteful when chat
+// / ingest / lint each fetch the index multiple times per call
+// without anything having changed.
+//
+// The cache holds the last-built string and an in-flight promise
+// (de-duped concurrent rebuilds). Invalidation is driven by callers
+// who know "something the index depends on changed" — wiki page
+// flushes, external vault edits to wiki paths, bootstrap completion.
+//
+// No expiry / TTL — the cache stays valid until something explicitly
+// invalidates it. A future "fallback safety net" could add a
+// stale-after timer, but for now we trust the explicit invalidation
+// points because their failure modes (missing a wiki edit) are
+// loud (sidebar diverges from index) and so easy to catch.
+
+let cached: string | null = null
+let inFlight: Promise<string> | null = null
+
+/** Get the current Tier 1 wiki index, building + caching it on the
+ * first call after each invalidation. Concurrent calls share the
+ * same in-flight build so we don't read every sidecar N times when
+ * chat + ingest fire back-to-back. */
+export async function getWikiIndex(): Promise<string> {
+  if (cached !== null) return cached
+  if (inFlight) return inFlight
+  inFlight = buildWikiIndex()
+    .then((result) => {
+      cached = result
+      return result
+    })
+    .finally(() => {
+      inFlight = null
+    })
+  return inFlight
+}
+
+/** Drop the cached index so the next `getWikiIndex()` call rebuilds
+ * from scratch. Callers: any code path that changes the data the
+ * index depends on (wiki page body + sidecar). Cheap — just clears a
+ * reference; the rebuild happens lazily on next read. */
+export function invalidateWikiIndex(): void {
+  cached = null
+}

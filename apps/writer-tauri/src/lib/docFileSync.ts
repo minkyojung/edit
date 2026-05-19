@@ -24,6 +24,7 @@
 import * as Y from 'yjs'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
+import { invalidateWikiIndex } from '@/state/wikiIndex'
 import { markStore } from '@/domain/markStoreInstance'
 import type { Mark } from '@/domain/marks'
 import {
@@ -384,6 +385,11 @@ export async function flushDirty(): Promise<void> {
   if (!getActiveVaultPath()) return
   const docs = useDocsStore.getState()
   const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
+  // Track whether this flush touched any wiki page so we can invalidate
+  // the Tier 1 index cache once at the end rather than per-doc. A wiki
+  // body / title change affects the index's summary + backlink columns
+  // for both the changed page and any pages it links to.
+  let wikiTouched = false
   for (const slug of getDirtySlugs()) {
     const known = docs.knownDocs.find((d) => d.slug === slug)
     if (!known) {
@@ -432,11 +438,13 @@ export async function flushDirty(): Promise<void> {
       }
       lastWrittenPath.set(slug, mdPath)
       clearDirty(slug)
+      if (known.type.startsWith('wiki:')) wikiTouched = true
     } catch (err) {
       console.warn('[vault:flush] write failed for', slug, err)
       // Leave dirty so the next tick retries.
     }
   }
+  if (wikiTouched) invalidateWikiIndex()
 }
 
 /** Begin the periodic flush loop. Idempotent — calling twice is a
