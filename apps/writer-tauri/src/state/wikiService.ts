@@ -260,6 +260,18 @@ export async function createCustomWikiPage(
   if (initialBody) {
     try {
       await useDocsStore.getState().seedDocBody(slug, initialBody)
+      // Fire-and-forget: kick off an aiSummary generation for the
+      // Tier 1 catalog. New pages start with the ingest-provided
+      // body, so a summary here captures the page's initial nature
+      // before the user has navigated to it. Failure (sidecar down,
+      // network, etc.) leaves sidecar.aiSummary unset and the index
+      // falls back to bodyExcerpt — no correctness impact.
+      void (async () => {
+        const { regenerateAiSummaryForSlug } = await import(
+          '@/agent/generateAiSummary'
+        )
+        await regenerateAiSummaryForSlug(slug)
+      })()
     } catch (err) {
       console.warn('[wiki] createCustomWikiPage seed failed', err)
     }

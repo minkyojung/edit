@@ -33,6 +33,7 @@ import { cn } from '@/lib/utils'
 import { notify } from '@/lib/notify'
 import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
 import { prepareMarkdownAppend } from '@/lib/markdownAppend'
+import { regenerateAiSummaryForSlug } from '@/agent/generateAiSummary'
 
 const AGENT_ID = 'ai:wiki-ingest'
 
@@ -152,7 +153,14 @@ export function WikiPageBanner() {
       return
     }
     const ok = await acceptProposal(activeSlug, view, proposal)
-    if (ok) remove({ proposalIds: [proposal.id] })
+    if (ok) {
+      remove({ proposalIds: [proposal.id] })
+      // Body just changed — kick off a background summary refresh so
+      // the Tier 1 catalog reflects the new content on the next
+      // ingest pass. Fire-and-forget; the user-visible accept flow
+      // is already complete by this point.
+      void regenerateAiSummaryForSlug(activeSlug)
+    }
   }
   const handleReject = (proposal: PendingProposal) => {
     remove({ proposalIds: [proposal.id] })
