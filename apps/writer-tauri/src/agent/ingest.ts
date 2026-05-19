@@ -25,6 +25,10 @@ import { pickNewBlocks } from '@/lib/blockHash'
 import { ensureConventionsWikiSlug } from '@/state/wikiService'
 import { assembleContext } from '@/agent/contextPipeline'
 import type { WikiPageBody } from '@/agent/contextSelector'
+import {
+  selectActiveThreadsForIngest,
+  type ActiveThreadSummary,
+} from '@/agent/selectActiveThreadsForIngest'
 import { getActiveVaultPath } from '@/state/settingsStore'
 const INGEST_MODEL = 'claude-haiku-4-5-20251001'
 
@@ -186,6 +190,7 @@ function composeSystemPrompt(args: {
   indexSnapshot: string
   hotPages: WikiPageBody[]
   conventions: string
+  chatActivity: ActiveThreadSummary[]
 }): string[] {
   const trimmedConventions = args.conventions.trim()
   const rules = trimmedConventions
@@ -209,6 +214,19 @@ function composeSystemPrompt(args: {
   // ingested repeatedly with the same wikilinks.
   for (const page of args.hotPages) {
     blocks.push(`--- WIKI PAGE: ${page.title} ---\n${page.body}`)
+  }
+
+  // Chat activity since last ingest pass. Each thread arrives
+  // pre-shaped as `- entity: fact` bullets (compactChatThread), so
+  // the model can treat them as fact sources the same way it does
+  // the daily body — no second transformation pass. Block goes
+  // last so prefix cache (rules → index → hot pages) stays warm
+  // when only chat changes between runs.
+  if (args.chatActivity.length > 0) {
+    const chatBody = args.chatActivity
+      .map((t) => `[Thread: "${t.threadTitle}"]\n${t.summary}`)
+      .join('\n\n')
+    blocks.push(`--- TODAY'S CHAT ACTIVITY ---\n${chatBody}`)
   }
 
   return blocks
@@ -584,17 +602,30 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
   // later. Failures degrade gracefully — empty conventions means
   // the static rules take over alone.
   await ensureConventionsWikiSlug()
-  // One facade call replaces the prior three (wiki dump + index +
-  // conventions). Tier 2 hot pages come from [[link]]s in the note
-  // being ingested — same daily can mention multiple existing wiki
-  // pages, and now their bodies ride along automatically. We skip
-  // the Tier 3 tool list (enableTools: false) because ingest is
-  // single-shot — the LLM emits one submit_ingest_result call and
-  // has no room to drive read_page/search_wiki.
-  const ctx = await assembleContext({
-    docBody: noteMarkdown,
-    enableTools: false,
-  })
+  // Run wiki context assembly and chat compaction in parallel —
+  // they read independent state and the chat side may include
+  // several LLM calls for stale threads, so paying once is much
+  // cheaper than serializing.
+  const handle = useDocsStore.getState().handles[noteSlug]
+  const sinceTs = useIngestStore.getState().lastIngestedAt[noteSlug] ?? 0
+  const [ctx, chatActivity] = await Promise.all([
+    // One facade call replaces the prior three (wiki dump + index +
+    // conventions). Tier 2 hot pages come from [[link]]s in the note
+    // being ingested — same daily can mention multiple existing wiki
+    // pages, and now their bodies ride along automatically. We skip
+    // the Tier 3 tool list (enableTools: false) because ingest is
+    // single-shot — the LLM emits one submit_ingest_result call and
+    // has no room to drive read_page/search_wiki.
+    assembleContext({ docBody: noteMarkdown, enableTools: false }),
+    // Chat activity since the previous successful ingest. Empty
+    // array on first run after this code lands (sinceTs = 0 means
+    // every existing thread is candidate; compactChatThread caches
+    // its result so subsequent runs are quick), and on quiet days
+    // where no thread had a new turn since lastIngestedAt.
+    handle
+      ? selectActiveThreadsForIngest({ ydoc: handle.ydoc, sinceTs })
+      : Promise.resolve<ActiveThreadSummary[]>([]),
+  ])
 
   const noteLabel =
     known.type === 'daily' && known.date
@@ -610,6 +641,7 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     indexSnapshot: ctx.index,
     hotPages: ctx.hotPages,
     conventions: ctx.conventions,
+    chatActivity,
   })
 
   const runId = crypto.randomUUID()
