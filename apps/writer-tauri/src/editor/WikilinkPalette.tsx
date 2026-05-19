@@ -21,7 +21,7 @@ import {
   type WikilinkPaletteInfo,
   type WikilinkPaletteKey,
 } from './wikilinkPalettePlugin'
-import { useDocsStore, type KnownDoc } from '@/state/docsStore'
+import { useDocsStore, isUserOwnedWiki, type KnownDoc } from '@/state/docsStore'
 import { cn } from '@/lib/utils'
 import { notify } from '@/lib/notify'
 
@@ -76,12 +76,17 @@ export function WikilinkPalette({ parentSlug, keyHandlerRef }: Props) {
   const candidates = useMemo<Candidate[]>(() => {
     if (!info || !dailySlug) return []
     const q = info.query.trim().toLowerCase()
-    // Children of the active parent — the only docs the palette
-    // resolves against. Filter by title prefix when a query is set;
-    // the title cache lives in knownDocs once the child has had its
-    // ydoc opened at least once.
+    // Two candidate pools, unioned:
+    //   1. Writings nested under this daily (parentId === dailySlug)
+    //   2. User-owned wiki pages (flat — no parentId since the
+    //      Karpathy refactor). isUserOwnedWiki narrows to wiki:custom-*
+    //      so system pages (system:index / system:log / conventions)
+    //      stay out — they have their own surfaces and aren't valid
+    //      link targets.
     const children = knownDocs.filter(
-      (d) => d.parentId === dailySlug && !d.archivedAt,
+      (d) =>
+        !d.archivedAt &&
+        (d.parentId === dailySlug || isUserOwnedWiki(d)),
     )
     const matches = children
       .map((doc) => ({ doc, title: titleFor(doc) }))
