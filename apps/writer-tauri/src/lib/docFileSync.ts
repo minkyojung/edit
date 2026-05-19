@@ -45,6 +45,33 @@ import { getActiveVaultPath } from '@/state/settingsStore'
 import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
 import { deriveLabel } from '@/lib/docLabel'
 
+/** Merge `next` over the existing `.meta.json` at `metaPath` so a
+ * flush preserves fields this layer doesn't track (aiSummary written
+ * by the ingest summary hook, aiImportance, etc.). Falls back to
+ * `next` alone when the sidecar is missing or unparseable — same
+ * behaviour as the previous full-overwrite, just no longer the
+ * default for healthy files.
+ *
+ * Read-modify-write is safe under the auto-flush loop because each
+ * flush tick processes one slug at a time, and the only writers of
+ * `<slug>.meta.json` are this function + getOrAssignSlug (which
+ * runs once per file at boot). No write-write races. */
+async function mergeSidecar(
+  metaPath: string,
+  next: DocMetaFile,
+): Promise<DocMetaFile> {
+  if (!(await vaultFileExists(metaPath))) return next
+  try {
+    const raw = await readVaultFile(metaPath)
+    const existing = JSON.parse(raw) as Partial<DocMetaFile>
+    return { ...existing, ...next }
+  } catch {
+    // Corrupt sidecar — let the fresh `next` overwrite it; we'd
+    // rather lose stale context metadata than block the flush.
+    return next
+  }
+}
+
 /** Result shape of {@link serializeDocToFiles} — the artefacts a
  * flush tick writes to disk for one doc:
  *   - `md`   — clean markdown body, written to `<stem>.md`
@@ -432,7 +459,12 @@ export async function flushDirty(): Promise<void> {
         }
       }
       await writeVaultFile(mdPath, result.md)
-      await writeVaultFile(metaPath, JSON.stringify(result.meta, null, 2))
+      // Sidecar carries identity (version + slug) plus opt-in context
+      // metadata other code paths populate (aiSummary, aiImportance,
+      // and any future fields). Read-modify-write so a flush doesn't
+      // clobber fields this layer doesn't know about.
+      const mergedMeta = await mergeSidecar(metaPath, result.meta)
+      await writeVaultFile(metaPath, JSON.stringify(mergedMeta, null, 2))
       if (ydocBinary) {
         await writeVaultBinary(ydocPath, ydocBinary)
       }
