@@ -13,6 +13,7 @@ import { AppShell } from '@/layout/AppShell'
 import { Page } from '@/layout/Page'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { WikiPageBanner } from '@/layout/WikiPageBanner'
+import { ExternalEditBanner } from '@/layout/ExternalEditBanner'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
@@ -137,6 +138,11 @@ function AppContent() {
                       so it doesn't shift layout when it appears/
                       disappears. */}
                   <WikiPageBanner />
+                  {/* External-edit conflict surface. Self-hides
+                      when the active doc has no conflict. Stays
+                      above the wiki banner so the data-loss path
+                      gets the higher visual weight. */}
+                  <ExternalEditBanner />
                   <Page
                     key={activeSlug ?? 'no-doc'}
                     handle={activeHandle}

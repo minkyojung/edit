@@ -37,6 +37,7 @@ import { invalidateWikiIndex } from '@/state/wikiIndex'
 import { isOurRecentWrite } from './vault'
 import { isDirty } from './docFileSync'
 import { buildKnownDocForExternalPath } from './scanVault'
+import { useExternalConflictStore } from '@/state/externalConflictStore'
 
 let activeUnwatch: (() => void) | null = null
 
@@ -214,7 +215,12 @@ function handleExternalReload(rel: string): void {
   if (!slug) return
   if (!state.handles[slug]) return
   if (isDirty(slug)) {
-    console.warn('[vault:reload] skipped — local dirty', { slug, rel })
+    // Conflict: external version diverges from the live Y.Doc and
+    // the local has unsaved edits. Auto-reloading would clobber the
+    // local; auto-flushing would clobber the external. Mark and
+    // surface a banner so the user picks. flushDirty respects the
+    // conflict set and skips this slug until resolved.
+    useExternalConflictStore.getState().markConflict(slug)
     return
   }
   void state.reloadFromVault(slug)

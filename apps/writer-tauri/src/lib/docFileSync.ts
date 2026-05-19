@@ -25,6 +25,7 @@ import * as Y from 'yjs'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
+import { hasExternalConflict } from '@/state/externalConflictStore'
 import { markStore } from '@/domain/markStoreInstance'
 import type { Mark } from '@/domain/marks'
 import {
@@ -418,6 +419,14 @@ export async function flushDirty(): Promise<void> {
   // for both the changed page and any pages it links to.
   let wikiTouched = false
   for (const slug of getDirtySlugs()) {
+    // Skip slugs with an unresolved external-edit conflict. Writing
+    // the live Y.Doc here would silently overwrite the external
+    // version while the user is still deciding via the banner.
+    // The slug stays dirty so the next flush after the user picks
+    // Dismiss (keep local) will land normally. Picking Reopen
+    // clears dirty before reload, so this gate doesn't strand
+    // writes either way.
+    if (hasExternalConflict(slug)) continue
     const known = docs.knownDocs.find((d) => d.slug === slug)
     if (!known) {
       clearDirty(slug)
