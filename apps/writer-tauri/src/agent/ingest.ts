@@ -17,6 +17,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import * as Y from 'yjs'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
@@ -552,6 +553,134 @@ function awaitChatRun(runId: string): Promise<ChatRunOutcome> {
   })
 }
 
+/** Source-agnostic ingest core. Takes pre-filtered markdown plus a
+ * display label and runs the wiki-context-aware LLM pass. No store
+ * reads, no slug lookups, no block-hash dedup — the caller (daily
+ * `runIngest` or bootstrap `bootstrapIngest`) handles whatever
+ * source-specific filtering / persistence it needs.
+ *
+ * Returned shape mirrors `IngestResult` minus `ingestedHashes`,
+ * which is daily-only state (bootstrap doesn't dedup by hash). */
+interface IngestCoreArgs {
+  /** Already-filtered text to feed the model. For daily this is the
+   * concatenated body of new blocks; for bootstrap it's a raw chunk
+   * straight from the source file / URL. */
+  text: string
+  /** Free-form label used in the user prompt (`daily/YYYY-MM-DD`
+   * for daily, `imported/<file>` for bootstrap). Surfaces as the
+   * provenance string the LLM cites in its proposals. */
+  sourceLabel: string
+  /** Chat-thread watermark for `selectActiveThreadsForIngest`.
+   * Daily passes `lastIngestedAt[slug]`; bootstrap passes 0 so the
+   * first run sees every thread. */
+  sinceTs: number
+  /** ydoc whose thread list backs the chat-activity block. Daily
+   * uses the active doc's handle; bootstrap reads the active doc
+   * (or null when no doc is open yet — chat activity then omits). */
+  ydoc: Y.Doc | null
+}
+
+interface IngestCoreResult {
+  proposals: IngestProposal[]
+  logEntry: string | null
+  raw: string
+  malformed: boolean
+}
+
+async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreResult> {
+  const { text, sourceLabel, sinceTs, ydoc } = args
+
+  // Seed the conventions page on first need so the user has
+  // something to edit; assembleContext reads the result a moment
+  // later. Failures degrade gracefully — empty conventions means
+  // the static rules take over alone.
+  await ensureConventionsWikiSlug()
+  // Run wiki context assembly and chat compaction in parallel —
+  // they read independent state and the chat side may include
+  // several LLM calls for stale threads, so paying once is much
+  // cheaper than serializing.
+  const [ctx, chatActivity] = await Promise.all([
+    // One facade call replaces the prior three (wiki dump + index +
+    // conventions). Tier 2 hot pages come from [[link]]s in the
+    // source text — same daily / import can mention multiple
+    // existing wiki pages, and now their bodies ride along
+    // automatically. We skip the Tier 3 tool list (enableTools:
+    // false) because ingest is single-shot — the LLM emits one
+    // submit_ingest_result call and has no room to drive
+    // read_page/search_wiki.
+    assembleContext({ docBody: text, enableTools: false }),
+    // Chat activity since the previous successful ingest. Empty
+    // array when no ydoc is available (bootstrap before any doc
+    // opens) or on quiet days where no thread had a new turn since
+    // sinceTs.
+    ydoc
+      ? selectActiveThreadsForIngest({ ydoc, sinceTs })
+      : Promise.resolve<ActiveThreadSummary[]>([]),
+  ])
+
+  const prompt = buildPrompt({
+    date: todayLocalDate(),
+    noteLabel: sourceLabel,
+    noteMarkdown: text,
+  })
+  const systemPrompt = composeSystemPrompt({
+    indexSnapshot: ctx.index,
+    hotPages: ctx.hotPages,
+    conventions: ctx.conventions,
+    chatActivity,
+  })
+
+  const runId = crypto.randomUUID()
+  const sessionId = crypto.randomUUID()
+  const finished = awaitChatRun(runId)
+  await invoke('claude_chat_start', {
+    args: {
+      runId,
+      model: INGEST_MODEL,
+      systemPrompt,
+      prompt,
+      // Enable the structured-output tool. The sidecar registers
+      // it as an MCP tool on the writer-relay server; the model
+      // calls it exactly once with the full ingest result, which
+      // we receive via the `ingest:result` event in awaitChatRun.
+      relayTools: ['submit_ingest_result'],
+      // Plumb the vault path for future read_page / search_wiki tools.
+      // No effect today (those tools aren't in ingest's relayTools yet),
+      // but keeping the parameter consistent across consumers means we
+      // can opt into filesystem tools in a follow-up commit without
+      // touching every call site.
+      vaultPath: getActiveVaultPath() ?? undefined,
+      effort: 'low',
+      sessionId,
+    },
+  })
+  const outcome = await finished
+  if (!outcome.toolInput) {
+    console.warn(
+      '[ingest:producer] submit_ingest_result tool was not called',
+      { textPreview: outcome.text.slice(0, 200) },
+    )
+    return {
+      proposals: [],
+      logEntry: null,
+      raw: outcome.text,
+      malformed: true,
+    }
+  }
+  const { proposals, logEntry } = sanitizeIngestResult(outcome.toolInput)
+  console.log('[ingest:producer] tool result accepted', {
+    proposals: proposals.length,
+    logEntry: !!logEntry,
+    targets: proposals.map((p) => p.target ?? `new:${p.suggestNewPage}`),
+  })
+  return {
+    proposals,
+    logEntry,
+    raw: outcome.text,
+    malformed: false,
+  }
+}
+
 /** Run one ingest pass against the given note slug. Reads the note,
  * snapshots the wiki, calls Haiku, returns proposals (no apply).
  * Throws on transport / SDK errors. Returns malformed=true when the
@@ -616,108 +745,29 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     total: allHashes.length,
   })
 
-  // Seed the conventions page on first need so the user has
-  // something to edit; assembleContext reads the result a moment
-  // later. Failures degrade gracefully — empty conventions means
-  // the static rules take over alone.
-  await ensureConventionsWikiSlug()
-  // Run wiki context assembly and chat compaction in parallel —
-  // they read independent state and the chat side may include
-  // several LLM calls for stale threads, so paying once is much
-  // cheaper than serializing.
   const handle = useDocsStore.getState().handles[noteSlug]
   const sinceTs = useIngestStore.getState().lastIngestedAt[noteSlug] ?? 0
-  const [ctx, chatActivity] = await Promise.all([
-    // One facade call replaces the prior three (wiki dump + index +
-    // conventions). Tier 2 hot pages come from [[link]]s in the note
-    // being ingested — same daily can mention multiple existing wiki
-    // pages, and now their bodies ride along automatically. We skip
-    // the Tier 3 tool list (enableTools: false) because ingest is
-    // single-shot — the LLM emits one submit_ingest_result call and
-    // has no room to drive read_page/search_wiki.
-    assembleContext({ docBody: noteMarkdown, enableTools: false }),
-    // Chat activity since the previous successful ingest. Empty
-    // array on first run after this code lands (sinceTs = 0 means
-    // every existing thread is candidate; compactChatThread caches
-    // its result so subsequent runs are quick), and on quiet days
-    // where no thread had a new turn since lastIngestedAt.
-    handle
-      ? selectActiveThreadsForIngest({ ydoc: handle.ydoc, sinceTs })
-      : Promise.resolve<ActiveThreadSummary[]>([]),
-  ])
-
   const noteLabel =
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
       : known.title?.trim() || noteSlug
 
-  const prompt = buildPrompt({
-    date: todayLocalDate(),
-    noteLabel,
-    noteMarkdown,
-  })
-  const systemPrompt = composeSystemPrompt({
-    indexSnapshot: ctx.index,
-    hotPages: ctx.hotPages,
-    conventions: ctx.conventions,
-    chatActivity,
+  const core = await runIngestCore({
+    text: noteMarkdown,
+    sourceLabel: noteLabel,
+    sinceTs,
+    ydoc: handle?.ydoc ?? null,
   })
 
-  const runId = crypto.randomUUID()
-  const sessionId = crypto.randomUUID()
-  const finished = awaitChatRun(runId)
-  await invoke('claude_chat_start', {
-    args: {
-      runId,
-      model: INGEST_MODEL,
-      systemPrompt,
-      prompt,
-      // Enable the structured-output tool. The sidecar registers
-      // it as an MCP tool on the writer-relay server; the model
-      // calls it exactly once with the full ingest result, which
-      // we receive via the `ingest:result` event in awaitChatRun.
-      relayTools: ['submit_ingest_result'],
-      // Plumb the vault path for future read_page / search_wiki tools.
-      // No effect today (those tools aren't in ingest's relayTools yet),
-      // but keeping the parameter consistent across consumers means we
-      // can opt into filesystem tools in a follow-up commit without
-      // touching every call site.
-      vaultPath: getActiveVaultPath() ?? undefined,
-      effort: 'low',
-      sessionId,
-    },
-  })
-  const outcome = await finished
-  if (!outcome.toolInput) {
-    console.warn(
-      '[ingest:producer] submit_ingest_result tool was not called',
-      { textPreview: outcome.text.slice(0, 200) },
-    )
+  return {
+    ...core,
     // Malformed pass: don't persist the hash snapshot — the LLM
     // never "consumed" these blocks, so leave the store as-is so
     // the next pass retries with the same content.
-    return {
-      proposals: [],
-      logEntry: null,
-      raw: outcome.text,
-      malformed: true,
-      ingestedHashes: [],
-    }
-  }
-  const { proposals, logEntry } = sanitizeIngestResult(outcome.toolInput)
-  console.log('[ingest:producer] tool result accepted', {
-    proposals: proposals.length,
-    logEntry: !!logEntry,
-    targets: proposals.map((p) => p.target ?? `new:${p.suggestNewPage}`),
-  })
-  return {
-    proposals,
-    logEntry,
-    raw: outcome.text,
-    malformed: false,
-    ingestedHashes: allHashes,
+    ingestedHashes: core.malformed ? [] : allHashes,
   }
 }
+
 
 /** Convenience for console testing: run ingest against today's
  * daily entry without having to look up the slug manually. Returns
