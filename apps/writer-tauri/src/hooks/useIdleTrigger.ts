@@ -238,23 +238,34 @@ async function runIngestForSlug(
     result = await runIngest(slug)
   } catch (err) {
     console.warn('[ingest] runIngest failed', slug, err)
-    // Auth errors are the one ingest failure that doesn't auto-
-    // recover — the OAuth token has expired and the user must
-    // sign in again before any future pass can succeed. Surface
-    // it as a toast with a Reconnect action so the silent
-    // background failure becomes visible. Every other error
-    // (NETWORK / RATE_LIMIT / IDLE_TIMEOUT / SIDECAR_DIED /
-    // malformed / transient 5xx) clears on the next idle window
-    // without user action, so interrupting them with a toast
-    // would be noise. Same classifier (`extractErrorCode`) the
-    // chat ErrorCard uses, so the two surfaces agree on what
-    // counts as auth.
+    // Two failure surfaces, gated by trigger kind:
+    //
+    //   AUTH         — always surface. The OAuth token expired and
+    //                  no future pass can succeed until the user
+    //                  reconnects, regardless of how the pass was
+    //                  triggered.
+    //   Other errors — surface ONLY on manual triggers (opts.force).
+    //                  The user just clicked sync and expects feedback;
+    //                  staying silent looks like the click did nothing.
+    //                  For auto-trigger (23:59 fallback) we keep the
+    //                  silence — NETWORK / RATE_LIMIT / IDLE_TIMEOUT /
+    //                  SIDECAR_DIED / malformed all clear on the next
+    //                  idle window, so toasting them would be noise.
+    //
+    // Same AUTH classifier (`extractErrorCode`) the chat ErrorCard uses,
+    // so the two surfaces agree on what counts as auth.
     if (extractErrorCode(err) === 'AUTH') {
       notify.claudeSessionExpired({
         onReconnect: () => useConnectDialog.getState().setOpen(true),
       })
+    } else if (opts.force) {
+      notify.wikiSyncFailed()
     }
-    return 0
+    // Negative sentinel so manual callers can distinguish error
+    // from "0 proposals on success" — without it the WikiSection
+    // sidebar button would chain a misleading "Synced — nothing
+    // new today" toast right after the failure toast.
+    return -1
   }
   // Update the watermark unconditionally on a successful call —
   // even an empty proposal set means "we looked at this length and

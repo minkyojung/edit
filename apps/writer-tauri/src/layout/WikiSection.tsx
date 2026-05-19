@@ -87,7 +87,15 @@ export function WikiSection() {
     setSyncing(true)
     try {
       const proposals = await syncTodayManually()
+      // syncTodayManually return contract:
+      //   null  → no daily to target. Stay quiet.
+      //   < 0   → ingest pass errored. The internal toast (auth or
+      //           wikiSyncFailed) has already fired — skip our
+      //           success toast to avoid the "Sync failed" +
+      //           "Synced — nothing new" double-toast confusion.
+      //   ≥ 0   → success; report the count.
       if (proposals === null) return
+      if (proposals < 0) return
       notify.wikiSynced({ proposals })
     } catch (err) {
       console.warn('[wiki] manual sync failed', err)
