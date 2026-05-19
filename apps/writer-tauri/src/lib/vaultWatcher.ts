@@ -38,6 +38,7 @@ import { isOurRecentWrite } from './vault'
 import { isDirty } from './docFileSync'
 import { buildKnownDocForExternalPath } from './scanVault'
 import { useExternalConflictStore } from '@/state/externalConflictStore'
+import { notify } from './notify'
 
 let activeUnwatch: (() => void) | null = null
 
@@ -218,9 +219,30 @@ function handleExternalReload(rel: string): void {
     // Conflict: external version diverges from the live Y.Doc and
     // the local has unsaved edits. Auto-reloading would clobber the
     // local; auto-flushing would clobber the external. Mark and
-    // surface a banner so the user picks. flushDirty respects the
+    // surface a toast so the user picks. flushDirty respects the
     // conflict set and skips this slug until resolved.
-    useExternalConflictStore.getState().markConflict(slug)
+    const conflict = useExternalConflictStore.getState()
+    // markConflict is idempotent — already-marked slugs short-circuit
+    // and we skip the toast too. Otherwise a second fsevent in a
+    // burst (macOS sometimes coalesces rename + modify) would stack
+    // duplicate toasts on the same conflict.
+    if (conflict.hasConflict(slug)) return
+    conflict.markConflict(slug)
+    const known = state.knownDocs.find((d) => d.slug === slug)
+    const fileName = known?.title?.trim() || rel
+    notify.externalEditConflict({
+      fileName,
+      onReopen: () => {
+        // Reload first, then clear — auto-flush is still gated on
+        // the conflict set, so a tick can't race in between.
+        void state.reloadFromVault(slug).then(() => {
+          useExternalConflictStore.getState().resolveConflict(slug)
+        })
+      },
+      onDismiss: () => {
+        useExternalConflictStore.getState().resolveConflict(slug)
+      },
+    })
     return
   }
   void state.reloadFromVault(slug)

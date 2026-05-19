@@ -104,6 +104,32 @@ export const notify = {
     toast.error("Couldn't open link")
   },
 
+  // ── External-edit conflict ────────────────────────────────────
+  /** Vault watcher detected an external write to a doc that still
+   * has unsaved local edits. Persistent toast (no auto-dismiss) with
+   * two explicit resolutions — auto-flush stays gated on the conflict
+   * store until the user picks one. VSCode 's save-conflict prompt
+   * uses the same shape. */
+  externalEditConflict(args: {
+    fileName: string
+    onReopen: () => void
+    onDismiss: () => void
+  }) {
+    toast.warning(`외부에서 수정됨: ${args.fileName}`, {
+      description:
+        'Writer 안의 내용과 디스크 내용이 다릅니다. 둘 중 하나만 남길 수 있습니다.',
+      duration: Infinity,
+      action: {
+        label: '다시 불러오기',
+        onClick: args.onReopen,
+      },
+      cancel: {
+        label: '무시',
+        onClick: args.onDismiss,
+      },
+    })
+  },
+
   // ── Wiki sync ─────────────────────────────────────────────────
   /** Manual sync finished. Branches on whether anything new was
    * filed so the copy matches what actually changed — generic
