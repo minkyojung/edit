@@ -36,13 +36,29 @@ import type { KnownDoc } from '@/state/docsStore'
  * and external file moves.
  *
  * The mark data lives in `<stem>.ydoc` (Yjs binary); the `.meta.json`
- * sidecar carries only identity. Bumping `version` is the migration
- * lever — a future field addition reads as `undefined` on old files
- * and the migrate step rewrites with the new shape.
+ * sidecar carries only identity + lightweight LLM-context metadata.
+ * Bumping `version` is the migration lever — a future field addition
+ * reads as `undefined` on old files and the migrate step rewrites
+ * with the new shape.
+ *
+ * `aiSummary` / `aiImportance` feed the Tier 1 wiki index without
+ * forcing the index builder to LLM-summarise every page on every
+ * boot. They're populated by the ingest post-pass; a missing value
+ * falls back to the page's first non-empty body line at index time.
  */
 export interface DocMetaFile {
   version: 1
   slug: string
+  /** One-line LLM-generated summary used by the wiki index. ~80 chars.
+   * Absent on old sidecars and freshly-minted docs; the index builder
+   * falls back to the body's first non-empty line until ingest writes
+   * a real summary. */
+  aiSummary?: string
+  /** 0–100 score used to rank pages when the Tier 2 hot-context
+   * selector has to drop pages to stay under budget. Computed from
+   * backlink count + recency; not user-editable. Absent on old
+   * sidecars — treated as 0 (lowest priority) by the selector. */
+  aiImportance?: number
 }
 
 /** Lookup a doc by slug. Required by {@link pathForDoc} only for
