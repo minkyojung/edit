@@ -115,16 +115,16 @@ export const notify = {
     onReopen: () => void
     onDismiss: () => void
   }) {
-    toast.warning(`외부에서 수정됨: ${args.fileName}`, {
+    toast.warning(`${args.fileName} changed on disk`, {
       description:
-        'Writer 안의 내용과 디스크 내용이 다릅니다. 둘 중 하나만 남길 수 있습니다.',
+        'You have unsaved edits here. Reload to use the disk version, or keep yours and overwrite on the next save.',
       duration: Infinity,
       action: {
-        label: '다시 불러오기',
+        label: 'Reload from disk',
         onClick: args.onReopen,
       },
       cancel: {
-        label: '무시',
+        label: 'Keep mine',
         onClick: args.onDismiss,
       },
     })
