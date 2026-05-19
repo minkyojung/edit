@@ -115,9 +115,8 @@ export const notify = {
     onReopen: () => void
     onDismiss: () => void
   }) {
-    toast.warning(`${args.fileName} changed on disk`, {
-      description:
-        'You have unsaved edits here. Reload to use the disk version, or keep yours and overwrite on the next save.',
+    toast.warning(`External edit: ${args.fileName}`, {
+      description: 'You have unsaved changes.',
       duration: Infinity,
       action: {
         label: 'Reload from disk',
