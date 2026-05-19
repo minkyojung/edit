@@ -19,7 +19,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { FREE_CHAT_PROMPT } from './skills/freeChat'
 import { applyProposal, type ApplyOutcome } from './applyProposal'
 import type { Proposal } from './proposals'
-import { readWikiContext } from '@/state/wikiService'
+import { assembleContext } from '@/agent/contextPipeline'
 import { getActiveVaultPath } from '@/state/settingsStore'
 
 // Sentinel string the Claude Agent SDK uses to split a multi-block
@@ -265,7 +265,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     systemPrompt,
     model = DEFAULT_MODEL,
     effort: effortOverride,
-    relayTools = ['propose_change'],
+    relayTools = ['propose_change', 'read_page', 'search_wiki'],
     appendDocument = true,
     signal,
     onTextDelta,
@@ -285,41 +285,42 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
   const docForPrompt = docText.length > DOC_CHAR_CAP ? docText.slice(0, DOC_CHAR_CAP) : docText
   const systemBody = systemPrompt ?? FREE_CHAT_PROMPT
+  const prompt = promptOverride ?? buildPrompt(history ?? [])
 
-  // Read the user's wiki context (belief + entity + episode) so it
-  // can be prepended to the system prompt as the cacheable prefix.
-  // Empty when no wiki page has content yet — assembly handles that
-  // cleanly. Read errors collapse to '' (proof-server unreachable)
-  // so a chat is never blocked on the wiki round-trip.
-  const wikiContext = await readWikiContext()
+  // Tier 1/2 + conventions via the assembleContext facade. Pass both
+  // the user message and the current doc body so wikilinks in either
+  // surface trigger hot-page inclusion. Failures upstream collapse to
+  // empty fields — chat never blocks on the context round-trip.
+  const ctx = await assembleContext({
+    text: prompt,
+    docBody: docForPrompt,
+  })
 
-  // System prompt assembly — the SDK accepts either a single string
-  // or string[] with a boundary marker. We prefer the array form
-  // when there's a meaningful split between cacheable prefix
-  // (wiki context, role) and dynamic suffix (current document text).
-  // No wiki + no document → fall back to a single string.
+  // Anchor ordering by cache stability:
+  //   prefix (stable):   conventions → index → hotPages → systemBody
+  //   suffix (dynamic):  document
+  // conventions/index move only when wiki pages change; hotPages
+  // follow the [[link]] set in a thread which is stable across
+  // consecutive turns. The document changes every keystroke so we
+  // pin it after the SDK's cache boundary.
+  const prefix: string[] = []
+  if (ctx.conventions) prefix.push(ctx.conventions)
+  if (ctx.index) prefix.push(`--- WIKI INDEX ---\n${ctx.index}`)
+  for (const page of ctx.hotPages) {
+    prefix.push(`--- WIKI PAGE: ${page.title} ---\n${page.body}`)
+  }
+  prefix.push(systemBody)
+
   let system: string | string[]
-  if (wikiContext && appendDocument) {
-    system = [
-      wikiContext,
-      systemBody,
-      SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
-      `--- DOCUMENT ---\n${docForPrompt}`,
-    ]
-  } else if (wikiContext) {
-    // Wiki context but no document (slash commands that bake doc into the body).
-    system = [wikiContext, systemBody]
-  } else if (appendDocument) {
-    // No wiki content yet, but document follows the role prompt.
-    system = [
-      systemBody,
-      SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
-      `--- DOCUMENT ---\n${docForPrompt}`,
-    ]
+  if (appendDocument) {
+    system = [...prefix, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, `--- DOCUMENT ---\n${docForPrompt}`]
+  } else if (prefix.length > 1) {
+    // prefix always contains systemBody; >1 means at least one
+    // context section actually fired.
+    system = prefix
   } else {
     system = systemBody
   }
-  const prompt = promptOverride ?? buildPrompt(history ?? [])
   const runId = crypto.randomUUID()
 
   // Internal controller is the single source of abort — it bridges the
