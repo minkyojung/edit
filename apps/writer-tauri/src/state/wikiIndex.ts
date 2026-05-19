@@ -28,7 +28,7 @@ import { isEffectivelyEmpty } from '@/lib/markdownText'
 import { ensureIndexWikiSlug, readWikiMarkdown } from './wikiService'
 import {
   metaPathForDoc,
-  pathForDoc,
+  pathForDoc as computePathForDoc,
   type DocMetaFile,
 } from '@/lib/docPaths'
 import {
@@ -158,19 +158,26 @@ function truncate(text: string, max: number): string {
  * page. Replaces the prior LLM-edited `wiki:index` body with a fresh,
  * deterministic snapshot.
  *
- * Line format: `- [<slug>] <title> — <summary> | linked: <N>`
+ * Line format: `- <path> — <title>: <summary> | links: <N>`
+ *
+ * The path comes first because that's what the LLM needs to feed
+ * back into the `read_page` / `search_wiki` tools. Title + summary
+ * follow for human-readable scanning. Slug is no longer surfaced —
+ * the path serves as both the identifier (Karpathy-style: "the
+ * filesystem IS the addressing scheme") and the disk reference.
  *
  * Source preference for each column:
+ *   - path   : pathForDoc(doc) → e.g. `wiki/Sarah Kim.md`
  *   - title  : `KnownDoc.title` (Bear/Obsidian first-body-line)
  *   - summary: `sidecar.aiSummary` (populated by Phase A5 ingest hook)
  *              → fallback to the body's first content line after the
  *                title (see {@link bodyExcerpt})
  *              → fallback to `(empty)` placeholder so the LLM still
  *                sees that the page exists
- *   - linked : backlink count from {@link countBacklinks}
+ *   - links  : backlink count from {@link countBacklinks}
  *
- * Pure side-effect-free aside from sidecar reads. The memory-cache
- * layer + disk persistence land in the next sub-step. */
+ * Pages without a resolvable path (shouldn't happen for non-archived
+ * wiki entries, but defensive) are skipped silently. */
 export async function buildWikiIndex(): Promise<string> {
   const catalog = useDocsStore.getState().knownDocs
   const wikiPages = catalog.filter(
@@ -187,7 +194,11 @@ export async function buildWikiIndex(): Promise<string> {
 
   const counts = countBacklinks(catalog, (slug) => bodies[slug])
 
-  const lines = wikiPages.map((doc, i) => {
+  const lines: string[] = []
+  for (let i = 0; i < wikiPages.length; i++) {
+    const doc = wikiPages[i]
+    const path = computePathForDoc(doc)
+    if (!path) continue
     const sidecar = sidecars[i]
     const body = bodies[doc.slug] ?? ''
     const summary =
@@ -196,9 +207,10 @@ export async function buildWikiIndex(): Promise<string> {
       EMPTY_PLACEHOLDER
     const title = (doc.title ?? '').trim() || 'Untitled'
     const linked = counts.get(doc.slug) ?? 0
-    return `- [${doc.slug}] ${title} — ${truncate(summary, SUMMARY_MAX_LEN)} | linked: ${linked}`
-  })
-
+    lines.push(
+      `- ${path} — ${title}: ${truncate(summary, SUMMARY_MAX_LEN)} | links: ${linked}`,
+    )
+  }
   return lines.join('\n')
 }
 
@@ -300,7 +312,7 @@ async function persistWikiIndexNow(): Promise<void> {
     if (!indexDoc) return // ensure failed; bail and let next tick retry
   }
 
-  const path = pathForDoc(indexDoc)
+  const path = computePathForDoc(indexDoc)
   if (!path) return
 
   const content = await getWikiIndex()
