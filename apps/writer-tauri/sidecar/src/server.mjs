@@ -1,3 +1,5 @@
+import { readFile, readdir } from 'node:fs/promises'
+import { normalize, resolve as resolvePath } from 'node:path'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import {
@@ -13,9 +15,75 @@ import {
   NO_TOKEN,
 } from './jsonrpc.mjs'
 
+/** Subfolders the LLM is allowed to read via `read_page` / `search_wiki`.
+ * Excludes `daily/` and `threads/` — those are user-authored sources, not
+ * wiki content the LLM should be looking up. Excludes nothing inside
+ * `_system/` either, since system pages (conventions / log / index) are
+ * legitimate context for the LLM's routing decisions. */
+const READABLE_PREFIXES = ['wiki/', '_system/']
+
+/** Validate a vault-relative path the model passed in. Returns the
+ * normalised relative path on success or null when the path would
+ * escape the allowed subfolders. We don't trust the model not to try
+ * `../etc/passwd`; the gate here is the only safety net before we
+ * hand the path to `readFile`. */
+function validateVaultRelPath(rawPath) {
+  const trimmed = String(rawPath ?? '').trim()
+  if (!trimmed) return null
+  // Reject absolute paths and any segment that climbs out.
+  if (trimmed.startsWith('/') || trimmed.includes('\\')) return null
+  const normalised = normalize(trimmed)
+  if (normalised.startsWith('..') || normalised.includes('/../')) return null
+  if (!READABLE_PREFIXES.some((p) => normalised.startsWith(p))) return null
+  return normalised
+}
+
 // Relay tools: defined here, but every invocation reports back to the host
 // (frontend) via a notification rather than performing the action itself.
 // The frontend (which owns the editor / UI) does the real work.
+
+// `read_page` is the Karpathy-style "structured discovery" primitive —
+// the model reads the Tier 1 catalog (shipped in the system prompt),
+// picks the page it wants in full, and calls this tool with the path.
+// Unlike the relay tools above, the handler IS the data source: it
+// reads markdown from the user's vault directly. No frontend round-
+// trip. This is the standard Claude SDK pattern — async tool
+// handlers return content the model continues with on the next turn.
+//
+// Security: the path must be vault-relative under `wiki/` or `_system/`.
+// Anything else (absolute paths, `..`, daily notes) is rejected with
+// an error string so the model can route differently.
+function buildReadPageTool(vaultPath) {
+  return tool(
+    'read_page',
+    'Read the full markdown body of a wiki or system page from the user\'s vault. Pass a vault-relative path beginning with "wiki/" or "_system/" (e.g., "wiki/Sarah Kim.md"). The catalog in the system prompt lists every page\'s path. Use this when the catalog alone is not enough and you need the page in full to answer or to verify a claim.',
+    { path: z.string() },
+    async (args) => {
+      const rel = validateVaultRelPath(args.path)
+      if (!rel) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `(error: path "${args.path}" is not readable — must be vault-relative under wiki/ or _system/)`,
+            },
+          ],
+        }
+      }
+      try {
+        const abs = resolvePath(vaultPath, rel)
+        const body = await readFile(abs, 'utf-8')
+        return { content: [{ type: 'text', text: body }] }
+      } catch (err) {
+        return {
+          content: [
+            { type: 'text', text: `(error reading ${rel}: ${err?.message ?? err})` },
+          ],
+        }
+      }
+    },
+  )
+}
 
 function buildProposeChangeTool(runId, emit) {
   return tool(
@@ -273,6 +341,7 @@ export class Server {
       model,
       systemPrompt,
       relayTools,
+      vaultPath,
       permissionMode = 'bypassPermissions',
       effort,
       sessionId,
@@ -327,6 +396,14 @@ export class Server {
         relayDefs.push(buildProposeChangeTool(runId, this.emit))
       } else if (name === 'submit_ingest_result') {
         relayDefs.push(buildSubmitIngestResultTool(runId, this.emit))
+      } else if (name === 'read_page') {
+        if (!vaultPath) {
+          console.warn(
+            `[sidecar] read_page requested but vaultPath not provided; skipping (runId=${runId})`,
+          )
+          continue
+        }
+        relayDefs.push(buildReadPageTool(vaultPath))
       }
     }
     if (relayDefs.length > 0) {

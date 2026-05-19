@@ -20,6 +20,7 @@ import { FREE_CHAT_PROMPT } from './skills/freeChat'
 import { applyProposal, type ApplyOutcome } from './applyProposal'
 import type { Proposal } from './proposals'
 import { readWikiContext } from '@/state/wikiService'
+import { getActiveVaultPath } from '@/state/settingsStore'
 
 // Sentinel string the Claude Agent SDK uses to split a multi-block
 // system prompt into a cacheable static prefix vs a session-specific
@@ -645,6 +646,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         systemPrompt: system,
         prompt,
         relayTools,
+        // Forwarded so sidecar's read_page / search_wiki handlers can
+        // resolve vault-relative paths against the user's chosen folder.
+        // Undefined when no vault selected — the sidecar then skips
+        // registering filesystem tools (warns once).
+        vaultPath: getActiveVaultPath() ?? undefined,
         effort,
         sessionId: isResume ? undefined : threadId,
         resume: isResume ? threadId : undefined,

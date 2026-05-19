@@ -28,6 +28,7 @@ import {
   ensureConventionsWikiSlug,
 } from '@/state/wikiService'
 import { getWikiIndex } from '@/state/wikiIndex'
+import { getActiveVaultPath } from '@/state/settingsStore'
 const INGEST_MODEL = 'claude-haiku-4-5-20251001'
 
 /** A single proposed wiki edit. v1 = append-only (the LLM may not
@@ -619,6 +620,12 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
       // calls it exactly once with the full ingest result, which
       // we receive via the `ingest:result` event in awaitChatRun.
       relayTools: ['submit_ingest_result'],
+      // Plumb the vault path for future read_page / search_wiki tools.
+      // No effect today (those tools aren't in ingest's relayTools yet),
+      // but keeping the parameter consistent across consumers means we
+      // can opt into filesystem tools in a follow-up commit without
+      // touching every call site.
+      vaultPath: getActiveVaultPath() ?? undefined,
       effort: 'low',
       sessionId,
     },
