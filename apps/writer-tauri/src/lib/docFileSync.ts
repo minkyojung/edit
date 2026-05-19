@@ -472,7 +472,13 @@ export async function flushDirty(): Promise<void> {
       clearDirty(slug)
       if (known.type.startsWith('wiki:')) wikiTouched = true
     } catch (err) {
-      console.warn('[vault:flush] write failed for', slug, err)
+      // Error (not warn) — this is a data-durability failure path.
+      // The slug stays dirty so the next auto-flush tick retries,
+      // but at quit time the in-memory edits since the last
+      // successful flush would be lost. Bumping the level so it
+      // shows in red in the dev console and any future telemetry
+      // pipeline can filter on it.
+      console.error('[vault:flush] write failed for', slug, err)
       // Leave dirty so the next tick retries.
     }
   }
