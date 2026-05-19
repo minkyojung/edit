@@ -47,3 +47,18 @@ export function isEffectivelyEmpty(text: string): boolean {
 export function effectiveLength(text: string): number {
   return text.replace(EFFECTIVELY_EMPTY_RE, '').length
 }
+
+/** First line in `text` that contains anything beyond whitespace +
+ * zero-width chars, trimmed. Returns null when no such line exists.
+ *
+ * Used by the Tier 1 wiki index builder as a fallback summary when a
+ * page's sidecar `aiSummary` hasn't been generated yet. The index
+ * builder is the only caller today but the predicate is intentionally
+ * generic — any future "give me a one-line preview of this body"
+ * surface (search results, sidebar hover) can reuse it. */
+export function firstNonEmptyLine(text: string): string | null {
+  for (const line of text.split('\n')) {
+    if (!isEffectivelyEmpty(line)) return line.trim()
+  }
+  return null
+}

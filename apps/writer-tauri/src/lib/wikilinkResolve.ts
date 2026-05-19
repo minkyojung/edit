@@ -68,3 +68,23 @@ export function resolveWikilinksInMarkdown(md: string): string {
     return `[${trimmed}](${WIKILINK_HREF_PREFIX}${slug})`
   })
 }
+
+/** Extract every `[[Name]]` token from a markdown body and return
+ * their trimmed contents. Same regex as
+ * {@link resolveWikilinksInMarkdown} — single source of truth for
+ * what we consider a wikilink. Used by the wiki index builder to
+ * compute backlink counts without resolving anything.
+ *
+ * Empty / whitespace-only brackets are skipped so a stray `[[  ]]`
+ * doesn't inflate counts. Returns duplicates as duplicates: two
+ * separate `[[Sarah]]` in the same body count as two backlinks (each
+ * mention is its own reference to the target). */
+export function extractWikilinks(md: string): string[] {
+  const matches = md.matchAll(/\[\[([^\]\n]+)\]\]/g)
+  const out: string[] = []
+  for (const m of matches) {
+    const trimmed = m[1].trim()
+    if (trimmed.length > 0) out.push(trimmed)
+  }
+  return out
+}

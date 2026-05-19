@@ -296,7 +296,7 @@ export async function createCustomWikiPage(
  *
  * Returns '' for missing handles, empty bodies, or anything that
  * the shared isEffectivelyEmpty predicate considers blank. */
-function readWikiMarkdown(slug: string | null): string {
+export function readWikiMarkdown(slug: string | null): string {
   if (!slug) return ''
 
   const docs = useDocsStore.getState()
