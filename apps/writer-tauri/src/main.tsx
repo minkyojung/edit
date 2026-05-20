@@ -22,19 +22,6 @@ if (import.meta.env.DEV) {
   // can be exercised from the dev console while we tune the prompt.
   // Production builds skip this block entirely.
   void import('./agent/ingest')
-  // Same idea — registers window.__bootstrapIngest for verifying the
-  // first-run import pipeline before the BootstrapDialog Stage 2
-  // caller lands.
-  void import('./agent/bootstrapIngest')
-  // Registers window.__runImport so the file → bootstrapIngest path
-  // is exercisable from DevTools before Stage 2 wires it up.
-  void import('./agent/import/runImport')
-  // Registers window.__fetchUrlAsMarkdown for verifying the Profile
-  // URL fetch + RSS routing path before BootstrapDialog wires it up.
-  void import('./agent/profile/fetchUrl')
-  // Registers window.__extractProfile for the full URL → Profile
-  // pipeline (fetch → per-URL LLM → synthesis LLM → markdown).
-  void import('./agent/profile/extractProfile')
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

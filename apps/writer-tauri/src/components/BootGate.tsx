@@ -21,16 +21,10 @@
 // flag flips, so the user sees the app open as soon as their
 // today-anchor is ready — the rest streams in.
 //
-// First-launch BootstrapDialog: BootGate triggers the dialog by
-// calling settingsStore.openBootstrapDialog() once after bootstrap
-// completes (when bootstrapCompleted is still false). The actual
-// dialog mounts inside AppContent so the ProfileBanner regenerate
-// flow can re-open it later without remounting the entire app.
-
 import { useEffect, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocsStore } from '@/state/docsStore'
-import { getActiveVaultPath, useSettingsStore } from '@/state/settingsStore'
+import { getActiveVaultPath } from '@/state/settingsStore'
 import { pickVault } from '@/lib/vaultPicker'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
@@ -65,20 +59,6 @@ export function BootGate({ children }: Props) {
     }
     void init()
   }, [bootstrap])
-
-  // Once bootstrap finishes, trigger the first-launch BootstrapDialog
-  // exactly once when the user hasn't completed it yet. The dialog
-  // itself lives in AppContent (mounted alongside the editor) so the
-  // ProfileBanner regenerate action can re-open it mid-session
-  // without remounting the app.
-  useEffect(() => {
-    if (bootstrapping) return
-    const { bootstrapCompleted, bootstrapDialogOpen, openBootstrapDialog } =
-      useSettingsStore.getState()
-    if (!bootstrapCompleted && !bootstrapDialogOpen) {
-      openBootstrapDialog()
-    }
-  }, [bootstrapping])
 
   // Delay the visual loader by 400 ms so a fast bootstrap doesn't
   // produce a spinner flash.

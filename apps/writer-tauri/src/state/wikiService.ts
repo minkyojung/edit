@@ -199,10 +199,10 @@ export async function ensureIndexWikiSlug(): Promise<string | null> {
 }
 
 /** Ensure `wiki:profile` exists. The user's self-profile page —
- * created either by `extractProfile` (URL → LLM → markdown body)
- * during BootstrapDialog Stage 2, or lazily on first need if the
- * user skipped bootstrap. Body is empty until extractProfile (or
- * direct user editing) fills it. */
+ * populated by the onboarding pipeline (URL → adapters → analyzers
+ * → markdown body) or lazily on first need if the user skipped
+ * onboarding. Body is empty until the pipeline (or direct user
+ * editing) fills it. */
 export async function ensureProfileWikiSlug(): Promise<string | null> {
   return ensureSystemPage(SYSTEM_PAGE_PROFILE)
 }
