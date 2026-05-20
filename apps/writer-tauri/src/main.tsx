@@ -32,6 +32,9 @@ if (import.meta.env.DEV) {
   // Registers window.__fetchUrlAsMarkdown for verifying the Profile
   // URL fetch + RSS routing path before BootstrapDialog wires it up.
   void import('./agent/profile/fetchUrl')
+  // Registers window.__extractProfile for the full URL → Profile
+  // pipeline (fetch → per-URL LLM → synthesis LLM → markdown).
+  void import('./agent/profile/extractProfile')
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

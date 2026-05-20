@@ -16,8 +16,8 @@
 // the live wiki snapshot, not against a stale cached prefix.
 
 import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import * as Y from 'yjs'
+import { awaitChatRun } from '@/agent/chatRun'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
@@ -436,122 +436,9 @@ function sanitizeIngestResult(input: IngestToolInput): ParsedIngest {
   return { proposals, logEntry }
 }
 
-interface ChatRunOutcome {
-  /** Tool input from the model's `submit_ingest_result` call, or
-   * null when the model didn't call the tool. Null counts as a
-   * malformed pass: the LLM ignored the contract. */
-  toolInput: IngestToolInput | null
-  /** Any free-form assistant text. With the tool active the model
-   * shouldn't say much (a brief acknowledgment at most), but we
-   * still capture it for diagnostics when toolInput ends up null. */
-  text: string
-}
-
-/** Wait for one chat run to complete on the chat sidecar. With the
- * `submit_ingest_result` tool enabled, the model's structured
- * output arrives via an `ingest:result` notification (relayed
- * through Rust as a Tauri event); free-form text deltas still
- * stream on `claude:event` and we accumulate them for diagnostics.
- * Either branch is sufficient to call the run "settled" — we
- * resolve on `claude:done` with whatever we captured. */
-function awaitChatRun(runId: string): Promise<ChatRunOutcome> {
-  return new Promise<ChatRunOutcome>((resolve, reject) => {
-    let toolInput: IngestToolInput | null = null
-    let assistantText = ''
-    const unlistens: UnlistenFn[] = []
-    let settled = false
-
-    const cleanup = () => {
-      while (unlistens.length > 0) {
-        try {
-          unlistens.pop()?.()
-        } catch {
-          /* listener already detached */
-        }
-      }
-    }
-    const settleOk = () => {
-      if (settled) return
-      settled = true
-      cleanup()
-      resolve({ toolInput, text: assistantText })
-    }
-    const settleErr = (err: unknown) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(err)
-    }
-
-    Promise.all([
-      // The structured-output channel: sidecar relays the tool input
-      // here when the model calls submit_ingest_result. We expect
-      // at most one of these per run.
-      listen<{ runId: string; input: IngestToolInput }>(
-        'ingest:result',
-        (e) => {
-          if (e.payload.runId !== runId) return
-          toolInput = e.payload.input
-        },
-      ),
-      listen<{
-        runId: string
-        event: {
-          type?: string
-          event?: {
-            type?: string
-            delta?: { type?: string; text?: string }
-          }
-          message?: { content?: Array<{ type: string; text?: string }> }
-        }
-      }>('claude:event', (e) => {
-        if (e.payload.runId !== runId) return
-        const ev = e.payload.event
-        if (ev?.type === 'stream_event') {
-          const inner = ev.event
-          if (
-            inner?.type === 'content_block_delta' &&
-            inner.delta?.type === 'text_delta' &&
-            inner.delta.text
-          ) {
-            assistantText += inner.delta.text
-          }
-          return
-        }
-        if (ev?.type === 'assistant') {
-          const blocks = ev.message?.content ?? []
-          if (Array.isArray(blocks) && assistantText.length === 0) {
-            for (const b of blocks) {
-              if (b.type === 'text' && typeof b.text === 'string') {
-                assistantText += b.text
-              }
-            }
-          }
-        }
-      }),
-      listen<{ runId: string; stopReason: string | null }>(
-        'claude:done',
-        (e) => {
-          if (e.payload.runId !== runId) return
-          settleOk()
-        },
-      ),
-      listen<{ runId: string; code: string; message: string }>(
-        'claude:error',
-        (e) => {
-          if (e.payload.runId !== runId) return
-          settleErr(new Error(`${e.payload.code}: ${e.payload.message}`))
-        },
-      ),
-      listen<{ mode: string }>('sidecar:died', (e) => {
-        if (e.payload.mode !== 'chat') return
-        settleErr(new Error('SIDECAR_DIED: chat sidecar crashed'))
-      }),
-    ])
-      .then((registered) => unlistens.push(...registered))
-      .catch((err) => settleErr(err))
-  })
-}
+// awaitChatRun lives in @/agent/chatRun — generic over the structured-
+// output event name so the Profile bootstrap can reuse the same
+// listener choreography (its event is `profile:result`).
 
 /** Source-agnostic ingest core. Takes pre-filtered markdown plus a
  * display label and runs the wiki-context-aware LLM pass. No store
@@ -632,7 +519,7 @@ export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreRes
 
   const runId = crypto.randomUUID()
   const sessionId = crypto.randomUUID()
-  const finished = awaitChatRun(runId)
+  const finished = awaitChatRun<IngestToolInput>(runId, 'ingest:result')
   await invoke('claude_chat_start', {
     args: {
       runId,

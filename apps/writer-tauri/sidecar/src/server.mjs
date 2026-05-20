@@ -218,6 +218,38 @@ function buildProposeChangeTool(runId, emit) {
 // complete). The handler forwards the raw input to the host as an
 // `ingest/result` notification; ingest.ts assembles its IngestResult
 // from that payload directly.
+// `submit_profile` is the Profile-bootstrap counterpart to
+// submit_ingest_result. The Profile pipeline runs N per-URL Haiku
+// calls + 1 synthesis Sonnet call; every call uses this same tool
+// to emit a Profile-shaped payload, so the schema is shared. The
+// host distinguishes pass type by which event the run belongs to,
+// not by tool name.
+//
+// All array fields are optional / can be empty — a per-URL pass
+// may legitimately yield zero voice_samples for a thin source,
+// and the synthesis pass merges across sources to fill gaps.
+function buildSubmitProfileTool(runId, emit) {
+  return tool(
+    'submit_profile',
+    'Submit a structured profile extracted from one or more sources about the user. Use null for fields you cannot determine; use empty arrays for list fields with no entries. voice_samples must be verbatim quotes from the source text — do not paraphrase or invent. dispositions and values may be inferred from the writing but should be supported by something in the source. Call this exactly once per run.',
+    {
+      name: z.string().nullable(),
+      headline: z.string().nullable(),
+      location: z.string().nullable(),
+      roles: z.array(z.string()),
+      interests: z.array(z.string()),
+      voice_samples: z.array(z.string()),
+      values: z.array(z.string()),
+      dispositions: z.array(z.string()),
+      about: z.string(),
+    },
+    async (args) => {
+      emit(notification('profile/result', { runId, input: args }))
+      return { content: [{ type: 'text', text: 'Profile result recorded.' }] }
+    },
+  )
+}
+
 function buildSubmitIngestResultTool(runId, emit) {
   return tool(
     'submit_ingest_result',
@@ -498,6 +530,8 @@ export class Server {
         relayDefs.push(buildProposeChangeTool(runId, this.emit))
       } else if (name === 'submit_ingest_result') {
         relayDefs.push(buildSubmitIngestResultTool(runId, this.emit))
+      } else if (name === 'submit_profile') {
+        relayDefs.push(buildSubmitProfileTool(runId, this.emit))
       } else if (name === 'read_page') {
         if (!vaultPath) {
           console.warn(
