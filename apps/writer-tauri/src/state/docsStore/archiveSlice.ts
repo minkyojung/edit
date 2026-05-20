@@ -27,7 +27,7 @@
 
 import { notify } from '@/lib/notify'
 import { useChatRuns } from '@/stores/chatRuns'
-import { ensureNonEmptyTabStrip, isUserOwnedWiki, isWikiDoc } from './helpers'
+import { ensureNonEmptyTabStrip, getDocPolicy, isUserOwnedWiki, isWikiDoc } from './helpers'
 import type { DocsState, GetDocsState, KnownDoc, SetDocsState } from './types'
 
 export interface ArchiveSlice {
@@ -59,10 +59,14 @@ export const createArchiveSlice = (
     // Daily entries are time-axis spine, not user-authored docs.
     // Refuse so the sidebar/breadcrumb invariants stay intact.
     if (target.type === 'daily') return false
-    // Agent-managed wiki/system pages are protected from accidental
-    // wipe (Karpathy write-ownership invariant). User-spawned
-    // wiki:custom-* pages are the user's own writing surface, so
-    // they follow the regular ownership rule and can be archived.
+    // Policy-level gate. canArchive=false catches system pages AND
+    // wiki:profile (which IS user-owned for editing/banner purposes
+    // but must survive accidental archive — it's the user's clone
+    // memory, losing it = catastrophic).
+    if (!getDocPolicy(target).canArchive) return false
+    // Defense-in-depth (Karpathy write-ownership): agent-managed
+    // pages without user ownership are also blocked, even if a
+    // future policy row mis-sets canArchive.
     if (isWikiDoc(target) && !isUserOwnedWiki(target)) return false
     if (target.archivedAt) return false
 

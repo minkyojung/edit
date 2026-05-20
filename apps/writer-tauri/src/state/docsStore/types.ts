@@ -75,6 +75,7 @@ export type DocCategory =
   | 'daily'         // user-authored time-spine entry
   | 'writing'       // user-authored free note (may nest under daily / writing)
   | 'wiki-content'  // agent-created, user-editable wiki page (wiki:custom-*)
+  | 'wiki-profile'  // user self-profile — editable + ingest-updatable, non-archivable
   | 'system-meta'   // agent-managed config / metadata (system:conventions/log/index)
 
 /** Capability matrix for one doc category. Every caller that used

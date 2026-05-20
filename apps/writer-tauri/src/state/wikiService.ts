@@ -113,6 +113,17 @@ const SYSTEM_PAGE_INDEX: SystemPageConfig = {
   title: 'index',
   initialBody: '',
 }
+// wiki:profile uses the SAME lazy-create helper despite the `wiki:`
+// prefix instead of `system:` — the only thing the helper cares
+// about is the type id + initial body. Profile body is populated
+// by extractProfile after URL ingest, so initial body stays empty;
+// users opening the page before bootstrap completes see a blank
+// editable doc, same as a freshly-minted custom wiki page.
+const SYSTEM_PAGE_PROFILE: SystemPageConfig = {
+  type: 'wiki:profile',
+  title: 'Profile',
+  initialBody: '',
+}
 
 /** Shared body for the three lazy-create helpers below. Probes the
  * catalog, then on first-need mints a client-side slug. Empty body
@@ -185,6 +196,15 @@ export async function ensureConventionsWikiSlug(): Promise<string | null> {
  * invalidation overwrites them). */
 export async function ensureIndexWikiSlug(): Promise<string | null> {
   return ensureSystemPage(SYSTEM_PAGE_INDEX)
+}
+
+/** Ensure `wiki:profile` exists. The user's self-profile page —
+ * created either by `extractProfile` (URL → LLM → markdown body)
+ * during BootstrapDialog Stage 2, or lazily on first need if the
+ * user skipped bootstrap. Body is empty until extractProfile (or
+ * direct user editing) fills it. */
+export async function ensureProfileWikiSlug(): Promise<string | null> {
+  return ensureSystemPage(SYSTEM_PAGE_PROFILE)
 }
 
 /** Read the user's conventions page body. Returns '' when the page

@@ -53,6 +53,18 @@ const WIKI_CONTENT_POLICY: DocPolicy = {
   isIngestSource: false,
   isAgentManaged: true,
 }
+const WIKI_PROFILE_POLICY: DocPolicy = {
+  // User self-profile (`wiki:profile`). Behaves like wiki-content for
+  // banner / editing / sidebar placement, but `canArchive: false` and
+  // `isIngestSource: false` so the user can't accidentally wipe it
+  // and we never re-ingest the profile back into itself.
+  category: 'wiki-profile',
+  sidebarGroup: 'wiki',
+  canArchive: false,
+  canBeMovedInWikiTree: false,
+  isIngestSource: false,
+  isAgentManaged: true,
+}
 const SYSTEM_META_POLICY: DocPolicy = {
   category: 'system-meta',
   sidebarGroup: 'system',
@@ -70,6 +82,7 @@ const SYSTEM_META_POLICY: DocPolicy = {
 export function getDocPolicy(doc: Pick<KnownDoc, 'type'>): DocPolicy {
   if (doc.type === 'daily') return DAILY_POLICY
   if (doc.type === 'writing') return WRITING_POLICY
+  if (doc.type === 'wiki:profile') return WIKI_PROFILE_POLICY
   if (doc.type.startsWith('system:')) return SYSTEM_META_POLICY
   if (doc.type.startsWith('wiki:')) return WIKI_CONTENT_POLICY
   return WIKI_CONTENT_POLICY
@@ -85,10 +98,14 @@ export function isWikiDoc(doc: Pick<KnownDoc, 'type'>): boolean {
 }
 
 /** Karpathy write-ownership invariant: whoever wrote the page may
- * delete it. Thin wrapper around the policy table — `canArchive`
- * is true exactly for the category the user can wipe. */
+ * edit it. Returns true for pages the user can directly edit AND
+ * that receive `WikiPageBanner` proposals (wiki:custom-* content
+ * + the wiki:profile self-page). `canArchive` is the orthogonal
+ * "may wipe" gate — profile inherits this true-for-edit / false-
+ * for-archive shape. */
 export function isUserOwnedWiki(doc: Pick<KnownDoc, 'type'>): boolean {
-  return getDocPolicy(doc).category === 'wiki-content'
+  const cat = getDocPolicy(doc).category
+  return cat === 'wiki-content' || cat === 'wiki-profile'
 }
 
 // ── Vault path lookup ──────────────────────────────────────────────
