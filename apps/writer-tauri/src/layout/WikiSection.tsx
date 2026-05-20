@@ -69,13 +69,18 @@ export function WikiSection() {
   // order (zustand persist preserves array order); no sort applied
   // so the most recent creations land at the bottom and the user's
   // older pages stay where they were.
-  const wikiDocs = useMemo(
-    () =>
-      knownDocs.filter(
-        (d) => !d.archivedAt && getDocPolicy(d).sidebarGroup === 'wiki',
-      ),
-    [knownDocs],
-  )
+  //
+  // Profile is pinned to the top of the wiki group regardless of
+  // insertion order — it's the canonical "about me" page, surfaced
+  // first for discoverability (Tana / Notion convention).
+  const { profileDoc, otherWikiDocs } = useMemo(() => {
+    const wiki = knownDocs.filter(
+      (d) => !d.archivedAt && getDocPolicy(d).sidebarGroup === 'wiki',
+    )
+    const profile = wiki.find((d) => d.type === 'wiki:profile') ?? null
+    const others = wiki.filter((d) => d.type !== 'wiki:profile')
+    return { profileDoc: profile, otherWikiDocs: others }
+  }, [knownDocs])
 
   const ensureNotesRoute = () => {
     if (!pathname.startsWith('/notes')) navigate('/notes')
@@ -159,7 +164,22 @@ export function WikiSection() {
         </SidebarGroupAction>
         <SidebarGroupContent>
           <SidebarMenu>
-            {wikiDocs.map((doc) => (
+            {profileDoc && (
+              <SidebarMenuItem
+                key={profileDoc.slug}
+                data-slug={profileDoc.slug}
+              >
+                {/* Profile uses SystemRow shape — no archive context
+                    menu, since canArchive=false at the policy level
+                    anyway. Pinned at the top of the wiki group. */}
+                <SystemRow
+                  doc={profileDoc}
+                  isActive={profileDoc.slug === activeSlug}
+                  onSelect={() => onSelectDoc(profileDoc.slug)}
+                />
+              </SidebarMenuItem>
+            )}
+            {otherWikiDocs.map((doc) => (
               <SidebarMenuItem key={doc.slug} data-slug={doc.slug}>
                 <WikiRow
                   doc={doc}

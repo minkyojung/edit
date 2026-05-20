@@ -23,7 +23,7 @@ import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
 import { isEffectivelyEmpty } from '@/lib/markdownText'
 import { pickNewBlocks } from '@/lib/blockHash'
-import { ensureConventionsWikiSlug } from '@/state/wikiService'
+import { ensureConventionsWikiSlug, ensureProfileWikiSlug } from '@/state/wikiService'
 import { assembleContext } from '@/agent/contextPipeline'
 import type { WikiPageBody } from '@/agent/contextSelector'
 import {
@@ -152,6 +152,12 @@ Only propose facts that meaningfully add to or change wiki state. Skip:
 
 When in doubt, omit. A clean empty pass is better than noise.
 
+## Routing self-facts to wiki:profile
+
+The INDEX includes \`[wiki:profile]\` — the user's own profile page (the person described in the SELF PROFILE block above). Route facts about the USER themselves there: career or role changes, location moves, new interests they're committing to, stable beliefs about themselves. Casual self-reports stay out per the "What to propose" filter above; mentions of other people go to those people's pages, not the profile.
+
+\`entity\` for a wiki:profile proposal is what the update is about (e.g. \`Career\`, \`Move to Seoul\`, \`Reading goals\`). The host appends it as \`### {entity}\` like any other page.
+
 ## Invariants (do not violate)
 
 - APPEND ONLY. Never propose modifying or deleting existing lines.
@@ -175,9 +181,10 @@ When done, call the \`submit_ingest_result\` tool **exactly once** with the stru
 {
   "proposals": [
     { "target": "wiki:custom-7ntdvj41", "entity": "Sarah", "bullets": ["Now reports directly to me"], "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
+    { "target": "wiki:profile", "entity": "Career", "bullets": ["Joined Acme as Senior Engineer (Apr 2026)"], "sourceQuote": "Started at Acme today as a senior engineer.", "rationale": "user's career change — updates the profile" },
     { "suggestNewPage": "The Pragmatic Programmer", "entity": "The Pragmatic Programmer", "bullets": ["Software craftsmanship", "Started reading this week"], "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "new entity not in INDEX yet" }
   ],
-  "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; created The Pragmatic Programmer page"
+  "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; logged new role on profile; created The Pragmatic Programmer page"
 }
 
 If you found nothing worth filing, still call the tool — pass an empty array for proposals AND pass \`null\` (not a string) for logEntry. The host suppresses empty passes entirely so they don't pile up in wiki:log. A pass without a tool call is treated as malformed and discarded.
@@ -495,6 +502,11 @@ export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreRes
   // later. Failures degrade gracefully — empty conventions means
   // the static rules take over alone.
   await ensureConventionsWikiSlug()
+  // Same lazy-seed for the self-profile page. Guarantees `wiki:profile`
+  // shows up in the INDEX so the model can route self-facts there
+  // even for users who skipped the URL bootstrap — the page just
+  // starts empty and fills from daily activity instead.
+  await ensureProfileWikiSlug()
   // Run wiki context assembly and chat compaction in parallel —
   // they read independent state and the chat side may include
   // several LLM calls for stale threads, so paying once is much
