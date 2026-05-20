@@ -18,6 +18,7 @@ import {
   PROFILE_SYSTEM_PREAMBLE,
   type ProfileSectionKey,
 } from './conventions'
+import { hasAnySources, readAllSources, saveSources } from './sources'
 import { useDocsStore } from '@/state/docsStore'
 import { ensureProfileWikiSlug } from '@/state/wikiService'
 
@@ -66,7 +67,7 @@ export async function runProfilePipeline(
   onProgress: (p: PipelineProgress) => void,
 ): Promise<PipelineResult> {
   onProgress({ kind: 'discovering' })
-  const { adapter, documents } = await discoverAndFetch(inputUrl)
+  const { adapter, documents } = await loadOrFetchSources(inputUrl)
   if (documents.length === 0) {
     onProgress({ kind: 'no_documents' })
     return { ok: false, reason: 'no_documents' }
@@ -95,6 +96,35 @@ export async function runProfilePipeline(
   }
   onProgress({ kind: 'done', slug })
   return { ok: true, slug }
+}
+
+/** Prefer disk over network. If the vault already has persisted
+ * sources from a previous run, reuse them — avoids re-fetching and
+ * re-burning bandwidth + the user's Claude Code budget on subsequent
+ * regenerations. Falls back to a live fetch when the cache is empty
+ * (first run, or vault explicitly cleared by the user). */
+async function loadOrFetchSources(
+  inputUrl: string,
+): Promise<{ adapter: string; documents: Document[] }> {
+  if (await hasAnySources()) {
+    const cached = await readAllSources()
+    if (cached.length > 0) {
+      console.log('[profile] using cached sources', { count: cached.length })
+      return { adapter: 'cache', documents: cached }
+    }
+  }
+
+  const { adapter, documents } = await discoverAndFetch(inputUrl)
+  if (documents.length > 0) {
+    try {
+      await saveSources(documents, adapter, inputUrl)
+    } catch (err) {
+      // Persistence failure isn't fatal — the pipeline can still
+      // run from the in-memory documents. Next run will just refetch.
+      console.warn('[profile] saveSources failed', err)
+    }
+  }
+  return { adapter, documents }
 }
 
 async function generateSection(
