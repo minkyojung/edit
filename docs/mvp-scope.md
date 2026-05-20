@@ -343,3 +343,54 @@ ChatPanel.tsx **1058 → 534 라인** (≈50% 감소). LEGO-block 구조로 재�
 - [ ] DMG 빌드 + 코드 사이닝 + 공증 (7번 후속)
 - [ ] 베타 5–10 명 onboarding 메시지 + 채널
 - [ ] 첫 주 모니터링 후 🟡 핫픽스
+
+---
+
+## 🚀 v0.0.1 Release (2026-05-19 시작)
+
+위 Phase 0~4 로드맵 대신, **5 개 theme 으로 재구조화** 한 출시 계획. 사용자
+결정 — Reliability + 데이터 안전 + Memory Bootstrap 을 우선, 나머지는 narrow
+한 surface 만.
+
+세부 실행 계획: `/Users/williamjung/.claude/plans/async-imagining-book.md`
+
+### 진행 상황
+
+| Theme | 작업 | 상태 |
+|---|---|---|
+| Theme 1 — Reliability 기반 | silent failure 토스트화, CSP, quit flush, vault write surface, build target 좁히기 등 7 items | ✅ 완료 (2026-05-19) |
+| Theme 2 — External edit 보호 | vault watcher → 충돌 토스트 (Reload from disk / Keep mine) | ✅ 완료 (2026-05-19) |
+| Theme 3 — Memory Bootstrap | BootstrapDialog + Import 파이프라인 + bootstrapIngest 엔진 | 🟡 부분 완료 (B1+B2+B3 land, B4/B5/B6 보류) |
+| Theme 4 — First-User Polish | Claude Connect 버튼 surface, vault picker UX, empty-state 가이드 | ⬜ 대기 |
+| Theme 5 — Pre-Ship Hygiene | E2E 5 시나리오, 릴리즈 노트, DMG 빌드, 마지막 typecheck/test | ⬜ 대기 |
+
+### Theme 3 — Memory Bootstrap 세부
+
+Interview + Import + URL 하이브리드. 세 source 모두 같은 출구
+(`ingestStore.enqueue`) 로 수렴해 기존 banner accept UX 재사용.
+
+| Sub-phase | 작업 | 상태 |
+|---|---|---|
+| B1 | BootstrapDialog shell + Stepper + `settingsStore.bootstrapCompleted` | ✅ `a2fd5055` |
+| B2 | Import 파이프라인 (parseImport + runImport + Stage 2 wire + 완료 토스트) | ✅ `55f678a8` / `2524b277` / `1f28ed60` |
+| B3 | `bootstrapIngest()` — runIngest 의 source-agnostic 형제 | ✅ `1a649597` / `27cbf9dd` |
+| B4 | URL fetch via sidecar (`fetch_url` MCP tool) | ⬜ dogfood gate 통과 시 |
+| B5 | Adaptive Interview skill | ⬜ dogfood gate 통과 시 |
+| B6 | Re-entry — Command Palette + Cmd+Shift+B | ⬜ |
+
+**1 차 슬라이스 (B1+B3+B2) e2e 검증 결과 (2026-05-20)**:
+- Dialog → Import 체크 → Next → OS 파일 picker → 1 파일 선택
+- 토스트 등장: "Imported 1 file — No new facts to extract"
+- bootstrapIngest 파이프라인 모든 단계 동작, 0-proposal 분기도 사용자에게 surface 됨
+- LLM 의 "fact 없음" 판단 = C'.5 의 노이즈 가이드 깐깐하게 작동한 정상 동작
+
+### Theme 3 — Dogfood Gate (1 주)
+
+B4/B5/B6 보류 중. 본인이 fact-rich 한 파일로 1 주 사용 후 게이트 판단:
+
+1. proposal 50% 이상이 의미 있는가?
+2. accept 후 wiki 가 chat 답변에 자연스럽게 인용되는가?
+3. 다시 한다면 같은 흐름을 쓸 것 같은가?
+
+3 개 다 yes → B4 진행. 하나라도 no → 그 자리에서 멈추고 진단 (system prompt
+재튜닝 / surface 보강 / 다른 source 방식 등).
