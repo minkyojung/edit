@@ -1,9 +1,15 @@
 # ADR: Bootstrap import 파이프라인 — source-agnostic core + 입구별 wrapper
 
 작성: 2026-05-20
-상태: **Accepted (B1+B2+B3 land, dogfood gate 입장)**
+상태: **Superseded by `2026-05-20-profile-pipeline-rebuild.md` (2026-05-20 same-day rewrite)**
 관련: `2026-05-08-wiki-ingest-system.md`, `2026-05-13-wiki-ingest-banner-inbox.md`
 참고: `/Users/williamjung/.claude/plans/async-imagining-book.md` (Theme 3 — 1차 슬라이스 실행 계획)
+
+> **2026-05-20 supersession note**: 이 ADR 의 모든 land 항목 (BootstrapDialog
+> Stage 2, `runImport`, `bootstrapIngest`, `parseImport`, `extractProfile`)
+> 은 같은 날 오후 전부 삭제되고 새 profile 파이프라인 (Source 어댑터 + LLM
+> 섹션 호출 + zone 분리 wiki:profile) 로 대체됨. 사유와 새 설계는 후속
+> ADR 참고. 이 문서는 history 로 남김.
 
 ---
 
