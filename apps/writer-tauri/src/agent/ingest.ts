@@ -561,7 +561,7 @@ function awaitChatRun(runId: string): Promise<ChatRunOutcome> {
  *
  * Returned shape mirrors `IngestResult` minus `ingestedHashes`,
  * which is daily-only state (bootstrap doesn't dedup by hash). */
-interface IngestCoreArgs {
+export interface IngestCoreArgs {
   /** Already-filtered text to feed the model. For daily this is the
    * concatenated body of new blocks; for bootstrap it's a raw chunk
    * straight from the source file / URL. */
@@ -580,14 +580,14 @@ interface IngestCoreArgs {
   ydoc: Y.Doc | null
 }
 
-interface IngestCoreResult {
+export interface IngestCoreResult {
   proposals: IngestProposal[]
   logEntry: string | null
   raw: string
   malformed: boolean
 }
 
-async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreResult> {
+export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreResult> {
   const { text, sourceLabel, sinceTs, ydoc } = args
 
   // Seed the conventions page on first need so the user has

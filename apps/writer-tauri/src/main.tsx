@@ -22,6 +22,10 @@ if (import.meta.env.DEV) {
   // can be exercised from the dev console while we tune the prompt.
   // Production builds skip this block entirely.
   void import('./agent/ingest')
+  // Same idea — registers window.__bootstrapIngest for verifying the
+  // first-run import pipeline before the BootstrapDialog Stage 2
+  // caller lands.
+  void import('./agent/bootstrapIngest')
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
