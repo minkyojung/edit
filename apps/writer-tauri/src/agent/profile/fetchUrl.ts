@@ -148,37 +148,41 @@ async function tryFetchAsRss(feedUrl: string): Promise<FetchedSource | null> {
 }
 
 /** Parse RSS 2.0 or Atom XML into our FetchedSource shape using
- * the browser-native DOMParser. Handles both:
+ * the browser-native DOMParser in `text/html` mode. Handles both:
  *
  *   <rss><channel><item>...</item></channel></rss>     (RSS 2.0)
  *   <feed><entry>...</entry></feed>                    (Atom 1.0)
  *
- * Plus Substack/Medium's `content:encoded` namespace. The XML
- * namespace prefix shows up as a literal tag name in the DOM tree
- * because DOMParser parses namespaces but querySelector with
- * escaped colons matches them. */
+ * Why HTML mode instead of XML mode: WebKit's `text/xml` parser is
+ * strict, and real-world feeds (Substack, Medium, most WordPress
+ * sites) routinely contain CDATA-wrapped HTML, namespaced tags
+ * (`dc:creator`, `content:encoded`), and unescaped `&` characters
+ * in URLs — all of which are fine for RSS readers but trip strict
+ * XML. Industry-standard RSS clients (Feedly, NetNewsWire) all use
+ * lenient HTML parsers for this reason. HTML5 lowercases tag names,
+ * but our selectors compare case-insensitively so `pubDate` /
+ * `lastBuildDate` etc. still match. Namespaced prefixes (`dc:`,
+ * `content:`) stay as literal tag names — we escape the colon in
+ * the selector. */
 function parseRssBody(finalUrl: string, body: string): FetchedSource | null {
   try {
-    const doc = new DOMParser().parseFromString(body, 'text/xml')
-    const parseError = doc.querySelector('parsererror')
-    if (parseError) {
-      console.warn('[profile:fetch] RSS XML parse error', {
+    const doc = new DOMParser().parseFromString(body, 'text/html')
+    // The HTML parser doesn't surface XML errors at all — it just
+    // accepts whatever it's given. We instead probe for the canonical
+    // RSS / Atom root tags; their absence means we got something
+    // that isn't a feed at all (challenge page, error HTML, etc.).
+    const rssRoot = doc.querySelector('rss, feed')
+    if (!rssRoot) {
+      console.warn('[profile:fetch] RSS root tag not found', {
         finalUrl,
-        parseErrorMsg: parseError.textContent?.slice(0, 200),
-        // Surface the actual response body so we can tell whether
-        // the host returned an HTML challenge page (Cloudflare bot
-        // protection, login wall) instead of the RSS feed we asked
-        // for. Without this the parse error is a black box.
         bodyStartsWith: body.slice(0, 500),
       })
       return null
     }
-
-    // RSS 2.0 first, fall back to Atom.
-    const isAtom = doc.documentElement.localName.toLowerCase() === 'feed'
-    const feedTitle = textOf(doc.querySelector(isAtom ? 'feed > title' : 'channel > title'))
+    const isAtom = rssRoot.tagName.toLowerCase() === 'feed'
+    const feedTitle = textOf(rssRoot.querySelector(isAtom ? ':scope > title' : 'channel > title'))
     const itemNodes = Array.from(
-      doc.querySelectorAll(isAtom ? 'feed > entry' : 'channel > item'),
+      rssRoot.querySelectorAll(isAtom ? ':scope > entry' : 'channel > item'),
     ).slice(0, MAX_RSS_ITEMS)
     if (itemNodes.length === 0) return null
 
