@@ -4,12 +4,13 @@
 // dialog drives. The dialog passes a progress callback so it can
 // render "fetching" / "section_done" cards as the run advances.
 //
-// The pipeline writes wiki:profile exactly once at the end, after
-// all three sections succeed. seedDocBody is one-shot (it skips
-// when the page already has content), so we accumulate in memory
-// and assemble the full markdown before the single write. This is
-// also why a partial failure (Themes throws) aborts cleanly without
-// leaving a half-written profile page behind.
+// Section bodies live in memory during the run; the final wiki:profile
+// markdown is assembled and written once at the end. A partial failure
+// (e.g. Themes throws) aborts cleanly without leaving a half-written
+// page behind. Single-section regeneration (runSection) reads the
+// existing page and splices the new content into just that heading's
+// zone via replaceZone — other sections, the Sources list, Background,
+// and Notes survive untouched.
 
 import { invoke } from '@tauri-apps/api/core'
 import { discoverAndFetch, type Document } from './adapters'
@@ -18,21 +19,13 @@ import {
   PROFILE_SYSTEM_PREAMBLE,
   type ProfileSectionKey,
 } from './conventions'
-import {
-  readAllDerivations,
-  readDerivation,
-  saveDerivation,
-  type Derivation,
-} from './derivations'
-import { assembleProfileMarkdown } from './markers'
-import {
-  hasAnySources,
-  listAllSourceFiles,
-  readAllSources,
-  saveSources,
-} from './sources'
+import { assembleProfileMarkdown, replaceZone } from './markers'
+import { hasAnySources, readAllSources, saveSources } from './sources'
 import { useDocsStore } from '@/state/docsStore'
-import { ensureProfileWikiSlug } from '@/state/wikiService'
+import {
+  ensureProfileWikiSlug,
+  readSelfProfile,
+} from '@/state/wikiService'
 
 // Haiku for the section calls. The OAuth-token budget the app
 // shares with chat/ingest/Claude Code itself is the real bottleneck
@@ -79,24 +72,18 @@ export async function runProfilePipeline(
   onProgress: (p: PipelineProgress) => void,
 ): Promise<PipelineResult> {
   onProgress({ kind: 'discovering' })
-  const { adapter, documents, sourceFiles } = await loadOrFetchSources(inputUrl)
+  const { adapter, documents } = await loadOrFetchSources(inputUrl)
   if (documents.length === 0) {
     onProgress({ kind: 'no_documents' })
     return { ok: false, reason: 'no_documents' }
   }
   onProgress({ kind: 'fetched', adapter, count: documents.length })
 
+  const sections: Partial<Record<ProfileSectionKey, string>> = {}
   for (const key of SECTION_ORDER) {
     onProgress({ kind: 'section_start', section: key })
     try {
-      const content = await generateSection(key, documents)
-      await saveDerivation({
-        kind: key,
-        derivedAt: new Date().toISOString(),
-        model: MODEL,
-        sourceFiles,
-        content,
-      })
+      sections[key] = await generateSection(key, documents)
     } catch (err) {
       console.error('[profile] section failed', { section: key, err })
       const msg = err instanceof Error ? err.message : String(err)
@@ -107,7 +94,7 @@ export async function runProfilePipeline(
   }
 
   onProgress({ kind: 'saving' })
-  const markdown = await assembleMarkdownFromDerivations(documents)
+  const markdown = assembleMarkdownFromSections(sections, documents)
   const slug = await writeWikiProfile(markdown)
   if (!slug) {
     return { ok: false, reason: 'write_failed' }
@@ -116,34 +103,40 @@ export async function runProfilePipeline(
   return { ok: true, slug }
 }
 
-/** Regenerate a single derivation. Used by the Regenerate UI in
- * Phase 4 — touches only one derivation file, leaves the others
- * (and the unmodified wiki:profile sections) alone. Caller is
- * responsible for re-assembling the page afterwards. */
+/** Regenerate a single zone in place. Reads the existing wiki:profile
+ * markdown, runs the LLM against the persisted sources, then splices
+ * the new content under the matching heading via replaceZone. Other
+ * zones — including any user edits in Background / Notes — survive
+ * untouched. Falls back to a full rebuild when the page hasn't been
+ * created yet (no heading to splice into). */
 export async function runSection(
   key: ProfileSectionKey,
-): Promise<{ ok: true; derivation: Derivation } | { ok: false; reason: string }> {
+): Promise<{ ok: true; slug: string } | { ok: false; reason: string }> {
   const documents = await readAllSources()
   if (documents.length === 0) {
     return { ok: false, reason: 'no_sources' }
   }
-  const sourceFiles = await listAllSourceFiles()
+
+  let content: string
   try {
-    const content = await generateSection(key, documents)
-    const derivation: Derivation = {
-      kind: key,
-      derivedAt: new Date().toISOString(),
-      model: MODEL,
-      sourceFiles,
-      content,
-    }
-    await saveDerivation(derivation)
-    return { ok: true, derivation }
+    content = await generateSection(key, documents)
   } catch (err) {
     console.error('[profile] runSection failed', { section: key, err })
     const msg = err instanceof Error ? err.message : String(err)
     return { ok: false, reason: msg }
   }
+
+  const slug = await ensureProfileWikiSlug()
+  if (!slug) return { ok: false, reason: 'no_profile_slug' }
+
+  const current = await readSelfProfile()
+  const spliced = current ? replaceZone(current, key, content) : null
+  const next =
+    spliced ??
+    assembleMarkdownFromSections({ [key]: content }, documents)
+
+  const ok = await useDocsStore.getState().replaceDocBody(slug, next)
+  return ok ? { ok: true, slug } : { ok: false, reason: 'write_failed' }
 }
 
 /** Prefer disk over network. If the vault already has persisted
@@ -154,29 +147,26 @@ export async function runSection(
 async function loadOrFetchSources(inputUrl: string): Promise<{
   adapter: string
   documents: Document[]
-  sourceFiles: string[]
 }> {
   if (await hasAnySources()) {
     const cached = await readAllSources()
     if (cached.length > 0) {
       console.log('[profile] using cached sources', { count: cached.length })
-      const sourceFiles = await listAllSourceFiles()
-      return { adapter: 'cache', documents: cached, sourceFiles }
+      return { adapter: 'cache', documents: cached }
     }
   }
 
   const { adapter, documents } = await discoverAndFetch(inputUrl)
-  let sourceFiles: string[] = []
   if (documents.length > 0) {
     try {
-      sourceFiles = await saveSources(documents, adapter, inputUrl)
+      await saveSources(documents, adapter, inputUrl)
     } catch (err) {
       // Persistence failure isn't fatal — the pipeline can still
       // run from the in-memory documents. Next run will just refetch.
       console.warn('[profile] saveSources failed', err)
     }
   }
-  return { adapter, documents, sourceFiles }
+  return { adapter, documents }
 }
 
 async function generateSection(
@@ -344,28 +334,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/** Assemble the wiki:profile markdown from the persisted derivations,
- * wrapped in zone markers so other writers (the ingest pipeline,
- * future agents, the user) know which areas of the page they may
- * touch. See profile/markers.ts for the marker contract. */
-async function assembleMarkdownFromDerivations(
+/** Assemble the wiki:profile markdown from the in-memory section
+ * map produced by a single pipeline run. Other writers (ingest,
+ * future agents, the user) recognise zones by their H2 heading —
+ * see profile/markers.ts for the heading-name contract. */
+function assembleMarkdownFromSections(
+  sections: Partial<Record<ProfileSectionKey, string>>,
   docs: Document[],
-): Promise<string> {
-  const derivations = await readAllDerivations()
-  const sections = SECTION_ORDER.flatMap((key) => {
-    const d = derivations[key]
-    return d ? [{ kind: key, content: d.content }] : []
+): string {
+  const ordered = SECTION_ORDER.flatMap((key) => {
+    const content = sections[key]
+    return content ? [{ kind: key, content }] : []
   })
   return assembleProfileMarkdown(
-    sections,
+    ordered,
     docs.map((d) => ({ title: d.title, sourceUrl: d.sourceUrl })),
   )
 }
-
-// Kept reachable so a future call site (e.g. "rebuild profile from
-// existing derivations after the user clears + re-imports") can
-// look up a single derivation without going through the bulk read.
-void readDerivation
 
 async function writeWikiProfile(markdown: string): Promise<string | null> {
   const slug = await ensureProfileWikiSlug()
