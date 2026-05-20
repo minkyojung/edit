@@ -18,7 +18,18 @@ import {
   PROFILE_SYSTEM_PREAMBLE,
   type ProfileSectionKey,
 } from './conventions'
-import { hasAnySources, readAllSources, saveSources } from './sources'
+import {
+  readAllDerivations,
+  readDerivation,
+  saveDerivation,
+  type Derivation,
+} from './derivations'
+import {
+  hasAnySources,
+  listAllSourceFiles,
+  readAllSources,
+  saveSources,
+} from './sources'
 import { useDocsStore } from '@/state/docsStore'
 import { ensureProfileWikiSlug } from '@/state/wikiService'
 
@@ -67,18 +78,24 @@ export async function runProfilePipeline(
   onProgress: (p: PipelineProgress) => void,
 ): Promise<PipelineResult> {
   onProgress({ kind: 'discovering' })
-  const { adapter, documents } = await loadOrFetchSources(inputUrl)
+  const { adapter, documents, sourceFiles } = await loadOrFetchSources(inputUrl)
   if (documents.length === 0) {
     onProgress({ kind: 'no_documents' })
     return { ok: false, reason: 'no_documents' }
   }
   onProgress({ kind: 'fetched', adapter, count: documents.length })
 
-  const sections: Partial<Record<ProfileSectionKey, string>> = {}
   for (const key of SECTION_ORDER) {
     onProgress({ kind: 'section_start', section: key })
     try {
-      sections[key] = await generateSection(key, documents)
+      const content = await generateSection(key, documents)
+      await saveDerivation({
+        kind: key,
+        derivedAt: new Date().toISOString(),
+        model: MODEL,
+        sourceFiles,
+        content,
+      })
     } catch (err) {
       console.error('[profile] section failed', { section: key, err })
       const msg = err instanceof Error ? err.message : String(err)
@@ -89,7 +106,7 @@ export async function runProfilePipeline(
   }
 
   onProgress({ kind: 'saving' })
-  const markdown = assembleMarkdown(sections, documents)
+  const markdown = await assembleMarkdownFromDerivations(documents)
   const slug = await writeWikiProfile(markdown)
   if (!slug) {
     return { ok: false, reason: 'write_failed' }
@@ -98,33 +115,67 @@ export async function runProfilePipeline(
   return { ok: true, slug }
 }
 
+/** Regenerate a single derivation. Used by the Regenerate UI in
+ * Phase 4 — touches only one derivation file, leaves the others
+ * (and the unmodified wiki:profile sections) alone. Caller is
+ * responsible for re-assembling the page afterwards. */
+export async function runSection(
+  key: ProfileSectionKey,
+): Promise<{ ok: true; derivation: Derivation } | { ok: false; reason: string }> {
+  const documents = await readAllSources()
+  if (documents.length === 0) {
+    return { ok: false, reason: 'no_sources' }
+  }
+  const sourceFiles = await listAllSourceFiles()
+  try {
+    const content = await generateSection(key, documents)
+    const derivation: Derivation = {
+      kind: key,
+      derivedAt: new Date().toISOString(),
+      model: MODEL,
+      sourceFiles,
+      content,
+    }
+    await saveDerivation(derivation)
+    return { ok: true, derivation }
+  } catch (err) {
+    console.error('[profile] runSection failed', { section: key, err })
+    const msg = err instanceof Error ? err.message : String(err)
+    return { ok: false, reason: msg }
+  }
+}
+
 /** Prefer disk over network. If the vault already has persisted
  * sources from a previous run, reuse them — avoids re-fetching and
  * re-burning bandwidth + the user's Claude Code budget on subsequent
  * regenerations. Falls back to a live fetch when the cache is empty
  * (first run, or vault explicitly cleared by the user). */
-async function loadOrFetchSources(
-  inputUrl: string,
-): Promise<{ adapter: string; documents: Document[] }> {
+async function loadOrFetchSources(inputUrl: string): Promise<{
+  adapter: string
+  documents: Document[]
+  sourceFiles: string[]
+}> {
   if (await hasAnySources()) {
     const cached = await readAllSources()
     if (cached.length > 0) {
       console.log('[profile] using cached sources', { count: cached.length })
-      return { adapter: 'cache', documents: cached }
+      const sourceFiles = await listAllSourceFiles()
+      return { adapter: 'cache', documents: cached, sourceFiles }
     }
   }
 
   const { adapter, documents } = await discoverAndFetch(inputUrl)
+  let sourceFiles: string[] = []
   if (documents.length > 0) {
     try {
-      await saveSources(documents, adapter, inputUrl)
+      sourceFiles = await saveSources(documents, adapter, inputUrl)
     } catch (err) {
       // Persistence failure isn't fatal — the pipeline can still
       // run from the in-memory documents. Next run will just refetch.
       console.warn('[profile] saveSources failed', err)
     }
   }
-  return { adapter, documents }
+  return { adapter, documents, sourceFiles }
 }
 
 async function generateSection(
@@ -292,20 +343,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function assembleMarkdown(
-  sections: Partial<Record<ProfileSectionKey, string>>,
+/** Assemble the wiki:profile markdown from the persisted derivations.
+ * Reading from disk (rather than the in-memory `sections` map this
+ * used to take) means the assembler is the same code path whether
+ * the trigger was a full pipeline run or a single-section regen —
+ * both end with "all derivations on disk, rebuild the page." */
+async function assembleMarkdownFromDerivations(
   docs: Document[],
-): string {
+): Promise<string> {
+  const derivations = await readAllDerivations()
   const parts: string[] = []
   for (const key of SECTION_ORDER) {
-    const body = sections[key]
-    if (!body) continue
-    parts.push(`${PROFILE_SECTIONS[key].heading}\n\n${body}`)
+    const d = derivations[key]
+    if (!d) continue
+    parts.push(`${PROFILE_SECTIONS[key].heading}\n\n${d.content}`)
   }
   parts.push('## Sources')
   parts.push(docs.map((d) => `- [${d.title}](${d.sourceUrl})`).join('\n'))
   return parts.join('\n\n') + '\n'
 }
+
+// Kept reachable so a future call site (e.g. "rebuild profile from
+// existing derivations after the user clears + re-imports") can
+// look up a single derivation without going through the bulk read.
+void readDerivation
 
 async function writeWikiProfile(markdown: string): Promise<string | null> {
   const slug = await ensureProfileWikiSlug()

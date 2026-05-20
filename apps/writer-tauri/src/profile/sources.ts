@@ -114,6 +114,15 @@ export async function hasAnySources(): Promise<boolean> {
   return !!index && index.imports.length > 0
 }
 
+/** All vault-relative source paths, flattened across every import.
+ * Used by the derivation layer to record which files a derivation
+ * was built from. */
+export async function listAllSourceFiles(): Promise<string[]> {
+  const index = await readIndex()
+  if (!index) return []
+  return index.imports.flatMap((entry) => entry.files)
+}
+
 // ── helpers ───────────────────────────────────────────────────────
 
 async function readIndex(): Promise<SourceIndex | null> {
