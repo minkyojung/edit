@@ -1,26 +1,20 @@
-// First-run welcome dialog. Walks the user through three stages:
+// First-run welcome dialog. Stages:
 //
-//   1. Source  — pick which inputs feed the initial memory
-//                (Import files / Add URLs). Stage 1 is the only
-//                stage with real wiring in this phase.
-//   2. Analyze — runs Import + URL pipelines, streams progress.
-//                Placeholder until B2 + B4 land.
-//   3. Interview — adaptive Q&A that fills gaps the analyze step
-//                leaves behind. Placeholder until B5 lands.
+//   1. Source  — pick which inputs feed the initial memory (Import
+//                files / Add URLs). Stage 1 is fully wired.
+//   2. Analyze — when Import is selected, runs the file picker +
+//                bootstrapIngest loop and streams progress. URL
+//                fetch lands in B4 (silently skipped for now).
+//   3. Interview — adaptive Q&A. Lands in B5; currently skipped
+//                entirely so the user sees Finish straight from
+//                Stage 2 instead of a "coming soon" placeholder.
 //
 // The dialog itself owns nothing persistent except the stage index
 // and the source checkboxes. Skip / Finish both flip
 // settingsStore.bootstrapCompleted so the dialog stays gone across
-// app restarts. BootGate (B1.c, next phase) controls when this
-// mounts.
-//
-// Why a shell first: getting the modal + stepper + close behavior
-// right is independent of the input pipelines. Landing those in
-// later phases means each pipeline can be developed and verified
-// against a working chrome, not against a dialog that doesn't
-// render yet.
+// app restarts. BootGate controls when this mounts.
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -30,7 +24,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useSettingsStore } from '@/state/settingsStore'
+import { notify } from '@/lib/notify'
+import {
+  runImport,
+  type ImportProgress,
+  type ImportResult,
+} from '@/agent/import/runImport'
 
 type Stage = 1 | 2 | 3
 
@@ -55,6 +56,18 @@ export function BootstrapDialog({ open, onClose }: Props) {
     onClose()
   }
 
+  // Stage 1 → next button decides which path to take. Import wins
+  // when it's checked (since Stage 2 is the only wired pipeline);
+  // URL-only falls through to Finish for now (B4 will pick this up).
+  const handleNextFromStage1 = () => {
+    if (importSelected) {
+      setStage(2)
+    } else {
+      // URL-only or neither — nothing to do until B4 lands.
+      handleFinish()
+    }
+  }
+
   return (
     <Dialog
       open={open}
@@ -74,24 +87,13 @@ export function BootstrapDialog({ open, onClose }: Props) {
             onToggleImport={() => setImportSelected((v) => !v)}
             onToggleUrl={() => setUrlSelected((v) => !v)}
             onSkip={handleSkip}
-            onNext={() => setStage(2)}
+            onNext={handleNextFromStage1}
           />
         )}
         {stage === 2 && (
-          <StagePlaceholder
-            title="Analyze"
-            description="Reading your files / URLs and extracting facts. Pipelines land in a later phase — for now this stage is a stub."
-            onBack={() => setStage(1)}
-            onNext={() => setStage(3)}
-          />
-        )}
-        {stage === 3 && (
-          <StagePlaceholder
-            title="Interview"
-            description="Adaptive Q&A to fill gaps. Lands in a later phase."
-            onBack={() => setStage(2)}
-            onNext={handleFinish}
-            nextLabel="Finish"
+          <Stage2Analyze
+            onCancel={() => setStage(1)}
+            onFinish={handleFinish}
           />
         )}
       </DialogContent>
@@ -220,34 +222,85 @@ function SourceRow({
   )
 }
 
-interface PlaceholderProps {
-  title: string
-  description: string
-  onBack: () => void
-  onNext: () => void
-  nextLabel?: string
+interface Stage2Props {
+  /** User cancelled the OS picker (no files chosen). Stage 1 takes
+   * over so they can pick again or hit Skip. */
+  onCancel: () => void
+  /** Import finished (at least one file processed). Closes the
+   * dialog and persists bootstrapCompleted. */
+  onFinish: () => void
 }
 
-function StagePlaceholder({
-  title,
-  description,
-  onBack,
-  onNext,
-  nextLabel = 'Next',
-}: PlaceholderProps) {
+function Stage2Analyze({ onCancel, onFinish }: Stage2Props) {
+  const [progress, setProgress] = useState<ImportProgress | null>(null)
+  const [result, setResult] = useState<ImportResult | null>(null)
+  const startedRef = useRef(false)
+
+  // Fire the import exactly once on mount. React StrictMode double-
+  // mounts every dev-time effect, which would open the OS picker
+  // twice; the ref short-circuits the second run. (Not an issue in
+  // production, but the dev experience matters during dogfood.)
+  useEffect(() => {
+    if (startedRef.current) return
+    startedRef.current = true
+
+    void (async () => {
+      try {
+        const res = await runImport({ onProgress: setProgress })
+        setResult(res)
+        if (res.filesProcessed === 0) {
+          // User cancelled the picker — bounce back to Stage 1 so
+          // they can retry or hit Skip explicitly.
+          onCancel()
+          return
+        }
+        // Surface the outcome BEFORE closing the dialog so the toast
+        // is the persistent feedback while the modal animates out.
+        // Without this the dialog just disappears and the user has
+        // no idea whether the LLM extracted anything (a valid 0-
+        // proposal result looks identical to a 12-proposal result).
+        notify.bootstrapImportComplete({
+          filesProcessed: res.filesProcessed,
+          filesFailed: res.filesFailed,
+          totalProposals: res.totalProposals,
+        })
+        onFinish()
+      } catch (err) {
+        // runImport itself doesn't throw (per-file errors are
+        // caught inside), but be defensive: surface to console
+        // and let the user pick again via Stage 1.
+        console.error('[bootstrap] runImport failed', err)
+        onCancel()
+      }
+    })()
+    // onCancel / onFinish are stable refs from the parent's
+    // closure — including them would re-fire on every parent
+    // render, which the ref guard already prevents but eslint
+    // doesn't know that. Empty deps is correct here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const statusLine = (() => {
+    if (result) {
+      const noun = result.totalProposals === 1 ? 'proposal' : 'proposals'
+      return `Done. ${result.totalProposals} ${noun} queued.`
+    }
+    if (progress) {
+      const noun = progress.proposalsCount === 1 ? 'proposal' : 'proposals'
+      return `Reading ${progress.filesDone} / ${progress.filesTotal} files… ${progress.proposalsCount} ${noun} so far.`
+    }
+    return 'Pick the files to import.'
+  })()
+
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
+        <DialogTitle>Analyzing your notes</DialogTitle>
+        <DialogDescription>{statusLine}</DialogDescription>
       </DialogHeader>
-      <div className="py-6 text-center text-sm text-muted-foreground">Coming next.</div>
-      <DialogFooter className="flex items-center justify-between sm:justify-between">
-        <Button variant="ghost" onClick={onBack}>
-          Back
-        </Button>
-        <Button onClick={onNext}>{nextLabel}</Button>
-      </DialogFooter>
+      <div className="flex items-center justify-center py-8">
+        {result ? null : <Spinner />}
+      </div>
     </>
   )
 }

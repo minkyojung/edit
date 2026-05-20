@@ -158,6 +158,46 @@ export const notify = {
       description: `${folderPath} has files we don't recognise. Pick an empty folder or an existing Writer vault.`,
     })
   },
+
+  // ── Bootstrap import ──────────────────────────────────────────
+  /** Final summary toast for the first-run Import pipeline. Without
+   * it the dialog just closes silently — user has no way to tell
+   * whether anything was extracted, especially when the LLM returns
+   * 0 proposals (which is a valid outcome, not an error). Picker
+   * cancel is handled separately (caller bounces back to Stage 1)
+   * so this never fires for "nothing happened at all". */
+  bootstrapImportComplete(args: {
+    filesProcessed: number
+    filesFailed: number
+    totalProposals: number
+  }) {
+    const { filesProcessed, filesFailed, totalProposals } = args
+    const succeeded = filesProcessed - filesFailed
+    const filesWord = (n: number) => (n === 1 ? 'file' : 'files')
+    const entriesWord = (n: number) => (n === 1 ? 'entry' : 'entries')
+
+    if (succeeded === 0 && filesFailed > 0) {
+      toast.error("Couldn't import any files", {
+        description: `${filesFailed} ${filesWord(filesFailed)} failed. See console for details.`,
+      })
+      return
+    }
+    if (filesFailed > 0) {
+      toast.warning(`Imported ${succeeded} of ${filesProcessed} files`, {
+        description: `${filesFailed} ${filesWord(filesFailed)} couldn't be read. See console.`,
+      })
+      return
+    }
+    if (totalProposals > 0) {
+      toast.success(`Imported ${succeeded} ${filesWord(succeeded)}`, {
+        description: `${totalProposals} new wiki ${entriesWord(totalProposals)} ready to review`,
+      })
+      return
+    }
+    toast.success(`Imported ${succeeded} ${filesWord(succeeded)}`, {
+      description: 'No new facts to extract',
+    })
+  },
 }
 
 // Dev-only console handle so smoke testing can fire each toast without
