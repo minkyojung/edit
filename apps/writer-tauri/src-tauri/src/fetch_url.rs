@@ -103,7 +103,19 @@ pub async fn fetch_url(url: String) -> Result<FetchedPage, String> {
             bytes.len()
         ));
     }
-    let body = String::from_utf8_lossy(&bytes).into_owned();
+    let decoded = String::from_utf8_lossy(&bytes).into_owned();
+    // Strip the UTF-8 BOM (U+FEFF) and any other leading whitespace
+    // before `<?xml ...?>`. The browser's strict XML parser (text/xml)
+    // refuses to parse a document with garbage in front of the
+    // declaration — even a single invisible BOM byte aborts the parse
+    // and the only signal we get back is a generic "parsererror"
+    // element with no line/column info. Many CDN-fronted feeds (Substack,
+    // Cloudflare-cached WordPress) emit BOMs; strip here so the
+    // frontend never has to think about it.
+    let body = decoded
+        .trim_start_matches('\u{FEFF}')
+        .trim_start()
+        .to_string();
 
     Ok(FetchedPage {
         url: final_url,

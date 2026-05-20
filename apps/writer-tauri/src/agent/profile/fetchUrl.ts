@@ -148,68 +148,96 @@ async function tryFetchAsRss(feedUrl: string): Promise<FetchedSource | null> {
 }
 
 /** Parse RSS 2.0 or Atom XML into our FetchedSource shape using
- * the browser-native DOMParser in `text/html` mode. Handles both:
+ * the browser-native DOMParser in `application/xml` mode. Handles:
  *
  *   <rss><channel><item>...</item></channel></rss>     (RSS 2.0)
  *   <feed><entry>...</entry></feed>                    (Atom 1.0)
  *
- * Why HTML mode instead of XML mode: WebKit's `text/xml` parser is
- * strict, and real-world feeds (Substack, Medium, most WordPress
- * sites) routinely contain CDATA-wrapped HTML, namespaced tags
- * (`dc:creator`, `content:encoded`), and unescaped `&` characters
- * in URLs — all of which are fine for RSS readers but trip strict
- * XML. Industry-standard RSS clients (Feedly, NetNewsWire) all use
- * lenient HTML parsers for this reason. HTML5 lowercases tag names,
- * but our selectors compare case-insensitively so `pubDate` /
- * `lastBuildDate` etc. still match. Namespaced prefixes (`dc:`,
- * `content:`) stay as literal tag names — we escape the colon in
- * the selector. */
+ * Why strict XML over `text/html`: HTML5's parser drops CDATA
+ * content (treats `<![CDATA[...]]>` as a bogus comment), and
+ * namespaced tags (`dc:creator`, `content:encoded`) get mangled.
+ * Real-world feeds put titles and post bodies INSIDE CDATA, so
+ * HTML-mode parsing silently loses the actual content.
+ *
+ * Strict XML handles CDATA correctly; the historical "Substack
+ * rejected as invalid XML" failure was actually a leading BOM
+ * stripped now by the Rust fetch layer (fetch_url.rs). For
+ * namespaced fields we use `getElementsByTagNameNS` — querySelector
+ * with `content\:encoded` works in HTML mode but not reliably in
+ * XML mode where namespaces are honoured.
+ *
+ * Namespace URIs are stable per the RSS / Atom / Dublin Core specs;
+ * we hard-code them rather than re-discovering from the document
+ * declaration each time. */
+const NS_CONTENT = 'http://purl.org/rss/1.0/modules/content/'
+const NS_DC = 'http://purl.org/dc/elements/1.1/'
+const NS_ATOM = 'http://www.w3.org/2005/Atom'
+
 function parseRssBody(finalUrl: string, body: string): FetchedSource | null {
   try {
-    const doc = new DOMParser().parseFromString(body, 'text/html')
-    // The HTML parser doesn't surface XML errors at all — it just
-    // accepts whatever it's given. We instead probe for the canonical
-    // RSS / Atom root tags; their absence means we got something
-    // that isn't a feed at all (challenge page, error HTML, etc.).
-    const rssRoot = doc.querySelector('rss, feed')
-    if (!rssRoot) {
-      console.warn('[profile:fetch] RSS root tag not found', {
+    const doc = new DOMParser().parseFromString(body, 'application/xml')
+    const parseError = doc.querySelector('parsererror')
+    if (parseError) {
+      console.warn('[profile:fetch] XML parse error', {
         finalUrl,
+        msg: parseError.textContent?.slice(0, 200),
         bodyStartsWith: body.slice(0, 500),
       })
       return null
     }
-    const isAtom = rssRoot.tagName.toLowerCase() === 'feed'
-    const feedTitle = textOf(rssRoot.querySelector(isAtom ? ':scope > title' : 'channel > title'))
-    const itemNodes = Array.from(
-      rssRoot.querySelectorAll(isAtom ? ':scope > entry' : 'channel > item'),
-    ).slice(0, MAX_RSS_ITEMS)
-    if (itemNodes.length === 0) return null
+
+    const rssRoot = doc.documentElement
+    const rootName = rssRoot.localName.toLowerCase()
+    if (rootName !== 'rss' && rootName !== 'feed') {
+      console.warn('[profile:fetch] not a feed', {
+        finalUrl,
+        rootElement: rootName,
+        bodyStartsWith: body.slice(0, 500),
+      })
+      return null
+    }
+    const isAtom = rootName === 'feed'
+    const feedTitle = textOf(
+      isAtom
+        ? doc.getElementsByTagNameNS(NS_ATOM, 'title')[0] ?? null
+        : doc.querySelector('channel > title'),
+    )
+    const itemNodes = isAtom
+      ? Array.from(doc.getElementsByTagNameNS(NS_ATOM, 'entry'))
+      : Array.from(doc.querySelectorAll('channel > item'))
+    const items = itemNodes.slice(0, MAX_RSS_ITEMS)
+    if (items.length === 0) return null
 
     const sections: string[] = []
     let bylineCandidate: string | null = null
-    for (const item of itemNodes) {
-      const title = textOf(item.querySelector('title'))
+    for (const item of items) {
+      const title = textOf(firstChildByLocalName(item, 'title'))
       const date = textOf(
-        item.querySelector(isAtom ? 'published, updated' : 'pubDate'),
+        firstChildByLocalName(item, isAtom ? 'published' : 'pubDate') ??
+          firstChildByLocalName(item, 'updated'),
       )
-      // Prefer the full body (`content:encoded` for RSS,
-      // `content` for Atom), fall back to the short description /
-      // summary tag.
-      const fullBody = textOf(
-        item.querySelector('content\\:encoded, encoded'),
+      // Full post body: <content:encoded> (RSS) or <content> (Atom).
+      // Fall back to <description> (RSS) or <summary> (Atom) for
+      // feeds that don't carry full text.
+      const fullBody =
+        textOf(firstByNS(item, NS_CONTENT, 'encoded')) ??
+        (isAtom ? textOf(firstChildByLocalName(item, 'content')) : null)
+      const summary = textOf(
+        firstChildByLocalName(item, isAtom ? 'summary' : 'description'),
       )
-      const summary = textOf(item.querySelector(isAtom ? 'summary, content' : 'description'))
-      const body = stripHtml(fullBody || summary || '')
+      const bodyText = stripHtml(fullBody || summary || '')
       if (!bylineCandidate) {
         bylineCandidate =
-          textOf(item.querySelector(isAtom ? 'author > name' : 'dc\\:creator, creator')) ??
-          textOf(item.querySelector('author'))
+          textOf(firstByNS(item, NS_DC, 'creator')) ??
+          (isAtom
+            ? textOf(firstByLocalName(item, 'name'))
+            : null) ??
+          textOf(firstChildByLocalName(item, 'author'))
       }
       const section = [
         title ? `## ${title}` : '##',
         date ? `*${date}*` : '',
-        body,
+        bodyText,
       ]
         .filter((s) => s.trim().length > 0)
         .join('\n\n')
@@ -223,12 +251,42 @@ function parseRssBody(finalUrl: string, body: string): FetchedSource | null {
       byline: bylineCandidate,
       markdown: sections.join('\n\n---\n\n'),
       sourceType: 'rss',
-      itemCount: itemNodes.length,
+      itemCount: items.length,
     }
   } catch (err) {
     console.warn('[profile:fetch] RSS parse failed', { finalUrl, err })
     return null
   }
+}
+
+/** Find the first direct child of `parent` whose localName matches
+ * (case-insensitive). Used for non-namespaced RSS/Atom fields where
+ * default-namespace lookup via querySelector is unreliable in XML
+ * mode (Atom puts everything in the Atom namespace by default). */
+function firstChildByLocalName(parent: Element, name: string): Element | null {
+  const target = name.toLowerCase()
+  for (const child of Array.from(parent.children)) {
+    if (child.localName.toLowerCase() === target) return child
+  }
+  return null
+}
+
+/** Like firstChildByLocalName but searches all descendants. */
+function firstByLocalName(parent: Element, name: string): Element | null {
+  const target = name.toLowerCase()
+  const all = parent.getElementsByTagName('*')
+  for (let i = 0; i < all.length; i++) {
+    if (all[i].localName.toLowerCase() === target) return all[i]
+  }
+  return null
+}
+
+/** Find first element in `parent` with the given namespace URI +
+ * localName. Used for namespaced fields like content:encoded and
+ * dc:creator that querySelector can't address reliably in XML mode. */
+function firstByNS(parent: Element, ns: string, localName: string): Element | null {
+  const list = parent.getElementsByTagNameNS(ns, localName)
+  return list.length > 0 ? list[0] : null
 }
 
 function textOf(el: Element | null | undefined): string | null {
