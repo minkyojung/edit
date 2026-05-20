@@ -29,7 +29,15 @@ import {
   type ProfileFields,
 } from './profileTypes'
 
-const EXTRACT_MODEL = 'claude-haiku-4-5-20251001'
+// Both passes use Sonnet. Originally per-URL was Haiku for cost,
+// but Haiku 4.5 in tool-use mode routinely sandbags `submit_profile`
+// — it generates "Profile extracted and submitted" as text and
+// never invokes the tool, even with the strongest prompt language.
+// Claude Agent SDK doesn't expose `toolChoice` so we can't force
+// the call from the host side. Sonnet 4.6 follows tool-use
+// instructions reliably; the ~$0.03 extra per profile bootstrap
+// is negligible (Profile is a one-time operation per user).
+const EXTRACT_MODEL = 'claude-sonnet-4-6'
 const SYNTHESIS_MODEL = 'claude-sonnet-4-6'
 const PROFILE_RESULT_EVENT = 'profile:result'
 
