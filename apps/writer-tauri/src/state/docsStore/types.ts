@@ -227,6 +227,11 @@ export interface DocsState {
    * No-op when the markdown is empty or when the editor parser
    * isn't mounted yet (caller should retry once a doc is active). */
   seedDocBody: (slug: string, markdown: string) => Promise<boolean>
+  /** Overwrite a doc's body with the supplied markdown. Unlike
+   * seedDocBody this rewrites non-empty docs too — the profile
+   * pipeline uses it so re-runs actually update the wiki:profile
+   * page rather than no-opping. */
+  replaceDocBody: (slug: string, markdown: string) => Promise<boolean>
   /** Rename a user-owned doc. Updates `knownDocs[slug].title`; the
    * auto-flush rename-on-change machinery (Phase 4.B.1.c.vi) then
    * moves the .md + .marks.json on disk on the next tick.

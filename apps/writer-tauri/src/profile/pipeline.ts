@@ -24,6 +24,7 @@ import {
   saveDerivation,
   type Derivation,
 } from './derivations'
+import { assembleProfileMarkdown } from './markers'
 import {
   hasAnySources,
   listAllSourceFiles,
@@ -343,24 +344,22 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/** Assemble the wiki:profile markdown from the persisted derivations.
- * Reading from disk (rather than the in-memory `sections` map this
- * used to take) means the assembler is the same code path whether
- * the trigger was a full pipeline run or a single-section regen —
- * both end with "all derivations on disk, rebuild the page." */
+/** Assemble the wiki:profile markdown from the persisted derivations,
+ * wrapped in zone markers so other writers (the ingest pipeline,
+ * future agents, the user) know which areas of the page they may
+ * touch. See profile/markers.ts for the marker contract. */
 async function assembleMarkdownFromDerivations(
   docs: Document[],
 ): Promise<string> {
   const derivations = await readAllDerivations()
-  const parts: string[] = []
-  for (const key of SECTION_ORDER) {
+  const sections = SECTION_ORDER.flatMap((key) => {
     const d = derivations[key]
-    if (!d) continue
-    parts.push(`${PROFILE_SECTIONS[key].heading}\n\n${d.content}`)
-  }
-  parts.push('## Sources')
-  parts.push(docs.map((d) => `- [${d.title}](${d.sourceUrl})`).join('\n'))
-  return parts.join('\n\n') + '\n'
+    return d ? [{ kind: key, content: d.content }] : []
+  })
+  return assembleProfileMarkdown(
+    sections,
+    docs.map((d) => ({ title: d.title, sourceUrl: d.sourceUrl })),
+  )
 }
 
 // Kept reachable so a future call site (e.g. "rebuild profile from
@@ -371,6 +370,10 @@ void readDerivation
 async function writeWikiProfile(markdown: string): Promise<string | null> {
   const slug = await ensureProfileWikiSlug()
   if (!slug) return null
-  const ok = await useDocsStore.getState().seedDocBody(slug, markdown)
+  // replaceDocBody (not seedDocBody) so a pipeline re-run actually
+  // rewrites the page. seedDocBody no-ops on non-empty docs, which
+  // is correct for first-create but would silently drop every
+  // subsequent regeneration.
+  const ok = await useDocsStore.getState().replaceDocBody(slug, markdown)
   return ok ? slug : null
 }

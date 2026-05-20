@@ -21,7 +21,7 @@
 import { generateClientSlug } from '@/lib/slug'
 import { todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import { deriveLabel } from '@/lib/docLabel'
-import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
+import { replaceMarkdownInYDoc, seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
 import { useEditorViewStore } from '../editorViewStore'
 import { scrubDailyTitleArtifacts } from './handlesSlice'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
@@ -49,6 +49,12 @@ export interface CreateSlice {
    * content into a freshly-created handle. No-op on already-populated
    * bodies. */
   seedDocBody: (slug: string, markdown: string) => Promise<boolean>
+  /** Overwrite a doc's entire body with the supplied markdown.
+   * Unlike {@link seedDocBody} this does NOT skip on non-empty docs —
+   * existing content is cleared and replaced. Used by the profile
+   * pipeline so re-runs (or single-section regenerations that
+   * assemble a fresh full markdown) can actually update the page. */
+  replaceDocBody: (slug: string, markdown: string) => Promise<boolean>
 }
 
 export const createCreateSlice = (
@@ -226,5 +232,22 @@ export const createCreateSlice = (
     const labelText = deriveLabel(handle.ydoc.getXmlFragment('prosemirror'))
     if (labelText.length > 0) return false
     return seedMarkdownIntoYDoc(handle.ydoc, markdown, parser)
+  },
+
+  replaceDocBody: async (slug, markdown) => {
+    if (!markdown.trim()) return false
+    await get().ensureHandle(slug)
+    const handle = get().handles[slug]
+    if (!handle) return false
+    // Same readiness wait as seedDocBody — the rewrite races vault
+    // hydration otherwise and the replace can land mid-load, leaving
+    // the page in a mixed state on next render.
+    await handle.contentReady
+    const parser = useEditorViewStore.getState().parser
+    if (!parser) {
+      console.warn('[docs] replaceDocBody: parser not ready, skipping', slug)
+      return false
+    }
+    return replaceMarkdownInYDoc(handle.ydoc, markdown, parser)
   },
 })

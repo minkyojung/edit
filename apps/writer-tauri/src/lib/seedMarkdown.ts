@@ -61,3 +61,50 @@ export function seedMarkdownIntoYDoc(
   }
   return true
 }
+
+/** Replace the entire body of a Y.Doc's prosemirror fragment with
+ * the parsed markdown. Used by the profile pipeline so a fresh
+ * pipeline run (full or single-zone re-derivation) can rewrite the
+ * page contents, where {@link seedMarkdownIntoYDoc} would no-op
+ * because the doc already has content.
+ *
+ * Two-phase write: clear the existing fragment, then apply the new
+ * state from a temp doc. Both phases use the same 'doc-init' origin
+ * so the rewrite stays out of the user's undo stack. The two
+ * transactions are sequential (Yjs nesting is fine but two flat
+ * transactions are simpler to reason about); no concurrent observer
+ * will see the doc in the intermediate "empty" state on the same
+ * tick. */
+export function replaceMarkdownInYDoc(
+  ydoc: Y.Doc,
+  markdown: string,
+  parser: MarkdownParser,
+): boolean {
+  const trimmed = markdown.trim()
+  if (trimmed.length === 0) return false
+
+  let pmNode: ReturnType<MarkdownParser> | null = null
+  try {
+    pmNode = parser(trimmed)
+  } catch (err) {
+    console.warn('[seedMarkdown] replace: parser failed', err)
+    return false
+  }
+  if (!pmNode) return false
+
+  const fragment = ydoc.getXmlFragment(FRAGMENT_NAME)
+  const seedDoc = prosemirrorToYDoc(pmNode, FRAGMENT_NAME)
+  const update = Y.encodeStateAsUpdate(seedDoc)
+
+  try {
+    ydoc.transact(() => {
+      if (fragment.length > 0) {
+        fragment.delete(0, fragment.length)
+      }
+    }, ORIGIN)
+    Y.applyUpdate(ydoc, update, ORIGIN)
+  } finally {
+    seedDoc.destroy()
+  }
+  return true
+}
