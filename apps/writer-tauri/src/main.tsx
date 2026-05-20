@@ -29,6 +29,9 @@ if (import.meta.env.DEV) {
   // Registers window.__runImport so the file → bootstrapIngest path
   // is exercisable from DevTools before Stage 2 wires it up.
   void import('./agent/import/runImport')
+  // Registers window.__fetchUrlAsMarkdown for verifying the Profile
+  // URL fetch + RSS routing path before BootstrapDialog wires it up.
+  void import('./agent/profile/fetchUrl')
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

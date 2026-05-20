@@ -1,4 +1,5 @@
 pub mod claude_sidecar;
+mod fetch_url;
 mod oauth;
 mod secure_storage;
 
@@ -44,6 +45,7 @@ pub fn run() {
             claude_sidecar::commands::claude_chat_start,
             claude_sidecar::commands::claude_chat_cancel,
             claude_sidecar::commands::claude_title,
+            fetch_url::fetch_url,
             app_quit,
         ])
         .setup(|app| {
