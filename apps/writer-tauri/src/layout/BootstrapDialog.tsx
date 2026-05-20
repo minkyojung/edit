@@ -223,6 +223,11 @@ function Stage2UrlAnalyze({ urls, onCancel, onFinish }: Stage2UrlProps) {
           onCancel()
           return
         }
+        // Stamp the bootstrap timestamp + clear any prior dismissed
+        // flag so the on-page banner appears on the freshly-saved
+        // profile. Persisted to settingsStore so the banner survives
+        // reloads until the user dismisses it explicitly.
+        useSettingsStore.getState().markProfileBootstrapped()
         // Surface the outcome BEFORE closing — toast becomes the
         // persistent feedback while the modal animates out and the
         // editor navigates to the profile page.
@@ -233,7 +238,7 @@ function Stage2UrlAnalyze({ urls, onCancel, onFinish }: Stage2UrlProps) {
         })
         // Navigate the editor to the freshly-saved profile page so
         // the user lands on it as the dialog closes. The on-page
-        // banner (E.5.d) will be the "review" surface.
+        // banner (E.5.d) is the "review" surface.
         useDocsStore.getState().setActive(slug)
         onFinish()
       } catch (err) {

@@ -6,21 +6,28 @@
 //   - RSS/Atom feed (Substack, Medium, Ghost, WordPress, anything
 //     advertising a feed URL) → batched extraction of recent posts.
 //     One paste gets the user a corpus, not a single sample.
-//   - Article (everything else) → Readability via the @extractus
-//     library. Strips nav/footers/ads to give the LLM the prose.
+//   - Article (everything else) → Mozilla Readability via the
+//     native browser DOM. Strips nav/footers/ads to give the LLM
+//     the prose.
 //   - oEmbed for x.com / twitter.com — v0 stub. We return the raw
 //     status URL so the LLM can at least cite the source; full
 //     timeline import is deferred to a ZIP path later.
 //
 // All routes converge on the same return shape so the caller
 // (`extractProfile`) treats every source as "one markdown blob
-// with metadata." The Rust side (`fetch_url` Tauri command)
-// owns the network call; this file is pure orchestration +
-// HTML parsing.
+// with metadata."
+//
+// Implementation note (E.2 → fix): we originally used
+// `@extractus/article-extractor` + `rss-parser`, but both pull in
+// Node-only dependencies (`fs`, `events`, etc.) that Vite
+// externalises for the browser build, which throws at runtime
+// inside the Tauri WebView. We now use `@mozilla/readability`
+// (pure browser, the actual Firefox Reader View engine) for
+// articles, and a hand-rolled RSS/Atom parser using the native
+// `DOMParser` for feeds. Both are zero-Node-dep.
 
 import { invoke } from '@tauri-apps/api/core'
-import { extractFromHtml } from '@extractus/article-extractor'
-import Parser from 'rss-parser'
+import { Readability } from '@mozilla/readability'
 
 export type SourceType = 'rss' | 'article' | 'oembed' | 'unsupported'
 
@@ -98,7 +105,7 @@ export async function fetchUrlAsMarkdown(rawUrl: string): Promise<FetchedSource 
   // First — see if the page is itself a feed (some users paste the
   // /feed URL directly). RSS parsers handle XML directly.
   if (looksLikeFeed(page)) {
-    const rss = await parseRssBody(page.url, page.body)
+    const rss = parseRssBody(page.url, page.body)
     if (rss) return rss
   }
 
@@ -111,7 +118,7 @@ export async function fetchUrlAsMarkdown(rawUrl: string): Promise<FetchedSource 
     if (rss) return rss
   }
 
-  return await extractArticle(page)
+  return extractArticle(page)
 }
 
 // ── RSS path ───────────────────────────────────────────────────────
@@ -140,34 +147,85 @@ async function tryFetchAsRss(feedUrl: string): Promise<FetchedSource | null> {
   return parseRssBody(page.url, page.body)
 }
 
-async function parseRssBody(
-  finalUrl: string,
-  body: string,
-): Promise<FetchedSource | null> {
+/** Parse RSS 2.0 or Atom XML into our FetchedSource shape using
+ * the browser-native DOMParser. Handles both:
+ *
+ *   <rss><channel><item>...</item></channel></rss>     (RSS 2.0)
+ *   <feed><entry>...</entry></feed>                    (Atom 1.0)
+ *
+ * Plus Substack/Medium's `content:encoded` namespace. The XML
+ * namespace prefix shows up as a literal tag name in the DOM tree
+ * because DOMParser parses namespaces but querySelector with
+ * escaped colons matches them. */
+function parseRssBody(finalUrl: string, body: string): FetchedSource | null {
   try {
-    const parser = new Parser({ timeout: 8000 })
-    const feed = await parser.parseString(body)
-    const items = (feed.items ?? []).slice(0, MAX_RSS_ITEMS)
-    if (items.length === 0) return null
-    const sections = items.map((it) => {
-      const heading = it.title ? `## ${it.title}` : '##'
-      const meta = it.pubDate ? `*${it.pubDate}*` : ''
-      const body = stripHtml(it['content:encoded'] ?? it.content ?? it.contentSnippet ?? it.summary ?? '')
-      return [heading, meta, body].filter((s) => s.trim().length > 0).join('\n\n')
-    })
-    const byline = items.find((it) => it.creator || it.author)
+    const doc = new DOMParser().parseFromString(body, 'text/xml')
+    const parseError = doc.querySelector('parsererror')
+    if (parseError) {
+      console.warn('[profile:fetch] RSS XML parse error', {
+        finalUrl,
+        snippet: parseError.textContent?.slice(0, 200),
+      })
+      return null
+    }
+
+    // RSS 2.0 first, fall back to Atom.
+    const isAtom = doc.documentElement.localName.toLowerCase() === 'feed'
+    const feedTitle = textOf(doc.querySelector(isAtom ? 'feed > title' : 'channel > title'))
+    const itemNodes = Array.from(
+      doc.querySelectorAll(isAtom ? 'feed > entry' : 'channel > item'),
+    ).slice(0, MAX_RSS_ITEMS)
+    if (itemNodes.length === 0) return null
+
+    const sections: string[] = []
+    let bylineCandidate: string | null = null
+    for (const item of itemNodes) {
+      const title = textOf(item.querySelector('title'))
+      const date = textOf(
+        item.querySelector(isAtom ? 'published, updated' : 'pubDate'),
+      )
+      // Prefer the full body (`content:encoded` for RSS,
+      // `content` for Atom), fall back to the short description /
+      // summary tag.
+      const fullBody = textOf(
+        item.querySelector('content\\:encoded, encoded'),
+      )
+      const summary = textOf(item.querySelector(isAtom ? 'summary, content' : 'description'))
+      const body = stripHtml(fullBody || summary || '')
+      if (!bylineCandidate) {
+        bylineCandidate =
+          textOf(item.querySelector(isAtom ? 'author > name' : 'dc\\:creator, creator')) ??
+          textOf(item.querySelector('author'))
+      }
+      const section = [
+        title ? `## ${title}` : '##',
+        date ? `*${date}*` : '',
+        body,
+      ]
+        .filter((s) => s.trim().length > 0)
+        .join('\n\n')
+      if (section.trim().length > 0) sections.push(section)
+    }
+    if (sections.length === 0) return null
+
     return {
       url: finalUrl,
-      title: feed.title ?? null,
-      byline: byline?.creator ?? byline?.author ?? null,
+      title: feedTitle,
+      byline: bylineCandidate,
       markdown: sections.join('\n\n---\n\n'),
       sourceType: 'rss',
-      itemCount: items.length,
+      itemCount: itemNodes.length,
     }
   } catch (err) {
     console.warn('[profile:fetch] RSS parse failed', { finalUrl, err })
     return null
   }
+}
+
+function textOf(el: Element | null | undefined): string | null {
+  if (!el) return null
+  const t = el.textContent?.trim()
+  return t && t.length > 0 ? t : null
 }
 
 function looksLikeFeed(page: FetchedPageRaw): boolean {
@@ -207,12 +265,26 @@ function discoverFeedUrl(html: string, baseUrl: string): string | null {
 
 // ── Article path ───────────────────────────────────────────────────
 
-async function extractArticle(page: FetchedPageRaw): Promise<FetchedSource | null> {
+/** Run Mozilla Readability against a fetched HTML page. The engine
+ * mutates the input document, so we parse the body into a fresh
+ * Document first. Readability needs a `baseURI` to resolve relative
+ * links — we set it via the parsed doc's documentURI when possible. */
+function extractArticle(page: FetchedPageRaw): FetchedSource | null {
   try {
-    const article = await extractFromHtml(page.body, page.url)
+    const doc = new DOMParser().parseFromString(page.body, 'text/html')
+    // Some readability heuristics use the doc's baseURI to score
+    // links. Inject a <base> tag pointing at the source URL so
+    // relative paths resolve correctly.
+    if (!doc.querySelector('base')) {
+      const base = doc.createElement('base')
+      base.setAttribute('href', page.url)
+      doc.head?.prepend(base)
+    }
+    const reader = new Readability(doc)
+    const article = reader.parse()
     if (!article || !article.content) {
-      // Last-resort: strip all HTML and return whatever text the page
-      // had. Better than nothing for thin home pages.
+      // Last-resort: strip all HTML and return whatever text the
+      // page had. Better than nothing for thin home pages.
       const fallback = stripHtml(page.body)
       if (fallback.trim().length < 100) return null
       return {
@@ -227,7 +299,7 @@ async function extractArticle(page: FetchedPageRaw): Promise<FetchedSource | nul
     return {
       url: page.url,
       title: article.title ?? null,
-      byline: article.author ?? null,
+      byline: article.byline ?? null,
       markdown: stripHtml(article.content),
       sourceType: 'article',
       itemCount: 1,
