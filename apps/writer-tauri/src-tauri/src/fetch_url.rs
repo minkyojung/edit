@@ -40,6 +40,22 @@ pub struct FetchedPage {
     pub body: String,
 }
 
+/// XML 1.0 character class — per the spec, the only allowed code
+/// points are #x9 (tab), #xA (newline), #xD (carriage return), and
+/// the contiguous ranges #x20–#xD7FF, #xE000–#xFFFD, #x10000–#x10FFFF.
+/// Everything else (other ASCII control chars, surrogate halves, the
+/// non-character codepoints U+FFFE/U+FFFF) makes a strict XML parser
+/// refuse the document. Used by the BOM-strip path to sanitise feed
+/// bodies before handing them to the frontend's DOMParser.
+fn is_valid_xml_char(c: char) -> bool {
+    matches!(c,
+        '\t' | '\n' | '\r'
+        | '\u{20}'..='\u{D7FF}'
+        | '\u{E000}'..='\u{FFFD}'
+        | '\u{10000}'..='\u{10FFFF}'
+    )
+}
+
 /// SSRF guard. Blocks the obvious "internal" targets so a malicious /
 /// mistyped URL can't pivot to localhost services or LAN devices via
 /// our Tauri privileges. Public IPs and hostnames fall through.
@@ -112,10 +128,17 @@ pub async fn fetch_url(url: String) -> Result<FetchedPage, String> {
     // element with no line/column info. Many CDN-fronted feeds (Substack,
     // Cloudflare-cached WordPress) emit BOMs; strip here so the
     // frontend never has to think about it.
-    let body = decoded
-        .trim_start_matches('\u{FEFF}')
-        .trim_start()
-        .to_string();
+    let trimmed = decoded.trim_start_matches('\u{FEFF}').trim_start();
+    // Strip XML 1.0 invalid characters (control chars except tab /
+    // newline / carriage return, plus the U+FFFE/U+FFFF non-character
+    // codepoints). Real-world RSS bodies routinely contain stray
+    // 0x08 backspace bytes — usually copy-pasted from terminals or
+    // legacy editors — which the strict parser correctly rejects.
+    // Industry-standard RSS readers all do this sanitisation pass.
+    let body: String = trimmed
+        .chars()
+        .filter(|&c| is_valid_xml_char(c))
+        .collect();
 
     Ok(FetchedPage {
         url: final_url,
