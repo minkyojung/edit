@@ -293,7 +293,7 @@ describe('markStore.subscribe', () => {
         content: undefined,
         text: 'note a',
       })
-    })
+    }, 'doc-init')
 
     // Two events: initial empty, then post-insert.
     expect(events.length).toBeGreaterThanOrEqual(2)
@@ -317,7 +317,7 @@ describe('markStore.subscribe', () => {
         content: undefined,
         text: 'note',
       })
-    })
+    }, 'doc-init')
 
     expect(events.length).toBe(initialCount)
   })

@@ -234,7 +234,7 @@ function looksLikeFilename(seg: string): boolean {
 
 // ── frontmatter serialisation ─────────────────────────────────────
 
-interface ParsedSource extends Document {}
+type ParsedSource = Document
 
 /** Compose the on-disk markdown for a single source file. */
 function serialiseSourceFile(
@@ -293,7 +293,7 @@ function parseSourceFile(raw: string): ParsedSource | null {
  * 1.2. We don't claim full YAML coverage; the parser side mirrors
  * this narrow surface. */
 function escapeYamlValue(value: string): string {
-  const needsQuote = /[:#]|^\s|\s$|^["'\[\]{}|>!%@&*]/.test(value)
+  const needsQuote = /[:#]|^\s|\s$|^["'[\]{}|>!%@&*]/.test(value)
   if (!needsQuote) return value
   return `'${value.replace(/'/g, "''")}'`
 }

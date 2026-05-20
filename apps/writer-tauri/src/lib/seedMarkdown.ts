@@ -43,7 +43,7 @@ export function seedMarkdownIntoYDoc(
   const trimmed = markdown.trim()
   if (trimmed.length === 0) return false
 
-  let pmNode: ReturnType<MarkdownParser> | null = null
+  let pmNode: ReturnType<MarkdownParser>
   try {
     pmNode = parser(trimmed)
   } catch (err) {
@@ -83,7 +83,7 @@ export function replaceMarkdownInYDoc(
   const trimmed = markdown.trim()
   if (trimmed.length === 0) return false
 
-  let pmNode: ReturnType<MarkdownParser> | null = null
+  let pmNode: ReturnType<MarkdownParser>
   try {
     pmNode = parser(trimmed)
   } catch (err) {

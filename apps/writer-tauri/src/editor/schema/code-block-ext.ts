@@ -234,15 +234,11 @@ export const codeBlockSchemaExt = $nodeSchema('code_block', (ctx) => {
     toMarkdown: {
       match: (node) => node.type.name === 'code_block',
       runner: (state, node) => {
-        // Extract proof marks from the code block
+        // Extract proof marks from the code block. `lang` rides in
+        // the dedicated mdast field; `meta` carries only the encoded
+        // proof marks (lang itself is not duplicated there).
         const proofMarks = extractProofMarks(node);
         const encodedMarks = encodeMarksForMeta(proofMarks);
-
-        // Build meta: language first, then proof marks if any
-        let meta = node.attrs.language || '';
-        if (encodedMarks) {
-          meta = meta ? `${meta} ${encodedMarks}` : encodedMarks;
-        }
 
         state.addNode('code', undefined, node.textContent, {
           lang: node.attrs.language || undefined,
