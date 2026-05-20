@@ -23,9 +23,18 @@ import { ensureProfileWikiSlug } from '@/state/wikiService'
 
 const MODEL = 'claude-sonnet-4-6'
 const MAX_TOKENS_PER_SECTION = 800
-// Per-post truncation before the prompt. 4000 chars × ~20 posts =
-// ~80k chars, well inside the model context after system prompt.
-const PER_POST_CHAR_CAP = 4000
+// Per-post truncation before the prompt. 2000 chars × 8 posts =
+// ~16k chars per call — comfortably below the OAuth-token per-
+// minute input limit so the three section calls don't 429. Voice
+// and theme signal saturates well before 2000 chars per post, so
+// the larger cap from earlier iterations was unnecessary.
+const PER_POST_CHAR_CAP = 2000
+
+// 429 retry policy. Exponential backoff: 1s, 2s, 4s. Three retries
+// covers the typical per-minute window resets without making the
+// user wait forever on a hard outage.
+const MAX_RETRY_ATTEMPTS = 4
+const RETRY_BASE_DELAY_MS = 1000
 
 const SECTION_ORDER: ProfileSectionKey[] = ['voice', 'themes', 'about']
 
@@ -63,8 +72,9 @@ export async function runProfilePipeline(
     try {
       sections[key] = await generateSection(key, documents)
     } catch (err) {
+      console.error('[profile] section failed', { section: key, err })
       const msg = err instanceof Error ? err.message : String(err)
-      onProgress({ kind: 'error', message: `${key}: ${msg}` })
+      onProgress({ kind: 'error', message: `${key}: ${msg || '(no message)'}` })
       return { ok: false, reason: 'llm_failed' }
     }
     onProgress({ kind: 'section_done', section: key })
@@ -88,16 +98,23 @@ async function generateSection(
   // The heading is added by the assembler — instructing the model to
   // skip it avoids the common failure of emitting "## Voice" twice
   // (model heading + our heading) when we concatenate.
-  const system = [
-    PROFILE_SYSTEM_PREAMBLE,
-    '',
+  const sectionInstruction = [
     def.instruction,
     '',
     `Return ONLY the section body. Do not include the "${def.heading}" heading — the caller will add it.`,
   ].join('\n')
 
-  const userContent = renderDocsForPrompt(docs)
-  const text = await callAnthropic(system, userContent)
+  // Caching strategy: keep system + posts identical across all three
+  // section calls so Anthropic's prompt cache hits on calls 2 and 3.
+  // Section-specific instruction is appended AFTER the cache marker
+  // on the posts block — anything before the marker is the cached
+  // prefix; anything after re-runs each call.
+  const postsText = renderDocsForPrompt(docs)
+  const text = await callAnthropic({
+    system: PROFILE_SYSTEM_PREAMBLE,
+    postsText,
+    sectionInstruction,
+  })
   return text.trim()
 }
 
@@ -118,34 +135,124 @@ interface AnthropicResult {
   status: number
   body: {
     content?: Array<{ type: string; text?: string }>
-    error?: { message?: string }
+    error?: { type?: string; message?: string }
   }
 }
 
-async function callAnthropic(
-  system: string,
-  userContent: string,
-): Promise<string> {
-  const resp = await invoke<AnthropicResult>('anthropic_messages_create', {
-    request: {
-      body: {
-        model: MODEL,
-        max_tokens: MAX_TOKENS_PER_SECTION,
-        system,
-        messages: [{ role: 'user', content: userContent }],
-      },
-    },
-  })
+/** Turn an Anthropic error block into a human-readable message.
+ * The OAuth-token path often returns `message: "Error"` (literally
+ * the string "Error") when rate-limited, with the real signal in
+ * `type` (e.g. "rate_limit_error"). Prefer type when message is
+ * empty / generic. */
+function formatApiError(
+  status: number,
+  err: { type?: string; message?: string } | undefined,
+): string {
+  if (status === 429) {
+    return "We've hit Anthropic's rate limit. Wait about a minute and try again."
+  }
+  const message = err?.message
+  const meaningful = message && message !== 'Error' ? message : null
+  if (meaningful) return meaningful
+  if (err?.type) return `${err.type} (status ${status})`
+  return `status ${status}`
+}
 
+interface SectionCallArgs {
+  system: string
+  postsText: string
+  sectionInstruction: string
+}
+
+async function callAnthropic(args: SectionCallArgs): Promise<string> {
+  // Retry loop. On 429 we back off and try again — the OAuth-token
+  // per-minute limit usually clears within a few seconds. Any other
+  // failure surfaces immediately (no point retrying a 400/auth/etc).
+  for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+    const result = await callOnce(args)
+    if (result.kind === 'ok') return result.text
+    if (result.kind === 'rate_limited' && attempt < MAX_RETRY_ATTEMPTS) {
+      const delayMs = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)
+      console.warn(
+        `[profile] rate-limited, retrying in ${delayMs}ms (attempt ${attempt}/${MAX_RETRY_ATTEMPTS})`,
+      )
+      await sleep(delayMs)
+      continue
+    }
+    throw result.error
+  }
+  // Loop exit only via throw above. Unreachable.
+  throw new Error('exhausted retries')
+}
+
+type CallOnceResult =
+  | { kind: 'ok'; text: string }
+  | { kind: 'rate_limited'; error: Error }
+  | { kind: 'fatal'; error: Error }
+
+async function callOnce(args: SectionCallArgs): Promise<CallOnceResult> {
+  let resp: AnthropicResult
+  try {
+    resp = await invoke<AnthropicResult>('anthropic_messages_create', {
+      request: { body: buildRequestBody(args) },
+    })
+  } catch (err) {
+    console.error('[profile] invoke failed', err)
+    const message = typeof err === 'string' ? err : `invoke: ${String(err)}`
+    return { kind: 'fatal', error: new Error(message) }
+  }
+
+  if (resp.status === 429) {
+    console.warn('[profile] 429', { body: resp.body })
+    return {
+      kind: 'rate_limited',
+      error: new Error(formatApiError(resp.status, resp.body.error)),
+    }
+  }
   if (resp.status !== 200) {
-    const reason = resp.body.error?.message ?? `status ${resp.status}`
-    throw new Error(reason)
+    console.error('[profile] non-200', { status: resp.status, body: resp.body })
+    return {
+      kind: 'fatal',
+      error: new Error(formatApiError(resp.status, resp.body.error)),
+    }
   }
   const textBlock = resp.body.content?.find((b) => b.type === 'text')
   if (!textBlock?.text) {
-    throw new Error('no text content in response')
+    console.error('[profile] no text block', { body: resp.body })
+    return { kind: 'fatal', error: new Error('no text content in response') }
   }
-  return textBlock.text
+  return { kind: 'ok', text: textBlock.text }
+}
+
+/** Build the Messages API body with a prompt-cache marker on the
+ * posts block. The cache prefix is (system + posts) — identical
+ * across the three section calls, so calls 2 and 3 hit the cache
+ * and pay only for the (small) section instruction + output. The
+ * section instruction sits AFTER the marker so its variance
+ * doesn't invalidate the cache. */
+function buildRequestBody(args: SectionCallArgs) {
+  return {
+    model: MODEL,
+    max_tokens: MAX_TOKENS_PER_SECTION,
+    system: args.system,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: args.postsText,
+            cache_control: { type: 'ephemeral' },
+          },
+          { type: 'text', text: args.sectionInstruction },
+        ],
+      },
+    ],
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function assembleMarkdown(

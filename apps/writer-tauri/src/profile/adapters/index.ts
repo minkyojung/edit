@@ -35,10 +35,11 @@ export async function fetchPage(url: string): Promise<FetchedPage> {
   return invoke('fetch_url', { url })
 }
 
-/** Adapter results capped so the prompt size stays bounded. 20
- * recent posts is plenty of signal for Voice/Themes/About without
- * blowing past the context window when we concatenate later. */
-export const MAX_DOCS_PER_RUN = 20
+/** Adapter results capped so the prompt size stays bounded. 8
+ * recent posts is enough signal for Voice/Themes/About — going
+ * higher just hits the OAuth-token per-minute token limit faster
+ * (429 rate_limit_error) without measurably improving the analysis. */
+export const MAX_DOCS_PER_RUN = 8
 
 export interface DiscoveryResult {
   adapter: 'rss' | 'sitemap' | 'readability' | 'none'
