@@ -13,7 +13,9 @@ import { AppShell } from '@/layout/AppShell'
 import { Page } from '@/layout/Page'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { WikiPageBanner } from '@/layout/WikiPageBanner'
+import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
 import { useDocsStore } from '@/state/docsStore'
+import { useSettingsStore } from '@/state/settingsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
 import {
@@ -110,6 +112,15 @@ function AppContent() {
   // mount post-upgrade; no-op afterwards.
   useMigrateLegacyIngestMarks()
 
+  // First-run onboarding trigger. We read bootstrapCompleted from the
+  // persisted settings store as the initial value so a returning user
+  // never sees a flash of the dialog. The state is local — once
+  // OnboardingDialog calls markBootstrapCompleted, this component
+  // doesn't need to know; the next launch starts with the flag true.
+  const [onboardingOpen, setOnboardingOpen] = useState(
+    () => !useSettingsStore.getState().bootstrapCompleted,
+  )
+
   const activeHandle = activeSlug ? handles[activeSlug] ?? null : null
   const activeStatus = activeSlug ? statusMap[activeSlug] ?? 'loading' : 'loading'
 
@@ -159,6 +170,10 @@ function AppContent() {
         <MarkHoverActionsLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
         <MarkPopoverLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
         <CommandPalette />
+        <OnboardingDialog
+          open={onboardingOpen}
+          onClose={() => setOnboardingOpen(false)}
+        />
       </HashRouter>
     </ErrorBoundary>
   )
