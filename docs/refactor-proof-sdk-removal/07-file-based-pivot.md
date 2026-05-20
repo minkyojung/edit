@@ -167,15 +167,15 @@ interface Settings {
 
 ## Sub-phase 분할
 
-| Sub | 내용 | 예상 | 핵심 산출물 |
-|---|---|---|---|
-| **4.A** | 폴더 layout + 파일 I/O 기반 | 1주 | vault 선택 UX / 파일 read·write helpers / atomic save / echo flag |
-| **4.B** | 에디터 파일 binding | 1~1.5주 | Y.Doc ↔ markdown 직렬화 / debounced auto-save / 파일 ↔ editor 양방향 |
-| **4.C** | 마크 storage 새 모양 | 1~2주 | sidecar JSON / quote-based anchor / markStore 재구현 |
-| **4.D** | doc 흐름 마이그레이션 | 1주 | 데일리 / wiki / system 페이지의 파일 경로 매핑 / ingest·chat 흐름 적응 |
-| **4.E** | file watcher | 며칠 | OS native watch / 변경 분류 / conflict modal |
-| **4.F** | chat thread 이주 | 며칠 | `threads/<id>.json` |
-| **4.G** | IDB 잔재 제거 | 며칠 | y-indexeddb dep 제거 / 옛 코드 정리 |
+| Sub | 내용 | 예상 | 상태 | 핵심 산출물 |
+|---|---|---|---|---|
+| **4.A** | 폴더 layout + 파일 I/O 기반 | 1주 | ✅ 완료 | `vault.ts`, `vaultPicker.ts`, atomic write + echo flag |
+| **4.B** | 에디터 파일 binding | 1~1.5주 | ✅ 완료 | `docFileSync.ts`: 직렬화 + observer + 2s 자동 flush + 종료 시 final flush (CloseConfirmDialog) |
+| **4.C** | 마크 storage 새 모양 | 1~2주 | ✅ 완료 | `domain/internal/anchor.ts`, `quote.ts` (quote-based anchor). 단, Path C에서 `.ydoc` binary로 전환 → sidecar는 정체성 메타만 |
+| **4.D** | doc 흐름 마이그레이션 | 1주 | ✅ 완료 | `docPaths.ts`에 wiki / daily / _system 매핑 + daily 하위 노트 |
+| **4.E** | file watcher | 며칠 | ✅ 완료 | `vaultWatcher.ts`, `externalConflictStore.ts`, ExternalEditBanner |
+| **4.F** | chat thread 이주 | 며칠 | 🚧 다음 | `threads/<id>.json` — 현재 chat thread는 아직 IDB |
+| **4.G** | IDB 잔재 제거 | 며칠 | ⏳ 4.F 이후 | `y-indexeddb` dep 제거 (`package.json:80` 잔존) + 옛 코드 정리 |
 
 ## 핵심 invariant (모든 sub-phase 가 지켜야 함)
 

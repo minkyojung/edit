@@ -18,8 +18,9 @@ import type { GetDocsState, SetDocsState } from './types'
 
 export interface EditSlice {
   /** Rename a user-owned doc. Updates `knownDocs[slug].title`; the
-   * auto-flush rename-on-change machinery (Phase 4.B.1.c.vi) then
-   * moves the `.md` + `.meta.json` + `.ydoc` on disk on the next tick.
+   * auto-flush rename-on-change machinery (see `docFileSync.flushDirty`'s
+   * `lastWrittenPath` branch) then moves the `.md` + `.meta.json` +
+   * `.ydoc` on disk on the next tick.
    *
    * Refuses (returns false) for daily / system docs — their titles
    * are derived from type and aren't user-editable. Trim whitespace

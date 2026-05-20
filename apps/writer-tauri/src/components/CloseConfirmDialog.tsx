@@ -1,11 +1,11 @@
 // Confirmation modal triggered by app:close-requested when one or more
 // chats are still streaming. Mounted once at AppShell level.
 //
-// Phase 4.B.1.b.iv.4 — also runs the vault auto-flush pipeline before
-// any quit path so unsaved edits (and any made during the confirm
-// dialog) reach disk. Without this, edits in the last 2 seconds
-// before quit could be lost: the auto-flush timer runs at most every
-// 2s, and a user typing right before Cmd+Q could fall in that window.
+// Also runs the vault auto-flush pipeline before any quit path so
+// unsaved edits (and any made during the confirm dialog) reach disk.
+// Without this, edits in the last 2 seconds before quit could be
+// lost: the auto-flush timer runs at most every 2s, and a user
+// typing right before Cmd+Q could fall in that window.
 
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'

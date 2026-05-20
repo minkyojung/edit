@@ -1,25 +1,21 @@
 // Doc ↔ vault file synchronisation.
 //
-// Phase 4.B turns this layer into the bridge between the live Y.Doc
-// (memory + IDB today, becoming memory + file in 4.B.1) and the
-// markdown + sidecar pair on disk. The runtime flow grows in stages:
+// Bridge between the live Y.Doc (memory) and the on-disk vault files
+// (.md body + .meta.json identity sidecar + .ydoc CRDT snapshot).
 //
-//   4.B.1.b.i   — serializeDocToFiles for the simple case: active
-//                 doc, no marks. Pure read; no disk I/O.
-//   4.B.1.b.ii (this commit) — populate the sidecar by extracting
-//                 marks from markStore and computing semantic anchors
-//                 (quote + context + occurrence) against the serialised
-//                 markdown. Mirrors the markResolver fallback chain so
-//                 saves and loads stay symmetric.
-//   4.B.1.b.iii — handle inactive docs (fragment fallback or
-//                 transient PM reconstruction).
-//   4.B.1.b.iv  — install observer + debounced atomic write on
-//                 Y.Doc changes.
+// Runtime flow:
+//   - `installDocSync(slug, ydoc)` attaches an observer to the doc's
+//     XmlFragment and marks map; any mutation flags the slug dirty
+//   - `startAutoFlush()` ticks every FLUSH_INTERVAL_MS; each tick
+//     calls `flushDirty()` which serialises every dirty slug and
+//     writes the three files atomically
+//   - `flushDirty()` is also called from the app-close path
+//     (CloseConfirmDialog) so edits made in the last 2s before quit
+//     reach disk
 //
-// Splitting this way lets each step be inspected in DevTools before
-// the next layer goes in: serialize once, see the output, decide
-// whether the markdown / sidecar shape is right before wiring
-// auto-save on top.
+// vault.ts owns the atomic write + echo flag; vaultWatcher.ts owns
+// external-change detection. This module is the glue: when to write,
+// and what (serialise) to write.
 
 import * as Y from 'yjs'
 import { useDocsStore } from '@/state/docsStore'
@@ -133,13 +129,8 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
 // ── Dirty tracking ───────────────────────────────────────────────
 //
 // Each open doc's Y.Doc gets an observer that marks the slug "dirty"
-// on any content or mark mutation. A future auto-flush tick (Phase
-// 4.B.1.b.iv.2-3) walks `dirtySlugs` periodically and writes the
-// changed docs to vault files.
-//
-// This sub-phase (iv.1) installs only the observers and the set —
-// no disk I/O yet, so we can verify the dirty signal in DevTools
-// before wiring the actual flush.
+// on any content or mark mutation. The auto-flush tick walks
+// `dirtySlugs` periodically and writes the changed docs to vault files.
 
 const dirtySlugs = new Set<string>()
 
@@ -226,13 +217,9 @@ export function installDocSync(slug: string, ydoc: Y.Doc): () => void {
 // ── Auto-flush timer ─────────────────────────────────────────────
 //
 // Obsidian-style periodic flush: every FLUSH_INTERVAL_MS the timer
-// checks `dirtySlugs` and (in a later sub-phase) writes the changed
-// docs to the vault. This module owns the timer lifecycle so the
-// rest of the app sees a simple start/stop API.
-//
-// In this sub-phase (iv.2) the timer body is a dummy console log —
-// we want to verify the cadence first, then replace the callback
-// with the real serialize-and-write pipeline in iv.3.
+// checks `dirtySlugs` and writes the changed docs to the vault.
+// This module owns the timer lifecycle so the rest of the app sees
+// a simple start/stop API.
 //
 // The 2000ms interval matches what Obsidian observes in practice
 // (~2s periodic flush during continuous typing, per its plugin
@@ -505,8 +492,8 @@ export function startAutoFlush(): void {
 
 /** Stop the periodic flush loop. Idempotent. Called on app teardown
  * (Tauri ExitRequested) so the timer doesn't leak into a closing
- * window. iv.4 will also drive a final synchronous flush from this
- * path so unsaved dirty slugs land on disk before exit. */
+ * window. CloseConfirmDialog drives a final `flushDirty()` before
+ * calling this so unsaved dirty slugs land on disk before exit. */
 export function stopAutoFlush(): void {
   if (flushTimerId === null) return
   window.clearInterval(flushTimerId)

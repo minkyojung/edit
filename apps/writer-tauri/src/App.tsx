@@ -43,19 +43,15 @@ import { startVaultWatcher } from '@/lib/vaultWatcher'
 // to 'no-parser', leaving the body empty on every fresh open.
 void initHeadlessParser()
 
-// Phase 4.B.1.b.iv.2 — begin the periodic vault flush loop on app
-// load. Idempotent: safe under React StrictMode's double-mount and
-// against any future caller that might also start it. Currently a
-// dummy console-log tick; iv.3 swaps in the real save pipeline.
+// Begin the periodic vault flush loop on app load. Idempotent: safe
+// under React StrictMode's double-mount and against any future caller
+// that might also start it.
 startAutoFlush()
 
-// Phase 4.E.1 — start watching the vault folder for external edits.
-// Logging-only for now (no mutations); we use this baseline to
-// verify the Tauri watch API works on macOS and to observe the
-// shape of fsevents before wiring 4.E.2's router. The watcher is
-// gated on getActiveVaultPath() inside startVaultWatcher — when
-// BootGate's auto-picker is still up, it logs an inert message and
-// no-ops. Re-invocation after the picker completes lands in 4.E.2.
+// Watch the vault folder for external edits. Gated on
+// getActiveVaultPath() inside startVaultWatcher — when BootGate's
+// auto-picker is still up, it logs an inert message and no-ops.
+// The picker re-invokes after selecting a vault.
 void startVaultWatcher()
 
 // Module-scope so the configs array reference is stable across

@@ -1,13 +1,11 @@
 # Proof-SDK 제거 + Wiki LLM 재구성 로드맵
 
-> **Status (2026-05-17)**
+> **Status (2026-05-20)**
 >
 > - **Phase 0 ~ 3 완료** — proof-sdk / proof-server / Hocuspocus 의존 0 달성. mark schema 자체 정의 + 좁힘 (`proofSuggestion` 15→3 attrs, `proofApproved` 제거, `proofFlagged` reserved). CollabStatus 좁힘 + IDB error wiring. Karpathy 평평 wiki 구조 + Bear 식 body-first title 정착. 잠재 버그 2건 fix (end-of-doc accept, auto-thread).
-> - **Phase 4 (원래) — ingest.ts 분해 / Phase 5 — chat.ts 분해 / Phase 6 — queryWiki·lint·시간메타**: **연기**. 그 전에 더 근본적인 architecture pivot 이 들어감.
-> - **새 Phase 4 — 파일 기반 architecture pivot** (다음): 위키 / 데일리 / chat 데이터를 IndexedDB 가 아니라 사용자 폴더의 마크다운 파일로 저장. CLI 도구 (grep / git / vim / qmd / MCP) 와의 결합 + 데이터 durability + Karpathy 패턴 종착점.
-> - 옛 Phase 4/5/6 작업은 파일 기반 pivot 이 끝난 후 그 위에서 다시 진행 (위키 query 같은 새 기능은 파일 기반 위에서 더 자연스러움).
->
-> 자세한 새 Phase 4 plan: [07-file-based-pivot.md](./07-file-based-pivot.md) (작성 예정 — Pre-Phase 4 설계 결정 후)
+> - **새 Phase 4 (파일 기반 architecture pivot) — 4.A~4.E 완료**: vault 폴더 I/O, 에디터 ↔ 파일 양방향 (자동 저장 + 종료 시 final flush), 마크 anchor, doc 경로 매핑, 외부 변경 감지 + 충돌 banner 모두 동작. 자세한 진행: [07-file-based-pivot.md §Sub-phase 분할](./07-file-based-pivot.md)
+> - **다음**: 4.F — chat thread를 `threads/<id>.json`으로 이주. 그 다음 4.G — `y-indexeddb` dep 제거 + IDB 잔재 정리.
+> - **Phase 4 (원래) — ingest.ts 분해 / Phase 5 — chat.ts 분해 / Phase 6 — queryWiki·lint·시간메타**: **연기**. 파일 기반 pivot 완료 (4.G) 후 재진행.
 
 ## 목적
 
@@ -46,7 +44,7 @@
 | 1 | 새 markStore in-memory 구현 | ✅ 완료 | [01-markstore.md](./01-markstore.md) |
 | 2 | 호출자 갈아끼우기 (markActions, applyProposal, MarkToolbar, WikiPageBanner) | ✅ 완료 | [02-migration.md](./02-migration.md) |
 | 3 | proof-sdk / proof-server 제거 | ✅ 완료 (3.A~3.G 까지 모두) | [03-removal.md](./03-removal.md) |
-| **4 (새)** | **파일 기반 architecture pivot** — 위키/데일리/chat 데이터를 사용자 폴더의 .md 파일로 | 🚧 다음 | [07-file-based-pivot.md](./07-file-based-pivot.md) |
+| **4 (새)** | **파일 기반 architecture pivot** — 위키/데일리/chat 데이터를 사용자 폴더의 .md 파일로 | 🚧 진행 중 (4.A~4.E 완료, 4.F/4.G 남음) | [07-file-based-pivot.md](./07-file-based-pivot.md) |
 | 4 (구) | ingest.ts 분해 | ⏸ 연기 (새 Phase 4 후) | [04-ingest-refactor.md](./04-ingest-refactor.md) |
 | 5 | chat.ts 분해 | ⏸ 연기 | [05-chat-refactor.md](./05-chat-refactor.md) |
 | 6 | Wiki LLM 완성 (queryWiki + lint + 시간 메타) | ⏸ 연기 | [06-wiki-completion.md](./06-wiki-completion.md) |
@@ -59,7 +57,8 @@
 Phase 0 ──► Phase 1 ──► Phase 2 ──► Phase 3 ✅ (완료)
                                         │
                                         ▼
-                              [새 Phase 4 — 파일 기반 pivot]  🚧 다음
+                              [새 Phase 4 — 파일 기반 pivot]  🚧 진행 중
+                              4.A~4.E ✅   4.F/4.G 남음
                                         │
                                         ▼
                               구 Phase 4 (ingest) ──► 구 Phase 5 (chat) ──► 구 Phase 6 (queryWiki / lint)
