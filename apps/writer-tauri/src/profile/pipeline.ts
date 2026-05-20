@@ -21,7 +21,14 @@ import {
 import { useDocsStore } from '@/state/docsStore'
 import { ensureProfileWikiSlug } from '@/state/wikiService'
 
-const MODEL = 'claude-sonnet-4-6'
+// Haiku for the section calls. The OAuth-token budget the app
+// shares with chat/ingest/Claude Code itself is the real bottleneck
+// (not per-minute rate limit), so cost-per-call matters. Haiku is
+// ~3x cheaper than Sonnet and the Voice/Themes/About extraction is
+// well within Haiku's competence — stylistic summarisation, not
+// reasoning. If About quality regresses we can selectively promote
+// it to Sonnet later.
+const MODEL = 'claude-haiku-4-5'
 const MAX_TOKENS_PER_SECTION = 800
 // Per-post truncation before the prompt. 2000 chars × 8 posts =
 // ~16k chars per call — comfortably below the OAuth-token per-
