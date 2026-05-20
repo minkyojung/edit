@@ -26,6 +26,9 @@ if (import.meta.env.DEV) {
   // first-run import pipeline before the BootstrapDialog Stage 2
   // caller lands.
   void import('./agent/bootstrapIngest')
+  // Registers window.__runImport so the file → bootstrapIngest path
+  // is exercisable from DevTools before Stage 2 wires it up.
+  void import('./agent/import/runImport')
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
