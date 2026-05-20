@@ -1,3 +1,4 @@
+mod anthropic;
 pub mod claude_sidecar;
 mod fetch_url;
 mod oauth;
@@ -46,6 +47,7 @@ pub fn run() {
             claude_sidecar::commands::claude_chat_cancel,
             claude_sidecar::commands::claude_title,
             fetch_url::fetch_url,
+            anthropic::anthropic_messages_create,
             app_quit,
         ])
         .setup(|app| {

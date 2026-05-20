@@ -18,9 +18,7 @@
 // fills `about` with whatever signal it can find, so the user gets
 // a usable draft even from a single short blog post.
 
-import { invoke } from '@tauri-apps/api/core'
-import { awaitChatRun } from '@/agent/chatRun'
-import { getActiveVaultPath } from '@/state/settingsStore'
+import { structuredCall } from '@/agent/anthropicDirect'
 import { fetchUrlAsMarkdown, type FetchedSource } from './fetchUrl'
 import { renderProfileMd } from './renderProfileMd'
 import {
@@ -28,6 +26,40 @@ import {
   type PartialProfile,
   type ProfileFields,
 } from './profileTypes'
+
+/** JSON Schema for the `submit_profile` tool — mirrors the sidecar's
+ * zod schema but expressed in JSON Schema for the direct API call.
+ * Kept inline here so the per-call shape stays self-documenting. */
+const SUBMIT_PROFILE_TOOL = {
+  name: 'submit_profile',
+  description:
+    'Submit a structured profile extracted from one or more sources about the user. Call exactly once per run.',
+  schema: {
+    type: 'object',
+    properties: {
+      name: { type: ['string', 'null'] },
+      headline: { type: ['string', 'null'] },
+      location: { type: ['string', 'null'] },
+      roles: { type: 'array', items: { type: 'string' } },
+      interests: { type: 'array', items: { type: 'string' } },
+      voice_samples: { type: 'array', items: { type: 'string' } },
+      values: { type: 'array', items: { type: 'string' } },
+      dispositions: { type: 'array', items: { type: 'string' } },
+      about: { type: 'string' },
+    },
+    required: [
+      'name',
+      'headline',
+      'location',
+      'roles',
+      'interests',
+      'voice_samples',
+      'values',
+      'dispositions',
+      'about',
+    ],
+  } as const,
+}
 
 // Both passes use Sonnet. Originally per-URL was Haiku for cost,
 // but Haiku 4.5 in tool-use mode routinely sandbags `submit_profile`
@@ -39,7 +71,6 @@ import {
 // is negligible (Profile is a one-time operation per user).
 const EXTRACT_MODEL = 'claude-sonnet-4-6'
 const SYNTHESIS_MODEL = 'claude-sonnet-4-6'
-const PROFILE_RESULT_EVENT = 'profile:result'
 
 /** Hard cap so a wildly long Substack archive doesn't blow the
  * Haiku context window. Empirically ~50KB of prose is plenty for
@@ -173,30 +204,22 @@ async function extractFromSource(source: FetchedSource): Promise<PartialProfile 
     : source.url
   const prompt = `Source: ${sourceLabel}\n\nText:\n\n${truncated}`
 
-  const runId = crypto.randomUUID()
-  const finished = awaitChatRun<ProfileFields>(runId, PROFILE_RESULT_EVENT)
-  await invoke('claude_chat_start', {
-    args: {
-      runId,
-      model: EXTRACT_MODEL,
-      systemPrompt: PER_URL_SYSTEM_PROMPT,
-      prompt,
-      relayTools: ['submit_profile'],
-      vaultPath: getActiveVaultPath() ?? undefined,
-      effort: 'low',
-      sessionId: crypto.randomUUID(),
-    },
+  const result = await structuredCall<ProfileFields>({
+    model: EXTRACT_MODEL,
+    systemPrompt: PER_URL_SYSTEM_PROMPT,
+    prompt,
+    toolName: SUBMIT_PROFILE_TOOL.name,
+    toolDescription: SUBMIT_PROFILE_TOOL.description,
+    toolSchema: SUBMIT_PROFILE_TOOL.schema,
   })
-  const outcome = await finished
-  if (!outcome.toolInput) {
-    console.warn('[profile:extract] per-URL tool not called', {
+  if (!result) {
+    console.warn('[profile:extract] per-URL extract returned null', {
       url: source.url,
-      textPreview: outcome.text.slice(0, 200),
     })
     return null
   }
   return {
-    ...outcome.toolInput,
+    ...result,
     source_url: source.url,
     source_title: source.title,
   }
@@ -237,31 +260,22 @@ async function synthesise(partials: PartialProfile[]): Promise<ProfileFields> {
 
   const prompt = `Per-source partials:\n\n${block}\n\nMerge into one Profile via submit_profile.`
 
-  const runId = crypto.randomUUID()
-  const finished = awaitChatRun<ProfileFields>(runId, PROFILE_RESULT_EVENT)
-  await invoke('claude_chat_start', {
-    args: {
-      runId,
-      model: SYNTHESIS_MODEL,
-      systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
-      prompt,
-      relayTools: ['submit_profile'],
-      vaultPath: getActiveVaultPath() ?? undefined,
-      effort: 'low',
-      sessionId: crypto.randomUUID(),
-    },
+  const result = await structuredCall<ProfileFields>({
+    model: SYNTHESIS_MODEL,
+    systemPrompt: SYNTHESIS_SYSTEM_PROMPT,
+    prompt,
+    toolName: SUBMIT_PROFILE_TOOL.name,
+    toolDescription: SUBMIT_PROFILE_TOOL.description,
+    toolSchema: SUBMIT_PROFILE_TOOL.schema,
   })
-  const outcome = await finished
-  if (!outcome.toolInput) {
-    console.warn('[profile:extract] synthesis tool not called', {
-      textPreview: outcome.text.slice(0, 200),
-    })
+  if (!result) {
+    console.warn('[profile:extract] synthesis returned null')
     // Fallback: just merge naively across partials so the user gets
     // *something*. Voice samples / dispositions union; about uses
     // the longest per-source about.
     return naiveFallbackMerge(partials)
   }
-  return { ...outcome.toolInput, source_urls: partials.map((p) => p.source_url) }
+  return { ...result, source_urls: partials.map((p) => p.source_url) }
 }
 
 function naiveFallbackMerge(partials: PartialProfile[]): ProfileFields {
