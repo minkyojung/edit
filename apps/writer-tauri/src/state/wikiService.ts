@@ -218,6 +218,18 @@ export async function readConventions(): Promise<string> {
   return readWikiMarkdown(doc.slug)
 }
 
+/** Read the user's self-profile page body (`wiki:profile`). Returns
+ * '' when the page doesn't exist yet (user skipped bootstrap) — chat
+ * / ingest then run without the profile prefix, same as before this
+ * feature landed. */
+export async function readSelfProfile(): Promise<string> {
+  const doc = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.type === 'wiki:profile' && !d.archivedAt)
+  if (!doc) return ''
+  return readWikiMarkdown(doc.slug)
+}
+
 /** No-op placeholder kept so the docsStore bootstrap call site
  * doesn't have to special-case the new lazy model. The wiki used to
  * pre-seed three pages here; now it stays empty until something

@@ -297,13 +297,20 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   })
 
   // Anchor ordering by cache stability:
-  //   prefix (stable):   conventions → index → hotPages → systemBody
+  //   prefix (stable):   selfProfile → conventions → index → hotPages → systemBody
   //   suffix (dynamic):  document
-  // conventions/index move only when wiki pages change; hotPages
-  // follow the [[link]] set in a thread which is stable across
+  // selfProfile sits at the very top — it's the most-stable block
+  // (changes only when the user edits the profile or the ingest LLM
+  // accepts a proposal targeting wiki:profile), and putting "who the
+  // user is" first means every downstream piece of the prompt is read
+  // through that lens. conventions/index move only when wiki pages
+  // change; hotPages follow the [[link]] set which is stable across
   // consecutive turns. The document changes every keystroke so we
   // pin it after the SDK's cache boundary.
   const prefix: string[] = []
+  if (ctx.selfProfile) {
+    prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
+  }
   if (ctx.conventions) prefix.push(ctx.conventions)
   if (ctx.index) prefix.push(`--- WIKI INDEX ---\n${ctx.index}`)
   for (const page of ctx.hotPages) {

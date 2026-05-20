@@ -211,6 +211,7 @@ function composeSystemPrompt(args: {
   hotPages: WikiPageBody[]
   conventions: string
   chatActivity: ActiveThreadSummary[]
+  selfProfile: string
 }): string[] {
   const trimmedConventions = args.conventions.trim()
   const rules = trimmedConventions
@@ -218,6 +219,18 @@ function composeSystemPrompt(args: {
     : SYSTEM_PROMPT_STATIC
 
   const blocks: string[] = [rules]
+
+  // Self profile — what the system already knows about the user.
+  // Lands BEFORE the wiki index so the model reads "who this person
+  // is" before scanning candidate pages; routing decisions (e.g. is
+  // this fact about THEM or someone else?) become accurate.
+  // When the page is empty the block is omitted — same shape as the
+  // chat path so the model never sees a "(empty profile)" header.
+  if (args.selfProfile.trim().length) {
+    blocks.push(
+      `--- SELF PROFILE (the user, auto-updated) ---\n${args.selfProfile}`,
+    )
+  }
 
   if (args.indexSnapshot.trim().length) {
     blocks.push(
@@ -515,6 +528,7 @@ export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreRes
     hotPages: ctx.hotPages,
     conventions: ctx.conventions,
     chatActivity,
+    selfProfile: ctx.selfProfile,
   })
 
   const runId = crypto.randomUUID()

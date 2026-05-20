@@ -23,7 +23,7 @@
 // couple unrelated concerns — we keep that local to each consumer.
 
 import { getWikiIndex } from '@/state/wikiIndex'
-import { readConventions } from '@/state/wikiService'
+import { readConventions, readSelfProfile } from '@/state/wikiService'
 import { selectHotPages, type WikiPageBody } from './contextSelector'
 
 /** Names of Tier 3 tools available when the sidecar has a vault path.
@@ -45,6 +45,12 @@ export interface ContextBundle {
    * the wiki grows without touching code. Empty string when the
    * page doesn't exist yet or is genuinely blank. */
   conventions: string
+  /** User self-profile (`wiki:profile`) body. Prepended to the
+   * system prompt before everything else so chat / ingest always
+   * see "who the user is" first. Empty string when bootstrap was
+   * skipped or the page hasn't been created yet — consumers handle
+   * the empty case by simply omitting the block. */
+  selfProfile: string
   /** Tier 3 tool names the consumer should pass to `relayTools` on
    * the `claude_chat_start` invoke. Empty array when the caller
    * opts out via `enableTools: false`. */
@@ -81,13 +87,14 @@ export interface AssembleContextOptions {
 export async function assembleContext(
   opts: AssembleContextOptions = {},
 ): Promise<ContextBundle> {
-  const [index, hotPages, conventions] = await Promise.all([
+  const [index, hotPages, conventions, selfProfile] = await Promise.all([
     getWikiIndex(),
     selectHotPages(
       { dailyBody: opts.docBody, queryText: opts.text },
       { budgetChars: opts.budgetChars },
     ),
     readConventions(),
+    readSelfProfile(),
   ])
 
   const tools: Tier3ToolName[] =
@@ -96,7 +103,8 @@ export async function assembleContext(
   const budgetUsed =
     index.length +
     hotPages.reduce((sum, p) => sum + p.body.length, 0) +
-    conventions.length
+    conventions.length +
+    selfProfile.length
 
-  return { index, hotPages, conventions, tools, budgetUsed }
+  return { index, hotPages, conventions, selfProfile, tools, budgetUsed }
 }
