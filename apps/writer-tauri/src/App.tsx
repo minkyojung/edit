@@ -13,7 +13,10 @@ import { AppShell } from '@/layout/AppShell'
 import { Page } from '@/layout/Page'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { WikiPageBanner } from '@/layout/WikiPageBanner'
+import { ProfileBanner } from '@/layout/ProfileBanner'
+import { BootstrapDialog } from '@/layout/BootstrapDialog'
 import { useDocsStore } from '@/state/docsStore'
+import { useSettingsStore } from '@/state/settingsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
 import {
@@ -137,6 +140,15 @@ function AppContent() {
                       so it doesn't shift layout when it appears/
                       disappears. */}
                   <WikiPageBanner />
+                  {/* Profile banner — appears only on wiki:profile
+                      after the URL bootstrap saves it, until the
+                      user dismisses or regenerates. Self-hides on
+                      every other page. */}
+                  <ProfileBanner
+                    onRegenerate={() =>
+                      useSettingsStore.getState().openBootstrapDialog()
+                    }
+                  />
                   <Page
                     key={activeSlug ?? 'no-doc'}
                     handle={activeHandle}
@@ -159,7 +171,18 @@ function AppContent() {
         <MarkHoverActionsLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
         <MarkPopoverLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
         <CommandPalette />
+        <BootstrapDialogMount />
       </HashRouter>
     </ErrorBoundary>
   )
+}
+
+/** Reads the open flag from the store so the dialog can be re-opened
+ * mid-session (first launch via BootGate, or "Regenerate" from the
+ * profile banner). Kept as a tiny component so the parent doesn't
+ * re-render when the flag toggles. */
+function BootstrapDialogMount() {
+  const open = useSettingsStore((s) => s.bootstrapDialogOpen)
+  const close = useSettingsStore((s) => s.closeBootstrapDialog)
+  return <BootstrapDialog open={open} onClose={close} />
 }

@@ -27,6 +27,22 @@ interface SettingsState {
    * BootstrapDialog. Persisted to localStorage so the dialog only
    * appears once per browser profile. */
   bootstrapCompleted: boolean
+  /** Timestamp (ms since epoch) when the URL → Profile bootstrap
+   * created the wiki:profile page. The on-page banner uses this
+   * to know "this profile was just AI-generated, show the review
+   * banner." Null when the user skipped bootstrap or hasn't done
+   * one yet. */
+  profileBootstrappedAt: number | null
+  /** True once the user dismissed the profile review banner.
+   * Re-running bootstrap clears this so the banner reappears on
+   * the freshly-regenerated page. */
+  profileBannerDismissed: boolean
+  /** Transient — true while the BootstrapDialog should be visible.
+   * Intentionally NOT persisted: dialog visibility is a runtime
+   * concern, not a setting. Set true by BootGate on first launch
+   * (when bootstrapCompleted is false) or by the ProfileBanner
+   * "Regenerate" action; cleared by the dialog's own onClose. */
+  bootstrapDialogOpen: boolean
 
   /** Replace the active vault path. v1 normalises to single-entry
    * array (legacy entries get overwritten, not appended). */
@@ -37,6 +53,19 @@ interface SettingsState {
   /** Flip bootstrapCompleted to true. Called by BootstrapDialog on
    * Finish / Skip. Idempotent. */
   markBootstrapCompleted: () => void
+  /** Stamp the profile-bootstrap timestamp + clear the dismissed
+   * flag. Called after a successful URL → Profile run so the
+   * banner reappears on the freshly-saved page. */
+  markProfileBootstrapped: () => void
+  /** User clicked the banner's dismiss control. Persists so the
+   * banner stays gone across reloads until the next bootstrap. */
+  dismissProfileBanner: () => void
+  /** Show the BootstrapDialog. Used by ProfileBanner's regenerate
+   * action and by the first-launch auto-trigger in BootGate. */
+  openBootstrapDialog: () => void
+  /** Hide the BootstrapDialog. Called by the dialog itself on
+   * Skip / Finish / Esc / outside-click. */
+  closeBootstrapDialog: () => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -45,10 +74,21 @@ export const useSettingsStore = create<SettingsState>()(
       vaultPaths: [],
       activeVaultIndex: 0,
       bootstrapCompleted: false,
+      profileBootstrappedAt: null,
+      profileBannerDismissed: false,
+      bootstrapDialogOpen: false,
       setActiveVaultPath: (path) =>
         set({ vaultPaths: [path], activeVaultIndex: 0 }),
       clearVault: () => set({ vaultPaths: [], activeVaultIndex: 0 }),
       markBootstrapCompleted: () => set({ bootstrapCompleted: true }),
+      markProfileBootstrapped: () =>
+        set({
+          profileBootstrappedAt: Date.now(),
+          profileBannerDismissed: false,
+        }),
+      dismissProfileBanner: () => set({ profileBannerDismissed: true }),
+      openBootstrapDialog: () => set({ bootstrapDialogOpen: true }),
+      closeBootstrapDialog: () => set({ bootstrapDialogOpen: false }),
     }),
     {
       name: 'writer-tauri:settings',
@@ -57,6 +97,8 @@ export const useSettingsStore = create<SettingsState>()(
         vaultPaths: s.vaultPaths,
         activeVaultIndex: s.activeVaultIndex,
         bootstrapCompleted: s.bootstrapCompleted,
+        profileBootstrappedAt: s.profileBootstrappedAt,
+        profileBannerDismissed: s.profileBannerDismissed,
       }),
     },
   ),

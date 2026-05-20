@@ -20,13 +20,18 @@
 // migrations that aren't blocking) deliberately fires AFTER the
 // flag flips, so the user sees the app open as soon as their
 // today-anchor is ready — the rest streams in.
+//
+// First-launch BootstrapDialog: BootGate triggers the dialog by
+// calling settingsStore.openBootstrapDialog() once after bootstrap
+// completes (when bootstrapCompleted is still false). The actual
+// dialog mounts inside AppContent so the ProfileBanner regenerate
+// flow can re-open it later without remounting the entire app.
 
 import { useEffect, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocsStore } from '@/state/docsStore'
 import { getActiveVaultPath, useSettingsStore } from '@/state/settingsStore'
 import { pickVault } from '@/lib/vaultPicker'
-import { BootstrapDialog } from '@/layout/BootstrapDialog'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
@@ -37,13 +42,7 @@ interface Props {
 export function BootGate({ children }: Props) {
   const bootstrapping = useDocsStore((s) => s.bootstrapping)
   const bootstrap = useDocsStore((s) => s.bootstrap)
-  const bootstrapCompleted = useSettingsStore((s) => s.bootstrapCompleted)
   const [showLoader, setShowLoader] = useState(false)
-  // Dialog visibility is local — once the user dismisses it we flip
-  // settingsStore.bootstrapCompleted to true (persisted) AND set this
-  // to false so the modal animates out cleanly even if the store
-  // write is async. Either signal alone suffices to hide it.
-  const [dialogOpen, setDialogOpen] = useState(true)
 
   // Fire bootstrap once on mount. The store's bootstrap is idempotent
   // (it short-circuits when the catalog already has today's daily),
@@ -67,6 +66,20 @@ export function BootGate({ children }: Props) {
     void init()
   }, [bootstrap])
 
+  // Once bootstrap finishes, trigger the first-launch BootstrapDialog
+  // exactly once when the user hasn't completed it yet. The dialog
+  // itself lives in AppContent (mounted alongside the editor) so the
+  // ProfileBanner regenerate action can re-open it mid-session
+  // without remounting the app.
+  useEffect(() => {
+    if (bootstrapping) return
+    const { bootstrapCompleted, bootstrapDialogOpen, openBootstrapDialog } =
+      useSettingsStore.getState()
+    if (!bootstrapCompleted && !bootstrapDialogOpen) {
+      openBootstrapDialog()
+    }
+  }, [bootstrapping])
+
   // Delay the visual loader by 400 ms so a fast bootstrap doesn't
   // produce a spinner flash.
   useEffect(() => {
@@ -75,21 +88,7 @@ export function BootGate({ children }: Props) {
     return () => window.clearTimeout(t)
   }, [bootstrapping])
 
-  if (!bootstrapping) {
-    // First-run gate: after bootstrap finishes, hold back the main UI
-    // until the user resolves the BootstrapDialog (Skip or Finish).
-    // Once bootstrapCompleted flips true it's persisted, so the next
-    // launch falls straight through without flashing the dialog.
-    if (!bootstrapCompleted && dialogOpen) {
-      return (
-        <BootstrapDialog
-          open={dialogOpen}
-          onClose={() => setDialogOpen(false)}
-        />
-      )
-    }
-    return <>{children}</>
-  }
+  if (!bootstrapping) return <>{children}</>
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-background">
