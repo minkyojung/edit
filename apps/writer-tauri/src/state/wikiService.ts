@@ -82,6 +82,16 @@ When a bullet mentions another page that already exists in the WIKI block, wrap 
 ### Length
 
 Each proposal's content is concise — one bullet or a short block of two or three lines. If a fact deserves more, split it into multiple proposals. The wiki accumulates; over-stuffing one bullet ages worse than splitting.
+
+### wiki:profile zones
+
+The \`wiki:profile\` page is special: a separate pipeline (URL → analysis) populates several sections from the user's own writing. Sections have different ownership, and ingest must respect them:
+
+- \`## Voice\`, \`## Themes\`, \`## About\`, \`## Sources\` — managed by the profile pipeline. Do NOT append to these. Their content is regenerated from source URLs on demand, so any ingest additions would be silently overwritten.
+- \`## Background\` — the ingest target on \`wiki:profile\`. Append durable facts about the user themselves here: hobbies, ongoing projects, relationships, recurring interests, things they own or use, life events. One bullet per fact, same shape as other wiki pages.
+- \`## Notes\` — the user's own free-form area. Never append here.
+
+When proposing to \`wiki:profile\`, emit the bullet content normally — the materialisation step places it under \`## Background\`.
 `
 
 /** Lazy-create shape for an agent-managed `system:*` page. Each one
