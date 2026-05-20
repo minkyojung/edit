@@ -163,11 +163,40 @@ function namespaceFor(inputUrl: string): string {
 /** Build a sortable, human-readable filename for a single post.
  * Format: `<YYYY-MM-DD>--<slug>.md`. Date prefix from publishedAt
  * when available (else today), so a `ls` of the folder lists posts
- * chronologically. */
+ * chronologically.
+ *
+ * Slug length is capped in BYTES, not JS chars: APFS NAME_MAX is
+ * ~255 bytes, and one Korean char is 3 UTF-8 bytes, so a 60-char
+ * Korean slug occupies 180 bytes — close enough to the limit that
+ * the prefix + suffix can push us over. Capping at 120 bytes
+ * (~40 Korean chars or ~120 ASCII chars) leaves comfortable
+ * headroom for the `.md` + date prefix and avoids the silent
+ * truncation that previously left index entries pointing at files
+ * the filesystem had shortened. */
 function makeFilename(doc: Document): string {
   const date = formatDate(doc.publishedAt) ?? formatDate(new Date().toISOString())!
-  const slug = slugify(doc.title).slice(0, 60) || 'untitled'
+  const rawSlug = slugify(doc.title)
+  const truncated = truncateByBytes(rawSlug, 120).replace(/-+$/, '')
+  const slug = truncated || 'untitled'
   return `${date}--${slug}.md`
+}
+
+/** Trim a string so its UTF-8 encoded length is at most `maxBytes`.
+ * Iterates by Unicode codepoint (so multi-byte chars are kept whole;
+ * we never produce a half-byte sequence). */
+function truncateByBytes(input: string, maxBytes: number): string {
+  const encoder = new TextEncoder()
+  if (encoder.encode(input).length <= maxBytes) return input
+
+  let bytes = 0
+  let endCharIndex = 0
+  for (const ch of input) {
+    const chBytes = encoder.encode(ch).length
+    if (bytes + chBytes > maxBytes) break
+    bytes += chBytes
+    endCharIndex += ch.length
+  }
+  return input.slice(0, endCharIndex)
 }
 
 function dedupeName(name: string, used: Set<string>): string {
