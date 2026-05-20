@@ -1,18 +1,22 @@
-// First-run welcome dialog. Stages:
+// First-run welcome dialog.
 //
-//   1. Source  — pick which inputs feed the initial memory (Import
-//                files / Add URLs). Stage 1 is fully wired.
-//   2. Analyze — when Import is selected, runs the file picker +
-//                bootstrapIngest loop and streams progress. URL
-//                fetch lands in B4 (silently skipped for now).
-//   3. Interview — adaptive Q&A. Lands in B5; currently skipped
-//                entirely so the user sees Finish straight from
-//                Stage 2 instead of a "coming soon" placeholder.
+// Default flow (URL → Self Profile):
+//   1. Source  — user pastes blog / Substack / Medium URLs (one per
+//                line). Markdown Import remains accessible via a
+//                small secondary link for users who prefer files.
+//   2. Analyze — runs extractProfile (URL → LLM → ProfileFields),
+//                saves the result to the wiki:profile page, navigates
+//                the editor there. The on-page banner (E.5.d) becomes
+//                the "review" surface; no in-modal review step.
 //
-// The dialog itself owns nothing persistent except the stage index
-// and the source checkboxes. Skip / Finish both flip
-// settingsStore.bootstrapCompleted so the dialog stays gone across
-// app restarts. BootGate controls when this mounts.
+// Markdown fallback (Stage1 secondary link):
+//   1. Source  — same dialog, user clicks "Or import markdown notes"
+//   2. Analyze — runs runImport (file picker → bootstrapIngest),
+//                proposals land in the existing WikiPageBanner.
+//
+// Skip / Finish / Esc all flip settingsStore.bootstrapCompleted so
+// the dialog stays gone across app restarts. BootGate controls
+// when this mounts.
 
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -32,8 +36,14 @@ import {
   type ImportProgress,
   type ImportResult,
 } from '@/agent/import/runImport'
+import {
+  extractProfile,
+  type ExtractProfileProgress,
+} from '@/agent/profile/extractProfile'
+import { saveProfileToVault } from '@/agent/profile/saveProfile'
+import { useDocsStore } from '@/state/docsStore'
 
-type Stage = 1 | 2 | 3
+type Stage = 'source' | 'url-analyze' | 'markdown-analyze'
 
 interface Props {
   open: boolean
@@ -41,9 +51,8 @@ interface Props {
 }
 
 export function BootstrapDialog({ open, onClose }: Props) {
-  const [stage, setStage] = useState<Stage>(1)
-  const [importSelected, setImportSelected] = useState(false)
-  const [urlSelected, setUrlSelected] = useState(false)
+  const [stage, setStage] = useState<Stage>('source')
+  const [urls, setUrls] = useState<string[]>([])
   const markCompleted = useSettingsStore((s) => s.markBootstrapCompleted)
 
   const handleSkip = () => {
@@ -54,18 +63,6 @@ export function BootstrapDialog({ open, onClose }: Props) {
   const handleFinish = () => {
     markCompleted()
     onClose()
-  }
-
-  // Stage 1 → next button decides which path to take. Import wins
-  // when it's checked (since Stage 2 is the only wired pipeline);
-  // URL-only falls through to Finish for now (B4 will pick this up).
-  const handleNextFromStage1 = () => {
-    if (importSelected) {
-      setStage(2)
-    } else {
-      // URL-only or neither — nothing to do until B4 lands.
-      handleFinish()
-    }
   }
 
   return (
@@ -79,20 +76,26 @@ export function BootstrapDialog({ open, onClose }: Props) {
       }}
     >
       <DialogContent className="max-w-lg">
-        <Stepper stage={stage} />
-        {stage === 1 && (
-          <Stage1
-            importSelected={importSelected}
-            urlSelected={urlSelected}
-            onToggleImport={() => setImportSelected((v) => !v)}
-            onToggleUrl={() => setUrlSelected((v) => !v)}
+        {stage === 'source' && (
+          <Stage1Source
             onSkip={handleSkip}
-            onNext={handleNextFromStage1}
+            onSubmitUrls={(parsed) => {
+              setUrls(parsed)
+              setStage('url-analyze')
+            }}
+            onUseMarkdown={() => setStage('markdown-analyze')}
           />
         )}
-        {stage === 2 && (
-          <Stage2Analyze
-            onCancel={() => setStage(1)}
+        {stage === 'url-analyze' && (
+          <Stage2UrlAnalyze
+            urls={urls}
+            onCancel={() => setStage('source')}
+            onFinish={handleFinish}
+          />
+        )}
+        {stage === 'markdown-analyze' && (
+          <Stage2MarkdownAnalyze
+            onCancel={() => setStage('source')}
             onFinish={handleFinish}
           />
         )}
@@ -101,81 +104,52 @@ export function BootstrapDialog({ open, onClose }: Props) {
   )
 }
 
-function Stepper({ stage }: { stage: Stage }) {
-  const labels: Array<{ id: Stage; label: string }> = [
-    { id: 1, label: 'Source' },
-    { id: 2, label: 'Analyze' },
-    { id: 3, label: 'Interview' },
-  ]
-  return (
-    <div className="flex items-center justify-center gap-2 pb-2 text-xs text-muted-foreground">
-      {labels.map((step, i) => (
-        <div key={step.id} className="flex items-center gap-2">
-          <span
-            className={
-              'flex h-5 w-5 items-center justify-center rounded-full border text-[10px] ' +
-              (step.id === stage
-                ? 'border-foreground bg-foreground text-background'
-                : step.id < stage
-                  ? 'border-foreground/40 text-foreground/40'
-                  : 'border-muted-foreground/30')
-            }
-          >
-            {step.id}
-          </span>
-          <span className={step.id === stage ? 'text-foreground' : ''}>{step.label}</span>
-          {i < labels.length - 1 && <span className="w-4 border-t border-muted-foreground/30" />}
-        </div>
-      ))}
-    </div>
-  )
-}
-
 interface Stage1Props {
-  importSelected: boolean
-  urlSelected: boolean
-  onToggleImport: () => void
-  onToggleUrl: () => void
   onSkip: () => void
-  onNext: () => void
+  onSubmitUrls: (parsed: string[]) => void
+  onUseMarkdown: () => void
 }
 
-function Stage1({
-  importSelected,
-  urlSelected,
-  onToggleImport,
-  onToggleUrl,
-  onSkip,
-  onNext,
-}: Stage1Props) {
-  const canProceed = importSelected || urlSelected
+function Stage1Source({ onSkip, onSubmitUrls, onUseMarkdown }: Stage1Props) {
+  const [raw, setRaw] = useState('')
+  const parsed = parseUrls(raw)
+  const canProceed = parsed.length > 0
+
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Set up your memory</DialogTitle>
+        <DialogTitle>Tell us about you</DialogTitle>
         <DialogDescription>
-          Pick where your initial memory should come from. You can always add more later.
+          Paste links to your writing — blog, Substack, Medium, Ghost,
+          WordPress, anything public. One URL per line. We&apos;ll read
+          them and draft a profile you can edit.
         </DialogDescription>
       </DialogHeader>
-      <div className="flex flex-col gap-2 py-2">
-        <SourceRow
-          checked={importSelected}
-          onToggle={onToggleImport}
-          title="Import files"
-          subtitle=".md, .txt, .json from another app"
-        />
-        <SourceRow
-          checked={urlSelected}
-          onToggle={onToggleUrl}
-          title="Add URLs"
-          subtitle="Blog posts, wikis, anything public on the web"
-        />
-      </div>
+      <textarea
+        className="min-h-32 w-full resize-y rounded-md border border-border bg-background p-3 font-mono text-sm placeholder:text-muted-foreground focus:border-foreground focus:outline-none"
+        placeholder={'https://your-blog.com\nhttps://your-name.substack.com\nhttps://medium.com/@your-handle'}
+        value={raw}
+        onChange={(e) => setRaw(e.target.value)}
+        spellCheck={false}
+        autoFocus
+      />
+      {parsed.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {parsed.length} {parsed.length === 1 ? 'URL' : 'URLs'} ready.
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={onUseMarkdown}
+        className="self-start text-xs text-muted-foreground underline-offset-2 hover:underline"
+      >
+        Or import markdown notes instead
+      </button>
       <DialogFooter className="flex items-center justify-between sm:justify-between">
         <Button variant="ghost" onClick={onSkip} className="text-muted-foreground">
           Skip &amp; start blank
         </Button>
-        <Button onClick={onNext} disabled={!canProceed}>
+        <Button onClick={() => onSubmitUrls(parsed)} disabled={!canProceed}>
           Next
         </Button>
       </DialogFooter>
@@ -183,46 +157,123 @@ function Stage1({
   )
 }
 
-function SourceRow({
-  checked,
-  onToggle,
-  title,
-  subtitle,
-}: {
-  checked: boolean
-  onToggle: () => void
-  title: string
-  subtitle: string
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={
-        'flex items-start gap-3 rounded-md border p-3 text-left transition-colors ' +
-        (checked
-          ? 'border-foreground bg-muted/40'
-          : 'border-border hover:bg-muted/30')
+/** Split a textarea blob into a clean URL list. Strips whitespace,
+ * drops blanks, drops anything that doesn't parse as URL — the user
+ * sees the live "N URLs ready" count update as they fix typos. */
+function parseUrls(raw: string): string[] {
+  const lines = raw.split(/[\r\n]+/).map((s) => s.trim()).filter((s) => s.length > 0)
+  const valid: string[] = []
+  for (const line of lines) {
+    try {
+      const u = new URL(line)
+      if (u.protocol === 'http:' || u.protocol === 'https:') {
+        valid.push(line)
       }
-    >
-      <span
-        className={
-          'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ' +
-          (checked ? 'border-foreground bg-foreground text-background' : 'border-muted-foreground/40')
+    } catch {
+      /* skip invalid */
+    }
+  }
+  return valid
+}
+
+interface Stage2UrlProps {
+  urls: string[]
+  /** Extraction failed wholesale (no usable sources). Bounce back
+   * to Stage 1 so the user can edit URLs or hit Skip. */
+  onCancel: () => void
+  /** Profile saved successfully (or 0-source noop). Closes the
+   * dialog and lets the post-finish handler navigate the user to
+   * the wiki:profile page. */
+  onFinish: () => void
+}
+
+function Stage2UrlAnalyze({ urls, onCancel, onFinish }: Stage2UrlProps) {
+  const [progress, setProgress] = useState<ExtractProfileProgress | null>(null)
+  const startedRef = useRef(false)
+
+  useEffect(() => {
+    if (startedRef.current) return
+    startedRef.current = true
+
+    void (async () => {
+      try {
+        const result = await extractProfile(urls, { onProgress: setProgress })
+        // Total failure — nothing valid extracted. Bounce back so
+        // the user can fix the URL list rather than landing on an
+        // empty profile page.
+        if (result.sourcesProcessed === 0) {
+          notify.profileBootstrapComplete({
+            sourcesProcessed: 0,
+            sourcesFailed: result.sourcesFailed,
+            saved: false,
+          })
+          onCancel()
+          return
         }
-        aria-hidden="true"
-      >
-        {checked ? '✓' : ''}
-      </span>
-      <span className="flex flex-col">
-        <span className="text-sm font-medium">{title}</span>
-        <span className="text-xs text-muted-foreground">{subtitle}</span>
-      </span>
-    </button>
+        // Save the markdown into wiki:profile (creates the page if
+        // it doesn't exist yet). Failure here is rare but possible
+        // (parser not ready, vault write error) — surface and bail.
+        const slug = await saveProfileToVault(result.profileMarkdown)
+        if (!slug) {
+          notify.profileBootstrapComplete({
+            sourcesProcessed: result.sourcesProcessed,
+            sourcesFailed: result.sourcesFailed,
+            saved: false,
+          })
+          onCancel()
+          return
+        }
+        // Surface the outcome BEFORE closing — toast becomes the
+        // persistent feedback while the modal animates out and the
+        // editor navigates to the profile page.
+        notify.profileBootstrapComplete({
+          sourcesProcessed: result.sourcesProcessed,
+          sourcesFailed: result.sourcesFailed,
+          saved: true,
+        })
+        // Navigate the editor to the freshly-saved profile page so
+        // the user lands on it as the dialog closes. The on-page
+        // banner (E.5.d) will be the "review" surface.
+        useDocsStore.getState().setActive(slug)
+        onFinish()
+      } catch (err) {
+        console.error('[bootstrap] extractProfile failed', err)
+        notify.profileBootstrapComplete({
+          sourcesProcessed: 0,
+          sourcesFailed: urls.length,
+          saved: false,
+        })
+        onCancel()
+      }
+    })()
+    // urls is captured via ref-guard; effect intentionally runs once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const statusLine = (() => {
+    if (!progress) {
+      return `Fetching ${urls.length} ${urls.length === 1 ? 'source' : 'sources'}…`
+    }
+    if (progress.synthesisRunning) {
+      return 'Synthesising your profile…'
+    }
+    return `Reading ${progress.urlsDone} / ${progress.urlsTotal} sources…`
+  })()
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Drafting your profile</DialogTitle>
+        <DialogDescription>{statusLine}</DialogDescription>
+      </DialogHeader>
+      <div className="flex items-center justify-center py-8">
+        <Spinner />
+      </div>
+    </>
   )
 }
 
-interface Stage2Props {
+interface Stage2MarkdownProps {
   /** User cancelled the OS picker (no files chosen). Stage 1 takes
    * over so they can pick again or hit Skip. */
   onCancel: () => void
@@ -231,7 +282,7 @@ interface Stage2Props {
   onFinish: () => void
 }
 
-function Stage2Analyze({ onCancel, onFinish }: Stage2Props) {
+function Stage2MarkdownAnalyze({ onCancel, onFinish }: Stage2MarkdownProps) {
   const [progress, setProgress] = useState<ImportProgress | null>(null)
   const [result, setResult] = useState<ImportResult | null>(null)
   const startedRef = useRef(false)

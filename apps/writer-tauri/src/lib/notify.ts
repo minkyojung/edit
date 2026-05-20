@@ -159,6 +159,42 @@ export const notify = {
     })
   },
 
+  // ── Bootstrap profile ─────────────────────────────────────────
+  /** Final summary toast for the first-run Profile pipeline (URL →
+   * extractProfile → wiki:profile). Mirrors bootstrapImportComplete
+   * but for the URL flow; fires after the dialog closes so the
+   * user sees the outcome alongside the wiki:profile page that
+   * just opened. */
+  profileBootstrapComplete(args: {
+    sourcesProcessed: number
+    sourcesFailed: number
+    saved: boolean
+  }) {
+    const { sourcesProcessed, sourcesFailed, saved } = args
+    const sourceWord = (n: number) => (n === 1 ? 'source' : 'sources')
+    if (!saved) {
+      toast.error("Couldn't save your profile", {
+        description: 'Profile extraction finished but writing the page failed. See console.',
+      })
+      return
+    }
+    if (sourcesProcessed === 0 && sourcesFailed > 0) {
+      toast.error("Couldn't read any URLs", {
+        description: `${sourcesFailed} ${sourceWord(sourcesFailed)} failed. See console for details.`,
+      })
+      return
+    }
+    if (sourcesFailed > 0) {
+      toast.warning(`Profile created from ${sourcesProcessed} of ${sourcesProcessed + sourcesFailed} ${sourceWord(sourcesProcessed + sourcesFailed)}`, {
+        description: `${sourcesFailed} ${sourceWord(sourcesFailed)} couldn't be read. See console.`,
+      })
+      return
+    }
+    toast.success(`Profile created from ${sourcesProcessed} ${sourceWord(sourcesProcessed)}`, {
+      description: 'Open the Profile page to review — chat already sees it.',
+    })
+  },
+
   // ── Bootstrap import ──────────────────────────────────────────
   /** Final summary toast for the first-run Import pipeline. Without
    * it the dialog just closes silently — user has no way to tell
