@@ -164,7 +164,12 @@ function parseRssBody(finalUrl: string, body: string): FetchedSource | null {
     if (parseError) {
       console.warn('[profile:fetch] RSS XML parse error', {
         finalUrl,
-        snippet: parseError.textContent?.slice(0, 200),
+        parseErrorMsg: parseError.textContent?.slice(0, 200),
+        // Surface the actual response body so we can tell whether
+        // the host returned an HTML challenge page (Cloudflare bot
+        // protection, login wall) instead of the RSS feed we asked
+        // for. Without this the parse error is a black box.
+        bodyStartsWith: body.slice(0, 500),
       })
       return null
     }

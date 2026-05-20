@@ -19,7 +19,14 @@ use reqwest::{Client, Url};
 const MAX_BODY_BYTES: usize = 5 * 1024 * 1024;
 const TIMEOUT_SECS: u64 = 10;
 const REDIRECT_LIMIT: usize = 5;
-const USER_AGENT: &str = "Writer/0.1 (+https://github.com/minkyojung/edit)";
+// Browser-prefixed UA. Substack / Medium / Cloudflare-fronted hosts
+// 403 anything that doesn't look like a browser, while still
+// accepting identifiable "compatible; X" suffixes (the convention
+// Googlebot / Feedly / etc. use). Without the Mozilla prefix the
+// /feed endpoints come back as anti-bot HTML pages instead of
+// RSS. Honest but compatible.
+const USER_AGENT: &str =
+    "Mozilla/5.0 (compatible; Writer/0.1; +https://github.com/minkyojung/edit)";
 
 #[derive(serde::Serialize)]
 pub struct FetchedPage {

@@ -142,14 +142,18 @@ export async function extractProfile(
 
 // ── Per-URL pass ───────────────────────────────────────────────────
 
-const PER_URL_SYSTEM_PROMPT = `You are extracting a profile of a single person from one source they authored (a blog post, RSS feed, Twitter, etc.). Use the submit_profile tool exactly once.
+const PER_URL_SYSTEM_PROMPT = `You are extracting a profile of a single person from one source they authored (a blog post, RSS feed, Twitter, etc.).
+
+**You MUST call the submit_profile tool exactly once.** Do NOT respond with text describing what you would submit, or saying "I've extracted and submitted" — that text is discarded. Only the tool call lands. If you don't invoke submit_profile, your work is lost and the user sees an error.
 
 Rules:
 - voice_samples MUST be verbatim quotes (up to ~200 chars each) from the source text. Do not paraphrase, summarise, or invent.
 - For dispositions and values: only emit if the source supports it. "first-principles thinker" is fine if they argue from primitives; "skeptical of hype" is fine if they push back on trends. If you cannot justify a trait from the text, omit it.
 - Leave arrays empty rather than padding with vague entries.
 - about: 1-2 sentences max for this single source. The synthesis step will write the full about paragraph across all sources.
-- Use null for name / headline / location when not stated.`
+- Use null for name / headline / location when not stated.
+
+If the source text is too thin to extract anything (e.g. an error page or a paywall placeholder), still call submit_profile — pass empty arrays, null for nullable fields, and a one-sentence about explaining what you saw. Never respond with prose alone.`
 
 async function extractFromSource(source: FetchedSource): Promise<PartialProfile | null> {
   const truncated =
@@ -192,7 +196,9 @@ async function extractFromSource(source: FetchedSource): Promise<PartialProfile 
 
 // ── Synthesis pass ─────────────────────────────────────────────────
 
-const SYNTHESIS_SYSTEM_PROMPT = `You are merging multiple partial profiles (each extracted from one source the user authored) into a single coherent profile. Use the submit_profile tool exactly once.
+const SYNTHESIS_SYSTEM_PROMPT = `You are merging multiple partial profiles (each extracted from one source the user authored) into a single coherent profile.
+
+**You MUST call the submit_profile tool exactly once.** Do NOT respond with text describing what you would submit. Only the tool call lands; prose is discarded.
 
 Rules:
 - Preserve voice_samples verbatim from the partials. Pick the strongest 3-5 across all sources (varied length / topic). Do not invent new quotes.
