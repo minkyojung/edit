@@ -61,6 +61,14 @@
     margin-bottom: var(--prose-gap-block);
   }
 
+  /* Drop cursor (prosemirror-dropcursor). Color comes from the
+     theme token so light/dark switch picks the right contrast;
+     width is set inline by the plugin (width: 2). */
+  .pm-drop-cursor {
+    background-color: var(--foreground);
+    border-radius: 1px;
+  }
+
   .ProseMirror h1,
   .ProseMirror h2,
   .ProseMirror h3,

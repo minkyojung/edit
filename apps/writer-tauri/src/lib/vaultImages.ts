@@ -1,10 +1,11 @@
 // Image storage for the doc editor.
 //
-// User flow: slash menu "Image" → file picker hands us an absolute
-// path on the user's machine. This module owns the next step: read
-// those bytes and drop them under `<vault>/images/<safe-name>`,
-// then return the vault-relative path the markdown source should
-// reference.
+// Three entry points the editor uses:
+//   - copyImageIntoVault(absolutePath)  ← slash menu / file dialog
+//   - importImageFile(file)             ← drag-and-drop / clipboard paste
+//
+// Both funnel through `writeImageBytes(bytes, name)` so the dedupe
+// rule and the `images/` location live in exactly one place.
 //
 // Why a flat `images/` folder (not per-doc): Obsidian's convention.
 // One image lives in one place, the same image can be referenced
@@ -40,18 +41,28 @@ function splitExt(name: string): [string, string] {
   return [name.slice(0, dot), name.slice(dot)]
 }
 
-/** Copy an external image into the vault's `images/` folder and
- * return the vault-relative path the caller should embed in the
- * markdown image src.
- *
- * Caller's responsibility: the absolute source path must already be
- * something the user picked (e.g. via the dialog plugin). We don't
- * validate the file is actually an image — the dialog's extension
- * filter is the gate. A non-image written here would render as a
- * broken image in the doc, no other harm. */
-export async function copyImageIntoVault(absolutePath: string): Promise<string> {
-  const name = basename(absolutePath)
-  const [rawStem, ext] = splitExt(name)
+/** Pick an extension for clipboard images that arrive without a
+ * filename. Browsers expose the MIME type but `File.name` is often
+ * just "image.png" — handle the rare case where it's missing. */
+function extFromMime(mime: string): string {
+  if (mime === 'image/jpeg') return '.jpg'
+  if (mime === 'image/png') return '.png'
+  if (mime === 'image/gif') return '.gif'
+  if (mime === 'image/webp') return '.webp'
+  if (mime === 'image/svg+xml') return '.svg'
+  return ''
+}
+
+/** Shared write path: take raw bytes + a hint filename, place them
+ * under `images/` with a collision-free name, and return the
+ * vault-relative path. */
+async function writeImageBytes(
+  bytes: Uint8Array,
+  originalName: string,
+  mimeHint?: string,
+): Promise<string> {
+  const [rawStem, parsedExt] = splitExt(basename(originalName))
+  const ext = parsedExt || (mimeHint ? extFromMime(mimeHint) : '')
   const safeStem = sanitizeFilename(rawStem) || 'image'
 
   // Dedupe: image.jpg → image-2.jpg → image-3.jpg → …
@@ -62,7 +73,27 @@ export async function copyImageIntoVault(absolutePath: string): Promise<string> 
     n++
   }
 
-  const bytes = await readFile(absolutePath)
   await writeVaultBinary(relPath, bytes)
   return relPath
+}
+
+/** Copy an external image into the vault's `images/` folder and
+ * return the vault-relative path the caller should embed in the
+ * markdown image src.
+ *
+ * Caller's responsibility: the absolute source path must already be
+ * something the user picked (e.g. via the dialog plugin). We don't
+ * validate the file is actually an image — the dialog's extension
+ * filter is the gate. A non-image written here would render as a
+ * broken image in the doc, no other harm. */
+export async function copyImageIntoVault(absolutePath: string): Promise<string> {
+  const bytes = await readFile(absolutePath)
+  return writeImageBytes(bytes, basename(absolutePath))
+}
+
+/** Import a browser-side File (drag-and-drop or clipboard paste)
+ * into the vault. Returns the vault-relative path. */
+export async function importImageFile(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  return writeImageBytes(bytes, file.name, file.type)
 }
