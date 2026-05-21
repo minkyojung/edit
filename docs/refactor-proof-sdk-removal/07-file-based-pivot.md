@@ -174,8 +174,8 @@ interface Settings {
 | **4.C** | 마크 storage 새 모양 | 1~2주 | ✅ 완료 | `domain/internal/anchor.ts`, `quote.ts` (quote-based anchor). 단, Path C에서 `.ydoc` binary로 전환 → sidecar는 정체성 메타만 |
 | **4.D** | doc 흐름 마이그레이션 | 1주 | ✅ 완료 | `docPaths.ts`에 wiki / daily / _system 매핑 + daily 하위 노트 |
 | **4.E** | file watcher | 며칠 | ✅ 완료 | `vaultWatcher.ts`, `externalConflictStore.ts`, ExternalEditBanner |
-| **4.F** | chat thread 이주 | 며칠 | 🚧 다음 | `threads/<id>.json` — 현재 chat thread는 아직 IDB |
-| **4.G** | IDB 잔재 제거 | 며칠 | ⏳ 4.F 이후 | `y-indexeddb` dep 제거 (`package.json:80` 잔존) + 옛 코드 정리 |
+| **4.F** | chat thread 이주 | 며칠 | ✅ 완료 | `threads/<id>.json` + `threads/<id>.turns.jsonl`. `lib/threadFiles.ts`, `state/threadsStore.ts`. Y.Array `threads` / `thread:<id>` 모두 제거. `ThreadMeta.parentSlug` 필수. dev 검증: 11개 thread 재실행 후 완전 복원 |
+| **4.G** | IDB 잔재 제거 | 며칠 | ✅ 완료 | `y-indexeddb` dep 제거 (code 사용처 0건이라 dep만 정리) |
 
 ## 핵심 invariant (모든 sub-phase 가 지켜야 함)
 

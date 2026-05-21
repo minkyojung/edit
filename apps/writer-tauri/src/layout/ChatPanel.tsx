@@ -55,18 +55,13 @@ interface Props {
   editorView: EditorView | null
   ydoc: Y.Doc | null
   slug: string | null
-  /** Resolves once the doc's body + marks have been hydrated into the
-   * ydoc (vault load, IDB hydrate, or both — see CollabHandle). useThreads
-   * gates its `ready` flag on this so the auto-create-first-thread
-   * effect below can't fire before persisted threads land. */
-  contentReady: Promise<void> | null
 }
 
-export function ChatPanel({ editorView, ydoc, slug, contentReady }: Props) {
+export function ChatPanel({ editorView, ydoc, slug }: Props) {
   const { account } = useClaudeAuth()
-  const threads = useThreads(ydoc, contentReady)
+  const threads = useThreads(slug)
   const { activeId, setActiveId } = useActiveThread(slug, threads.active)
-  const turnsHook = useThreadTurns(ydoc, activeId)
+  const turnsHook = useThreadTurns(activeId)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   // Synchronous send-in-flight latch. Flipping `chatStatus` to 'streaming'

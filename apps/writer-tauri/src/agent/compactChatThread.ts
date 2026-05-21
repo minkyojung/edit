@@ -19,8 +19,8 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import * as Y from 'yjs'
-import type { ChatTurn, ThreadMeta } from '@/chat/types'
+import type { ChatTurn } from '@/chat/types'
+import { useThreadsStore } from '@/state/threadsStore'
 
 const MODEL = 'claude-haiku-4-5'
 const TIMEOUT_MS = 15_000
@@ -140,32 +140,7 @@ async function callCompactor(transcript: string): Promise<string | null> {
   })
 }
 
-/** Persist the summary back onto ThreadMeta in the thread's parent ydoc.
- * Y.Array has no in-place update, so we splice-replace at the same
- * index inside a single 'chat-meta' transaction — same pattern
- * `useThreads.renameThread` uses. The 'chat-meta' origin keeps the
- * write off the UndoManager (chat turns aren't part of the document
- * undo stack). */
-function persistSummary(
-  ydoc: Y.Doc,
-  threadId: string,
-  summary: string,
-  upToTurnId: string,
-): void {
-  const yThreads = ydoc.getArray<ThreadMeta>('threads')
-  const arr = yThreads.toArray()
-  const idx = arr.findIndex((t) => t.id === threadId)
-  if (idx < 0) return
-  const prev = arr[idx]
-  ydoc.transact(() => {
-    yThreads.delete(idx, 1)
-    yThreads.insert(idx, [
-      { ...prev, aiSummary: summary, aiSummaryUpToTurnId: upToTurnId },
-    ])
-  }, 'chat-meta')
-}
-
-/** Public entry. Reads the thread's turns from the given ydoc, calls
+/** Public entry. Reads the thread's turns from the store, calls
  * the compactor, persists the result back onto ThreadMeta, and
  * returns the summary string (or null on failure / empty thread).
  *
@@ -173,11 +148,9 @@ function persistSummary(
  * aiSummary untouched. Ingest treats absence/staleness symmetrically
  * — it'll retry on the next pass. */
 export async function compactChatThread(
-  ydoc: Y.Doc,
   threadId: string,
 ): Promise<string | null> {
-  const yTurns = ydoc.getArray<ChatTurn>(`thread:${threadId}`)
-  const turns = yTurns.toArray()
+  const turns: ChatTurn[] = useThreadsStore.getState().turns[threadId] ?? []
   if (turns.length === 0) return null
 
   const transcript = buildTranscript(turns)
@@ -188,7 +161,10 @@ export async function compactChatThread(
 
   const lastTurnId = turns[turns.length - 1].id
   try {
-    persistSummary(ydoc, threadId, summary, lastTurnId)
+    await useThreadsStore.getState().updateMeta(threadId, {
+      aiSummary: summary,
+      aiSummaryUpToTurnId: lastTurnId,
+    })
     console.log('[compactChat] cached', { threadId, turns: turns.length, chars: summary.length })
   } catch (err) {
     console.warn('[compactChat] persist failed', { threadId, err })

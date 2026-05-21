@@ -199,6 +199,42 @@ export async function writeVaultFile(relPath: string, content: string): Promise<
   await atomicWriteText(path, content)
 }
 
+/** Append UTF-8 text to a vault file, creating it if missing.
+ *
+ * Unlike {@link writeVaultFile}, this is NOT a tmp+rename atomic
+ * write — the kernel appends the bytes directly to the existing file.
+ * That's the right semantics for append-only logs (chat turn JSONL,
+ * future ingest logs) where:
+ *
+ *   - a full rewrite would scale O(n) with the file size on every
+ *     turn, which is unacceptable for long threads
+ *   - the crash mode we care about is "lose the last partial write",
+ *     not "corrupt the existing content" — append never touches
+ *     bytes already on disk
+ *
+ * POSIX guarantees an append-mode write of ≤ PIPE_BUF bytes (4096 on
+ * Linux, larger on macOS) is atomic against concurrent writers to the
+ * same fd. We're a single-writer process, so the stronger guarantee
+ * we actually need — "the file never contains a half-written byte
+ * sequence" — comes from the OS serialising our own writes. Callers
+ * that append multi-KB payloads (a long assistant turn) should still
+ * write a single full line at a time so the file remains parseable
+ * line-by-line after any crash.
+ *
+ * Like the atomic helpers, the path is stamped into
+ * {@link recentWrites} so the file watcher ignores the resulting
+ * fsevent. */
+export async function appendVaultFile(
+  relPath: string,
+  content: string,
+): Promise<void> {
+  const path = await resolveVaultPath(relPath)
+  const parent = await dirname(path)
+  await mkdir(parent, { recursive: true })
+  markOurRecentWrite(relPath)
+  await writeTextFile(path, content, { append: true })
+}
+
 /** Atomic binary write — same tmp+rename pattern as
  * {@link atomicWriteText} but for Uint8Array payloads (Y.Doc updates,
  * binary sidecars). Splitting the two helpers means we don't pay a

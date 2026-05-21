@@ -1,11 +1,15 @@
-// Subscribes to the document's `threads` Y.Array and exposes thread CRUD.
+// Hook surface for chat threads. Backed by `threadsStore` — a
+// zustand store that mirrors the on-disk `threads/<id>.json` +
+// `threads/<id>.turns.jsonl` pair (Phase 4.F file-based layout).
 //
-// Y.Array doesn't have in-place updates, so mutations follow a
-// delete-and-insert-at-same-index pattern inside a single transaction.
-// That keeps the order stable and lands as one Yjs update on the wire.
+// Threads are anchored to a doc via `ThreadMeta.parentSlug`; this
+// hook filters the global store down to a single slug's threads so
+// the caller (ChatPanel) doesn't have to know about the file-based
+// model. The pre-4.F implementation took a Y.Doc + `contentReady`
+// promise — `slug` replaces both since the file-based store reads
+// directly from the vault folder rather than from a per-doc Y.Doc.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import * as Y from 'yjs'
+import { useCallback, useMemo } from 'react'
 import {
   DEFAULT_CHAT_EFFORT,
   DEFAULT_CHAT_MODEL,
@@ -15,8 +19,7 @@ import {
   type ThreadMeta,
 } from '@/chat/types'
 import { useChatRuns } from '@/stores/chatRuns'
-
-const THREADS_KEY = 'threads'
+import { useThreadsStore } from '@/state/threadsStore'
 
 export interface UseThreadsResult {
   ready: boolean
@@ -31,109 +34,34 @@ export interface UseThreadsResult {
   setThreadEffort: (id: string, effort: ChatEffort) => void
   /** Marks the thread as having a confirmed SDK session. Called once per
    * thread, on the first stream event of its first run. Idempotent — repeat
-   * calls short-circuit so we don't spam Yjs updates. */
+   * calls short-circuit so we don't write the same value again. */
   markSessionStarted: (id: string) => void
 }
 
-export function useThreads(
-  ydoc: Y.Doc | null,
-  contentReady: Promise<void> | null,
-): UseThreadsResult {
-  const [threads, setThreads] = useState<ThreadMeta[]>([])
-  // Tracks doc-content hydration. `ready` waits on this so callers
-  // (e.g. ChatPanel's auto-create effect) don't see a transient empty
-  // thread list before persisted threads land — which would otherwise
-  // produce a spurious blank thread on every doc open.
-  const [hydrated, setHydrated] = useState(false)
+export function useThreads(slug: string | null): UseThreadsResult {
+  const hydrated = useThreadsStore((s) => s.hydrated)
+  const threadsById = useThreadsStore((s) => s.threads)
 
-  useEffect(() => {
-    setHydrated(false)
-    if (!contentReady) return
-    let cancelled = false
-    contentReady.then(() => {
-      if (!cancelled) setHydrated(true)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [contentReady])
-
-  useEffect(() => {
-    if (!ydoc) {
-      setThreads([])
-      return
-    }
-    const yThreads = ydoc.getArray<ThreadMeta>(THREADS_KEY)
-    const sync = () => setThreads(yThreads.toArray())
-    sync()
-    yThreads.observe(sync)
-    return () => yThreads.unobserve(sync)
-  }, [ydoc])
-
-  // One-shot cleanup: remove accumulated blank threads (no title and no
-  // turns) that earlier doc opens created before `ready` was gated on
-  // IDB hydration. Runs once per doc open, after IDB hydration finishes
-  // and before ChatPanel's auto-create effect fires (same hook, so
-  // React orders the effects in declaration order).
-  useEffect(() => {
-    if (!ydoc || !hydrated) return
-    const yThreads = ydoc.getArray<ThreadMeta>(THREADS_KEY)
-    const arr = yThreads.toArray()
-    const emptyIndices: number[] = []
-    arr.forEach((t, i) => {
-      if (t.title !== '') return
-      const yTurns = ydoc.getArray(`thread:${t.id}`)
-      if (yTurns.length === 0) emptyIndices.push(i)
-    })
-    if (emptyIndices.length === 0) return
-    // Delete high-to-low so earlier deletes don't shift later indices.
-    ydoc.transact(() => {
-      for (let k = emptyIndices.length - 1; k >= 0; k--) {
-        yThreads.delete(emptyIndices[k], 1)
-      }
-    }, 'chat-meta')
-  }, [ydoc, hydrated])
-
-  const findIndex = useCallback(
-    (id: string) => {
-      if (!ydoc) return -1
-      const yThreads = ydoc.getArray<ThreadMeta>(THREADS_KEY)
-      return yThreads.toArray().findIndex((t) => t.id === id)
-    },
-    [ydoc],
-  )
-
-  // Replace the entry at `i` with `next` inside one transaction.
-  // (Y.Array has no `set` for arbitrary types — delete+insert is the idiom.)
-  const replaceAt = useCallback(
-    (i: number, next: ThreadMeta) => {
-      if (!ydoc) return
-      const yThreads = ydoc.getArray<ThreadMeta>(THREADS_KEY)
-      // 'chat-meta' origin keeps thread metadata edits out of the
-      // doc-body UndoManager. The UndoManager wires its trackedOrigins
-      // around content (ySyncPluginKey, mark-action, mark-cleanup);
-      // sending Cmd+Z through thread renames / archives / model
-      // switches would feel arbitrary to the user and could revert
-      // chat state that no longer matches the current run.
-      ydoc.transact(() => {
-        yThreads.delete(i, 1)
-        yThreads.insert(i, [next])
-      }, 'chat-meta')
-    },
-    [ydoc],
-  )
+  // Restrict to the threads anchored to this slug. Legacy threads
+  // without `parentSlug` (carried over from the Y.Array layout) are
+  // surfaced nowhere — they show as orphaned in the file system and
+  // can be reattached or deleted manually. New threads always carry
+  // the field because `createThread` below sets it.
+  const threads = useMemo(() => {
+    if (!slug) return []
+    return Object.values(threadsById).filter((t) => t.parentSlug === slug)
+  }, [threadsById, slug])
 
   const createThread = useCallback<UseThreadsResult['createThread']>(
     (initialTitle = '') => {
-      if (!ydoc) return null
-      const yThreads = ydoc.getArray<ThreadMeta>(THREADS_KEY)
-      // Block creation when 5 active threads already exist.
-      const activeCount = yThreads.toArray().filter((t) => !t.archived).length
+      if (!slug) return null
+      const activeCount = threads.filter((t) => !t.archived).length
       if (activeCount >= MAX_ACTIVE_THREADS) return null
 
       const now = Date.now()
       const meta: ThreadMeta = {
         id: crypto.randomUUID(),
+        parentSlug: slug,
         title: initialTitle,
         createdAt: now,
         updatedAt: now,
@@ -141,91 +69,93 @@ export function useThreads(
         model: DEFAULT_CHAT_MODEL,
         effort: DEFAULT_CHAT_EFFORT,
       }
-      ydoc.transact(() => yThreads.push([meta]), 'chat-meta')
+      // Fire-and-forget disk write — the in-memory state is updated
+      // synchronously by createThread so the UI sees the new thread
+      // immediately. Errors surface in the console; the user can
+      // retry from the UI.
+      void useThreadsStore.getState().createThread(meta)
       return meta.id
     },
-    [ydoc],
+    [slug, threads],
   )
 
   const archiveThread = useCallback<UseThreadsResult['archiveThread']>(
     (id) => {
-      const i = findIndex(id)
-      if (i < 0) return
-      const yThreads = ydoc!.getArray<ThreadMeta>(THREADS_KEY)
-      const cur = yThreads.get(i)
-      if (cur.archived) return
-      // Cancel any in-flight runs owned by this thread BEFORE marking it
-      // archived. This is the canonical lifecycle hook — every caller of
-      // archiveThread benefits, regardless of which UI path triggered it.
+      const cur = useThreadsStore.getState().threads[id]
+      if (!cur || cur.archived) return
+      // Cancel any in-flight runs owned by this thread BEFORE marking
+      // it archived. This is the canonical lifecycle hook — every
+      // caller of archiveThread benefits, regardless of which UI
+      // path triggered it.
       useChatRuns.getState().abortByThread(id)
-      replaceAt(i, { ...cur, archived: true, archivedAt: Date.now() })
+      void useThreadsStore.getState().updateMeta(id, {
+        archived: true,
+        archivedAt: Date.now(),
+      })
     },
-    [findIndex, ydoc, replaceAt],
+    [],
   )
 
   const restoreThread = useCallback<UseThreadsResult['restoreThread']>(
     (id) => {
-      const i = findIndex(id)
-      if (i < 0) return { ok: false, reason: 'not-found' }
-      const yThreads = ydoc!.getArray<ThreadMeta>(THREADS_KEY)
-      const cur = yThreads.get(i)
+      const cur = useThreadsStore.getState().threads[id]
+      if (!cur) return { ok: false, reason: 'not-found' }
       if (!cur.archived) return { ok: true }
-      const activeCount = yThreads.toArray().filter((t) => !t.archived).length
+      const activeCount = threads.filter((t) => !t.archived).length
       if (activeCount >= MAX_ACTIVE_THREADS) return { ok: false, reason: 'limit' }
-      const { archivedAt: _archivedAt, ...rest } = cur
-      void _archivedAt
-      replaceAt(i, { ...rest, archived: false, updatedAt: Date.now() })
+      void useThreadsStore.getState().updateMeta(id, {
+        archived: false,
+        archivedAt: undefined,
+        updatedAt: Date.now(),
+      })
       return { ok: true }
     },
-    [findIndex, ydoc, replaceAt],
+    [threads],
   )
 
   const renameThread = useCallback<UseThreadsResult['renameThread']>(
     (id, title) => {
-      const i = findIndex(id)
-      if (i < 0) return
-      const yThreads = ydoc!.getArray<ThreadMeta>(THREADS_KEY)
-      const cur = yThreads.get(i)
-      if (cur.title === title) return
-      replaceAt(i, { ...cur, title, updatedAt: Date.now() })
+      const cur = useThreadsStore.getState().threads[id]
+      if (!cur || cur.title === title) return
+      void useThreadsStore.getState().updateMeta(id, {
+        title,
+        updatedAt: Date.now(),
+      })
     },
-    [findIndex, ydoc, replaceAt],
+    [],
   )
 
   const setThreadModel = useCallback<UseThreadsResult['setThreadModel']>(
     (id, model) => {
-      const i = findIndex(id)
-      if (i < 0) return
-      const yThreads = ydoc!.getArray<ThreadMeta>(THREADS_KEY)
-      const cur = yThreads.get(i)
-      if (cur.model === model) return
-      replaceAt(i, { ...cur, model, updatedAt: Date.now() })
+      const cur = useThreadsStore.getState().threads[id]
+      if (!cur || cur.model === model) return
+      void useThreadsStore.getState().updateMeta(id, {
+        model,
+        updatedAt: Date.now(),
+      })
     },
-    [findIndex, ydoc, replaceAt],
+    [],
   )
 
   const setThreadEffort = useCallback<UseThreadsResult['setThreadEffort']>(
     (id, effort) => {
-      const i = findIndex(id)
-      if (i < 0) return
-      const yThreads = ydoc!.getArray<ThreadMeta>(THREADS_KEY)
-      const cur = yThreads.get(i)
-      if (cur.effort === effort) return
-      replaceAt(i, { ...cur, effort, updatedAt: Date.now() })
+      const cur = useThreadsStore.getState().threads[id]
+      if (!cur || cur.effort === effort) return
+      void useThreadsStore.getState().updateMeta(id, {
+        effort,
+        updatedAt: Date.now(),
+      })
     },
-    [findIndex, ydoc, replaceAt],
+    [],
   )
 
   const markSessionStarted = useCallback<UseThreadsResult['markSessionStarted']>(
     (id) => {
-      const i = findIndex(id)
-      if (i < 0) return
-      const yThreads = ydoc!.getArray<ThreadMeta>(THREADS_KEY)
-      const cur = yThreads.get(i)
-      if (cur.sessionStarted) return
-      replaceAt(i, { ...cur, sessionStarted: true })
+      const cur = useThreadsStore.getState().threads[id]
+      if (!cur || cur.sessionStarted) return
+      void useThreadsStore.getState().updateMeta(id, { sessionStarted: true })
     },
-    [findIndex, ydoc, replaceAt],
+    [],
   )
 
   const { active, archived } = useMemo(() => {
@@ -237,7 +167,7 @@ export function useThreads(
   }, [threads])
 
   return {
-    ready: !!ydoc && hydrated,
+    ready: hydrated && !!slug,
     threads,
     active,
     archived,

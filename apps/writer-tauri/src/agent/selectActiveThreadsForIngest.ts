@@ -4,8 +4,8 @@
 //
 //   1. Activity filter — keep only threads whose most recent turn is
 //      newer than `sinceTs` (= ingestStore.lastIngestAt, injected by
-//      C'.4). Threads frozen since the previous ingest were already
-//      digested last pass; re-feeding them is noise.
+//      the caller). Threads frozen since the previous ingest were
+//      already digested last pass; re-feeding them is noise.
 //
 //   2. Cache check — for each surviving thread, compare its
 //      `aiSummaryUpToTurnId` against the live last turn id.
@@ -23,8 +23,8 @@
 // summarized. That's intentional — a one-time backfill so the
 // wiki captures pre-existing chat history.
 
-import * as Y from 'yjs'
-import type { ChatTurn, ThreadMeta } from '@/chat/types'
+import type { ThreadMeta } from '@/chat/types'
+import { useThreadsStore } from '@/state/threadsStore'
 import { compactChatThread } from './compactChatThread'
 
 export interface ActiveThreadSummary {
@@ -33,7 +33,9 @@ export interface ActiveThreadSummary {
 }
 
 export interface SelectActiveThreadsArgs {
-  ydoc: Y.Doc
+  /** Doc slug whose threads should be considered. Only threads
+   * anchored to this slug (`parentSlug === slug`) are processed. */
+  slug: string
   /** Wall-clock ms cutoff for "had activity since". Threads whose last
    * turn timestamp is ≤ this value are skipped. Pass 0 to include
    * every non-archived thread (first-run backfill). */
@@ -43,9 +45,11 @@ export interface SelectActiveThreadsArgs {
 export async function selectActiveThreadsForIngest(
   args: SelectActiveThreadsArgs,
 ): Promise<ActiveThreadSummary[]> {
-  const { ydoc, sinceTs } = args
-  const yThreads = ydoc.getArray<ThreadMeta>('threads')
-  const allThreads = yThreads.toArray()
+  const { slug, sinceTs } = args
+  const state = useThreadsStore.getState()
+  const allThreads = Object.values(state.threads).filter(
+    (t) => t.parentSlug === slug,
+  )
 
   // Activity filter — read each thread's turns once, snapshot the
   // last turn (id + ts) so the cache check below doesn't re-read.
@@ -53,8 +57,7 @@ export async function selectActiveThreadsForIngest(
   const active: Active[] = []
   for (const meta of allThreads) {
     if (meta.archived) continue
-    const yTurns = ydoc.getArray<ChatTurn>(`thread:${meta.id}`)
-    const turns = yTurns.toArray()
+    const turns = state.turns[meta.id] ?? []
     if (turns.length === 0) continue
     const last = turns[turns.length - 1]
     if (last.ts <= sinceTs) continue
@@ -70,7 +73,7 @@ export async function selectActiveThreadsForIngest(
       if (meta.aiSummary && meta.aiSummaryUpToTurnId === lastTurnId) {
         summary = meta.aiSummary
       } else {
-        summary = await compactChatThread(ydoc, meta.id)
+        summary = await compactChatThread(meta.id)
       }
       if (!summary) return null
       const title = meta.title.trim() || 'Untitled thread'

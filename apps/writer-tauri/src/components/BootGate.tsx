@@ -24,6 +24,7 @@
 import { useEffect, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocsStore } from '@/state/docsStore'
+import { useThreadsStore } from '@/state/threadsStore'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { pickVault } from '@/lib/vaultPicker'
 
@@ -56,6 +57,12 @@ export function BootGate({ children }: Props) {
         await pickVault()
       }
       bootstrap()
+      // Load chat thread metas + turns from `threads/`. Fires in
+      // parallel with bootstrap because the two read disjoint paths
+      // (docs read `wiki/` / `daily/` / `_system/`, threads read
+      // `threads/`). hydrate is idempotent so StrictMode's double-
+      // mount is safe.
+      void useThreadsStore.getState().hydrate()
     }
     void init()
   }, [bootstrap])

@@ -16,7 +16,6 @@
 // the live wiki snapshot, not against a stale cached prefix.
 
 import { invoke } from '@tauri-apps/api/core'
-import * as Y from 'yjs'
 import { awaitChatRun } from '@/agent/chatRun'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
@@ -481,10 +480,10 @@ export interface IngestCoreArgs {
    * Daily passes `lastIngestedAt[slug]`; bootstrap passes 0 so the
    * first run sees every thread. */
   sinceTs: number
-  /** ydoc whose thread list backs the chat-activity block. Daily
-   * uses the active doc's handle; bootstrap reads the active doc
-   * (or null when no doc is open yet — chat activity then omits). */
-  ydoc: Y.Doc | null
+  /** Doc slug whose threads should contribute to the chat-activity
+   * block. Each thread's `parentSlug` is matched against this. Pass
+   * null to omit chat activity (bootstrap before any doc opens). */
+  threadSlug: string | null
 }
 
 export interface IngestCoreResult {
@@ -495,7 +494,7 @@ export interface IngestCoreResult {
 }
 
 export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreResult> {
-  const { text, sourceLabel, sinceTs, ydoc } = args
+  const { text, sourceLabel, sinceTs, threadSlug } = args
 
   // Seed the conventions page on first need so the user has
   // something to edit; assembleContext reads the result a moment
@@ -522,11 +521,11 @@ export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreRes
     // read_page/search_wiki.
     assembleContext({ docBody: text, enableTools: false }),
     // Chat activity since the previous successful ingest. Empty
-    // array when no ydoc is available (bootstrap before any doc
+    // array when no slug is available (bootstrap before any doc
     // opens) or on quiet days where no thread had a new turn since
     // sinceTs.
-    ydoc
-      ? selectActiveThreadsForIngest({ ydoc, sinceTs })
+    threadSlug
+      ? selectActiveThreadsForIngest({ slug: threadSlug, sinceTs })
       : Promise.resolve<ActiveThreadSummary[]>([]),
   ])
 
@@ -658,7 +657,6 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     total: allHashes.length,
   })
 
-  const handle = useDocsStore.getState().handles[noteSlug]
   const sinceTs = useIngestStore.getState().lastIngestedAt[noteSlug] ?? 0
   const noteLabel =
     known.type === 'daily' && known.date
@@ -669,7 +667,7 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     text: noteMarkdown,
     sourceLabel: noteLabel,
     sinceTs,
-    ydoc: handle?.ydoc ?? null,
+    threadSlug: noteSlug,
   })
 
   return {
