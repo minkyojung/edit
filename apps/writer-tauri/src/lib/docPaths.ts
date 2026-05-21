@@ -92,6 +92,26 @@ export function pathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null {
   return null
 }
 
+/** Reverse of {@link pathForDoc}: given a vault-relative path,
+ * return the matching doc's slug, or null when no known doc maps
+ * to it. O(n) over `knownDocs` — fine for the intended callers
+ * (one-off click handlers, not hot loops). Trusts pathForDoc as
+ * the single forward mapping so the rules don't get duplicated
+ * (scanVault.ts's mdRelToKnownDoc has its own boot-time parser,
+ * but it works against parsed paths the scanner produced; the
+ * runtime case here is "the LLM gave us a path string, which
+ * doc does it belong to?" — different shape, same routing). */
+export function pathToKnownSlug(
+  relPath: string,
+  knownDocs: readonly KnownDoc[],
+): string | null {
+  const getDoc = (s: string) => knownDocs.find((d) => d.slug === s)
+  for (const doc of knownDocs) {
+    if (pathForDoc(doc, getDoc) === relPath) return doc.slug
+  }
+  return null
+}
+
 /** Vault-relative path of a doc's identity sidecar file. Same stem
  * as the markdown body, `.meta.json` suffix. Contains the doc's
  * persistent slug so scanVault can recover identity across restarts.

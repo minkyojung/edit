@@ -26,7 +26,7 @@ export interface UseThreadsResult {
   threads: ThreadMeta[]
   active: ThreadMeta[]
   archived: ThreadMeta[]
-  createThread: (initialTitle?: string) => string | null
+  createThread: (initialTitle?: string) => Promise<string | null>
   archiveThread: (id: string) => void
   restoreThread: (id: string) => { ok: true } | { ok: false; reason: 'limit' | 'not-found' }
   renameThread: (id: string, title: string) => void
@@ -53,7 +53,7 @@ export function useThreads(slug: string | null): UseThreadsResult {
   }, [threadsById, slug])
 
   const createThread = useCallback<UseThreadsResult['createThread']>(
-    (initialTitle = '') => {
+    async (initialTitle = '') => {
       if (!slug) return null
       const activeCount = threads.filter((t) => !t.archived).length
       if (activeCount >= MAX_ACTIVE_THREADS) return null
@@ -69,11 +69,12 @@ export function useThreads(slug: string | null): UseThreadsResult {
         model: DEFAULT_CHAT_MODEL,
         effort: DEFAULT_CHAT_EFFORT,
       }
-      // Fire-and-forget disk write — the in-memory state is updated
-      // synchronously by createThread so the UI sees the new thread
-      // immediately. Errors surface in the console; the user can
-      // retry from the UI.
-      void useThreadsStore.getState().createThread(meta)
+      // Await the store update so callers can rely on the new thread
+      // being visible in the threads list when this resolves. Without
+      // this, useActiveThread's reconcile effect would race the disk
+      // write and revert activeId back to the previous thread because
+      // the new id isn't in the filtered active list yet.
+      await useThreadsStore.getState().createThread(meta)
       return meta.id
     },
     [slug, threads],

@@ -114,7 +114,7 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
   useEffect(() => {
     if (!threads.ready) return
     if (threads.threads.length === 0) {
-      threads.createThread()
+      void threads.createThread()
     }
   }, [threads])
 
@@ -516,8 +516,8 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
           archived={threads.archived}
           activeId={activeId}
           onSelect={setActiveId}
-          onCreate={() => {
-            const id = threads.createThread()
+          onCreate={async () => {
+            const id = await threads.createThread()
             if (id) setActiveId(id)
           }}
           onArchive={(id) => {

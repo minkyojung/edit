@@ -5,8 +5,11 @@
 // header row; clicking opens a Radix popover with active + archived in a
 // single list, plus a [+ New chat] action.
 //
-// Same props shape as ThreadTabs so ChatPanel only swaps the import + JSX
-// call. Data-layer hooks (useThreads, useActiveThread) are untouched.
+// Built on Popover + Command (cmdk). Items reuse CommandItem so
+// padding / typography / focus styling flow from the design system
+// primitives rather than ad-hoc className strings. The active thread is
+// signalled by `data-checked`, which renders the built-in check icon on
+// the right edge of the row.
 
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -16,6 +19,14 @@ import {
   IconRestore,
   IconX,
 } from '@tabler/icons-react'
+import { Button } from '@/components/ui/button'
+import {
+  Command,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from '@/components/ui/command'
 import {
   Popover,
   PopoverContent,
@@ -82,116 +93,101 @@ export function ThreadPicker({
     <TooltipProvider>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <button
-            type="button"
-            className={cn(
-              // min-w-0 lets the trigger shrink inside its flex parent so the
-              // title span's `truncate` actually engages — without it the
-              // button falls back to min-content width and a long title
-              // pushes the chevron out of the panel.
-              'flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm font-medium',
-              'text-foreground outline-none transition-colors',
-              'hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring/40',
-            )}
+          <Button
+            variant="ghost"
+            size="sm"
+            // min-w-0 lets the trigger shrink inside its flex parent so the
+            // title span's `truncate` actually engages — without it the
+            // button falls back to min-content width and a long title
+            // pushes the chevron out of the panel.
+            className="min-w-0 flex-1 justify-start self-center"
             aria-label="Switch chat"
           >
-            <IconMessageCircleFilled size={14} className="shrink-0 opacity-70" />
-            <span className="min-w-0 flex-1 truncate">
+            <IconMessageCircleFilled className="shrink-0 opacity-70" />
+            <span className="min-w-0 flex-1 truncate text-left">
               {activeThread?.title || 'New chat'}
             </span>
             <IconChevronDown
-              size={14}
               stroke={1.75}
               className={cn(
                 'shrink-0 text-muted-foreground transition-transform',
                 open && 'rotate-180',
               )}
             />
-          </button>
+          </Button>
         </PopoverTrigger>
 
-        <PopoverContent
-          align="start"
-          sideOffset={6}
-          className="w-80 gap-0 rounded-2xl p-1.5"
-        >
-          {active.length > 0 && (
-            <ul className="flex flex-col gap-0.5">
-              {active.map((t) => (
-                <ActiveRow
-                  key={t.id}
-                  meta={t}
-                  isActive={t.id === activeId}
-                  onSelect={() => handleSelect(t.id)}
-                  onArchive={() => onArchive(t.id)}
-                  onRename={(title) => onRename(t.id, title)}
-                />
-              ))}
-            </ul>
-          )}
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={handleCreate}
-                disabled={atLimit}
-                className={cn(
-                  'mt-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors outline-none',
-                  'focus-visible:ring-3 focus-visible:ring-ring/30',
-                  atLimit
-                    ? 'cursor-not-allowed text-muted-foreground opacity-60'
-                    : 'text-foreground hover:bg-accent',
-                )}
-              >
-                <IconPlus size={14} stroke={1.75} className="shrink-0 opacity-70" />
-                <span className="min-w-0 flex-1">New chat</span>
-              </button>
-            </TooltipTrigger>
-            {atLimit && (
-              <TooltipContent side="bottom">
-                Up to {MAX_ACTIVE_THREADS} chats. Archive one to make room.
-              </TooltipContent>
-            )}
-          </Tooltip>
-
-          {archived.length > 0 && (
-            <>
-              <div className="my-1 h-px bg-border" />
-              <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
-                Archived
-              </div>
-              <ul className="flex flex-col gap-0.5">
-                {archived.map((t) => (
-                  <li key={t.id}>
-                    <button
-                      type="button"
-                      onClick={() => handleRestore(t.id)}
-                      disabled={atLimit}
-                      className="group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      <span className="min-w-0 flex-1 truncate text-foreground">
-                        {t.title || 'New chat'}
-                      </span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {formatRelative(t.archivedAt ?? t.updatedAt)}
-                      </span>
-                      <IconRestore
-                        size={14}
-                        stroke={1.75}
-                        className="shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
-                      />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              {atLimit && (
-                <div className="px-2.5 py-1 text-xs text-muted-foreground">
-                  Already at {MAX_ACTIVE_THREADS} active chats. Archive one to restore.
-                </div>
+        <PopoverContent align="start" className="w-80 p-0">
+          <Command>
+            <CommandList>
+              {active.length > 0 && (
+                <CommandGroup>
+                  {active.map((t) => (
+                    <ActiveRow
+                      key={t.id}
+                      meta={t}
+                      isActive={t.id === activeId}
+                      onSelect={() => handleSelect(t.id)}
+                      onArchive={() => onArchive(t.id)}
+                      onRename={(title) => onRename(t.id, title)}
+                    />
+                  ))}
+                </CommandGroup>
               )}
-            </>
-          )}
+
+              <CommandGroup>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <CommandItem
+                      value="__new-chat"
+                      onSelect={handleCreate}
+                      disabled={atLimit}
+                    >
+                      <IconPlus className="shrink-0 opacity-70" />
+                      <span className="flex-1">New chat</span>
+                    </CommandItem>
+                  </TooltipTrigger>
+                  {atLimit && (
+                    <TooltipContent side="bottom">
+                      Up to {MAX_ACTIVE_THREADS} chats. Archive one to make room.
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </CommandGroup>
+
+              {archived.length > 0 && (
+                <>
+                  <CommandSeparator />
+                  <CommandGroup heading="Archived">
+                    {archived.map((t) => (
+                      <CommandItem
+                        key={t.id}
+                        value={`archived:${t.id}`}
+                        onSelect={() => handleRestore(t.id)}
+                        disabled={atLimit}
+                      >
+                        <span className="min-w-0 flex-1 truncate text-foreground">
+                          {t.title || 'New chat'}
+                        </span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {formatRelative(t.archivedAt ?? t.updatedAt)}
+                        </span>
+                        <IconRestore
+                          stroke={1.75}
+                          className="shrink-0 text-muted-foreground"
+                        />
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                  {atLimit && (
+                    <div className="px-3 py-1.5 text-xs text-muted-foreground">
+                      Already at {MAX_ACTIVE_THREADS} active chats. Archive one to restore.
+                    </div>
+                  )}
+                </>
+              )}
+            </CommandList>
+          </Command>
         </PopoverContent>
       </Popover>
     </TooltipProvider>
@@ -230,86 +226,65 @@ function ActiveRow({ meta, isActive, onSelect, onArchive, onRename }: ActiveRowP
   }
 
   return (
-    <li>
-      <div
-        role="button"
-        tabIndex={editing ? -1 : 0}
-        onClick={() => {
-          if (editing) return
-          onSelect()
-        }}
-        onDoubleClick={(e) => {
-          e.stopPropagation()
-          setEditing(true)
-        }}
-        onKeyDown={(e) => {
-          if (editing) return
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            onSelect()
-          }
-        }}
-        className={cn(
-          'group flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors outline-none',
-          'focus-visible:ring-3 focus-visible:ring-ring/30',
-          isActive ? 'bg-accent text-foreground' : 'text-foreground hover:bg-accent/60',
-        )}
-      >
-        <IconMessageCircleFilled size={14} className="shrink-0 opacity-70" />
+    <CommandItem
+      value={meta.id}
+      // While editing, disable cmdk on this row so its keyboard nav and
+      // onSelect don't interfere with the inline input.
+      disabled={editing}
+      data-checked={isActive}
+      onSelect={() => {
+        if (editing) return
+        onSelect()
+      }}
+      onDoubleClick={(e) => {
+        e.stopPropagation()
+        setEditing(true)
+      }}
+    >
+      <IconMessageCircleFilled className="shrink-0 opacity-70" />
 
-        {editing ? (
-          <input
-            ref={inputRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              // Stop Radix from interpreting these as popover navigation /
-              // dismiss. Escape inside a Popover closes it by default; we
-              // want it to cancel rename without dismissing the picker.
-              e.stopPropagation()
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                commit()
-              } else if (e.key === 'Escape') {
-                e.preventDefault()
-                setDraft(meta.title)
-                setEditing(false)
-              }
-            }}
-            onClick={(e) => e.stopPropagation()}
-            className="min-w-0 flex-1 rounded bg-transparent text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          />
-        ) : (
-          <span className="min-w-0 flex-1 truncate">
-            {meta.title || 'New chat'}
-          </span>
-        )}
-
-        <span
-          role="button"
-          tabIndex={0}
-          onClick={(e) => {
-            e.stopPropagation()
-            onArchive()
-          }}
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
+            // Stop cmdk from reading these as list navigation and stop
+            // Radix Popover from dismissing on Escape.
+            e.stopPropagation()
+            if (e.key === 'Enter') {
               e.preventDefault()
-              e.stopPropagation()
-              onArchive()
+              commit()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              setDraft(meta.title)
+              setEditing(false)
             }
           }}
-          aria-label="Archive chat"
-          className={cn(
-            'flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-foreground/10',
-            'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-            'text-muted-foreground hover:text-foreground',
-          )}
-        >
-          <IconX size={12} stroke={2} />
+          onClick={(e) => e.stopPropagation()}
+          className="min-w-0 flex-1 rounded-md bg-transparent text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+        />
+      ) : (
+        <span className="min-w-0 flex-1 truncate">
+          {meta.title || 'New chat'}
         </span>
-      </div>
-    </li>
+      )}
+
+      {/* Sibling button — real <button>, not a nested role="button". */}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        onClick={(e) => {
+          e.stopPropagation()
+          onArchive()
+        }}
+        aria-label="Archive chat"
+        className="text-muted-foreground hover:text-foreground"
+      >
+        <IconX />
+      </Button>
+    </CommandItem>
   )
 }

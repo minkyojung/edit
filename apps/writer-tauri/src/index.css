@@ -4,13 +4,6 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
-/* Let Tailwind v4 see the utility classes Streamdown ships in its compiled
- * JS so generated styles aren't tree-shaken away. The companion stylesheet
- * carries the @keyframes (sd-fadeIn etc.) that the animated prop relies on
- * — Tailwind's @source directive doesn't pick those up. */
-@source "../node_modules/streamdown/dist/*.js";
-@import "streamdown/styles.css";
-
 @custom-variant dark (&:is(.dark *));
 @custom-variant hover (&:hover);
 

@@ -1,45 +1,59 @@
 import type React from 'react'
-import { Streamdown } from 'streamdown'
-import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
-import { useDocsStore } from '@/state/docsStore'
-import {
-  isWikilinkHref,
-  slugFromWikilinkHref,
-} from '@/editor/wikilinkPalettePlugin'
+import ReactMarkdown from 'react-markdown'
+import { remarkWikilink } from './remarkWikilink'
+import { WikiLink } from './WikiLink'
 
-// Streamdown renders raw markdown progressively (handles incomplete blocks
-// during streaming) and memoizes per-block, so we don't need to gate
-// markdown rendering on stream-vs-done. The component overrides below align
-// inline element styling with the rest of the chat surface.
+// Why react-markdown directly (no streamdown, no sanitize):
 //
-// Anchors with `note:<slug>` hrefs are wiki citations (LLM-emitted `[[Title]]`
-// gets rewritten upstream by resolveWikilinksInMarkdown). They're rendered
-// as in-app navigation buttons instead of real anchors so click activates
-// the target doc tab without trying to navigate the browser.
-const markdownComponents: React.ComponentProps<typeof Streamdown>['components'] = {
+//   - streamdown's default rehype chain (rehype-harden + rehype-sanitize)
+//     mangled our `[[Title]]` citations: harden rewrote anchors with
+//     unknown URL schemes into a `[blocked]` indicator span, and sanitize
+//     dropped `<wikilink>` elements outright with their children.
+//
+//   - We replaced our custom element with `<a data-wikilink-*>` (standard
+//     element + data attribute marker) and switched to react-markdown,
+//     but sanitize then stripped the `data-wikilink-*` attributes
+//     themselves — its schema's attribute allowlist couldn't be extended
+//     in a way that survived hast's attribute-name normalisation.
+//
+//   - react-markdown's baseline behaviour is already XSS-safe: raw
+//     `<script>` / `<iframe>` / etc. in markdown are rendered as text,
+//     not executed. Our input is assistant text from Anthropic
+//     (trusted) routed through a markdown parser; a separate sanitize
+//     pass is belt-and-suspenders we don't need here. Dropping it
+//     keeps the `data-wikilink-*` markers intact so `components.a`
+//     can branch on them.
+
+const REMARK_PLUGINS = [remarkWikilink]
+
+const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
   p: ({ children }) => <p className="leading-relaxed">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
   code: ({ children }) => (
     <code className="bg-muted text-foreground text-xs rounded px-1 py-0.5 font-mono">{children}</code>
   ),
-  a: ({ href, children, ...rest }) => {
-    if (typeof href === 'string' && isWikilinkHref(href)) {
-      const slug = slugFromWikilinkHref(href)
+  a: (props) => {
+    // react-markdown passes the raw mdast node as `node` on the
+    // component props; strip it before spreading onto the DOM so we
+    // don't end up with a literal `node="[object Object]"` attribute
+    // on the rendered element. Also pull `href` / `children` so
+    // they're routed to the right slot.
+    const { node: _node, href, children, ...rest } =
+      props as React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+        children?: React.ReactNode
+        node?: unknown
+      }
+    // remarkWikilink stamps every wikilink anchor with this attribute,
+    // including broken ones (the broken flag rides in
+    // data-wikilink-broken). Presence of the slug attribute — even
+    // empty — is the runtime signal that this <a> came from a
+    // `[[Title]]` token, not from a real markdown link.
+    if ((rest as Record<string, unknown>)['data-wikilink-slug'] !== undefined) {
       return (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.preventDefault()
-            const store = useDocsStore.getState()
-            const target = store.knownDocs.find((d) => d.slug === slug)
-            if (!target || target.archivedAt) return
-            store.setActive(slug)
-          }}
-          className="inline text-foreground underline decoration-foreground/40 underline-offset-2 hover:decoration-foreground"
-        >
+        <WikiLink {...(rest as React.ComponentProps<typeof WikiLink>)}>
           {children}
-        </button>
+        </WikiLink>
       )
     }
     return (
@@ -56,40 +70,26 @@ const markdownComponents: React.ComponentProps<typeof Streamdown>['components'] 
   },
 }
 
-// Streamdown's documented streaming pattern: pass content straight through,
-// let it word-wrap each new chunk in animated spans, and rely on blur+opacity
-// duration to mask token-arrival bursts (no client-side throttling needed).
-// `isAnimating` toggles the animation rehype pass off entirely once the
-// stream settles, so finished messages render with no leftover span markup.
-const STREAM_ANIMATE = {
-  animation: 'blurIn' as const,
-  duration: 200,
-  sep: 'word' as const,
-}
-
 export function StreamingMarkdown({
   content,
-  isStreaming,
+  // isStreaming is kept on the prop API for symmetry with the prior
+  // streamdown-based version; react-markdown doesn't need the hint
+  // (each content change re-renders from scratch). Future streaming
+  // UX (e.g. word-by-word fade) can read this flag again without
+  // changing every caller.
+  isStreaming: _isStreaming,
 }: {
   content: string
   isStreaming: boolean
 }) {
-  // Rewrite [[Title]] citations the LLM emits (from the /ask wiki Q&A
-  // mode, or anywhere the cross-link prompt rule is in play) into real
-  // markdown links pointing at note:<slug>. Streamdown renders those
-  // as anchors which our markdownComponents.a override turns into
-  // in-app navigation. Partial `[[Tit` mid-stream is left untouched —
-  // the regex only matches when `]]` arrives.
-  const resolved = resolveWikilinksInMarkdown(content)
   return (
     <div className="leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-      <Streamdown
-        animated={STREAM_ANIMATE}
-        isAnimating={isStreaming}
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
         components={markdownComponents}
       >
-        {resolved}
-      </Streamdown>
+        {content}
+      </ReactMarkdown>
     </div>
   )
 }

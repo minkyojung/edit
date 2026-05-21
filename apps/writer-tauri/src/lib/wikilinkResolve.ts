@@ -69,6 +69,48 @@ export function resolveWikilinksInMarkdown(md: string): string {
   })
 }
 
+// Dev-only handles so the wikilink resolver pipeline can be probed
+// from the browser console. Useful when a rendered chat answer
+// shows something unexpected (e.g. a "[blocked]" placeholder) —
+// running the same input through `__resolveWikilinks` reveals
+// whether the resolver matched the title or returned the raw
+// `[[Title]]` for streamdown to grapple with.
+//
+//   __resolveWikilinks('[[Tom]]')              // see the rewrite
+//   __knownDocs()                              // dump every doc's slug/title
+//   __wikiTitleMap()                           // see what the resolver's
+//                                              // title → slug map looks like
+if (import.meta.env.DEV) {
+  const w = window as unknown as {
+    __resolveWikilinks: typeof resolveWikilinksInMarkdown
+    __knownDocs: () => Array<{ slug: string; title: string; type: string; archived: boolean }>
+    __wikiTitleMap: () => Record<string, string>
+  }
+  w.__resolveWikilinks = resolveWikilinksInMarkdown
+  w.__knownDocs = () =>
+    useDocsStore.getState().knownDocs.map((d) => ({
+      slug: d.slug,
+      title: d.title ?? '',
+      type: d.type,
+      archived: !!d.archivedAt,
+    }))
+  w.__wikiTitleMap = () => {
+    const docs = useDocsStore
+      .getState()
+      .knownDocs.filter(
+        (d) => !d.archivedAt && !d.type.startsWith('system:'),
+      )
+    const out: Record<string, string> = {}
+    for (const d of docs) {
+      const title = (d.title ?? '').trim()
+      if (!title) continue
+      const key = title.toLowerCase()
+      if (!out[key]) out[key] = d.slug
+    }
+    return out
+  }
+}
+
 /** Extract every `[[Name]]` token from a markdown body and return
  * their trimmed contents. Same regex as
  * {@link resolveWikilinksInMarkdown} — single source of truth for
