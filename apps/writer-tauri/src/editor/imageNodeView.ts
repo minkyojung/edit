@@ -14,6 +14,13 @@
 // through unchanged so chat-side assistant-emitted images or future
 // pasted URLs keep working. CSP still polices what schemes the
 // webview will actually load.
+//
+// Right-click opens the alt-description dialog. The actual UI lives
+// in <ImageAltDialog/> at the app root; the NodeView just records
+// the target position in a Zustand store. We use `getPos` (PM's
+// third NodeView constructor arg) so the dialog gets the live
+// doc position rather than a stale one — getPos always reflects
+// where the node sits *now*, even after upstream edits.
 
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
@@ -21,21 +28,34 @@ import type { Node as PMNode } from '@milkdown/kit/prose/model'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { join } from '@tauri-apps/api/path'
 import { getActiveVaultPath } from '@/state/settingsStore'
+import { useImageAltDialogStore } from '@/state/imageAltDialogStore'
 
 const ABSOLUTE_URL_RE = /^[a-z][a-z0-9+.-]*:/i
 
 class ImageNodeView {
   readonly dom: HTMLImageElement
   private lastSrc: string | undefined
+  private getPos: () => number | undefined
 
-  constructor(node: PMNode) {
+  constructor(node: PMNode, getPos: () => number | undefined) {
+    this.getPos = getPos
     this.dom = document.createElement('img')
     this.dom.alt = (node.attrs.alt as string) ?? ''
     if (node.attrs.title) this.dom.title = String(node.attrs.title)
     this.dom.className =
       'max-w-full h-auto rounded my-2 block'
     this.dom.draggable = false
+    this.dom.addEventListener('contextmenu', this.onContextMenu)
     this.applySrc(node.attrs.src as string | undefined)
+  }
+
+  private onContextMenu = (e: MouseEvent): void => {
+    e.preventDefault()
+    const pos = this.getPos()
+    if (pos == null) return
+    useImageAltDialogStore
+      .getState()
+      .openWith(pos, this.dom.alt, this.dom.getBoundingClientRect())
   }
 
   private applySrc(rawSrc: string | undefined): void {
@@ -80,6 +100,10 @@ class ImageNodeView {
     this.applySrc(node.attrs.src as string | undefined)
     return true
   }
+
+  destroy(): void {
+    this.dom.removeEventListener('contextmenu', this.onContextMenu)
+  }
 }
 
 export const imageNodeView = $prose(
@@ -87,7 +111,7 @@ export const imageNodeView = $prose(
     new Plugin({
       props: {
         nodeViews: {
-          image: (node) => new ImageNodeView(node),
+          image: (node, _view, getPos) => new ImageNodeView(node, getPos),
         },
       },
     }),
