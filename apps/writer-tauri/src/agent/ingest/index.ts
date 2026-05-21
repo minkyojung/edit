@@ -1,0 +1,286 @@
+// Ingest engine entry point — Karpathy-style "user writes notes,
+// LLM maintains the wiki" pattern. One call:
+//
+//   const result = await runIngest(noteSlug)
+//
+// reads the note's markdown, snapshots every wiki page, asks Haiku
+// what should change in the wiki to reflect the new note, and
+// returns proposals WITHOUT applying them. Application (ydoc append)
+// and the trigger (idle / doc-close) are separate concerns layered
+// on top.
+//
+// Why a fresh sessionId per call: ingest is one-shot — there's no
+// multi-turn history to resume. We want each ingest evaluated
+// against the live wiki snapshot, not against a stale cached prefix.
+
+import { invoke } from '@tauri-apps/api/core'
+import { awaitChatRun } from '@/agent/chatRun'
+import { useDocsStore, isWikiDoc } from '@/state/docsStore'
+import { useIngestStore } from '@/state/ingestStore'
+import { pickNewBlocks } from '@/lib/blockHash'
+import {
+  ensureConventionsWikiSlug,
+  ensureProfileWikiSlug,
+} from '@/state/wikiService'
+import { assembleContext } from '@/agent/contextPipeline'
+import {
+  selectActiveThreadsForIngest,
+  type ActiveThreadSummary,
+} from '@/agent/selectActiveThreadsForIngest'
+import { getActiveVaultPath } from '@/state/settingsStore'
+import { buildPrompt, composeSystemPrompt } from './prompts'
+import { sanitizeIngestResult, type IngestToolInput } from './parse'
+import { readDocMarkdown, todayLocalDate } from './readDoc'
+import type {
+  IngestCoreArgs,
+  IngestCoreResult,
+  IngestResult,
+} from './types'
+
+const INGEST_MODEL = 'claude-haiku-4-5-20251001'
+
+// awaitChatRun lives in @/agent/chatRun — generic over the
+// structured-output event name so the Profile bootstrap can reuse
+// the same listener choreography (its event is `profile:result`).
+
+/** Source-agnostic ingest core. Takes pre-filtered markdown plus a
+ * display label and runs the wiki-context-aware LLM pass. No store
+ * reads, no slug lookups, no block-hash dedup — the caller (daily
+ * `runIngest` or bootstrap `bootstrapIngest`) handles whatever
+ * source-specific filtering / persistence it needs.
+ *
+ * Returned shape mirrors `IngestResult` minus `ingestedHashes`,
+ * which is daily-only state (bootstrap doesn't dedup by hash). */
+export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreResult> {
+  const { text, sourceLabel, sinceTs, threadSlug } = args
+
+  // Seed the conventions page on first need so the user has
+  // something to edit; assembleContext reads the result a moment
+  // later. Failures degrade gracefully — empty conventions means
+  // the static rules take over alone.
+  await ensureConventionsWikiSlug()
+  // Same lazy-seed for the self-profile page. Guarantees `wiki:profile`
+  // shows up in the INDEX so the model can route self-facts there
+  // even for users who skipped the URL bootstrap — the page just
+  // starts empty and fills from daily activity instead.
+  await ensureProfileWikiSlug()
+  // Run wiki context assembly and chat compaction in parallel —
+  // they read independent state and the chat side may include
+  // several LLM calls for stale threads, so paying once is much
+  // cheaper than serializing.
+  const [ctx, chatActivity] = await Promise.all([
+    // One facade call replaces the prior three (wiki dump + index +
+    // conventions). Tier 2 hot pages come from [[link]]s in the
+    // source text — same daily / import can mention multiple
+    // existing wiki pages, and now their bodies ride along
+    // automatically. We skip the Tier 3 tool list (enableTools:
+    // false) because ingest is single-shot — the LLM emits one
+    // submit_ingest_result call and has no room to drive
+    // read_page/search_wiki.
+    assembleContext({ docBody: text, enableTools: false }),
+    // Chat activity since the previous successful ingest. Empty
+    // array when no slug is available (bootstrap before any doc
+    // opens) or on quiet days where no thread had a new turn since
+    // sinceTs.
+    threadSlug
+      ? selectActiveThreadsForIngest({ slug: threadSlug, sinceTs })
+      : Promise.resolve<ActiveThreadSummary[]>([]),
+  ])
+
+  const prompt = buildPrompt({
+    date: todayLocalDate(),
+    noteLabel: sourceLabel,
+    noteMarkdown: text,
+  })
+  const systemPrompt = composeSystemPrompt({
+    indexSnapshot: ctx.index,
+    hotPages: ctx.hotPages,
+    conventions: ctx.conventions,
+    chatActivity,
+    selfProfile: ctx.selfProfile,
+  })
+
+  const runId = crypto.randomUUID()
+  const sessionId = crypto.randomUUID()
+  const finished = awaitChatRun<IngestToolInput>(runId, 'ingest:result')
+  await invoke('claude_chat_start', {
+    args: {
+      runId,
+      model: INGEST_MODEL,
+      systemPrompt,
+      prompt,
+      // Enable the structured-output tool. The sidecar registers
+      // it as an MCP tool on the writer-relay server; the model
+      // calls it exactly once with the full ingest result, which
+      // we receive via the `ingest:result` event in awaitChatRun.
+      relayTools: ['submit_ingest_result'],
+      // Plumb the vault path for future read_page / search_wiki
+      // tools. No effect today (those tools aren't in ingest's
+      // relayTools yet), but keeping the parameter consistent
+      // across consumers means we can opt into filesystem tools in
+      // a follow-up commit without touching every call site.
+      vaultPath: getActiveVaultPath() ?? undefined,
+      effort: 'low',
+      sessionId,
+    },
+  })
+  const outcome = await finished
+  if (!outcome.toolInput) {
+    console.warn(
+      '[ingest:producer] submit_ingest_result tool was not called',
+      { textPreview: outcome.text.slice(0, 200) },
+    )
+    return {
+      proposals: [],
+      logEntry: null,
+      raw: outcome.text,
+      malformed: true,
+    }
+  }
+  const { proposals, logEntry } = sanitizeIngestResult(outcome.toolInput)
+  console.log('[ingest:producer] tool result accepted', {
+    proposals: proposals.length,
+    logEntry: !!logEntry,
+    targets: proposals.map((p) => p.target ?? `new:${p.suggestNewPage}`),
+  })
+  return {
+    proposals,
+    logEntry,
+    raw: outcome.text,
+    malformed: false,
+  }
+}
+
+/** Run one ingest pass against the given note slug. Reads the note,
+ * snapshots the wiki, calls Haiku, returns proposals (no apply).
+ * Throws on transport / SDK errors. Returns malformed=true when the
+ * model emitted text but it didn't parse — caller can decide whether
+ * to retry or surface as a soft warning. */
+export async function runIngest(noteSlug: string): Promise<IngestResult> {
+  const known = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.slug === noteSlug)
+  if (!known) throw new Error(`unknown doc: ${noteSlug}`)
+  if (isWikiDoc(known)) {
+    // Agent-managed pages (system:* meta surface + wiki:custom-*
+    // content) are LLM output, not input — ingesting one would
+    // mean asking the model to summarize itself. The trigger layer
+    // enforces this too, but guard here so console testing can't
+    // accidentally poison the wiki with self-echo.
+    throw new Error(`refusing to ingest an agent-managed page: ${noteSlug}`)
+  }
+
+  const fullMarkdown = readDocMarkdown(noteSlug)
+  if (!fullMarkdown) {
+    return {
+      proposals: [],
+      logEntry: null,
+      raw: '',
+      malformed: false,
+      ingestedHashes: [],
+    }
+  }
+
+  // Block-hash filter: only forward blocks the LLM hasn't seen
+  // before. This is the structural dedup guard — without it, the
+  // same paragraph re-sent on a later pass would re-trigger
+  // proposals the user already accepted, stamping duplicate rows
+  // into the wiki. `allHashes` is the *full* current snapshot
+  // (not just new ones); caller persists it so deletions and
+  // edits both self-heal.
+  const seen = new Set(
+    useIngestStore.getState().ingestedBlockHashes[noteSlug] ?? [],
+  )
+  const { newBlocks, allHashes } = await pickNewBlocks(fullMarkdown, seen)
+  if (newBlocks.length === 0) {
+    console.log('[ingest:producer] no new blocks since last pass', {
+      noteSlug,
+      totalBlocks: allHashes.length,
+    })
+    return {
+      proposals: [],
+      logEntry: null,
+      raw: '',
+      malformed: false,
+      // Return the current snapshot anyway — the caller persists
+      // it to reflect deletions (any hash that disappeared from
+      // the body falls out of the stored set).
+      ingestedHashes: allHashes,
+    }
+  }
+  const noteMarkdown = newBlocks.map((b) => b.text).join('\n\n')
+  console.log('[ingest:producer] block filter', {
+    noteSlug,
+    new: newBlocks.length,
+    total: allHashes.length,
+  })
+
+  const sinceTs = useIngestStore.getState().lastIngestedAt[noteSlug] ?? 0
+  const noteLabel =
+    known.type === 'daily' && known.date
+      ? `daily/${known.date}`
+      : known.title?.trim() || noteSlug
+
+  const core = await runIngestCore({
+    text: noteMarkdown,
+    sourceLabel: noteLabel,
+    sinceTs,
+    threadSlug: noteSlug,
+  })
+
+  return {
+    ...core,
+    // Malformed pass: don't persist the hash snapshot — the LLM
+    // never "consumed" these blocks, so leave the store as-is so
+    // the next pass retries with the same content.
+    ingestedHashes: core.malformed ? [] : allHashes,
+  }
+}
+
+/** Convenience for console testing: run ingest against today's
+ * daily entry without having to look up the slug manually. Returns
+ * null when there's no daily for today (shouldn't happen — bootstrap
+ * always creates one — but handled so the console call never throws
+ * a confusing TypeError). */
+export async function ingestToday(): Promise<IngestResult | null> {
+  const today = todayLocalDate()
+  const known = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.type === 'daily' && d.date === today)
+  if (!known) {
+    console.warn('[ingest] no daily for today:', today)
+    return null
+  }
+  return runIngest(known.slug)
+}
+
+/** Convenience for console testing: run ingest against the currently
+ * active tab. Useful when the user is iterating on a specific note
+ * and wants to see what the model would propose for it. */
+export async function ingestActive(): Promise<IngestResult | null> {
+  const slug = useDocsStore.getState().activeSlug
+  if (!slug) {
+    console.warn('[ingest] no active doc')
+    return null
+  }
+  return runIngest(slug)
+}
+
+/** Dev-only handles so the engine is callable from the browser
+ * console for prompt-tuning.
+ *
+ * Console usage:
+ *   await __ingestToday()    // runs against today's daily
+ *   await __ingestActive()   // runs against the active tab
+ *   await __ingest('<slug>') // explicit slug
+ */
+if (import.meta.env.DEV) {
+  const w = window as unknown as {
+    __ingest: typeof runIngest
+    __ingestToday: typeof ingestToday
+    __ingestActive: typeof ingestActive
+  }
+  w.__ingest = runIngest
+  w.__ingestToday = ingestToday
+  w.__ingestActive = ingestActive
+}

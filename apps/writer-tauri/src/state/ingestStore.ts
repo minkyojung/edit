@@ -23,7 +23,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { IngestProposal } from '@/agent/ingest'
+import type { IngestProposal } from '@/agent/ingest/types'
 import { useDocsStore } from './docsStore'
 
 /** A proposal waiting for the user to accept or skip. Adds a stable

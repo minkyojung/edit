@@ -25,7 +25,7 @@
 import { useDocsStore, isUserOwnedWiki } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore, type PendingProposal } from '@/state/ingestStore'
-import { assembleProposalMarkdown } from '@/agent/ingest'
+import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
 import { markStore } from '@/domain/markStoreInstance'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { IconCheck, IconX } from '@tabler/icons-react'

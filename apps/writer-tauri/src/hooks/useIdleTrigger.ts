@@ -30,7 +30,8 @@
 // the call site even though the idle policy is gone).
 
 import { useEffect, useRef } from 'react'
-import { runIngest, assembleProposalMarkdown } from '@/agent/ingest'
+import { runIngest } from '@/agent/ingest/index'
+import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
@@ -38,7 +39,7 @@ import {
   ensureLogWikiSlug,
   createCustomWikiPage,
 } from '@/state/wikiService'
-import type { IngestProposal } from '@/agent/ingest'
+import type { IngestProposal } from '@/agent/ingest/types'
 import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
 import { effectiveLength } from '@/lib/markdownText'
 import { todayLocalDate } from '@/hooks/useDocMeta'
