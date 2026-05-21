@@ -508,7 +508,7 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
       </div>
 
       <div
-        className="flex shrink-0 items-stretch border-b border-border bg-background px-2"
+        className="flex shrink-0 items-stretch border-b border-border bg-background px-0.5"
         style={{ height: 'var(--header-h)' }}
       >
         <ThreadPicker

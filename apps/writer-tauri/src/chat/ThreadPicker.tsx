@@ -2,36 +2,34 @@
 // ThreadTabs strip: the chat panel is too narrow to comfortably show 5
 // tabs side-by-side, and rename/archive being hover-only hurt
 // discoverability. The picker shows only the active thread title in the
-// header row; clicking opens a Radix popover with active + archived in a
+// header row; clicking opens a DropdownMenu with active + archived in a
 // single list, plus a [+ New chat] action.
 //
-// Built on Popover + Command (cmdk). Items reuse CommandItem so
-// padding / typography / focus styling flow from the design system
-// primitives rather than ad-hoc className strings. The active thread is
-// signalled by `data-checked`, which renders the built-in check icon on
-// the right edge of the row.
+// Built on the shared DropdownMenu primitive so padding, radius,
+// separator, and icon stroke flow from the same tokens as the sidebar
+// account menu and other menus across the app. The active thread is
+// signalled by text color contrast (inactive rows use
+// `text-muted-foreground`, active stays at full `text-foreground`) —
+// no built-in check indicator competes with the row's archive button.
 
 import { useEffect, useRef, useState } from 'react'
 import {
   IconChevronDown,
   IconMessageCircleFilled,
+  IconPencil,
   IconPlus,
   IconRestore,
   IconX,
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import {
-  Command,
-  CommandGroup,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-} from '@/components/ui/command'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Tooltip,
   TooltipContent,
@@ -91,8 +89,8 @@ export function ThreadPicker({
 
   return (
     <TooltipProvider>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
             size="sm"
@@ -100,96 +98,80 @@ export function ThreadPicker({
             // title span's `truncate` actually engages — without it the
             // button falls back to min-content width and a long title
             // pushes the chevron out of the panel.
-            className="min-w-0 flex-1 justify-start self-center"
+            className="min-w-0 flex-1 justify-start self-center px-2"
             aria-label="Switch chat"
           >
-            <IconMessageCircleFilled className="shrink-0 opacity-70" />
+            <IconMessageCircleFilled size={16} stroke={1.5} className="shrink-0 opacity-70" />
             <span className="min-w-0 flex-1 truncate text-left">
               {activeThread?.title || 'New chat'}
             </span>
             <IconChevronDown
-              stroke={1.75}
+              size={14}
+              stroke={1.5}
               className={cn(
                 'shrink-0 text-muted-foreground transition-transform',
                 open && 'rotate-180',
               )}
             />
           </Button>
-        </PopoverTrigger>
+        </DropdownMenuTrigger>
 
-        <PopoverContent align="start" className="w-80 p-0">
-          <Command>
-            <CommandList>
-              {active.length > 0 && (
-                <CommandGroup>
-                  {active.map((t) => (
-                    <ActiveRow
-                      key={t.id}
-                      meta={t}
-                      isActive={t.id === activeId}
-                      onSelect={() => handleSelect(t.id)}
-                      onArchive={() => onArchive(t.id)}
-                      onRename={(title) => onRename(t.id, title)}
-                    />
-                  ))}
-                </CommandGroup>
+        <DropdownMenuContent align="start" className="w-80">
+          {active.map((t) => (
+            <ActiveRow
+              key={t.id}
+              meta={t}
+              isActive={t.id === activeId}
+              onSelect={() => handleSelect(t.id)}
+              onArchive={() => onArchive(t.id)}
+              onRename={(title) => onRename(t.id, title)}
+            />
+          ))}
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuItem onSelect={handleCreate} disabled={atLimit}>
+                <IconPlus size={16} stroke={1.5} />
+                New chat
+              </DropdownMenuItem>
+            </TooltipTrigger>
+            {atLimit && (
+              <TooltipContent side="bottom">
+                Up to {MAX_ACTIVE_THREADS} chats. Archive one to make room.
+              </TooltipContent>
+            )}
+          </Tooltip>
+
+          {archived.length > 0 && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+                Archived
+              </DropdownMenuLabel>
+              {archived.map((t) => (
+                <DropdownMenuItem
+                  key={t.id}
+                  onSelect={() => handleRestore(t.id)}
+                  disabled={atLimit}
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {t.title || 'New chat'}
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {formatRelative(t.archivedAt ?? t.updatedAt)}
+                  </span>
+                  <IconRestore size={16} stroke={1.5} className="text-muted-foreground" />
+                </DropdownMenuItem>
+              ))}
+              {atLimit && (
+                <div className="px-3 py-1.5 text-xs text-muted-foreground">
+                  Already at {MAX_ACTIVE_THREADS} active chats. Archive one to restore.
+                </div>
               )}
-
-              <CommandGroup>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <CommandItem
-                      value="__new-chat"
-                      onSelect={handleCreate}
-                      disabled={atLimit}
-                    >
-                      <IconPlus className="shrink-0 opacity-70" />
-                      <span className="flex-1">New chat</span>
-                    </CommandItem>
-                  </TooltipTrigger>
-                  {atLimit && (
-                    <TooltipContent side="bottom">
-                      Up to {MAX_ACTIVE_THREADS} chats. Archive one to make room.
-                    </TooltipContent>
-                  )}
-                </Tooltip>
-              </CommandGroup>
-
-              {archived.length > 0 && (
-                <>
-                  <CommandSeparator />
-                  <CommandGroup heading="Archived">
-                    {archived.map((t) => (
-                      <CommandItem
-                        key={t.id}
-                        value={`archived:${t.id}`}
-                        onSelect={() => handleRestore(t.id)}
-                        disabled={atLimit}
-                      >
-                        <span className="min-w-0 flex-1 truncate text-foreground">
-                          {t.title || 'New chat'}
-                        </span>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {formatRelative(t.archivedAt ?? t.updatedAt)}
-                        </span>
-                        <IconRestore
-                          stroke={1.75}
-                          className="shrink-0 text-muted-foreground"
-                        />
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                  {atLimit && (
-                    <div className="px-3 py-1.5 text-xs text-muted-foreground">
-                      Already at {MAX_ACTIVE_THREADS} active chats. Archive one to restore.
-                    </div>
-                  )}
-                </>
-              )}
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </TooltipProvider>
   )
 }
@@ -226,22 +208,19 @@ function ActiveRow({ meta, isActive, onSelect, onArchive, onRename }: ActiveRowP
   }
 
   return (
-    <CommandItem
-      value={meta.id}
-      // While editing, disable cmdk on this row so its keyboard nav and
-      // onSelect don't interfere with the inline input.
-      disabled={editing}
-      data-checked={isActive}
-      onSelect={() => {
-        if (editing) return
+    <DropdownMenuItem
+      // Block row select / menu close while editing — Enter / outside
+      // clicks should commit the rename, not switch threads or dismiss.
+      onSelect={(e) => {
+        if (editing) {
+          e.preventDefault()
+          return
+        }
         onSelect()
       }}
-      onDoubleClick={(e) => {
-        e.stopPropagation()
-        setEditing(true)
-      }}
+      className={cn(!isActive && 'text-muted-foreground')}
     >
-      <IconMessageCircleFilled className="shrink-0 opacity-70" />
+      <IconMessageCircleFilled size={16} stroke={1.5} className="shrink-0 opacity-70" />
 
       {editing ? (
         <input
@@ -250,8 +229,8 @@ function ActiveRow({ meta, isActive, onSelect, onArchive, onRename }: ActiveRowP
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
-            // Stop cmdk from reading these as list navigation and stop
-            // Radix Popover from dismissing on Escape.
+            // Stop Radix DropdownMenu from reading these as list nav
+            // (↑↓), typeahead, or dismiss (Escape).
             e.stopPropagation()
             if (e.key === 'Enter') {
               e.preventDefault()
@@ -263,7 +242,7 @@ function ActiveRow({ meta, isActive, onSelect, onArchive, onRename }: ActiveRowP
             }
           }}
           onClick={(e) => e.stopPropagation()}
-          className="min-w-0 flex-1 rounded-md bg-transparent text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+          className="min-w-0 flex-1 rounded-md bg-transparent text-sm font-medium text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
         />
       ) : (
         <span className="min-w-0 flex-1 truncate">
@@ -271,7 +250,23 @@ function ActiveRow({ meta, isActive, onSelect, onArchive, onRename }: ActiveRowP
         </span>
       )}
 
-      {/* Sibling button — real <button>, not a nested role="button". */}
+      {/* Rename button — clicked separately so the row's onSelect
+          (which would switch threads + close menu) doesn't fire. */}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        onClick={(e) => {
+          e.stopPropagation()
+          setEditing(true)
+        }}
+        aria-label="Rename chat"
+        className="text-muted-foreground hover:text-foreground"
+      >
+        <IconPencil size={14} stroke={1.5} />
+      </Button>
+
+      {/* Archive button — same propagation guard. */}
       <Button
         type="button"
         variant="ghost"
@@ -283,8 +278,8 @@ function ActiveRow({ meta, isActive, onSelect, onArchive, onRename }: ActiveRowP
         aria-label="Archive chat"
         className="text-muted-foreground hover:text-foreground"
       >
-        <IconX />
+        <IconX size={14} stroke={1.5} />
       </Button>
-    </CommandItem>
+    </DropdownMenuItem>
   )
 }
