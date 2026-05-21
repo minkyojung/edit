@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import * as Y from 'yjs'
-import { runChat } from '@/agent/chat'
+import { runChat } from '@/agent/chat/index'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import type { ChatEffort, ChatModel, ChatTurn } from '@/chat/types'
