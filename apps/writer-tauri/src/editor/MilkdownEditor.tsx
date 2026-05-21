@@ -18,6 +18,7 @@ import { createDocVersionPlugin } from './docVersionPlugin'
 import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
 import { formatStatePlugin } from './formatStatePlugin'
+import { imageNodeView } from './imageNodeView'
 import { inlineCodeSafeKeymap } from './inlineCodeSafe'
 import { createLinkClickPlugin } from './linkClickPlugin'
 import { createLinkHoverPlugin } from './linkHoverPlugin'
@@ -218,6 +219,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .use(createFrozenSelectionPlugin())
       .use(formatStatePlugin)
       .use(inlineCodeSafeKeymap)
+      .use(imageNodeView)
       .use(createPasteSanitizerPlugin())
       .use(createLinkClickPlugin())
       .use(createLinkHoverPlugin())

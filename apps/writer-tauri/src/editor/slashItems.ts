@@ -17,14 +17,17 @@ import {
   IconList,
   IconListNumbers,
   IconMinus,
+  IconPhoto,
   IconQuote,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
 import { setBlockType, wrapIn } from '@milkdown/kit/prose/commands'
 import { wrapInList } from '@milkdown/kit/prose/schema-list'
 import type { EditorView } from '@milkdown/kit/prose/view'
+import { open as openDialog } from '@tauri-apps/plugin-dialog'
 
 import { wrapInTaskList } from './taskList'
+import { copyImageIntoVault } from '@/lib/vaultImages'
 
 export interface SlashItem {
   /** Stable id for keying / debugging. */
@@ -75,6 +78,44 @@ function insertDivider(view: EditorView): void {
   if (!t) return
   const tr = view.state.tr.replaceSelectionWith(t.create())
   view.dispatch(tr.scrollIntoView())
+}
+
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']
+
+/** Image picker → vault copy → PM image node. Async because the
+ * file dialog and disk write are. The SlashMenu fires-and-forgets
+ * the returned promise; any failure logs but doesn't crash the
+ * editor (the dialog cancel path is the normal early-return). */
+async function insertImage(view: EditorView): Promise<void> {
+  let picked: string | string[] | null
+  try {
+    picked = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Image', extensions: IMAGE_EXTENSIONS }],
+    })
+  } catch (err) {
+    console.warn('[slash:image] file dialog failed', err)
+    return
+  }
+  if (typeof picked !== 'string' || picked.length === 0) return // cancelled
+
+  let relPath: string
+  try {
+    relPath = await copyImageIntoVault(picked)
+  } catch (err) {
+    console.warn('[slash:image] copy failed', err)
+    return
+  }
+
+  const t = view.state.schema.nodes.image
+  if (!t) return
+  // Basename without extension makes the most reasonable alt
+  // default; the user can edit the markdown directly to refine it.
+  const basename = picked.split(/[\\/]/).pop() ?? ''
+  const alt = basename.replace(/\.[^.]+$/, '')
+  const node = t.create({ src: relPath, alt, title: '' })
+  view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView())
+  view.focus()
 }
 
 export const SLASH_ITEMS: SlashItem[] = [
@@ -147,5 +188,17 @@ export const SLASH_ITEMS: SlashItem[] = [
     keywords: ['hr', 'rule', '---', 'horizontal'],
     icon: IconMinus,
     run: insertDivider,
+  },
+  {
+    id: 'image',
+    label: 'Image',
+    keywords: ['img', 'picture', 'photo'],
+    icon: IconPhoto,
+    // insertImage is async (file dialog + vault copy); fire-and-
+    // forget so the slash menu can dismiss synchronously. Errors
+    // surface in the console rather than blocking the editor.
+    run: (view) => {
+      void insertImage(view)
+    },
   },
 ]
