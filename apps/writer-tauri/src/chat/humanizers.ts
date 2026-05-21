@@ -182,12 +182,27 @@ const humanizers: Record<string, Humanizer> = {
   search_wiki: humanizeSearchWiki,
 }
 
+/** Strip the SDK's MCP relay prefix off a tool name. Tools the sidecar
+ * exposes via the MCP server arrive at the chat layer as
+ * `mcp__<server>__<tool>` (e.g. `mcp__writer-relay__read_page`). The
+ * humanizers map keys those tools by their short name (`read_page`),
+ * so we peel the prefix before lookup — and also use the stripped
+ * form as the fallback label so the user never sees the raw
+ * relay-namespaced id. */
+function stripMcpPrefix(toolName: string): string {
+  const m = /^mcp__[\w-]+__(.+)$/.exec(toolName)
+  return m ? m[1] : toolName
+}
+
 export function humanizeToolCall(
   toolName: string,
   input: unknown,
   output?: unknown,
 ): HumanizedToolCall {
-  const h = humanizers[toolName]
-  if (!h) return { label: `Using ${toolName}` }
-  return h(input, output)
+  const direct = humanizers[toolName]
+  if (direct) return direct(input, output)
+  const short = stripMcpPrefix(toolName)
+  const stripped = humanizers[short]
+  if (stripped) return stripped(input, output)
+  return { label: `Using ${short}` }
 }
