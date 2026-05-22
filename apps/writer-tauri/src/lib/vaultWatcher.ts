@@ -87,26 +87,41 @@ export async function startVaultWatcher(): Promise<() => void> {
       const candidates = relPaths.filter(isWatchableBodyFile)
       if (candidates.length === 0) return
 
-      // Filter self-echo: paths we recently wrote ourselves. Without
-      // this every flushDirty tick would appear as an "external
-      // change" and we'd reload the doc we just saved.
-      const external = candidates.filter((rel) => !isOurRecentWrite(rel))
-      if (external.length === 0) {
-        // Temporary debug — confirm the echo filter is doing work.
-        // Remove once Phase 4.E.1 is stable.
-        console.log('[watch] echo suppressed', candidates)
-        return
-      }
-      // Echo suppression failed — flag it loudly so we can diagnose
-      // path / timing mismatches when they happen in dev.
-      console.warn('[watch] echo MISS', { external, rawPaths })
-
-      dispatchEvent(event, external)
+      // Echo suppression is async (reads the file and hashes the
+      // bytes) so we hand off to a separate async flow rather than
+      // making the watch callback itself async — the Tauri plugin's
+      // listener signature is sync.
+      void resolveAndDispatch(event, candidates, rawPaths)
     },
     { recursive: true },
   )
   activeUnwatch = unwatch
   return unwatch
+}
+
+/** Filter the candidate paths by reading each from disk and
+ * comparing the content hash against `recentWriteHashes` (the
+ * VS Code-style content-based echo). Anything whose on-disk bytes
+ * match a recent write of ours is suppressed; the rest is treated
+ * as a real external edit and dispatched to the handlers. */
+async function resolveAndDispatch(
+  event: { type: unknown },
+  candidates: string[],
+  rawPaths: string[],
+): Promise<void> {
+  const checks = await Promise.all(
+    candidates.map(async (rel) => ({ rel, ours: await isOurRecentWrite(rel) })),
+  )
+  const external = checks.filter((c) => !c.ours).map((c) => c.rel)
+  if (external.length === 0) {
+    console.log('[watch] echo suppressed', candidates)
+    return
+  }
+  // Echo suppression failed — flag it so we can diagnose if a real
+  // external-edit case is hiding behind a content-hash collision or
+  // a write that wasn't routed through markOurRecentContent.
+  console.warn('[watch] echo MISS', { external, rawPaths })
+  dispatchEvent(event, external)
 }
 
 /** Stop the active vault watcher if any. Idempotent. */

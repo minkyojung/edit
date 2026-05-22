@@ -79,7 +79,7 @@ export const createTabsSlice = (
     // the strip empties (invariant below may then promote today's
     // daily into openSlugs and we return that instead).
     const idx = openSlugs.indexOf(slug)
-    let neighbor: string | null = next[idx] ?? next[idx - 1] ?? null
+    const neighbor: string | null = next[idx] ?? next[idx - 1] ?? null
     // Stop any chat run bound to this slug BEFORE destroying the
     // ydoc — a late proposal would otherwise try to apply against a
     // slug we've already torn down.

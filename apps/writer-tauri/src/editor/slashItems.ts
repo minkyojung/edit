@@ -27,6 +27,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 
 import { wrapInTaskList } from './taskList'
+import { insertBlockAtSelection } from './insertImage'
 import { copyImageIntoVault } from '@/lib/vaultImages'
 import { flushDirty } from '@/lib/docFileSync'
 
@@ -115,12 +116,7 @@ async function insertImage(view: EditorView): Promise<void> {
   const basename = picked.split(/[\\/]/).pop() ?? ''
   const alt = basename.replace(/\.[^.]+$/, '')
   const node = t.create({ src: relPath, alt, title: '' })
-  // PM handles block-node insertion natively: splits the enclosing
-  // paragraph at the cursor, places the block in between, and lands
-  // the selection on a sensible adjacent textblock. Replaces the
-  // bespoke insertImageAndAdvance helper Phase 5 needed only because
-  // the inline image schema couldn't do this on its own.
-  view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView())
+  insertBlockAtSelection(view, node)
   view.focus()
   // Force the doc save to land in the same ~ms window as the image
   // binary write. Without this the doc save waits for the next

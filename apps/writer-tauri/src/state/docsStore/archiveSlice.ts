@@ -91,7 +91,7 @@ export const createArchiveSlice = (
     // archive it and put me on the next sensible tab."
     const nextOpen = state.openSlugs.filter((s) => !groupSet.has(s))
     const archivedIdx = state.openSlugs.indexOf(slug)
-    let nextActive: string | null =
+    const nextActive: string | null =
       archivedIdx >= 0
         ? state.openSlugs.slice(archivedIdx + 1).find((s) => !groupSet.has(s)) ??
           [...state.openSlugs.slice(0, archivedIdx)].reverse().find((s) => !groupSet.has(s)) ??

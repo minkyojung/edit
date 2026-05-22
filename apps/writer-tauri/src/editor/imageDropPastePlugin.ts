@@ -26,6 +26,7 @@ import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
 import { TextSelection } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
+import { insertBlockAtSelection } from './insertImage'
 import { importImageFile } from '@/lib/vaultImages'
 import { flushDirty } from '@/lib/docFileSync'
 
@@ -45,9 +46,7 @@ async function insertImagesAtSelection(
       const t = view.state.schema.nodes.imageBlock
       if (!t) continue
       const node = t.create({ src: relPath, alt, title: '' })
-      // Block-node insertion — PM splits the host paragraph and
-      // places the block as the user expects. No helper needed.
-      view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView())
+      insertBlockAtSelection(view, node)
     } catch (err) {
       console.warn('[image-drop-paste] insert failed', { name: file.name, err })
     }

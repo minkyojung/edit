@@ -101,52 +101,71 @@ export async function readVaultFile(relPath: string): Promise<string> {
   return await readTextFile(path)
 }
 
-/** Window (ms) during which a file we just wrote should be treated
- * as "our recent write" by file-watcher consumers. macOS fsevents
- * can coalesce + delay events under load by 1-3 seconds, so the
- * window must comfortably cover that. The cost of a false negative
- * (genuine external edit suppressed because it lands within N seconds
- * of our save) is "user has to wait N seconds before the edit is
- * picked up" — far cheaper than the false positive (our own write
- * looks external, triggering a reload that wipes in-memory state). */
-const RECENT_WRITE_WINDOW_MS = 5000
+/** Window (ms) during which a content-hash we recently wrote stays
+ * in the echo-suppression set. macOS fsevents can coalesce + delay
+ * events under load by 1-3 seconds, so the window must comfortably
+ * cover that. The cost of a false negative (genuine external edit
+ * with identical bytes suppressed) is essentially zero — if the
+ * external edit produced the same content, there's no functional
+ * difference to "our own write". The cost of a false positive (our
+ * own write looks external) is much higher — a reload would wipe
+ * in-memory state. */
+const RECENT_WRITE_WINDOW_MS = 30_000
 
-/** Track the timestamp of each vault path we recently wrote so the
- * file watcher (Phase 4.E) can ignore the resulting echo events.
- * Without this filter our own writes would fire the "external
- * change" path and either trigger noisy reload, an unsaved-changes
- * modal, or in the worst case an infinite write→event→write loop. */
-const recentWrites = new Map<string, number>()
+/** Track content hashes of recent writes. Echo suppression compares
+ * the *bytes on disk at event time* to the bytes we just wrote — so
+ * path differences (canonicalisation, symlinks, trailing slashes)
+ * stop mattering. Same byte content → same hash → suppressed. The
+ * VS Code approach. */
+const recentWriteHashes = new Map<string, number>()
 
-/** Stamp `relPath` AND its `.tmp` companion as "we just wrote it"
- * so the file watcher's echo filter ({@link isOurRecentWrite})
- * suppresses every fsevent the atomic-write pattern produces:
- *
- *   write   → create  `<relPath>.tmp`
- *   rename  → remove  `<relPath>.tmp`
- *           → create  `<relPath>`
- *
- * Without the tmp stamp the .tmp events would leak through the
- * filter as "external" — vault.ts owns the atomic-write contract
- * so it's the right place to register both paths. */
-function markOurRecentWrite(relPath: string): void {
-  const now = Date.now()
-  recentWrites.set(relPath, now)
-  recentWrites.set(`${relPath}.tmp`, now)
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  // Web Crypto types BufferSource as `ArrayBuffer | ArrayBufferView<ArrayBuffer>`.
+  // `Uint8Array<ArrayBufferLike>` (the modern TS lib signature) isn't a
+  // direct match because the underlying buffer could be SharedArrayBuffer.
+  // We control the input — it always comes from a regular ArrayBuffer —
+  // so the cast is safe.
+  const buffer = await crypto.subtle.digest(
+    'SHA-256',
+    bytes as unknown as BufferSource,
+  )
+  return Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
 }
 
-/** Did we write `relPath` within the recent-write window? Used by
- * the file watcher (and tests) to filter echo events. Lazily prunes
- * stale entries so the Map doesn't grow unbounded over a long
- * session. */
-export function isOurRecentWrite(relPath: string): boolean {
-  const t = recentWrites.get(relPath)
-  if (t === undefined) return false
-  if (Date.now() - t > RECENT_WRITE_WINDOW_MS) {
-    recentWrites.delete(relPath)
+/** Record the hash of bytes we just wrote so the watcher can
+ * recognise the resulting fsevent as our own and suppress it.
+ * Called from inside each `writeVault*` helper *before* the actual
+ * write hits disk, so the hash is in place by the time the OS
+ * delivers the resulting event. */
+async function markOurRecentContent(bytes: Uint8Array): Promise<void> {
+  const hash = await sha256Hex(bytes)
+  recentWriteHashes.set(hash, Date.now())
+}
+
+/** Did the on-disk content at `relPath` come from one of our recent
+ * writes? Reads the file, computes its hash, and checks the recent
+ * set. Async because it touches disk.
+ *
+ * Stale entries are lazily pruned on read so the Map doesn't grow
+ * unbounded over long sessions. */
+export async function isOurRecentWrite(relPath: string): Promise<boolean> {
+  try {
+    const path = await resolveVaultPath(relPath)
+    const bytes = await readFile(path)
+    const hash = await sha256Hex(bytes)
+    const t = recentWriteHashes.get(hash)
+    if (t === undefined) return false
+    if (Date.now() - t > RECENT_WRITE_WINDOW_MS) {
+      recentWriteHashes.delete(hash)
+      return false
+    }
+    return true
+  } catch {
+    // File doesn't exist or read failed — can't be our recent write.
     return false
   }
-  return true
 }
 
 /** Atomic file write — content lands on disk as a complete file or
@@ -195,7 +214,7 @@ export async function writeVaultFile(relPath: string, content: string): Promise<
   // exists, so this stays idempotent on the common steady-state write.
   const parent = await dirname(path)
   await mkdir(parent, { recursive: true })
-  markOurRecentWrite(relPath)
+  await markOurRecentContent(new TextEncoder().encode(content))
   await atomicWriteText(path, content)
 }
 
@@ -231,8 +250,22 @@ export async function appendVaultFile(
   const path = await resolveVaultPath(relPath)
   const parent = await dirname(path)
   await mkdir(parent, { recursive: true })
-  markOurRecentWrite(relPath)
-  await writeTextFile(path, content, { append: true })
+  // With content-hash echo we need the post-append bytes to mark
+  // before the write lands. Read existing, concatenate, mark, write
+  // atomically. Loses the "OS-level append" semantics but our chat
+  // threads are O(KB) so the read-modify-write cost is negligible.
+  let existing: Uint8Array
+  try {
+    existing = await readFile(path)
+  } catch {
+    existing = new Uint8Array(0)
+  }
+  const appendBytes = new TextEncoder().encode(content)
+  const combined = new Uint8Array(existing.length + appendBytes.length)
+  combined.set(existing)
+  combined.set(appendBytes, existing.length)
+  await markOurRecentContent(combined)
+  await writeTextFile(path, new TextDecoder().decode(combined))
 }
 
 /** Atomic binary write — same tmp+rename pattern as
@@ -266,7 +299,7 @@ export async function writeVaultBinary(
   const path = await resolveVaultPath(relPath)
   const parent = await dirname(path)
   await mkdir(parent, { recursive: true })
-  markOurRecentWrite(relPath)
+  await markOurRecentContent(data)
   await atomicWriteBinary(path, data)
 }
 
@@ -293,8 +326,16 @@ export async function renameVaultFile(
   const toAbs = await resolveVaultPath(toRel)
   const parent = await dirname(toAbs)
   await mkdir(parent, { recursive: true })
-  markOurRecentWrite(fromRel)
-  markOurRecentWrite(toRel)
+  // Pre-mark the file's content so the rename's fsevent is recognised
+  // as ours. Rename doesn't change content, so the same hash matches
+  // events for both the source removal and the destination creation.
+  try {
+    const bytes = await readFile(fromAbs)
+    await markOurRecentContent(bytes)
+  } catch {
+    // If we can't read the source, the rename will fail anyway and
+    // there are no events to suppress.
+  }
   await rename(fromAbs, toAbs)
 }
 
