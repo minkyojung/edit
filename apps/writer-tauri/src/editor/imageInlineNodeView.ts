@@ -5,9 +5,9 @@
 // break the text model.
 //
 // The companion `imageBlock` node (its own line) renders through
-// `imageNodeView.ts`'s card NodeView, which adds the wrapper / handle
-// / drag preview scoping needed to keep WKWebView from compositing
-// surrounding UI layers into the drag image.
+// `cards/ImageCardNodeView.ts`'s card NodeView, which adds the
+// wrapper + drag preview scoping needed to keep WKWebView from
+// compositing surrounding UI layers into the drag image.
 //
 // Right-click and drag-preview customisation intentionally don't live
 // here — the alt-description dialog and the drag-scoping bug only
