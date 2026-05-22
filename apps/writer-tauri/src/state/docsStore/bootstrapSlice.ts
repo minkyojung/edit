@@ -21,21 +21,16 @@
 import { generateClientSlug } from '@/lib/slug'
 import { todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import { scanVault } from '@/lib/scanVault'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { scrubDailyTitleArtifacts } from './handlesSlice'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
 export interface BootstrapSlice {
   /** Set during bootstrap; turns to false when initial restore is done. */
   bootstrapping: boolean
-  /** Transient slug for the post-bootstrap URL replace. See DocsState
-   * docstring for the lifecycle. */
-  bootTargetSlug: string | null
   /** Run the initial vault scan → catalog → tab restore pipeline.
    * Re-entrancy-safe via the module-level `bootstrapInFlight` flag. */
   bootstrap: () => Promise<void>
-  /** Consume `bootTargetSlug` (RouteSyncBridge calls this after the
-   * replace navigate). */
-  clearBootTarget: () => void
 }
 
 /** Re-entrancy guard for bootstrap().
@@ -60,9 +55,6 @@ export const createBootstrapSlice = (
   get: GetDocsState,
 ): BootstrapSlice => ({
   bootstrapping: true,
-  bootTargetSlug: null,
-
-  clearBootTarget: () => set({ bootTargetSlug: null }),
 
   bootstrap: async () => {
     if (bootstrapInFlight) return
@@ -112,32 +104,21 @@ export const createBootstrapSlice = (
         openSlugs = [...openSlugs, todaysDaily.slug]
       }
 
-      // Pick a boot-target slug for RouteSyncBridge's replace navigate.
-      // Preference order:
-      //   1. The first surviving slug from persisted openSlugs (a doc
-      //      the user actually had open last session)
-      //   2. Today's daily (always-promoted; the journal floor)
-      // This is *not* the active slug — the URL is. We just hand the
-      // bridge a sensible target so the first paint isn't a blank
-      // "no doc" screen when the user enters via `/`.
-      const survivedOpen = openSlugs.find((s) => s !== todaysDaily.slug)
-      const bootTargetSlug = survivedOpen ?? todaysDaily.slug
-
-      set({ openSlugs, bootTargetSlug })
+      set({ openSlugs })
       set((s) => ({
         expandedDocSlugs: s.expandedDocSlugs.includes(todaysDaily!.slug)
           ? s.expandedDocSlugs
           : [...s.expandedDocSlugs, todaysDaily!.slug],
       }))
 
-      // Eagerly connect the boot-target slug so first paint shows
-      // content. Daily docs get their meta seeded if missing (covers
-      // the path where today's daily is brand new and has no meta
-      // map yet). The URL may name a different slug — useRouteSync
-      // will warm that one on its first tick; the warm here just
-      // covers the "URL has no slug, bridge will replace into
-      // bootTargetSlug" path so the editor doesn't flash empty.
-      const slugToOpen = bootTargetSlug
+      // Eagerly connect the slug AppContent will render on first paint.
+      // The URL is the source of truth: prefer its slug when it points
+      // at a known doc (session restore from main.tsx or a live deep
+      // link), else fall back to today's daily — RouteSyncBridge's
+      // reconciler will navigate the URL there on first tick.
+      const urlSlug = getActiveSlugFromHash()
+      const slugToOpen =
+        urlSlug && knownSlugs.has(urlSlug) ? urlSlug : todaysDaily.slug
       if (slugToOpen) {
         await get().ensureHandle(slugToOpen)
         const handle = get().handles[slugToOpen]

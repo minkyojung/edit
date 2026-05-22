@@ -22,7 +22,13 @@ import { todayLocalDate } from '@/hooks/useDocMeta'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
 import { useRouteSync } from '@/hooks/useRouteSync'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
-import { buildViewUrl, parseSlugFromPath } from '@/lib/viewUrl'
+import { usePersistLastPath } from '@/hooks/usePersistLastPath'
+import {
+  buildDayUrl,
+  buildMonthUrl,
+  buildWeekUrl,
+  parseSlugFromPath,
+} from '@/lib/viewUrl'
 import {
   useLazyMaterialize,
   type LazyMaterializeConfig,
@@ -94,63 +100,68 @@ export function App() {
   )
 }
 
-// Renders nothing — exists solely to host useRouteSync inside the
-// HashRouter, where useLocation can read the current pathname. Kept
-// at the top of the router's child tree so the store catches the
-// URL on the same tick the route renders (no flash of stale state
-// in the sidebar/editor on first paint).
+// Renders nothing — exists solely to host useRouteSync + the URL
+// reconciler inside the HashRouter, where useLocation can read the
+// current pathname. Kept at the top of the router's child tree so
+// the store catches the URL on the same tick the route renders (no
+// flash of stale state in the sidebar/editor on first paint).
 //
-// Also responsible for the post-bootstrap URL backfill: bootstrap
-// picks a boot-target slug (last open doc, or today's daily) and
-// stashes it on `bootTargetSlug`. If the user entered on a URL
-// without a slug (`/`, `/day/<date>`, etc.), we replace into the
-// full URL with the boot target so the back/forward stack starts
-// clean and the editor has a doc to render. Replace (not push) so
-// the very first ⌘[ doesn't bounce back into a slug-less limbo.
+// The reconciler enforces a single invariant on every pathname
+// change (after bootstrap completes):
+//
+//   "the URL must name a slug that exists in knownDocs"
+//
+// Violations — slug-less roots, deleted docs, vault swaps — are
+// repaired via a `replace` navigate to a fallback URL (today's
+// daily under the URL's current view shape). This replaces the
+// earlier one-shot bootTargetSlug pattern: every entry into a
+// broken URL self-heals, not just the cold-boot one.
 function RouteSyncBridge() {
   useRouteSync()
+  usePersistLastPath()
 
   const bootstrapping = useDocsStore((s) => s.bootstrapping)
-  const bootTargetSlug = useDocsStore((s) => s.bootTargetSlug)
-  const sidebarTab = useDocsStore((s) => s.sidebarTab)
-  const dayAnchor = useDocsStore((s) => s.dayAnchor)
-  const monthAnchor = useDocsStore((s) => s.monthAnchor)
-  const clearBootTarget = useDocsStore((s) => s.clearBootTarget)
+  const knownDocs = useDocsStore((s) => s.knownDocs)
+  const openSlugs = useDocsStore((s) => s.openSlugs)
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
   useEffect(() => {
     if (bootstrapping) return
-    if (!bootTargetSlug) return
-    // URL already names a slug → user entered via deep link or
-    // refresh. Respect what they typed; just clear the unused
-    // bootTargetSlug so future boots don't reuse it.
-    if (parseSlugFromPath(pathname) !== null) {
-      clearBootTarget()
-      return
-    }
-    navigate(
-      buildViewUrl({
-        tab: sidebarTab,
-        dayAnchor,
-        monthAnchor,
-        slug: bootTargetSlug,
-      }),
-      { replace: true },
+    const slug = parseSlugFromPath(pathname)
+    const valid = slug !== null && knownDocs.some((d) => d.slug === slug)
+    if (valid) return
+
+    // Pick a fallback slug. Today's daily is the journal floor and
+    // bootstrap guarantees it exists in knownDocs; openSlugs[0] is
+    // a safety net for the edge case where the day rolled over and
+    // today's daily hasn't been re-ensured yet.
+    const today = todayLocalDate()
+    const todaysDaily = knownDocs.find(
+      (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
     )
-    clearBootTarget()
-  }, [
-    bootstrapping,
-    bootTargetSlug,
-    sidebarTab,
-    dayAnchor,
-    monthAnchor,
-    pathname,
-    navigate,
-    clearBootTarget,
-  ])
+    const fallbackSlug = todaysDaily?.slug ?? openSlugs[0]
+    if (!fallbackSlug) return
+
+    // Preserve the URL's current view shape — if the user is on
+    // /week/<bad>, fall back to /week/<good>, not /day/<today>/<good>.
+    // For roots / unknown shapes we default to today's day view.
+    navigate(buildFallbackUrl(pathname, fallbackSlug), { replace: true })
+  }, [bootstrapping, pathname, knownDocs, openSlugs, navigate])
 
   return null
+}
+
+/** Build a fallback URL that preserves the current view shape (day /
+ * week / month + its anchor) and swaps in a valid slug. Falls back to
+ * today's day view for roots and unknown shapes. */
+function buildFallbackUrl(pathname: string, slug: string): string {
+  const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent)
+  const head = parts[0]
+  if (head === 'day' && parts[1]) return buildDayUrl(parts[1], slug)
+  if (head === 'week') return buildWeekUrl(slug)
+  if (head === 'month' && parts[1]) return buildMonthUrl(parts[1], slug)
+  return buildDayUrl(todayLocalDate(), slug)
 }
 
 // Everything inside BootGate — by the time this renders, the catalog

@@ -9,7 +9,7 @@
  *
  * Persistence map (kept in sync with persistConfig.ts):
  *   Persisted    — openSlugs, expandedDocSlugs
- *   Runtime-only — handles, status, bootstrapping, bootTargetSlug,
+ *   Runtime-only — handles, status, bootstrapping,
  *                  sidebarTab, monthAnchor, dayAnchor, knownDocs
  *
  * NOTE: "which doc is the user looking at" is NOT in the store. The
@@ -128,18 +128,6 @@ export interface DocsState {
   status: Record<string, CollabStatus>
   /** Set during bootstrap; turns to false when initial restore is done. */
   bootstrapping: boolean
-  /** Transient slug bootstrap wants to land on when the URL didn't
-   * specify one — last surviving active doc from persisted openSlugs,
-   * else today's daily. `RouteSyncBridge` consumes it once with a
-   * replace-style navigate and clears it via `clearBootTarget()`.
-   *
-   * Why this isn't in the URL directly: bootstrap runs before the
-   * router is mounted in the React tree, so we can't navigate from
-   * the store. The bridge sits inside HashRouter and can. Holding
-   * the boot target here for one tick (then clearing) keeps the
-   * "URL is source of truth" invariant intact for the rest of the
-   * session — the store doesn't carry an "active slug" field. */
-  bootTargetSlug: string | null
   /** Which sidebar date view is showing. Runtime-only — every session
    * starts on 'day' so the app reads as "you're here, now" on launch. */
   sidebarTab: 'day' | 'week' | 'month'
@@ -153,11 +141,6 @@ export interface DocsState {
 
   // Actions
   bootstrap: () => Promise<void>
-  /** Clear `bootTargetSlug` after `RouteSyncBridge` has consumed it
-   * with a replace-style navigate. Idempotent — a second call is a
-   * no-op. Lives next to `bootstrap` since they share the same
-   * lifecycle. */
-  clearBootTarget: () => void
   /** Lazy-create the in-memory handle for `slug` if it doesn't
    * already exist, register it on `handles`, and route status
    * updates back into `status`. Idempotent — a second call for
