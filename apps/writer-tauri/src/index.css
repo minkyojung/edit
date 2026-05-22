@@ -247,6 +247,16 @@
   .ProseMirror .image-card:active {
     cursor: grabbing;
   }
+  /* macOS Live Text (Sonoma+) auto-detects text burned into image
+     bitmaps (captions, subtitles, signs) and makes it selectable /
+     draggable as a separate item. During a drag this means caption
+     text inside the image gets carried alongside the card. Disabling
+     user-select on the img suppresses the Live Text affordance — the
+     image still drags as a whole via the wrapper. */
+  .ProseMirror .image-card img {
+    -webkit-user-select: none;
+    user-select: none;
+  }
   .ProseMirror .image-card.ProseMirror-selectednode {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
