@@ -21,6 +21,7 @@ import { proofMarkPlugins as rawProofMarkPlugins } from './schema/proof-marks'
 import { codeBlockExtPlugins as rawCodeBlockExt } from './schema/code-block-ext'
 import { frontmatterSchema as rawFrontmatter } from './schema/frontmatter'
 import { imageBlockSchema as rawImageBlock } from './schema/image-block'
+import { videoBlockSchema as rawVideoBlock } from './schema/video-block'
 
 export const proofMarkPlugins: MilkdownPlugin[] = (
   rawProofMarkPlugins as unknown as MilkdownPlugin[]
@@ -43,6 +44,13 @@ export const imageBlockSchema: MilkdownPlugin[] = [
   rawImageBlock as unknown as MilkdownPlugin,
 ].flat()
 
+/** Block-level video node. Round-trips through raw `<video>` HTML;
+ * see `schema/video-block.ts` for the parseMarkdown/toMarkdown
+ * details. Same wrap idiom as imageBlockSchema. */
+export const videoBlockSchema: MilkdownPlugin[] = [
+  rawVideoBlock as unknown as MilkdownPlugin,
+].flat()
+
 /**
  * Combined schema bundle — register this single export in MilkdownEditor
  * to keep the schema surface in one place. Order matters: marks register
@@ -54,4 +62,5 @@ export const proofSchemaPlugins: MilkdownPlugin[] = [
   ...codeBlockExtPlugins,
   ...frontmatterSchema,
   ...imageBlockSchema,
+  ...videoBlockSchema,
 ]

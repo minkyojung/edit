@@ -22,8 +22,9 @@ import { dropCursor } from '@milkdown/kit/prose/dropcursor'
 import { $prose } from '@milkdown/kit/utils'
 import { cardDropAdvanceCursor } from './cardDropAdvanceCursor'
 import { imageNodeView } from './cards/ImageCardNodeView'
-import { imageDropPastePlugin } from './imageDropPastePlugin'
+import { videoNodeView } from './cards/VideoCardNodeView'
 import { imageInlineNodeView } from './imageInlineNodeView'
+import { mediaDropPastePlugin } from './mediaDropPastePlugin'
 import { inlineCodeSafeKeymap } from './inlineCodeSafe'
 import { createLinkClickPlugin } from './linkClickPlugin'
 import { createLinkHoverPlugin } from './linkHoverPlugin'
@@ -225,10 +226,11 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .use(formatStatePlugin)
       .use(inlineCodeSafeKeymap)
       .use(imageNodeView)
+      .use(videoNodeView)
       .use(imageInlineNodeView)
       .use(cardDropAdvanceCursor)
       .use($prose(() => dropCursor({ color: false, width: 2, class: 'pm-drop-cursor' })))
-      .use(imageDropPastePlugin)
+      .use(mediaDropPastePlugin)
       .use(createPasteSanitizerPlugin())
       .use(createLinkClickPlugin())
       .use(createLinkHoverPlugin())

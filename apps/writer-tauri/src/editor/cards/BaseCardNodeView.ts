@@ -53,6 +53,13 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 
 export abstract class BaseCardNodeView {
   readonly dom: HTMLElement
+  /** Drag handle button pinned in the card's left gutter. Owns the
+   * native dragstart entry so the card body itself can stay
+   * non-draggable — important for media with internal controls
+   * (`<video controls>` seek/volume sliders, future audio scrubber)
+   * where wrapper-level drag would intercept the user's pointer
+   * before the native control could receive it. */
+  protected readonly handle: HTMLButtonElement
   /** Subclass-rendered body element. Assigned via `mountBody`, which
    * the subclass calls from its constructor once its own refs (img,
    * audio, …) are in place. Asserted non-null in dragPreviewSource
@@ -70,11 +77,26 @@ export abstract class BaseCardNodeView {
     this.dom = document.createElement('figure')
     this.dom.setAttribute('data-card', cardType)
     this.dom.setAttribute('contenteditable', 'false')
-    this.dom.draggable = true
+    // The wrapper itself is NOT draggable — drag is owned by the
+    // handle. This prevents pointer events on media-internal native
+    // controls (video seek bar, volume slider) from being hijacked
+    // by the card-move gesture, since the browser walks up to the
+    // nearest draggable ancestor on dragstart.
+    this.dom.draggable = false
     this.dom.tabIndex = -1
     this.dom.className = `${cardType}-card relative block`
-    this.dom.addEventListener('dragstart', this.onDragStart)
-    this.dom.addEventListener('dragend', this.onDragEnd)
+
+    this.handle = document.createElement('button')
+    this.handle.type = 'button'
+    this.handle.draggable = true
+    this.handle.tabIndex = -1
+    this.handle.setAttribute('data-card-handle', '')
+    this.handle.setAttribute('aria-label', 'Move this block')
+    this.handle.textContent = '⋮⋮'
+    this.handle.addEventListener('dragstart', this.onDragStart)
+    this.handle.addEventListener('dragend', this.onDragEnd)
+    this.handle.addEventListener('mousedown', this.onHandleMouseDown)
+    this.dom.appendChild(this.handle)
   }
 
   /** Subclass calls this from its constructor once its body element
@@ -197,6 +219,14 @@ export abstract class BaseCardNodeView {
     }
   }
 
+  /** Suppress the cursor-positioning side effect of clicking the
+   * handle. Without this, PM tries to place a text caret near the
+   * handle's coordinates and the click flickers the doc selection
+   * before the dragstart kicks in. */
+  private onHandleMouseDown = (e: MouseEvent): void => {
+    e.preventDefault()
+  }
+
   update(node: PMNode): boolean {
     if (node.type.name !== this.nodeName) return false
     return this.updateBody(node)
@@ -214,9 +244,14 @@ export abstract class BaseCardNodeView {
     return true
   }
 
+  /** PM mounts NodeViews into the editor via direct DOM ops; when a
+   * card is removed (delete, drop-move, doc swap) PM calls destroy().
+   * Detach the handle listeners so the GC can reclaim. The figure
+   * itself has no listeners to remove now (drag entry moved off it). */
   destroy(): void {
-    this.dom.removeEventListener('dragstart', this.onDragStart)
-    this.dom.removeEventListener('dragend', this.onDragEnd)
+    this.handle.removeEventListener('dragstart', this.onDragStart)
+    this.handle.removeEventListener('dragend', this.onDragEnd)
+    this.handle.removeEventListener('mousedown', this.onHandleMouseDown)
     if (this.dragPreview) {
       this.dragPreview.remove()
       this.dragPreview = null

@@ -232,32 +232,75 @@
     outline: none;
   }
 
-  /* Image card NodeView. The card wraps the block-level image in a
-     contenteditable=false figure that owns its own drag entry — the
-     figure itself is draggable, the canvas-rendered preview is built
-     in the dragstart handler. Margin matches --prose-gap-block so the
-     card sits flush with surrounding paragraphs and a fresh paragraph
-     inserted after the card lands at a normal line height instead of
-     pressed against the image. Cursor signals the affordance. */
-  .ProseMirror .image-card {
+  /* Card NodeViews (image, video). Each card wraps its media in a
+     contenteditable=false figure whose drag entry is owned by a
+     small handle pinned in the left gutter — the wrapper itself is
+     NOT draggable, so pointer events on media-internal native
+     controls (video seek bar, volume slider) reach the controls
+     without being hijacked by the card-move gesture. Margin matches
+     --prose-gap-block so the card sits flush with surrounding
+     paragraphs and a fresh paragraph inserted after the card lands
+     at a normal line height instead of pressed against the media. */
+  .ProseMirror .image-card,
+  .ProseMirror .video-card {
+    position: relative;
     margin-top: var(--prose-gap-block);
     margin-bottom: var(--prose-gap-block);
-    cursor: grab;
   }
-  .ProseMirror .image-card:active {
+  /* Hover handle in the editor's left gutter — Notion / Linear
+     convention. Default opacity 0 keeps the reading surface clean;
+     opacity bumps on card hover and again on handle hover so the
+     user can both discover (gentle) and confirm (firm) the affordance.
+     Pinned with `left: -28px` so the handle floats into the editor's
+     px-8 (32px) padding region without pushing the media right and
+     misaligning it with surrounding paragraph text. */
+  .ProseMirror .image-card [data-card-handle],
+  .ProseMirror .video-card [data-card-handle] {
+    position: absolute;
+    top: 6px;
+    left: -28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--muted-foreground);
+    font-size: 14px;
+    line-height: 1;
+    border-radius: 4px;
+    cursor: grab;
+    opacity: 0;
+    transition: opacity 120ms ease-out, background-color 120ms ease-out;
+    user-select: none;
+  }
+  .ProseMirror .image-card:hover [data-card-handle],
+  .ProseMirror .video-card:hover [data-card-handle] {
+    opacity: 0.5;
+  }
+  .ProseMirror .image-card [data-card-handle]:hover,
+  .ProseMirror .video-card [data-card-handle]:hover {
+    opacity: 1;
+    background: var(--accent);
+  }
+  .ProseMirror .image-card [data-card-handle]:active,
+  .ProseMirror .video-card [data-card-handle]:active {
     cursor: grabbing;
   }
-  /* macOS Live Text (Sonoma+) auto-detects text burned into image
-     bitmaps (captions, subtitles, signs) and makes it selectable /
-     draggable as a separate item. During a drag this means caption
-     text inside the image gets carried alongside the card. Disabling
-     user-select on the img suppresses the Live Text affordance — the
-     image still drags as a whole via the wrapper. */
-  .ProseMirror .image-card img {
+  /* macOS Live Text (Sonoma+) auto-detects text burned into media
+     bitmaps — image captions and video subtitle frames alike — and
+     makes that text selectable / draggable as a separate item.
+     Disabling user-select on the media element suppresses the Live
+     Text affordance so the card drags as one unit. */
+  .ProseMirror .image-card img,
+  .ProseMirror .video-card video {
     -webkit-user-select: none;
     user-select: none;
   }
-  .ProseMirror .image-card.ProseMirror-selectednode {
+  .ProseMirror .image-card.ProseMirror-selectednode,
+  .ProseMirror .video-card.ProseMirror-selectednode {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
     border-radius: 4px;
@@ -270,7 +313,9 @@
      the .ProseMirror-selectednode outline above stays as the canonical
      selection affordance. */
   .ProseMirror .image-card ::selection,
-  .ProseMirror .image-card::selection {
+  .ProseMirror .image-card::selection,
+  .ProseMirror .video-card ::selection,
+  .ProseMirror .video-card::selection {
     background: transparent;
   }
   /* Empty paragraphs (the trailing paragraph PM inserts after a card)
