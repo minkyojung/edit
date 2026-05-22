@@ -27,10 +27,52 @@
 
 import * as Y from 'yjs'
 import { prosemirrorToYDoc } from 'y-prosemirror'
+import type { Node as PMNode } from '@milkdown/kit/prose/model'
 import type { MarkdownParser } from '@/state/editorViewStore'
 
 const FRAGMENT_NAME = 'prosemirror'
 const ORIGIN = 'doc-init'
+
+/** Convert top-level `paragraph(only image)` blocks into the
+ * dedicated `imageBlock` node. Commonmark only knows the inline
+ * `image` mdast type, so a standalone image on its own line in the
+ * markdown source parses as `paragraph(image)`. We treat that
+ * structural shape as the user's intent of "image on its own line"
+ * and lift it to a real block node so input rules, navigation, and
+ * the visual model stay consistent with the doc model.
+ *
+ * Inline-image-in-text (e.g. `see this ![icon](icon.png) here`)
+ * stays as commonmark intended — the unwrap only fires for
+ * paragraphs whose ONLY child is an image, which is exactly the
+ * "image alone on a line" markdown shape. */
+function unwrapBlockImages(doc: PMNode): PMNode {
+  const imageBlockType = doc.type.schema.nodes.imageBlock
+  if (!imageBlockType) return doc
+  const next: PMNode[] = []
+  let changed = false
+  for (let i = 0; i < doc.childCount; i++) {
+    const child = doc.child(i)
+    if (
+      child.type.name === 'paragraph' &&
+      child.childCount === 1 &&
+      child.firstChild?.type.name === 'image'
+    ) {
+      const img = child.firstChild
+      next.push(
+        imageBlockType.create({
+          src: img.attrs.src,
+          alt: img.attrs.alt,
+          title: img.attrs.title,
+        }),
+      )
+      changed = true
+    } else {
+      next.push(child)
+    }
+  }
+  if (!changed) return doc
+  return doc.type.create(doc.attrs, next)
+}
 
 /** Returns true on success. False when the parser returns no node
  * (empty / whitespace-only markdown) — callers can treat that as
@@ -52,7 +94,8 @@ export function seedMarkdownIntoYDoc(
   }
   if (!pmNode) return false
 
-  const seedDoc = prosemirrorToYDoc(pmNode, FRAGMENT_NAME)
+  const transformed = unwrapBlockImages(pmNode)
+  const seedDoc = prosemirrorToYDoc(transformed, FRAGMENT_NAME)
   const update = Y.encodeStateAsUpdate(seedDoc)
   try {
     Y.applyUpdate(ydoc, update, ORIGIN)
@@ -92,8 +135,9 @@ export function replaceMarkdownInYDoc(
   }
   if (!pmNode) return false
 
+  const transformed = unwrapBlockImages(pmNode)
   const fragment = ydoc.getXmlFragment(FRAGMENT_NAME)
-  const seedDoc = prosemirrorToYDoc(pmNode, FRAGMENT_NAME)
+  const seedDoc = prosemirrorToYDoc(transformed, FRAGMENT_NAME)
   const update = Y.encodeStateAsUpdate(seedDoc)
 
   try {

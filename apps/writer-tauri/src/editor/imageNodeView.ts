@@ -112,6 +112,7 @@ export const imageNodeView = $prose(
       props: {
         nodeViews: {
           image: (node, _view, getPos) => new ImageNodeView(node, getPos),
+          imageBlock: (node, _view, getPos) => new ImageNodeView(node, getPos),
         },
       },
     }),

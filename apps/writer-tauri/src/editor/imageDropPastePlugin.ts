@@ -27,6 +27,7 @@ import { Plugin } from '@milkdown/kit/prose/state'
 import { TextSelection } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { importImageFile } from '@/lib/vaultImages'
+import { flushDirty } from '@/lib/docFileSync'
 
 function filterImageFiles(list: FileList | null | undefined): File[] {
   if (!list) return []
@@ -41,15 +42,22 @@ async function insertImagesAtSelection(
     try {
       const relPath = await importImageFile(file)
       const alt = file.name.replace(/\.[^.]+$/, '')
-      const t = view.state.schema.nodes.image
+      const t = view.state.schema.nodes.imageBlock
       if (!t) continue
       const node = t.create({ src: relPath, alt, title: '' })
+      // Block-node insertion — PM splits the host paragraph and
+      // places the block as the user expects. No helper needed.
       view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView())
     } catch (err) {
       console.warn('[image-drop-paste] insert failed', { name: file.name, err })
     }
   }
   view.focus()
+  // See the matching comment in slashItems.ts::insertImage — close
+  // the race window between the image binary write and the doc save
+  // so the watcher's echo suppression catches every fsevent we
+  // produced.
+  void flushDirty()
 }
 
 export const imageDropPastePlugin = $prose(

@@ -30,6 +30,7 @@
  */
 
 import { watch } from '@tauri-apps/plugin-fs'
+import { normalize } from '@tauri-apps/api/path'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useDocsStore } from '@/state/docsStore'
 import { findSlugByVaultPath } from '@/state/docsStore/helpers'
@@ -50,11 +51,19 @@ export async function startVaultWatcher(): Promise<() => void> {
   // settings-panel feature) doesn't leave stale watchers running.
   stopVaultWatcher()
 
-  const vaultPath = getActiveVaultPath()
-  if (!vaultPath) {
+  const rawVaultPath = getActiveVaultPath()
+  if (!rawVaultPath) {
     console.log('[watch] no vault selected; watcher inert')
     return () => {}
   }
+  // Normalise once at startup so the prefix-strip in `toVaultRelative`
+  // compares against the same canonical shape Tauri's watch produces
+  // for incoming event paths. Without this a vault picked as
+  // `~/Documents/Writer/` (trailing slash) or with extra `./` segments
+  // can silently fail to match incoming `/Users/.../Writer/...`
+  // events, leaking watcher events through as "external" even when
+  // they're our own writes.
+  const vaultPath = await normalize(rawVaultPath)
 
   console.log('[watch] starting on', vaultPath)
   const unwatch = await watch(
@@ -88,6 +97,9 @@ export async function startVaultWatcher(): Promise<() => void> {
         console.log('[watch] echo suppressed', candidates)
         return
       }
+      // Echo suppression failed — flag it loudly so we can diagnose
+      // path / timing mismatches when they happen in dev.
+      console.warn('[watch] echo MISS', { external, rawPaths })
 
       dispatchEvent(event, external)
     },

@@ -20,6 +20,7 @@ import type { MilkdownPlugin } from '@milkdown/kit/ctx'
 import { proofMarkPlugins as rawProofMarkPlugins } from './schema/proof-marks'
 import { codeBlockExtPlugins as rawCodeBlockExt } from './schema/code-block-ext'
 import { frontmatterSchema as rawFrontmatter } from './schema/frontmatter'
+import { imageBlockSchema as rawImageBlock } from './schema/image-block'
 
 export const proofMarkPlugins: MilkdownPlugin[] = (
   rawProofMarkPlugins as unknown as MilkdownPlugin[]
@@ -36,6 +37,12 @@ export const frontmatterSchema: MilkdownPlugin[] = [
   rawFrontmatter as unknown as MilkdownPlugin,
 ].flat()
 
+/** Block-level image node. Same shape as frontmatter (single
+ * $nodeSchema), so the same wrap idiom applies. */
+export const imageBlockSchema: MilkdownPlugin[] = [
+  rawImageBlock as unknown as MilkdownPlugin,
+].flat()
+
 /**
  * Combined schema bundle — register this single export in MilkdownEditor
  * to keep the schema surface in one place. Order matters: marks register
@@ -46,4 +53,5 @@ export const proofSchemaPlugins: MilkdownPlugin[] = [
   ...proofMarkPlugins,
   ...codeBlockExtPlugins,
   ...frontmatterSchema,
+  ...imageBlockSchema,
 ]

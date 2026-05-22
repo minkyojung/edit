@@ -60,7 +60,7 @@ export function ImageAltDialog() {
     const view = useEditorViewStore.getState().view
     if (!view) return ''
     const node = view.state.doc.nodeAt(pos)
-    if (!node || node.type.name !== 'image') return ''
+    if (!node || (node.type.name !== 'image' && node.type.name !== 'imageBlock')) return ''
     return basename(String(node.attrs.src ?? ''))
   }, [open, pos])
 
@@ -75,7 +75,7 @@ export function ImageAltDialog() {
       return
     }
     const node = view.state.doc.nodeAt(pos)
-    if (!node || node.type.name !== 'image') {
+    if (!node || (node.type.name !== 'image' && node.type.name !== 'imageBlock')) {
       close()
       return
     }

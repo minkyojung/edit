@@ -28,6 +28,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog'
 
 import { wrapInTaskList } from './taskList'
 import { copyImageIntoVault } from '@/lib/vaultImages'
+import { flushDirty } from '@/lib/docFileSync'
 
 export interface SlashItem {
   /** Stable id for keying / debugging. */
@@ -107,15 +108,27 @@ async function insertImage(view: EditorView): Promise<void> {
     return
   }
 
-  const t = view.state.schema.nodes.image
+  const t = view.state.schema.nodes.imageBlock
   if (!t) return
   // Basename without extension makes the most reasonable alt
   // default; the user can edit the markdown directly to refine it.
   const basename = picked.split(/[\\/]/).pop() ?? ''
   const alt = basename.replace(/\.[^.]+$/, '')
   const node = t.create({ src: relPath, alt, title: '' })
+  // PM handles block-node insertion natively: splits the enclosing
+  // paragraph at the cursor, places the block in between, and lands
+  // the selection on a sensible adjacent textblock. Replaces the
+  // bespoke insertImageAndAdvance helper Phase 5 needed only because
+  // the inline image schema couldn't do this on its own.
   view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView())
   view.focus()
+  // Force the doc save to land in the same ~ms window as the image
+  // binary write. Without this the doc save waits for the next
+  // 2-second autosave tick — opening a race where the watcher fires
+  // for the doc file before its `markOurRecentWrite` is set, leaking
+  // through echo suppression and producing a phantom "external edit"
+  // toast on every image insertion.
+  void flushDirty()
 }
 
 export const SLASH_ITEMS: SlashItem[] = [
