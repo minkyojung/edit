@@ -247,43 +247,26 @@
     margin-top: var(--prose-gap-block);
     margin-bottom: var(--prose-gap-block);
   }
-  /* Hover handle in the editor's left gutter — Notion / Linear
-     convention. Default opacity 0 keeps the reading surface clean;
-     opacity bumps on card hover and again on handle hover so the
-     user can both discover (gentle) and confirm (firm) the affordance.
-     Pinned with `left: -28px` so the handle floats into the editor's
-     px-8 (32px) padding region without pushing the media right and
-     misaligning it with surrounding paragraph text. */
+  /* Drag handle — pinned in the editor's left gutter, always
+     invisible. The element still receives pointer events (drag
+     entry, mousedown suppression) so the card-move gesture works
+     when the user grabs the 20×24px region at `left: -28px`. The
+     visual affordance is intentionally omitted; revisit later if
+     discoverability becomes a complaint. */
   .ProseMirror .image-card [data-card-handle],
   .ProseMirror .video-card [data-card-handle] {
     position: absolute;
     top: 6px;
     left: -28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     width: 20px;
     height: 24px;
     padding: 0;
     border: 0;
     background: transparent;
-    color: var(--muted-foreground);
-    font-size: 14px;
-    line-height: 1;
-    border-radius: 4px;
-    cursor: grab;
+    color: transparent;
     opacity: 0;
-    transition: opacity 120ms ease-out, background-color 120ms ease-out;
+    cursor: grab;
     user-select: none;
-  }
-  .ProseMirror .image-card:hover [data-card-handle],
-  .ProseMirror .video-card:hover [data-card-handle] {
-    opacity: 0.5;
-  }
-  .ProseMirror .image-card [data-card-handle]:hover,
-  .ProseMirror .video-card [data-card-handle]:hover {
-    opacity: 1;
-    background: var(--accent);
   }
   .ProseMirror .image-card [data-card-handle]:active,
   .ProseMirror .video-card [data-card-handle]:active {
