@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/dialog'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { readDocMeta } from '@/hooks/useDocMeta'
-import { useDocsStore } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
 
 interface Props {
   open: boolean
@@ -56,7 +56,7 @@ interface StoredMark {
 }
 
 export function DocumentInfoDialog({ open, onOpenChange, ydoc, editorView }: Props) {
-  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const activeSlug = useActiveSlug()
   const label = useDocLabel(activeSlug)
   const meta = useMemo(() => (ydoc ? readDocMeta(ydoc) : null), [ydoc, open])
 

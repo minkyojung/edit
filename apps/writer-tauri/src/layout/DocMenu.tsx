@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { DocumentInfoDialog } from './DocumentInfoDialog'
 import { ConfirmArchiveDialog } from './ConfirmArchiveDialog'
 
@@ -29,7 +30,7 @@ interface Props {
 }
 
 export function DocMenu({ editorView }: Props) {
-  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const activeSlug = useActiveSlug()
   const handle = useDocsStore((s) => (activeSlug ? s.handles[activeSlug] : null))
   const activeDoc = useDocsStore((s) =>
     activeSlug ? s.knownDocs.find((d) => d.slug === activeSlug) : null,

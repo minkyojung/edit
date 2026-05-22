@@ -21,13 +21,14 @@
 
 import { useEffect, useRef } from 'react'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import type { StoredMark } from '@/hooks/useCollabDoc'
 
 const AGENT_ID = 'ai:wiki-ingest'
 
 export function useMigrateLegacyIngestMarks(): void {
-  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const activeSlug = useActiveSlug()
   const handles = useDocsStore((s) => s.handles)
   const view = useEditorViewStore((s) => s.view)
   const sweptRef = useRef<Set<string>>(new Set())

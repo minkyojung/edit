@@ -33,7 +33,8 @@ import {
 import { MARK_HOVER_EVENT, type MarkHoverDetail } from '@/editor/markHoverPlugin'
 import { getMarkEndRect } from '@/editor/markHoverGeometry'
 import { useDocMark } from '@/hooks/useDocMarks'
-import { useDocsStore } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { formatActor } from '@/lib/formatActor'
 import { formatRelative } from '@/lib/formatRelative'
 
@@ -53,7 +54,7 @@ const OFFSCREEN_RECT: DOMRect = new DOMRect(-9999, -9999, 0, 0)
 export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
   const [activeMarkId, setActiveMarkId] = useState<string | null>(null)
   const leaveTimer = useRef<number | null>(null)
-  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const activeSlug = useActiveSlug()
   const activeMark = useDocMark(activeSlug, activeMarkId)
 
   function cancelClose() {
@@ -138,7 +139,7 @@ export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
 
   function handleAccept() {
     if (!editorView || !ydoc || !activeMarkId) return
-    const slug = useDocsStore.getState().activeSlug
+    const slug = getActiveSlugFromHash()
     if (!slug) return
     // Fire-and-forget: server-driven state change syncs back via the
     // WebSocket; we close the toolbar immediately so the cursor isn't
@@ -150,7 +151,7 @@ export function MarkHoverActionsLayer({ editorView, ydoc }: Props) {
 
   function handleReject() {
     if (!editorView || !ydoc || !activeMarkId) return
-    const slug = useDocsStore.getState().activeSlug
+    const slug = getActiveSlugFromHash()
     if (!slug) return
     void rejectMark(slug, editorView, activeMarkId)
     cancelClose()

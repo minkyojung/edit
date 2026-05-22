@@ -23,6 +23,7 @@
 // has entries targeting that page's type.
 
 import { useDocsStore, isUserOwnedWiki } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore, type PendingProposal } from '@/state/ingestStore'
 import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
@@ -123,7 +124,7 @@ async function acceptProposal(
 }
 
 export function WikiPageBanner() {
-  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const activeSlug = useActiveSlug()
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const handles = useDocsStore((s) => s.handles)
   const pendingProposals = useIngestStore((s) => s.pendingProposals)

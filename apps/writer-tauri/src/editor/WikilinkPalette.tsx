@@ -22,6 +22,7 @@ import {
   type WikilinkPaletteKey,
 } from './wikilinkPalettePlugin'
 import { useDocsStore, isUserOwnedWiki, type KnownDoc } from '@/state/docsStore'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { cn } from '@/lib/utils'
 import { notify } from '@/lib/notify'
 
@@ -229,7 +230,7 @@ async function commit(info: WikilinkPaletteInfo, pick: Candidate) {
   }
   if (pick.kind === 'create') {
     const store = useDocsStore.getState()
-    const activeSlug = store.activeSlug
+    const activeSlug = getActiveSlugFromHash()
     if (!activeSlug) {
       cancelWikilink(info.view)
       return

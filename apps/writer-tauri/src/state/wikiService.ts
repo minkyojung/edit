@@ -20,6 +20,7 @@ import {
   type KnownDoc,
 } from './docsStore'
 import { useEditorViewStore } from './editorViewStore'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 
 // PROOF_BASE_URL removed (Phase 3.A.2). All wiki body reads go
 // through the local Y.Doc + Milkdown serializer now.
@@ -334,7 +335,7 @@ export function readWikiMarkdown(slug: string | null): string {
   const handle = docs.handles[slug]
   if (!handle) return ''
 
-  if (docs.activeSlug === slug) {
+  if (getActiveSlugFromHash() === slug) {
     const view = useEditorViewStore.getState().view
     const serializer = useEditorViewStore.getState().serializer
     if (view && serializer) {

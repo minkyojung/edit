@@ -33,6 +33,7 @@ import { useEffect, useRef } from 'react'
 import { runIngest } from '@/agent/ingest/index'
 import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
 import {
@@ -162,7 +163,7 @@ function readDocLength(slug: string): number {
   const handle = docs.handles[slug]
   if (!handle) return 0
 
-  if (docs.activeSlug === slug) {
+  if (getActiveSlugFromHash() === slug) {
     const view = useEditorViewStore.getState().view
     if (view) return effectiveLength(view.state.doc.textContent)
   }

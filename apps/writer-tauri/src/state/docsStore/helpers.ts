@@ -171,9 +171,9 @@ export function shiftMonthAnchor(anchor: string, delta: number): string {
 /** Apply the "tab strip is never empty" invariant to a state patch
  * about to be passed to set(). If the patch (or current state, if
  * the patch doesn't touch openSlugs) would leave openSlugs empty,
- * today's daily slug is folded back in synchronously and made active
- * — so the user never sees a blank tab strip, regardless of whether
- * any follow-up async work succeeds or fails.
+ * today's daily slug is folded back in synchronously — so the user
+ * never sees a blank tab strip, regardless of whether any follow-up
+ * async work succeeds or fails.
  *
  * The invariant lives here rather than scattered across each
  * mutation (closeDoc / archiveDoc / deleteForever / emptyArchive)
@@ -184,7 +184,11 @@ export function shiftMonthAnchor(anchor: string, delta: number): string {
  * run yet, or the day rolled over since bootstrap). In that edge
  * case the strip stays empty for the moment — caller's own async
  * follow-up (ensureHandle, openDaily) is the next line of defense,
- * but it's not relied on for the common path. */
+ * but it's not relied on for the common path.
+ *
+ * Note: this helper no longer sets an "active slug" — the URL is
+ * the source of truth for that. Callers (closeDoc, archiveDoc, …)
+ * read the post-patch `openSlugs[0]` as the slug to navigate to. */
 export function ensureNonEmptyTabStrip(
   state: DocsState,
   patch: Partial<DocsState>,
@@ -199,7 +203,6 @@ export function ensureNonEmptyTabStrip(
   return {
     ...patch,
     openSlugs: [todayDaily.slug],
-    activeSlug: todayDaily.slug,
   }
 }
 

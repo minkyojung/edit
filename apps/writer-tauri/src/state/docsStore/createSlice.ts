@@ -28,8 +28,11 @@ import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
 export interface CreateSlice {
   /** Empty writing note. Label falls back to 'Untitled' until the
-   * user names it via the inline title input. */
-  createNew: () => Promise<void>
+   * user names it via the inline title input. Returns the new slug
+   * so callers can drive the post-create navigation themselves
+   * (URL is the source of truth — the store no longer sets activeSlug
+   * on its own). */
+  createNew: () => Promise<string>
   /** Find or create the daily entry for the given local date and
    * make it the active tab. Returns the slug (or null on edge cases
    * the caller treats as no-op). */
@@ -65,11 +68,15 @@ export const createCreateSlice = (
     // Empty title + empty body. The displayed label falls back to
     // 'Untitled' in useDocLabel; the editor renders the body
     // placeholder hint. Nothing is seeded into the doc itself.
+    //
+    // The store appends to openSlugs and warms the handle, but does
+    // NOT set activeSlug — the caller drives navigation via
+    // navigate(buildViewUrl(..., slug)) so the new doc lands in the
+    // back/forward stack.
     const slug = generateClientSlug()
     const meta: KnownDoc = { slug, type: 'writing' }
     set((s) => ({
       openSlugs: [...s.openSlugs, slug],
-      activeSlug: slug,
       knownDocs: [...s.knownDocs, meta],
     }))
     await get().ensureHandle(slug)
@@ -80,6 +87,7 @@ export const createCreateSlice = (
         createdAt: new Date().toISOString(),
       })
     }
+    return slug
   },
 
   openDaily: async (date) => {
@@ -98,7 +106,6 @@ export const createCreateSlice = (
     if (!get().openSlugs.includes(slug)) {
       set((s) => ({ openSlugs: [...s.openSlugs, slug] }))
     }
-    set({ activeSlug: slug })
     await get().ensureHandle(slug)
     const handle = get().handles[slug]
     if (handle) {
@@ -141,7 +148,6 @@ export const createCreateSlice = (
       openSlugs: s.openSlugs.includes(slug)
         ? s.openSlugs
         : [...s.openSlugs, slug],
-      activeSlug: slug,
     }))
     await get().ensureHandle(slug)
     const handle = get().handles[slug]

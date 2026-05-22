@@ -25,6 +25,7 @@
 
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { createMarkStore, type MarkStoreHandle } from './markStoreImpl'
 
 function resolveHandle(slug: string): MarkStoreHandle | null {
@@ -37,7 +38,7 @@ function resolveHandle(slug: string): MarkStoreHandle | null {
   // (subscribe / list / get) work with `view: null`; PM-mutating
   // callers receive `view_not_ready` and can retry or queue.
   const view =
-    docs.activeSlug === slug ? useEditorViewStore.getState().view : null
+    getActiveSlugFromHash() === slug ? useEditorViewStore.getState().view : null
 
   return { view, ydoc: handle.ydoc }
 }

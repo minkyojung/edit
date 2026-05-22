@@ -9,7 +9,8 @@
 // useDocLabel). Tabs whose handle hasn't been opened yet fall back
 // to the cached knownDocs.title or 'Untitled'.
 
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { IconFileDescription, IconPlus, IconX } from '@tabler/icons-react'
 import { Tabs as TabsPrimitive } from 'radix-ui'
 import {
@@ -21,14 +22,31 @@ import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { useChatRunningForSlug } from '@/hooks/useChatRunningForSlug'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { ChatRunningIcon } from '@/components/icons/ChatRunningIcon'
 
 export function EditorTabs() {
   const openSlugs = useDocsStore((s) => s.openSlugs)
-  const activeSlug = useDocsStore((s) => s.activeSlug)
-  const setActive = useDocsStore((s) => s.setActive)
+  const activeSlug = useActiveSlug()
+  const sidebarTab = useDocsStore((s) => s.sidebarTab)
+  const dayAnchor = useDocsStore((s) => s.dayAnchor)
+  const monthAnchor = useDocsStore((s) => s.monthAnchor)
   const closeDoc = useDocsStore((s) => s.closeDoc)
   const createNew = useDocsStore((s) => s.createNew)
+  const navigate = useNavigate()
+
+  // Switching a tab preserves the sidebar view & anchor — only the
+  // open-slug portion of the URL moves. Wrapping navigate keeps the
+  // cycle shortcut and the click handler going through the same code
+  // path so a future change (e.g. adding a query parameter on tab
+  // change) lands in one place.
+  const goToSlug = useCallback(
+    (slug: string) => {
+      navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
+    },
+    [navigate, sidebarTab, dayAnchor, monthAnchor],
+  )
 
   // ⌘⇧[ / ⌘⇧] cycles tabs. Global — no focus gate. The chord
   // isn't bound to anything else in any input we render, so a
@@ -47,16 +65,16 @@ export function EditorTabs() {
       const next = isPrev
         ? (cur - 1 + openSlugs.length) % openSlugs.length
         : (cur + 1) % openSlugs.length
-      setActive(openSlugs[next])
+      goToSlug(openSlugs[next])
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [openSlugs, activeSlug, setActive])
+  }, [openSlugs, activeSlug, goToSlug])
 
   return (
     <TabsPrimitive.Root
       value={activeSlug ?? ''}
-      onValueChange={setActive}
+      onValueChange={goToSlug}
       className="flex flex-1 items-stretch gap-1 overflow-hidden"
     >
       <TabsPrimitive.List
@@ -68,7 +86,10 @@ export function EditorTabs() {
             key={slug}
             slug={slug}
             isActive={slug === activeSlug}
-            onClose={() => closeDoc(slug)}
+            onClose={() => {
+              const next = closeDoc(slug)
+              if (next) goToSlug(next)
+            }}
           />
         ))}
 
@@ -77,9 +98,9 @@ export function EditorTabs() {
             <button
               type="button"
               onClick={() => {
-                createNew().catch((err) =>
-                  console.error('[docs] createNew failed', err),
-                )
+                createNew()
+                  .then((slug) => goToSlug(slug))
+                  .catch((err) => console.error('[docs] createNew failed', err))
               }}
               className={cn(
                 'flex size-7 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors',

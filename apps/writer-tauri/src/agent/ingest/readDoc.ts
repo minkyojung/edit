@@ -10,6 +10,7 @@
 
 import { isEffectivelyEmpty } from '@/lib/markdownText'
 import { useDocsStore } from '@/state/docsStore'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useEditorViewStore } from '@/state/editorViewStore'
 
 /** Read a doc's markdown body directly from the client side.
@@ -41,7 +42,7 @@ export function readDocMarkdown(slug: string): string {
   const handle = docs.handles[slug]
   if (!handle) return ''
 
-  if (docs.activeSlug === slug) {
+  if (getActiveSlugFromHash() === slug) {
     const view = useEditorViewStore.getState().view
     const serializer = useEditorViewStore.getState().serializer
     if (view && serializer) {

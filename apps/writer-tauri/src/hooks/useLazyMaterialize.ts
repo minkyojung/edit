@@ -35,6 +35,7 @@
 import { useEffect, useRef } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
 
@@ -79,7 +80,7 @@ function waitForLocalReady(handle: {
  * (configs.length must be constant across renders — see the public
  * function's contract below). */
 function useLazyDrain(config: LazyMaterializeConfig): void {
-  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const activeSlug = useActiveSlug()
   const handles = useDocsStore((s) => s.handles)
   const view = useEditorViewStore((s) => s.view)
   const queue = useIngestStore(config.queueSelector)

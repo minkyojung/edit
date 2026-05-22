@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { ThemeProvider } from '@/components/theme-provider'
@@ -14,10 +14,15 @@ import { Page } from '@/layout/Page'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { WikiPageBanner } from '@/layout/WikiPageBanner'
 import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
+import { ImageAltDialog } from '@/editor/ImageAltDialog'
 import { useDocsStore } from '@/state/docsStore'
 import { useSettingsStore } from '@/state/settingsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
+import { todayLocalDate } from '@/hooks/useDocMeta'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
+import { useRouteSync } from '@/hooks/useRouteSync'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
+import { buildViewUrl, parseSlugFromPath } from '@/lib/viewUrl'
 import {
   useLazyMaterialize,
   type LazyMaterializeConfig,
@@ -70,23 +75,89 @@ const SYSTEM_DRAIN_CONFIGS: LazyMaterializeConfig[] = [
 ]
 
 export function App() {
+  // HashRouter sits above BootGate so anything router-aware (useActiveSlug,
+  // useNavigate, useLocation) can be called from anywhere inside the app
+  // — including AppContent itself. BootGate is router-agnostic; it only
+  // gates rendering on the catalog bootstrap, so hoisting the router
+  // above it doesn't change any timing.
   return (
     <ThemeProvider defaultPalette="charcoal" storageKey="writer-palette">
       <TooltipProvider delayDuration={200}>
-        <BootGate>
-          <AppContent />
-        </BootGate>
-        <AppToaster />
+        <HashRouter>
+          <BootGate>
+            <AppContent />
+          </BootGate>
+          <AppToaster />
+        </HashRouter>
       </TooltipProvider>
     </ThemeProvider>
   )
+}
+
+// Renders nothing — exists solely to host useRouteSync inside the
+// HashRouter, where useLocation can read the current pathname. Kept
+// at the top of the router's child tree so the store catches the
+// URL on the same tick the route renders (no flash of stale state
+// in the sidebar/editor on first paint).
+//
+// Also responsible for the post-bootstrap URL backfill: bootstrap
+// picks a boot-target slug (last open doc, or today's daily) and
+// stashes it on `bootTargetSlug`. If the user entered on a URL
+// without a slug (`/`, `/day/<date>`, etc.), we replace into the
+// full URL with the boot target so the back/forward stack starts
+// clean and the editor has a doc to render. Replace (not push) so
+// the very first ⌘[ doesn't bounce back into a slug-less limbo.
+function RouteSyncBridge() {
+  useRouteSync()
+
+  const bootstrapping = useDocsStore((s) => s.bootstrapping)
+  const bootTargetSlug = useDocsStore((s) => s.bootTargetSlug)
+  const sidebarTab = useDocsStore((s) => s.sidebarTab)
+  const dayAnchor = useDocsStore((s) => s.dayAnchor)
+  const monthAnchor = useDocsStore((s) => s.monthAnchor)
+  const clearBootTarget = useDocsStore((s) => s.clearBootTarget)
+  const navigate = useNavigate()
+  const { pathname } = useLocation()
+
+  useEffect(() => {
+    if (bootstrapping) return
+    if (!bootTargetSlug) return
+    // URL already names a slug → user entered via deep link or
+    // refresh. Respect what they typed; just clear the unused
+    // bootTargetSlug so future boots don't reuse it.
+    if (parseSlugFromPath(pathname) !== null) {
+      clearBootTarget()
+      return
+    }
+    navigate(
+      buildViewUrl({
+        tab: sidebarTab,
+        dayAnchor,
+        monthAnchor,
+        slug: bootTargetSlug,
+      }),
+      { replace: true },
+    )
+    clearBootTarget()
+  }, [
+    bootstrapping,
+    bootTargetSlug,
+    sidebarTab,
+    dayAnchor,
+    monthAnchor,
+    pathname,
+    navigate,
+    clearBootTarget,
+  ])
+
+  return null
 }
 
 // Everything inside BootGate — by the time this renders, the catalog
 // bootstrap has finished, so React subscriptions land on a stable
 // store and the sidebar's first paint reflects the user's real data.
 function AppContent() {
-  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const activeSlug = useActiveSlug()
   const handles = useDocsStore((s) => s.handles)
   const statusMap = useDocsStore((s) => s.status)
   const [view, setView] = useState<EditorView | null>(null)
@@ -120,12 +191,43 @@ function AppContent() {
   const activeHandle = activeSlug ? handles[activeSlug] ?? null : null
   const activeStatus = activeSlug ? statusMap[activeSlug] ?? 'loading' : 'loading'
 
+  // The notes shell is identical across every Day/Week/Month route —
+  // the URL only changes which sidebar view / anchor / open slug the
+  // store reflects. Hoisting the element keeps the <Routes> table a
+  // pure mapping from path → same surface, so adding a new view
+  // route later is a one-line addition rather than a copy of the JSX.
+  const notesElement = (
+    <>
+      {/* Banner mounts above the editor and self-hides
+          when the active doc isn't a wiki:* page with
+          pending proposals. Lives in the scroll area
+          so it doesn't shift layout when it appears/
+          disappears. */}
+      <WikiPageBanner />
+      <Page
+        key={activeSlug ?? 'no-doc'}
+        handle={activeHandle}
+        status={activeStatus}
+        onViewReady={(v) => {
+          // Mirror into the global store so non-React
+          // consumers (banner accept, future palette
+          // commands) can reach the live view without
+          // prop drilling. Local state stays the source
+          // of truth for sibling renders below.
+          setView(v)
+          useEditorViewStore.getState().setView(v)
+        }}
+      />
+    </>
+  )
+
   return (
     <ErrorBoundary
       FallbackComponent={FullPageErrorFallback}
       onError={(error, info) => console.error('[app] uncaught render error', error, info)}
     >
-      <HashRouter>
+      <>
+        <RouteSyncBridge />
         <AppShell
           oauthStatus="unauthenticated"
           collabHandle={activeHandle}
@@ -133,34 +235,19 @@ function AppContent() {
           editorView={view}
         >
           <Routes>
-            <Route path="/" element={<Navigate to="/notes" replace />} />
-            <Route
-              path="/notes"
-              element={
-                <>
-                  {/* Banner mounts above the editor and self-hides
-                      when the active doc isn't a wiki:* page with
-                      pending proposals. Lives in the scroll area
-                      so it doesn't shift layout when it appears/
-                      disappears. */}
-                  <WikiPageBanner />
-                  <Page
-                    key={activeSlug ?? 'no-doc'}
-                    handle={activeHandle}
-                    status={activeStatus}
-                    onViewReady={(v) => {
-                      // Mirror into the global store so non-React
-                      // consumers (banner accept, future palette
-                      // commands) can reach the live view without
-                      // prop drilling. Local state stays the source
-                      // of truth for sibling renders below.
-                      setView(v)
-                      useEditorViewStore.getState().setView(v)
-                    }}
-                  />
-                </>
-              }
-            />
+            {/* Root + legacy /notes both redirect to today's Day view.
+                todayLocalDate() is called on each render so a session
+                that crosses midnight still resolves to the right day
+                on first navigation. /notes survives as a legacy
+                deep-link target only — no live caller navigates here. */}
+            <Route path="/" element={<Navigate to={`/day/${todayLocalDate()}`} replace />} />
+            <Route path="/notes" element={<Navigate to={`/day/${todayLocalDate()}`} replace />} />
+            <Route path="/day/:date" element={notesElement} />
+            <Route path="/day/:date/:slug" element={notesElement} />
+            <Route path="/week" element={notesElement} />
+            <Route path="/week/:slug" element={notesElement} />
+            <Route path="/month/:ym" element={notesElement} />
+            <Route path="/month/:ym/:slug" element={notesElement} />
           </Routes>
         </AppShell>
         <MarkHoverActionsLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
@@ -170,7 +257,8 @@ function AppContent() {
           open={onboardingOpen}
           onClose={() => setOnboardingOpen(false)}
         />
-      </HashRouter>
+        <ImageAltDialog />
+      </>
     </ErrorBoundary>
   )
 }

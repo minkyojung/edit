@@ -18,7 +18,7 @@
 // ⌘T (handled globally in Sidebar.tsx) jumps back to today.
 
 import { useMemo } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import {
   IconChevronLeft,
   IconChevronRight,
@@ -26,6 +26,8 @@ import {
 } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { useDocsStore, shiftDayAnchor, isWikiDoc } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
+import { buildDayUrl } from '@/lib/viewUrl'
 import { DocTreeNode, indexChildren } from '../DocTreeNode'
 import {
   SidebarGroup,
@@ -39,15 +41,12 @@ import { Button } from '@/components/ui/button'
 
 export function DayView() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
-  const activeSlug = useDocsStore((s) => s.activeSlug)
-  const setActive = useDocsStore((s) => s.setActive)
+  const activeSlug = useActiveSlug()
   const openDaily = useDocsStore((s) => s.openDaily)
   const createChildNote = useDocsStore((s) => s.createChildNote)
   const archiveDoc = useDocsStore((s) => s.archiveDoc)
   const dayAnchor = useDocsStore((s) => s.dayAnchor)
-  const setDayAnchor = useDocsStore((s) => s.setDayAnchor)
   const navigate = useNavigate()
-  const { pathname } = useLocation()
 
   const anchoredDaily = useMemo(
     () =>
@@ -70,34 +69,29 @@ export function DayView() {
     ? childrenByParent.get(anchoredDaily.slug) ?? []
     : []
 
-  const ensureNotesRoute = () => {
-    if (!pathname.startsWith('/notes')) navigate('/notes')
-  }
-
   // Chevron click: shift the anchor and, if a daily already exists for
   // the new date, follow it in the editor. Never creates — that's the
   // label-click contract. When the new anchor has no daily the editor
   // stays on whatever was active and the tree below switches to an
   // empty state, signaling "this day is empty, click the date to start."
+  // navigate() drives the store via useRouteSync; whichever slug ends
+  // up in the URL becomes the active doc on the next tick.
   const handleShift = (delta: number) => {
     const next = shiftDayAnchor(dayAnchor, delta)
-    setDayAnchor(next)
     const found = knownDocs.find(
       (d) => d.type === 'daily' && d.date === next && !d.archivedAt,
     )
-    if (found) {
-      setActive(found.slug)
-      ensureNotesRoute()
-    }
+    const targetSlug = found?.slug ?? activeSlug
+    navigate(buildDayUrl(next, targetSlug))
   }
 
   const onLabelClick = async () => {
     if (anchoredDaily) {
-      setActive(anchoredDaily.slug)
+      navigate(buildDayUrl(dayAnchor, anchoredDaily.slug))
     } else {
-      await openDaily(dayAnchor)
+      const created = await openDaily(dayAnchor)
+      navigate(buildDayUrl(dayAnchor, created ?? activeSlug))
     }
-    ensureNotesRoute()
   }
 
   const dateLabel = formatDayLabel(dayAnchor)
@@ -153,15 +147,15 @@ export function DayView() {
                 doc={child}
                 childrenByParent={childrenByParent}
                 activeSlug={activeSlug}
-                onSelect={(slug) => {
-                  setActive(slug)
-                  ensureNotesRoute()
-                }}
+                onSelect={(slug) => navigate(buildDayUrl(dayAnchor, slug))}
                 onAddChild={async (parentSlug) => {
-                  await createChildNote(parentSlug)
-                  ensureNotesRoute()
+                  const created = await createChildNote(parentSlug)
+                  if (created) navigate(buildDayUrl(dayAnchor, created))
                 }}
-                onArchive={(slug) => archiveDoc(slug)}
+                onArchive={(slug) => {
+                  const next = archiveDoc(slug)
+                  if (next) navigate(buildDayUrl(dayAnchor, next))
+                }}
               />
             ))}
           </SidebarMenu>
@@ -173,8 +167,8 @@ export function DayView() {
               <SidebarMenuButton
                 size="sm"
                 onClick={async () => {
-                  await createChildNote(anchoredDaily.slug)
-                  ensureNotesRoute()
+                  const created = await createChildNote(anchoredDaily.slug)
+                  if (created) navigate(buildDayUrl(dayAnchor, created))
                 }}
                 className="text-[12px] text-sidebar-foreground/60 hover:text-sidebar-accent-foreground"
               >

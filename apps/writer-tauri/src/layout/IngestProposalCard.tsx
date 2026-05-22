@@ -19,6 +19,7 @@ import { useNavigate } from 'react-router-dom'
 import { IconX } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { useIngestStore, type PendingProposal } from '@/state/ingestStore'
 
 /** Clamp an entity name to fit in the card's one-line preview. The
@@ -64,7 +65,6 @@ export function IngestProposalCard() {
   const proposals = useIngestStore((s) => s.pendingProposals)
   const dismissed = useIngestStore((s) => s.dismissed)
   const dismiss = useIngestStore((s) => s.dismiss)
-  const setActive = useDocsStore((s) => s.setActive)
   const navigate = useNavigate()
 
   if (proposals.length === 0 || dismissed) return null
@@ -75,14 +75,20 @@ export function IngestProposalCard() {
     // the /notes route) takes over from there: it filters
     // pendingProposals to the active page's type and renders the
     // inbox cards in place.
-    const docs = useDocsStore.getState().knownDocs
+    const store = useDocsStore.getState()
     for (const proposal of proposals) {
-      const doc = docs.find(
+      const doc = store.knownDocs.find(
         (d) => d.type === proposal.target && !d.archivedAt,
       )
       if (doc) {
-        setActive(doc.slug)
-        navigate('/notes')
+        navigate(
+          buildViewUrl({
+            tab: store.sidebarTab,
+            dayAnchor: store.dayAnchor,
+            monthAnchor: store.monthAnchor,
+            slug: doc.slug,
+          }),
+        )
         return
       }
     }

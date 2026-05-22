@@ -16,6 +16,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { awaitChatRun } from '@/agent/chatRun'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useIngestStore } from '@/state/ingestStore'
 import { pickNewBlocks } from '@/lib/blockHash'
 import {
@@ -258,7 +259,7 @@ export async function ingestToday(): Promise<IngestResult | null> {
  * active tab. Useful when the user is iterating on a specific note
  * and wants to see what the model would propose for it. */
 export async function ingestActive(): Promise<IngestResult | null> {
-  const slug = useDocsStore.getState().activeSlug
+  const slug = getActiveSlugFromHash()
   if (!slug) {
     console.warn('[ingest] no active doc')
     return null

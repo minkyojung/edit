@@ -8,10 +8,13 @@
  * indirectly via `@/state/docsStore` (the index.ts re-exports them).
  *
  * Persistence map (kept in sync with persistConfig.ts):
- *   Persisted    — openSlugs, activeSlug, knownDocs (NO — vault scan
- *                  is source of truth), expandedDocSlugs
- *   Runtime-only — handles, status, bootstrapping, sidebarTab,
- *                  monthAnchor, dayAnchor
+ *   Persisted    — openSlugs, expandedDocSlugs
+ *   Runtime-only — handles, status, bootstrapping, bootTargetSlug,
+ *                  sidebarTab, monthAnchor, dayAnchor, knownDocs
+ *
+ * NOTE: "which doc is the user looking at" is NOT in the store. The
+ * URL is the source of truth — see useActiveSlug. The store carries
+ * only the tab strip (openSlugs) and per-doc metadata.
  *
  * NOTE: `knownDocs` is intentionally NOT persisted — the on-disk vault
  * is the single source of truth. See bootstrap() which calls
@@ -112,7 +115,6 @@ export interface DocPolicy {
 export interface DocsState {
   // Persisted
   openSlugs: string[]
-  activeSlug: string | null
   knownDocs: KnownDoc[]
   /** Slugs of docs whose tree row is currently expanded in the
    * sidebar — daily and writing alike. Persisted so the user's
@@ -126,6 +128,18 @@ export interface DocsState {
   status: Record<string, CollabStatus>
   /** Set during bootstrap; turns to false when initial restore is done. */
   bootstrapping: boolean
+  /** Transient slug bootstrap wants to land on when the URL didn't
+   * specify one — last surviving active doc from persisted openSlugs,
+   * else today's daily. `RouteSyncBridge` consumes it once with a
+   * replace-style navigate and clears it via `clearBootTarget()`.
+   *
+   * Why this isn't in the URL directly: bootstrap runs before the
+   * router is mounted in the React tree, so we can't navigate from
+   * the store. The bridge sits inside HashRouter and can. Holding
+   * the boot target here for one tick (then clearing) keeps the
+   * "URL is source of truth" invariant intact for the rest of the
+   * session — the store doesn't carry an "active slug" field. */
+  bootTargetSlug: string | null
   /** Which sidebar date view is showing. Runtime-only — every session
    * starts on 'day' so the app reads as "you're here, now" on launch. */
   sidebarTab: 'day' | 'week' | 'month'
@@ -139,6 +153,11 @@ export interface DocsState {
 
   // Actions
   bootstrap: () => Promise<void>
+  /** Clear `bootTargetSlug` after `RouteSyncBridge` has consumed it
+   * with a replace-style navigate. Idempotent — a second call is a
+   * no-op. Lives next to `bootstrap` since they share the same
+   * lifecycle. */
+  clearBootTarget: () => void
   /** Lazy-create the in-memory handle for `slug` if it doesn't
    * already exist, register it on `handles`, and route status
    * updates back into `status`. Idempotent — a second call for
@@ -170,9 +189,9 @@ export interface DocsState {
    * the doc is currently open, so the existing tear-down ordering
    * (ydoc destroy, ensureNonEmptyTabStrip, etc.) is reused. */
   removeKnownDoc: (slug: string) => void
-  setActive: (slug: string) => void
-  closeDoc: (slug: string) => void
-  createNew: () => Promise<void>
+  ensureOpen: (slug: string) => void
+  closeDoc: (slug: string) => string | null
+  createNew: () => Promise<string>
   /** Find or create the daily entry for the given local date and make
    * it the active tab. Returns the slug. */
   openDaily: (date?: string) => Promise<string | null>
@@ -208,7 +227,7 @@ export interface DocsState {
    * activeSlug if needed. The group is tagged with a single
    * timestamp so restore can move them back together. Refuses to
    * act on daily entries. Returns true on success. */
-  archiveDoc: (slug: string) => boolean
+  archiveDoc: (slug: string) => string | null
   /** Restore an archived group identified by `slug` (any group
    * member works). Re-points each parentId to its pre-archive
    * value via `archivedFromParent`. */
@@ -216,9 +235,9 @@ export interface DocsState {
   /** Permanently delete an archived group: hits the sidecar DELETE
    * for each member, removes them from knownDocs / openSlugs /
    * handles. No-op if the slug isn't archived. */
-  deleteForever: (slug: string) => Promise<void>
+  deleteForever: (slug: string) => Promise<string | null>
   /** Permanently delete every archived doc (sidecar + local state). */
-  emptyArchive: () => Promise<void>
+  emptyArchive: () => Promise<string | null>
   /** Seed a new doc's body from a markdown string. Used by
    * createCustomWikiPage / ensureSystemPage to plant initial content.
    * Ensures the handle (IDB shard + Y.Doc) exists first, then applies

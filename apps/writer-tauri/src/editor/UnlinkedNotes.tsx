@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { usePmDocVersion } from '@/hooks/usePmDocVersion'
 import { isWikilinkHref, slugFromWikilinkHref } from './wikilinkPalettePlugin'
@@ -121,19 +122,20 @@ function UnlinkedRow({
   doc: KnownDoc
   onPick: () => void
 }) {
-  const setActive = useDocsStore((s) => s.setActive)
-  const openSlugs = useDocsStore((s) => s.openSlugs)
   const label = useDocLabel(doc.slug)
 
   const onClick = () => {
-    if (!openSlugs.includes(doc.slug)) {
-      useDocsStore.setState((s) =>
-        s.openSlugs.includes(doc.slug)
-          ? s
-          : { openSlugs: [...s.openSlugs, doc.slug] },
-      )
-    }
-    setActive(doc.slug)
+    const store = useDocsStore.getState()
+    // Push the new view through location.hash so the picked doc
+    // shows up in the back/forward stack. useRouteSync mirrors it
+    // into the store on the next tick, which runs the setActive
+    // path (openSlugs append + ensureHandle).
+    window.location.hash = buildViewUrl({
+      tab: store.sidebarTab,
+      dayAnchor: store.dayAnchor,
+      monthAnchor: store.monthAnchor,
+      slug: doc.slug,
+    })
     onPick()
   }
 

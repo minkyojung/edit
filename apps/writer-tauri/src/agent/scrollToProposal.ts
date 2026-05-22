@@ -18,12 +18,13 @@ import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { usePendingScroll } from '@/state/pendingScrollStore'
 import { scrollToMark } from '@/editor/scrollToMark'
+import { buildViewUrl, getActiveSlugFromHash } from '@/lib/viewUrl'
 
 export function scrollToProposal(slug: string, markId: string): boolean {
   const docsState = useDocsStore.getState()
   if (!docsState.handles[slug]) return false
 
-  if (docsState.activeSlug === slug) {
+  if (getActiveSlugFromHash() === slug) {
     const view = useEditorViewStore.getState().view
     if (view && scrollToMark(view, markId)) return true
     // View not ready (mid-mount) — queue and let drain handle it.
@@ -32,6 +33,14 @@ export function scrollToProposal(slug: string, markId: string): boolean {
   }
 
   usePendingScroll.getState().set(slug, markId)
-  docsState.setActive(slug)
+  // Drive the doc switch through location.hash so the jump lands in
+  // the back/forward stack just like a user-initiated navigation;
+  // useRouteSync calls setActive on the next tick.
+  window.location.hash = buildViewUrl({
+    tab: docsState.sidebarTab,
+    dayAnchor: docsState.dayAnchor,
+    monthAnchor: docsState.monthAnchor,
+    slug,
+  })
   return true
 }

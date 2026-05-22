@@ -18,8 +18,10 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import { useNavigate } from 'react-router-dom'
 import { SidebarMenuButton } from '@/components/ui/sidebar'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { cn } from '@/lib/utils'
 import { formatRelative } from '@/lib/formatRelative'
 import { ConfirmDeleteForeverDialog } from './ConfirmDeleteForeverDialog'
@@ -32,6 +34,23 @@ export function ArchivedDocsPopover() {
   const unarchiveDoc = useDocsStore((s) => s.unarchiveDoc)
   const deleteForever = useDocsStore((s) => s.deleteForever)
   const emptyArchive = useDocsStore((s) => s.emptyArchive)
+  const navigate = useNavigate()
+
+  // After a destructive action, the store hands us the slug that
+  // should now be active; we navigate so the URL stays in sync
+  // with the new tab strip.
+  const navigateAfterDestruction = (next: string | null) => {
+    if (!next) return
+    const store = useDocsStore.getState()
+    navigate(
+      buildViewUrl({
+        tab: store.sidebarTab,
+        dayAnchor: store.dayAnchor,
+        monthAnchor: store.monthAnchor,
+        slug: next,
+      }),
+    )
+  }
 
   // Match the sidebar's live width. We can't just use w-(--sidebar-width)
   // because Radix portals the popover to <body>, where the CSS var
@@ -140,9 +159,11 @@ export function ArchivedDocsPopover() {
         confirmLabel="Delete forever"
         onConfirm={async () => {
           if (!pendingDeleteSlug) return
-          await deleteForever(pendingDeleteSlug).catch((err) =>
-            console.error('[archive] deleteForever failed', err),
-          )
+          const next = await deleteForever(pendingDeleteSlug).catch((err) => {
+            console.error('[archive] deleteForever failed', err)
+            return null
+          })
+          navigateAfterDestruction(next)
         }}
       />
 
@@ -157,9 +178,11 @@ export function ArchivedDocsPopover() {
         }
         confirmLabel="Empty archive"
         onConfirm={async () => {
-          await emptyArchive().catch((err) =>
-            console.error('[archive] emptyArchive failed', err),
-          )
+          const next = await emptyArchive().catch((err) => {
+            console.error('[archive] emptyArchive failed', err)
+            return null
+          })
+          navigateAfterDestruction(next)
           setOpen(false)
         }}
       />

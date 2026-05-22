@@ -21,7 +21,7 @@
 // menu primitive DocTreeNode used.
 
 import { useMemo, useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import {
   IconArchive,
   IconFileDescription,
@@ -31,7 +31,9 @@ import {
 } from '@tabler/icons-react'
 import { useDocsStore, getDocPolicy, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { createCustomWikiPage } from '@/state/wikiService'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { notify } from '@/lib/notify'
 import { syncTodayManually } from '@/hooks/useIdleTrigger'
 import {
@@ -52,11 +54,20 @@ import {
 
 export function WikiSection() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
-  const activeSlug = useDocsStore((s) => s.activeSlug)
-  const setActive = useDocsStore((s) => s.setActive)
+  const activeSlug = useActiveSlug()
+  const sidebarTab = useDocsStore((s) => s.sidebarTab)
+  const dayAnchor = useDocsStore((s) => s.dayAnchor)
+  const monthAnchor = useDocsStore((s) => s.monthAnchor)
   const archiveDoc = useDocsStore((s) => s.archiveDoc)
   const navigate = useNavigate()
-  const { pathname } = useLocation()
+
+  // Jumping to a wiki page preserves whichever date-view the sidebar
+  // is currently on — the user's "where am I in time" context shouldn't
+  // collapse just because they opened a wiki page. Only the slug
+  // portion of the URL changes.
+  const navigateToSlug = (slug: string) => {
+    navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
+  }
 
   const systemDocs = useMemo(
     () =>
@@ -81,10 +92,6 @@ export function WikiSection() {
     const others = wiki.filter((d) => d.type !== 'wiki:profile')
     return { profileDoc: profile, otherWikiDocs: others }
   }, [knownDocs])
-
-  const ensureNotesRoute = () => {
-    if (!pathname.startsWith('/notes')) navigate('/notes')
-  }
 
   const [syncing, setSyncing] = useState(false)
   const handleSyncClick = async () => {
@@ -113,16 +120,13 @@ export function WikiSection() {
   const handleNewRoot = async () => {
     const slug = await createCustomWikiPage('')
     if (!slug) return
-    setActive(slug)
-    ensureNotesRoute()
+    navigateToSlug(slug)
   }
 
-  const onSelectDoc = (slug: string) => {
-    setActive(slug)
-    ensureNotesRoute()
-  }
+  const onSelectDoc = (slug: string) => navigateToSlug(slug)
   const onArchiveDoc = (slug: string) => {
-    archiveDoc(slug)
+    const next = archiveDoc(slug)
+    if (next) navigateToSlug(next)
   }
 
   return (

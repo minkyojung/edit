@@ -19,7 +19,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { MarkPopover } from './MarkPopover'
 import { MARK_CLICKED_EVENT, type MarkClickedDetail } from '@/editor/markClickPlugin'
 import { acceptMark, rejectMark } from '@/editor/markActions'
-import { useDocsStore } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { markStore } from '@/domain/markStoreInstance'
 import type { Proposal } from '@/agent/proposals'
 
@@ -35,7 +35,7 @@ interface Active {
 
 export function MarkPopoverLayer({ editorView, ydoc }: Props) {
   const [active, setActive] = useState<Active | null>(null)
-  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const activeSlug = useActiveSlug()
 
   useEffect(() => {
     function onClicked(e: Event) {

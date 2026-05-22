@@ -27,9 +27,15 @@ import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 export interface BootstrapSlice {
   /** Set during bootstrap; turns to false when initial restore is done. */
   bootstrapping: boolean
+  /** Transient slug for the post-bootstrap URL replace. See DocsState
+   * docstring for the lifecycle. */
+  bootTargetSlug: string | null
   /** Run the initial vault scan → catalog → tab restore pipeline.
    * Re-entrancy-safe via the module-level `bootstrapInFlight` flag. */
   bootstrap: () => Promise<void>
+  /** Consume `bootTargetSlug` (RouteSyncBridge calls this after the
+   * replace navigate). */
+  clearBootTarget: () => void
 }
 
 /** Re-entrancy guard for bootstrap().
@@ -54,6 +60,9 @@ export const createBootstrapSlice = (
   get: GetDocsState,
 ): BootstrapSlice => ({
   bootstrapping: true,
+  bootTargetSlug: null,
+
+  clearBootTarget: () => set({ bootTargetSlug: null }),
 
   bootstrap: async () => {
     if (bootstrapInFlight) return
@@ -96,42 +105,39 @@ export const createBootstrapSlice = (
       // knownDocs persisted and could diverge from disk).
       const knownSlugs = new Set(get().knownDocs.map((d) => d.slug))
       let openSlugs = get().openSlugs.filter((s) => knownSlugs.has(s))
-      let activeSlug: string | null = openSlugs.includes(
-        get().activeSlug ?? '',
-      )
-        ? get().activeSlug
-        : null
 
       // Today's daily is always promoted into the tab strip ("always
       // land on today" is the journal's design promise).
       if (!openSlugs.includes(todaysDaily.slug)) {
         openSlugs = [...openSlugs, todaysDaily.slug]
       }
-      if (!activeSlug) activeSlug = todaysDaily.slug
-      set({ openSlugs, activeSlug })
+
+      // Pick a boot-target slug for RouteSyncBridge's replace navigate.
+      // Preference order:
+      //   1. The first surviving slug from persisted openSlugs (a doc
+      //      the user actually had open last session)
+      //   2. Today's daily (always-promoted; the journal floor)
+      // This is *not* the active slug — the URL is. We just hand the
+      // bridge a sensible target so the first paint isn't a blank
+      // "no doc" screen when the user enters via `/`.
+      const survivedOpen = openSlugs.find((s) => s !== todaysDaily.slug)
+      const bootTargetSlug = survivedOpen ?? todaysDaily.slug
+
+      set({ openSlugs, bootTargetSlug })
       set((s) => ({
         expandedDocSlugs: s.expandedDocSlugs.includes(todaysDaily!.slug)
           ? s.expandedDocSlugs
           : [...s.expandedDocSlugs, todaysDaily!.slug],
       }))
 
-      // Defensive: ensure activeSlug still points somewhere real
-      // after the validation pass above. Edge case — openSlugs
-      // ended up empty after filtering AND today's daily insert
-      // somehow didn't land. Picks any tab to avoid a null-active
-      // session that breaks the editor mount.
-      const finalState = get()
-      if (
-        !finalState.activeSlug ||
-        !finalState.openSlugs.includes(finalState.activeSlug)
-      ) {
-        set({ activeSlug: finalState.openSlugs[0] ?? null })
-      }
-
-      // Eagerly connect the active slug so first paint shows content.
-      // Daily docs get their meta seeded if missing (covers the path
-      // where today's daily is brand new and has no meta map yet).
-      const slugToOpen = get().activeSlug
+      // Eagerly connect the boot-target slug so first paint shows
+      // content. Daily docs get their meta seeded if missing (covers
+      // the path where today's daily is brand new and has no meta
+      // map yet). The URL may name a different slug — useRouteSync
+      // will warm that one on its first tick; the warm here just
+      // covers the "URL has no slug, bridge will replace into
+      // bootTargetSlug" path so the editor doesn't flash empty.
+      const slugToOpen = bootTargetSlug
       if (slugToOpen) {
         await get().ensureHandle(slugToOpen)
         const handle = get().handles[slugToOpen]

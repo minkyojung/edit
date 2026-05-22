@@ -1,21 +1,28 @@
 /**
  * docsStore — persist middleware config.
  *
- * What's persisted: only the tab strip state (openSlugs, activeSlug)
- * + the sidebar fold state (expandedDocSlugs). Everything else is
+ * What's persisted: only the tab strip state (openSlugs) + the
+ * sidebar fold state (expandedDocSlugs). Everything else is
  * runtime-only — `knownDocs` rebuilds from `scanVault()` on every
  * boot (Path C), and `handles`/`status` are by definition session-
  * scoped Y.Doc instances.
+ *
+ * Why activeSlug is NOT persisted (v6 → v7): the URL is the source
+ * of truth for "which doc is open". Persisting an activeSlug field
+ * alongside the URL would create the same two-source drift the
+ * 3-step migration set out to eliminate. Bootstrap re-derives the
+ * post-rehydrate active slug from the URL or a today's-daily
+ * fallback; see bootstrapSlice + RouteSyncBridge.
  *
  * Why knownDocs is NOT persisted: pre-Path-C, two catalogs (vault
  * + localStorage) drifted apart and required title-mirror + backfill
  * machinery to reconcile. Single source of truth (vault) eliminates
  * that class of bugs.
  *
- * Migration chain v1 → v6: documented inline. Each step is either a
+ * Migration chain v1 → v7: documented inline. Each step is either a
  * no-op version bump (interface widened, no data change) or a
- * targeted rewrite (v5 → v6 system:* rename). New migrations append
- * to the bottom and the version bumps to v7.
+ * targeted rewrite (v5 → v6 system:* rename, v6 → v7 activeSlug
+ * removal).
  */
 
 import type { PersistOptions } from 'zustand/middleware'
@@ -23,13 +30,14 @@ import type { DocsState, KnownDoc } from './types'
 
 export const persistConfig: PersistOptions<
   DocsState,
-  Pick<DocsState, 'openSlugs' | 'activeSlug' | 'expandedDocSlugs'>
+  Pick<DocsState, 'openSlugs' | 'expandedDocSlugs'>
 > = {
   name: 'writer-tauri:docs',
-  version: 6,
+  version: 7,
   partialize: (s) => ({
     openSlugs: s.openSlugs,
-    activeSlug: s.activeSlug,
+    // activeSlug intentionally NOT persisted (v7) — URL is the
+    // source of truth. See module docstring.
     // knownDocs no longer persisted (Path C): the source of truth
     // is the vault folder, hydrated on every boot via scanVault().
     // This eliminates the "two catalogs drift" class of bugs that
@@ -58,6 +66,15 @@ export const persistConfig: PersistOptions<
     // can branch on a single prefix. User content pages
     // (`wiki:custom-...`) keep their type. Slug-keyed data is
     // unaffected — only the `knownDocs[i].type` string is rewritten.
+    // v6 → v7: drop `activeSlug` from persisted state. The URL is
+    // now the single source of truth for "which doc is open"; the
+    // store field no longer exists, and persist would otherwise
+    // resurrect a stale slug into the rehydrated shape forever.
+    if (version < 7) {
+      const { activeSlug: _drop, ...rest } =
+        (persisted as { activeSlug?: unknown }) ?? {}
+      persisted = rest
+    }
     if (version < 6) {
       const state = (persisted ?? {}) as { knownDocs?: KnownDoc[] }
       const rename: Record<string, KnownDoc['type']> = {

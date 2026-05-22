@@ -24,8 +24,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { IconCheck, IconAlertCircle } from '@tabler/icons-react'
+import { useNavigate } from 'react-router-dom'
 import { useDocsStore } from '@/state/docsStore'
 import { useSettingsStore } from '@/state/settingsStore'
+import { buildViewUrl } from '@/lib/viewUrl'
 import {
   runProfilePipeline,
   type PipelineProgress,
@@ -67,7 +69,7 @@ export function OnboardingDialog({ open, onClose }: Props) {
   const [savedSlug, setSavedSlug] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  const setActive = useDocsStore((s) => s.setActive)
+  const navigate = useNavigate()
   const markBootstrapCompleted = useSettingsStore(
     (s) => s.markBootstrapCompleted,
   )
@@ -139,7 +141,15 @@ export function OnboardingDialog({ open, onClose }: Props) {
 
   const handleOpenProfile = () => {
     if (savedSlug) {
-      setActive(savedSlug)
+      const store = useDocsStore.getState()
+      navigate(
+        buildViewUrl({
+          tab: store.sidebarTab,
+          dayAnchor: store.dayAnchor,
+          monthAnchor: store.monthAnchor,
+          slug: savedSlug,
+        }),
+      )
     }
     markBootstrapCompleted()
     onClose()

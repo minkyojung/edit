@@ -33,19 +33,28 @@ import type { DocsState, GetDocsState, KnownDoc, SetDocsState } from './types'
 export interface ArchiveSlice {
   /** Archive `slug` and all its descendants (cascade). Closes any
    * open tabs in the group, tears down their handles, and reassigns
-   * activeSlug if needed. The group is tagged with a single
+   * the post-archive active slug. The group is tagged with a single
    * timestamp so restore can move them back together. Refuses to
-   * act on daily entries. Returns true on success. */
-  archiveDoc: (slug: string) => boolean
+   * act on daily entries.
+   *
+   * Returns the slug the caller should navigate to after the archive,
+   * or null when the action was refused (gate failed). When the
+   * archive succeeded but no slug remains (corner case — empty-strip
+   * invariant didn't fire because catalog has no today's daily yet),
+   * the caller may stay put. */
+  archiveDoc: (slug: string) => string | null
   /** Restore an archived group identified by `slug` (any group
    * member works). Re-points each parentId to its pre-archive
    * value via `archivedFromParent`. */
   unarchiveDoc: (slug: string) => void
-  /** Permanently delete an archived group. No-op if the slug isn't
-   * archived. */
-  deleteForever: (slug: string) => Promise<void>
-  /** Permanently delete every archived doc. */
-  emptyArchive: () => Promise<void>
+  /** Permanently delete an archived group. Returns the post-delete
+   * active slug for the caller's navigate, or null if no slug
+   * needs surfacing (the deleted group wasn't open). */
+  deleteForever: (slug: string) => Promise<string | null>
+  /** Permanently delete every archived doc. Returns the post-empty
+   * active slug for the caller's navigate, or null if the tab strip
+   * was untouched. */
+  emptyArchive: () => Promise<string | null>
 }
 
 export const createArchiveSlice = (
@@ -55,37 +64,39 @@ export const createArchiveSlice = (
   archiveDoc: (slug) => {
     const state = get()
     const target = state.knownDocs.find((d) => d.slug === slug)
-    if (!target) return false
+    if (!target) return null
     // Daily entries are time-axis spine, not user-authored docs.
     // Refuse so the sidebar/breadcrumb invariants stay intact.
-    if (target.type === 'daily') return false
+    if (target.type === 'daily') return null
     // Policy-level gate. canArchive=false catches system pages AND
     // wiki:profile (which IS user-owned for editing/banner purposes
     // but must survive accidental archive — it's the user's clone
     // memory, losing it = catastrophic).
-    if (!getDocPolicy(target).canArchive) return false
+    if (!getDocPolicy(target).canArchive) return null
     // Defense-in-depth (Karpathy write-ownership): agent-managed
     // pages without user ownership are also blocked, even if a
     // future policy row mis-sets canArchive.
-    if (isWikiDoc(target) && !isUserOwnedWiki(target)) return false
-    if (target.archivedAt) return false
+    if (isWikiDoc(target) && !isUserOwnedWiki(target)) return null
+    if (target.archivedAt) return null
 
     const groupSlugs = collectDescendantSlugs(state.knownDocs, slug)
     const stamp = Date.now()
     const groupSet = new Set(groupSlugs)
 
-    // Close any open tabs in the group, destroy their handles, and
-    // pick a sensible new activeSlug if the active was inside.
+    // Close any open tabs in the group and destroy their handles.
+    // We also pre-compute a sensible "next active" slug for the
+    // caller's post-archive navigate. The archived doc is treated as
+    // if it were the user's focus (whether or not it actually was),
+    // since the most common archive UX is "I'm done with this thing,
+    // archive it and put me on the next sensible tab."
     const nextOpen = state.openSlugs.filter((s) => !groupSet.has(s))
-    let nextActive = state.activeSlug
-    if (state.activeSlug && groupSet.has(state.activeSlug)) {
-      const idx = state.openSlugs.indexOf(state.activeSlug)
-      // First non-group slug at or after idx; else most recent before.
-      nextActive =
-        state.openSlugs.slice(idx + 1).find((s) => !groupSet.has(s)) ??
-        [...state.openSlugs.slice(0, idx)].reverse().find((s) => !groupSet.has(s)) ??
-        null
-    }
+    const archivedIdx = state.openSlugs.indexOf(slug)
+    let nextActive: string | null =
+      archivedIdx >= 0
+        ? state.openSlugs.slice(archivedIdx + 1).find((s) => !groupSet.has(s)) ??
+          [...state.openSlugs.slice(0, archivedIdx)].reverse().find((s) => !groupSet.has(s)) ??
+          null
+        : nextOpen[0] ?? null
     // Cancel chat runs for the whole cascade before tearing handles
     // down. Late proposals must not race past a destroyed ydoc.
     const chatRuns = useChatRuns.getState()
@@ -118,22 +129,24 @@ export const createArchiveSlice = (
     // today's daily must still be archive-free in nextKnown). Pass a
     // synthesized state so the lookup sees nextKnown.
     const postState: DocsState = { ...state, knownDocs: nextKnown }
-    set(ensureNonEmptyTabStrip(postState, {
+    const patch = ensureNonEmptyTabStrip(postState, {
       knownDocs: nextKnown,
       openSlugs: nextOpen,
-      activeSlug: nextActive,
       handles: nextHandles,
       status: nextStatus,
-    }))
-    // Warm whichever slug ended up active — whether nextActive
-    // survived or the invariant fell back to today's daily.
-    const finalActive = get().activeSlug
+    })
+    set(patch)
+    // If the invariant promoted today's daily into the strip the
+    // patch carries that as openSlugs[0]; use it as the next active
+    // when our pre-computed neighbor is null.
+    const postOpen = patch.openSlugs ?? nextOpen
+    const finalActive = nextActive ?? postOpen[0] ?? null
     if (finalActive && !get().handles[finalActive]) {
       get().ensureHandle(finalActive).catch((err) =>
         console.error('[docs] post-archive ensureHandle failed', err),
       )
     }
-    return true
+    return finalActive
   },
 
   unarchiveDoc: (slug) => {
@@ -159,13 +172,13 @@ export const createArchiveSlice = (
   deleteForever: async (slug) => {
     const state = get()
     const target = state.knownDocs.find((d) => d.slug === slug)
-    if (!target?.archivedAt) return
+    if (!target?.archivedAt) return null
     // Agent-managed wiki/system pages can't reach this code path
     // today (archive is refused above) but assert it anyway so a
     // future regression can't silently wipe agent memory. User-
     // spawned wiki:custom-* pages reach archive, so they're allowed
     // through here and follow normal hard-delete.
-    if (isWikiDoc(target) && !isUserOwnedWiki(target)) return
+    if (isWikiDoc(target) && !isUserOwnedWiki(target)) return null
     const stamp = target.archivedAt
     const groupSlugs = state.knownDocs
       .filter((d) => d.archivedAt === stamp)
@@ -180,19 +193,23 @@ export const createArchiveSlice = (
     const nextOpen = cur.openSlugs.filter((sl) => !groupSet.has(sl))
     const nextExpanded = cur.expandedDocSlugs.filter((sl) => !groupSet.has(sl))
     const postState: DocsState = { ...cur, knownDocs: nextKnown }
-    set(ensureNonEmptyTabStrip(postState, {
+    const patch = ensureNonEmptyTabStrip(postState, {
       knownDocs: nextKnown,
       openSlugs: nextOpen,
       expandedDocSlugs: nextExpanded,
-    }))
+    })
+    set(patch)
     if (failed > 0) {
       notify.cantDeleteNote({ onRetry: () => get().deleteForever(slug) })
     }
+    // The post-patch openSlugs holds the new strip; caller navigates
+    // to its head when the active doc was inside the deleted group.
+    return (patch.openSlugs ?? nextOpen)[0] ?? null
   },
 
   emptyArchive: async () => {
     const archived = get().knownDocs.filter((d) => d.archivedAt)
-    if (archived.length === 0) return
+    if (archived.length === 0) return null
     // Path C: no IDB shards to clean. Vault files stay on disk —
     // user removes them from Finder if they want the space back.
     const failed = 0
@@ -202,11 +219,12 @@ export const createArchiveSlice = (
     const nextOpen = cur.openSlugs.filter((sl) => !archivedSet.has(sl))
     const nextExpanded = cur.expandedDocSlugs.filter((sl) => !archivedSet.has(sl))
     const postState: DocsState = { ...cur, knownDocs: nextKnown }
-    set(ensureNonEmptyTabStrip(postState, {
+    const patch = ensureNonEmptyTabStrip(postState, {
       knownDocs: nextKnown,
       openSlugs: nextOpen,
       expandedDocSlugs: nextExpanded,
-    }))
+    })
+    set(patch)
     if (get().openSlugs.length === 0) {
       void get().openDaily().catch((err) =>
         console.error('[docs] post-emptyArchive openDaily failed', err),
@@ -215,6 +233,7 @@ export const createArchiveSlice = (
     if (failed > 0) {
       notify.cantEmptyTrash({ onRetry: () => get().emptyArchive() })
     }
+    return (patch.openSlugs ?? nextOpen)[0] ?? null
   },
 })
 

@@ -11,6 +11,7 @@ import { ToolStateBadge } from '@/chat/ui/ToolStateBadge'
 import { KeyValueBlock } from '@/chat/ui/KeyValueBlock'
 import { humanizeToolCall } from '@/chat/humanizers'
 import { useDocsStore } from '@/state/docsStore'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { pathToKnownSlug } from '@/lib/docPaths'
 
 /** Generic tool invocation card (Read / Bash / Grep / …). Built on AI
@@ -53,7 +54,13 @@ export function ToolPart({ part }: { part: ToolPartType }) {
                 // navigation action and avoids toggling the body open
                 // as a side effect.
                 e.stopPropagation()
-                useDocsStore.getState().setActive(openSlug)
+                const store = useDocsStore.getState()
+                window.location.hash = buildViewUrl({
+                  tab: store.sidebarTab,
+                  dayAnchor: store.dayAnchor,
+                  monthAnchor: store.monthAnchor,
+                  slug: openSlug,
+                })
               }}
               aria-label="Open page in editor"
               className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"

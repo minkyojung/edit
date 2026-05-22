@@ -19,6 +19,7 @@
 
 import * as Y from 'yjs'
 import { useDocsStore } from '@/state/docsStore'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
 import { hasExternalConflict } from '@/state/externalConflictStore'
@@ -108,7 +109,7 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
   // most accurate body (markdown is regenerated from the doc the
   // user can actually see). Inactive handles fall through to null
   // until 4.B.1.b.iii lands a fragment-based fallback.
-  const isActive = docs.activeSlug === slug
+  const isActive = getActiveSlugFromHash() === slug
   if (!isActive) return null
 
   const { view, serializer } = useEditorViewStore.getState()
@@ -508,12 +509,12 @@ export function stopAutoFlush(): void {
 //   __listMarks()                  // mark store state of active doc
 if (import.meta.env.DEV) {
   const handle = (slug?: string): SerializedDocFiles | null => {
-    const target = slug ?? useDocsStore.getState().activeSlug
+    const target = slug ?? getActiveSlugFromHash()
     if (!target) return null
     return serializeDocToFiles(target)
   }
   const listMarks = (slug?: string): Mark[] => {
-    const target = slug ?? useDocsStore.getState().activeSlug
+    const target = slug ?? getActiveSlugFromHash()
     if (!target) return []
     return markStore.list(target)
   }
@@ -526,13 +527,12 @@ if (import.meta.env.DEV) {
   const applyHandle = async (
     slug?: string,
   ): Promise<ApplyVaultOutcome | 'no-handle'> => {
-    const target = slug ?? useDocsStore.getState().activeSlug
+    const target = slug ?? getActiveSlugFromHash()
     if (!target) return 'no-handle'
     const handle = useDocsStore.getState().handles[target]
     if (!handle) return 'no-handle'
     return applyVaultBodyToYDoc(handle.ydoc, target)
   }
   ;(window as unknown as { __applyVault: typeof applyHandle }).__applyVault = applyHandle
-  ;(window as unknown as { __activeSlug: () => string | null }).__activeSlug = () =>
-    useDocsStore.getState().activeSlug
+  ;(window as unknown as { __activeSlug: () => string | null }).__activeSlug = getActiveSlugFromHash
 }

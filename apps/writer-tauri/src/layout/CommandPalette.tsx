@@ -39,6 +39,8 @@ import {
   useDocsStore,
   type KnownDoc,
 } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
+import { buildDayUrl, buildViewUrl } from '@/lib/viewUrl'
 import {
   formatLocalDate,
   todayLocalDate,
@@ -65,10 +67,8 @@ export function CommandPalette() {
   const [query, setQuery] = useState('')
 
   const knownDocs = useDocsStore((s) => s.knownDocs)
-  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const activeSlug = useActiveSlug()
   const openDaily = useDocsStore((s) => s.openDaily)
-  const setActive = useDocsStore((s) => s.setActive)
-  const setSidebarTab = useDocsStore((s) => s.setSidebarTab)
   const archiveDoc = useDocsStore((s) => s.archiveDoc)
   const renameDoc = useDocsStore((s) => s.renameDoc)
   const navigate = useNavigate()
@@ -182,28 +182,26 @@ export function CommandPalette() {
   const onSelect = async (r: Result) => {
     setOpen(false)
     if (r.kind === 'date') {
+      // ⌘G reads as "I want to work this date" — drop into Day view
+      // so the user lands on the daily's working surface, not a list
+      // they'd have to interpret. The new URL carries both the
+      // anchor and the resolved slug; useRouteSync mirrors them
+      // into the store next tick.
       const slug = await openDaily(r.date)
-      if (slug) {
-        // ⌘G reads as "I want to work this date" — drop into Day view
-        // so the user lands on the daily's working surface, not a list
-        // they'd have to interpret.
-        setSidebarTab('day')
-        navigate('/notes')
-      }
+      navigate(buildDayUrl(r.date, slug ?? null))
       return
     }
     // doc
     const slug = r.doc.slug
-    const state = useDocsStore.getState()
-    if (!state.openSlugs.includes(slug)) {
-      useDocsStore.setState((s) =>
-        s.openSlugs.includes(slug)
-          ? s
-          : { openSlugs: [...s.openSlugs, slug] },
-      )
-    }
-    setActive(slug)
-    navigate('/notes')
+    const store = useDocsStore.getState()
+    navigate(
+      buildViewUrl({
+        tab: store.sidebarTab,
+        dayAnchor: store.dayAnchor,
+        monthAnchor: store.monthAnchor,
+        slug,
+      }),
+    )
   }
 
   const placeholder =
@@ -260,7 +258,18 @@ export function CommandPalette() {
               <CommandItem
                 value="action:archive-active"
                 onSelect={() => {
-                  archiveDoc(activeDoc.slug)
+                  const next = archiveDoc(activeDoc.slug)
+                  if (next) {
+                    const store = useDocsStore.getState()
+                    navigate(
+                      buildViewUrl({
+                        tab: store.sidebarTab,
+                        dayAnchor: store.dayAnchor,
+                        monthAnchor: store.monthAnchor,
+                        slug: next,
+                      }),
+                    )
+                  }
                   setOpen(false)
                 }}
                 className="text-destructive data-[selected=true]:text-destructive"

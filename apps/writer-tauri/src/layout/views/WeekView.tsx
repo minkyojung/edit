@@ -22,11 +22,13 @@
 // SidebarMenuSub for automatic indentation and the vertical guide.
 
 import { useMemo, useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { IconCalendar, IconChevronRight } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { useDocsStore, isWikiDoc, type KnownDoc } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { todayLocalDate, formatLocalDate } from '@/hooks/useDocMeta'
+import { buildDayUrl, buildWeekUrl } from '@/lib/viewUrl'
 import { DocTreeNode, indexChildren } from '../DocTreeNode'
 import {
   SidebarGroup,
@@ -49,15 +51,11 @@ const DAYS_IN_WEEK = 7
 
 export function WeekView() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
-  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const activeSlug = useActiveSlug()
   const openDaily = useDocsStore((s) => s.openDaily)
-  const setActive = useDocsStore((s) => s.setActive)
   const createChildNote = useDocsStore((s) => s.createChildNote)
   const archiveDoc = useDocsStore((s) => s.archiveDoc)
-  const setSidebarTab = useDocsStore((s) => s.setSidebarTab)
-  const setDayAnchor = useDocsStore((s) => s.setDayAnchor)
   const navigate = useNavigate()
-  const { pathname } = useLocation()
 
   // Expansion state is local to Week view — peeking into a day from
   // the week strip is an in-the-moment gesture, not something we want
@@ -102,20 +100,14 @@ export function WeekView() {
     return out
   }, [today, dailyByDate, childrenByParent])
 
-  const ensureNotesRoute = () => {
-    if (!pathname.startsWith('/notes')) navigate('/notes')
-  }
-
   const onJump = async (row: Row) => {
+    // Jumping to a specific day reads as "I want to work this day" —
+    // drop the user into Day view at that anchor so the prev/next
+    // chevrons continue from where they picked. The URL carries both
+    // the new anchor and the resolved slug; useRouteSync mirrors them
+    // into the store on the next tick.
     const slug = await openDaily(row.date)
-    if (slug) {
-      // Jumping to a specific day reads as "I want to work this day" —
-      // drop the user into Day view at that anchor so the prev/next
-      // chevrons continue from where they picked.
-      setDayAnchor(row.date)
-      setSidebarTab('day')
-    }
-    ensureNotesRoute()
+    navigate(buildDayUrl(row.date, slug ?? activeSlug))
   }
 
   return (
@@ -138,15 +130,15 @@ export function WeekView() {
                 activeSlug={activeSlug}
                 onJump={() => onJump(row)}
                 onToggle={() => toggleExpanded(row.date)}
-                onSelectChild={(slug) => {
-                  setActive(slug)
-                  ensureNotesRoute()
-                }}
+                onSelectChild={(slug) => navigate(buildWeekUrl(slug))}
                 onAddChild={async (parentSlug) => {
-                  await createChildNote(parentSlug)
-                  ensureNotesRoute()
+                  const created = await createChildNote(parentSlug)
+                  if (created) navigate(buildWeekUrl(created))
                 }}
-                onArchive={(slug) => archiveDoc(slug)}
+                onArchive={(slug) => {
+                  const next = archiveDoc(slug)
+                  if (next) navigate(buildWeekUrl(next))
+                }}
               />
             )
           })}
