@@ -501,6 +501,7 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
           left; reserved for model / account / right-sidebar toggle on
           the right once those land. */}
       <div
+        data-tauri-drag-region
         className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-3"
         style={{ height: 'var(--header-h)' }}
       >

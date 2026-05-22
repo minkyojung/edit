@@ -201,6 +201,7 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <SidebarHeader
+        data-tauri-drag-region
         className="flex flex-row items-center gap-0.5 p-0 pr-1"
         style={{ height: 'var(--header-h)' }}
       >
