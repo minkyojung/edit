@@ -232,6 +232,47 @@
     outline: none;
   }
 
+  /* Image card NodeView. The card wraps the block-level image in a
+     contenteditable=false figure that owns its own drag entry — the
+     figure itself is draggable, the canvas-rendered preview is built
+     in the dragstart handler. Margin matches --prose-gap-block so the
+     card sits flush with surrounding paragraphs and a fresh paragraph
+     inserted after the card lands at a normal line height instead of
+     pressed against the image. Cursor signals the affordance. */
+  .ProseMirror .image-card {
+    margin-top: var(--prose-gap-block);
+    margin-bottom: var(--prose-gap-block);
+    cursor: grab;
+  }
+  .ProseMirror .image-card:active {
+    cursor: grabbing;
+  }
+  .ProseMirror .image-card.ProseMirror-selectednode {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  /* PM mirrors NodeSelection into a DOM Range over the card wrapper so
+     the browser applies its system highlight color (macOS / WKWebView
+     paints this as a green-yellow tint when the accent color isn't
+     blue). The internal Range is needed for PM's selection sync; only
+     its visual paint is undesired. Suppress it on the card subtree —
+     the .ProseMirror-selectednode outline above stays as the canonical
+     selection affordance. */
+  .ProseMirror .image-card ::selection,
+  .ProseMirror .image-card::selection {
+    background: transparent;
+  }
+  /* Empty paragraphs (the trailing paragraph PM inserts after a card)
+     would otherwise collapse to height 0 in some WebKit builds and
+     leave the caret pressed against the previous block. Reserving one
+     line of height matches the visual rhythm of non-empty paragraphs.
+     --prose-lh-body is unitless (1.7), so multiply by 1em to get a
+     concrete height. */
+  .ProseMirror p:empty {
+    min-height: calc(1em * var(--prose-lh-body));
+  }
+
   /* luma — avatar gradient */
   .avatar-luma {
     background: conic-gradient(

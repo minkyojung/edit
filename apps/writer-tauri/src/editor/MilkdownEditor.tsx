@@ -20,7 +20,9 @@ import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
 import { formatStatePlugin } from './formatStatePlugin'
 import { dropCursor } from '@milkdown/kit/prose/dropcursor'
 import { $prose } from '@milkdown/kit/utils'
+import { cardDropAdvanceCursor } from './cardDropAdvanceCursor'
 import { imageDropPastePlugin } from './imageDropPastePlugin'
+import { imageInlineNodeView } from './imageInlineNodeView'
 import { imageNodeView } from './imageNodeView'
 import { inlineCodeSafeKeymap } from './inlineCodeSafe'
 import { createLinkClickPlugin } from './linkClickPlugin'
@@ -223,6 +225,8 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .use(formatStatePlugin)
       .use(inlineCodeSafeKeymap)
       .use(imageNodeView)
+      .use(imageInlineNodeView)
+      .use(cardDropAdvanceCursor)
       .use($prose(() => dropCursor({ color: false, width: 2, class: 'pm-drop-cursor' })))
       .use(imageDropPastePlugin)
       .use(createPasteSanitizerPlugin())
