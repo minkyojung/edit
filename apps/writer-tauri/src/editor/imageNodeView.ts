@@ -46,6 +46,7 @@ class ImageNodeView {
       'max-w-full h-auto rounded my-2 block'
     this.dom.draggable = false
     this.dom.addEventListener('contextmenu', this.onContextMenu)
+    this.dom.addEventListener('dragstart', this.onDragStart)
     this.applySrc(node.attrs.src as string | undefined)
   }
 
@@ -56,6 +57,24 @@ class ImageNodeView {
     useImageAltDialogStore
       .getState()
       .openWith(pos, this.dom.alt, this.dom.getBoundingClientRect())
+  }
+
+  /** Own the drag preview so the browser doesn't paint surrounding
+   * compositor layers (other editor chrome, popovers, etc.) into
+   * the drag image. The default behaviour snapshots the element's
+   * full stacking context and on WKWebView that pulls in stray
+   * ancestor CSS layers. Calling setDragImage with this img alone
+   * scopes the preview to exactly the image and nothing else. */
+  private onDragStart = (e: DragEvent): void => {
+    if (!e.dataTransfer) return
+    const rect = this.dom.getBoundingClientRect()
+    // Offset puts the cursor near the top-left of the preview so the
+    // user sees where the image will land relative to their pointer.
+    // Cap the offset for very large images so the cursor doesn't end
+    // up far from the preview's edge.
+    const offsetX = Math.min(rect.width / 2, 80)
+    const offsetY = Math.min(rect.height / 2, 60)
+    e.dataTransfer.setDragImage(this.dom, offsetX, offsetY)
   }
 
   private applySrc(rawSrc: string | undefined): void {
@@ -103,6 +122,7 @@ class ImageNodeView {
 
   destroy(): void {
     this.dom.removeEventListener('contextmenu', this.onContextMenu)
+    this.dom.removeEventListener('dragstart', this.onDragStart)
   }
 }
 
