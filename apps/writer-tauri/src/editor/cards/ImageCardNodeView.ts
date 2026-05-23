@@ -18,7 +18,7 @@ import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
 import type { Node as PMNode } from '@milkdown/kit/prose/model'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { resolveImageSrc } from '../utils/resolveImageSrc'
+import { resolveVaultAssetSrc } from '../utils/resolveVaultAssetSrc'
 import { BaseCardNodeView } from './BaseCardNodeView'
 
 class ImageCardNodeView extends BaseCardNodeView {
@@ -73,7 +73,7 @@ class ImageCardNodeView extends BaseCardNodeView {
       return
     }
     try {
-      const resolved = await resolveImageSrc(rawSrc)
+      const resolved = await resolveVaultAssetSrc(rawSrc)
       // Race check: another applySrc may have started while we
       // awaited the path join. Only apply if the src we resolved is
       // still the one we want.

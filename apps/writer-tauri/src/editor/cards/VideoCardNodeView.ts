@@ -13,7 +13,7 @@
 // sees those clicks, while the rest of the video body remains a
 // normal mousedown surface that PM can drive into a card drag.
 //
-// `resolveImageSrc` reuse — the helper is image-named but its
+// `resolveVaultAssetSrc` reuse — the helper is image-named but its
 // implementation is generic (vault-relative path → `convertFileSrc`
 // asset URL, with absolute URLs passing through). Renaming it
 // `resolveVaultAssetSrc` is deferred to a separate cleanup PR.
@@ -27,7 +27,7 @@ import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
 import type { Node as PMNode } from '@milkdown/kit/prose/model'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { resolveImageSrc } from '../utils/resolveImageSrc'
+import { resolveVaultAssetSrc } from '../utils/resolveVaultAssetSrc'
 import { BaseCardNodeView } from './BaseCardNodeView'
 import { createVideoControls } from './VideoControls'
 
@@ -112,7 +112,7 @@ class VideoCardNodeView extends BaseCardNodeView {
       return
     }
     try {
-      const resolved = await resolveImageSrc(rawSrc)
+      const resolved = await resolveVaultAssetSrc(rawSrc)
       if (this.lastSrc !== rawSrc) return
       if (resolved === null) {
         this.video.removeAttribute('src')

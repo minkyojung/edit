@@ -16,7 +16,7 @@
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
 import type { Node as PMNode } from '@milkdown/kit/prose/model'
-import { resolveImageSrc } from './utils/resolveImageSrc'
+import { resolveVaultAssetSrc } from './utils/resolveVaultAssetSrc'
 
 class ImageInlineNodeView {
   readonly dom: HTMLImageElement
@@ -38,7 +38,7 @@ class ImageInlineNodeView {
       return
     }
     try {
-      const resolved = await resolveImageSrc(rawSrc)
+      const resolved = await resolveVaultAssetSrc(rawSrc)
       // Race check: another applySrc may have started while we awaited
       // the path join. Only apply if the src we resolved is still the
       // one we want.

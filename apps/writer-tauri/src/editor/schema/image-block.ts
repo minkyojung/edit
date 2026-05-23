@@ -32,15 +32,13 @@
 
 import { $nodeSchema } from '@milkdown/kit/utils'
 
-// `draggable` is intentionally NOT set to true. With it true, PM
-// auto-applies `draggable="true"` onto the NodeView's outer DOM,
-// which (a) competes with the native `<video controls>` shadow DOM
-// for pointer interactions on the sibling videoBlock card, and (b)
-// re-introduces the WKWebView compositor-leak when the wrapper is
-// the drag origin. The image card's drag is owned end-to-end by its
-// own handle in BaseCardNodeView.onDragStart — see that handler for
-// the manual NodeSelection / serializeForClipboard / view.dragging
-// dance that PM's auto-handler would otherwise do.
+// `draggable` is left at PM's default, which for `atom: true` nodes
+// resolves to true (see PM NodeSpec docs). That gives the card a
+// schema-driven drag entry: on mousedown PM's `mightDrag` arms, the
+// outer DOM gets `draggable="true"` until mouseup, and PM's global
+// dragstart handler takes care of NodeSelection + serializeForClipboard
+// + view.dragging. BaseCardNodeView only intercepts dragstart to
+// swap in a WKWebView-safe canvas preview.
 export const imageBlockSchema = $nodeSchema('imageBlock', () => ({
   group: 'block',
   atom: true,

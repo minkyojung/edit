@@ -27,7 +27,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 
 import { wrapInTaskList } from './taskList'
-import { insertBlockAtSelection } from './insertImage'
+import { insertBlockAtSelection } from './insertBlock'
 import { copyImageIntoVault } from '@/lib/vaultImages'
 import { flushDirty } from '@/lib/docFileSync'
 
@@ -85,10 +85,12 @@ function insertDivider(view: EditorView): void {
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']
 
 /** Image picker → vault copy → PM image node. Async because the
- * file dialog and disk write are. The SlashMenu fires-and-forgets
- * the returned promise; any failure logs but doesn't crash the
- * editor (the dialog cancel path is the normal early-return). */
-async function insertImage(view: EditorView): Promise<void> {
+ * file dialog and disk write are. Callers fire-and-forget the
+ * returned promise; any failure logs but doesn't crash the editor
+ * (the dialog cancel path is the normal early-return). Exported
+ * so the FormatToolbar's Image button can reuse the same flow as
+ * the slash menu entry. */
+export async function insertImage(view: EditorView): Promise<void> {
   let picked: string | string[] | null
   try {
     picked = await openDialog({

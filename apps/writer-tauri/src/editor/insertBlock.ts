@@ -1,24 +1,24 @@
-// Block-node insertion helper for image insertion paths (slash menu,
-// drag-drop, clipboard paste).
+// Generic block-atom insertion helper. Used by the slash menu,
+// drag-drop / clipboard-paste pipeline (image and video), and any
+// future insertion path that needs to drop a block atom and leave
+// the cursor on the next line.
 //
-// Why this exists even after promoting `image` to a block schema:
-// PM's `replaceSelectionWith(blockAtom)` places the block at the
-// cursor and sets the selection to a NodeSelection on the inserted
-// block. Visually that reads as "image is selected, cursor gone".
-// Typing in that state replaces the image with text — surprising
-// and destructive.
+// Why this exists: PM's `replaceSelectionWith(blockAtom)` places the
+// block at the cursor and sets the selection to a NodeSelection on
+// the inserted block. Visually that reads as "card is selected,
+// cursor gone". Typing in that state replaces the card with text —
+// surprising and destructive.
 //
-// We want the natural "image inserted, cursor on the line below"
-// behaviour. This helper makes that explicit: after the block goes
-// in, find the next textblock (inserting a fresh empty paragraph if
-// none exists at end-of-doc), and place a TextSelection at its
-// start.
+// This helper restores the natural "card inserted, cursor on the
+// line below" behaviour: after the block goes in, find the next
+// textblock (inserting a fresh empty paragraph if none exists at
+// end-of-doc), and place a TextSelection at its start.
 
 import { TextSelection } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { Node as PMNode } from '@milkdown/kit/prose/model'
 
-/** Insert `node` (expected to be a block atom — imageBlock, divider,
+/** Insert `node` (any block atom — imageBlock, videoBlock, divider,
  * etc.) at the current selection and land the text cursor in the
  * textblock immediately following it. */
 export function insertBlockAtSelection(view: EditorView, node: PMNode): void {

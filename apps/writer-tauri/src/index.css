@@ -247,31 +247,6 @@
     margin-top: var(--prose-gap-block);
     margin-bottom: var(--prose-gap-block);
   }
-  /* Drag handle — pinned in the editor's left gutter, always
-     invisible. The element still receives pointer events (drag
-     entry, mousedown suppression) so the card-move gesture works
-     when the user grabs the 20×24px region at `left: -28px`. The
-     visual affordance is intentionally omitted; revisit later if
-     discoverability becomes a complaint. */
-  .ProseMirror .image-card [data-card-handle],
-  .ProseMirror .video-card [data-card-handle] {
-    position: absolute;
-    top: 6px;
-    left: -28px;
-    width: 20px;
-    height: 24px;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: transparent;
-    opacity: 0;
-    cursor: grab;
-    user-select: none;
-  }
-  .ProseMirror .image-card [data-card-handle]:active,
-  .ProseMirror .video-card [data-card-handle]:active {
-    cursor: grabbing;
-  }
   /* macOS Live Text (Sonoma+) auto-detects text burned into media
      bitmaps — image captions and video subtitle frames alike — and
      makes that text selectable / draggable as a separate item.

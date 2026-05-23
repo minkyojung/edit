@@ -51,9 +51,9 @@ function readAttr(tag: string, name: string): string {
   return m ? (m[1] ?? m[2] ?? '') : ''
 }
 
-// `draggable` is intentionally NOT set to true — see the matching
-// comment in image-block.ts. Drag is owned by BaseCardNodeView's
-// handle, not by PM's schema-driven auto-handler.
+// `draggable` is left at PM's default — see the matching comment in
+// image-block.ts. With `atom: true` PM resolves draggable to true,
+// which gives the card its schema-driven drag entry.
 export const videoBlockSchema = $nodeSchema('videoBlock', () => ({
   group: 'block',
   atom: true,
