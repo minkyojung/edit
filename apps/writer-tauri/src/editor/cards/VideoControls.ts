@@ -115,6 +115,11 @@ export function createVideoControls(video: HTMLVideoElement): {
       playBtn.innerHTML = ICON_PAUSE
       playBtn.setAttribute('aria-label', 'Pause')
     }
+    // `is-paused` doubles as the "controls stay visible" hint for the
+    // auto-hide CSS: while playing, hover is the only thing that
+    // brings the bar in; while paused or ended, the bar stays up so
+    // the user always has a way back to play / replay / seek.
+    el.classList.toggle('is-paused', video.paused || video.ended)
   }
 
   const renderProgress = (): void => {

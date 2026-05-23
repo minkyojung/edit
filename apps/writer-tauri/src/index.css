@@ -247,6 +247,18 @@
     margin-top: var(--prose-gap-block);
     margin-bottom: var(--prose-gap-block);
   }
+  /* Hover affordance: surface a grab cursor on the card so the
+     drag-to-move gesture has a discoverable hint. Buttons / seek bar
+     inside the controls override this with their own cursor values,
+     so it only applies to the media area itself. */
+  .ProseMirror .image-card:hover,
+  .ProseMirror .video-card:hover {
+    cursor: grab;
+  }
+  .ProseMirror .image-card:active,
+  .ProseMirror .video-card:active {
+    cursor: grabbing;
+  }
   /* macOS Live Text (Sonoma+) auto-detects text burned into media
      bitmaps — image captions and video subtitle frames alike — and
      makes that text selectable / draggable as a separate item.
@@ -287,6 +299,17 @@
     line-height: 1;
     border-radius: 0 0 4px 4px;
     user-select: none;
+    /* Auto-hide pattern: bar is invisible during normal playback,
+       fades in on hover, and stays up when paused / ended so the
+       user always has a path back to play / replay. The `is-paused`
+       class is toggled from VideoControls.ts in sync with video.paused
+       / video.ended. */
+    opacity: 0;
+    transition: opacity 180ms ease-out;
+  }
+  .ProseMirror .video-card:hover .video-controls,
+  .ProseMirror .video-controls.is-paused {
+    opacity: 1;
   }
   .ProseMirror .video-controls button {
     display: inline-flex;
