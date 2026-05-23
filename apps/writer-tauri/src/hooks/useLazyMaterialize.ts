@@ -35,6 +35,7 @@
 import { useEffect, useRef } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
 
@@ -59,31 +60,16 @@ export interface LazyMaterializeConfig {
 }
 
 function waitForLocalReady(handle: {
-  provider: {
-    isSynced: boolean
-    on: (e: 'synced', f: () => void) => void
-    off: (e: 'synced', f: () => void) => void
-  } | null
-  idb: {
-    synced: boolean
-    on: (e: 'synced', f: () => void) => void
-    off: (e: 'synced', f: () => void) => void
-  }
+  contentReady: Promise<void>
 }): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const finish = () => setTimeout(resolve, 50)
-    if (handle.provider?.isSynced || handle.idb.synced) {
-      finish()
-      return
-    }
-    const onAny = () => {
-      handle.provider?.off('synced', onAny)
-      handle.idb.off('synced', onAny)
-      finish()
-    }
-    handle.provider?.on('synced', onAny)
-    handle.idb.on('synced', onAny)
-  })
+  // Small post-resolution delay so y-prosemirror's initial PM↔Y
+  // reconcile finishes its microtask flush before the caller starts
+  // walking the doc. Same 50ms cushion the previous IDB-event path
+  // used — empirical, kept identical so timing-sensitive consumers
+  // (system page drain) don't observe a different paint cadence.
+  return handle.contentReady.then(
+    () => new Promise<void>((resolve) => setTimeout(resolve, 50)),
+  )
 }
 
 /** Hook variant for a single config. Internal use only — the public
@@ -94,7 +80,7 @@ function waitForLocalReady(handle: {
  * (configs.length must be constant across renders — see the public
  * function's contract below). */
 function useLazyDrain(config: LazyMaterializeConfig): void {
-  const activeSlug = useDocsStore((s) => s.activeSlug)
+  const activeSlug = useActiveSlug()
   const handles = useDocsStore((s) => s.handles)
   const view = useEditorViewStore((s) => s.view)
   const queue = useIngestStore(config.queueSelector)

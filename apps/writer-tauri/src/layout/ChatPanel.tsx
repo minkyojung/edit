@@ -13,7 +13,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
 import { TextSelection } from '@milkdown/kit/prose/state'
-import type { HocuspocusProvider } from '@hocuspocus/provider'
 import * as Y from 'yjs'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useThreads } from '@/hooks/useThreads'
@@ -28,7 +27,7 @@ import {
   type LoadedCommand,
 } from '@/chat/commands'
 import { useChatRuns } from '@/stores/chatRuns'
-import { ThreadTabs } from '@/chat/ThreadTabs'
+import { ThreadPicker } from '@/chat/ThreadPicker'
 import { PromptInput } from '@/chat/PromptInput'
 import {
   DEFAULT_CHAT_EFFORT,
@@ -55,15 +54,14 @@ function parseSlashInvocation(text: string): { name: string; args: string } | nu
 interface Props {
   editorView: EditorView | null
   ydoc: Y.Doc | null
-  provider: HocuspocusProvider | null
   slug: string | null
 }
 
-export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
+export function ChatPanel({ editorView, ydoc, slug }: Props) {
   const { account } = useClaudeAuth()
-  const threads = useThreads(ydoc)
+  const threads = useThreads(slug)
   const { activeId, setActiveId } = useActiveThread(slug, threads.active)
-  const turnsHook = useThreadTurns(ydoc, activeId)
+  const turnsHook = useThreadTurns(activeId)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   // Synchronous send-in-flight latch. Flipping `chatStatus` to 'streaming'
@@ -109,32 +107,16 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
     setPinned(distance < 80)
   }, [])
 
-  // Track Hocuspocus initial sync so we don't auto-create a thread before the
-  // server has had a chance to send us the existing list — that race produces
-  // duplicate threads on every reload.
-  const [synced, setSynced] = useState(false)
+  // Auto-create the first thread once threads hydrate from the doc's
+  // Y.Doc + IDB. threads.ready flips true after useThreads observes
+  // the Y.Array — the single readiness signal we need now that the
+  // doc is local-only (no server response to race against).
   useEffect(() => {
-    setSynced(false)
-    if (!provider) return
-    if (provider.synced) {
-      setSynced(true)
-      return
-    }
-    const onSynced = () => setSynced(true)
-    provider.on('synced', onSynced)
-    return () => {
-      provider.off('synced', onSynced)
-    }
-  }, [provider])
-
-  // Auto-create the first thread only after we've synced — and only if the
-  // document genuinely has none.
-  useEffect(() => {
-    if (!synced || !threads.ready) return
+    if (!threads.ready) return
     if (threads.threads.length === 0) {
-      threads.createThread()
+      void threads.createThread()
     }
-  }, [synced, threads])
+  }, [threads])
 
   // Auto-scroll only when the user is already pinned to the bottom — if they
   // scrolled up to read history, leave them alone. Streaming uses 'auto' (no
@@ -438,9 +420,13 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       // stamps fresh ones — pressing Regenerate means "throw out what
       // I just got". Without this, a re-`/proofread` would leave stale
       // marks layered under the new ones on the same words.
-      if (targetTurn.appliedMarkIds && editorView && ydoc) {
+      if (targetTurn.appliedMarkIds && slug && ydoc) {
+        // Fire-and-forget cleanup — the rerun shouldn't block on the
+        // server-side reject round-trips. Errors stay in the console
+        // (cleanupMark already swallows them) so a flaky network
+        // doesn't strand the regenerate UI.
         for (const markId of targetTurn.appliedMarkIds) {
-          cleanupMark(editorView, ydoc, markId)
+          void cleanupMark(slug, ydoc, markId)
         }
       }
       turnsHook.removeTurn(assistantTurnId)
@@ -515,6 +501,7 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
           left; reserved for model / account / right-sidebar toggle on
           the right once those land. */}
       <div
+        data-tauri-drag-region
         className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-3"
         style={{ height: 'var(--header-h)' }}
       >
@@ -522,16 +509,16 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
       </div>
 
       <div
-        className="flex shrink-0 items-stretch border-b border-border bg-background px-2"
+        className="flex shrink-0 items-stretch border-b border-border bg-background px-0.5"
         style={{ height: 'var(--header-h)' }}
       >
-        <ThreadTabs
+        <ThreadPicker
           active={threads.active}
           archived={threads.archived}
           activeId={activeId}
           onSelect={setActiveId}
-          onCreate={() => {
-            const id = threads.createThread()
+          onCreate={async () => {
+            const id = await threads.createThread()
             if (id) setActiveId(id)
           }}
           onArchive={(id) => {
@@ -565,6 +552,8 @@ export function ChatPanel({ editorView, ydoc, provider, slug }: Props) {
             key={turn.id}
             turn={turn}
             slug={slug}
+            threadId={activeId}
+            threadTitle={activeThread?.title ?? ''}
             onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
           />
         ))}

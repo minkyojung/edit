@@ -10,6 +10,7 @@
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
 import { useDocsStore } from '@/state/docsStore'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { isWikilinkHref, slugFromWikilinkHref } from './wikilinkPalettePlugin'
 
 export function createWikilinkClickPlugin() {
@@ -38,12 +39,17 @@ export function createWikilinkClickPlugin() {
                 // no-op. User has to restore from Archive first.
                 return true
               }
-              if (!store.openSlugs.includes(slug)) {
-                useDocsStore.setState((s) => ({
-                  openSlugs: [...s.openSlugs, slug],
-                }))
-              }
-              store.setActive(slug)
+              // PM plugin runs outside React, so we drive navigation
+              // through location.hash (HashRouter listens on
+              // hashchange). useRouteSync then mirrors the new URL
+              // into the store, which calls setActive — that's where
+              // the openSlugs append + ensureHandle still happens.
+              window.location.hash = buildViewUrl({
+                tab: store.sidebarTab,
+                dayAnchor: store.dayAnchor,
+                monthAnchor: store.monthAnchor,
+                slug,
+              })
               return true
             },
           },

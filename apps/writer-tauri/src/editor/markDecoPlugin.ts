@@ -41,7 +41,6 @@ function classForMark(typeName: string, kind: unknown): string | null {
   }
   if (typeName === 'proofComment') return 'mark-deco mark-deco--comment'
   if (typeName === 'proofFlagged') return 'mark-deco mark-deco--flagged'
-  if (typeName === 'proofApproved') return 'mark-deco mark-deco--approved'
   return null
 }
 

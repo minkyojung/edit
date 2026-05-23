@@ -19,25 +19,22 @@ import { useNavigate } from 'react-router-dom'
 import { IconX } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { useIngestStore, type PendingProposal } from '@/state/ingestStore'
 
-/** Pull a short, readable noun phrase out of a proposal's markdown
- * body so the card preview reads as "Sarah, project deadline" rather
- * than dumping the raw bullet line. Best-effort: strip leading
- * bullet, cut at the first em-dash / colon (which usually separates
- * the entity from its description), then clamp length. */
-function extractTitle(content: string): string {
-  const cleaned = content
-    .replace(/^[-*•]\s*/, '')
-    .split(/[—:]/)[0]
-    .trim()
+/** Clamp an entity name to fit in the card's one-line preview. The
+ * old version had to dig the entity out of free-form markdown
+ * (`extractTitle`); with the new atomic schema the LLM already gives
+ * us the entity directly, so this is just a length guard. */
+function shortEntity(entity: string): string {
+  const cleaned = entity.trim()
   return cleaned.length > 28 ? `${cleaned.slice(0, 28)}…` : cleaned
 }
 
 /** Compose the one-line preview shown in the card body. Variants:
  *   "1 update from daily/2026-05-07 — Sarah"
  *   "3 updates from 2 notes — Sarah, project, …"
- * Capped at two titles plus an ellipsis so the card never grows
+ * Capped at two entities plus an ellipsis so the card never grows
  * past two lines of body text. */
 function previewText(proposals: PendingProposal[]): string {
   if (proposals.length === 0) return ''
@@ -46,7 +43,7 @@ function previewText(proposals: PendingProposal[]): string {
     sources.size === 1
       ? `from ${proposals[0].sourceLabel}`
       : `from ${sources.size} notes`
-  const titles = proposals.slice(0, 2).map((p) => extractTitle(p.content))
+  const titles = proposals.slice(0, 2).map((p) => shortEntity(p.entity))
   const titlesText = titles.join(', ') + (proposals.length > 2 ? ', …' : '')
   const noun = proposals.length === 1 ? 'update' : 'updates'
   return `${proposals.length} ${noun} ${sourceLabel} — ${titlesText}`
@@ -68,7 +65,6 @@ export function IngestProposalCard() {
   const proposals = useIngestStore((s) => s.pendingProposals)
   const dismissed = useIngestStore((s) => s.dismissed)
   const dismiss = useIngestStore((s) => s.dismiss)
-  const setActive = useDocsStore((s) => s.setActive)
   const navigate = useNavigate()
 
   if (proposals.length === 0 || dismissed) return null
@@ -79,14 +75,20 @@ export function IngestProposalCard() {
     // the /notes route) takes over from there: it filters
     // pendingProposals to the active page's type and renders the
     // inbox cards in place.
-    const docs = useDocsStore.getState().knownDocs
+    const store = useDocsStore.getState()
     for (const proposal of proposals) {
-      const doc = docs.find(
+      const doc = store.knownDocs.find(
         (d) => d.type === proposal.target && !d.archivedAt,
       )
       if (doc) {
-        setActive(doc.slug)
-        navigate('/notes')
+        navigate(
+          buildViewUrl({
+            tab: store.sidebarTab,
+            dayAnchor: store.dayAnchor,
+            monthAnchor: store.monthAnchor,
+            slug: doc.slug,
+          }),
+        )
         return
       }
     }

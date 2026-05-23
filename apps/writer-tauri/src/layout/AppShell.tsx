@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
@@ -27,6 +28,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
   const { sidebarOpen, contextPanelOpen, setSidebar, togglePanels, setContextPanel } =
     useLayoutStore()
   const contextPanelRef = usePanelRef()
+  const navigate = useNavigate()
 
   useEffect(() => {
     const panel = contextPanelRef.current
@@ -39,16 +41,33 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
   }, [contextPanelOpen])
 
   useEffect(() => {
+    // App-level meta shortcuts. All three operate on the window scope
+    // so they fire whether or not the editor has focus — matching how
+    // Safari / Arc / VSCode treat back/forward. ⌘[ / ⌘] aren't bound
+    // anywhere in the milkdown / prose keymap (verified during the
+    // step-4 audit), so window-level capture doesn't compete with
+    // text editing.
     function handleKeyDown(e: KeyboardEvent) {
       if (!e.metaKey) return
-      if (e.key !== '.') return
-      e.preventDefault()
-      togglePanels()
+      if (e.key === '[') {
+        e.preventDefault()
+        navigate(-1)
+        return
+      }
+      if (e.key === ']') {
+        e.preventDefault()
+        navigate(1)
+        return
+      }
+      if (e.key === '.') {
+        e.preventDefault()
+        togglePanels()
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [togglePanels])
+  }, [togglePanels, navigate])
 
   return (
     <SidebarProvider
@@ -109,7 +128,6 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
               <ChatPanel
                 editorView={editorView ?? null}
                 ydoc={collabHandle?.ydoc ?? null}
-                provider={collabHandle?.provider ?? null}
                 slug={collabHandle?.slug ?? null}
               />
             </ErrorBoundary>

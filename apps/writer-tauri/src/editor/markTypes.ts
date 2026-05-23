@@ -1,9 +1,9 @@
 // Single source of truth for the set of proof mark names the editor
 // plugins recognize. Each plugin needs a different subset depending
 // on what it cares about; rather than duplicating string arrays
-// across files (and risking a new mark type being added in five
-// places but missed in the sixth), the three meaningful groupings
-// are named and exported once here.
+// across files (and risking a new mark type being added in one
+// place but missed in another), the three meaningful groupings are
+// named and exported once here.
 //
 //   ALL_PROOF_MARK_NAMES         — every proof mark the schema
 //                                   defines. Used by inlineCodeSafe
@@ -27,24 +27,20 @@
 //                                   that markActions.findInlineAnchor
 //                                   searches over.
 //
-// Memberships were lifted verbatim from the prior inline definitions
-// and intentionally NOT widened or narrowed in this refactor — the
-// goal is to centralize the list, not to change behavior.
+// proofFlagged is in ALL (the schema reserves it for the future
+// fact-check feature — see proof-marks.ts) but NOT in INTERACTIVE
+// yet, because no UI surface creates / handles it.
 
 export const ALL_PROOF_MARK_NAMES = [
   'proofSuggestion',
   'proofComment',
   'proofFlagged',
-  'proofApproved',
   'proofAuthored',
-  'proofProvenance',
 ] as const
 
 export const INTERACTIVE_PROOF_MARK_NAMES = [
   'proofSuggestion',
   'proofComment',
-  'proofFlagged',
-  'proofApproved',
 ] as const
 
 export const ANCHOR_PROOF_MARK_NAMES = ['proofSuggestion', 'proofComment'] as const

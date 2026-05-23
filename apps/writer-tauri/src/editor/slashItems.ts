@@ -17,14 +17,19 @@ import {
   IconList,
   IconListNumbers,
   IconMinus,
+  IconPhoto,
   IconQuote,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
 import { setBlockType, wrapIn } from '@milkdown/kit/prose/commands'
 import { wrapInList } from '@milkdown/kit/prose/schema-list'
 import type { EditorView } from '@milkdown/kit/prose/view'
+import { open as openDialog } from '@tauri-apps/plugin-dialog'
 
 import { wrapInTaskList } from './taskList'
+import { insertBlockAtSelection } from './insertBlock'
+import { copyImageIntoVault } from '@/lib/vaultImages'
+import { flushDirty } from '@/lib/docFileSync'
 
 export interface SlashItem {
   /** Stable id for keying / debugging. */
@@ -73,8 +78,57 @@ function setCodeBlock(view: EditorView): void {
 function insertDivider(view: EditorView): void {
   const t = view.state.schema.nodes.hr
   if (!t) return
-  const tr = view.state.tr.replaceSelectionWith(t.create())
-  view.dispatch(tr.scrollIntoView())
+  // insertBlockAtSelection lands the cursor on the next textblock —
+  // raw replaceSelectionWith would leave a NodeSelection wrapping
+  // the hr, so the user's next keystroke would replace it.
+  insertBlockAtSelection(view, t.create())
+}
+
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']
+
+/** Image picker → vault copy → PM image node. Async because the
+ * file dialog and disk write are. Callers fire-and-forget the
+ * returned promise; any failure logs but doesn't crash the editor
+ * (the dialog cancel path is the normal early-return). Exported
+ * so the FormatToolbar's Image button can reuse the same flow as
+ * the slash menu entry. */
+export async function insertImage(view: EditorView): Promise<void> {
+  let picked: string | string[] | null
+  try {
+    picked = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Image', extensions: IMAGE_EXTENSIONS }],
+    })
+  } catch (err) {
+    console.warn('[slash:image] file dialog failed', err)
+    return
+  }
+  if (typeof picked !== 'string' || picked.length === 0) return // cancelled
+
+  let relPath: string
+  try {
+    relPath = await copyImageIntoVault(picked)
+  } catch (err) {
+    console.warn('[slash:image] copy failed', err)
+    return
+  }
+
+  const t = view.state.schema.nodes.imageBlock
+  if (!t) return
+  // Basename without extension makes the most reasonable alt
+  // default; the user can edit the markdown directly to refine it.
+  const basename = picked.split(/[\\/]/).pop() ?? ''
+  const alt = basename.replace(/\.[^.]+$/, '')
+  const node = t.create({ src: relPath, alt, title: '' })
+  insertBlockAtSelection(view, node)
+  view.focus()
+  // Force the doc save to land in the same ~ms window as the image
+  // binary write. Without this the doc save waits for the next
+  // 2-second autosave tick — opening a race where the watcher fires
+  // for the doc file before its `markOurRecentWrite` is set, leaking
+  // through echo suppression and producing a phantom "external edit"
+  // toast on every image insertion.
+  void flushDirty()
 }
 
 export const SLASH_ITEMS: SlashItem[] = [
@@ -147,5 +201,17 @@ export const SLASH_ITEMS: SlashItem[] = [
     keywords: ['hr', 'rule', '---', 'horizontal'],
     icon: IconMinus,
     run: insertDivider,
+  },
+  {
+    id: 'image',
+    label: 'Image',
+    keywords: ['img', 'picture', 'photo'],
+    icon: IconPhoto,
+    // insertImage is async (file dialog + vault copy); fire-and-
+    // forget so the slash menu can dismiss synchronously. Errors
+    // surface in the console rather than blocking the editor.
+    run: (view) => {
+      void insertImage(view)
+    },
   },
 ]

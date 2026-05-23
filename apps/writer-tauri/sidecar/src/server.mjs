@@ -1,3 +1,5 @@
+import { readFile, readdir } from 'node:fs/promises'
+import { normalize, resolve as resolvePath } from 'node:path'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import {
@@ -13,9 +15,177 @@ import {
   NO_TOKEN,
 } from './jsonrpc.mjs'
 
+/** Subfolders the LLM is allowed to read via `read_page` / `search_wiki`.
+ * Excludes `daily/` and `threads/` — those are user-authored sources, not
+ * wiki content the LLM should be looking up. Excludes nothing inside
+ * `_system/` either, since system pages (conventions / log / index) are
+ * legitimate context for the LLM's routing decisions. */
+const READABLE_PREFIXES = ['wiki/', '_system/']
+
+/** Validate a vault-relative path the model passed in. Returns the
+ * normalised relative path on success or null when the path would
+ * escape the allowed subfolders. We don't trust the model not to try
+ * `../etc/passwd`; the gate here is the only safety net before we
+ * hand the path to `readFile`. */
+function validateVaultRelPath(rawPath) {
+  const trimmed = String(rawPath ?? '').trim()
+  if (!trimmed) return null
+  // Reject absolute paths and any segment that climbs out.
+  if (trimmed.startsWith('/') || trimmed.includes('\\')) return null
+  const normalised = normalize(trimmed)
+  if (normalised.startsWith('..') || normalised.includes('/../')) return null
+  if (!READABLE_PREFIXES.some((p) => normalised.startsWith(p))) return null
+  return normalised
+}
+
 // Relay tools: defined here, but every invocation reports back to the host
 // (frontend) via a notification rather than performing the action itself.
 // The frontend (which owns the editor / UI) does the real work.
+
+// `read_page` is the Karpathy-style "structured discovery" primitive —
+// the model reads the Tier 1 catalog (shipped in the system prompt),
+// picks the page it wants in full, and calls this tool with the path.
+// Unlike the relay tools above, the handler IS the data source: it
+// reads markdown from the user's vault directly. No frontend round-
+// trip. This is the standard Claude SDK pattern — async tool
+// handlers return content the model continues with on the next turn.
+//
+// Security: the path must be vault-relative under `wiki/` or `_system/`.
+// Anything else (absolute paths, `..`, daily notes) is rejected with
+// an error string so the model can route differently.
+function buildReadPageTool(vaultPath) {
+  return tool(
+    'read_page',
+    'Read the full markdown body of a wiki or system page from the user\'s vault. Pass a vault-relative path beginning with "wiki/" or "_system/" (e.g., "wiki/Sarah Kim.md"). The catalog in the system prompt lists every page\'s path. Use this when the catalog alone is not enough and you need the page in full to answer or to verify a claim.',
+    { path: z.string() },
+    async (args) => {
+      const rel = validateVaultRelPath(args.path)
+      if (!rel) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `(error: path "${args.path}" is not readable — must be vault-relative under wiki/ or _system/)`,
+            },
+          ],
+        }
+      }
+      try {
+        const abs = resolvePath(vaultPath, rel)
+        const body = await readFile(abs, 'utf-8')
+        return { content: [{ type: 'text', text: body }] }
+      } catch (err) {
+        return {
+          content: [
+            { type: 'text', text: `(error reading ${rel}: ${err?.message ?? err})` },
+          ],
+        }
+      }
+    },
+  )
+}
+
+// `search_wiki` is the "find pages by content" companion to read_page.
+// The model passes a substring query; we scan every .md in wiki/ and
+// return the paths whose title or body contains the query (case-
+// insensitive). Title matches rank first because they're a stronger
+// signal of "this page is about X".
+//
+// Result format: a markdown list of `- path — excerpt` lines so the
+// model has both the path (to feed back into read_page) and a hint
+// of why this file matched. Excerpt is the first body line that
+// contains the query, trimmed to ~80 chars.
+//
+// Cap at 20 results — the catalog (Tier 1) already gave the LLM the
+// full surface area; this tool is for "find anything mentioning X",
+// not for paginating the wiki. If the model needs more it can
+// narrow the query.
+const SEARCH_RESULT_CAP = 20
+const SEARCH_EXCERPT_MAX = 80
+
+function buildSearchWikiTool(vaultPath) {
+  return tool(
+    'search_wiki',
+    'Find wiki pages whose title or body contains a substring. Pass `query` (case-insensitive). Returns up to 20 results as `- path — excerpt` lines, ranked title-match first then body-match. Use this when the catalog\'s one-line summaries are not enough to decide which page is relevant; then call read_page on a result to read the page in full.',
+    { query: z.string() },
+    async (args) => {
+      const q = String(args.query ?? '').trim().toLowerCase()
+      if (!q) {
+        return { content: [{ type: 'text', text: '(error: empty query)' }] }
+      }
+      const wikiDir = resolvePath(vaultPath, 'wiki')
+      let entries
+      try {
+        entries = await readdir(wikiDir, { withFileTypes: true })
+      } catch (err) {
+        return {
+          content: [{ type: 'text', text: `(error reading wiki/: ${err?.message ?? err})` }],
+        }
+      }
+      const titleHits = []
+      const bodyHits = []
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith('.md')) continue
+        // Skip sidecars (.meta.json) — readdir already filters by .md but
+        // belt-and-braces in case future suffixes leak in.
+        if (entry.name.endsWith('.meta.json') || entry.name.endsWith('.ydoc')) continue
+        const filename = entry.name
+        const titleHit = filename.toLowerCase().includes(q)
+        let body = ''
+        try {
+          body = await readFile(resolvePath(wikiDir, filename), 'utf-8')
+        } catch {
+          continue // unreadable file, skip silently
+        }
+        const lower = body.toLowerCase()
+        const bodyIdx = lower.indexOf(q)
+        if (!titleHit && bodyIdx < 0) continue
+        // Build excerpt: first non-empty line that contains the query,
+        // or the first line of the body when only title matched.
+        let excerpt = ''
+        if (bodyIdx >= 0) {
+          const lines = body.split('\n')
+          for (const line of lines) {
+            if (line.toLowerCase().includes(q) && line.trim().length > 0) {
+              excerpt = line.trim()
+              break
+            }
+          }
+        }
+        if (!excerpt) {
+          for (const line of body.split('\n')) {
+            if (line.trim().length > 0) {
+              excerpt = line.trim()
+              break
+            }
+          }
+        }
+        if (excerpt.length > SEARCH_EXCERPT_MAX) {
+          excerpt = excerpt.slice(0, SEARCH_EXCERPT_MAX).trimEnd() + '…'
+        }
+        const entryLine = `- wiki/${filename} — ${excerpt || '(empty)'}`
+        if (titleHit) titleHits.push(entryLine)
+        else bodyHits.push(entryLine)
+      }
+      const all = [...titleHits.sort(), ...bodyHits.sort()].slice(
+        0,
+        SEARCH_RESULT_CAP,
+      )
+      if (all.length === 0) {
+        return {
+          content: [{ type: 'text', text: `(no wiki pages match "${args.query}")` }],
+        }
+      }
+      const truncated =
+        titleHits.length + bodyHits.length > SEARCH_RESULT_CAP
+          ? `\n\n(showing first ${SEARCH_RESULT_CAP} of ${titleHits.length + bodyHits.length} matches; narrow the query for more.)`
+          : ''
+      return {
+        content: [{ type: 'text', text: all.join('\n') + truncated }],
+      }
+    },
+  )
+}
 
 function buildProposeChangeTool(runId, emit) {
   return tool(
@@ -48,6 +218,38 @@ function buildProposeChangeTool(runId, emit) {
 // complete). The handler forwards the raw input to the host as an
 // `ingest/result` notification; ingest.ts assembles its IngestResult
 // from that payload directly.
+// `submit_profile` is the Profile-bootstrap counterpart to
+// submit_ingest_result. The Profile pipeline runs N per-URL Haiku
+// calls + 1 synthesis Sonnet call; every call uses this same tool
+// to emit a Profile-shaped payload, so the schema is shared. The
+// host distinguishes pass type by which event the run belongs to,
+// not by tool name.
+//
+// All array fields are optional / can be empty — a per-URL pass
+// may legitimately yield zero voice_samples for a thin source,
+// and the synthesis pass merges across sources to fill gaps.
+function buildSubmitProfileTool(runId, emit) {
+  return tool(
+    'submit_profile',
+    'Submit a structured profile extracted from one or more sources about the user. Use null for fields you cannot determine; use empty arrays for list fields with no entries. voice_samples must be verbatim quotes from the source text — do not paraphrase or invent. dispositions and values may be inferred from the writing but should be supported by something in the source. Call this exactly once per run.',
+    {
+      name: z.string().nullable(),
+      headline: z.string().nullable(),
+      location: z.string().nullable(),
+      roles: z.array(z.string()),
+      interests: z.array(z.string()),
+      voice_samples: z.array(z.string()),
+      values: z.array(z.string()),
+      dispositions: z.array(z.string()),
+      about: z.string(),
+    },
+    async (args) => {
+      emit(notification('profile/result', { runId, input: args }))
+      return { content: [{ type: 'text', text: 'Profile result recorded.' }] }
+    },
+  )
+}
+
 function buildSubmitIngestResultTool(runId, emit) {
   return tool(
     'submit_ingest_result',
@@ -58,7 +260,15 @@ function buildSubmitIngestResultTool(runId, emit) {
           target: z.string().optional(),
           suggestNewPage: z.string().optional(),
           suggestNewPageParent: z.string().optional(),
-          content: z.string(),
+          // Atomic schema (replaces free-form `content: string`): the
+          // topic the bullets are about, plus the bullet bodies. No
+          // headings, no sub-sections — the host assembles the final
+          // markdown at apply time. Removing the "anywhere markdown"
+          // slot was the only way to stop the model from re-emitting
+          // page-level headers like "## People" that doubled up on
+          // every accept.
+          entity: z.string(),
+          bullets: z.array(z.string()).min(1),
           rationale: z.string().optional(),
           sourceQuote: z.string().optional(),
         }),
@@ -265,6 +475,7 @@ export class Server {
       model,
       systemPrompt,
       relayTools,
+      vaultPath,
       permissionMode = 'bypassPermissions',
       effort,
       sessionId,
@@ -319,6 +530,24 @@ export class Server {
         relayDefs.push(buildProposeChangeTool(runId, this.emit))
       } else if (name === 'submit_ingest_result') {
         relayDefs.push(buildSubmitIngestResultTool(runId, this.emit))
+      } else if (name === 'submit_profile') {
+        relayDefs.push(buildSubmitProfileTool(runId, this.emit))
+      } else if (name === 'read_page') {
+        if (!vaultPath) {
+          console.warn(
+            `[sidecar] read_page requested but vaultPath not provided; skipping (runId=${runId})`,
+          )
+          continue
+        }
+        relayDefs.push(buildReadPageTool(vaultPath))
+      } else if (name === 'search_wiki') {
+        if (!vaultPath) {
+          console.warn(
+            `[sidecar] search_wiki requested but vaultPath not provided; skipping (runId=${runId})`,
+          )
+          continue
+        }
+        relayDefs.push(buildSearchWikiTool(vaultPath))
       }
     }
     if (relayDefs.length > 0) {

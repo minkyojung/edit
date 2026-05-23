@@ -17,9 +17,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { useDocsStore } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
+import { buildViewUrl } from '@/lib/viewUrl'
 
 interface Props {
   open: boolean
@@ -31,6 +33,7 @@ export function ConfirmArchiveDialog({ open, onOpenChange, slug }: Props) {
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const archiveDoc = useDocsStore((s) => s.archiveDoc)
   const label = useDocLabel(slug)
+  const navigate = useNavigate()
 
   // Walk the tree to count descendants so the dialog can show the
   // cascade size up front. Already-archived nodes are skipped to
@@ -53,8 +56,18 @@ export function ConfirmArchiveDialog({ open, onOpenChange, slug }: Props) {
 
   const onConfirm = () => {
     if (!slug) return
-    const ok = archiveDoc(slug)
-    if (ok) onOpenChange(false)
+    const next = archiveDoc(slug)
+    if (next === null) return
+    const store = useDocsStore.getState()
+    navigate(
+      buildViewUrl({
+        tab: store.sidebarTab,
+        dayAnchor: store.dayAnchor,
+        monthAnchor: store.monthAnchor,
+        slug: next,
+      }),
+    )
+    onOpenChange(false)
   }
 
   return (

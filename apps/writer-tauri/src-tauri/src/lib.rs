@@ -1,125 +1,19 @@
+mod anthropic;
 pub mod claude_sidecar;
+mod fetch_url;
 mod oauth;
 mod secure_storage;
 
-use std::path::PathBuf;
-use std::process::{Child, Command};
-use std::sync::atomic::{AtomicI32, Ordering};
-use std::thread;
-use std::time::Duration;
 use tauri::{Emitter, Manager};
 
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
-
-// Holds only the proof-server's process group id, not the Child handle.
-// Spawn writes; shutdown reads. An atomic int can't be poisoned the way a
-// Mutex can if a panic happens mid-lock, so the cleanup path is always
-// reachable. The Child is dropped immediately after spawn —
-// std::process::Child::drop is a no-op on Unix, so the OS process keeps
-// running and we shoot the whole group via SIGTERM at shutdown.
-struct ProofServerPgid(AtomicI32);
-
-// Idempotent: swap(0) means whichever shutdown path fires first does the
-// kill, the rest are no-ops. Cmd+Q routes through RunEvent::Exit, the X
-// button routes through WindowEvent::Destroyed — both call this so a
-// proof-server zombie can't be left holding port 4000 between launches.
-//
-// Two-phase shutdown so proof-sdk's debounced persistDoc timers actually
-// get a chance to flush before the process dies: send SIGTERM, then poll
-// for the process group to exit (proof-sdk's graceful path completes in
-// ~1–2s typically, with a 5s hard timeout of its own). If the wait
-// itself times out we fall back to the prior force-kill behavior so a
-// hung child can never leave port 4000 occupied. Without this wait the
-// SIGTERM and the SIGKILL fired in the same millisecond, which raced
-// the graceful path and reliably ate the last 250ms of edits on every
-// Cmd+Q — see proof-sdk/server/index.ts:registerGracefulShutdown for
-// the receiving side.
-const GRACEFUL_SHUTDOWN_BUDGET: Duration = Duration::from_secs(6);
-const GRACEFUL_SHUTDOWN_POLL: Duration = Duration::from_millis(100);
-
-fn shutdown_proof_server(app: &tauri::AppHandle) {
-    let pgid = app
-        .state::<ProofServerPgid>()
-        .0
-        .swap(0, Ordering::SeqCst);
-    if pgid <= 0 {
-        return;
-    }
-
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(-pgid, libc::SIGTERM);
-    }
-    println!("[proof-server] SIGTERM sent (pgid={pgid}), awaiting graceful exit");
-
-    let deadline = std::time::Instant::now() + GRACEFUL_SHUTDOWN_BUDGET;
-    while std::time::Instant::now() < deadline {
-        // kill(pgid, 0) probes whether the process group still exists
-        // without delivering a signal — returns 0 while alive, -1 with
-        // ESRCH once every process in the group has reaped. We poll
-        // rather than waitpid() because Tauri spawned the child with
-        // setsid() and dropped its Child handle (see ProofServerPgid),
-        // so there's no waitpid-able handle to block on.
-        #[cfg(unix)]
-        let still_alive = unsafe { libc::kill(-pgid, 0) == 0 };
-        #[cfg(not(unix))]
-        let still_alive = true;
-        if !still_alive {
-            println!("[proof-server] graceful exit observed (pgid={pgid})");
-            return;
-        }
-        thread::sleep(GRACEFUL_SHUTDOWN_POLL);
-    }
-
-    // Hard fallback: child didn't honour SIGTERM within the budget.
-    // Belt-and-suspenders kills anything still holding port 4000 (and
-    // catches grandchildren that escaped the process group along the
-    // way) so the next spawn can bind cleanly.
-    println!("[proof-server] graceful exit timed out, force-killing (pgid={pgid})");
-    kill_port_holders(4000);
-}
+// proof-server lifecycle removed in Phase 3.D. The app no longer spawns
+// a bundled sidecar — every doc operation runs against the local Y.Doc
+// + IDB. Removing the spawn eliminates the `[collab] failed to derive
+// markdown` log class and shaves ~0.5s off cold boot.
 
 #[tauri::command]
 fn app_quit(app: tauri::AppHandle) {
     app.exit(0);
-}
-
-// HTTP-pings the bundled proof-server. The frontend's EngineGate calls
-// this on mount and after a Retry to know when the server is reachable.
-// Short timeout so failure is obvious during cold start (the gate retries
-// itself); longer timeouts would just stall the gate UI.
-#[tauri::command]
-async fn check_proof_server_health() -> Result<(), String> {
-    let resp = reqwest::Client::new()
-        .get("http://127.0.0.1:4000/health")
-        .timeout(Duration::from_millis(800))
-        .send()
-        .await
-        .map_err(|e| format!("connect failed: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("health returned {}", resp.status()));
-    }
-    Ok(())
-}
-
-// Frontend-driven recovery: kill whatever's holding port 4000 and spawn a
-// fresh proof-server. Returns once spawn succeeds at the OS level —
-// the frontend then resumes health-check polling to confirm it actually
-// started serving requests. Spawn-time eprintln in spawn_proof_server
-// captures the underlying reason for failures (bun missing, binary
-// missing, port stuck, etc.).
-#[tauri::command]
-fn respawn_proof_server(app: tauri::AppHandle) -> Result<(), String> {
-    shutdown_proof_server(&app);
-    let workspace_root = find_workspace_root(&app);
-    let pgid = spawn_proof_server(&workspace_root)
-        .map(|child| child.id() as i32)
-        .ok_or_else(|| "spawn returned no pid (see app logs for reason)".to_string())?;
-    app.state::<ProofServerPgid>()
-        .0
-        .store(pgid, Ordering::SeqCst);
-    Ok(())
 }
 
 /// Hand control of the close decision to the frontend by emitting
@@ -136,187 +30,12 @@ fn request_app_close(app: &tauri::AppHandle) {
     }
 }
 
-fn find_workspace_root(app_handle: &tauri::AppHandle) -> PathBuf {
-    let mut dir = app_handle
-        .path()
-        .resource_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
-    for _ in 0..10 {
-        // Anchor on proof-sdk's server entry — that's all we need now that
-        // dev runs through `bun` (which is on PATH, no per-workspace install).
-        if dir.join("node_modules/proof-sdk/server/index.ts").exists() {
-            return dir;
-        }
-        if let Some(parent) = dir.parent() {
-            dir = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-    PathBuf::from(".")
-}
-
-#[cfg(debug_assertions)]
-fn which_bun() -> Option<PathBuf> {
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
-        let candidate = std::path::Path::new(dir).join("bun");
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-fn kill_port_holders(port: u16) {
-    if let Ok(out) = Command::new("lsof").arg(format!("-ti:{port}")).output() {
-        let pids = String::from_utf8_lossy(&out.stdout);
-        let mut killed = false;
-        for pid in pids.lines().filter(|l| !l.is_empty()) {
-            let _ = Command::new("kill").arg("-9").arg(pid).status();
-            println!("[proof-server] killed leftover pid={pid} on port {port}");
-            killed = true;
-        }
-        // Wait for the OS to release the port before attempting a new bind.
-        if killed {
-            thread::sleep(Duration::from_millis(300));
-        }
-    }
-}
-
-fn spawn_proof_server(workspace_root: &PathBuf) -> Option<Child> {
-    // Defensive: a stale proof-server (from a prior dev/run) holding port
-    // 4000 will silently keep our new spawn from binding. Kill any
-    // lingering listener before we try.
-    kill_port_holders(4000);
-
-    let (program, pre_args, working_dir): (PathBuf, Vec<PathBuf>, PathBuf);
-
-    #[cfg(debug_assertions)]
-    {
-        // Dev: run the .ts source through bun (so bun:sqlite resolves).
-        let server_entry = workspace_root.join("node_modules/proof-sdk/server/index.ts");
-        if !server_entry.exists() {
-            eprintln!("[proof-server] proof-sdk server entry not found");
-            return None;
-        }
-        let bun = match which_bun() {
-            Some(b) => b,
-            None => {
-                eprintln!("[proof-server] bun not found on PATH; install via https://bun.sh");
-                return None;
-            }
-        };
-        program = bun;
-        pre_args = vec![PathBuf::from("run"), server_entry];
-        working_dir = workspace_root.join("node_modules/proof-sdk");
-    }
-
-    #[cfg(not(debug_assertions))]
-    {
-        // Prod: use the bundled proof-server binary that Tauri ships next to
-        // the main exe. No Node, no source files, no node_modules required.
-        let exe_dir = match std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        {
-            Some(d) => d,
-            None => {
-                eprintln!("[proof-server] could not resolve current_exe parent");
-                return None;
-            }
-        };
-        let binary = exe_dir.join("proof-server");
-        if !binary.exists() {
-            eprintln!(
-                "[proof-server] bundled binary not found at {}",
-                binary.display()
-            );
-            return None;
-        }
-        program = binary;
-        pre_args = vec![];
-        // Run from the home directory so the bundled binary doesn't try to
-        // write into the read-only .app bundle. The actual DB path is set
-        // explicitly via DATABASE_PATH below.
-        working_dir = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"));
-    }
-
-    // Resolve writable paths. Dev keeps the legacy in-repo location; prod
-    // tucks them into the user's home dir so the bundled binary doesn't
-    // try to write inside the read-only .app. proof-sdk reads both via
-    // env vars (DATABASE_PATH, SNAPSHOT_DIR) so we just point them.
-    let db_path: PathBuf;
-    let snapshot_dir: PathBuf;
-    #[cfg(debug_assertions)]
-    {
-        let proof_sdk_dir = workspace_root.join("node_modules/proof-sdk");
-        db_path = proof_sdk_dir.join("proof-share.db");
-        snapshot_dir = proof_sdk_dir.join("snapshots");
-        let _ = std::fs::create_dir_all(&snapshot_dir);
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        let home = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"));
-        let writer_data = home
-            .join("Library/Application Support/com.conductor.writer");
-        let _ = std::fs::create_dir_all(&writer_data);
-        db_path = writer_data.join("proof-share.db");
-        snapshot_dir = writer_data.join("snapshots");
-        let _ = std::fs::create_dir_all(&snapshot_dir);
-    }
-
-    let mut cmd = Command::new(&program);
-    for arg in &pre_args {
-        cmd.arg(arg);
-    }
-    cmd.env("PORT", "4000")
-        .env("DATABASE_PATH", &db_path)
-        .env("SNAPSHOT_DIR", &snapshot_dir)
-        // Allow both the dev Vite origin and the prod Tauri webview origins
-        // (which differ between Tauri versions / platforms — list both
-        // common forms so we don't have to rebuild when Tauri changes).
-        .env(
-            "PROOF_CORS_ALLOW_ORIGINS",
-            "http://localhost:1420,tauri://localhost,http://tauri.localhost,https://tauri.localhost",
-        )
-        // Collab WS is multiplexed on the same HTTP port (embedded mode).
-        // Without this, the server computes collabWsUrl as port+1 (4001) instead of 4000.
-        .env("COLLAB_EMBEDDED_WS", "1")
-        .current_dir(&working_dir);
-    let _ = workspace_root; // silence unused-warn in prod builds
-
-    // Put child in its own process group so we can kill the whole tree
-    // (tsx spawns a Node child; we need both to die together).
-    #[cfg(unix)]
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
-    }
-
-    match cmd.spawn() {
-        Ok(child) => {
-            println!("[proof-server] spawned pid={}", child.id());
-            Some(child)
-        }
-        Err(e) => {
-            eprintln!("[proof-server] failed to spawn: {e}");
-            None
-        }
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .manage(ProofServerPgid(AtomicI32::new(0)))
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(oauth::PendingOAuth::default())
         .invoke_handler(tauri::generate_handler![
             oauth::start_claude_oauth,
@@ -327,9 +46,9 @@ pub fn run() {
             claude_sidecar::commands::claude_chat_start,
             claude_sidecar::commands::claude_chat_cancel,
             claude_sidecar::commands::claude_title,
+            fetch_url::fetch_url,
+            anthropic::anthropic_messages_create,
             app_quit,
-            check_proof_server_health,
-            respawn_proof_server,
         ])
         .setup(|app| {
             // Replace the default macOS Quit menu item with one we control.
@@ -402,19 +121,9 @@ pub fn run() {
                 });
             }
 
-            let workspace_root = find_workspace_root(app.handle());
-            println!("[proof-server] workspace root: {}", workspace_root.display());
-
-            // Capture the spawned child's pid (== pgid because we setsid in
-            // pre_exec). The Child handle itself is dropped at end of scope —
-            // the OS process keeps running, and shutdown uses pgid to SIGTERM
-            // the whole group.
-            let pgid = spawn_proof_server(&workspace_root)
-                .map(|child| child.id() as i32)
-                .unwrap_or(0);
-            app.state::<ProofServerPgid>()
-                .0
-                .store(pgid, Ordering::SeqCst);
+            // proof-server spawn removed (Phase 3.D). The app now boots
+            // directly into the claude sidecars below — no engine gate,
+            // no port-4000 listener, no projection-repair daemon.
 
             // Spawn the Claude sidecars (chat + title). Run on the Tauri
             // async runtime; if it fails, log and let the app keep running
@@ -446,12 +155,6 @@ pub fn run() {
                 if window.label() == "main" {
                     api.prevent_close();
                     request_app_close(window.app_handle());
-                    return;
-                }
-            }
-            if let tauri::WindowEvent::Destroyed = event {
-                if window.label() == "main" {
-                    shutdown_proof_server(window.app_handle());
                 }
             }
         })
@@ -465,10 +168,6 @@ pub fn run() {
                 }
                 tauri::RunEvent::Exit => {
                     eprintln!("[run] Exit");
-                    // Cmd+Q / dock quit / programmatic exit route here without
-                    // firing WindowEvent::Destroyed, so this is the only
-                    // reliable hook for proof-server cleanup on those paths.
-                    shutdown_proof_server(app_handle);
                 }
                 tauri::RunEvent::WindowEvent { label, event, .. } => {
                     if matches!(

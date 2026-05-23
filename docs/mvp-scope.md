@@ -343,3 +343,62 @@ ChatPanel.tsx **1058 → 534 라인** (≈50% 감소). LEGO-block 구조로 재�
 - [ ] DMG 빌드 + 코드 사이닝 + 공증 (7번 후속)
 - [ ] 베타 5–10 명 onboarding 메시지 + 채널
 - [ ] 첫 주 모니터링 후 🟡 핫픽스
+
+---
+
+## 🚀 v0.0.1 Release (2026-05-19 시작)
+
+위 Phase 0~4 로드맵 대신, **5 개 theme 으로 재구조화** 한 출시 계획. 사용자
+결정 — Reliability + 데이터 안전 + Memory Bootstrap 을 우선, 나머지는 narrow
+한 surface 만.
+
+세부 실행 계획: `/Users/williamjung/.claude/plans/async-imagining-book.md`
+
+### 진행 상황
+
+| Theme | 작업 | 상태 |
+|---|---|---|
+| Theme 1 — Reliability 기반 | silent failure 토스트화, CSP, quit flush, vault write surface, build target 좁히기 등 7 items | ✅ 완료 (2026-05-19) |
+| Theme 2 — External edit 보호 | vault watcher → 충돌 토스트 (Reload from disk / Keep mine) | ✅ 완료 (2026-05-19) |
+| Theme 3 — Memory Bootstrap | Profile pipeline (Sources → LLM → wiki:profile zones) | ✅ 완료 (2026-05-20, ADR `2026-05-20-profile-pipeline-rebuild.md`) |
+| Theme 4 — First-User Polish | Claude Connect 버튼 surface, vault picker UX, empty-state 가이드 | ⬜ 대기 |
+| Theme 5 — Pre-Ship Hygiene | E2E 5 시나리오, 릴리즈 노트, DMG 빌드, 마지막 typecheck/test | ⬜ 대기 |
+
+### Theme 3 — Memory Bootstrap 세부
+
+**2026-05-20 재설계**: 옛 B1~B6 (BootstrapDialog + Import file picker +
+bootstrapIngest) 는 같은 날 morning 에 land 후 검토에서 모놀리식 흐름 +
+Karpathy 정신과의 deviation 으로 폐기. 같은 날 afternoon 에 Karpathy
+정신에 맞춰 재작성 — Sources (raw) → LLM 분석 → wiki:profile zones
+(derived). 옛 ADR `2026-05-20-bootstrap-import-pipeline.md` 는
+superseded; 새 설계는 `2026-05-20-profile-pipeline-rebuild.md` 참고.
+
+| Step / Phase | 작업 | 상태 |
+|---|---|---|
+| Step 1 | 옛 onboarding/profile 코드 전부 삭제 | ✅ `a9017329` |
+| Step 2 | `profile/conventions.ts` — Voice / Themes / About 섹션 지침 | ✅ `fabaecce` |
+| Step 3 | `profile/adapters/` — RSS / Sitemap / Readability + router | ✅ `7581e137` |
+| Step 4 | `profile/pipeline.ts` — URL → 어댑터 → LLM 3 회 → wiki:profile | ✅ `02a051a9` |
+| Step 5 | `profile/ui/OnboardingDialog.tsx` + BootGate trigger | ✅ `f53af8a0` |
+| Phase 1 | `profile/sources.ts` — vault/sources/ 영구 저장 (재실행 시 fetch 0) | ✅ `5e5c8dc8` |
+| Phase 3 | `profile/markers.ts` + `replaceDocBody` — H2 헤딩 기반 zone 분리 | ✅ `d090ac26` / `995b3054` |
+| Phase 4 | DEFAULT_CONVENTIONS 에 wiki:profile zone 룰 — ingest 가 `## Background` 영역으로 가도록 | ✅ `7a40ee69` |
+| Phase 5 | derivations JSON 폐기 — Profile.md 가 single source of truth | ✅ `dedfa16f` |
+
+**e2e 검증 결과 (2026-05-20)**:
+- localStorage `bootstrapCompleted` 리셋 → OnboardingDialog 등장
+- `https://williamjung0130.substack.com/` 입력 → Analyze
+- 카드 순서: ✓ Found 8 posts via rss → ✓ Voice → ✓ Themes → ✓ About → done
+- `vault/wiki/Profile.md` 생성 — Voice/Themes/About/Sources + 빈 Background/Notes
+- `vault/sources/williamjung0130-substack-com/` 에 8 편 markdown 저장 (byte-truncate 적용)
+
+### Theme 3 — Dogfood Gate (1 주)
+
+본인이 일주일 사용 후 다음 항목 부각 시 작업:
+
+1. **Source 추가 동작** — 두 번째 URL 입력 (sources/ 폴더에 새 namespace 추가) 미검증. 시도 시 깨지면 fix.
+2. **Background zone splice** — ingest LLM 이 wiki:profile 의 `## Background` 영역으로 정확히 들어가는지. 지금 ingest 는 페이지 끝으로 append → Notes 침범. 사용자가 자기 데일리에 자기 얘기 본격 쓰면 부각.
+3. **Token usage 가시화** — 응답 `usage` 필드 콘솔/UI 노출. 30 분 작업, 비파괴적.
+4. **API key 입력 옵션** — OAuth-token 예산 공유 (chat/ingest/profile 같은 풀) 가 hard cap. 옵션 추가는 진짜 필요해질 때.
+
+3 개 다 자연스럽게 작동 → 추가 작업 없음. 부딪힘 → 그 자리에서 진단.

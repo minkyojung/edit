@@ -131,7 +131,7 @@ Esc / Cmd+Z 취소 보장 필수.
 
 ### 5.5 기존 시스템 무변경 확인
 - `MarkToolbar` (셀렉션 버블, Comment/Suggest) — 그대로
-- proofMark schema (proofSuggestion, proofComment, ...) — 그대로
+- 현재 정의된 proofMark (`apps/writer-tauri/src/editor/markTypes.ts` 단일 출처) — 그대로
 - 새 포맷 mark는 commonmark preset의 표준 mark만 사용 (custom mark 추가 0)
 
 ---
@@ -306,23 +306,26 @@ Style 드롭다운 / B / I / Link / Style 변환 모두 commonmark 명령이 이
 
 ---
 
-## 12. proofMark 공존 검증 결과 (2026-05-09 조사)
+## 12. proofMark 공존 검증 결과 (2026-05-09 조사, 2026-05-20 schema 갱신)
 
 검증 대상: 새로 활성화될 표준 마크(strong / emphasis / inlineCode /
 strike_through / link)가 기존 proofMark(proofSuggestion / proofComment /
-proofFlagged / proofApproved / proofAuthored / proofProvenance)와
-schema·시각·직렬화에서 공존 가능한지.
+proofFlagged / proofAuthored)와 schema·시각·직렬화에서 공존 가능한지.
+
+> 2026-05-17 proof-sdk 제거 (Phase 3.G) 이후 schema 단일 출처는
+> `apps/writer-tauri/src/editor/markTypes.ts`. `proofApproved`,
+> `proofProvenance`는 제거됐고 `proofFlagged`는 schema에만 reserved
+> (UI 없음). `inlineCodeSafe.ts`는 `ALL_PROOF_MARK_NAMES`를 import해
+> schema 변경에 자동 정합.
 
 ### 12.1 proofMark schema 요약
 
-| Mark | inclusive | excludes | spanning |
-|---|---|---|---|
-| proofSuggestion | false | (default) | true |
-| proofComment | false | (default) | true |
-| proofFlagged | false | (default) | true |
-| proofApproved | false | (default) | true |
-| proofAuthored | true | `'proofAuthored'` (자기 자신만) | true |
-| proofProvenance | false | (default) | true |
+| Mark | inclusive | excludes | spanning | UI |
+|---|---|---|---|---|
+| proofSuggestion | false | (default) | true | ✅ |
+| proofComment | false | (default) | true | ✅ |
+| proofFlagged | false | (default) | true | reserved (UI 없음) |
+| proofAuthored | true | `'proofAuthored'` (자기 자신만) | true | ✅ |
 
 ProseMirror `excludes` 기본값은 자기 자신만 → 표준 마크와 같은 range에
 공존 가능.
@@ -451,14 +454,16 @@ Phase 1 진입 가능. 단 다음 두 결정을 잠금:
 | `.label-wrapper user-select: none` | `bafef19c` | icon 열이 selection 사각형에 끼지 않게 |
 | frozen-selection 데코 페인트 제거 | `df66ecf2` | blur 트리거가 너무 광범위해서 stale 녹색 박스가 본문에 영구로 남음. 시각 표시는 ChatPanel chip이 이미 담당 → 페인트는 사족. snapshot/`getFrozenRange` 로직과 self-heal은 유지 |
 
-### 13.8 다음 작업 큐
+### 13.8 다음 작업 큐 (2026-05-20 갱신)
 
-doc이 명시한 큐는 Phase 1 / 1.5 / 2 모두 닫힘. 다음 우선순위는 명시되지 않음. 후보:
+doc이 명시한 큐는 Phase 1 / 1.5 / 2 모두 닫힘. 다음 우선순위:
 
-- **A. 슬래시 메뉴 카탈로그 보강** — §6.2가 언급한 Image 진입점 추가 (Wikilink는 `[[`로 별도 진입). 항목 그루핑 검토
-- **B. proofMark 협업 검증 (§8 매트릭스 미완)** — 두 클라이언트 동시 편집으로 mark 전파·라운드트립 정식 통과 기록
-- **C. Phase 3 신규 인라인 (§7)** — highlight, sub/super, 링크 hover preview
+- **A. ~~슬래시 메뉴에 Image 진입점 추가~~ → 보류** — Tauri CSP가 `img-src 'self' data: blob:`로 좁아져 있어 외부 URL 이미지는 차단됨 (`apps/writer-tauri/src-tauri/tauri.conf.json:26`). 슬래시 메뉴 항목만 추가해도 실제 동작 0. Phase 4 (파일 기반 pivot) 종착점이 vault 안의 이미지 + `asset:` 프로토콜 + 마크다운 상대 경로라, 그때 통합해서 추가하는 게 정공법
+- **B. ~~proofMark 협업 검증~~ → 보류** — proof-sdk 제거 후 다중 사용자 협업이 비목표가 됨 (refactor-proof-sdk-removal README "보존/비목표" 표 참조). 곧 들어올 파일 기반 pivot (Phase 4) 후 "외부 도구 동시 편집에도 mark 메타 보존" 형태로 재정의 필요. §8 매트릭스의 "Yjs 동기화" 행도 같은 이유로 재정의 대기
+- **C. Phase 3 신규 인라인 (§7)** — highlight, sub/super, 링크 hover preview. 사용 데이터 본 뒤 결정
 - **D. doc에 없는 새 우선순위** — 사용자 결정
+
+다음 실제 작업은 **markdown-styling 영역 밖** — Phase 4 (파일 기반 pivot)의 4.F (chat thread 이주). `refactor-proof-sdk-removal/07-file-based-pivot.md` 참조.
 
 확정 결정 (잠금):
 - `Cmd+K` 재할당은 **취소** (사용자가 "원래대로 되돌려줘"로 reverted)

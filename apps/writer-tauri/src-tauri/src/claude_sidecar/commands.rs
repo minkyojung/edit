@@ -30,6 +30,13 @@ pub struct ChatStartArgs {
     /// Sidecar handles the registration; frontend does not pass tool schemas.
     #[serde(default)]
     pub relay_tools: Option<Vec<String>>,
+    /// Absolute path of the active vault folder. Forwarded to the sidecar so
+    /// tools like `read_page` / `search_wiki` can read markdown directly from
+    /// disk (Claude SDK-native pattern — tool handlers ARE the data source).
+    /// Optional because chats without filesystem-touching tools don't need it;
+    /// when omitted, the corresponding relay tools are silently disabled.
+    #[serde(default)]
+    pub vault_path: Option<String>,
     #[serde(default)]
     pub permission_mode: Option<String>,
     /// Reasoning effort hint forwarded as-is to the SDK's `effort` option.
@@ -95,6 +102,9 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     }
     if let Some(tools) = args.relay_tools {
         params["relayTools"] = json!(tools);
+    }
+    if let Some(vp) = args.vault_path {
+        params["vaultPath"] = Value::String(vp);
     }
     if let Some(mode) = args.permission_mode {
         params["permissionMode"] = Value::String(mode);

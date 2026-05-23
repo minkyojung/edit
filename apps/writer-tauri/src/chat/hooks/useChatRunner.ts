@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import * as Y from 'yjs'
-import { runChat } from '@/agent/chat'
+import { runChat } from '@/agent/chat/index'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import type { ChatEffort, ChatModel, ChatTurn } from '@/chat/types'
@@ -84,10 +84,10 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
 
   // No view-change abort: a run started against doc A keeps running
   // after the user switches to doc B. chat.ts's proposal listener
-  // routes by slug — proposals for the (now unmounted) original doc
-  // land in pendingProposalsStore and drain when the user comes back.
+  // routes by slug — proposals land in the target doc's Y.Doc
+  // directly (markStore.add) as long as its handle is still open.
   // closeDoc / archiveDoc in docsStore aborts runs whose owning slug
-  // is removed, so a truly-destroyed ydoc never receives a write.
+  // is removed, so a truly-destroyed ydoc never receives a late mark.
 
   const run = useCallback(
     async (threadId: string, history: ChatTurn[], overrides?: RunOverrides) => {

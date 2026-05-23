@@ -42,10 +42,9 @@ interface EditorHeaderProps {
 }
 
 const STATUS_LABEL: Record<CollabStatus, string | null> = {
-  initializing: 'Starting…',
-  connecting: 'Connecting…',
-  connected: null,
-  error: 'Offline',
+  loading: 'Starting…',
+  ready: null,
+  error: 'Storage error',
 }
 
 export function EditorHeader({
@@ -56,6 +55,7 @@ export function EditorHeader({
   const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
   return (
     <div
+      data-tauri-drag-region
       className="flex shrink-0 items-center bg-card shadow-[inset_0_-1px_0_var(--border)]"
       style={{ height: 'var(--header-h)' }}
     >

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Ensure src-tauri/binaries/ contains everything Tauri's externalBin
-# declares — pinned bun + compiled proof-server — for the host platform
-# by default, or for the full matrix when called with --all-targets.
+# Ensure src-tauri/binaries/ contains a pinned bun for the host platform
+# (or for the full matrix when called with --all-targets). Bun is the
+# runtime for the Claude sidecar (sidecar/src/index.mjs); we pin a version
+# instead of relying on system install so every developer / CI run uses
+# the same binary.
+#
+# proof-server was previously built here too; it is gone (Phase 3.D —
+# every doc operation now runs against the local Y.Doc + IDB).
 #
 # Idempotent: re-running is a no-op once binaries match the pinned
 # version. Safe to call from postinstall and beforeDevCommand.
-#
-# Bun is downloaded from the official releases instead of relying on
-# a system install so every developer / CI run uses the same version.
-# proof-server is built with that same pinned bun, not whatever the
-# user happens to have on PATH.
 
 set -euo pipefail
 
@@ -18,7 +18,6 @@ BUN_VERSION="1.3.13"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WT_ROOT="$SCRIPT_DIR/.."
 OUT_DIR="$WT_ROOT/src-tauri/binaries"
-PROOF_SDK_ROOT="$WT_ROOT/../../../proof-sdk"
 mkdir -p "$OUT_DIR"
 
 ALL_TARGETS=false
@@ -26,14 +25,14 @@ if [[ "${1:-}" == "--all-targets" ]]; then
   ALL_TARGETS=true
 fi
 
-# Returns: "<bun_release_platform>|<bun_compile_target>|<rust_triple>|<suffix>"
+# Returns: "<bun_release_platform>|<rust_triple>|<suffix>"
 target_row() {
   case "$1" in
-    aarch64-apple-darwin)      echo "darwin-aarch64|bun-darwin-arm64|aarch64-apple-darwin|" ;;
-    x86_64-apple-darwin)       echo "darwin-x64|bun-darwin-x64|x86_64-apple-darwin|" ;;
-    x86_64-unknown-linux-gnu)  echo "linux-x64|bun-linux-x64|x86_64-unknown-linux-gnu|" ;;
-    aarch64-unknown-linux-gnu) echo "linux-aarch64|bun-linux-arm64|aarch64-unknown-linux-gnu|" ;;
-    x86_64-pc-windows-msvc)    echo "windows-x64|bun-windows-x64|x86_64-pc-windows-msvc|.exe" ;;
+    aarch64-apple-darwin)      echo "darwin-aarch64|aarch64-apple-darwin|" ;;
+    x86_64-apple-darwin)       echo "darwin-x64|x86_64-apple-darwin|" ;;
+    x86_64-unknown-linux-gnu)  echo "linux-x64|x86_64-unknown-linux-gnu|" ;;
+    aarch64-unknown-linux-gnu) echo "linux-aarch64|aarch64-unknown-linux-gnu|" ;;
+    x86_64-pc-windows-msvc)    echo "windows-x64|x86_64-pc-windows-msvc|.exe" ;;
     *) echo "✗ unsupported target: $1" >&2; exit 1 ;;
   esac
 }
@@ -59,7 +58,7 @@ HOST_TRIPLE=$(host_triple)
 
 ensure_bun() {
   local triple="$1"
-  IFS='|' read -r bun_release_platform _ rust_triple suffix <<< "$(target_row "$triple")"
+  IFS='|' read -r bun_release_platform rust_triple suffix <<< "$(target_row "$triple")"
   local target="$OUT_DIR/bun-${rust_triple}${suffix}"
   local marker="${target}.version"
 
@@ -90,40 +89,10 @@ ensure_bun() {
   rm -rf "$tmp"
 }
 
-ensure_proof_server() {
-  local triple="$1"
-  IFS='|' read -r _ bun_compile_target rust_triple suffix <<< "$(target_row "$triple")"
-  local target="$OUT_DIR/proof-server-${rust_triple}${suffix}"
-  local marker="${target}.bun-version"
-
-  if [[ -f "$target" && -f "$marker" && "$(cat "$marker")" == "$BUN_VERSION" ]]; then
-    return 0
-  fi
-
-  if [[ ! -f "$PROOF_SDK_ROOT/server/index.ts" ]]; then
-    echo "✗ proof-sdk entry not found at $PROOF_SDK_ROOT/server/index.ts" >&2
-    exit 1
-  fi
-
-  local host_bun="$OUT_DIR/bun-${HOST_TRIPLE}"
-  if [[ ! -x "$host_bun" ]]; then
-    echo "✗ host bun missing at $host_bun (ensure_bun must run first)" >&2
-    exit 1
-  fi
-
-  echo "→ build proof-server (${bun_compile_target})"
-  (cd "$PROOF_SDK_ROOT" && "$host_bun" build server/index.ts \
-    --compile --target="$bun_compile_target" --outfile "$target") >/dev/null
-  chmod +x "$target"
-  echo "$BUN_VERSION" > "$marker"
-}
-
 if $ALL_TARGETS; then
   for triple in "${ALL_TRIPLES[@]}"; do ensure_bun "$triple"; done
-  for triple in "${ALL_TRIPLES[@]}"; do ensure_proof_server "$triple"; done
 else
   ensure_bun "$HOST_TRIPLE"
-  ensure_proof_server "$HOST_TRIPLE"
 fi
 
 echo "✓ binaries ready in $OUT_DIR"

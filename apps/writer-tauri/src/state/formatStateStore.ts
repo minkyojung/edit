@@ -20,6 +20,7 @@ export type FormatBlockType =
   | 'heading-6'
   | 'bullet_list'
   | 'ordered_list'
+  | 'task_list'
   | 'blockquote'
   | 'code_block'
   | 'unknown'

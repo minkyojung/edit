@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import {
   IconSettings,
   IconFilter,
@@ -9,6 +9,7 @@ import {
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { SidebarDateMenu } from './SidebarDateMenu'
+import { NavHistoryButtons } from './NavHistoryButtons'
 import { DayView } from './views/DayView'
 import { WeekView } from './views/WeekView'
 import { MonthView } from './views/MonthView'
@@ -16,6 +17,7 @@ import { WikiSection } from './WikiSection'
 import { ArchivedDocsPopover } from './ArchivedDocsPopover'
 import { IngestProposalCard } from './IngestProposalCard'
 import { useDocsStore } from '@/state/docsStore'
+import { buildDayUrl, buildViewUrl, getActiveSlugFromHash } from '@/lib/viewUrl'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
@@ -117,7 +119,6 @@ function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
 
 export function AppSidebar() {
   const { palette, setPalette } = useTheme()
-  const { pathname } = useLocation()
   const connectOpen = useConnectDialog((s) => s.open)
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const { account, refresh, disconnect } = useClaudeAuth()
@@ -131,14 +132,14 @@ export function AppSidebar() {
 
   const openDaily = useDocsStore((s) => s.openDaily)
   const createChildNote = useDocsStore((s) => s.createChildNote)
+  const findDailyAncestorSlug = useDocsStore((s) => s.findDailyAncestorSlug)
   const navigate = useNavigate()
 
   // Global doc shortcuts:
-  //   ⌘T → today's daily entry (always reachable, even from /wiki).
+  //   ⌘T → today's daily entry (always reachable). Routes through
+  //         buildDayUrl so the jump lands a back/forward entry.
   //   ⌘N → new child note under whatever's currently active. Mirrors
   //         Linear / Notion: "make a new thing inside this thing".
-  // Both pop the user back to /notes if they were on a side route
-  // since that's where the result becomes visible.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
@@ -147,33 +148,46 @@ export function AppSidebar() {
         e.preventDefault()
         // ⌘T jumps to today and lands the user on Day view so the
         // shortcut reads as "take me to today's work surface,"
-        // regardless of which date view they had open. Reset the Day
-        // view's anchor too so a stepped-away anchor doesn't linger
-        // after a "go home" gesture.
-        const today = useDocsStore.getState().dayAnchor
+        // regardless of which date view they had open. Driving this
+        // through navigate() (not direct store setters) gives the
+        // jump a slot in the back/forward stack — ⌘[ undoes the ⌘T.
         const realToday = new Date()
         const yyyy = realToday.getFullYear()
         const mm = String(realToday.getMonth() + 1).padStart(2, '0')
         const dd = String(realToday.getDate()).padStart(2, '0')
         const todayISO = `${yyyy}-${mm}-${dd}`
-        if (today !== todayISO) {
-          useDocsStore.getState().setDayAnchor(todayISO)
-        }
-        openDaily().catch((err) =>
+        openDaily(todayISO).then((slug) => {
+          navigate(buildDayUrl(todayISO, slug ?? null))
+        }).catch((err) =>
           console.error('[docs] ⌘T openDaily failed', err),
         )
-        useDocsStore.getState().setSidebarTab('day')
-        if (!pathname.startsWith('/notes')) navigate('/notes')
         return
       }
       if (e.key === 'n' || e.key === 'N') {
         e.preventDefault()
-        const activeSlug = useDocsStore.getState().activeSlug
+        const activeSlug = getActiveSlugFromHash()
         if (!activeSlug) return
-        createChildNote(activeSlug).catch((err) =>
+        // Writings nest only 1-deep under a daily. If a writing is
+        // currently active, ⌘N creates a sibling under the same daily
+        // rather than a (forbidden) grandchild. Daily / wiki active
+        // pass through unchanged: daily → child writing, wiki → null
+        // (createChildNote refuses, ⌘N becomes a no-op on wiki pages).
+        const target =
+          findDailyAncestorSlug(activeSlug) ?? activeSlug
+        createChildNote(target).then((created) => {
+          if (!created) return
+          const store = useDocsStore.getState()
+          navigate(
+            buildViewUrl({
+              tab: store.sidebarTab,
+              dayAnchor: store.dayAnchor,
+              monthAnchor: store.monthAnchor,
+              slug: created,
+            }),
+          )
+        }).catch((err) =>
           console.error('[docs] ⌘N createChildNote failed', err),
         )
-        if (!pathname.startsWith('/notes')) navigate('/notes')
       }
     }
     // Capture phase so the editor / chat input / any descendant that
@@ -182,17 +196,28 @@ export function AppSidebar() {
     // over local input handling.
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [openDaily, createChildNote, navigate, pathname])
+  }, [openDaily, createChildNote, findDailyAncestorSlug, navigate])
 
   return (
     <Sidebar>
       <SidebarHeader
-        className="flex flex-row items-center gap-0.5 p-0 pl-2 pr-1"
+        data-tauri-drag-region
+        className="flex flex-row items-center gap-0.5 p-0 pr-1"
         style={{ height: 'var(--header-h)' }}
       >
-        <div data-tauri-drag-region className="flex-1 h-full" />
-        <SidebarDateMenu />
+        {/* Reserve the macOS traffic-light area as a drag region so
+            the OS dots paint over our chrome rather than over a real
+            button. Same width token as EditorHeader so the two
+            headers line up across the sidebar boundary. */}
+        <div
+          data-tauri-drag-region
+          className="h-full shrink-0"
+          style={{ width: 'var(--traffic-light-w)' }}
+        />
         <SidebarTrigger />
+        <NavHistoryButtons />
+        <SidebarDateMenu />
+        <div data-tauri-drag-region className="flex-1 h-full" />
       </SidebarHeader>
 
       <SidebarContent>

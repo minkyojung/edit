@@ -1,30 +1,23 @@
 // Single source of truth for the displayed label of a doc, used by
-// every surface that renders a doc reference (tabs, sidebar tree,
+// every surface that renders a doc reference (tabs, sidebar, palette,
 // breadcrumb, wikilink palette, unlinked-notes list, dialog title).
 //
-// Resolution order:
-//   1. Daily entry  → meta.date (anchor; no editable title at all).
-//   2. Wiki entry   → live body label (deriveLabel) if non-empty,
-//      else the cached knownDocs.title (set at create time for both
-//      seeds and custom pages), else a type-derived label. Wiki docs
-//      are bootstrapped with an empty body, so without this fallback
-//      they'd all read as 'Untitled'. The cached-title fallback is
-//      what lets a custom 'wiki:custom-<id>' page show its real
-//      user-given name ('people') instead of the opaque suffix.
-//   3. Warm writing → live body label (deriveLabel via useDocTitle).
-//      Reflects every keystroke, including across collab peers. If
-//      the body is empty, falls through to the cached knownDocs.title
-//      so wikilink children don't flicker to 'Untitled' the moment
-//      the user opens them — the cached label persists until they
-//      type a real first line.
-//   4. Cold writing → knownDocs.title, the persisted mirror set at
-//      create time and kept in sync by the per-handle body observer
-//      installed in docsStore.ensureHandle. Lets closed/unopened
-//      docs still show their real label without N WebSockets.
-//   5. Fallback     → 'Untitled'.
+// Policy (Obsidian model — title is independent of body):
+//
+//   1. Daily entry  → meta.date (anchor; no editable title).
+//   2. System page  → fixed name derived from the `system:*` type id.
+//   3. Wiki / Writing → `knownDocs[slug].title`. This IS the filename
+//      on disk (Path C Step 4); the only way to change it is the
+//      explicit renameDoc action, never via body edits.
+//   4. Fallback     → 'Untitled' when title is absent.
+//
+// Pre-Step-4 the writing branch fell back to the body's first line
+// when title was empty. That branch is gone — the body and the title
+// are decoupled, period. A doc with no title displays as 'Untitled'
+// regardless of what the body contains. To name it, use the inline
+// title input (PageHeader) or the Command Palette's Rename.
 
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
-import { useDocTitle } from './useDocTitle'
 
 const DAILY_LABEL_FMT = new Intl.DateTimeFormat('en-US', {
   weekday: 'long',
@@ -42,28 +35,25 @@ function formatDailyLabel(date: string): string {
 }
 
 export function useDocLabel(slug: string | null): string {
-  const handle = useDocsStore((s) => (slug ? s.handles[slug] : undefined))
   const known = useDocsStore((s) =>
     slug ? s.knownDocs.find((d) => d.slug === slug) : undefined,
   )
-  const title = useDocTitle(handle?.ydoc ?? null)
 
-  if (known?.type === 'daily' && known.date) return formatDailyLabel(known.date)
-  if (known && isWikiDoc(known)) {
-    const live = title.trim()
-    if (live) return live
+  if (!known) return 'Untitled'
+
+  if (known.type === 'daily' && known.date) return formatDailyLabel(known.date)
+
+  if (isWikiDoc(known)) {
     const cached = known.title?.trim()
     if (cached) return cached
-    // Custom content pages (wiki:custom-<id>) have meaningless
-    // type suffixes — fall back to 'Untitled' like the rest of the
-    // app. System pages (system:log / system:conventions /
-    // system:index) carry meaningful suffixes — surface them as
-    // the label so the sidebar reads as 'log' / 'Conventions' /
-    // 'index' rather than the raw type id.
-    if (known.type.startsWith('wiki:custom-')) return 'Untitled'
+    // System pages have a meaningful suffix to fall back on
+    // ('conventions' / 'log' / 'index'). Custom wiki pages with no
+    // title yet display as 'Untitled' until the user renames.
     if (known.type.startsWith('system:')) return known.type.replace(/^system:/, '')
-    return known.type.replace(/^wiki:/, '')
+    return 'Untitled'
   }
-  if (handle) return title || known?.title || 'Untitled'
-  return known?.title || 'Untitled'
+
+  // Writing notes — body decoupled from title (Step 4). Title is
+  // whatever renameDoc has set, or 'Untitled'.
+  return known.title?.trim() || 'Untitled'
 }

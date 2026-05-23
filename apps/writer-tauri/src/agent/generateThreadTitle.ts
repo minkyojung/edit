@@ -15,10 +15,13 @@ const TIMEOUT_MS = 15_000
 const SYSTEM = `Summarize the user's message into a concise 3-5 word title in the SAME LANGUAGE as the message.
 
 Rules:
-- Output only the title text. No quotes, no punctuation, no prefix like "Title:".
-- Keep it short — under 30 characters.
-- Capture the topic, not the speech act ("ask", "request", etc.).
+- Output only the title text on a single line. No quotes, no punctuation, no prefix like "Title:".
+- Keep it short — at most 6 words AND under 24 characters total.
+- Capture the topic noun phrase, not the speech act ("ask", "request", "tell me", etc.).
+- No greetings, no sentences. Title form only.
 - Match the language of the user's message exactly.`
+
+const TITLE_MAX_CHARS = 30
 
 interface ChatEvent {
   runId: string
@@ -80,8 +83,21 @@ export async function generateThreadTitle(userMessage: string): Promise<string |
       listen<DoneEvent>('claude:done', (e) => {
         if (e.payload.runId !== runId) return
         clearTimeout(timer)
-        const cleaned = text.trim().replace(/^["'`]|["'`]$/g, '')
-        settle(cleaned.length > 0 ? cleaned : null)
+        // Take the first non-empty line, strip wrapping quotes, collapse
+        // whitespace, then hard-cap length. Haiku occasionally returns a
+        // multi-line answer or a full sentence despite the prompt — caller
+        // sets this string directly as the thread title, so we must enforce
+        // brevity here rather than trusting the model.
+        const firstLine = text.split(/\r?\n/).map((s) => s.trim()).find((s) => s.length > 0) ?? ''
+        const cleaned = firstLine
+          .replace(/^["'`]+|["'`]+$/g, '')
+          .replace(/\s+/g, ' ')
+          .trim()
+        const capped =
+          cleaned.length > TITLE_MAX_CHARS
+            ? cleaned.slice(0, TITLE_MAX_CHARS).trimEnd() + '…'
+            : cleaned
+        settle(capped.length > 0 ? capped : null)
       }),
       listen<ErrorEvent>('claude:error', (e) => {
         if (e.payload.runId !== runId) return

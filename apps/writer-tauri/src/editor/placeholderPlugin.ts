@@ -18,7 +18,6 @@ import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view'
 import type { EditorState } from '@milkdown/kit/prose/state'
-import { isEffectivelyEmpty } from '@/lib/markdownText'
 
 const PLACEHOLDER_ATTR = 'data-placeholder'
 const placeholderKey = new PluginKey('writer-placeholder')
@@ -40,7 +39,14 @@ export function createPlaceholderPlugin(opts: PlaceholderOptions) {
             const first = doc.firstChild
             if (!first) return null
             if (first.type.name !== 'paragraph') return null
-            if (!isEffectivelyEmpty(first.textContent)) return null
+            // Emptiness test: structural content size, not textContent.
+            // A paragraph that holds only an inline atom (image, hr,
+            // future embed types) has `textContent === ''` but
+            // `content.size > 0` — without this distinction the
+            // placeholder hint would still paint at the start of the
+            // paragraph and collide with the image. Matches the
+            // standard PM-ecosystem pattern (Tiptap, etc.).
+            if (first.content.size !== 0) return null
             return DecorationSet.create(doc, [
               Decoration.node(0, first.nodeSize, {
                 [PLACEHOLDER_ATTR]: opts.bodyText,

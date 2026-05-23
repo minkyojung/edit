@@ -13,6 +13,8 @@ import { MessageFooter } from '@/chat/messages/MessageFooter'
 export const MessageRow = React.memo(function MessageRow({
   turn,
   slug,
+  threadId,
+  threadTitle,
   onRegenerate,
 }: {
   turn: ChatTurn
@@ -21,6 +23,13 @@ export const MessageRow = React.memo(function MessageRow({
    * editor to the mark. Null when no doc is active (chat panel can also
    * mount during transitional states). */
   slug: string | null
+  /** Active thread id — needed by the file-to-wiki action so the
+   * enqueued proposals carry their originating thread as `sourceSlug`.
+   * Null when no thread is active (the footer hides the action). */
+  threadId?: string | null
+  /** Active thread title — surfaces as `chat: <title>` on enqueued
+   * proposals. */
+  threadTitle?: string
   /** Provided only when this turn is the latest settled assistant turn —
    * the only one Regenerate is allowed on. */
   onRegenerate?: (turnId: string) => void
@@ -124,6 +133,8 @@ export const MessageRow = React.memo(function MessageRow({
         canCopy={canCopy}
         canRegenerate={canRegenerate}
         onRegenerate={onRegenerate}
+        threadId={threadId}
+        threadTitle={threadTitle}
       />
     </>
   )

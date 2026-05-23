@@ -68,6 +68,16 @@ export const notify = {
     })
   },
 
+  // ── Editor ────────────────────────────────────────────────────
+  /** Milkdown's Editor.make().create() chain rejected. The doc loaded
+   * but the editor couldn't be constructed — usually a schema/plugin
+   * registration regression. Reopening the note re-runs the chain. */
+  editorInitFailed() {
+    toast.error('Editor failed to load', {
+      description: 'Try closing and reopening this note',
+    })
+  },
+
   // ── Auth ──────────────────────────────────────────────────────
   claudeSessionExpired(opts: { onReconnect?: () => void } = {}) {
     toast.error('Claude session expired', {
@@ -98,20 +108,35 @@ export const notify = {
     toast.error("Couldn't create link")
   },
 
-  // ── Doc tree move ────────────────────────────────────────────
-  /** moveDoc refused — invalid target (cycle, system page parent,
-   * archived, etc.). Surfaced from the drag-and-drop drop handler;
-   * context-menu items self-disable so they never hit this path. */
-  cantMoveDoc() {
-    toast.error("Can't move there", {
-      description: 'That target would create a cycle or isn’t allowed',
-    })
-  },
-
   // ── External link ─────────────────────────────────────────────
   /** Cmd+click on a link couldn't reach the system browser. */
   linkOpenFailed() {
     toast.error("Couldn't open link")
+  },
+
+  // ── External-edit conflict ────────────────────────────────────
+  /** Vault watcher detected an external write to a doc that still
+   * has unsaved local edits. Persistent toast (no auto-dismiss) with
+   * two explicit resolutions — auto-flush stays gated on the conflict
+   * store until the user picks one. VSCode 's save-conflict prompt
+   * uses the same shape. */
+  externalEditConflict(args: {
+    fileName: string
+    onReopen: () => void
+    onDismiss: () => void
+  }) {
+    toast.warning(`External edit: ${args.fileName}`, {
+      description: 'You have unsaved changes.',
+      duration: Infinity,
+      action: {
+        label: 'Reload from disk',
+        onClick: args.onReopen,
+      },
+      cancel: {
+        label: 'Keep mine',
+        onClick: args.onDismiss,
+      },
+    })
   },
 
   // ── Wiki sync ─────────────────────────────────────────────────
@@ -132,6 +157,123 @@ export const notify = {
    * this one covers everything else). */
   wikiSyncFailed() {
     toast.error('Sync failed', { description: 'See console for details' })
+  },
+
+  // ── Chat → wiki handoff ───────────────────────────────────────
+  /** User filed an assistant reply into the wiki and the engine
+   * landed N proposals on the review queue. */
+  chatHandoffQueued(args: { count: number }) {
+    const noun = args.count === 1 ? 'update' : 'updates'
+    toast.success(`Filed to wiki — ${args.count} new ${noun}`, {
+      description: 'Open the wiki page to review',
+    })
+  },
+  /** Engine ran cleanly but the model judged the message had no
+   * durable facts to file. Not an error — surfacing it so the
+   * click doesn't feel like a no-op. */
+  chatHandoffEmpty() {
+    toast.message('Nothing to file', {
+      description: 'Nothing durable in this reply',
+    })
+  },
+  /** Model emitted text but didn't call the structured tool. Soft
+   * warning — caller can retry. */
+  chatHandoffMalformed() {
+    toast.warning("Couldn't read the wiki update", {
+      description: 'The model response was malformed — try again',
+    })
+  },
+  /** Transport / SDK error during chat→wiki handoff. */
+  chatHandoffFailed() {
+    toast.error("Couldn't file to wiki", {
+      description: 'See console for details',
+    })
+  },
+
+  // ── Vault ─────────────────────────────────────────────────────
+  /** User picked a folder that isn't empty and isn't an existing
+   * Writer vault. Vaults are "one folder = one app" so dropping our
+   * structure into ~/Documents would pollute their personal files. */
+  vaultFolderNotAcceptable(folderPath: string) {
+    toast.error('That folder is not empty', {
+      description: `${folderPath} has files we don't recognise. Pick an empty folder or an existing Writer vault.`,
+    })
+  },
+
+  // ── Bootstrap profile ─────────────────────────────────────────
+  /** Final summary toast for the first-run Profile pipeline (URL →
+   * extractProfile → wiki:profile). Mirrors bootstrapImportComplete
+   * but for the URL flow; fires after the dialog closes so the
+   * user sees the outcome alongside the wiki:profile page that
+   * just opened. */
+  profileBootstrapComplete(args: {
+    sourcesProcessed: number
+    sourcesFailed: number
+    saved: boolean
+  }) {
+    const { sourcesProcessed, sourcesFailed, saved } = args
+    const sourceWord = (n: number) => (n === 1 ? 'source' : 'sources')
+    if (!saved) {
+      toast.error("Couldn't save your profile", {
+        description: 'Profile extraction finished but writing the page failed. See console.',
+      })
+      return
+    }
+    if (sourcesProcessed === 0 && sourcesFailed > 0) {
+      toast.error("Couldn't read any URLs", {
+        description: `${sourcesFailed} ${sourceWord(sourcesFailed)} failed. See console for details.`,
+      })
+      return
+    }
+    if (sourcesFailed > 0) {
+      toast.warning(`Profile created from ${sourcesProcessed} of ${sourcesProcessed + sourcesFailed} ${sourceWord(sourcesProcessed + sourcesFailed)}`, {
+        description: `${sourcesFailed} ${sourceWord(sourcesFailed)} couldn't be read. See console.`,
+      })
+      return
+    }
+    toast.success(`Profile created from ${sourcesProcessed} ${sourceWord(sourcesProcessed)}`, {
+      description: 'Open the Profile page to review — chat already sees it.',
+    })
+  },
+
+  // ── Bootstrap import ──────────────────────────────────────────
+  /** Final summary toast for the first-run Import pipeline. Without
+   * it the dialog just closes silently — user has no way to tell
+   * whether anything was extracted, especially when the LLM returns
+   * 0 proposals (which is a valid outcome, not an error). Picker
+   * cancel is handled separately (caller bounces back to Stage 1)
+   * so this never fires for "nothing happened at all". */
+  bootstrapImportComplete(args: {
+    filesProcessed: number
+    filesFailed: number
+    totalProposals: number
+  }) {
+    const { filesProcessed, filesFailed, totalProposals } = args
+    const succeeded = filesProcessed - filesFailed
+    const filesWord = (n: number) => (n === 1 ? 'file' : 'files')
+    const entriesWord = (n: number) => (n === 1 ? 'entry' : 'entries')
+
+    if (succeeded === 0 && filesFailed > 0) {
+      toast.error("Couldn't import any files", {
+        description: `${filesFailed} ${filesWord(filesFailed)} failed. See console for details.`,
+      })
+      return
+    }
+    if (filesFailed > 0) {
+      toast.warning(`Imported ${succeeded} of ${filesProcessed} files`, {
+        description: `${filesFailed} ${filesWord(filesFailed)} couldn't be read. See console.`,
+      })
+      return
+    }
+    if (totalProposals > 0) {
+      toast.success(`Imported ${succeeded} ${filesWord(succeeded)}`, {
+        description: `${totalProposals} new wiki ${entriesWord(totalProposals)} ready to review`,
+      })
+      return
+    }
+    toast.success(`Imported ${succeeded} ${filesWord(succeeded)}`, {
+      description: 'No new facts to extract',
+    })
   },
 }
 

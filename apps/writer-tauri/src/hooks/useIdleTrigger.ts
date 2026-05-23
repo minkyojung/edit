@@ -30,22 +30,23 @@
 // the call site even though the idle policy is gone).
 
 import { useEffect, useRef } from 'react'
-import { runIngest } from '@/agent/ingest'
-import { useDocsStore, isWikiDoc, isUserOwnedWiki } from '@/state/docsStore'
+import { runIngest } from '@/agent/ingest/index'
+import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
+import { useDocsStore, isWikiDoc } from '@/state/docsStore'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
+import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
 import {
   ensureLogWikiSlug,
   createCustomWikiPage,
 } from '@/state/wikiService'
-import type { IngestProposal, IndexUpdate } from '@/agent/ingest'
+import type { IngestProposal } from '@/agent/ingest/types'
 import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
 import { effectiveLength } from '@/lib/markdownText'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { extractErrorCode } from '@/chat/utils/errorMessage'
 import { notify } from '@/lib/notify'
 import { useConnectDialog } from '@/stores/connectDialog'
-
-const PROOF_BASE_URL = 'http://localhost:4000'
 
 interface RunOptions {
   /** Skip the watermark gate. Used by the dev console hook
@@ -85,6 +86,11 @@ async function materializeNewPageProposals(
     }
     const name = p.suggestNewPage?.trim()
     if (!name) continue
+    // Assemble the bullets into markdown. The new page is born
+    // about this entity, so its body skips the `### {entity}`
+    // sub-heading — the page title already carries the topic, and
+    // a heading inside the body would render redundantly under it.
+    //
     // Append a provenance footer so the page is born showing where
     // its content came from. The user can verify the routing at a
     // glance (e.g. "this is Alex's career — why is it on a Chris
@@ -93,48 +99,32 @@ async function materializeNewPageProposals(
     //
     // resolveWikilinks rewrites [[Other Page]] tokens to real
     // markdown links — without this the LLM-emitted brackets land
-    // as literal text in the new page's body. Only the content
-    // portion is rewritten; sourceQuote stays verbatim because it
-    // mirrors the user's note (no LLM-side rewriting allowed
-    // there).
-    const resolvedContent = resolveWikilinksInMarkdown(p.content)
-    const body = p.sourceQuote
-      ? `${resolvedContent}\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
-      : resolvedContent
+    // as literal text in the new page's body. Only the assembled
+    // bullet content is rewritten; sourceQuote stays verbatim
+    // because it mirrors the user's note (no LLM-side rewriting
+    // allowed there).
+    const assembled = assembleProposalMarkdown(p, { withEntityHeading: false })
+    const resolvedContent = resolveWikilinksInMarkdown(assembled)
+    // First line of the body MUST be the page title as a level-1
+    // heading. The title-mirror (installTitleMirror) walks the first
+    // non-empty block and copies its plain text into knownDocs.title,
+    // so the sidebar / palette / breadcrumb read it as the page name.
+    // Without this heading the mirror would catch the first bullet
+    // ("- 새 매니저로 합류") and rename the page to that. This is
+    // the regression the previous title-input pattern worked around;
+    // doing the same thing as a body-first heading aligns wiki and
+    // writing pages on one rule ("body first line is the title").
+    const titleHeading = `# ${p.suggestNewPage?.trim() ?? p.entity}`
+    const provenanceFooter = p.sourceQuote
+      ? `\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
+      : ''
+    const body = `${titleHeading}\n\n${resolvedContent}${provenanceFooter}`
 
-    // Resolve suggestNewPageParent (a page type id) to a slug by
-    // exact-equality lookup against the live catalog, limited to
-    // user content pages (wiki:custom-*). The system prompt asks
-    // the model to copy the id verbatim from the WIKI block
-    // header, so there's no title-fallback heuristic — a miss
-    // means typo / hallucination and we'd rather log + root-
-    // create than guess. createCustomWikiPage runs its own
-    // validation too.
-    let parentId: string | undefined
-    if (p.suggestNewPageParent) {
-      const parent = useDocsStore
-        .getState()
-        .knownDocs.find(
-          (d) =>
-            !d.archivedAt &&
-            isUserOwnedWiki(d) &&
-            d.type === p.suggestNewPageParent,
-        )
-      if (parent) {
-        parentId = parent.slug
-      } else {
-        console.warn(
-          '[ingest] suggestNewPageParent did not resolve; creating at root',
-          p.suggestNewPageParent,
-        )
-      }
-    }
-
-    const newSlug = await createCustomWikiPage(
-      name,
-      body,
-      parentId ? { parentId } : undefined,
-    )
+    // Karpathy-style flat wiki: every entity is its own page at
+    // the same level. We deliberately don't pass a parent — the
+    // sidebar shows the catalog as a flat list and the LLM finds
+    // pages via the WIKI / INDEX blocks, not via tree navigation.
+    const newSlug = await createCustomWikiPage(name, body)
     if (!newSlug) {
       console.warn(
         '[ingest] suggestNewPage failed; dropping proposal',
@@ -158,17 +148,31 @@ async function materializeNewPageProposals(
 /** Read a doc's markdown via the canonical proof-server route.
  * Returns '' on failure so the watermark check treats unreachable
  * docs as "no growth" and skips them silently. */
-async function readDocLength(slug: string): Promise<number> {
-  try {
-    const res = await fetch(
-      `${PROOF_BASE_URL}/documents/${encodeURIComponent(slug)}`,
-    )
-    if (!res.ok) return 0
-    const json = (await res.json()) as { markdown?: string }
-    return effectiveLength(json.markdown ?? '')
-  } catch {
-    return 0
+/** Effective length of the doc's body, client-side.
+ *
+ * Phase 3.A — replaced the proof-server round-trip. Same reasoning
+ * as readDocMarkdown in agent/ingest.ts: the server's markdown
+ * column is wedged at empty due to a deriveMarkdownFromFragment
+ * crash on our client's Y.XmlFragment, so a client-side read is
+ * the only path that reflects what the user actually typed.
+ *
+ * Reads from the live PM doc when the slug is active, otherwise
+ * from the Y.XmlFragment. Returns 0 when no handle exists. */
+function readDocLength(slug: string): number {
+  const docs = useDocsStore.getState()
+  const handle = docs.handles[slug]
+  if (!handle) return 0
+
+  if (getActiveSlugFromHash() === slug) {
+    const view = useEditorViewStore.getState().view
+    if (view) return effectiveLength(view.state.doc.textContent)
   }
+
+  // Fallback: count the Y.XmlFragment's serialized text. Loses
+  // structural markdown but only the visible characters matter
+  // for the gate.
+  const fragment = handle.ydoc.getXmlFragment('prosemirror')
+  return effectiveLength(fragment.toString())
 }
 
 /** Run an ingest pass against a specific note slug. Returns the
@@ -200,7 +204,7 @@ async function runIngestForSlug(
     return 0
   }
 
-  const length = await readDocLength(slug)
+  const length = readDocLength(slug)
   if (length === 0) {
     console.log('[ingest:trigger] bail: source doc empty', { slug })
     return 0
@@ -236,23 +240,34 @@ async function runIngestForSlug(
     result = await runIngest(slug)
   } catch (err) {
     console.warn('[ingest] runIngest failed', slug, err)
-    // Auth errors are the one ingest failure that doesn't auto-
-    // recover — the OAuth token has expired and the user must
-    // sign in again before any future pass can succeed. Surface
-    // it as a toast with a Reconnect action so the silent
-    // background failure becomes visible. Every other error
-    // (NETWORK / RATE_LIMIT / IDLE_TIMEOUT / SIDECAR_DIED /
-    // malformed / transient 5xx) clears on the next idle window
-    // without user action, so interrupting them with a toast
-    // would be noise. Same classifier (`extractErrorCode`) the
-    // chat ErrorCard uses, so the two surfaces agree on what
-    // counts as auth.
+    // Two failure surfaces, gated by trigger kind:
+    //
+    //   AUTH         — always surface. The OAuth token expired and
+    //                  no future pass can succeed until the user
+    //                  reconnects, regardless of how the pass was
+    //                  triggered.
+    //   Other errors — surface ONLY on manual triggers (opts.force).
+    //                  The user just clicked sync and expects feedback;
+    //                  staying silent looks like the click did nothing.
+    //                  For auto-trigger (23:59 fallback) we keep the
+    //                  silence — NETWORK / RATE_LIMIT / IDLE_TIMEOUT /
+    //                  SIDECAR_DIED / malformed all clear on the next
+    //                  idle window, so toasting them would be noise.
+    //
+    // Same AUTH classifier (`extractErrorCode`) the chat ErrorCard uses,
+    // so the two surfaces agree on what counts as auth.
     if (extractErrorCode(err) === 'AUTH') {
       notify.claudeSessionExpired({
         onReconnect: () => useConnectDialog.getState().setOpen(true),
       })
+    } else if (opts.force) {
+      notify.wikiSyncFailed()
     }
-    return 0
+    // Negative sentinel so manual callers can distinguish error
+    // from "0 proposals on success" — without it the WikiSection
+    // sidebar button would chain a misleading "Synced — nothing
+    // new today" toast right after the failure toast.
+    return -1
   }
   // Update the watermark unconditionally on a successful call —
   // even an empty proposal set means "we looked at this length and
@@ -278,15 +293,15 @@ async function runIngestForSlug(
     return 0
   }
   // Karpathy's invariant: 1 ingest = 1 meaningful wiki diff = 1
-  // log line. If a pass produces no proposals AND no index updates,
-  // the LLM looked at the daily and judged nothing worth filing —
-  // its logEntry (when emitted at all) would just be a per-pass
-  // "nothing notable" verdict that piles up in wiki:log over time.
-  // Suppress the entire enqueue so the log page only ever shows
-  // real wiki changes. The console line above still records the
-  // pass for diagnostics — the audit trail moves from a user-
-  // visible page to dev tooling, which is where it belongs.
-  if (result.proposals.length === 0 && result.indexUpdates.length === 0) {
+  // log line. If a pass produces no proposals, the LLM looked at
+  // the daily and judged nothing worth filing — its logEntry (when
+  // emitted at all) would just be a per-pass "nothing notable"
+  // verdict that piles up in wiki:log over time. Suppress the
+  // entire enqueue so the log page only ever shows real wiki
+  // changes. The console line above still records the pass for
+  // diagnostics — the audit trail moves from a user-visible page
+  // to dev tooling, which is where it belongs.
+  if (result.proposals.length === 0) {
     console.log('[ingest:producer] empty result — suppressing logEntry to keep wiki:log clean', {
       hadLogEntry: !!result.logEntry,
     })
@@ -311,42 +326,13 @@ async function runIngestForSlug(
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
       : known.title?.trim() || slug
-  const { proposals: proposalsForQueue, nameToType } =
-    await materializeNewPageProposals(result.proposals, sourceLabel)
-
-  // Rewrite indexUpdates so every target is a real wiki:* type id.
-  // The LLM emitted them with the new page's *name* (e.g. "Books")
-  // when it didn't have an id yet; materializeNewPageProposals just
-  // created the real pages and gave us the name → type map. Drop
-  // any indexUpdate whose name didn't resolve — the matching page
-  // creation must have failed, so its summary line has nothing to
-  // anchor to.
-  const validTypes = new Set<string>(
-    useDocsStore
-      .getState()
-      .knownDocs.filter((d) => !d.archivedAt)
-      .map((d) => d.type),
+  const { proposals: proposalsForQueue } = await materializeNewPageProposals(
+    result.proposals,
+    sourceLabel,
   )
-  const indexUpdatesForQueue: IndexUpdate[] = []
-  for (const u of result.indexUpdates) {
-    if (validTypes.has(u.target)) {
-      indexUpdatesForQueue.push(u)
-      continue
-    }
-    const rewritten = nameToType.get(u.target)
-    if (rewritten) {
-      indexUpdatesForQueue.push({ target: rewritten, summary: u.summary })
-    } else {
-      console.warn(
-        '[ingest] indexUpdate target did not resolve to a real page; dropping',
-        u.target,
-      )
-    }
-  }
 
   useIngestStore.getState().enqueue({
     proposals: proposalsForQueue,
-    indexUpdates: indexUpdatesForQueue,
     logEntry: result.logEntry,
     sourceSlug: slug,
     sourceLabel,

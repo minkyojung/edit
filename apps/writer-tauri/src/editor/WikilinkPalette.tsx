@@ -2,8 +2,12 @@
 // Wraps the plugin's emitted state into a popup positioned at the
 // caret. Resolves the typed query against the current doc's
 // children — both the prebuilt KnownDoc cache (so closed siblings
-// still appear) and live titles via useDocTitle for already-open
-// handles.
+// still appear) and the cached knownDocs.title.
+//
+// Path C Step 4: titles are filenames, decoupled from body. The
+// palette displays whatever name the user gave each doc via the
+// inline title input / Command Palette Rename — never live body
+// content.
 //
 // Behavior matches SlashPalette: keyboard-only navigation
 // (ArrowUp/Down/Tab/Enter/Escape) with mouse fallback. Clicking
@@ -17,9 +21,8 @@ import {
   type WikilinkPaletteInfo,
   type WikilinkPaletteKey,
 } from './wikilinkPalettePlugin'
-import { useDocsStore, type KnownDoc } from '@/state/docsStore'
-import { useDocTitle } from '@/hooks/useDocTitle'
-import { deriveLabel } from '@/lib/docLabel'
+import { useDocsStore, isUserOwnedWiki, type KnownDoc } from '@/state/docsStore'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { cn } from '@/lib/utils'
 import { notify } from '@/lib/notify'
 
@@ -62,15 +65,29 @@ export function WikilinkPalette({ parentSlug, keyHandlerRef }: Props) {
       )
   }, [])
 
+  const findDailyAncestorSlug = useDocsStore((s) => s.findDailyAncestorSlug)
+  // Anchor every palette interaction (candidate filter + create) on
+  // the daily ancestor. Writings nest only 1-deep under a daily, so
+  // resolving here means a [[link]] typed from inside a writing sees
+  // its siblings under the same daily — and any new doc lands as a
+  // sibling, not a (forbidden) grandchild. When the active doc is
+  // itself a daily this resolves to its own slug.
+  const dailySlug = parentSlug ? findDailyAncestorSlug(parentSlug) : null
+
   const candidates = useMemo<Candidate[]>(() => {
-    if (!info || !parentSlug) return []
+    if (!info || !dailySlug) return []
     const q = info.query.trim().toLowerCase()
-    // Children of the active parent — the only docs the palette
-    // resolves against. Filter by title prefix when a query is set;
-    // the title cache lives in knownDocs once the child has had its
-    // ydoc opened at least once.
+    // Two candidate pools, unioned:
+    //   1. Writings nested under this daily (parentId === dailySlug)
+    //   2. User-owned wiki pages (flat — no parentId since the
+    //      Karpathy refactor). isUserOwnedWiki narrows to wiki:custom-*
+    //      so system pages (system:index / system:log / conventions)
+    //      stay out — they have their own surfaces and aren't valid
+    //      link targets.
     const children = knownDocs.filter(
-      (d) => d.parentId === parentSlug && !d.archivedAt,
+      (d) =>
+        !d.archivedAt &&
+        (d.parentId === dailySlug || isUserOwnedWiki(d)),
     )
     const matches = children
       .map((doc) => ({ doc, title: titleFor(doc) }))
@@ -88,7 +105,7 @@ export function WikilinkPalette({ parentSlug, keyHandlerRef }: Props) {
         ? [{ kind: 'create', label: info.query.trim() || 'Untitled' }]
         : []
     return [...matches, ...create]
-  }, [info, parentSlug, knownDocs])
+  }, [info, dailySlug, knownDocs])
 
   // Clamp selectedIndex when the candidate list shrinks.
   const safeIndex = candidates.length === 0
@@ -135,7 +152,7 @@ export function WikilinkPalette({ parentSlug, keyHandlerRef }: Props) {
     }
   }, [info, candidates, safeIndex, keyHandlerRef])
 
-  if (!info || !parentSlug) return null
+  if (!info || !dailySlug) return null
 
   // Position popup just below the caret. Use viewport coords from
   // the plugin's coordsAtPos and offset by 2px so it doesn't kiss
@@ -213,15 +230,24 @@ async function commit(info: WikilinkPaletteInfo, pick: Candidate) {
   }
   if (pick.kind === 'create') {
     const store = useDocsStore.getState()
-    const parentSlug = store.activeSlug
-    if (!parentSlug) {
+    const activeSlug = getActiveSlugFromHash()
+    if (!activeSlug) {
+      cancelWikilink(info.view)
+      return
+    }
+    // Resolve to the active doc's daily ancestor — writings nest only
+    // 1-deep under a daily, so a [[link]] typed from inside a writing
+    // creates a sibling under the same daily rather than a (forbidden)
+    // grandchild. When the active doc is itself a daily this is a no-op.
+    const dailyParent = store.findDailyAncestorSlug(activeSlug)
+    if (!dailyParent) {
       cancelWikilink(info.view)
       return
     }
     // Goes through the store action so the title field gets seeded
     // and the handle is warmed; otherwise sidebar / tab labels
     // would render "Untitled" until the user opened the child.
-    const slug = await store.createWritingChild(parentSlug, pick.label)
+    const slug = await store.createWritingChild(dailyParent, pick.label)
     if (!slug) {
       cancelWikilink(info.view)
       return
@@ -235,23 +261,9 @@ async function commit(info: WikilinkPaletteInfo, pick: Candidate) {
   }
 }
 
-/** Pull a display label for a candidate row. Mirrors useDocLabel's
- * resolution order for non-daily docs: live body label wins when
- * the handle is warm; otherwise the cached knownDocs.title; finally
- * 'Untitled'. */
+/** Display label for a candidate row. Path C Step 4: title is
+ * decoupled from body — the filename (knownDocs.title) is the only
+ * source. Body edits do not affect the palette label. */
 function titleFor(doc: KnownDoc): string {
-  return TitleResolver(doc) || 'Untitled'
+  return doc.title?.trim() || 'Untitled'
 }
-
-function TitleResolver(doc: KnownDoc): string {
-  const handle = useDocsStore.getState().handles[doc.slug]
-  if (handle) {
-    const live = deriveLabel(handle.ydoc.getXmlFragment('prosemirror'))
-    if (live) return live
-  }
-  return doc.title ?? ''
-}
-
-// Re-export so the editor wiring file can import the hook from one
-// place (alongside the palette + plugin).
-export { useDocTitle }

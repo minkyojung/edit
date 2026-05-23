@@ -8,6 +8,7 @@
 //   [drag region] [▾ Day] [⊟]
 
 import { IconChevronDown } from '@tabler/icons-react'
+import { useNavigate } from 'react-router-dom'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,8 +17,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
+import { buildViewUrl, type SidebarTab } from '@/lib/viewUrl'
 
-const VIEW_LABELS: Record<'day' | 'week' | 'month', string> = {
+const VIEW_LABELS: Record<SidebarTab, string> = {
   day: 'Day',
   week: 'Week',
   month: 'Month',
@@ -25,7 +28,14 @@ const VIEW_LABELS: Record<'day' | 'week' | 'month', string> = {
 
 export function SidebarDateMenu() {
   const tab = useDocsStore((s) => s.sidebarTab)
-  const setTab = useDocsStore((s) => s.setSidebarTab)
+  const dayAnchor = useDocsStore((s) => s.dayAnchor)
+  const monthAnchor = useDocsStore((s) => s.monthAnchor)
+  const activeSlug = useActiveSlug()
+  const navigate = useNavigate()
+
+  const goTo = (next: SidebarTab) => {
+    navigate(buildViewUrl({ tab: next, dayAnchor, monthAnchor, slug: activeSlug }))
+  }
 
   return (
     <DropdownMenu>
@@ -43,9 +53,9 @@ export function SidebarDateMenu() {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-28">
-        <DropdownMenuItem onSelect={() => setTab('day')}>Day</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setTab('week')}>Week</DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setTab('month')}>Month</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => goTo('day')}>Day</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => goTo('week')}>Week</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => goTo('month')}>Month</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )

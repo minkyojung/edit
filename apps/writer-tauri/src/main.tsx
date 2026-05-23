@@ -3,7 +3,29 @@ import ReactDOM from 'react-dom/client'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { App } from './App'
+import { LAST_PATH_STORAGE_KEY } from './hooks/usePersistLastPath'
 import './index.css'
+
+// Session restore: if the WebView came up with an empty / root hash
+// (cold relaunch, fresh install, or Tauri reset), reapply the last
+// pathname we saw before quit. Runs before React mounts so HashRouter
+// reads the restored hash on its very first render — no flash of the
+// "today's daily" fallback before the real last-viewed doc lands.
+//
+// The reconciler in RouteSyncBridge validates the restored slug against
+// knownDocs after bootstrap, so a stale path (deleted doc, vault swap)
+// can't corrupt state — it will redirect to today's daily.
+;(() => {
+  try {
+    const currentHash = window.location.hash.replace(/^#/, '')
+    if (currentHash && currentHash !== '/') return
+    const saved = localStorage.getItem(LAST_PATH_STORAGE_KEY)
+    if (!saved) return
+    window.location.hash = saved
+  } catch {
+    // Same swallow as the writer hook — restore is best-effort.
+  }
+})()
 
 // Cmd+R → reload, Cmd+Option+I → devtools (dev only)
 if (import.meta.env.DEV) {

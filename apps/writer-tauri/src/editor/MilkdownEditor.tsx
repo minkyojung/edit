@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { Editor, rootCtx, editorViewOptionsCtx, editorViewCtx, parserCtx } from '@milkdown/kit/core'
+import {
+  Editor,
+  rootCtx,
+  editorViewOptionsCtx,
+  editorViewCtx,
+  defaultValueCtx,
+} from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
@@ -18,6 +24,14 @@ import { createDocVersionPlugin } from './docVersionPlugin'
 import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
 import { formatStatePlugin } from './formatStatePlugin'
+import { dropCursor } from '@milkdown/kit/prose/dropcursor'
+import { $prose } from '@milkdown/kit/utils'
+import { cardDropAdvanceCursor } from './cardDropAdvanceCursor'
+import { audioNodeView } from './cards/AudioCardNodeView'
+import { imageNodeView } from './cards/ImageCardNodeView'
+import { videoNodeView } from './cards/VideoCardNodeView'
+import { imageInlineNodeView } from './imageInlineNodeView'
+import { mediaDropPastePlugin } from './mediaDropPastePlugin'
 import { inlineCodeSafeKeymap } from './inlineCodeSafe'
 import { createLinkClickPlugin } from './linkClickPlugin'
 import { createLinkHoverPlugin } from './linkHoverPlugin'
@@ -41,27 +55,43 @@ import { useDocsStore } from '@/state/docsStore'
 import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { normalizeDailyBody } from '@/lib/docTitle'
-import { useDocLabel } from '../hooks/useDocLabel'
 import { MarkToolbar } from './MarkToolbar'
 import { LinkHoverBar } from './LinkHoverBar'
 import { SlashMenu } from './SlashMenu'
-import { proofMarkPlugins } from './proofMarkSchemas'
+// Proof schemas come from proof-sdk via a thin adapter so client and
+// server share one canonical definition. The previous local copy
+// drifted out of sync; restoring the canonical schemas closed the
+// projection-repair crash class. The bundle covers three plugins:
+//   - proofMarkPlugins        — 7 mark types (proofSuggestion / etc.)
+//   - codeBlockExtPlugins     — redefines `code_block` to allow
+//                                 proof marks inside (without this
+//                                 our code_block node shape diverges
+//                                 from the server's)
+//   - frontmatterSchema       — block-level YAML frontmatter node
+//                                 (we don't emit one, but registering
+//                                 keeps the two schemas symmetric)
+// See ./proofMarks.ts for adapter notes.
+import { proofSchemaPlugins } from './proofMarks'
 import { dailyGuardPlugin } from './dailyGuardPlugin'
-import { useEditorViewStore } from '@/state/editorViewStore'
-import { usePendingProposals } from '@/state/pendingProposalsStore'
 import { usePendingScroll } from '@/state/pendingScrollStore'
 import { scrollToMark } from '@/editor/scrollToMark'
-import { applyProposal } from '@/agent/applyProposal'
 import { EditorFooter } from '@/components/EditorFooter'
+import { notify } from '@/lib/notify'
 
 interface Props {
   handle: CollabHandle | null
   status: CollabStatus
   onMarkdownChange?: (md: string) => void
   onViewReady?: (view: EditorView | null) => void
+  /** Slot rendered above the body, inside the same scrollable
+   * column. Owned by the parent (typically <Page>) so doc-kind
+   * branching for the title surface lives outside the editor.
+   * The editor itself is now agnostic to whether this is a daily
+   * date label, a system page name, or an editable wiki title. */
+  header?: React.ReactNode
 }
 
-export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }: Props) {
+export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, header }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<Editor | null>(null)
   const onChangeRef = useRef(onMarkdownChange)
@@ -84,7 +114,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     handle ? s.knownDocs.find((d) => d.slug === handle.slug) : undefined,
   )
   const isDaily = knownDoc?.type === 'daily'
-  const dailyLabel = useDocLabel(handle?.slug ?? null)
 
   // Live-rewrite wikilinks in this body whenever the referenced
   // child's title changes, so anchor text never drifts from the
@@ -110,34 +139,31 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
   // must not duplicate it. Idempotent via meta.titleNormalizedV2 —
   // see lib/docTitle.ts. Non-daily docs run no normalization.
   //
-  // Gated on (provider.synced OR idb.synced) AND meta.type being populated.
-  // Local-disk hydration is enough to run normalization — the title
-  // structure lives in the Y.Doc that idb just restored. Waiting for the
-  // server is unnecessary and would stall this on cold/offline launches.
-  // provider may be null (offline tab) — in that case idb is the only
-  // signal we'll ever get; the OR-gate handles both cases uniformly.
+  // Gated on contentReady AND meta.type being populated. The title
+  // structure lives in the Y.Doc that vault load (or fresh creation)
+  // populated; normalization runs after both signals are in.
   useEffect(() => {
     if (!handle || !pmView) return
     if (!isDaily) return
-    const { ydoc, provider, idb } = handle
+    const { ydoc, contentReady } = handle
     const view = pmView
     const metaMap = ydoc.getMap('meta')
     const opts = { date: knownDoc?.date }
     let ran = false
+    let hydrated = false
     const tryRun = () => {
       if (ran) return
-      if (!provider?.isSynced && !idb.synced) return
+      if (!hydrated) return
       if (!metaMap.get('type')) return
       ran = true
       normalizeDailyBody(ydoc, view, opts)
     }
-    tryRun()
-    provider?.on('synced', tryRun)
-    idb.on('synced', tryRun)
+    void contentReady.then(() => {
+      hydrated = true
+      tryRun()
+    })
     metaMap.observe(tryRun)
     return () => {
-      provider?.off('synced', tryRun)
-      idb.off('synced', tryRun)
       metaMap.unobserve(tryRun)
     }
   }, [handle, pmView, isDaily, knownDoc?.date])
@@ -155,12 +181,18 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     if (!rootRef.current || !handle) return
 
     let mounted = true
-    const { ydoc, provider } = handle
+    const { ydoc } = handle
 
     Editor.make()
       .config((ctx) => {
         ctx.set(rootCtx, rootRef.current!)
         ctx.set(editorViewOptionsCtx, { attributes: { class: 'milkdown-editor-root' } })
+        // Explicit empty default so the editor's pre-collab doc state is
+        // documented rather than implicit. Collab's bindDoc replaces this
+        // once handle.contentReady resolves; the ctx exists to keep the
+        // pre-bind window deterministic if Milkdown's internal default
+        // ever changes between versions.
+        ctx.set(defaultValueCtx, '')
       })
       .config(configureListItemBlock)
       .use(commonmark)
@@ -192,7 +224,12 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       // collab so remote (y-prosemirror) transactions already carry
       // the ySyncPluginKey meta by the time our filter inspects them.
       .use(isDaily ? [dailyGuardPlugin] : [])
-      .use(proofMarkPlugins)
+      // proofSchemaPlugins == proofMarks + codeBlockExt + frontmatter
+      // (see ./proofMarks.ts). Registration order mirrors
+      // proof-sdk/server/milkdown-headless.ts:150-158 so marks are
+      // available before code_block_ext references them in its `marks: '...'`
+      // content spec.
+      .use(proofSchemaPlugins)
       .use(createMarkDecoPlugin(ydoc))
       .use(createMarkCleanupPlugin(ydoc))
       .use(createMarkClickPlugin())
@@ -202,6 +239,13 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       .use(createFrozenSelectionPlugin())
       .use(formatStatePlugin)
       .use(inlineCodeSafeKeymap)
+      .use(imageNodeView)
+      .use(videoNodeView)
+      .use(audioNodeView)
+      .use(imageInlineNodeView)
+      .use(cardDropAdvanceCursor)
+      .use($prose(() => dropCursor({ color: false, width: 2, class: 'pm-drop-cursor' })))
+      .use(mediaDropPastePlugin)
       .use(createPasteSanitizerPlugin())
       .use(createLinkClickPlugin())
       .use(createLinkHoverPlugin())
@@ -242,29 +286,39 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
         // Wait for IndexedDB to finish hydrating the ydoc before binding
         // the collab service. y-prosemirror's sync plugin runs an initial
         // PM↔Y reconcile the moment it sees a ydoc; if we bind while the
-        // fragment is empty (pre-hydrate) and IDB then fills it after,
+        // fragment is empty (pre-hydrate) and content fills in after,
         // PM ends up with a doc where the hydrated paragraphs sit
         // alongside new client items the initial reconcile created — the
-        // 1→2→4→8 doubling regression. Binding after idbSynced means PM
-        // sees the fully-populated fragment from frame one and the
-        // initial reconcile is a no-op.
-        await handle.idbSynced
+        // 1→2→4→8 doubling regression. Binding after contentReady means
+        // PM sees the fully-populated fragment from frame one and the
+        // initial reconcile is a no-op. contentReady spans IDB hydrate
+        // AND vault load (Path C) so binding waits for vault-sourced
+        // body + marks to land, not just the in-browser cache.
+        await handle.contentReady
         if (!mounted) return
 
-        // If hydration left the fragment empty (brand-new note), pre-seed
-        // it with the schema's minimal fill (one empty paragraph) before
-        // binding. y-prosemirror's sync plugin compares PM's filled doc
-        // against the fragment on first bind; an empty fragment vs PM's
-        // schema-required <paragraph/> triggers a PM→Y commit that puts
-        // an extra paragraph node into the fragment for good. After the
-        // user types into PM's paragraph, the fragment ends up with two
-        // paragraph items — the leading empty one is the visible regression.
-        // Seeding the same shape PM would have filled means the diff
-        // check is a no-op and no spurious commit fires.
+        // All post-create setup runs in one ctx acquisition: seed an
+        // empty fragment, bind collab + UndoManager, expose the view to
+        // React, drain any scroll-to-mark request that arrived before
+        // this slug's editor mounted. The ordering here is meaningful —
+        // seed MUST precede bindDoc, and bindDoc must precede setPmView
+        // so React subscribers always see a fully-wired view.
         editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx)
+
+          // If hydration left the fragment empty (brand-new note),
+          // pre-seed it with the schema's minimal fill (one empty
+          // paragraph) before binding. y-prosemirror's sync plugin
+          // compares PM's filled doc against the fragment on first bind;
+          // an empty fragment vs PM's schema-required <paragraph/>
+          // triggers a PM→Y commit that puts an extra paragraph node
+          // into the fragment for good. After the user types into PM's
+          // paragraph, the fragment ends up with two paragraph items —
+          // the leading empty one is the visible regression. Seeding the
+          // same shape PM would have filled means the diff check is a
+          // no-op and no spurious commit fires.
           const xmlFragment = ydoc.getXmlFragment('prosemirror')
           if (xmlFragment.length === 0) {
-            const view = ctx.get(editorViewCtx)
             const fill = view.state.schema.topNodeType.createAndFill()
             if (fill) {
               const seedDoc = prosemirrorToYDoc(fill, 'prosemirror')
@@ -273,10 +327,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
               seedDoc.destroy()
             }
           }
-        })
 
-        editor.action((ctx) => {
-          const collabService = ctx.get(collabServiceCtx)
           // Build a Y.UndoManager that tracks BOTH the prosemirror
           // XmlFragment (the doc itself) AND the marks Y.Map. Wiring
           // both into the same undo stack means accept/reject's
@@ -303,10 +354,9 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
           //                     into one undo step, so Cmd+Z is one
           //                     keystroke either way.
           //
-          // Anything outside these origins (e.g. server reconciliation
-          // updates from Hocuspocus) stays out of the undo stack so a
-          // remote write can't be undone into existence.
-          const xmlFragment = ydoc.getXmlFragment('prosemirror')
+          // Anything outside these origins stays out of the undo stack
+          // so a programmatic write can't be undone into existence.
+          const collabService = ctx.get(collabServiceCtx)
           const marksMap = ydoc.getMap('marks')
           const undoManager = new UndoManager([xmlFragment, marksMap], {
             trackedOrigins: new Set([
@@ -317,48 +367,38 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
             captureTimeout: 500,
           })
           collabService.setOptions({ yUndoOpts: { undoManager } })
-          const service = collabService.bindDoc(ydoc)
-          // Awareness is the multi-cursor / presence layer. It only
-          // exists once the WebSocket provider has attached; offline
-          // tabs simply skip it and the editor still works locally.
-          if (provider?.awareness) service.setAwareness(provider.awareness)
-          service.connect()
-        })
+          // No awareness (multi-cursor / presence) since Phase 3.C
+          // removed the WebSocket provider — local-only editor.
+          collabService.bindDoc(ydoc).connect()
 
-        editor.action((ctx) => {
-          const view = ctx.get(editorViewCtx)
+          // Parser / serializer come from the headless Milkdown built
+          // at app boot (lib/headlessMilkdown.ts) — populated globally
+          // in editorViewStore before any doc opens. Per-doc editor
+          // instances no longer publish them, removing the race that
+          // left vault load waiting on parser-not-set.
           setPmView(view)
           onViewReady?.(view)
-        })
 
-        // Expose the markdown parser so non-React consumers (mark
-        // accept, ingest seed) can turn LLM-emitted markdown into
-        // real PM nodes instead of plain text. Cleared on unmount
-        // alongside the view.
-        editor.action((ctx) => {
-          const parser = ctx.get(parserCtx)
-          useEditorViewStore.getState().setParser(parser)
-          // Drain proposals that arrived while this slug's editor was
-          // unmounted (user switched away mid-chat). drain() pops the
-          // whole queue atomically before invoking apply, so a Strict
-          // Mode second mount sees nothing left to do. Runs after the
-          // parser is registered because applyProposal's empty-doc
-          // insert path reads parser from the store.
-          const view = ctx.get(editorViewCtx)
-          usePendingProposals.getState().drain(handle.slug, ({ proposal, meta }) =>
-            applyProposal(view, ydoc, proposal, meta),
-          )
           // Drain a pending "scroll to this mark" target queued by the
-          // chat panel before this slug's editor was mounted. Runs after
-          // the proposal drain above so a freshly-applied mark from the
-          // same chat session is reachable. rAF defers one paint so the
-          // decoration plugins finish their first build pass and the
-          // target mark has stable coordinates.
+          // chat panel before this slug's editor was mounted. rAF defers
+          // one paint so decoration plugins finish their first build
+          // pass and the target mark has stable coords.
           const pendingMarkId = usePendingScroll.getState().drain(handle.slug)
           if (pendingMarkId) {
             requestAnimationFrame(() => scrollToMark(view, pendingMarkId))
           }
         })
+      })
+      .catch((err) => {
+        // Editor.make().create() or the post-create setup rejected.
+        // Without this catch the chain failed silently and the user saw
+        // an empty editor with no signal that anything went wrong, which
+        // makes the bug class invisible in production. Unmount races land
+        // here too, so skip the toast when the component has already
+        // torn down.
+        if (!mounted) return
+        console.error('[MilkdownEditor] editor create failed', err)
+        notify.editorInitFailed()
       })
 
     return () => {
@@ -373,7 +413,9 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
       setSelection(null)
       setPmView(null)
       onViewReady?.(null)
-      useEditorViewStore.getState().setParser(null)
+      // Parser / serializer are owned by the headless Milkdown
+      // (lib/headlessMilkdown.ts) for the app's lifetime — don't
+      // null them on per-doc unmount.
     }
   }, [handle])
 
@@ -381,14 +423,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
     <div className="relative flex h-full w-full flex-col">
       <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="mx-auto max-w-2xl px-8 pt-12 pb-12">
-          {isDaily ? (
-            <div
-              aria-label="Daily date"
-              className="mb-6 w-full text-3xl font-semibold leading-tight text-foreground"
-            >
-              {dailyLabel}
-            </div>
-          ) : null}
+          {header}
           <div ref={rootRef} />
         </div>
       </div>
@@ -396,9 +431,8 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady }
         view={pmView}
         parentSlug={handle?.slug ?? null}
         status={status}
-        provider={handle?.provider ?? null}
       />
-      {handle && <MarkToolbar selection={selection} ydoc={handle.ydoc} onDismiss={() => setSelection(null)} />}
+      {handle && <MarkToolbar slug={handle.slug} selection={selection} onDismiss={() => setSelection(null)} />}
       <LinkHoverBar />
       <SlashMenu />
       <WikilinkPalette

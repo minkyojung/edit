@@ -1,16 +1,13 @@
 // Shared "parse this markdown and prepare an append" primitive for
 // every site that lands LLM-emitted content into a wiki page.
 //
-// Three callers used to roll their own variant:
+// Two callers used to roll their own variant:
 //
 //   - applyPendingLogsForView (agent/applyIngest.ts) created a plain
 //     `schema.text(line)` paragraph, skipping the markdown parser
 //     entirely. That's why `## [2026-05-14] …` rendered as literal
 //     hash-hash in the log page: the appender saw markdown but
 //     dispatched it as plain text.
-//   - applyPendingIndexUpdatesForView (agent/applyIngest.ts) called
-//     the parser correctly, but rolled its own leading-empty-
-//     paragraph cleanup inline.
 //   - acceptProposal (layout/WikiPageBanner.tsx) called the parser
 //     correctly and skipped the cleanup (banner targets pages whose
 //     ZWS-seed is now removed up-front, so it wasn't visible — but
@@ -21,8 +18,6 @@
 // the inserted range. Callers are responsible for `dispatch`:
 //   - log drain dispatches directly
 //   - banner wraps dispatch in a Yjs transact for atomic Cmd+Z
-//   - index drain dispatches directly (append path only — the
-//     replace-by-marker path stays inline because its range
 //     resolution depends on the doc's existing structure)
 //
 // Returning a *prepared* tr (rather than dispatching inside the

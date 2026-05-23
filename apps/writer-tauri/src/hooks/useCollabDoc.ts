@@ -4,10 +4,8 @@
 // the file remains as a pure type surface; the runtime hook + its
 // 'My Document' default-title bootstrap are gone.
 import type * as Y from 'yjs'
-import type { HocuspocusProvider } from '@hocuspocus/provider'
-import type { IndexeddbPersistence } from 'y-indexeddb'
 
-export type CollabStatus = 'initializing' | 'connecting' | 'connected' | 'error'
+export type CollabStatus = 'loading' | 'ready' | 'error'
 
 export type StoredMarkStatus = 'pending' | 'accepted' | 'rejected'
 export type MarkKind =
@@ -54,48 +52,31 @@ export interface StoredMark {
 
 export interface CollabHandle {
   ydoc: Y.Doc
-  /** WebSocket sync layer. Null while we're offline or waiting for the
-   * proof-server health check / collab-session; gets attached in the
-   * background once the server is reachable. Consumers must null-check
-   * before reading provider.synced / awareness / etc — the editor still
-   * works (writes flow through `idb`) without a provider. */
-  provider: HocuspocusProvider | null
   slug: string
-  /** Client-side IndexedDB persistence layer. Writes every Y.Doc update
-   * to local disk synchronously with the in-memory CRDT, so the editor
-   * survives any failure mode of the proof-server (graceful exit,
-   * SIGKILL, crash, network drop). Without this, all data survival
-   * depends on round-tripping every change through the WebSocket and
-   * out the proof-server's 250ms debounce — the path that drops the
-   * last keystrokes on Ctrl+C. */
-  idb: IndexeddbPersistence
-  /** Resolves once the IndexedDB layer has hydrated the ydoc from its
-   * local cache (or confirmed there's nothing cached for this slug).
-   * Gates downstream consumers (editor render, mark application) that
-   * previously waited only on `provider.synced` — with this we can
-   * paint immediately on cold boot even when the server is unreachable. */
-  idbSynced: Promise<void>
+  /** Resolves once the doc's body + marks have been hydrated into the
+   * ydoc. Sources, in order:
+   *   1. The vault file (.md + .marks.json) via applyVaultToHandle
+   *   2. Empty (for brand-new docs with no on-disk file yet — the
+   *      auto-flush pipeline writes the first version on the next tick)
+   *
+   * Callers that need to read/write content-dependent state (editor
+   * binding, mark application, dirty-bit observers, chat threads)
+   * await this before touching the ydoc.
+   *
+   * Path C: this is the ONLY hydration signal — IDB persistence is
+   * gone, so the ydoc lives only in memory for the session and the
+   * vault file is the durable surface. */
+  contentReady: Promise<void>
 }
 
 /**
  * Per-authored-mark metadata, keyed by mark id in Y.Map('authoredMeta').
  *
- * Background: proof-server only canonicalizes the seven mark kinds
- * it ships with (authored / approved / flagged / comment / insert /
- * delete / replace). Our old `proofProvenance` mark was a custom
- * kind layered on top to carry wiki-source breadcrumbs + accept
- * timestamps; the server didn't recognize it, so its HTML→markdown
- * projection mangled spans carrying that mark, which the drift
- * detector then read as a projection wipe and reverted the accept.
- * The split-tr workaround in markActions.ts was a defensive
- * sequencing trick to dodge that — never a proper fix.
- *
- * The portable path is to use the standard `proofAuthored` mark for
- * the inline anchor (server understands it, single-tr accept stays
- * safe) and park the extra metadata in a sibling Y.Map keyed by the
- * same mark id. Yjs syncs the Y.Map as opaque binary, so the server
- * never has to parse it — drift detection can't fire on metadata
- * the server doesn't read.
+ * The inline anchor is a `proofAuthored` mark (carries id + by);
+ * the rich provenance fields (sourceSlug / sourceLabel / acceptedAt /
+ * model) ride in this sibling Y.Map keyed by the same mark id. Split
+ * this way so the mark schema stays minimal — adding new metadata
+ * fields doesn't require a schema migration.
  *
  * Wire shape:
  *   ydoc.getMap<AuthoredMeta>('authoredMeta').set(markId, { ... })

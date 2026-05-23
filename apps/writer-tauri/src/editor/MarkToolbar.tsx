@@ -1,19 +1,40 @@
+/**
+ * MarkToolbar — pops up over a non-empty text selection and lets the
+ * user attach a comment, a replace suggestion, or a delete suggestion
+ * to that range.
+ *
+ * Phase 2.5 — migrated off direct `Y.Map.set` + `tr.addMark` to
+ * `markStore.add`. The previous direct-write path wrote marks in the
+ * legacy `StoredMark` shape (with `char:N` relative positions in
+ * `startRel`/`endRel`), which the new domain Mark schema's
+ * `isValidMark` rejects — so user-created marks were silently
+ * disappearing from the live UI after Phase 2.4 even though they
+ * landed in Y.Map.
+ *
+ * markStore.add now anchors via y-prosemirror RelativePosition (the
+ * proper CRDT-stable encoding), and we pass the exact selection range
+ * as `anchor` so the mark always lands where the user selected — even
+ * when the selected text appears multiple times in the doc.
+ *
+ * The ydoc prop is gone; markStore resolves the active doc internally
+ * from `useDocsStore` + `useEditorViewStore`. Callers pass `slug`
+ * instead so the store can match against `activeSlug`.
+ */
+
 import { useEffect, useState } from 'react'
-import * as Y from 'yjs'
 import type { SelectionInfo } from './selectionPlugin'
-import type { StoredMark } from '../hooks/useCollabDoc'
-import { buildTextIndex, posToCharOffset } from './utils/textRange'
 import { notify } from '@/lib/notify'
+import { markStore } from '@/domain/markStoreInstance'
 
 interface Props {
+  slug: string
   selection: SelectionInfo | null
-  ydoc: Y.Doc
   onDismiss: () => void
 }
 
 type Mode = 'pick' | 'comment' | 'replace'
 
-export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
+export function MarkToolbar({ slug, selection, onDismiss }: Props) {
   const [mode, setMode] = useState<Mode>('pick')
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -72,92 +93,35 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
     onDismiss()
   }
 
-  function computeAnchors(): { startRel: string; endRel: string } | null {
-    const index = buildTextIndex(selection!.doc)
-    if (!index) return null
-    // PM 'from' = position OF first char (in positions array)
-    const startChar = posToCharOffset(index, selection!.from)
-    // PM 'to' = position AFTER last char (not in array). Look up last char, add 1.
-    const lastCharIdx = posToCharOffset(index, selection!.to - 1)
-    if (startChar === null || lastCharIdx === null) return null
-    return { startRel: `char:${startChar}`, endRel: `char:${lastCharIdx + 1}` }
-  }
-
-  function stampInlineMark(
-    markId: string,
-    kind: 'replace' | 'insert' | 'delete' | 'comment',
-    extraAttrs: Record<string, unknown> = {},
-  ): boolean {
-    const view = selection!.view
-    const schemaName = kind === 'comment' ? 'proofComment' : 'proofSuggestion'
-    const markType = view.state.schema.marks[schemaName]
-    if (!markType) {
-      console.error(`[mark] schema mark "${schemaName}" not found`)
-      notify.markCantAdd()
-      return false
-    }
-    const attrs = kind === 'comment'
-      ? { id: markId, by: 'owner', ...extraAttrs }
-      : { id: markId, kind, by: 'owner', ...extraAttrs }
-    view.dispatch(view.state.tr.addMark(selection!.from, selection!.to, markType.create(attrs)))
-    return true
-  }
-
-  function writeMarkToYMap(markId: string, mark: StoredMark) {
-    const marksMap = ydoc.getMap<StoredMark>('marks')
-    marksMap.set(markId, mark)
-  }
-
-  function submit() {
-    if (loading) return
-    const anchors = computeAnchors()
-    if (!anchors) {
-      console.error('[mark] failed to compute anchors')
-      notify.markCantAdd()
-      return
-    }
-    const markId = crypto.randomUUID()
-    const now = new Date().toISOString()
+  async function submit() {
+    if (loading || !selection) return
     setLoading(true)
     try {
-      // PM stamp + Y.Map write share one Yjs transaction with the
-      // 'mark-action' origin so Cmd+Z restores the mark and metadata
-      // together — mirrors accept/reject in markActions.ts.
-      let stamped = false
-      ydoc.transact(() => {
-        if (mode === 'comment') {
-          const text = input.trim() || '.'
-          const quote = selection!.text
-          // Stamp body + quote on the PM mark so PM undo can restore the
-          // comment intact (single source of truth). Y.Map mirror below
-          // is kept for legacy readers (e.g. DocumentInfoDialog stats);
-          // the popover now reads from the mark itself.
-          if (!stampInlineMark(markId, 'comment', { text, quote })) return
-          writeMarkToYMap(markId, {
+      const anchor = { from: selection.from, to: selection.to }
+      const quote = selection.text
+
+      const result = mode === 'comment'
+        ? await markStore.add({
+            slug,
             kind: 'comment',
-            by: 'owner',
             quote,
-            text,
-            ...anchors,
-            at: now,
-          } as StoredMark)
-          stamped = true
-        } else if (mode === 'replace') {
-          const content = input.trim()
-          if (!stampInlineMark(markId, 'replace', { content })) return
-          writeMarkToYMap(markId, {
-            kind: 'replace',
-            by: 'owner',
-            quote: selection!.text,
-            content,
-            status: 'pending',
-            ...anchors,
-            at: now,
-          } as StoredMark)
-          stamped = true
-        }
-      }, 'mark-action')
-      if (!stamped) {
+            anchor,
+            text: input.trim() || '.',
+            by: 'human:owner',
+          })
+        : await markStore.add({
+            slug,
+            kind: 'suggestion',
+            suggestionType: 'replace',
+            quote,
+            anchor,
+            content: input.trim(),
+            by: 'human:owner',
+          })
+
+      if (!result.ok) {
+        console.error('[mark] create failed', result.reason)
+        notify.markCantAdd()
         setLoading(false)
         return
       }
@@ -169,31 +133,21 @@ export function MarkToolbar({ selection, ydoc, onDismiss }: Props) {
     }
   }
 
-  function createDelete() {
-    const anchors = computeAnchors()
-    if (!anchors) {
-      console.error('[mark] failed to compute anchors')
-      notify.markCantAdd()
-      return
-    }
-    const markId = crypto.randomUUID()
-    const now = new Date().toISOString()
+  async function createDelete() {
+    if (!selection) return
     setLoading(true)
     try {
-      let stamped = false
-      ydoc.transact(() => {
-        if (!stampInlineMark(markId, 'delete')) return
-        writeMarkToYMap(markId, {
-          kind: 'delete',
-          by: 'owner',
-          quote: selection!.text,
-          status: 'pending',
-          ...anchors,
-          at: now,
-        } as StoredMark)
-        stamped = true
-      }, 'mark-action')
-      if (!stamped) {
+      const result = await markStore.add({
+        slug,
+        kind: 'suggestion',
+        suggestionType: 'delete',
+        quote: selection.text,
+        anchor: { from: selection.from, to: selection.to },
+        by: 'human:owner',
+      })
+      if (!result.ok) {
+        console.error('[mark] create failed', result.reason)
+        notify.markCantAdd()
         setLoading(false)
         return
       }

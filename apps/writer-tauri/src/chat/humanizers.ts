@@ -137,6 +137,37 @@ function humanizeWebFetch(input: unknown): HumanizedToolCall {
   return { label: `Fetching ${host}` }
 }
 
+/** `read_page` — sidecar tool that reads a vault wiki / system page
+ * by its vault-relative path. Strips the `.md` extension so the label
+ * matches how the rest of the app speaks about pages (`Tom`, not
+ * `Tom.md`). The page-open affordance lives on ToolPart's header,
+ * driven off `part.input.path` + `pathToKnownSlug`. */
+function humanizeReadPage(input: unknown): HumanizedToolCall {
+  const i = (input ?? {}) as { path?: string }
+  const name = basename(i.path).replace(/\.md$/, '')
+  if (!name) return { label: 'Reading wiki' }
+  return { label: `Read ${name}` }
+}
+
+/** `search_wiki` — sidecar tool that fuzzy-matches the query against
+ * page titles and bodies. The output (when available) is a markdown
+ * list with one `- path — excerpt` line per hit; counting those gives
+ * the user a sense of how broad the model's hit was. While input is
+ * still streaming the count is omitted so the label doesn't flap. */
+function humanizeSearchWiki(input: unknown, output?: unknown): HumanizedToolCall {
+  const i = (input ?? {}) as { query?: string }
+  if (!i.query) return { label: 'Searching wiki' }
+  const lines =
+    typeof output === 'string'
+      ? output.split('\n').filter((l) => l.startsWith('- ')).length
+      : undefined
+  const suffix =
+    lines !== undefined
+      ? ` (${lines} ${lines === 1 ? 'result' : 'results'})`
+      : ''
+  return { label: `Searched wiki: "${truncate(i.query, 40)}"${suffix}` }
+}
+
 const humanizers: Record<string, Humanizer> = {
   [PROPOSE_CHANGE_TOOL]: humanizeProposeChange,
   Read: humanizeRead,
@@ -147,6 +178,20 @@ const humanizers: Record<string, Humanizer> = {
   Glob: humanizeGlob,
   WebSearch: humanizeWebSearch,
   WebFetch: humanizeWebFetch,
+  read_page: humanizeReadPage,
+  search_wiki: humanizeSearchWiki,
+}
+
+/** Strip the SDK's MCP relay prefix off a tool name. Tools the sidecar
+ * exposes via the MCP server arrive at the chat layer as
+ * `mcp__<server>__<tool>` (e.g. `mcp__writer-relay__read_page`). The
+ * humanizers map keys those tools by their short name (`read_page`),
+ * so we peel the prefix before lookup — and also use the stripped
+ * form as the fallback label so the user never sees the raw
+ * relay-namespaced id. */
+function stripMcpPrefix(toolName: string): string {
+  const m = /^mcp__[\w-]+__(.+)$/.exec(toolName)
+  return m ? m[1] : toolName
 }
 
 export function humanizeToolCall(
@@ -154,7 +199,10 @@ export function humanizeToolCall(
   input: unknown,
   output?: unknown,
 ): HumanizedToolCall {
-  const h = humanizers[toolName]
-  if (!h) return { label: `Using ${toolName}` }
-  return h(input, output)
+  const direct = humanizers[toolName]
+  if (direct) return direct(input, output)
+  const short = stripMcpPrefix(toolName)
+  const stripped = humanizers[short]
+  if (stripped) return stripped(input, output)
+  return { label: `Using ${short}` }
 }

@@ -1,5 +1,17 @@
 // Shared types for the chat surface (threads + turns).
-// Stored in the document's Y.Doc so they sync across devices via Hocuspocus.
+//
+// Persisted as a pair of vault files per thread:
+//   threads/<id>.json         — ThreadMeta (this file's shape).
+//   threads/<id>.turns.jsonl  — one ChatTurn per line, append-only.
+//
+// The meta JSON is rewritten atomically (vault.ts's tmp+rename) on
+// any metadata change (rename, archive, model switch). Turns are
+// appended one line at a time as the SDK finishes each turn —
+// append is atomic on POSIX for writes under PIPE_BUF (~4 KB);
+// larger turns rely on the kernel's serialised write to the same fd
+// from a single process. Because we only ever append (no rewrite),
+// a mid-write crash truncates at most one trailing turn rather
+// than corrupting the file.
 
 /** Models the user can pick from in the PromptInput model selector.
  * Kept narrow + explicit so the UI can display friendly labels without
@@ -46,6 +58,12 @@ export const DEFAULT_CHAT_EFFORT: ChatEffort = 'medium'
 
 export interface ThreadMeta {
   id: string
+  /** Slug of the doc this thread is anchored to. Threads always
+   * belong to exactly one doc (wiki page / daily / system). When the
+   * parent doc is archived the thread follows. The file-based layout
+   * uses a flat `threads/` folder, so this field — not directory
+   * structure — carries the doc association. */
+  parentSlug: string
   title: string                    // empty until Haiku titler fills it in
   createdAt: number
   updatedAt: number

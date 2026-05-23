@@ -1,9 +1,4 @@
-// Blocks the app UI until docsStore.bootstrap() finishes — same
-// shape as EngineGate, second floor up in the gate stack:
-//
-//   EngineGate (proof-server health)
-//     └─ BootGate (catalog bootstrap)
-//          └─ AppContent
+// Blocks the app UI until docsStore.bootstrap() finishes.
 //
 // What bootstrap() does, and why we wait for it before any UI
 // renders:
@@ -11,9 +6,9 @@
 //   1. Migrate the legacy single-slug localStorage entry into a
 //      catalog-shaped daily so existing content survives the
 //      multi-doc rewrite.
-//   2. Ensure today's daily exists in the catalog (creating it on
-//      the server if missing).
-//   3. Wire the active slug + connect its collab handle.
+//   2. Ensure today's daily exists in the catalog (creating it if
+//      missing).
+//   3. Wire the active slug + open its collab handle.
 //
 // Until those land, knownDocs is empty or half-populated and the
 // sidebar shows a stale shape — a user clicking "New Note" mid-
@@ -25,12 +20,15 @@
 // migrations that aren't blocking) deliberately fires AFTER the
 // flag flips, so the user sees the app open as soon as their
 // today-anchor is ready — the rest streams in.
-
+//
 import { useEffect, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocsStore } from '@/state/docsStore'
+import { useThreadsStore } from '@/state/threadsStore'
+import { getActiveVaultPath } from '@/state/settingsStore'
+import { pickVault } from '@/lib/vaultPicker'
 
-const LOADER_DELAY_MS = 400 // same as EngineGate — keep flashes off fast boots
+const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
 interface Props {
   children: React.ReactNode
@@ -45,12 +43,32 @@ export function BootGate({ children }: Props) {
   // (it short-circuits when the catalog already has today's daily),
   // but React's Strict Mode would still double-call this useEffect —
   // hence the idempotency on the store side, not a guard here.
+  //
+  // Path C precondition: a vault must be selected before bootstrap so
+  // every doc the bootstrap touches (today's daily + system pages) can
+  // immediately reach disk. We block on the OS picker until the user
+  // chooses a folder; cancelling falls through to bootstrap-without-
+  // vault, which silent-skips every disk write. That's a degraded but
+  // recoverable state — user can re-run picker from DevTools, or quit
+  // and relaunch to get the prompt again.
   useEffect(() => {
-    bootstrap()
+    const init = async () => {
+      if (!getActiveVaultPath()) {
+        await pickVault()
+      }
+      bootstrap()
+      // Load chat thread metas + turns from `threads/`. Fires in
+      // parallel with bootstrap because the two read disjoint paths
+      // (docs read `wiki/` / `daily/` / `_system/`, threads read
+      // `threads/`). hydrate is idempotent so StrictMode's double-
+      // mount is safe.
+      void useThreadsStore.getState().hydrate()
+    }
+    void init()
   }, [bootstrap])
 
   // Delay the visual loader by 400 ms so a fast bootstrap doesn't
-  // produce a spinner flash. Matches EngineGate's behaviour.
+  // produce a spinner flash.
   useEffect(() => {
     if (!bootstrapping) return
     const t = window.setTimeout(() => setShowLoader(true), LOADER_DELAY_MS)

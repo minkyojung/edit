@@ -9,11 +9,13 @@
 // "I want this day" reads as a request to work it, not just peek.
 
 import { useMemo } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
-import { useDocsStore } from '@/state/docsStore'
+import { useDocsStore, shiftMonthAnchor } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { todayLocalDate } from '@/hooks/useDocMeta'
+import { buildDayUrl, buildMonthUrl } from '@/lib/viewUrl'
 import { SidebarGroup } from '@/components/ui/sidebar'
 
 const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const
@@ -21,11 +23,9 @@ const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const
 export function MonthView() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const monthAnchor = useDocsStore((s) => s.monthAnchor)
-  const shiftMonth = useDocsStore((s) => s.shiftMonth)
+  const activeSlug = useActiveSlug()
   const openDaily = useDocsStore((s) => s.openDaily)
-  const setSidebarTab = useDocsStore((s) => s.setSidebarTab)
   const navigate = useNavigate()
-  const { pathname } = useLocation()
 
   const today = todayLocalDate()
 
@@ -44,14 +44,16 @@ export function MonthView() {
   )
   const headerLabel = useMemo(() => formatMonthHeader(monthAnchor), [monthAnchor])
 
-  const ensureNotesRoute = () => {
-    if (!pathname.startsWith('/notes')) navigate('/notes')
+  // Stepping the month chevron stays on the Month view — the anchor
+  // changes but the user is still surveying. Day-cell clicks below flip
+  // to Day view because that gesture reads as "go work this day."
+  const shiftMonthBy = (delta: number) => {
+    navigate(buildMonthUrl(shiftMonthAnchor(monthAnchor, delta), activeSlug))
   }
 
   const handlePick = async (date: string) => {
     const slug = await openDaily(date)
-    if (slug) setSidebarTab('day')
-    ensureNotesRoute()
+    navigate(buildDayUrl(date, slug ?? activeSlug))
   }
 
   return (
@@ -59,7 +61,7 @@ export function MonthView() {
       <div className="flex items-center justify-between px-1 pb-1">
         <button
           type="button"
-          onClick={() => shiftMonth(-1)}
+          onClick={() => shiftMonthBy(-1)}
           aria-label="Previous month"
           className={cn(
             'flex h-5 w-5 items-center justify-center rounded-sm transition-colors',
@@ -74,7 +76,7 @@ export function MonthView() {
         </span>
         <button
           type="button"
-          onClick={() => shiftMonth(1)}
+          onClick={() => shiftMonthBy(1)}
           aria-label="Next month"
           className={cn(
             'flex h-5 w-5 items-center justify-center rounded-sm transition-colors',
