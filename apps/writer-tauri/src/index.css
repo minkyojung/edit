@@ -288,6 +288,95 @@
     outline-offset: 2px;
     border-radius: 4px;
   }
+
+  /* Custom video controls — pinned to the bottom of the video frame,
+     always visible. Each interactive element inside `.video-controls`
+     attaches `stopPropagation` in JS so PM's input pipeline never sees
+     its events; the rest of the card body remains a normal mousedown
+     surface that PM uses to start a card drag. */
+  .ProseMirror .video-card video {
+    display: block;
+  }
+  .ProseMirror .video-controls {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
+    color: white;
+    font-size: 12px;
+    line-height: 1;
+    border-radius: 0 0 4px 4px;
+    user-select: none;
+  }
+  .ProseMirror .video-controls button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    line-height: 0;
+  }
+  .ProseMirror .video-controls button:hover {
+    background: rgba(255, 255, 255, 0.18);
+  }
+  .ProseMirror .video-controls button svg {
+    display: block;
+  }
+  .ProseMirror .video-controls .time {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.85;
+  }
+  /* Two-element split for the scrubber: the outer `.seek-bar` is the
+     hit-area (taller than the visual line so vertical-axis grabs are
+     forgiving), the inner `.seek-track` is the visual line itself.
+     Earlier attempts at folding both into one element via padding +
+     background-clip rendered inconsistently on WKWebView (the
+     background didn't paint in some builds), so the split is the
+     structural fix. */
+  .ProseMirror .video-controls .seek-bar {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    height: 16px;
+    cursor: pointer;
+  }
+  .ProseMirror .video-controls .seek-track {
+    position: relative;
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 2px;
+  }
+  .ProseMirror .video-controls .seek-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    background: white;
+    border-radius: 2px;
+    pointer-events: none;
+  }
+  .ProseMirror .video-controls .seek-thumb {
+    position: absolute;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    background: white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+
   /* PM mirrors NodeSelection into a DOM Range over the card wrapper so
      the browser applies its system highlight color (macOS / WKWebView
      paints this as a green-yellow tint when the accent color isn't
