@@ -26,7 +26,7 @@ import { NodeSelection, Plugin, TextSelection } from '@milkdown/kit/prose/state'
 
 /** Node types that should auto-advance the cursor after a drop. Add
  * a new card's schema node name here when it lands. */
-const CARD_NODE_TYPES = new Set(['imageBlock', 'videoBlock'])
+const CARD_NODE_TYPES = new Set(['imageBlock', 'videoBlock', 'audioBlock'])
 
 export const cardDropAdvanceCursor = $prose(
   () =>

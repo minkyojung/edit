@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { Editor, rootCtx, editorViewOptionsCtx, editorViewCtx } from '@milkdown/kit/core'
+import {
+  Editor,
+  rootCtx,
+  editorViewOptionsCtx,
+  editorViewCtx,
+  defaultValueCtx,
+} from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
@@ -21,6 +27,7 @@ import { formatStatePlugin } from './formatStatePlugin'
 import { dropCursor } from '@milkdown/kit/prose/dropcursor'
 import { $prose } from '@milkdown/kit/utils'
 import { cardDropAdvanceCursor } from './cardDropAdvanceCursor'
+import { audioNodeView } from './cards/AudioCardNodeView'
 import { imageNodeView } from './cards/ImageCardNodeView'
 import { videoNodeView } from './cards/VideoCardNodeView'
 import { imageInlineNodeView } from './imageInlineNodeView'
@@ -69,6 +76,7 @@ import { dailyGuardPlugin } from './dailyGuardPlugin'
 import { usePendingScroll } from '@/state/pendingScrollStore'
 import { scrollToMark } from '@/editor/scrollToMark'
 import { EditorFooter } from '@/components/EditorFooter'
+import { notify } from '@/lib/notify'
 
 interface Props {
   handle: CollabHandle | null
@@ -179,6 +187,12 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .config((ctx) => {
         ctx.set(rootCtx, rootRef.current!)
         ctx.set(editorViewOptionsCtx, { attributes: { class: 'milkdown-editor-root' } })
+        // Explicit empty default so the editor's pre-collab doc state is
+        // documented rather than implicit. Collab's bindDoc replaces this
+        // once handle.contentReady resolves; the ctx exists to keep the
+        // pre-bind window deterministic if Milkdown's internal default
+        // ever changes between versions.
+        ctx.set(defaultValueCtx, '')
       })
       .config(configureListItemBlock)
       .use(commonmark)
@@ -227,6 +241,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .use(inlineCodeSafeKeymap)
       .use(imageNodeView)
       .use(videoNodeView)
+      .use(audioNodeView)
       .use(imageInlineNodeView)
       .use(cardDropAdvanceCursor)
       .use($prose(() => dropCursor({ color: false, width: 2, class: 'pm-drop-cursor' })))
@@ -282,20 +297,28 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         await handle.contentReady
         if (!mounted) return
 
-        // If hydration left the fragment empty (brand-new note), pre-seed
-        // it with the schema's minimal fill (one empty paragraph) before
-        // binding. y-prosemirror's sync plugin compares PM's filled doc
-        // against the fragment on first bind; an empty fragment vs PM's
-        // schema-required <paragraph/> triggers a PM→Y commit that puts
-        // an extra paragraph node into the fragment for good. After the
-        // user types into PM's paragraph, the fragment ends up with two
-        // paragraph items — the leading empty one is the visible regression.
-        // Seeding the same shape PM would have filled means the diff
-        // check is a no-op and no spurious commit fires.
+        // All post-create setup runs in one ctx acquisition: seed an
+        // empty fragment, bind collab + UndoManager, expose the view to
+        // React, drain any scroll-to-mark request that arrived before
+        // this slug's editor mounted. The ordering here is meaningful —
+        // seed MUST precede bindDoc, and bindDoc must precede setPmView
+        // so React subscribers always see a fully-wired view.
         editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx)
+
+          // If hydration left the fragment empty (brand-new note),
+          // pre-seed it with the schema's minimal fill (one empty
+          // paragraph) before binding. y-prosemirror's sync plugin
+          // compares PM's filled doc against the fragment on first bind;
+          // an empty fragment vs PM's schema-required <paragraph/>
+          // triggers a PM→Y commit that puts an extra paragraph node
+          // into the fragment for good. After the user types into PM's
+          // paragraph, the fragment ends up with two paragraph items —
+          // the leading empty one is the visible regression. Seeding the
+          // same shape PM would have filled means the diff check is a
+          // no-op and no spurious commit fires.
           const xmlFragment = ydoc.getXmlFragment('prosemirror')
           if (xmlFragment.length === 0) {
-            const view = ctx.get(editorViewCtx)
             const fill = view.state.schema.topNodeType.createAndFill()
             if (fill) {
               const seedDoc = prosemirrorToYDoc(fill, 'prosemirror')
@@ -304,10 +327,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
               seedDoc.destroy()
             }
           }
-        })
 
-        editor.action((ctx) => {
-          const collabService = ctx.get(collabServiceCtx)
           // Build a Y.UndoManager that tracks BOTH the prosemirror
           // XmlFragment (the doc itself) AND the marks Y.Map. Wiring
           // both into the same undo stack means accept/reject's
@@ -336,7 +356,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
           //
           // Anything outside these origins stays out of the undo stack
           // so a programmatic write can't be undone into existence.
-          const xmlFragment = ydoc.getXmlFragment('prosemirror')
+          const collabService = ctx.get(collabServiceCtx)
           const marksMap = ydoc.getMap('marks')
           const undoManager = new UndoManager([xmlFragment, marksMap], {
             trackedOrigins: new Set([
@@ -347,34 +367,38 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
             captureTimeout: 500,
           })
           collabService.setOptions({ yUndoOpts: { undoManager } })
-          const service = collabService.bindDoc(ydoc)
           // No awareness (multi-cursor / presence) since Phase 3.C
           // removed the WebSocket provider — local-only editor.
-          service.connect()
-        })
+          collabService.bindDoc(ydoc).connect()
 
-        editor.action((ctx) => {
-          const view = ctx.get(editorViewCtx)
+          // Parser / serializer come from the headless Milkdown built
+          // at app boot (lib/headlessMilkdown.ts) — populated globally
+          // in editorViewStore before any doc opens. Per-doc editor
+          // instances no longer publish them, removing the race that
+          // left vault load waiting on parser-not-set.
           setPmView(view)
           onViewReady?.(view)
-        })
 
-        // Parser / serializer come from the headless Milkdown built
-        // at app boot (lib/headlessMilkdown.ts) — populated globally
-        // in editorViewStore before any doc opens. Per-doc editor
-        // instances no longer publish them, removing the race that
-        // left vault load waiting on parser-not-set.
-        editor.action((ctx) => {
-          const view = ctx.get(editorViewCtx)
-          // Drain a pending "scroll to this mark" target queued by
-          // the chat panel before this slug's editor was mounted.
-          // rAF defers one paint so decoration plugins finish their
-          // first build pass and the target mark has stable coords.
+          // Drain a pending "scroll to this mark" target queued by the
+          // chat panel before this slug's editor was mounted. rAF defers
+          // one paint so decoration plugins finish their first build
+          // pass and the target mark has stable coords.
           const pendingMarkId = usePendingScroll.getState().drain(handle.slug)
           if (pendingMarkId) {
             requestAnimationFrame(() => scrollToMark(view, pendingMarkId))
           }
         })
+      })
+      .catch((err) => {
+        // Editor.make().create() or the post-create setup rejected.
+        // Without this catch the chain failed silently and the user saw
+        // an empty editor with no signal that anything went wrong, which
+        // makes the bug class invisible in production. Unmount races land
+        // here too, so skip the toast when the component has already
+        // torn down.
+        if (!mounted) return
+        console.error('[MilkdownEditor] editor create failed', err)
+        notify.editorInitFailed()
       })
 
     return () => {

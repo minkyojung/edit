@@ -1,27 +1,28 @@
-// Custom video controls — replaces the browser's built-in
-// `<video controls>` shadow DOM. The native chrome was the source
-// of every drag-vs-controls conflict we hit: shadow DOM internals
-// (scrubber thumb, volume slider) fire pointer events that PM's
-// `mightDrag` trap interprets as card-drag intent, and there is no
-// way to intercept those events from outside the shadow tree. By
-// rendering our own controls layer in plain DOM, every interactive
-// element is reachable from our own code — each one calls
-// `stopPropagation()` so its events don't bubble into PM's input
-// pipeline, leaving the rest of the card body free to receive the
-// mousedown that initiates a card drag.
+// Custom media controls — replaces the browser's built-in
+// `<video controls>` / `<audio controls>` shadow DOM. The native
+// chrome was the source of every drag-vs-controls conflict we hit:
+// shadow DOM internals (scrubber thumb, volume slider) fire pointer
+// events that PM's `mightDrag` trap interprets as card-drag intent,
+// and there is no way to intercept those events from outside the
+// shadow tree. By rendering our own controls layer in plain DOM,
+// every interactive element is reachable from our own code — each
+// one calls `stopPropagation()` so its events don't bubble into
+// PM's input pipeline, leaving the rest of the card body free to
+// receive the mousedown that initiates a card drag.
 //
-// What lives here vs. what the `<video>` element keeps:
-//   - We render: play/pause button, seek bar (fill + thumb), time
-//     display, mute toggle, fullscreen toggle.
-//   - We listen to: `play`, `pause`, `timeupdate`, `loadedmetadata`,
-//     `volumechange`, `ended` to sync the UI.
-//   - We do NOT reimplement: decoding, buffering, fullscreen
-//     transitions, audio mixing. Those are still native browser
-//     concerns — we just call the matching `video.*` APIs.
+// Works on any `HTMLMediaElement` — `<video>` and `<audio>` share
+// the same playback API (play, pause, currentTime, duration,
+// volume, muted, etc.), so the same factory drives both card
+// types. Per-variant container styling (auto-hide gradient on
+// video, solid background on audio) is handled by the variant
+// `className` the caller supplies. Inner element styles target
+// the shared `[data-card-controls]` attribute selector in
+// index.css so the button / seek bar / time display look the
+// same regardless of media type.
 //
 // Returned `destroy()` removes every listener this module attached
-// to the video and to the controls' interactive elements; callers
-// must invoke it on NodeView teardown.
+// to the media element and to the controls' interactive elements;
+// callers must invoke it on NodeView teardown.
 
 // Inline SVG icon strings. We can't import @tabler/icons-react from
 // a vanilla NodeView, but using the same Tabler-family glyph data
@@ -64,12 +65,23 @@ function createIconButton(label: string, svg: string): HTMLButtonElement {
   return btn
 }
 
-export function createVideoControls(video: HTMLVideoElement): {
+export interface MediaControlsOptions {
+  /** Class added to the controls root in addition to the shared
+   * `[data-card-controls]` attribute — caller decides which variant
+   * styling applies (e.g. `'video-controls'` for the absolute-positioned
+   * gradient overlay, `'audio-controls'` for the solid in-flow bar). */
+  className?: string
+}
+
+export function createMediaControls(
+  video: HTMLMediaElement,
+  options: MediaControlsOptions = {},
+): {
   el: HTMLElement
   destroy: () => void
 } {
   const el = document.createElement('div')
-  el.className = 'video-controls'
+  if (options.className) el.className = options.className
   el.setAttribute('data-card-controls', '')
 
   const playBtn = createIconButton('Play', ICON_PLAY)

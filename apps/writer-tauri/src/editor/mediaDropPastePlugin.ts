@@ -1,5 +1,5 @@
-// Drag-and-drop + clipboard-paste handler for media files (images
-// and videos).
+// Drag-and-drop + clipboard-paste handler for media files (images,
+// videos, audio).
 //
 // The slash menu covers explicit insertion via file dialog; this
 // plugin handles the two other paths every note-app user expects:
@@ -8,11 +8,9 @@
 //     editor. The screenshot arrives as a PNG `File` on the
 //     clipboard with no source path.
 //
-// Each file is classified by MIME prefix into image vs video and
-// routed to the matching importer (`importImageFile` /
-// `importVideoFile`) and node type (`imageBlock` / `videoBlock`).
-// Both branches converge on `insertBlockAtSelection`, which is
-// generic over block atoms.
+// Each file is classified by MIME prefix and routed to the matching
+// vault importer + schema node type. All branches converge on
+// `insertBlockAtSelection`, which is generic over block atoms.
 //
 // The async copy-into-vault step runs *outside* the transaction.
 // We move the selection to the drop position first, then dispatch
@@ -26,13 +24,15 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { insertBlockAtSelection } from './insertBlock'
 import { importImageFile } from '@/lib/vaultImages'
 import { importVideoFile } from '@/lib/vaultVideos'
+import { importAudioFile } from '@/lib/vaultAudios'
 import { flushDirty } from '@/lib/docFileSync'
 
-type MediaKind = 'image' | 'video'
+type MediaKind = 'image' | 'video' | 'audio'
 
 function classifyMediaFile(file: File): MediaKind | null {
   if (file.type.startsWith('image/')) return 'image'
   if (file.type.startsWith('video/')) return 'video'
+  if (file.type.startsWith('audio/')) return 'audio'
   return null
 }
 
@@ -48,24 +48,41 @@ function filterMediaFiles(
   return out
 }
 
+const IMPORTERS: Record<MediaKind, (file: File) => Promise<string>> = {
+  image: importImageFile,
+  video: importVideoFile,
+  audio: importAudioFile,
+}
+
+const NODE_NAMES: Record<MediaKind, string> = {
+  image: 'imageBlock',
+  video: 'videoBlock',
+  audio: 'audioBlock',
+}
+
+function buildAttrs(
+  kind: MediaKind,
+  file: File,
+  relPath: string,
+): Record<string, unknown> {
+  const stem = file.name.replace(/\.[^.]+$/, '')
+  if (kind === 'image') return { src: relPath, alt: stem, title: '' }
+  // Video / audio cards both use a single `title` attr; seeding it
+  // with the filename gives the user a reasonable starting label
+  // they can edit (or, for video, ignore).
+  return { src: relPath, title: stem }
+}
+
 async function insertMediaAtSelection(
   view: EditorView,
   files: Array<{ file: File; kind: MediaKind }>,
 ): Promise<void> {
   for (const { file, kind } of files) {
     try {
-      const relPath =
-        kind === 'image'
-          ? await importImageFile(file)
-          : await importVideoFile(file)
-      const nodeName = kind === 'image' ? 'imageBlock' : 'videoBlock'
-      const t = view.state.schema.nodes[nodeName]
+      const relPath = await IMPORTERS[kind](file)
+      const t = view.state.schema.nodes[NODE_NAMES[kind]]
       if (!t) continue
-      const attrs =
-        kind === 'image'
-          ? { src: relPath, alt: file.name.replace(/\.[^.]+$/, ''), title: '' }
-          : { src: relPath, title: '' }
-      const node = t.create(attrs)
+      const node = t.create(buildAttrs(kind, file, relPath))
       insertBlockAtSelection(view, node)
     } catch (err) {
       console.warn('[media-drop-paste] insert failed', {

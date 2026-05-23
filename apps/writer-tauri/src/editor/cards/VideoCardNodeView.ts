@@ -29,7 +29,7 @@ import type { Node as PMNode } from '@milkdown/kit/prose/model'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { resolveVaultAssetSrc } from '../utils/resolveVaultAssetSrc'
 import { BaseCardNodeView } from './BaseCardNodeView'
-import { createVideoControls } from './VideoControls'
+import { createMediaControls } from './MediaControls'
 
 class VideoCardNodeView extends BaseCardNodeView {
   private readonly video: HTMLVideoElement
@@ -75,7 +75,9 @@ class VideoCardNodeView extends BaseCardNodeView {
 
     this.mountBody(this.video)
 
-    const { el: controlsEl, destroy } = createVideoControls(this.video)
+    const { el: controlsEl, destroy } = createMediaControls(this.video, {
+      className: 'video-controls',
+    })
     this.controlsDestroy = destroy
     this.dom.appendChild(controlsEl)
   }

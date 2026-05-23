@@ -242,7 +242,8 @@
      paragraphs and a fresh paragraph inserted after the card lands
      at a normal line height instead of pressed against the media. */
   .ProseMirror .image-card,
-  .ProseMirror .video-card {
+  .ProseMirror .video-card,
+  .ProseMirror .audio-card {
     position: relative;
     margin-top: var(--prose-gap-block);
     margin-bottom: var(--prose-gap-block);
@@ -252,12 +253,20 @@
      inside the controls override this with their own cursor values,
      so it only applies to the media area itself. */
   .ProseMirror .image-card:hover,
-  .ProseMirror .video-card:hover {
+  .ProseMirror .video-card:hover,
+  .ProseMirror .audio-card:hover {
     cursor: grab;
   }
   .ProseMirror .image-card:active,
-  .ProseMirror .video-card:active {
+  .ProseMirror .video-card:active,
+  .ProseMirror .audio-card:active {
     cursor: grabbing;
+  }
+  /* Title input on the audio card stays a text cursor — it's an
+     editable field, not part of the drag surface. */
+  .ProseMirror .audio-card .audio-title-input,
+  .ProseMirror .audio-card .audio-title-input:hover {
+    cursor: text;
   }
   /* macOS Live Text (Sonoma+) auto-detects text burned into media
      bitmaps — image captions and video subtitle frames alike — and
@@ -270,7 +279,8 @@
     user-select: none;
   }
   .ProseMirror .image-card.ProseMirror-selectednode,
-  .ProseMirror .video-card.ProseMirror-selectednode {
+  .ProseMirror .video-card.ProseMirror-selectednode,
+  .ProseMirror .audio-card.ProseMirror-selectednode {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
     border-radius: 4px;
@@ -284,34 +294,24 @@
   .ProseMirror .video-card video {
     display: block;
   }
-  .ProseMirror .video-controls {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
+
+  /* Shared media-controls layout — selected via the
+     `[data-card-controls]` attribute that MediaControls.ts sets on
+     its root. Buttons, seek bar, fill, thumb, and the time display
+     all look identical across video and audio. Per-variant container
+     styling (`.video-controls` for the absolute-positioned auto-
+     hiding gradient overlay, `.audio-controls` for the solid in-flow
+     bar) lives in the matching block below. */
+  .ProseMirror [data-card-controls] {
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 8px 12px;
-    background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
-    color: white;
     font-size: 12px;
     line-height: 1;
-    border-radius: 0 0 4px 4px;
     user-select: none;
-    /* Auto-hide pattern: bar is invisible during normal playback,
-       fades in on hover, and stays up when paused / ended so the
-       user always has a path back to play / replay. The `is-paused`
-       class is toggled from VideoControls.ts in sync with video.paused
-       / video.ended. */
-    opacity: 0;
-    transition: opacity 180ms ease-out;
   }
-  .ProseMirror .video-card:hover .video-controls,
-  .ProseMirror .video-controls.is-paused {
-    opacity: 1;
-  }
-  .ProseMirror .video-controls button {
+  .ProseMirror [data-card-controls] button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -323,13 +323,10 @@
     border-radius: 4px;
     line-height: 0;
   }
-  .ProseMirror .video-controls button:hover {
-    background: rgba(255, 255, 255, 0.18);
-  }
-  .ProseMirror .video-controls button svg {
+  .ProseMirror [data-card-controls] button svg {
     display: block;
   }
-  .ProseMirror .video-controls .time {
+  .ProseMirror [data-card-controls] .time {
     font-variant-numeric: tabular-nums;
     opacity: 0.85;
   }
@@ -340,39 +337,130 @@
      background-clip rendered inconsistently on WKWebView (the
      background didn't paint in some builds), so the split is the
      structural fix. */
-  .ProseMirror .video-controls .seek-bar {
+  .ProseMirror [data-card-controls] .seek-bar {
     flex: 1;
     display: flex;
     align-items: center;
     height: 16px;
     cursor: pointer;
   }
-  .ProseMirror .video-controls .seek-track {
+  .ProseMirror [data-card-controls] .seek-track {
     position: relative;
     width: 100%;
     height: 4px;
-    background: rgba(255, 255, 255, 0.3);
     border-radius: 2px;
   }
-  .ProseMirror .video-controls .seek-fill {
+  .ProseMirror [data-card-controls] .seek-fill {
     position: absolute;
     top: 0;
     bottom: 0;
     left: 0;
-    background: white;
     border-radius: 2px;
     pointer-events: none;
   }
-  .ProseMirror .video-controls .seek-thumb {
+  .ProseMirror [data-card-controls] .seek-thumb {
     position: absolute;
     top: 50%;
     width: 12px;
     height: 12px;
-    background: white;
     border-radius: 50%;
     transform: translate(-50%, -50%);
     pointer-events: none;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Video controls — absolute-positioned overlay on the video frame,
+     dark gradient background, auto-hides during playback. */
+  .ProseMirror .video-controls {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
+    color: white;
+    border-radius: 0 0 4px 4px;
+    /* Auto-hide: invisible during playback, fades in on hover, and
+       stays pinned when paused / ended (is-paused toggled from
+       MediaControls.ts in sync with video.paused / video.ended). */
+    opacity: 0;
+    transition: opacity 180ms ease-out;
+  }
+  .ProseMirror .video-card:hover .video-controls,
+  .ProseMirror .video-controls.is-paused {
+    opacity: 1;
+  }
+  .ProseMirror .video-controls button:hover {
+    background: rgba(255, 255, 255, 0.18);
+  }
+  .ProseMirror .video-controls .seek-track {
+    background: rgba(255, 255, 255, 0.3);
+  }
+  .ProseMirror .video-controls .seek-fill {
+    background: white;
+  }
+  .ProseMirror .video-controls .seek-thumb {
+    background: white;
+  }
+
+  /* Audio card — no visual frame, so the user-supplied title input is
+     the card's identity. Single `--card` background with a border-top
+     between the title area and the controls so contrast stays
+     uniform across themes (an earlier split that used `--card` +
+     `--muted` left some palettes rendering the input on near-black
+     against a not-quite-white `--foreground`, which read as low-
+     contrast / barely visible).
+     The underlying `<audio>` element is hidden because the
+     MediaControls layer is the only player UI. */
+  .ProseMirror .audio-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--card-foreground, var(--foreground));
+    overflow: hidden;
+  }
+  .ProseMirror .audio-card audio {
+    display: none;
+  }
+  .ProseMirror .audio-card-body {
+    padding: 0;
+  }
+  /* Inner host wrapper that restores `contenteditable=true` for the
+     input — see AudioCardNodeView.ts for the WebKit-quirk rationale.
+     The wrapper carries no visual styling of its own; the input is
+     responsible for its own appearance. */
+  .ProseMirror .audio-title-host {
+    display: block;
+  }
+  .ProseMirror .audio-title-input {
+    display: block;
+    width: 100%;
+    padding: 10px 12px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+  }
+  .ProseMirror .audio-title-input::placeholder {
+    color: var(--muted-foreground);
+  }
+  .ProseMirror .audio-controls {
+    background: transparent;
+    color: inherit;
+    border-top: 1px solid var(--border);
+  }
+  .ProseMirror .audio-controls button:hover {
+    background: var(--accent);
+  }
+  .ProseMirror .audio-controls .seek-track {
+    background: var(--border);
+  }
+  .ProseMirror .audio-controls .seek-fill {
+    background: currentColor;
+  }
+  .ProseMirror .audio-controls .seek-thumb {
+    background: currentColor;
   }
 
   /* PM mirrors NodeSelection into a DOM Range over the card wrapper so
@@ -385,8 +473,16 @@
   .ProseMirror .image-card ::selection,
   .ProseMirror .image-card::selection,
   .ProseMirror .video-card ::selection,
-  .ProseMirror .video-card::selection {
+  .ProseMirror .video-card::selection,
+  .ProseMirror .audio-card ::selection,
+  .ProseMirror .audio-card::selection {
     background: transparent;
+  }
+  /* …but allow text selection inside the audio title input (it's an
+     editable field, not part of the suppression rule above). */
+  .ProseMirror .audio-card .audio-title-input::selection {
+    background: var(--accent);
+    color: var(--accent-foreground);
   }
   /* Empty paragraphs (the trailing paragraph PM inserts after a card)
      would otherwise collapse to height 0 in some WebKit builds and

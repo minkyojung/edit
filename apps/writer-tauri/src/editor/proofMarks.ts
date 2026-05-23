@@ -22,6 +22,7 @@ import { codeBlockExtPlugins as rawCodeBlockExt } from './schema/code-block-ext'
 import { frontmatterSchema as rawFrontmatter } from './schema/frontmatter'
 import { imageBlockSchema as rawImageBlock } from './schema/image-block'
 import { videoBlockSchema as rawVideoBlock } from './schema/video-block'
+import { audioBlockSchema as rawAudioBlock } from './schema/audio-block'
 
 export const proofMarkPlugins: MilkdownPlugin[] = (
   rawProofMarkPlugins as unknown as MilkdownPlugin[]
@@ -51,6 +52,13 @@ export const videoBlockSchema: MilkdownPlugin[] = [
   rawVideoBlock as unknown as MilkdownPlugin,
 ].flat()
 
+/** Block-level audio node. Round-trips through raw `<audio>` HTML
+ * with a `title` attribute the user fills in via the input above
+ * the controls. Same wrap idiom as the other block schemas. */
+export const audioBlockSchema: MilkdownPlugin[] = [
+  rawAudioBlock as unknown as MilkdownPlugin,
+].flat()
+
 /**
  * Combined schema bundle — register this single export in MilkdownEditor
  * to keep the schema surface in one place. Order matters: marks register
@@ -63,4 +71,5 @@ export const proofSchemaPlugins: MilkdownPlugin[] = [
   ...frontmatterSchema,
   ...imageBlockSchema,
   ...videoBlockSchema,
+  ...audioBlockSchema,
 ]
