@@ -24,10 +24,6 @@ import {
   ensureProfileWikiSlug,
 } from '@/state/wikiService'
 import { assembleContext } from '@/agent/contextPipeline'
-import {
-  selectActiveThreadsForIngest,
-  type ActiveThreadSummary,
-} from '@/agent/selectActiveThreadsForIngest'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { buildPrompt, composeSystemPrompt } from './prompts'
 import { sanitizeIngestResult, type IngestToolInput } from './parse'
@@ -53,7 +49,7 @@ const INGEST_MODEL = 'claude-haiku-4-5-20251001'
  * Returned shape mirrors `IngestResult` minus `ingestedHashes`,
  * which is daily-only state (bootstrap doesn't dedup by hash). */
 export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreResult> {
-  const { text, sourceLabel, sinceTs, threadSlug } = args
+  const { text, sourceLabel } = args
 
   // Seed the conventions page on first need so the user has
   // something to edit; assembleContext reads the result a moment
@@ -65,28 +61,15 @@ export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreRes
   // even for users who skipped the URL bootstrap — the page just
   // starts empty and fills from daily activity instead.
   await ensureProfileWikiSlug()
-  // Run wiki context assembly and chat compaction in parallel —
-  // they read independent state and the chat side may include
-  // several LLM calls for stale threads, so paying once is much
-  // cheaper than serializing.
-  const [ctx, chatActivity] = await Promise.all([
-    // One facade call replaces the prior three (wiki dump + index +
-    // conventions). Tier 2 hot pages come from [[link]]s in the
-    // source text — same daily / import can mention multiple
-    // existing wiki pages, and now their bodies ride along
-    // automatically. We skip the Tier 3 tool list (enableTools:
-    // false) because ingest is single-shot — the LLM emits one
-    // submit_ingest_result call and has no room to drive
-    // read_page/search_wiki.
-    assembleContext({ docBody: text, enableTools: false }),
-    // Chat activity since the previous successful ingest. Empty
-    // array when no slug is available (bootstrap before any doc
-    // opens) or on quiet days where no thread had a new turn since
-    // sinceTs.
-    threadSlug
-      ? selectActiveThreadsForIngest({ slug: threadSlug, sinceTs })
-      : Promise.resolve<ActiveThreadSummary[]>([]),
-  ])
+  // One facade call replaces the prior three (wiki dump + index +
+  // conventions). Tier 2 hot pages come from [[link]]s in the
+  // source text — same daily / import / chat-handoff can mention
+  // multiple existing wiki pages, and now their bodies ride along
+  // automatically. We skip the Tier 3 tool list (enableTools:
+  // false) because ingest is single-shot — the LLM emits one
+  // submit_ingest_result call and has no room to drive
+  // read_page/search_wiki.
+  const ctx = await assembleContext({ docBody: text, enableTools: false })
 
   const prompt = buildPrompt({
     date: todayLocalDate(),
@@ -97,7 +80,6 @@ export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreRes
     indexSnapshot: ctx.index,
     hotPages: ctx.hotPages,
     conventions: ctx.conventions,
-    chatActivity,
     selfProfile: ctx.selfProfile,
   })
 
@@ -216,7 +198,6 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
     total: allHashes.length,
   })
 
-  const sinceTs = useIngestStore.getState().lastIngestedAt[noteSlug] ?? 0
   const noteLabel =
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
@@ -225,8 +206,6 @@ export async function runIngest(noteSlug: string): Promise<IngestResult> {
   const core = await runIngestCore({
     text: noteMarkdown,
     sourceLabel: noteLabel,
-    sinceTs,
-    threadSlug: noteSlug,
   })
 
   return {

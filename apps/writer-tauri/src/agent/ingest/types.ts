@@ -80,20 +80,15 @@ export interface IngestResult {
 export interface IngestCoreArgs {
   /** Already-filtered text to feed the model. For daily this is the
    * concatenated body of new blocks; for bootstrap it's a raw chunk
-   * straight from the source file / URL. */
+   * straight from the source file / URL. For chat-handoff this is
+   * the assistant message body. */
   text: string
   /** Free-form label used in the user prompt (`daily/YYYY-MM-DD`
-   * for daily, `imported/<file>` for bootstrap). Surfaces as the
-   * provenance string the LLM cites in its proposals. */
+   * for daily, `imported/<file>` for bootstrap, `chat: <title>` for
+   * chat handoff). Surfaces as the provenance string the LLM cites
+   * in its proposals; the prompt builder also branches on the
+   * `chat:` prefix to tighten extraction. */
   sourceLabel: string
-  /** Chat-thread watermark for `selectActiveThreadsForIngest`.
-   * Daily passes `lastIngestedAt[slug]`; bootstrap passes 0 so the
-   * first run sees every thread. */
-  sinceTs: number
-  /** Doc slug whose threads should contribute to the chat-activity
-   * block. Each thread's `parentSlug` is matched against this. Pass
-   * null to omit chat activity (bootstrap before any doc opens). */
-  threadSlug: string | null
 }
 
 export interface IngestCoreResult {

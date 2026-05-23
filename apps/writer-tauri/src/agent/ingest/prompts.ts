@@ -14,7 +14,6 @@
 // are treated as the cacheable prefix; every block in our return
 // gets cached.
 
-import type { ActiveThreadSummary } from '@/agent/selectActiveThreadsForIngest'
 import type { WikiPageBody } from '@/agent/contextSelector'
 
 /** Static, system-owned rules that never move into the user's
@@ -30,7 +29,6 @@ export const SYSTEM_PROMPT_STATIC = `You maintain a personal wiki on the user's 
 
 - INDEX block — system-built catalog of every wiki page. One line per page in the form: \`- <path> [<type-id>] — <title>: <summary> | links: <N>\`. The \`[<type-id>]\` bracket (e.g. \`[wiki:custom-7n2dvj41]\`) is the verbatim string you copy into a proposal's \`target\` field when adding to that page. Treat the INDEX itself as read-only — the host rebuilds it deterministically; do not emit updates for it.
 - WIKI PAGE blocks — full bodies of pages mentioned via \`[[link]]\` in the new note. Read each body to learn what shape the page has and what kind of content belongs there. The page's body is the ground truth for its current pattern.
-- TODAY'S CHAT ACTIVITY block (optional) — \`entity: fact\` bullets pre-extracted from chat threads the user had since the last ingest. Treat these as a fact source on equal footing with the new note. Bullets are already in your proposal shape; pick them up verbatim when relevant, or merge them into existing pages.
 
 ## What to propose
 
@@ -53,7 +51,7 @@ The INDEX includes \`[wiki:profile]\` — the user's own profile page (the perso
 - APPEND ONLY. Never propose modifying or deleting existing lines.
 - \`target\` is the verbatim \`[<type-id>]\` from the INDEX line — never invent ids.
 - Each proposal is atomic: ONE \`entity\` (topic name — a person, a book, a project) and a list of \`bullets\` (the facts about that entity). DO NOT emit page-level or sub-section headings inside bullets — the host assembles \`### {entity}\\n- {bullet}\` automatically. Bullets are plain text only: no leading \`-\`, no nested headings, no \`##\` or \`###\`.
-- Always include a \`sourceQuote\`: the exact sentence (or short clause) the proposal was derived from. For note-derived facts, echo from the note verbatim. For chat-derived facts, use the bullet text from the chat block (optionally prefix with the thread title in parentheses).
+- Always include a \`sourceQuote\`: the exact sentence (or short clause) the proposal was derived from, echoed from the note verbatim.
 - The wiki is FLAT — every entity is its own page at the same level. Do not create category pages. Each fact about a person belongs on a page named after that person, not on a shared "People" page. Same for books, projects, concepts.
 
 ## Cross-linking
@@ -87,7 +85,6 @@ When you DO have something to file (proposals is non-empty), the logEntry must b
  *   2. SELF PROFILE                — what we already know about the user
  *   3. INDEX summary               — per-page one-liners
  *   4. WIKI PAGE bodies            — full bodies of [[linked]] pages
- *   5. TODAY'S CHAT ACTIVITY       — bullets from new threads
  *
  * Subsequent ingest calls with the same wiki state hit the cache
  * for ~90% of the prompt cost; only the user prompt (DATE + NEW
@@ -98,7 +95,6 @@ export function composeSystemPrompt(args: {
   indexSnapshot: string
   hotPages: WikiPageBody[]
   conventions: string
-  chatActivity: ActiveThreadSummary[]
   selfProfile: string
 }): string[] {
   const trimmedConventions = args.conventions.trim()
@@ -137,19 +133,6 @@ export function composeSystemPrompt(args: {
     blocks.push(`--- WIKI PAGE: ${page.title} ---\n${page.body}`)
   }
 
-  // Chat activity since last ingest pass. Each thread arrives
-  // pre-shaped as `- entity: fact` bullets (compactChatThread), so
-  // the model can treat them as fact sources the same way it does
-  // the daily body — no second transformation pass. Block goes
-  // last so prefix cache (rules → index → hot pages) stays warm
-  // when only chat changes between runs.
-  if (args.chatActivity.length > 0) {
-    const chatBody = args.chatActivity
-      .map((t) => `[Thread: "${t.threadTitle}"]\n${t.summary}`)
-      .join('\n\n')
-    blocks.push(`--- TODAY'S CHAT ACTIVITY ---\n${chatBody}`)
-  }
-
   return blocks
 }
 
@@ -157,16 +140,31 @@ export function composeSystemPrompt(args: {
  * every ingest pass (today's date, the note being analyzed) goes
  * here so the system-prompt cache keeps hitting. The wiki context
  * and conventions used to live here too; they moved into the
- * system prompt (composeSystemPrompt above) for cache reuse. */
+ * system prompt (composeSystemPrompt above) for cache reuse.
+ *
+ * When `noteLabel` starts with `chat:` (handoff from a chat reply,
+ * not a daily note), we prepend a one-liner that tightens
+ * extraction — chat replies mix the user's direct statements with
+ * the assistant's narrative, and the model needs the nudge to
+ * skip the narrative half. */
 export function buildPrompt(args: {
   date: string
   noteLabel: string
   noteMarkdown: string
 }): string {
-  return [
+  const isChat = args.noteLabel.startsWith('chat:')
+  const lines: string[] = []
+  if (isChat) {
+    lines.push(
+      "Source is a chat reply, not a daily note — extract durable facts only, skip narrative and AI-side reasoning.",
+      '',
+    )
+  }
+  lines.push(
     `DATE: ${args.date}`,
     '',
     `NEW NOTE (${args.noteLabel}):`,
     args.noteMarkdown,
-  ].join('\n')
+  )
+  return lines.join('\n')
 }
