@@ -149,6 +149,37 @@ export const notify = {
     toast.error('Sync failed', { description: 'See console for details' })
   },
 
+  // ── Chat → wiki handoff ───────────────────────────────────────
+  /** User filed an assistant reply into the wiki and the engine
+   * landed N proposals on the review queue. */
+  chatHandoffQueued(args: { count: number }) {
+    const noun = args.count === 1 ? 'update' : 'updates'
+    toast.success(`Filed to wiki — ${args.count} new ${noun}`, {
+      description: 'Open the wiki page to review',
+    })
+  },
+  /** Engine ran cleanly but the model judged the message had no
+   * durable facts to file. Not an error — surfacing it so the
+   * click doesn't feel like a no-op. */
+  chatHandoffEmpty() {
+    toast.message('Nothing to file', {
+      description: 'Nothing durable in this reply',
+    })
+  },
+  /** Model emitted text but didn't call the structured tool. Soft
+   * warning — caller can retry. */
+  chatHandoffMalformed() {
+    toast.warning("Couldn't read the wiki update", {
+      description: 'The model response was malformed — try again',
+    })
+  },
+  /** Transport / SDK error during chat→wiki handoff. */
+  chatHandoffFailed() {
+    toast.error("Couldn't file to wiki", {
+      description: 'See console for details',
+    })
+  },
+
   // ── Vault ─────────────────────────────────────────────────────
   /** User picked a folder that isn't empty and isn't an existing
    * Writer vault. Vaults are "one folder = one app" so dropping our

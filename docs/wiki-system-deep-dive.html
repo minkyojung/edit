@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wiki 시스템 심화 — Karpathy 패턴과 우리 구현의 차이</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a22;
+    --panel-2: #1c2230;
+    --border: #2a3142;
+    --text: #e6eaf0;
+    --muted: #8893a7;
+    --accent: #7dd3fc;
+    --raw: #fcd34d;
+    --raw-bg: rgba(252, 211, 77, 0.10);
+    --wiki: #86efac;
+    --wiki-bg: rgba(134, 239, 172, 0.10);
+    --system: #c4b5fd;
+    --system-bg: rgba(196, 181, 253, 0.10);
+    --bad: #fca5a5;
+    --bad-bg: rgba(252, 165, 165, 0.10);
+    --warn: #fdba74;
+    --warn-bg: rgba(253, 186, 116, 0.10);
+    --ok: #6ee7b7;
+    --code-bg: #0b0d12;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Pretendard", "SF Pro Text", "Apple SD Gothic Neo", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 40px 24px 80px;
+    line-height: 1.65;
+    font-size: 15px;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  h1 {
+    font-size: 30px;
+    margin: 0 0 6px;
+    letter-spacing: -0.5px;
+  }
+  .lead {
+    color: var(--muted);
+    margin: 0 0 32px;
+  }
+  h2 {
+    font-size: 22px;
+    margin: 56px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    letter-spacing: -0.3px;
+  }
+  h3 {
+    font-size: 17px;
+    margin: 32px 0 10px;
+    color: var(--accent);
+  }
+  h4 {
+    font-size: 14px;
+    margin: 18px 0 6px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  p { margin: 10px 0; }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--accent);
+    font-family: "SF Mono", "JetBrains Mono", Menlo, monospace;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.55;
+    font-family: "SF Mono", "JetBrains Mono", Menlo, monospace;
+    color: #d4d8e0;
+  }
+  pre code {
+    background: transparent;
+    padding: 0;
+    color: inherit;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 14px 0;
+  }
+  .grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 14px;
+  }
+  .layer {
+    border-radius: 10px;
+    padding: 16px;
+    border: 1px solid var(--border);
+  }
+  .layer.raw { background: var(--raw-bg); border-color: rgba(252, 211, 77, 0.35); }
+  .layer.wiki { background: var(--wiki-bg); border-color: rgba(134, 239, 172, 0.35); }
+  .layer.system { background: var(--system-bg); border-color: rgba(196, 181, 253, 0.35); }
+  .layer h4 { color: var(--text); margin-top: 0; }
+  .layer .who {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .layer ul { margin: 6px 0 0; padding-left: 18px; }
+  .layer li { margin: 3px 0; font-size: 13px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 13.5px;
+  }
+  th, td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  td code { font-size: 12px; }
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 16px 0;
+  }
+  .step {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .step .idx {
+    flex: 0 0 28px;
+    height: 28px;
+    border-radius: 14px;
+    background: var(--accent);
+    color: #0b0d12;
+    font-weight: 700;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .step .body { flex: 1; }
+  .step .body .title { font-weight: 600; margin-bottom: 2px; }
+  .step .body .src { font-size: 12px; color: var(--muted); font-family: "SF Mono", monospace; }
+  .step .body .desc { font-size: 13.5px; margin-top: 4px; color: #d4d8e0; }
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .badge.ok { background: rgba(110, 231, 183, 0.18); color: var(--ok); }
+  .badge.warn { background: var(--warn-bg); color: var(--warn); }
+  .badge.bad { background: var(--bad-bg); color: var(--bad); }
+  .crit {
+    border-left: 3px solid var(--bad);
+    background: var(--bad-bg);
+    padding: 14px 18px;
+    border-radius: 6px;
+    margin: 12px 0;
+  }
+  .crit.warn {
+    border-left-color: var(--warn);
+    background: var(--warn-bg);
+  }
+  .crit h4 {
+    margin: 0 0 6px;
+    color: var(--text);
+    font-size: 14px;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .crit .where {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    font-family: "SF Mono", monospace;
+  }
+  .diagram {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin: 16px 0;
+    overflow-x: auto;
+  }
+  .diagram pre {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: #c0c7d4;
+    font-size: 12.5px;
+  }
+  .arrow {
+    color: var(--muted);
+    margin: 0 6px;
+  }
+  ul.thick { padding-left: 20px; }
+  ul.thick li { margin: 6px 0; }
+  .small { font-size: 12.5px; color: var(--muted); }
+  hr {
+    border: none;
+    border-top: 1px dashed var(--border);
+    margin: 24px 0;
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 6px 14px;
+    font-size: 13.5px;
+  }
+  .kv .k { color: var(--muted); }
+  .footer {
+    color: var(--muted);
+    font-size: 12.5px;
+    margin-top: 64px;
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Wiki 시스템 심화 분석</h1>
+  <p class="lead">
+    Karpathy LLM Wiki 패턴(원문 gist) ↔ writer-tauri 현재 구현 매핑.<br>
+    "Index가 뭐고 위키는 어떻게 만들어지는가" — 그리고 어디가 미완·비효율·사족인가.
+  </p>
+
+  <!-- ====================================================== -->
+  <h2>0. Karpathy의 원래 그림 — 30초 요약</h2>
+
+  <p>RAG는 매번 원본을 다시 합성한다. 위키 패턴은 그 반대다 — <b>LLM이 영구적·점증적인 markdown 위키를 유지보수</b>한다. 매번 합성하지 않고, <b>합성된 결과가 누적</b>된다. "지식베이스 유지의 고된 부분은 읽기·사고가 아니라 bookkeeping이고, LLM은 그걸 잘한다."</p>
+
+  <h3>3-Layer 구조</h3>
+  <div class="grid-3">
+    <div class="layer raw">
+      <h4>Raw Sources</h4>
+      <div class="who">불변. 사람이 큐레이션, LLM은 읽기만.</div>
+      <ul>
+        <li>기사, 논문, 일기</li>
+        <li>웹 클리퍼, 파일</li>
+      </ul>
+    </div>
+    <div class="layer wiki">
+      <h4>Wiki Core</h4>
+      <div class="who">가변. LLM이 소유. 사람은 탐색.</div>
+      <ul>
+        <li>요약, 엔티티/개념 페이지</li>
+        <li><code>index.md</code> (카탈로그)</li>
+        <li><code>log.md</code> (append-only)</li>
+      </ul>
+    </div>
+    <div class="layer system">
+      <h4>Schema</h4>
+      <div class="who">사람이 편집. LLM 운영 규칙.</div>
+      <ul>
+        <li><code>CLAUDE.md</code> / <code>AGENTS.md</code></li>
+        <li>위키 구조, 컨벤션</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>3가지 동작</h3>
+  <table>
+    <tr><th>동작</th><th>의미</th><th>우리 상태</th></tr>
+    <tr><td><b>Ingest</b></td><td>새 원본 → 위키 갱신 + 로그 기록 (한 소스당 10~15 페이지 터치)</td><td><span class="badge ok">구현됨</span></td></tr>
+    <tr><td><b>Query</b></td><td>질문 → 위키 검색 → 인용 답변 → 새 사실은 위키로 환류</td><td><span class="badge bad">미구현</span></td></tr>
+    <tr><td><b>Lint</b></td><td>주기적 헬스체크: 모순, stale, orphan, 지식 공백</td><td><span class="badge bad">미구현</span></td></tr>
+  </table>
+
+  <!-- ====================================================== -->
+  <h2>1. 우리 구조 매핑 — 페이지 종류로 본 그림</h2>
+
+  <p>writer-tauri는 모든 문서가 <code>KnownDoc.type</code> prefix로 식별된다. 같은 markdown 파일이지만 누가 쓰느냐로 강하게 구분.</p>
+
+  <table>
+    <tr><th>Karpathy</th><th>우리 (type prefix)</th><th>역할</th><th>쓰는 주체</th></tr>
+    <tr>
+      <td>Raw source</td>
+      <td><code>daily</code>, <code>writing</code></td>
+      <td>사용자 메모. ingest의 입력.</td>
+      <td>사용자만</td>
+    </tr>
+    <tr>
+      <td>Wiki page</td>
+      <td><code>wiki:custom-*</code></td>
+      <td>엔티티/개념 페이지. Sarah, Project X, The Pragmatic Programmer.</td>
+      <td>LLM 제안 → 사용자 수락</td>
+    </tr>
+    <tr>
+      <td><code>CLAUDE.md</code></td>
+      <td><code>system:conventions</code></td>
+      <td>LLM에게 주는 운영 규칙. 사용자가 자유롭게 편집.</td>
+      <td>사용자가 편집</td>
+    </tr>
+    <tr>
+      <td><code>index.md</code></td>
+      <td><code>system:index</code></td>
+      <td>모든 위키 페이지 한 줄 카탈로그.</td>
+      <td><b>시스템이 결정적으로 생성</b> (LLM 아님)</td>
+    </tr>
+    <tr>
+      <td><code>log.md</code></td>
+      <td><code>system:log</code></td>
+      <td>ingest 패스 1줄씩 append-only 타임라인.</td>
+      <td>LLM이 한 줄 emit</td>
+    </tr>
+    <tr>
+      <td>—</td>
+      <td><code>wiki:profile</code></td>
+      <td>사용자 자기소개 페이지. <code>## Voice / ## About</code> 등 섹션 분리.</td>
+      <td>별도 파이프라인 + ingest</td>
+    </tr>
+  </table>
+
+  <p class="small">소스: <code>apps/writer-tauri/src/state/wikiService.ts</code> (라인 30~48에서 type id 정의).</p>
+
+  <!-- ====================================================== -->
+  <h2>2. Index — 가장 헷갈리는 부분</h2>
+
+  <p><b>질문: "system에 인덱스는 뭐고, 위키는 어떻게 만들어지나?"</b></p>
+
+  <p>Karpathy 원본에서 <code>index.md</code>는 LLM이 ingest할 때마다 갱신하는 페이지다 — "이 페이지에 한 줄 요약 추가/수정해줘"라고 시킨다. 우리는 <b>의도적으로 다르다</b>.</p>
+
+  <div class="panel">
+    <h4>우리 index가 하는 일</h4>
+    <p>위키 페이지 전체를 한 줄로 줄인 카탈로그를 <b>결정적으로(자동)</b> 빌드한다. LLM은 안 건드린다. 라인 포맷:</p>
+    <pre><code>- wiki/Sarah.md [wiki:custom-7n2dvj41] — Sarah: AI팀 PM, 음성 합성 프로젝트 리드 | links: 4</code></pre>
+    <div class="kv">
+      <div class="k">path</div><div>파일 경로 (LLM이 <code>read_page</code> 툴에 넘길 키)</div>
+      <div class="k">[type-id]</div><div>verbatim 식별자. LLM이 proposal의 <code>target</code>에 그대로 복사 — 이름·경로보다 안정적</div>
+      <div class="k">title</div><div>Bear/Obsidian 컨벤션: 본문 첫 줄</div>
+      <div class="k">summary</div><div>sidecar <code>.meta.json</code>의 <code>aiSummary</code> → 없으면 본문 둘째 줄 → 없으면 <code>(empty)</code></div>
+      <div class="k">links: N</div><div>다른 위키에서 이 페이지로 들어오는 <code>[[link]]</code> 개수 (backlink count)</div>
+    </div>
+  </div>
+
+  <h3>왜 결정적으로? — 기존 LLM-편집 방식의 문제</h3>
+  <ul class="thick">
+    <li><b>토큰 비용</b>: 매 ingest마다 index 본문을 다시 쓰면 출력 토큰이 페이지 수에 비례해 늘어남.</li>
+    <li><b>드리프트</b>: 모델이 가끔 한 줄 빠뜨리거나 slug를 새로 지어내는 사고. 신뢰성 깨짐.</li>
+    <li><b>결정성</b>: <code>knownDocs</code> + sidecar + 본문 backlink는 모두 시스템 메타데이터. 다시 빌드하면 같은 결과.</li>
+  </ul>
+
+  <p class="small">소스: <code>apps/writer-tauri/src/state/wikiIndex.ts</code> 파일 헤더 코멘트 + <code>buildWikiIndex()</code>.</p>
+
+  <h3>Index가 갱신되는 시점</h3>
+  <div class="diagram"><pre>
+  위키 페이지 본문 변경 (사용자 편집 / ingest accept)
+        │
+        ▼
+  invalidateWikiIndex()  ──┐
+                           │
+        cached = null      │  (memory cache 즉시 무효화)
+        scheduleWikiIndexPersist() ──┐
+                                     │  (200ms debounce)
+                                     ▼
+                              persistWikiIndexNow()
+                                     │
+                                     ├─ getWikiIndex()  → buildWikiIndex() 재실행
+                                     ├─ writeVaultFile(_system/index.md, content)
+                                     └─ Y.Doc 열려 있으면 reloadFromVault</pre></div>
+
+  <p class="small">"사용자가 <code>_system/index.md</code>를 직접 편집해도 다음 invalidation에서 덮어쓴다" — 의도된 계약 (시스템이 단일 writer).</p>
+
+  <!-- ====================================================== -->
+  <h2>3. 위키는 어떻게 만들어지는가 — Ingest 파이프라인</h2>
+
+  <p>한 줄로: <b>사용자가 daily에 적은 글 → LLM이 어떤 위키 페이지에 어떤 사실을 추가할지 제안 → 사용자가 수락 → 위키 페이지 끝에 append</b>.</p>
+
+  <div class="pipeline">
+    <div class="step">
+      <span class="idx">1</span>
+      <div class="body">
+        <div class="title">트리거 발화 <span class="badge warn">3가지 surface</span></div>
+        <div class="src">hooks/useIdleTrigger.ts</div>
+        <div class="desc">(a) 사이드바 Sync 버튼 (명시적), (b) 23:59 단발 타이머, (c) 부팅 시점 어제 데일리 catch-up. 이전엔 "5분 idle 자동 ingest"였지만, 작은 컨텍스트 → 보수 판정 → "no durable content" 로그 쌓임 문제로 폐기됨.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <span class="idx">2</span>
+      <div class="body">
+        <div class="title">Block-hash dedup</div>
+        <div class="src">agent/ingest/index.ts:185 · lib/blockHash.ts</div>
+        <div class="desc">노트 본문을 blocks로 쪼개 해시 비교. 지난 패스 이후 새로 추가된 block만 LLM에 넘긴다. 같은 패러그래프를 두 번 제안 못 함.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <span class="idx">3</span>
+      <div class="body">
+        <div class="title">Context 조립 — Tier 1/2/3</div>
+        <div class="src">agent/contextPipeline.ts → assembleContext()</div>
+        <div class="desc">병렬로: Tier 1 = wiki index 스냅샷, Tier 2 = 노트에 <code>[[link]]</code>된 페이지 본문 (hot pages), conventions, self profile.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <span class="idx">4</span>
+      <div class="body">
+        <div class="title">System prompt 어셈블 (cacheable)</div>
+        <div class="src">agent/ingest/prompts.ts → composeSystemPrompt()</div>
+        <div class="desc">블록 순서: <b>rules + conventions → SELF PROFILE → INDEX → WIKI PAGE 본문들 → 최근 채팅 활동</b>. user prompt는 <code>DATE + NEW NOTE</code>만 — 작고 자주 바뀌어서 캐시 미스 안 만듦.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <span class="idx">5</span>
+      <div class="body">
+        <div class="title">Haiku 호출 + structured tool call</div>
+        <div class="src">claude-haiku-4-5-20251001 + relayTool <code>submit_ingest_result</code></div>
+        <div class="desc">모델은 <b>반드시 한 번</b> 툴을 호출. 텍스트 JSON 절대 안 받음 (오염 방지). 툴 input shape: <code>{ proposals: [...], logEntry: string | null }</code>.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <span class="idx">6</span>
+      <div class="body">
+        <div class="title">Sanitize + 큐잉</div>
+        <div class="src">agent/ingest/parse.ts · state/ingestStore.ts</div>
+        <div class="desc">각 proposal은 atomic: <code>{ target | suggestNewPage, entity, bullets[], sourceQuote, rationale }</code>. <b>자유 markdown 금지 (Arc 1 — illegal states unrepresentable)</b>. 큐에 들어가 사용자 검토 대기.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <span class="idx">7</span>
+      <div class="body">
+        <div class="title">Banner UI에서 사용자 수락</div>
+        <div class="src">layout/WikiPageBanner.tsx · IngestProposalCard.tsx</div>
+        <div class="desc">사용자가 해당 wiki 페이지에 진입하면 상단 banner에 "검토할 제안 N건". <code>entity + bullets → ### Entity\n- bullet</code>로 stitch해 페이지 끝에 append. 새 페이지면 <code>createCustomWikiPage(name, body)</code>로 생성.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <span class="idx">8</span>
+      <div class="body">
+        <div class="title">Index 자동 무효화</div>
+        <div class="src">state/wikiIndex.ts → invalidateWikiIndex()</div>
+        <div class="desc">위키가 변하면 index가 200ms debounce 후 재빌드 + 디스크 쓰기. 다음 ingest는 새 index를 본다.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================== -->
+  <h2>4. Context Pipeline — LLM이 보는 것</h2>
+
+  <p>LLM 호출 한 번에 들어가는 것을 3계층으로 나눠 의도적으로 캐시 친화적으로 설계.</p>
+
+  <div class="diagram"><pre>
+  ┌─────────────────────────── system prompt (cacheable prefix) ──────────────────────────┐
+  │                                                                                       │
+  │  1. SYSTEM_PROMPT_STATIC + conventions  ←  운영 규칙 + 사용자가 편집한 schema          │
+  │  2. SELF PROFILE                        ←  wiki:profile 본문                          │
+  │  3. INDEX (Tier 1)                      ←  wiki:* 모든 페이지 한 줄 카탈로그          │
+  │  4. WIKI PAGE 본문들 (Tier 2)            ←  [[link]] 된 페이지만 풀바디 (30K char budget)│
+  │  5. TODAY'S CHAT ACTIVITY (선택적)        ←  지난 ingest 이후 채팅 thread 요약          │
+  │                                                                                       │
+  └───────────────────────────────────────────────────────────────────────────────────────┘
+                                          │
+                                          ▼
+  ┌─────────── user prompt (per-call, 캐시 안 됨) ───────────┐
+  │                                                          │
+  │   DATE: 2026-05-22                                       │
+  │   NEW NOTE (daily/2026-05-22):                           │
+  │     &lt;신규 block 들만&gt;                                  │
+  │                                                          │
+  └──────────────────────────────────────────────────────────┘
+                                          │
+                                          ▼
+                          Haiku → submit_ingest_result tool call
+
+  Tier 3 (read_page / search_wiki tools) — 코드에는 있으나 ingest에서는 enableTools: false 로 OFF.</pre></div>
+
+  <p><b>왜 분리?</b> 시스템 프롬프트는 크지만 안정적, user prompt는 작고 매번 다름. Anthropic prompt cache 5분 TTL 안에 반복 호출하면 ~90% 비용 절감.</p>
+
+  <!-- ====================================================== -->
+  <h2>5. 비판 — 미완·비효율·사족</h2>
+
+  <p>이 섹션은 "지금 이대로 운영하면 어디가 아플까"의 솔직한 진단. 우선순위 순.</p>
+
+  <h3>5.1 미완 (Karpathy 패턴이 요구하는데 우리에게 없음)</h3>
+
+  <div class="crit">
+    <h4>① Query 동작 부재</h4>
+    <div class="where">코드 검색 결과: <code>/ask</code>, <code>wikiQueryMode</code> 없음. <code>docs/llm-wiki-redesign-plan.md</code> §3.2에 "⏳"</div>
+    <p>위키 누적의 가치를 닫는 양방향 루프 (질문 → 답 → 새 사실 환류) 없음. 일반 chat은 있지만 "내 위키 기반 + 출처 표시 + 새 발견 환류"는 미구현. <b>대화에 들어간 정보가 위키로 흘러들어오지 않음</b> — 누적 채널의 한쪽 절반이 비어 있음.</p>
+    <p class="small">참고: <code>docs/wiki-explainer.html</code> 230~340줄에 "흐름 3: /ask"가 있지만 실제 구현 없음. 문서가 코드를 앞서감.</p>
+  </div>
+
+  <div class="crit">
+    <h4>② Lint 동작 부재</h4>
+    <div class="where">검색 결과 없음. <code>llm-wiki-redesign-plan.md</code> §3.3에 "⏳"</div>
+    <p>모순(같은 사실 다르게 적힘), stale, orphan, 지식 공백 자동 탐지 없음. 위키가 자라면 결국 부패 — Karpathy도 "Lint는 위키가 100페이지를 넘는 순간 필수"라고 명시. 지금은 사용자가 직접 찾아내야 함.</p>
+  </div>
+
+  <h3>5.2 비효율 (있긴 있는데 무겁거나 중복)</h3>
+
+  <div class="crit warn">
+    <h4>③ Tier 3 도구 절반만 연결</h4>
+    <div class="where">agent/contextPipeline.ts:33 <code>DEFAULT_TOOLS = ['read_page', 'search_wiki']</code></div>
+    <p>코드에 도구 이름은 있고 sidecar에 등록도 돼 있지만, <b>ingest는 <code>enableTools: false</code>로 끔</b>. 즉 LLM이 필요한 페이지를 능동적으로 가져올 수 없음. 결과: Tier 2의 <code>[[link]]</code> 휴리스틱에만 의존. 위키 페이지가 적을 땐 OK, 많아지면 LLM이 "이 fact는 [Project Z] 페이지에 있을 텐데" 라고 인지해도 닿을 수 없음. <b>도구 이름만 import해두고 실제 비활성 → 절반 구현</b>.</p>
+  </div>
+
+  <div class="crit warn">
+    <h4>④ proof-sdk 우회 자체구현 4건 — 표면 버그 근원</h4>
+    <div class="where">docs/wiki-arc-roadmap.md Arc 1~4</div>
+    <p>같은 저장소에 <b>proof-sdk가 이미 푼 4가지 기능을 자체 구현으로 우회</b>하고 있음 (semantic anchoring, /ops endpoint, 3축 provenance, agent bridge). 표면 버그들 (위키 본문에 헤더 중복 박힘, "서버가 가끔 마크 되돌림", AI attribution 드리프트)이 모두 여기서 나옴. Arc 1은 완료, Arc 2~4 진행 중.</p>
+  </div>
+
+  <div class="crit warn">
+    <h4>⑤ aiSummary 생성을 위한 별도 LLM 호출</h4>
+    <div class="where">state/wikiService.ts:306 <code>regenerateAiSummaryForSlug(slug)</code></div>
+    <p>새 wiki 페이지 만들 때 fire-and-forget으로 LLM 호출 추가 → sidecar <code>.meta.json</code>의 <code>aiSummary</code> 채움. Index 라인의 summary 컬럼용. 안 채워지면 본문 둘째 줄로 폴백되니 정확성 영향은 없지만, <b>매 신규 페이지마다 LLM 호출 1회 추가</b>. Karpathy 원본은 본문 첫줄 = title, 둘째 = summary 규약으로 LLM 호출 없이 처리.</p>
+  </div>
+
+  <div class="crit warn">
+    <h4>⑥ 3중 dedup — block-hash + watermark + LLM 판단</h4>
+    <div class="where">ingest/index.ts:185, useIdleTrigger.ts, prompts.ts (자체 invariants)</div>
+    <p>(a) block-hash로 새 block만 추출 + (b) <code>lastEditedAt &gt; lastIngestedAt</code> watermark gate + (c) 프롬프트에 "이미 INDEX에 있으면 skip" 룰. 셋이 같은 일을 다른 층에서 함. 안전하긴 한데, (b)가 (a)와 사실상 중복 (b가 통과하면 (a)가 또 거름). <b>(b) 폐기 가능 후보</b>.</p>
+  </div>
+
+  <h3>5.3 사족 (Karpathy 본 코드에 없는 추가 — 진짜 필요한가?)</h3>
+
+  <div class="crit warn">
+    <h4>⑦ wiki:profile 페이지의 zone 룰</h4>
+    <div class="where">state/wikiService.ts:88~95 (DEFAULT_CONVENTIONS), prompts.ts §"Routing self-facts to wiki:profile"</div>
+    <p><code>## Voice / ## Themes / ## About / ## Sources / ## Background / ## Notes</code> — 6개 섹션마다 다른 ownership 규칙. ingest는 ## Background에만 append. 시스템 프롬프트에 이 룰 설명을 매번 박음. Karpathy의 평면 페이지 원칙 (하나의 엔티티 = 하나의 페이지, flat list of bullets) 과 어긋남. <b>profile 페이지 하나 때문에 프롬프트 분기 + 컨벤션 분기 + 적용 분기가 추가됨</b>. URL 분석 파이프라인이 이 페이지에 의존하니 빼긴 어렵지만, 복잡도 비용은 인지해야 함.</p>
+  </div>
+
+  <div class="crit warn">
+    <h4>⑧ 채팅 활동 블록을 ingest 컨텍스트에 끼움</h4>
+    <div class="where">prompts.ts L146 + selectActiveThreadsForIngest.ts + compactChatThread.ts</div>
+    <p>지난 ingest 이후 사용자가 했던 채팅 thread들을 <code>entity: fact</code> bullet으로 compact해 시스템 프롬프트 끝에 넣음. Karpathy 원본은 "source가 곧 인풋" — daily 하나. 우리는 daily + 채팅 두 소스. 의도는 좋지만 <b>compact 단계에서 thread당 LLM 호출 1회 추가</b> (stale thread 요약용). ingest 1회당 LLM 호출이 1 + N (active threads). 채팅이 많은 날 비용 급증.</p>
+  </div>
+
+  <div class="crit warn">
+    <h4>⑨ system page의 lazy create 패턴 — 4번 반복</h4>
+    <div class="where">state/wikiService.ts <code>ensureLogWikiSlug / ensureConventionsWikiSlug / ensureIndexWikiSlug / ensureProfileWikiSlug</code></div>
+    <p>이미 <code>SystemPageConfig</code>로 추출됐고 helper도 한 줄짜리라 부채는 작음. 다만 callsite마다 "쓰기 전에 ensure" 패턴을 박는 게 비싸짐. <b>bootstrap 한 군데서 미리 4개 다 만들면</b> ingest / chat / index persist의 ensure 호출이 다 빠짐. lazy의 가치는 "쓰지도 않을 페이지 안 만든다"인데, 4개 다 거의 항상 쓰임 → lazy가 사족.</p>
+  </div>
+
+  <div class="crit warn">
+    <h4>⑩ AuthoredMeta sidecar (Y.Map) — proof-sdk 3축 provenance 우회</h4>
+    <div class="where">hooks/useCollabDoc.ts:110~124</div>
+    <p>마크 attr에 직접 origin/basis/review 박는 SDK 표준 대신 별도 <code>Y.Map('authoredMeta')</code>에 sourceSlug/Label/Quote만 저장. 동기화 비용 + 마크와 사이드카 정합성 깨질 여지 + 서버 projection이 인식 못 함. Arc 4에서 폐기 예정.</p>
+  </div>
+
+  <!-- ====================================================== -->
+  <h2>6. 한눈 요약</h2>
+
+  <div class="panel">
+    <ul class="thick">
+      <li><b>Index</b> = 모든 위키 페이지의 한 줄 카탈로그. <b>LLM이 안 쓴다 — 시스템이 결정적으로 빌드</b>한다. <code>buildWikiIndex()</code>가 <code>knownDocs + sidecar + backlink count</code>로 매번 같은 결과 생성. 200ms debounce로 디스크 persist.</li>
+      <li><b>위키 생성</b> = daily 본문에서 새 block 추출 → 컨텍스트 4종 (rules / index / hot pages / self profile / 채팅 활동) 조립 → Haiku가 <code>submit_ingest_result</code> 툴로 proposal 반환 → 큐에 쌓임 → 사용자가 해당 wiki 페이지 열면 banner에서 ✓/✕ → accept면 페이지 끝에 append + index 무효화 → 200ms 후 index 재빌드.</li>
+      <li><b>미완</b>: Query (<code>/ask</code>), Lint. 둘 다 Karpathy 패턴의 핵심.</li>
+      <li><b>비효율</b>: Tier 3 도구는 import만 하고 OFF. proof-sdk가 푼 4개 문제를 자체 구현으로 우회. aiSummary용 추가 LLM 호출. dedup 3중첩.</li>
+      <li><b>사족</b>: wiki:profile zone 룰 (Karpathy의 flat 원칙 위반). 채팅 활동 ingest (LLM 호출 N+1). 4개의 lazy-create (사실상 항상 쓰임).</li>
+    </ul>
+  </div>
+
+  <div class="footer">
+    참고:<br>
+    · 원문 — <code>https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f</code><br>
+    · 기존 사용자용 개요 — <code>docs/wiki-explainer.html</code> (일부 stale: "/ask" 흐름, "LLM이 index 갱신")<br>
+    · 재설계 계획 — <code>docs/llm-wiki-redesign-plan.md</code><br>
+    · proof-sdk 정합 로드맵 — <code>docs/wiki-arc-roadmap.md</code> (Arc 1~5)
+  </div>
+
+</div>
+</body>
+</html>

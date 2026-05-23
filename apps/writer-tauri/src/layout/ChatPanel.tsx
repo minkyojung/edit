@@ -552,6 +552,8 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
             key={turn.id}
             turn={turn}
             slug={slug}
+            threadId={activeId}
+            threadTitle={activeThread?.title ?? ''}
             onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
           />
         ))}
