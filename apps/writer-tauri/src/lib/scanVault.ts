@@ -33,6 +33,7 @@ import {
 } from '@/lib/vault'
 import type { KnownDoc } from '@/state/docsStore'
 import type { DocMetaFile } from '@/lib/docPaths'
+import { seedLastWrittenPath } from '@/lib/docFileSync'
 
 /** Read the doc's persistent slug from its `.meta.json` sidecar, or
  * mint one + write the sidecar if missing. Two-tier lookup:
@@ -45,7 +46,16 @@ import type { DocMetaFile } from '@/lib/docPaths'
  * `export/` cleanup: by that point every doc had already received a
  * `.meta.json` during the prior scan, so the legacy reader had no
  * remaining work. */
-async function getOrAssignSlug(mdRel: string): Promise<string> {
+/** Returned by {@link getOrAssignSlug}: the slug to use plus the rest
+ * of the sidecar payload so callers can hydrate non-identity fields
+ * (archivedAt, archivedFromParent, aiSummary, …) without a second
+ * file read. Empty when the sidecar was just minted. */
+interface SidecarLoad {
+  slug: string
+  meta: Partial<DocMetaFile>
+}
+
+async function getOrAssignSlug(mdRel: string): Promise<SidecarLoad> {
   const metaRel = mdRel.replace(/\.md$/, '.meta.json')
 
   if (await vaultFileExists(metaRel)) {
@@ -53,7 +63,7 @@ async function getOrAssignSlug(mdRel: string): Promise<string> {
       const raw = await readVaultFile(metaRel)
       const parsed = JSON.parse(raw) as Partial<DocMetaFile>
       if (typeof parsed.slug === 'string' && parsed.slug.length > 0) {
-        return parsed.slug
+        return { slug: parsed.slug, meta: parsed }
       }
     } catch {
       // Corrupted .meta.json — fall through to mint a fresh slug.
@@ -63,7 +73,7 @@ async function getOrAssignSlug(mdRel: string): Promise<string> {
   const slug = generateClientSlug()
   const meta: DocMetaFile = { version: 1, slug }
   await writeVaultFile(metaRel, `${JSON.stringify(meta, null, 2)}\n`)
-  return slug
+  return { slug, meta }
 }
 
 /** Walk a vault subdirectory recursively and return every body-.md
@@ -97,9 +107,46 @@ async function listMdRecursive(subRel: string): Promise<string[]> {
  * doesn't match any of our four placement rules (an oddly-located file
  * — skipped silently by the caller).
  *
+ * `meta` carries the rest of the sidecar payload (archive flags, AI
+ * fields, …). Soft-state fields from the sidecar are layered on top
+ * of the path-derived base so a doc archived in a previous session
+ * comes back archived after a restart. Path C: vault is the single
+ * source of truth, so any state that must survive boot has to live
+ * in either the disk layout or the sidecar.
+ *
  * Exported for unit tests — the placement rules are the public
  * contract between disk layout and the in-memory catalog. */
 export function mdRelToKnownDoc(
+  slug: string,
+  mdRel: string,
+  dailySlugByDate: Map<string, string>,
+  meta: Partial<DocMetaFile> = {},
+): KnownDoc | null {
+  const base = mdRelToBaseDoc(slug, mdRel, dailySlugByDate)
+  if (!base) return null
+  // Sidecar-stored fields layer onto the path-derived base so soft
+  // state (archive flag, title intent) survives the boot rebuild that
+  // would otherwise only see the filesystem.
+  const overlay: Partial<KnownDoc> = {}
+  if (typeof meta.archivedAt === 'number') {
+    overlay.archivedAt = meta.archivedAt
+  }
+  if (typeof meta.archivedFromParent === 'string') {
+    overlay.archivedFromParent = meta.archivedFromParent
+  }
+  // `titleIntent === 'empty'` means the on-disk filename is a system
+  // fallback ('Untitled.md') rather than the user's chosen title.
+  // Drop the filename-derived title so the EditableTitleInput renders
+  // its placeholder instead of treating "Untitled" as the user's
+  // input. Legacy sidecars (no titleIntent) are treated as 'set' —
+  // they always carried a non-fallback filename.
+  if (meta.titleIntent === 'empty') {
+    overlay.title = undefined
+  }
+  return { ...base, ...overlay } as KnownDoc
+}
+
+function mdRelToBaseDoc(
   slug: string,
   mdRel: string,
   dailySlugByDate: Map<string, string>,
@@ -156,12 +203,18 @@ export async function scanVault(): Promise<KnownDoc[]> {
     ...(await listMdRecursive('_system')),
   ]
 
-  // Pass 1: resolve slug for every file. Done up-front because
-  // pass-2's writing-note resolution needs the daily slug map.
-  const scanned: Array<{ slug: string; mdRel: string }> = []
+  // Pass 1: resolve slug + load sidecar metadata for every file in one
+  // read. Done up-front because pass-2's writing-note resolution needs
+  // the daily slug map, and pass-2 also needs the sidecar's soft-state
+  // fields (archivedAt, …) to layer onto the path-derived KnownDoc.
+  const scanned: Array<{
+    slug: string
+    mdRel: string
+    meta: Partial<DocMetaFile>
+  }> = []
   for (const mdRel of allMd) {
-    const slug = await getOrAssignSlug(mdRel)
-    scanned.push({ slug, mdRel })
+    const { slug, meta } = await getOrAssignSlug(mdRel)
+    scanned.push({ slug, mdRel, meta })
   }
 
   // Daily index: date → slug. Built from the same scan so writings
@@ -174,10 +227,20 @@ export async function scanVault(): Promise<KnownDoc[]> {
 
   // Pass 2: assemble KnownDoc entries. Unrecognised paths drop out.
   const docs: KnownDoc[] = []
-  for (const { slug, mdRel } of scanned) {
-    const doc = mdRelToKnownDoc(slug, mdRel, dailySlugByDate)
+  for (const { slug, mdRel, meta } of scanned) {
+    const doc = mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta)
     if (doc) docs.push(doc)
   }
+
+  // Seed the rename tracker so the first user rename after boot can
+  // emit `fs.rename` against the existing file instead of writing a
+  // fresh copy and orphaning the old one. Pre-Path-R0 this was lazily
+  // populated by the first auto-flush; if the user renamed inside the
+  // 2s window before that tick, the resulting orphan would resurface
+  // on the next reload (scanVault picks the alphabetically first .md
+  // when two share a slug). Seeding from disk closes that race.
+  seedLastWrittenPath(scanned)
+
   return docs
 }
 
@@ -202,12 +265,12 @@ export async function buildKnownDocForExternalPath(
   mdRel: string,
   catalog: KnownDoc[],
 ): Promise<KnownDoc | null> {
-  const slug = await getOrAssignSlug(mdRel)
+  const { slug, meta } = await getOrAssignSlug(mdRel)
   const dailySlugByDate = new Map<string, string>()
   for (const d of catalog) {
     if (d.type === 'daily' && d.date) dailySlugByDate.set(d.date, d.slug)
   }
-  return mdRelToKnownDoc(slug, mdRel, dailySlugByDate)
+  return mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta)
 }
 
 // Dev-only console handle. `await __scanVault()` to inspect what the

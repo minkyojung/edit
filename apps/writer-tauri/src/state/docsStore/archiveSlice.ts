@@ -27,6 +27,7 @@
 
 import { notify } from '@/lib/notify'
 import { useChatRuns } from '@/stores/chatRuns'
+import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
 import { ensureNonEmptyTabStrip, getDocPolicy, isUserOwnedWiki, isWikiDoc } from './helpers'
 import type { DocsState, GetDocsState, KnownDoc, SetDocsState } from './types'
 
@@ -136,6 +137,22 @@ export const createArchiveSlice = (
       status: nextStatus,
     })
     set(patch)
+    // Sidecar writes go through the flush path so the flush stays the
+    // single writer of `.meta.json` (no read-modify-write races with
+    // the periodic auto-flush). Marking the cascade dirty and kicking
+    // the flush immediately gives "click → disk" the same latency as
+    // the previous direct write, but with no concurrent writer.
+    //
+    // `findDailyAncestor` falls back to `archivedFromParent` when
+    // `parentId` is cleared (which `set(patch)` just did), so the
+    // flush's `metaPathForDoc` still resolves to the writing's
+    // on-disk location.
+    for (const s of groupSlugs) {
+      markSlugDirty(s)
+    }
+    void flushDirty().catch((err) =>
+      console.error('[docs] post-archive flush failed', err),
+    )
     // If the invariant promoted today's daily into the strip the
     // patch carries that as openSlugs[0]; use it as the next active
     // when our pre-computed neighbor is null.
@@ -154,6 +171,12 @@ export const createArchiveSlice = (
     const target = state.knownDocs.find((d) => d.slug === slug)
     if (!target?.archivedAt) return
     const stamp = target.archivedAt
+    // Capture pre-mutation group so we know whose sidecar to clear —
+    // after `set` the archivedAt is gone, the predicate that selected
+    // the cascade can't reuse.
+    const groupSlugs = state.knownDocs
+      .filter((d) => d.archivedAt === stamp)
+      .map((d) => d.slug)
     // Restore everything archived in the same batch (same timestamp)
     // so a cascade is undone as a unit.
     const nextKnown = state.knownDocs.map((d) =>
@@ -167,6 +190,17 @@ export const createArchiveSlice = (
         : d,
     )
     set({ knownDocs: nextKnown })
+    // Same routing as archiveDoc: mark dirty and let the flush write
+    // the cleared sidecar. `buildMetaForKnownDoc` reads the post-set
+    // KnownDoc — archivedAt/archivedFromParent are now undefined, so
+    // the merged sidecar drops them on JSON.stringify and the doc
+    // boots back as live.
+    for (const s of groupSlugs) {
+      markSlugDirty(s)
+    }
+    void flushDirty().catch((err) =>
+      console.error('[docs] post-unarchive flush failed', err),
+    )
   },
 
   deleteForever: async (slug) => {

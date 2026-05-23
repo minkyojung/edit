@@ -68,6 +68,16 @@ export const notify = {
     })
   },
 
+  // ── Editor ────────────────────────────────────────────────────
+  /** Milkdown's Editor.make().create() chain rejected. The doc loaded
+   * but the editor couldn't be constructed — usually a schema/plugin
+   * registration regression. Reopening the note re-runs the chain. */
+  editorInitFailed() {
+    toast.error('Editor failed to load', {
+      description: 'Try closing and reopening this note',
+    })
+  },
+
   // ── Auth ──────────────────────────────────────────────────────
   claudeSessionExpired(opts: { onReconnect?: () => void } = {}) {
     toast.error('Claude session expired', {

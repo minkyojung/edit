@@ -65,27 +65,33 @@ export const createCreateSlice = (
   get: GetDocsState,
 ): CreateSlice => ({
   createNew: async () => {
-    // Empty title + empty body. The displayed label falls back to
-    // 'Untitled' in useDocLabel; the editor renders the body
-    // placeholder hint. Nothing is seeded into the doc itself.
+    // Anchor the new writing under today's daily. `type: 'writing'`
+    // has no disk placement of its own — `pathForDoc` walks parentId
+    // up to a daily ancestor to derive `daily/<date>/<title>.md`, and
+    // returns null when no daily is found. Pre-fix this slice created
+    // `{ type: 'writing' }` with no parentId, which meant pathForDoc
+    // returned null, flushDirty silently skipped the doc, and the
+    // brand-new note never reached disk — so it vanished on restart.
     //
-    // The store appends to openSlugs and warms the handle, but does
-    // NOT set activeSlug — the caller drives navigation via
-    // navigate(buildViewUrl(..., slug)) so the new doc lands in the
-    // back/forward stack.
-    const slug = generateClientSlug()
-    const meta: KnownDoc = { slug, type: 'writing' }
-    set((s) => ({
-      openSlugs: [...s.openSlugs, slug],
-      knownDocs: [...s.knownDocs, meta],
-    }))
-    await get().ensureHandle(slug)
-    const handle = get().handles[slug]
-    if (handle) {
-      writeDocMeta(handle.ydoc, {
-        type: 'writing',
-        createdAt: new Date().toISOString(),
-      })
+    // Going through openDaily + createChildNote reuses the existing
+    // daily-anchoring logic (including handle warmup + writeDocMeta
+    // for the daily so its `daily/<date>.md` lands on disk too — the
+    // boot scan needs that file to resolve the writing's parentId on
+    // next session).
+    //
+    // Side effect worth noting: openDaily adds today's daily to the
+    // tab strip if it wasn't already there. Calling code (the "+ tab"
+    // button in EditorTabs) then navigates to the returned slug — the
+    // new writing, not the daily — so the user lands where they
+    // expected. The visible daily tab is a deliberate context cue
+    // ("you created this under today").
+    const dailySlug = await get().openDaily()
+    if (!dailySlug) {
+      throw new Error('createNew: failed to anchor under today\'s daily')
+    }
+    const slug = await get().createChildNote(dailySlug)
+    if (!slug) {
+      throw new Error('createNew: createChildNote refused')
     }
     return slug
   },

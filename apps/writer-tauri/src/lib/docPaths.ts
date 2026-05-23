@@ -59,6 +59,32 @@ export interface DocMetaFile {
    * backlink count + recency; not user-editable. Absent on old
    * sidecars — treated as 0 (lowest priority) by the selector. */
   aiImportance?: number
+  /** Soft-delete timestamp (epoch ms). Set when the user archives the
+   * doc, cleared on unarchive. Persisted here because the catalog is
+   * rebuilt from disk on every boot (Path C — vault is the source of
+   * truth); without this field, archive state would silently revert
+   * to "live" on app restart. */
+  archivedAt?: number
+  /** Pre-archive `parentId` snapshot, so unarchive can restore the
+   * cascade group's tree structure. Lives in the same sidecar as
+   * `archivedAt` to keep the archive state self-contained. */
+  archivedFromParent?: string
+  /** Distinguishes "the filename is a system fallback because the user
+   * hadn't named the doc" from "the filename is the user's chosen
+   * title". Path C requires every file on disk to have a name, so a
+   * new doc whose title is empty/undefined still has to land at
+   * `Untitled.md`. Without this flag the boot scan would read that
+   * filename back as the literal title "Untitled", erasing the
+   * placeholder state the user originally saw.
+   *
+   * Derived at serialize time from the in-memory `KnownDoc.title`:
+   * empty / undefined → `'empty'`, otherwise → `'set'`. No code path
+   * sets it directly; the flush owns the rule.
+   *
+   * Legacy sidecars (pre-S2) lack this field and are treated as
+   * `'set'` by the boot reader for backward compatibility — they
+   * always carried a non-fallback filename. */
+  titleIntent?: 'empty' | 'set'
 }
 
 /** Lookup a doc by slug. Required by {@link pathForDoc} only for
@@ -139,15 +165,23 @@ export function ydocPathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null
 /** Walk parentId up the chain until we hit a daily. Returns null if
  * the chain ends without one (orphan writing) or contains a cycle
  * (defensive — KnownDoc invariants forbid it, but we don't want a
- * pathological catalog to lock up the call site). */
+ * pathological catalog to lock up the call site).
+ *
+ * Archived writings have their `parentId` cleared (so the tree UI
+ * doesn't show them under a live daily) and the original parent
+ * snapshotted in `archivedFromParent`. We fall back to that snapshot
+ * so the archived doc still resolves to its on-disk location — the
+ * sidecar lives next to the body file, and the flush needs the path
+ * to write the archive marker. */
 function findDailyAncestor(doc: KnownDoc, getDoc: DocLookup): KnownDoc | null {
   const visited = new Set<string>()
   let current: KnownDoc | undefined = doc
   while (current && !visited.has(current.slug)) {
     visited.add(current.slug)
     if (current.type === 'daily') return current
-    if (!current.parentId) return null
-    current = getDoc(current.parentId)
+    const parentId = current.parentId ?? current.archivedFromParent
+    if (!parentId) return null
+    current = getDoc(parentId)
   }
   return null
 }

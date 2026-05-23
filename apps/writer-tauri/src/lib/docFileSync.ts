@@ -18,7 +18,7 @@
 // and what (serialise) to write.
 
 import * as Y from 'yjs'
-import { useDocsStore } from '@/state/docsStore'
+import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
@@ -50,10 +50,15 @@ import { deriveLabel } from '@/lib/docLabel'
  * behaviour as the previous full-overwrite, just no longer the
  * default for healthy files.
  *
- * Read-modify-write is safe under the auto-flush loop because each
- * flush tick processes one slug at a time, and the only writers of
- * `<slug>.meta.json` are this function + getOrAssignSlug (which
- * runs once per file at boot). No write-write races. */
+ * Read-modify-write is safe because the flush loop is the only
+ * runtime writer of `<slug>.meta.json` (the other writer is
+ * `getOrAssignSlug`, which runs once per file at boot). Each flush
+ * tick processes one slug at a time, so no two `mergeSidecar` calls
+ * overlap. The invariant matters: a sibling code path that wrote
+ * the sidecar outside this loop would race with the next periodic
+ * flush, intermittently restoring stale fields (e.g. `archivedAt`
+ * snapshots from before an unarchive). Route any new sidecar writes
+ * through `markSlugDirty(slug)` + `flushDirty()` instead. */
 async function mergeSidecar(
   metaPath: string,
   next: DocMetaFile,
@@ -123,8 +128,68 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
     return null
   }
 
-  const meta: DocMetaFile = { version: 1, slug }
+  // `titleIntent` reflects whether the in-memory title is the user's
+  // chosen value or whether `pathForDoc` had to fall back to
+  // 'Untitled' because the doc was created without a title. The boot
+  // reader uses this flag to decide whether the filename should
+  // hydrate back into KnownDoc.title; if 'empty', the title stays
+  // undefined and the EditableTitleInput renders its placeholder
+  // instead of the literal string "Untitled". Wiki, system, and
+  // writing docs all share the same rule so the flush owns it for
+  // every type at once.
+  const known = docs.knownDocs.find((d) => d.slug === slug)
+  const meta = buildMetaForKnownDoc(slug, known)
   return { md, meta }
+}
+
+/** Compose the sidecar payload from the in-memory `KnownDoc`. Shared
+ * between the full-flush path (`serializeDocToFiles`) and the
+ * meta-only path (`flushDirty` for archived docs whose handle has
+ * been torn down). Fields included:
+ *   - `titleIntent`            — see comment below
+ *   - `archivedAt`             — present iff the doc is currently
+ *                                archived in memory
+ *   - `archivedFromParent`     — same condition
+ *
+ * `archivedAt`/`archivedFromParent` are emitted explicitly (including
+ * the `undefined` case for live docs) so `mergeSidecar` can clear
+ * stale archive markers on unarchive: a spread of an `undefined` key
+ * over an existing value, then JSON.stringify, drops the field from
+ * the on-disk JSON. Without the explicit key the merge would preserve
+ * the pre-unarchive value. */
+function buildMetaForKnownDoc(
+  slug: string,
+  known: KnownDoc | undefined,
+): DocMetaFile {
+  // `titleIntent` reflects whether the in-memory title is the user's
+  // chosen value or whether `pathForDoc` had to fall back to
+  // 'Untitled' because the doc was created without a title. The boot
+  // reader uses this flag to decide whether the filename should
+  // hydrate back into KnownDoc.title; if 'empty', the title stays
+  // undefined and the EditableTitleInput renders its placeholder
+  // instead of the literal string "Untitled". Wiki, system, and
+  // writing docs all share the same rule so the flush owns it for
+  // every type at once.
+  const titleIntent: 'empty' | 'set' = known?.title?.trim() ? 'set' : 'empty'
+  return {
+    version: 1,
+    slug,
+    titleIntent,
+    archivedAt: known?.archivedAt,
+    archivedFromParent: known?.archivedFromParent,
+  }
+}
+
+/** Meta-only serialization for docs whose body/CRDT state isn't
+ * available (archived docs after handle teardown). Reads the
+ * in-memory `KnownDoc` and produces just the sidecar payload —
+ * `flushDirty` writes it via the same `mergeSidecar` path the body
+ * flush uses, keeping the flush as the single writer of sidecars. */
+export function serializeMetaOnly(slug: string): DocMetaFile | null {
+  const docs = useDocsStore.getState()
+  const known = docs.knownDocs.find((d) => d.slug === slug)
+  if (!known) return null
+  return buildMetaForKnownDoc(slug, known)
 }
 
 // ── Dirty tracking ───────────────────────────────────────────────
@@ -151,6 +216,27 @@ const dirtySlugs = new Set<string>()
 // reconcile across restarts (would need a vault-wide slug→file
 // index, out of scope).
 const lastWrittenPath = new Map<string, string>()
+
+/** Seed the rename tracker from the current on-disk state. Called by
+ * `scanVault` at boot so the first user rename can detect each doc's
+ * existing file and emit `fs.rename` instead of silently writing a
+ * new path and leaving the old file behind.
+ *
+ * Without this, a boot → quick rename sequence races the 2s
+ * auto-flush: `lastWrittenPath.get(slug)` returns undefined, the
+ * rename-on-change block is skipped, and the disk ends up with two
+ * `.md` files claiming the same slug. `scanVault` then picks one of
+ * them alphabetically on the next reload, so renames silently revert.
+ *
+ * Idempotent — overwrites any existing entry. Safe to call multiple
+ * times if a reconcile pass needs to resync. */
+export function seedLastWrittenPath(
+  entries: Array<{ slug: string; mdRel: string }>,
+): void {
+  for (const { slug, mdRel } of entries) {
+    lastWrittenPath.set(slug, mdRel)
+  }
+}
 
 function markDirty(slug: string): void {
   dirtySlugs.add(slug)
@@ -427,13 +513,36 @@ export async function flushDirty(): Promise<void> {
       clearDirty(slug)
       continue
     }
+    // Meta-only path: archived docs have had their handles torn down,
+    // so the body/CRDT can't be re-serialized. We still need the
+    // sidecar to record the archive flag so the state survives boot,
+    // so write just the meta and clear dirty. Routing this through
+    // the same `mergeSidecar` call the body flush uses keeps the
+    // flush as the single writer of sidecars — no concurrent
+    // `mergeSidecar` callers means no read-modify-write races.
+    const handle = docs.handles[slug]
+    if (!handle) {
+      const metaOnly = serializeMetaOnly(slug)
+      if (!metaOnly) {
+        clearDirty(slug)
+        continue
+      }
+      try {
+        const merged = await mergeSidecar(metaPath, metaOnly)
+        await writeVaultFile(metaPath, JSON.stringify(merged, null, 2))
+        clearDirty(slug)
+      } catch (err) {
+        console.error('[vault:flush] meta-only write failed for', slug, err)
+        // Leave dirty so the next tick retries.
+      }
+      continue
+    }
     const result = serializeDocToFiles(slug)
     if (!result) continue
     // Y.Doc binary snapshot — captures the full CRDT state including
     // RelativePosition mark anchors. The handle's ydoc is the live
     // in-memory copy.
-    const handle = docs.handles[slug]
-    const ydocBinary = handle ? Y.encodeStateAsUpdate(handle.ydoc) : null
+    const ydocBinary = Y.encodeStateAsUpdate(handle.ydoc)
     try {
       // Rename-on-change: if this slug was last written at a
       // different path (Untitled note gained a title, wiki page
@@ -462,9 +571,7 @@ export async function flushDirty(): Promise<void> {
       // clobber fields this layer doesn't know about.
       const mergedMeta = await mergeSidecar(metaPath, result.meta)
       await writeVaultFile(metaPath, JSON.stringify(mergedMeta, null, 2))
-      if (ydocBinary) {
-        await writeVaultBinary(ydocPath, ydocBinary)
-      }
+      await writeVaultBinary(ydocPath, ydocBinary)
       lastWrittenPath.set(slug, mdPath)
       clearDirty(slug)
       if (known.type.startsWith('wiki:')) wikiTouched = true
