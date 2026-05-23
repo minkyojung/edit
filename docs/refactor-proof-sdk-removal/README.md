@@ -1,10 +1,12 @@
 # Proof-SDK 제거 + Wiki LLM 재구성 로드맵
 
-> **Status (2026-05-21)**
+> **Status (2026-05-23)**
 >
 > - **Phase 0 ~ 3 완료** — proof-sdk / proof-server / Hocuspocus 의존 0 달성. mark schema 자체 정의 + 좁힘 (`proofSuggestion` 15→3 attrs, `proofApproved` 제거, `proofFlagged` reserved). CollabStatus 좁힘 + IDB error wiring. Karpathy 평평 wiki 구조 + Bear 식 body-first title 정착. 잠재 버그 2건 fix (end-of-doc accept, auto-thread).
 > - **새 Phase 4 (파일 기반 architecture pivot) — 4.A~4.G 완료**: vault 폴더 I/O, 에디터 ↔ 파일 양방향, 마크 anchor, doc 경로 매핑, 외부 변경 감지, chat thread 파일 이주 (`threads/<id>.json` + JSONL turns), `y-indexeddb` dep 제거 모두 완료. 자세한 진행: [07-file-based-pivot.md §Sub-phase 분할](./07-file-based-pivot.md)
-> - **다음**: 옛 Phase 4/5/6 — 파일 기반 위에서 재진행.
+> - **옛 Phase 4 (ingest.ts 분해) / Phase 5 (chat.ts 분해)** — 코드상 이미 `agent/ingest/` + `agent/chat/` 폴더 분해 상태. 사실상 완료.
+> - **Phase 6.1 (Query 동작) 완료 (2026-05-23)** — 양방향 환류 루프 닫힘. 채팅 답변 hover 시 책 아이콘으로 `runChatToWikiHandoff` 트리거 → 기존 ingest 큐로 환류. 동시에 자동 채팅 ingest 사족 ~250줄 삭제. 자세한 진행: [06-wiki-completion.md §Sub 6.1](./06-wiki-completion.md)
+> - **다음**: Phase 6.3 + 6.4 묶음 (링크 사전검증 + 시간 메타, 1주 미만). 6.2 Lint 는 위키가 더 자란 후.
 
 ## 목적
 
@@ -44,9 +46,9 @@
 | 2 | 호출자 갈아끼우기 (markActions, applyProposal, MarkToolbar, WikiPageBanner) | ✅ 완료 | [02-migration.md](./02-migration.md) |
 | 3 | proof-sdk / proof-server 제거 | ✅ 완료 (3.A~3.G 까지 모두) | [03-removal.md](./03-removal.md) |
 | **4 (새)** | **파일 기반 architecture pivot** — 위키/데일리/chat 데이터를 사용자 폴더의 .md 파일로 | ✅ 완료 (4.A~4.G) | [07-file-based-pivot.md](./07-file-based-pivot.md) |
-| 4 (구) | ingest.ts 분해 | ⏸ 연기 (새 Phase 4 후) | [04-ingest-refactor.md](./04-ingest-refactor.md) |
-| 5 | chat.ts 분해 | ⏸ 연기 | [05-chat-refactor.md](./05-chat-refactor.md) |
-| 6 | Wiki LLM 완성 (queryWiki + lint + 시간 메타) | ⏸ 연기 | [06-wiki-completion.md](./06-wiki-completion.md) |
+| 4 (구) | ingest.ts 분해 | ✅ 사실상 완료 (`agent/ingest/` 폴더 분해) | [04-ingest-refactor.md](./04-ingest-refactor.md) |
+| 5 | chat.ts 분해 | ✅ 사실상 완료 (`agent/chat/` 폴더 분해) | [05-chat-refactor.md](./05-chat-refactor.md) |
+| 6 | Wiki LLM 완성 (queryWiki + lint + 시간 메타) | 🚧 진행 중 — 6.1 ✅ / 6.2~6.5 ⏳ | [06-wiki-completion.md](./06-wiki-completion.md) |
 
 **Phase 0~3 합 (완료): ~7주 실 작업.** 새 Phase 4 예상: ~6~8주.
 
@@ -59,8 +61,13 @@ Phase 0 ──► Phase 1 ──► Phase 2 ──► Phase 3 ✅ (완료)
                               새 Phase 4 — 파일 기반 pivot  ✅ (4.A~4.G 모두 완료)
                                         │
                                         ▼
-                              구 Phase 4 (ingest) ──► 구 Phase 5 (chat) ──► 구 Phase 6 (queryWiki / lint)
-                                                                                  🚧 다음 진행 대상
+                              구 Phase 4 (ingest 분해) ✅ ──► 구 Phase 5 (chat 분해) ✅
+                                        │
+                                        ▼
+                              구 Phase 6 — Wiki LLM 완성  🚧 6.1 ✅ / 6.2~6.5 ⏳
+                                        │  └ 6.1: 양방향 환류 루프 닫힘 (2026-05-23)
+                                        ▼
+                              다음: 6.3 (링크 사전검증) + 6.4 (시간 메타) 묶음 PR
 ```
 
 - Phase 0~3 완료. proof-sdk / proof-server / Hocuspocus 잔재 0.

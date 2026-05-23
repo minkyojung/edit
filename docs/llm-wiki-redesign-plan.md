@@ -14,12 +14,19 @@
 | 2 | 1번 목차 페이지 도입 (Phase 1-A: 빈 페이지 자동 생성) | ✅ | `877c3212` |
 | 2 | 1번 목차 페이지 도입 (Phase 1-B: indexUpdates + dedup merge) | ✅ | `b5c45813` |
 | 3 | 4번 cross-link 압력 | ✅ | `9039e875` |
-| 4 | 2번 Query 동작 | ⏳ |  |
+| 4 | 2번 Query 동작 — 양방향 환류 채널 (Phase 6.1) | ✅ | `1613066b` + `e1ae27fc` |
 | 5 | 7번 daily 재정리 신호 | ⏳ |  |
 | 6 | 3번 Lint | ⏳ |  |
 | 7 | 6번 wiki:log dedup (5번 후 우선순위 재평가) | ⏳ |  |
 | 8 | 8번 schema leakage 정리 | ⏳ |  |
 | — | 1번 Phase 2 (readWikiContext index 기반 전환 + fetch tool) | ⏳ | Phase 1-B 검증 후 |
+
+> Query 동작 (4번) 은 처음 예상과 다르게 풀렸다. 탐색 중 `/ask` 슬래시
+> 커맨드 + chat 시스템 프롬프트의 INDEX/hotPages 자동 주입 + `read_page`
+> / `search_wiki` 도구가 이미 동작함을 발견 — 위키 → 답 방향은 완성 상태.
+> 빠진 것은 답 → 위키 환류 채널 한 줄이었고, 이걸 채팅 메시지 hover 액션
+> (책 아이콘) 으로 추가. 동시에 사족이었던 자동 채팅 ingest 흐름을 정리
+> (~250줄 삭제). 자세한 매핑은 `docs/refactor-proof-sdk-removal/06-wiki-completion.md`.
 
 ---
 

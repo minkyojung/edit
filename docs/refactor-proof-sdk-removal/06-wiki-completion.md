@@ -4,6 +4,18 @@
 **선행**: Phase 5 완료 (또는 Phase 4 만 완료 — "대안 순서" 시 6.1 만 먼저)
 **목적**: Karpathy 패턴에서 우리 구현이 빠뜨린 부분 채움. 위키가 ingest-only 가 아닌 ingest + query + lint 의 완전 사이클로.
 
+## 진행 현황 (2026-05-23)
+
+| Sub | 내용 | 상태 |
+|---|---|---|
+| 6.1 | Query 동작 — 양방향 환류 채널 | ✅ 완료 (`1613066b` + `e1ae27fc`) |
+| 6.2 | Lint 동작 | ⏳ 미진행 |
+| 6.3 | 링크 사전검증 | ⏳ 미진행 |
+| 6.4 | 시간 메타 | ⏳ 미진행 |
+| 6.5 (선택) | 관계 타입 라벨 | ⏳ 미진행 |
+
+**다음 진행 권장**: 6.3 + 6.4 묶음 (며칠 + 며칠 = 1주 미만 한 PR). 이유는 본문 §"다음 작업 권장" 참고.
+
 ## 배경
 
 Karpathy 의 LLM Wiki 패턴은 5개 축:
@@ -11,63 +23,86 @@ Karpathy 의 LLM Wiki 패턴은 5개 축:
 2. **Index** — 페이지별 한 줄 요약 ✓ 구현됨 (`system:index` 페이지)
 3. **Log** — ingest 이력 ✓ 구현됨 (`system:log` 페이지)
 4. **Conventions** — 위키 규칙 ✓ 구현됨 (`system:conventions` 페이지)
-5. **Query** — 위키 검색 ✕ **미구현 — 6.1**
+5. **Query** — 위키 검색 ✅ 구현 완료 (6.1)
 6. **Lint** — 위키 품질 점검 ✕ **미구현 — 6.2**
 7. **시간 메타** — 페이지별 updatedAt ✕ 부분 — **6.4**
 8. **링크 사전검증** — `[[Page]]` 가 실재하는지 ✕ **6.3**
 9. (선택) 관계 타입 — `[[Page|depends-on]]` ✕ **6.5**
 
-이 phase 의 본질: AI 가 만든 위키 메모리가 다시 AI 에게 입력으로 돌아오는 **피드백 루프 완성**. 지금은 ingest 가 한 방향만 흐름.
+이 phase 의 본질: AI 가 만든 위키 메모리가 다시 AI 에게 입력으로 돌아오는 **피드백 루프 완성**. 6.1 완료로 루프는 닫혔다 — 남은 sub 들은 위키 품질과 노이즈 관리.
 
-## Sub 6.1 — agent/queryWiki (1.5주)
+## Sub 6.1 — Query 동작 ✅ 완료 (2026-05-23)
 
-### 무엇
-사용자가 위키에 질문 → LLM 이 index 검색 → 관련 페이지 본문 읽기 → 답변 합성 → "이 답을 위키 페이지로 정리하시겠어요?" 후속 제안.
+원래 계획은 `agent/queryWiki.ts` 신규 + `submit_query_answer` 구조화 tool
+이었지만, 탐색 중 **80% 이미 구현돼 있음**을 발견. 빠진 한 조각만
+채우는 방향으로 재설계 후 완료.
 
-### 왜 가장 먼저
-- Karpathy 패턴의 핵심 ("explorations compound in knowledge base rather than disappearing into chat")
-- 지금은 chat 으로 물어보면 그 답이 어디에도 안 남음
-- 위키가 AI 메모리로서 가치 있게 됨
+### 이미 있었던 것 (탐색 결과)
 
-### 구현
+| 6.1 요구사항 | 실제 위치 |
+|---|---|
+| 질문 입력 진입점 | `/chat/commands/builtin/ask.md` (`/ask` slash) |
+| INDEX + CONVENTIONS 자동 주입 | `agent/chat/systemPrompt.ts` `composeSystemBlocks` |
+| 페이지 본문 능동 fetch | sidecar `read_page` / `search_wiki` 도구, chat 기본 활성 |
+| 답변 + citation (`[[Title]]`) | `FREE_CHAT_PROMPT` 의 Citations 룰 |
 
-#### 파일
-- 신규: `apps/writer-tauri/src/agent/queryWiki.ts`
-- 신규: UI 진입점 — Command Palette (`Cmd+Shift+P → "Ask wiki"`) + 사이드바 또는 chat panel 안 슬래시 (`/ask`)
+위키 → 답 방향은 일반 채팅에서도 동작 — `/ask` 가 아니더라도
+모든 채팅이 위키 컨텍스트를 본다.
 
-#### 흐름
-1. 사용자 질문 입력 (예: "Sarah 가 무슨 책 읽고 있더라?")
-2. queryWiki 가 system prompt 에 INDEX 블록 전체 + CONVENTIONS 본문 포함
-3. LLM 이 검색 (어떤 페이지를 봐야 하는지 결정)
-4. tool `read_wiki_page(typeId)` 호출 → 페이지 본문 받음
-5. 충분한 정보 모으면 답변 합성 + tool `submit_query_answer({ answer, citations, suggestedUpdates })` 호출
-6. 결과 UI:
-   - 답변 본문 (citations 클릭 시 해당 위키 페이지로 이동)
-   - "이 답을 위키 페이지로 정리" 버튼 → ingest 와 같은 흐름으로 큐에 push
+### 추가한 것 (이 PR 의 핵심)
 
-#### Tool 정의
-```ts
-read_wiki_page: {
-  name: 'read_wiki_page',
-  description: 'Read the full body of a wiki page by its type id.',
-  input_schema: { typeId: 'string' },
-}
+**1. 채팅 → 위키 환류 채널** (커밋 `e1ae27fc`)
 
-submit_query_answer: {
-  name: 'submit_query_answer',
-  description: 'Final answer + citations + optional follow-up updates.',
-  input_schema: {
-    answer: 'string',
-    citations: 'array of { typeId, quote }',
-    suggestedUpdates: 'array of IngestProposal',  // optional
-  },
-}
-```
+기존 `runIngestCore` 를 그대로 재사용해 채팅 답변 본문을 source 로 다룸:
+
+- `agent/wikiHandoff.ts` — `runChatToWikiHandoff(messageContent, threadId, threadTitle)` 함수.
+  `runIngestCore({ text, sourceLabel: 'chat: <title>' })` 호출 후 결과를
+  `ingestStore.enqueue(...)` 로 push. 기존 banner UI 가 그대로 검토 surface.
+- `chat/messages/FileToWikiButton.tsx` — 어시스턴트 메시지 hover 시 노출되는
+  책 아이콘. 클릭 시 위 함수 호출 + 토스트 결과.
+- `chat/messages/MessageFooter.tsx`, `MessageRow.tsx`, `layout/ChatPanel.tsx` —
+  `threadId` / `threadTitle` prop drilling.
+- `lib/notify.ts` — `chatHandoffQueued` / `chatHandoffEmpty` /
+  `chatHandoffMalformed` / `chatHandoffFailed` 토스트 4종.
+- `agent/ingest/prompts.ts` `buildPrompt` — `sourceLabel.startsWith('chat:')`
+  분기 한 줄로 "chat reply 는 narrative 빼고 durable facts 만" nudge.
+
+**2. 사족 정리** (커밋 `1613066b`)
+
+채팅 자동 ingest 흐름을 제거 — Karpathy 원본의 "Raw Sources" 정의에
+채팅은 포함되지 않으며, 우리 코드의 자동 thread compaction 은 비용
+(1 + N LLM 호출) 대비 가치가 작았다.
+
+- 삭제: `agent/selectActiveThreadsForIngest.ts`, `agent/compactChatThread.ts`
+- 정리: `IngestCoreArgs` 에서 `sinceTs` / `threadSlug` 제거, `composeSystemPrompt`
+  에서 `chatActivity` 파라미터 + "TODAY'S CHAT ACTIVITY" 블록 제거,
+  `ThreadMeta.aiSummary` / `aiSummaryUpToTurnId` 제거.
+- 효과: 약 250줄 감소, ingest 호출 1 + N → 1.
+
+### 방식 결정 (왜 수동 트리거인가)
+
+3가지 옵션 (A 수동 / B 구조화 / C 자동) 중 **A 채택**:
+- 신호 vs 잡음 — 자동 환류는 잡담까지 다 큐에 쌓아 사용자 피로 ↑.
+- Karpathy 원칙 "사람=판단, LLM=정리" 와 일치.
+- 기존 ingest 흐름 그대로 재사용 → 코드 작음.
+- 1~2주 데이터 관찰 후 B/C 격상 가능 (백트랙 비용 낮음).
+
+원래 plan 파일: `~/.claude/plans/starry-booping-turing.md`.
 
 ### 검증
-- 위키에 질문 → 관련 페이지 인용한 답변
-- 답변에 citation 표시 + 클릭 시 페이지 이동
-- "위키에 정리" 클릭 → 새 페이지 또는 기존 페이지 업데이트 제안 큐로 (ingest 와 같은 banner UI 흐름)
+- `pnpm exec tsc --noEmit` 0 errors.
+- `pnpm exec eslint` 0 errors on changed files.
+- 수동: `/ask <q>` → 답에 `[[Title]]` 인용 → footer 책 아이콘 → 토스트
+  → 위키 페이지 banner 카드 ✓/✕ 확인됨 (사용자 스크린샷).
+
+### 남은 폴리시 (다음 PR 에서 같이 또는 별도)
+
+- **Onboarding tooltip**: 책 아이콘 첫 등장 시 "이 답을 위키에 정리할 수
+  있어요" 1회 안내. 지금은 아이콘이 hover-only 라 발견성 약함.
+- **신호 로깅**: `[wikiHandoff] result` 한 줄 로그를 추가해서 1~2주 후
+  자동 환류 (Option C) 격상 결정에 쓸 데이터 수집.
+- **`/ask` 처리**: 지금은 그대로 유지. 일반 채팅도 위키 기반이라
+  `/ask` 의 차별점은 "엄격 wiki-only 모드" 뿐. 사용 빈도 보고 결정.
 
 ## Sub 6.2 — agent/lint (1주)
 
@@ -174,13 +209,54 @@ Karpathy 가 명시한 "collapsed relationship types" 위험. 그러나 가치 �
 
 ## 완료 기준 (Phase 6 전체)
 
-- [ ] queryWiki 동작 (Sub 6.1)
+- [x] queryWiki 동작 (Sub 6.1) — 2026-05-23
 - [ ] lint 동작 (Sub 6.2)
 - [ ] 링크 사전검증 동작 (Sub 6.3)
 - [ ] 시간 메타 동작 (Sub 6.4)
 - [ ] (선택) 관계 타입 동작 (Sub 6.5)
-- [ ] `ensureSystemPage` 3번 복붙 → 한 헬퍼로 정리 (wikiService.ts 의 구조 냄새 해소)
+- [x] `ensureSystemPage` 3번 복붙 → 한 헬퍼로 정리 (wikiService.ts) — 이미 Phase 0~3 기간에 정리됨
 - [ ] Phase 2~5 회귀 테스트 모두 통과
+
+## 다음 작업 권장 (next branch)
+
+**1순위: Sub 6.3 + Sub 6.4 묶음 PR** (며칠 + 며칠 = 1주 미만)
+
+두 작업이 같은 영역 (ingest 프롬프트 + banner 카드) 을 건드리고, 각자
+독립적이라 한 PR 로 묶기 자연스럽다.
+
+- **6.3 링크 사전검증**: 사용자가 banner 카드를 보기 전, 시스템이
+  proposal 본문의 `[[Page]]` 토큰을 catalog 와 자동 대조 → 미해결 링크는
+  카드에 "Create page / Remove link" 옵션으로 노출. 사용자 클릭 한 번에
+  처리. 깨진 링크가 위키에 박히는 일 0.
+- **6.4 시간 메타**: 위키 페이지마다 `updatedAt` 추적, ingest prompt 의
+  WIKI 블록 헤더에 `[type-id — title — updated 5d ago]` 형식으로 노출.
+  "어제 막 정리한 사실을 오늘 또 제안" 패턴이 사라짐.
+
+진입점: `lib/wikilinkResolve.ts` 의 `findUnresolvedLinks(text)` 신규 +
+`WikiPageBanner.tsx` 의 카드 컴포넌트 + `state/wikiService.ts` 의
+Y.Doc meta 갱신 hook + `ingest/prompts.ts` 의 WIKI 블록 헤더 포맷.
+
+**2순위: 1~2주 신호 관찰**
+
+6.1 의 책 아이콘 사용 패턴을 모아 6.1.next 결정:
+- 클릭 빈도 / 환류 accept rate / Empty 비율
+- 거의 항상 누름 → Option C (자동 환류) 격상 검토
+- 거의 안 누름 → 기능 가치 재평가
+- Empty 비율 높음 → `chat:` 분기 프롬프트 튜닝
+
+데이터 수집을 위한 한 줄 로깅 (`[wikiHandoff] result …`) 을 6.3 PR
+끄트머리에 같이 넣는 게 비용 0.
+
+**3순위: Sub 6.2 Lint** (1주)
+
+위키가 30~50 페이지 넘은 후 가치 발현 시점이라, 6.3/6.4 완료 후 위키가
+좀 더 자란 시점이 적절. 일찍 하면 false positive 노이즈가 더 큼.
+
+**보류: Sub 6.5 관계 타입**
+
+가치 검증 안 됨. 6.2~6.4 끝낸 후 사용자 판단.
+
+## 부수 효과 (구조 자동 개선)
 
 ## 부수 효과 (구조 자동 개선)
 
