@@ -23,12 +23,17 @@ import {
   IconCode,
   IconItalic,
   IconLink,
+  IconMinus,
+  IconPhoto,
   IconStrikethrough,
 } from '@tabler/icons-react'
 
 import { toggleInlineCodeSafe } from './inlineCodeSafe'
+import { insertBlockAtSelection } from './insertBlock'
 import { LinkEditInput } from './LinkEditInput'
 import { applyLinkMark } from './linkUtils'
+import { wrapInTaskList } from './taskList'
+import { insertImage } from './slashItems'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -60,8 +65,9 @@ const STYLE_LABEL: Record<FormatBlockType, string> = {
   'heading-6': 'Heading 6',
   bullet_list: 'Bullet list',
   ordered_list: 'Numbered list',
+  task_list: 'To-do list',
   blockquote: 'Quote',
-  code_block: 'Code',
+  code_block: 'Code block',
   unknown: 'Style',
 }
 
@@ -110,6 +116,18 @@ export function FormatToolbar() {
   const wrapQuote = (v: EditorView) => {
     const t = v.state.schema.nodes.blockquote
     if (t) wrapIn(t)(v.state, v.dispatch)
+  }
+  const setCodeBlock = (v: EditorView) => {
+    const t = v.state.schema.nodes.code_block
+    if (t) setBlockType(t)(v.state, v.dispatch)
+  }
+  const insertDivider = (v: EditorView) => {
+    const t = v.state.schema.nodes.hr
+    if (!t) return
+    // insertBlockAtSelection lands the cursor on the next textblock —
+    // raw replaceSelectionWith would leave a NodeSelection wrapping
+    // the hr, so the user's next keystroke would replace it.
+    insertBlockAtSelection(v, t.create())
   }
 
   const itemActive = (target: FormatBlockType) =>
@@ -167,12 +185,24 @@ export function FormatToolbar() {
           >
             Numbered list
           </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={runBlock(wrapInTaskList)}
+            className={itemActive('task_list')}
+          >
+            To-do list
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={runBlock(wrapQuote)}
             className={itemActive('blockquote')}
           >
             Quote
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={runBlock(setCodeBlock)}
+            className={itemActive('code_block')}
+          >
+            Code block
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -231,6 +261,35 @@ export function FormatToolbar() {
       <div aria-hidden className="mx-1 h-4 w-px shrink-0 self-center bg-border" />
 
       <LinkButton view={view} active={isLink} disabled={disabled} />
+
+      <div aria-hidden className="mx-1 h-4 w-px shrink-0 self-center bg-border" />
+
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        disabled={disabled}
+        onClick={runBlock(insertDivider)}
+        aria-label="Insert divider"
+        className="h-7 w-7"
+      >
+        <IconMinus size={14} stroke={2.25} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        disabled={disabled}
+        onClick={() => {
+          if (!view) return
+          // insertImage is async (file dialog + vault copy). Fire-
+          // and-forget — the toolbar button shouldn't block; errors
+          // surface via the function's own logging.
+          void insertImage(view)
+        }}
+        aria-label="Insert image"
+        className="h-7 w-7"
+      >
+        <IconPhoto size={14} stroke={2.25} />
+      </Button>
     </div>
   )
 }

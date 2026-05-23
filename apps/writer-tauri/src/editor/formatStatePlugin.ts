@@ -31,8 +31,13 @@ function computeBlockType(state: EditorState): FormatBlockType {
   // Walk ancestors so a paragraph nested inside a list/quote reports
   // the wrapping block, not "paragraph". Innermost wrap wins (e.g. a
   // list inside a quote shows "Bullet list").
+  // task_list is encoded as a bullet_list whose list_item carries
+  // `checked != null` (gfm preset convention) — check the item first
+  // so a To-do item reports task_list rather than bullet_list.
   for (let d = $from.depth; d > 0; d--) {
-    const name = $from.node(d).type.name
+    const node = $from.node(d)
+    const name = node.type.name
+    if (name === 'list_item' && node.attrs.checked != null) return 'task_list'
     if (name === 'bullet_list') return 'bullet_list'
     if (name === 'ordered_list') return 'ordered_list'
     if (name === 'blockquote') return 'blockquote'

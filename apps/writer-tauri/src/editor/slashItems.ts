@@ -78,8 +78,10 @@ function setCodeBlock(view: EditorView): void {
 function insertDivider(view: EditorView): void {
   const t = view.state.schema.nodes.hr
   if (!t) return
-  const tr = view.state.tr.replaceSelectionWith(t.create())
-  view.dispatch(tr.scrollIntoView())
+  // insertBlockAtSelection lands the cursor on the next textblock —
+  // raw replaceSelectionWith would leave a NodeSelection wrapping
+  // the hr, so the user's next keystroke would replace it.
+  insertBlockAtSelection(view, t.create())
 }
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']
