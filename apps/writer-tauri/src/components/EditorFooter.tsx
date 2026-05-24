@@ -118,7 +118,7 @@ export function EditorFooter({ view, parentSlug, status }: Props) {
     <div
       className="
         flex shrink-0 items-center justify-between gap-3
-        bg-card shadow-[inset_0_1px_0_var(--border)]
+        bg-transparent shadow-[inset_0_1px_0_var(--border)]
         px-4 py-1
         text-[12px] leading-none text-muted-foreground
         select-none

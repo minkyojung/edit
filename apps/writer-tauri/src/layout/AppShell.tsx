@@ -89,7 +89,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
                   canvas position stays stable regardless of toolbar
                   state, mirroring the editor header above. */}
               <div
-                className="flex shrink-0 items-stretch bg-background shadow-[inset_0_-1px_0_var(--border)]"
+                className="flex shrink-0 items-stretch bg-transparent shadow-[inset_0_-1px_0_var(--border)]"
                 style={{ height: 'var(--header-h)' }}
               >
                 <FormatToolbar />
