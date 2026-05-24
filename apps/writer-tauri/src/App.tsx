@@ -23,6 +23,7 @@ import { useIdleTrigger } from '@/hooks/useIdleTrigger'
 import { useRouteSync } from '@/hooks/useRouteSync'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { usePersistLastPath } from '@/hooks/usePersistLastPath'
+import { useWindowChrome } from '@/hooks/useWindowChrome'
 import {
   buildDayUrl,
   buildMonthUrl,
@@ -178,6 +179,7 @@ function AppContent() {
   // over. Mounted once here at the root so subscriptions and the
   // date-poll timer share a single lifetime across the session.
   useIdleTrigger()
+  useWindowChrome()
   // Drains queued log entries / index updates into their respective
   // system pages when the user navigates there. One hook, one
   // configs table — adding system:about or system:lint later is a

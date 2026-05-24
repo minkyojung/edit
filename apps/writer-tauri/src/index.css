@@ -29,6 +29,12 @@
     color: var(--foreground);
     @apply bg-background text-foreground;
   }
+  /* In fullscreen macOS hides the traffic-light buttons, so the 80px
+     reservation on the left of EditorHeader / SidebarHeader stops
+     serving a purpose. useWindowChrome toggles this attribute. */
+  body[data-fullscreen="true"] {
+    --traffic-light-w: 0px;
+  }
   * {
     @apply border-border outline-ring/50;
   }
@@ -806,7 +812,11 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --radius: 0.25rem;
+  /* Base radius for the Tailwind v4 radius scale. All `rounded-*`
+     utilities derive from this (see @theme inline below), so a single
+     bump propagates app-wide. Sized to sit one step inside the Tahoe
+     ~26pt window corner — concentric, not competing. */
+  --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
