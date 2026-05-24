@@ -45,8 +45,14 @@ import {
   createWikilinkBrokenPlugin,
   wikilinkBrokenKey,
 } from './wikilinkBrokenPlugin'
+import {
+  createAiEditGutterPlugin,
+  aiEditGutterKey,
+} from './aiEditGutterPlugin'
 import { createPlaceholderPlugin } from './placeholderPlugin'
 import { useDocsStore } from '@/state/docsStore'
+import { useGitStore, isAiEditCommit } from '@/state/gitStore'
+import { pathForDoc } from '@/lib/docPaths'
 import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { normalizeDailyBody } from '@/lib/docTitle'
@@ -124,6 +130,53 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       pmView.dispatch(pmView.state.tr.setMeta(wikilinkBrokenKey, 'rebuild'))
     })
     return unsubscribe
+  }, [pmView])
+
+  // Drive the AI-edit gutter from gitStore. Two responsibilities:
+  //   1. Make sure every active ai-edit commit's detail is in cache
+  //      (the gutter plugin can't draw a marker without diff line
+  //      numbers). Prefetched once per sha; ensureCommitDetail
+  //      de-dupes concurrent calls.
+  //   2. Send a `rebuild` meta whenever the inputs the plugin reads
+  //      from gitStore change (activity list, commitDetails cache,
+  //      dismissedShas). docChanged transactions rebuild on their
+  //      own — this covers the "git pushed new data" channel.
+  useEffect(() => {
+    if (!pmView) return
+    function refresh() {
+      const view = pmView
+      if (!view) return
+      const store = useGitStore.getState()
+      for (const c of store.activity) {
+        if (!isAiEditCommit(c)) continue
+        if (store.dismissedShas.has(c.sha)) continue
+        if (store.commitDetails[c.sha]) continue
+        if (store.loadingShas.has(c.sha)) continue
+        void store.ensureCommitDetail(c.sha)
+      }
+      view.dispatch(view.state.tr.setMeta(aiEditGutterKey, 'rebuild'))
+    }
+    refresh()
+    const unsubGit = useGitStore.subscribe((state, prev) => {
+      if (
+        state.activity === prev.activity &&
+        state.commitDetails === prev.commitDetails &&
+        state.dismissedShas === prev.dismissedShas
+      ) {
+        return
+      }
+      refresh()
+    })
+    const unsubDocs = useDocsStore.subscribe((state, prev) => {
+      // Title / archive changes can shift the active file path, which
+      // changes which commits the plugin should match.
+      if (state.knownDocs === prev.knownDocs) return
+      refresh()
+    })
+    return () => {
+      unsubGit()
+      unsubDocs()
+    }
   }, [pmView])
 
   // Daily-doc body normalization: strip the legacy "# YYYY-MM-DD"
@@ -240,6 +293,33 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .use(createSlashTriggerPlugin())
       .use(createWikilinkClickPlugin())
       .use(createWikilinkBrokenPlugin())
+      // AI-edit gutter — coloured bar to the left of any block touched
+      // by an unreviewed ai-edit commit in the active doc. Pure
+      // visualisation of git activity; state lives in gitStore and is
+      // pushed into the plugin via `rebuild` meta from the subscribe
+      // effect below. See aiEditGutterPlugin.ts.
+      .use(
+        createAiEditGutterPlugin({
+          getActiveRelPath: () => {
+            if (!handle) return null
+            const docs = useDocsStore.getState().knownDocs
+            const doc = docs.find((d) => d.slug === handle.slug)
+            if (!doc) return null
+            return pathForDoc(doc, (s) => docs.find((d) => d.slug === s))
+          },
+          getActiveShas: () => {
+            const { activity, dismissedShas } = useGitStore.getState()
+            const out: string[] = []
+            for (const c of activity) {
+              if (!isAiEditCommit(c)) continue
+              if (dismissedShas.has(c.sha)) continue
+              out.push(c.sha)
+            }
+            return out
+          },
+          getCommitDetail: (sha) => useGitStore.getState().commitDetails[sha],
+        }),
+      )
       .use(
         createPlaceholderPlugin({
           // Daily docs render their title outside the editor (a

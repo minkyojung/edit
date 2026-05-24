@@ -77,6 +77,11 @@ interface GitState {
    * detail. */
   loadingShas: Set<string>
 
+  /** SHAs the user has clicked "검토 완료" on. The gutter marker
+   * hides these even though they're still in `activity`. Populated
+   * by `dismissSha` (U.3) and cleared by `markAllReviewed`. */
+  dismissedShas: Set<string>
+
   /** Explicit "commit now with this message". Used by LLM ingest and
    * any other code path that has a meaningful message ready. */
   commitChangesNow: (message: string) => Promise<void>
@@ -109,6 +114,12 @@ interface GitState {
   /** Toggle the inline expansion of one card. First open of a
    * sha kicks off the lazy git_show fetch into `commitDetails`. */
   toggleCommitDetail: (sha: string) => Promise<void>
+
+  /** Ensure `commitDetails[sha]` is populated, without changing the
+   * expanded state. Used by the gutter marker, which needs detail
+   * for every active ai-edit commit regardless of Review-panel UI.
+   * No-op when the detail is already cached. */
+  ensureCommitDetail: (sha: string) => Promise<void>
 }
 
 /** Build an auto-generated commit message from a set of changed
@@ -157,6 +168,18 @@ export function isUserVisibleCommit(commit: CommitInfo): boolean {
   )
 }
 
+/** Match commits produced by the LLM-edit path (sidecar ingest, chat
+ * handoff, direct edit). Subject conventions:
+ *   - `ai-edit: ingest from <label> (<N> updates)`
+ *   - `ai-edit: chat reply (<N> edits)`
+ *   - `ai-edit: chat: <command> (<N> edits)`
+ * The Review panel's `commitSource` strips the same prefix for label
+ * extraction; the gutter only needs the boolean. Keep both helpers in
+ * sync if the convention changes. */
+export function isAiEditCommit(commit: CommitInfo): boolean {
+  return commit.subject.startsWith('ai-edit:')
+}
+
 export const useGitStore = create<GitState>((set, get) => {
   // Shared core: snapshot dirtyPaths + run the commit. Both
   // commitChangesNow and commitImmediate funnel through here so
@@ -189,6 +212,7 @@ export const useGitStore = create<GitState>((set, get) => {
     expandedShas: new Set<string>(),
     commitDetails: {},
     loadingShas: new Set<string>(),
+    dismissedShas: new Set<string>(),
 
     commitChangesNow: async (message) => {
       await runCommit(message)
@@ -276,9 +300,21 @@ export const useGitStore = create<GitState>((set, get) => {
       // Collapse — nothing else to do. The cached detail stays
       // around so re-opening the same card is instant.
       if (wasOpen) return
+      // Open path delegates the actual fetch to ensureCommitDetail
+      // so the gutter marker and the Review panel share one fetch
+      // path and one loading-state shape.
+      await get().ensureCommitDetail(sha)
+    },
+
+    ensureCommitDetail: async (sha) => {
       // Cache hit — nothing to fetch. Commit content is immutable
       // (sha == content hash) so a cached detail is forever valid.
       if (get().commitDetails[sha]) return
+      // Already fetching from another caller — let it complete.
+      // Two parallel `gitShow` calls would race-write commitDetails
+      // (last writer wins on the same data) and double the loading
+      // flicker for no benefit.
+      if (get().loadingShas.has(sha)) return
       set((s) => {
         const next = new Set(s.loadingShas)
         next.add(sha)

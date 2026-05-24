@@ -217,6 +217,40 @@
     background-color: transparent;
   }
 
+  /* AI-edit gutter — coloured 3px bar painted to the left of any
+     top-level block touched by an unreviewed ai-edit commit. The
+     decoration is `Decoration.node`, so the class lands on the
+     block's own element; position:relative + ::before paints the
+     bar in the margin without affecting layout.
+       add     — green (insertion)
+       replace — amber (mixed add+remove)
+       remove  — red   (pure deletion)
+     `left` matches the editor's left padding so the bar sits in the
+     visible gutter rather than overlapping body text. */
+  .ProseMirror .ai-edit-gutter {
+    position: relative;
+  }
+  .ProseMirror .ai-edit-gutter::before {
+    content: '';
+    position: absolute;
+    left: -1rem;
+    top: 0.15em;
+    bottom: 0.15em;
+    width: 3px;
+    border-radius: 2px;
+    background-color: var(--ai-edit-gutter-color, var(--muted-foreground));
+    pointer-events: none;
+  }
+  .ProseMirror .ai-edit-gutter--add {
+    --ai-edit-gutter-color: oklch(0.72 0.18 145);
+  }
+  .ProseMirror .ai-edit-gutter--replace {
+    --ai-edit-gutter-color: oklch(0.78 0.16 80);
+  }
+  .ProseMirror .ai-edit-gutter--remove {
+    --ai-edit-gutter-color: oklch(0.68 0.20 25);
+  }
+
   /* Empty-body placeholder — the placeholderPlugin tags the first
      block with data-placeholder=<hint> when the doc is effectively
      empty (one block, no text or just a ZWS). ::before paints the
