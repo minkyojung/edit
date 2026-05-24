@@ -119,8 +119,8 @@ export function EditorFooter({ view, parentSlug, status }: Props) {
       className="
         flex shrink-0 items-center justify-between gap-3
         bg-transparent shadow-[inset_0_1px_0_var(--border)]
-        px-4 py-1
-        text-[12px] leading-none text-muted-foreground
+        px-4 py-1.5
+        text-[12px] font-normal leading-none text-muted-foreground
         select-none
       "
       data-testid="editor-footer"
