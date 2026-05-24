@@ -17,6 +17,7 @@ import {
   IconArrowBackUp,
   IconChevronDown,
   IconChevronRight,
+  IconHistory,
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -38,13 +39,13 @@ export function ReviewPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 flex-col gap-1 border-b border-border px-4 py-3">
-        <h2 className="text-sm font-medium">Recent changes</h2>
-        <p className="text-xs text-muted-foreground">
-          {hasActivity
-            ? `${activity.length} change${activity.length === 1 ? '' : 's'} since you last reviewed`
-            : "You're caught up — nothing new since the last review."}
-        </p>
+      <div className="flex shrink-0 flex-col gap-0.5 bg-transparent px-4 py-3 shadow-[inset_0_-1px_0_var(--border)]">
+        <h2 className="text-[15px] font-semibold text-foreground">Recent changes</h2>
+        {hasActivity && (
+          <p className="text-[13px] text-muted-foreground">
+            {`${activity.length} change${activity.length === 1 ? '' : 's'} since you last reviewed`}
+          </p>
+        )}
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -55,13 +56,27 @@ export function ReviewPanel() {
             ))}
           </div>
         ) : (
-          <div className="flex items-center justify-center px-4 py-12 text-center text-xs text-muted-foreground">
-            No activity to show.
+          // ContentUnavailableView pattern (macOS 14+/iOS 17+):
+          // tertiary icon + Title 3 headline + body description. Matches
+          // the ChatPanel empty state so the right column reads as one
+          // design language regardless of which mode is showing.
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 py-12">
+            <IconHistory
+              size={48}
+              stroke={1.5}
+              className="text-muted-foreground/40"
+            />
+            <p className="text-[16px] font-semibold text-foreground">
+              You&apos;re caught up
+            </p>
+            <p className="max-w-xs text-center text-[14px] text-muted-foreground">
+              Nothing new since your last review.
+            </p>
           </div>
         )}
       </ScrollArea>
 
-      <div className="shrink-0 border-t border-border px-4 py-3">
+      <div className="shrink-0 bg-transparent px-4 py-3 shadow-[inset_0_1px_0_var(--border)]">
         <Button
           variant="default"
           size="sm"
