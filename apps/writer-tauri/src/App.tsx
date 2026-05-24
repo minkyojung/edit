@@ -7,12 +7,9 @@ import { AppToaster } from '@/components/AppToaster'
 import { BootGate } from '@/components/BootGate'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { FullPageErrorFallback } from '@/components/ErrorFallback'
-import { MarkPopoverLayer } from '@/components/agent/MarkPopoverLayer'
-import { MarkHoverActionsLayer } from '@/components/agent/MarkHoverActionsLayer'
 import { AppShell } from '@/layout/AppShell'
 import { Page } from '@/layout/Page'
 import { CommandPalette } from '@/layout/CommandPalette'
-import { WikiPageBanner } from '@/layout/WikiPageBanner'
 import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
 import { ImageAltDialog } from '@/editor/ImageAltDialog'
 import { useDocsStore } from '@/state/docsStore'
@@ -210,28 +207,20 @@ function AppContent() {
   // pure mapping from path → same surface, so adding a new view
   // route later is a one-line addition rather than a copy of the JSX.
   const notesElement = (
-    <>
-      {/* Banner mounts above the editor and self-hides
-          when the active doc isn't a wiki:* page with
-          pending proposals. Lives in the scroll area
-          so it doesn't shift layout when it appears/
-          disappears. */}
-      <WikiPageBanner />
-      <Page
-        key={activeSlug ?? 'no-doc'}
-        handle={activeHandle}
-        status={activeStatus}
-        onViewReady={(v) => {
-          // Mirror into the global store so non-React
-          // consumers (banner accept, future palette
-          // commands) can reach the live view without
-          // prop drilling. Local state stays the source
-          // of truth for sibling renders below.
-          setView(v)
-          useEditorViewStore.getState().setView(v)
-        }}
-      />
-    </>
+    <Page
+      key={activeSlug ?? 'no-doc'}
+      handle={activeHandle}
+      status={activeStatus}
+      onViewReady={(v) => {
+        // Mirror into the global store so non-React
+        // consumers (future palette commands) can reach
+        // the live view without prop drilling. Local
+        // state stays the source of truth for sibling
+        // renders below.
+        setView(v)
+        useEditorViewStore.getState().setView(v)
+      }}
+    />
   )
 
   return (
@@ -263,8 +252,6 @@ function AppContent() {
             <Route path="/month/:ym/:slug" element={notesElement} />
           </Routes>
         </AppShell>
-        <MarkHoverActionsLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
-        <MarkPopoverLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
         <CommandPalette />
         <OnboardingDialog
           open={onboardingOpen}

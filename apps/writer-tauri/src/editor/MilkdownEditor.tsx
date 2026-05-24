@@ -21,7 +21,6 @@ import { createMarkCleanupPlugin } from './markCleanupPlugin'
 import { createMarkClickPlugin } from './markClickPlugin'
 import { createMarkHoverPlugin } from './markHoverPlugin'
 import { createDocVersionPlugin } from './docVersionPlugin'
-import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
 import { formatStatePlugin } from './formatStatePlugin'
 import { dropCursor } from '@milkdown/kit/prose/dropcursor'
@@ -55,7 +54,6 @@ import { useDocsStore } from '@/state/docsStore'
 import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { normalizeDailyBody } from '@/lib/docTitle'
-import { MarkToolbar } from './MarkToolbar'
 import { LinkHoverBar } from './LinkHoverBar'
 import { SlashMenu } from './SlashMenu'
 // Proof schemas come from proof-sdk via a thin adapter so client and
@@ -97,7 +95,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
   const onChangeRef = useRef(onMarkdownChange)
   onChangeRef.current = onMarkdownChange
 
-  const [selection, setSelection] = useState<SelectionInfo | null>(null)
   // Local view state — EditorFooter (and the UnlinkedNotes trigger
   // nested inside it) needs to walk the PM doc for wikilink
   // references and writing stats, so it needs the live view. The
@@ -235,7 +232,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .use(createMarkClickPlugin())
       .use(createMarkHoverPlugin(ydoc))
       .use(createDocVersionPlugin())
-      .use(createSelectionPlugin(setSelection))
       .use(createFrozenSelectionPlugin())
       .use(formatStatePlugin)
       .use(inlineCodeSafeKeymap)
@@ -410,7 +406,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         editorRef.current.destroy()
         editorRef.current = null
       }
-      setSelection(null)
       setPmView(null)
       onViewReady?.(null)
       // Parser / serializer are owned by the headless Milkdown
@@ -432,7 +427,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         parentSlug={handle?.slug ?? null}
         status={status}
       />
-      {handle && <MarkToolbar slug={handle.slug} selection={selection} onDismiss={() => setSelection(null)} />}
       <LinkHoverBar />
       <SlashMenu />
       <WikilinkPalette
