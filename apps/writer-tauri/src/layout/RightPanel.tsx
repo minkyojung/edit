@@ -113,11 +113,6 @@ function SaveSnapshotButton() {
   )
 }
 
-// Tahoe spring easing — Apple's standard motion curve for material
-// transitions. Used inline here; if we end up applying it to more
-// components we can lift it to a CSS variable.
-const TAHOE_EASE = 'cubic-bezier(0.32, 0.72, 0, 1)'
-
 function CapsuleFilterItem({
   active,
   onClick,
@@ -149,10 +144,9 @@ function CapsuleFilterItem({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      style={{ transitionTimingFunction: TAHOE_EASE }}
       className={cn(
         'relative inline-flex h-8 cursor-pointer items-center rounded-full text-sm font-medium outline-none',
-        'transition-[background-color,color,padding] duration-300',
+        'transition-[background-color,color,padding] duration-300 ease-tahoe',
         active
           ? cn('gap-1.5 px-3', activeBg, activeText)
           : 'px-2 bg-foreground/8 text-muted-foreground hover:text-foreground hover:bg-foreground/15',
@@ -165,9 +159,8 @@ function CapsuleFilterItem({
           the capsule's expand/contract, opacity hides leftover text
           mid-animation. */}
       <span
-        style={{ transitionTimingFunction: TAHOE_EASE }}
         className={cn(
-          'overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin] duration-300',
+          'overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin] duration-300 ease-tahoe',
           active ? 'ml-1 max-w-32 opacity-100' : 'ml-0 max-w-0 opacity-0',
         )}
       >

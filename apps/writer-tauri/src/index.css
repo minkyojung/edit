@@ -1236,10 +1236,18 @@
   --duration-slow: 320ms;
 
   /* Shadow tiers — elevation layered from subtle to floating. Window-
-     level shadow is owned by the native NSWindow, not CSS. */
+     level shadow is owned by the native NSWindow, not CSS. We also
+     alias Tailwind's default shadow utilities (sm/md/lg/xl/2xl) to
+     these tokens so every shadow-X class in the app picks up the
+     softer macOS-toned shadow scale without per-component edits. */
   --shadow-1: 0 1px 2px rgb(0 0 0 / 0.05);
   --shadow-2: 0 4px 12px rgb(0 0 0 / 0.10);
   --shadow-3: 0 8px 24px rgb(0 0 0 / 0.14);
+  --shadow-sm: var(--shadow-1);
+  --shadow-md: var(--shadow-2);
+  --shadow-lg: var(--shadow-2);
+  --shadow-xl: var(--shadow-3);
+  --shadow-2xl: var(--shadow-3);
 
   /* ── Tahoe Design Tokens (Layer 2: Semantic) ─────────────────────────
      Intent-named aliases. Components should prefer these over Layer 1
