@@ -142,12 +142,14 @@ function DocTab({
         'group relative flex w-48 shrink-0 items-center gap-1.5 pl-2 pr-1.5 text-left text-sm font-medium transition-colors',
         'outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40',
         isActive
-          // Active tab paints in the canvas color. The header's bottom
-          // hairline is an inset box-shadow on the parent, so the tab's
-          // background naturally paints over the 1px strip beneath it
-          // and the divider disappears under the active tab.
-          ? 'bg-background text-foreground'
-          : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground',
+          // Active tab paints in the canvas color and grows a 1px
+          // hairline on each side via inset box-shadow. The shadow
+          // mimics the EditorHeader's bottom hairline (same token, same
+          // weight) so the active tab reads as a small frame "lifted"
+          // out of the header — surface alone wasn't enough contrast
+          // against bg-card in the darker palettes.
+          ? 'bg-background text-foreground shadow-[inset_1px_0_0_var(--border),inset_-1px_0_0_var(--border)]'
+          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
       )}
     >
       {isRunning ? (
