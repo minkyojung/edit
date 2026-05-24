@@ -153,7 +153,7 @@ export function SelectionBubble() {
         onClick={runMark('strong')}
         aria-label="Bold"
         aria-pressed={isBold}
-        className={cn('h-7 w-7 rounded-lg transition-colors', isBold ? 'bg-accent text-accent-foreground' : 'hover:bg-foreground/10')}
+        className={cn('h-7 w-7 rounded-full transition-colors', isBold ? 'bg-accent text-accent-foreground' : 'hover:bg-foreground/15 dark:hover:bg-foreground/15')}
       >
         <IconBold size={14} stroke={2.25} />
       </Button>
@@ -163,7 +163,7 @@ export function SelectionBubble() {
         onClick={runMark('emphasis')}
         aria-label="Italic"
         aria-pressed={isItalic}
-        className={cn('h-7 w-7 rounded-md', isItalic && 'bg-accent text-accent-foreground')}
+        className={cn('h-7 w-7 rounded-full transition-colors', isItalic ? 'bg-accent text-accent-foreground' : 'hover:bg-foreground/15 dark:hover:bg-foreground/15')}
       >
         <IconItalic size={14} stroke={2.25} />
       </Button>
@@ -173,7 +173,7 @@ export function SelectionBubble() {
         onClick={runMark('strike_through')}
         aria-label="Strikethrough"
         aria-pressed={isStrike}
-        className={cn('h-7 w-7 rounded-md', isStrike && 'bg-accent text-accent-foreground')}
+        className={cn('h-7 w-7 rounded-full transition-colors', isStrike ? 'bg-accent text-accent-foreground' : 'hover:bg-foreground/15 dark:hover:bg-foreground/15')}
       >
         <IconStrikethrough size={14} stroke={2.25} />
       </Button>
@@ -183,7 +183,7 @@ export function SelectionBubble() {
         onClick={() => view && toggleInlineCodeSafe(view)}
         aria-label="Code"
         aria-pressed={isCode}
-        className={cn('h-7 w-7 rounded-md', isCode && 'bg-accent text-accent-foreground')}
+        className={cn('h-7 w-7 rounded-full transition-colors', isCode ? 'bg-accent text-accent-foreground' : 'hover:bg-foreground/15 dark:hover:bg-foreground/15')}
       >
         <IconCode size={14} stroke={2.25} />
       </Button>
@@ -257,7 +257,7 @@ function LinkButton({ view, active }: { view: EditorView; active: boolean }) {
           size="icon-sm"
           aria-label="Link"
           aria-pressed={active}
-          className={cn('h-7 w-7 rounded-md', active && 'bg-accent text-accent-foreground')}
+          className={cn('h-7 w-7 rounded-full transition-colors', active ? 'bg-accent text-accent-foreground' : 'hover:bg-foreground/15 dark:hover:bg-foreground/15')}
         >
           <IconLink size={14} stroke={2.25} />
         </Button>
