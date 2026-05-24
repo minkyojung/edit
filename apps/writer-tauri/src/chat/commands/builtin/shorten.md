@@ -13,10 +13,8 @@ its original length — keep every substantive idea, drop redundancy and
 hedging, and preserve the author's voice. Do not summarize; this should
 read as the same passage written tighter.
 
-To deliver the result, call the `propose_change` tool exactly once with:
+To deliver the result, call the `edit_document` tool exactly once with:
 
-- `kind`: `"suggestion"`
-- `suggestionType`: `"replace"`
 - `quote`: the ENTIRE original selection, character-for-character
 - `content`: your shortened version
 - `rationale`: one short sentence on what you cut

@@ -13,8 +13,7 @@ import type {
   ChatTurn,
   MessagePart,
 } from '@/chat/types'
-import type { ApplyOutcome } from '../applyProposal'
-import type { Proposal } from '../proposals'
+import type { DirectEdit, EditOutcome } from '../applyDirectEdit'
 
 /** Sentinel string the Claude Agent SDK uses to split a multi-block
  * system prompt into a cacheable static prefix vs a session-specific
@@ -42,7 +41,7 @@ export interface ToolCallRecord {
   id: string
   name: string
   input: unknown
-  result: ApplyOutcome
+  result: EditOutcome
 }
 
 export interface RunChatArgs {
@@ -118,9 +117,9 @@ export interface ChatErrorRateLimit {
 
 // ── Sidecar event payloads ─────────────────────────────────────
 
-export interface ProposalEvent {
+export interface EditEvent {
   runId: string
-  input: Proposal
+  input: DirectEdit
 }
 
 /**

@@ -3,12 +3,12 @@
 // SDK (`query()`), which internally handles tool execution; we
 // only consume the resulting notifications:
 //
-//   claude:event    → assistant text blocks (accumulated, emitted
-//                     as deltas)
-//   claude:proposal → propose_change payload (we apply the mark
-//                     locally)
-//   claude:done     → end of turn
-//   claude:error    → upstream failure or cancellation
+//   claude:event → assistant text blocks (accumulated, emitted
+//                  as deltas)
+//   claude:edit  → edit_document payload (we splice the doc body
+//                  and tally the turn for one git commit)
+//   claude:done  → end of turn
+//   claude:error → upstream failure or cancellation
 //
 // V1 multi-turn handling: only the latest user message is sent;
 // session resumption (via the SDK's `resume` option) keeps prior
@@ -20,14 +20,17 @@ import { FREE_CHAT_PROMPT } from '../skills/freeChat'
 import { assembleContext } from '@/agent/contextPipeline'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useChatRuns } from '@/stores/chatRuns'
+import { useGitStore } from '@/state/gitStore'
+import { useDocsStore } from '@/state/docsStore'
+import { flushDirty } from '@/lib/docFileSync'
 import {
   agentIdForModel,
   DEFAULT_MODEL,
   type ChatErrorRateLimit,
   type ChatEvent,
   type DoneEvent,
+  type EditEvent,
   type ErrorEvent,
-  type ProposalEvent,
   type RunChatArgs,
   type RunChatResult,
   type ToolCallRecord,
@@ -39,7 +42,11 @@ import {
   truncateDocForPrompt,
 } from './systemPrompt'
 import { createStreamParser } from './streamParser'
-import { createProposalListener } from './proposalListener'
+import {
+  buildEditCommitBody,
+  createEditListener,
+  type EditCounter,
+} from './editListener'
 
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const {
@@ -56,7 +63,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     systemPrompt,
     model = DEFAULT_MODEL,
     effort: effortOverride,
-    relayTools = ['propose_change', 'read_page', 'search_wiki'],
+    relayTools = ['edit_document', 'read_page', 'search_wiki'],
     appendDocument = true,
     signal,
     onTextDelta,
@@ -65,7 +72,12 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     onToolApplied,
     sessionStarted,
   } = args
-  const agentId = agentIdForModel(model)
+  // agentIdForModel was used to stamp marks; with marks gone the
+  // value is now only kept for compatibility with any downstream
+  // metadata field that still references it. We compute it lazily
+  // so unused imports surface as lint failures if the binding
+  // disappears entirely.
+  void agentIdForModel
 
   // Effort default: Haiku is the copyeditor lane (short, latency-
   // sensitive turns) → 'low'. Sonnet/Opus are the chat lane → 'medium'.
@@ -107,6 +119,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   runs.start(threadId, runId, controller, slug)
 
   const toolCalls: ToolCallRecord[] = []
+  // Counter the edit listener bumps on every successful applyDirectEdit
+  // so settleOk knows whether to emit a "ai-edit: chat reply" commit.
+  // Lives outside toolCalls so the engine can read it without walking
+  // the list at settle time.
+  const editAcc: EditCounter = { count: 0 }
 
   // Live stream → MessagePart translator. Owns the timeline state
   // (partsById, blockIndexToPartId, etc.) so this file only sees
@@ -132,7 +149,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       if (settled) return
       settled = true
       cleanup()
+      // Resolve the caller immediately; the per-turn commit runs
+      // fire-and-forget so the chat UI doesn't wait on disk I/O.
+      // The Review panel's 30 s background poll surfaces the new
+      // commit shortly after; any user who opens the panel sooner
+      // triggers a refresh on mount that catches it too.
       resolve({ stopReason, toolCalls })
+      if (editAcc.count > 0) {
+        void finalizeEditCommit(slug, toolCalls)
+      }
     }
     const settleErr = (err: unknown) => {
       if (settled) return
@@ -146,14 +171,13 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         if (e.payload.runId !== runId) return
         parser.handleEvent(e.payload.event)
       }),
-      listen<ProposalEvent>(
-        'claude:proposal',
-        createProposalListener({
+      listen<EditEvent>(
+        'claude:edit',
+        createEditListener({
           runId,
           slug,
-          agentId,
           toolCalls,
-          parser,
+          acc: editAcc,
           onToolApplied,
         }),
       ),
@@ -242,4 +266,38 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   }
 
   return finished
+}
+
+/** Post-turn commit: flush any pending Y.Doc → disk writes the edits
+ * touched, then land a single `ai-edit: chat reply (...)` commit so
+ * the Review panel shows the turn as one card with rationale + diff.
+ *
+ * Fire-and-forget from settleOk; the caller already has its
+ * RunChatResult and doesn't need to wait on git. A failure here
+ * logs but doesn't surface — the commit message is best-effort and
+ * the underlying disk state is already correct. */
+async function finalizeEditCommit(
+  slug: string,
+  toolCalls: ToolCallRecord[],
+): Promise<void> {
+  try {
+    const known = useDocsStore
+      .getState()
+      .knownDocs.find((d) => d.slug === slug)
+    const sourceLabel =
+      known?.type === 'daily' && known.date
+        ? `daily/${known.date}`
+        : known?.title?.trim() || slug
+    const successful = toolCalls.filter(
+      (r) => r.name === 'edit_document' && r.result.ok,
+    )
+    if (successful.length === 0) return
+    await flushDirty()
+    const subject = `ai-edit: chat reply (${successful.length} edit${successful.length === 1 ? '' : 's'} in ${sourceLabel})`
+    const body = buildEditCommitBody(successful, sourceLabel)
+    const message = body ? `${subject}\n\n${body}` : subject
+    await useGitStore.getState().commitChangesNow(message)
+  } catch (err) {
+    console.warn('[chat] post-turn commit failed', err)
+  }
 }

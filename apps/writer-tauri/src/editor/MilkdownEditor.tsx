@@ -51,6 +51,7 @@ import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { normalizeDailyBody } from '@/lib/docTitle'
 import { LinkHoverBar } from './LinkHoverBar'
+import { SelectionBubble } from './SelectionBubble'
 import { SlashMenu } from './SlashMenu'
 // Proof schemas come from proof-sdk via a thin adapter so client and
 // server share one canonical definition. The previous local copy
@@ -417,6 +418,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         status={status}
       />
       <LinkHoverBar />
+      <SelectionBubble />
       <SlashMenu />
       <WikilinkPalette
         parentSlug={handle?.slug ?? null}

@@ -10,7 +10,7 @@
 // Humanizers are pure functions of input/output so they're trivial to
 // unit-test and reuse across surfaces.
 
-import { PROPOSE_CHANGE_TOOL } from '@/chat/parts/proposeChangeTool'
+import { EDIT_DOCUMENT_TOOL } from '@/chat/parts/proposeChangeTool'
 
 export interface HumanizedToolCall {
   /** Single-line description to show as the activity / card header.
@@ -47,35 +47,18 @@ function basename(path: string | undefined | null): string {
 // generic label when the fields it needs aren't present yet — the
 // dynamic version takes over the moment the input parses cleanly.
 
-function humanizeProposeChange(input: unknown): HumanizedToolCall {
+function humanizeEditDocument(input: unknown): HumanizedToolCall {
   const i = (input ?? {}) as {
-    kind?: 'suggestion' | 'comment'
-    suggestionType?: 'insert' | 'delete' | 'replace'
     quote?: string
     content?: string
-    text?: string
+    rationale?: string
   }
-  if (i.kind === 'comment') {
-    if (!i.quote && !i.text) return { label: 'Adding a comment' }
-    if (!i.text) return { label: `Commenting on "${truncate(i.quote, 30)}"` }
-    return { label: `💬 "${truncate(i.quote, 24)}": ${truncate(i.text, 32)}` }
-  }
-  if (!i.quote) return { label: 'Suggesting an edit' }
+  if (!i.quote && !i.content) return { label: 'Editing the document' }
   const quote = truncate(i.quote, 28)
   const content = truncate(i.content, 28)
-  switch (i.suggestionType) {
-    case 'insert':
-      return content
-        ? { label: `Insert "${content}" after "${quote}"` }
-        : { label: `Inserting after "${quote}"` }
-    case 'delete':
-      return { label: `Delete "${quote}"` }
-    case 'replace':
-    default:
-      return content
-        ? { label: `Replace "${quote}" → "${content}"` }
-        : { label: `Editing "${quote}"` }
-  }
+  if (!i.quote && i.content) return { label: `Inserting "${content}"` }
+  if (i.quote && !i.content) return { label: `Deleting "${quote}"` }
+  return { label: `Replace "${quote}" → "${content}"` }
 }
 
 function humanizeRead(input: unknown): HumanizedToolCall {
@@ -169,7 +152,7 @@ function humanizeSearchWiki(input: unknown, output?: unknown): HumanizedToolCall
 }
 
 const humanizers: Record<string, Humanizer> = {
-  [PROPOSE_CHANGE_TOOL]: humanizeProposeChange,
+  [EDIT_DOCUMENT_TOOL]: humanizeEditDocument,
   Read: humanizeRead,
   Edit: humanizeEdit,
   Write: humanizeWrite,

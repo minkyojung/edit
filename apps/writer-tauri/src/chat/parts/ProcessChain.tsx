@@ -3,13 +3,12 @@ import type { ReactNode } from 'react'
 import {
   BrainIcon,
   ChevronDownIcon,
-  MessageCircleIcon,
   PencilIcon,
   WrenchIcon,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ReasoningPart, ToolPart } from '@/chat/types'
-import { PROPOSE_CHANGE_TOOL } from '@/chat/parts/proposeChangeTool'
+import { EDIT_DOCUMENT_TOOL } from '@/chat/parts/proposeChangeTool'
 import { humanizeToolCall } from '@/chat/humanizers'
 import {
   ChainOfThought,
@@ -175,68 +174,54 @@ function CollapsibleStep({
 
 function ToolStep({ part }: { part: ToolPart }) {
   const { label } = humanizeToolCall(part.toolName, part.input, part.output)
-  const isPropose = part.toolName === PROPOSE_CHANGE_TOOL
-  const proposalInput = isPropose
-    ? ((part.input ?? {}) as ProposeChangeInput)
+  const isEdit = part.toolName === EDIT_DOCUMENT_TOOL
+  const editInput = isEdit
+    ? ((part.input ?? {}) as EditDocumentInput)
     : null
-  const isComment = proposalInput?.kind === 'comment'
-  const icon: LucideIcon = isPropose
-    ? isComment
-      ? MessageCircleIcon
-      : PencilIcon
-    : WrenchIcon
+  const icon: LucideIcon = isEdit ? PencilIcon : WrenchIcon
   const status: 'active' | 'complete' | 'pending' =
     part.state === 'input-streaming' || part.state === 'input-available'
       ? 'active'
       : part.state === 'approval-requested'
         ? 'pending'
         : 'complete'
-  // Phase 3.B removed the mark-scroll helper (chat panel no longer
-  // jumps to an editor mark — there are no marks). The propose_change
-  // step still renders as a labelled row so the chat history is
-  // readable; click-to-jump is gone.
+  // Phase 3.C: edits land in the doc body directly and surface in the
+  // Review panel as commits; the step row here is just a human-
+  // readable receipt of what was changed.
   return (
     <CollapsibleStep
       icon={icon}
       label={label}
-      detail={renderToolDetail(part, proposalInput, isComment)}
+      detail={renderToolDetail(part, editInput)}
       status={status}
     />
   )
 }
 
-interface ProposeChangeInput {
-  kind?: 'suggestion' | 'comment'
-  suggestionType?: 'insert' | 'delete' | 'replace'
+interface EditDocumentInput {
   quote?: string
   content?: string
-  text?: string
   rationale?: string
 }
 
 function renderToolDetail(
   part: ToolPart,
-  proposalInput: ProposeChangeInput | null,
-  isComment: boolean,
+  editInput: EditDocumentInput | null,
 ): ReactNode {
-  if (proposalInput) {
-    const replacement = proposalInput.content ?? proposalInput.text
+  if (editInput) {
     const hasBody =
-      proposalInput.quote || replacement || proposalInput.rationale
+      editInput.quote || editInput.content || editInput.rationale
     if (!hasBody) return null
     return (
       <div className="space-y-1.5">
-        {proposalInput.quote && (
-          <div className="line-through opacity-80">{proposalInput.quote}</div>
+        {editInput.quote && (
+          <div className="line-through opacity-80">{editInput.quote}</div>
         )}
-        {!isComment && replacement && (
-          <div className="text-foreground/90">→ {replacement}</div>
+        {editInput.content && (
+          <div className="text-foreground/90">→ {editInput.content}</div>
         )}
-        {isComment && replacement && (
-          <div className="text-foreground/90">{replacement}</div>
-        )}
-        {proposalInput.rationale && (
-          <div className="pt-1">{proposalInput.rationale}</div>
+        {editInput.rationale && (
+          <div className="pt-1">{editInput.rationale}</div>
         )}
       </div>
     )
@@ -263,10 +248,10 @@ function headerLabel(
   isStreaming: boolean,
 ): string {
   if (isStreaming) return 'Working…'
-  const proposals = toolParts.filter((p) => p.toolName === PROPOSE_CHANGE_TOOL)
-  if (proposals.length > 0) {
-    const n = proposals.length
-    return n === 1 ? 'Suggested 1 change' : `Suggested ${n} changes`
+  const edits = toolParts.filter((p) => p.toolName === EDIT_DOCUMENT_TOOL)
+  if (edits.length > 0) {
+    const n = edits.length
+    return n === 1 ? 'Applied 1 edit' : `Applied ${n} edits`
   }
   if (toolParts.length > 0) return 'Worked on the document'
   if (reasoningParts.length > 0) return 'Thought it through'

@@ -13,10 +13,8 @@ the core ideas with concrete examples, supporting detail, or context
 that makes the argument more vivid. Stay in the author's voice and do
 not introduce ideas the original passage didn't gesture at.
 
-To deliver the result, call the `propose_change` tool exactly once with:
+To deliver the result, call the `edit_document` tool exactly once with:
 
-- `kind`: `"suggestion"`
-- `suggestionType`: `"replace"`
 - `quote`: the ENTIRE original selection, character-for-character
 - `content`: your expanded version
 - `rationale`: one short sentence describing what you added

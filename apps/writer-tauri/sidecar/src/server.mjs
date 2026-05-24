@@ -187,21 +187,18 @@ function buildSearchWikiTool(vaultPath) {
   )
 }
 
-function buildProposeChangeTool(runId, emit) {
+function buildEditDocumentTool(runId, emit) {
   return tool(
-    'propose_change',
-    'Propose a single suggestion or comment for the current document. Call this once per issue you find.',
+    'edit_document',
+    'Edit the current document by replacing one substring with another. Call this once per edit. quote MUST be an exact substring of the document body; the host replaces the first occurrence of quote with content. Use an empty quote to prepend content at the top, and an empty content to delete the matched quote. rationale is shown to the user in the Review panel.',
     {
-      kind: z.enum(['suggestion', 'comment']),
-      suggestionType: z.enum(['insert', 'delete', 'replace']).optional(),
       quote: z.string(),
-      content: z.string().optional(),
-      text: z.string().optional(),
+      content: z.string(),
       rationale: z.string().optional(),
     },
     async (args) => {
-      emit(notification('chat/proposal', { runId, input: args }))
-      return { content: [{ type: 'text', text: 'Proposal recorded.' }] }
+      emit(notification('chat/edit', { runId, input: args }))
+      return { content: [{ type: 'text', text: 'Edit applied.' }] }
     },
   )
 }
@@ -523,11 +520,11 @@ export class Server {
     // UI work happens in the frontend.
     const enabledRelay = Array.isArray(relayTools)
       ? relayTools
-      : (this.mode === 'chat' ? ['propose_change'] : [])
+      : (this.mode === 'chat' ? ['edit_document'] : [])
     const relayDefs = []
     for (const name of enabledRelay) {
-      if (name === 'propose_change') {
-        relayDefs.push(buildProposeChangeTool(runId, this.emit))
+      if (name === 'edit_document') {
+        relayDefs.push(buildEditDocumentTool(runId, this.emit))
       } else if (name === 'submit_ingest_result') {
         relayDefs.push(buildSubmitIngestResultTool(runId, this.emit))
       } else if (name === 'submit_profile') {

@@ -151,12 +151,11 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
 
       // Counters used by `summarize` (review-comments). Only mutated when
       // a summarize callback is present; otherwise stay at zero and unused.
+      // Phase 3.C: each `edit_document` call (success or failure) bumps
+      // `proposedCount`; successes also bump `appliedCount`. Marks are no
+      // longer involved, so `appliedMarkIds` is gone.
       let proposedCount = 0
       let appliedCount = 0
-      // Mark ids the run produces via propose_change. Always collected (not
-      // gated on `summarize`) so handleRegenerate can clear stale marks
-      // when re-running any slash command, not just review-comments.
-      const appliedMarkIds: string[] = []
 
       const commit = (
         finalStatus: ChatTurn['status'],
@@ -190,7 +189,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           errorText: errorText ?? undefined,
           errorCode,
           resetsAt,
-          appliedMarkIds: appliedMarkIds.length > 0 ? [...appliedMarkIds] : undefined,
         })
         setStreaming(null)
       }
@@ -218,12 +216,9 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
             flusher.schedule()
           },
           onToolApplied: (call) => {
-            if (call.name !== 'propose_change') return
+            if (call.name !== 'edit_document') return
             proposedCount += 1
-            if (call.result.ok) {
-              appliedCount += 1
-              appliedMarkIds.push(call.result.markId)
-            }
+            if (call.result.ok) appliedCount += 1
           },
         })
         commit('done', result.stopReason)

@@ -9,7 +9,6 @@ import { PanelErrorFallback } from '@/components/ErrorFallback'
 import { AppSidebar } from './Sidebar'
 import { RightPanel } from './RightPanel'
 import { EditorHeader } from './EditorHeader'
-import { FormatToolbar } from '@/editor/FormatToolbar'
 import { CloseConfirmDialog } from '@/components/CloseConfirmDialog'
 import { useLayoutStore } from '@/state/layoutStore'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
@@ -85,15 +84,6 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
                 editorView={editorView ?? null}
                 collabStatus={collabStatus}
               />
-              {/* Row 2 — formatting toolbar. Sits at --header-h so the
-                  canvas position stays stable regardless of toolbar
-                  state, mirroring the editor header above. */}
-              <div
-                className="flex shrink-0 items-stretch bg-transparent shadow-[inset_0_-1px_0_var(--border)]"
-                style={{ height: 'var(--header-h)' }}
-              >
-                <FormatToolbar />
-              </div>
               <div className="relative min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {children}
                 {bottomLeft && (

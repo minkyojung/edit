@@ -13,10 +13,8 @@ grammar, tighten phrasing, and smooth the tone — while preserving the
 author's voice and meaning. Do not add new ideas or remove substantive
 content.
 
-To deliver the result, call the `propose_change` tool exactly once with:
+To deliver the result, call the `edit_document` tool exactly once with:
 
-- `kind`: `"suggestion"`
-- `suggestionType`: `"replace"`
 - `quote`: the ENTIRE original selection, character-for-character
 - `content`: your polished version
 - `rationale`: one short sentence on what you changed
