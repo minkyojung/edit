@@ -13,15 +13,16 @@ grammar, tighten phrasing, and smooth the tone — while preserving the
 author's voice and meaning. Do not add new ideas or remove substantive
 content.
 
-To deliver the result, call the `edit_document` tool exactly once with:
+To deliver the result, call the `Edit` tool exactly once with:
 
-- `quote`: the ENTIRE original selection, character-for-character
-- `content`: your polished version
-- `rationale`: one short sentence on what you changed
+- `file_path`: the working doc's vault-relative path (shown in the WORKING DOC block above; Read it first if you need to confirm)
+- `old_string`: the ENTIRE original selection below, character-for-character
+- `new_string`: your polished version (MUST differ from old_string)
 
-If the passage is already clean, still call the tool with `content`
-identical to `quote` and a rationale of `"No changes needed."` Do not
-output any chat text — the tool call is your entire response.
+If the passage is already clean, do NOT call the tool — Edit refuses
+no-op swaps. Reply in chat with `"No changes needed."` instead. Do not
+output any chat text alongside a tool call — the Edit call is your
+entire response when a change is warranted.
 
 Selection:
 

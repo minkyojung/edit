@@ -13,11 +13,11 @@ its original length — keep every substantive idea, drop redundancy and
 hedging, and preserve the author's voice. Do not summarize; this should
 read as the same passage written tighter.
 
-To deliver the result, call the `edit_document` tool exactly once with:
+To deliver the result, call the `Edit` tool exactly once with:
 
-- `quote`: the ENTIRE original selection, character-for-character
-- `content`: your shortened version
-- `rationale`: one short sentence on what you cut
+- `file_path`: the working doc's vault-relative path (shown in the WORKING DOC block above; Read it first if you need to confirm)
+- `old_string`: the ENTIRE original selection below, character-for-character
+- `new_string`: your shortened version (MUST differ from old_string)
 
 Do not output any chat text — the tool call is your entire response.
 

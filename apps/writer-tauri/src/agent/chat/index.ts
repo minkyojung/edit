@@ -5,10 +5,15 @@
 //
 //   claude:event → assistant text blocks (accumulated, emitted
 //                  as deltas)
-//   claude:edit  → edit_document payload (we splice the doc body
-//                  and tally the turn for one git commit)
 //   claude:done  → end of turn
 //   claude:error → upstream failure or cancellation
+//
+// File edits used to flow through a `claude:edit` notification from
+// the host-bridged `edit_document` MCP tool, but that bridge was
+// retired alongside Phase 3.1's `canUseTool` gate — Claude now uses
+// its built-in Edit/Write tools directly. The host's role here
+// is just to commit the resulting on-disk changes at turn end
+// (via the vaultWatcher → noteActivity → dirtyPaths chain).
 //
 // V1 multi-turn handling: only the latest user message is sent;
 // session resumption (via the SDK's `resume` option) keeps prior
@@ -22,6 +27,7 @@ import { getActiveVaultPath } from '@/state/settingsStore'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useGitStore } from '@/state/gitStore'
 import { useDocsStore } from '@/state/docsStore'
+import { usePendingEditsStore } from '@/state/pendingEditsStore'
 import { flushDirty } from '@/lib/docFileSync'
 import {
   agentIdForModel,
@@ -29,7 +35,6 @@ import {
   type ChatErrorRateLimit,
   type ChatEvent,
   type DoneEvent,
-  type EditEvent,
   type ErrorEvent,
   type RunChatArgs,
   type RunChatResult,
@@ -42,11 +47,6 @@ import {
   truncateDocForPrompt,
 } from './systemPrompt'
 import { createStreamParser } from './streamParser'
-import {
-  buildEditCommitBody,
-  createEditListener,
-  type EditCounter,
-} from './editListener'
 
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const {
@@ -63,13 +63,12 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     systemPrompt,
     model = DEFAULT_MODEL,
     effort: effortOverride,
-    relayTools = ['edit_document', 'read_page', 'search_wiki'],
+    relayTools = ['read_page', 'search_wiki'],
     appendDocument = true,
     signal,
     onTextDelta,
     onThinkingDelta,
     onPart,
-    onToolApplied,
     sessionStarted,
   } = args
   // agentIdForModel was used to stamp marks; with marks gone the
@@ -119,11 +118,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   runs.start(threadId, runId, controller, slug)
 
   const toolCalls: ToolCallRecord[] = []
-  // Counter the edit listener bumps on every successful applyDirectEdit
-  // so settleOk knows whether to emit a "ai-edit: chat reply" commit.
-  // Lives outside toolCalls so the engine can read it without walking
-  // the list at settle time.
-  const editAcc: EditCounter = { count: 0 }
 
   // Live stream → MessagePart translator. Owns the timeline state
   // (partsById, blockIndexToPartId, etc.) so this file only sees
@@ -155,8 +149,16 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       // commit shortly after; any user who opens the panel sooner
       // triggers a refresh on mount that catches it too.
       resolve({ stopReason, toolCalls })
-      if (editAcc.count > 0) {
-        void finalizeEditCommit(slug, toolCalls)
+      // Vault changes from this turn flow through the vaultWatcher
+      // → noteActivity chain: Claude's built-in Edit/Write writes the
+      // .md file → OS fsevent → watcher → dirtyPaths. When dirtyPaths
+      // is non-empty at settle time, the turn produced disk changes
+      // worth committing as one logical "ai-edit" entry. When it's
+      // empty, the turn was pure conversation (question + answer)
+      // and there's nothing to record.
+      const hasDirtyPaths = useGitStore.getState().dirtyPaths.size > 0
+      if (hasDirtyPaths) {
+        void finalizeEditCommit(slug)
       }
     }
     const settleErr = (err: unknown) => {
@@ -171,16 +173,27 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         if (e.payload.runId !== runId) return
         parser.handleEvent(e.payload.event)
       }),
-      listen<EditEvent>(
-        'claude:edit',
-        createEditListener({
-          runId,
-          slug,
-          toolCalls,
-          acc: editAcc,
-          onToolApplied,
-        }),
-      ),
+      // Phase 3.2 staged-edit gate: the sidecar emits one of these
+      // for every write-side built-in (Edit / Write / MultiEdit /
+      // NotebookEdit) the model attempts. The host stores the
+      // payload so the ProcessChain UI can render Apply / Reject
+      // affordances next to the matching tool step. Phase 3.3 will
+      // additionally round-trip a decision back to the sidecar's
+      // canUseTool callback so Apply actually lets the SDK run the
+      // write; today the click only flips the local status flag.
+      listen<{
+        runId: string
+        toolName: string
+        input: Record<string, unknown>
+      }>('claude:edit-pending', (e) => {
+        if (e.payload.runId !== runId) return
+        usePendingEditsStore.getState().addPending({
+          id: crypto.randomUUID(),
+          runId: e.payload.runId,
+          toolName: e.payload.toolName,
+          input: e.payload.input,
+        })
+      }),
       listen<DoneEvent>('claude:done', (e) => {
         if (e.payload.runId !== runId) return
         settleOk(e.payload.stopReason)
@@ -276,10 +289,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
  * RunChatResult and doesn't need to wait on git. A failure here
  * logs but doesn't surface — the commit message is best-effort and
  * the underlying disk state is already correct. */
-async function finalizeEditCommit(
-  slug: string,
-  toolCalls: ToolCallRecord[],
-): Promise<void> {
+async function finalizeEditCommit(slug: string): Promise<void> {
   try {
     const known = useDocsStore
       .getState()
@@ -288,14 +298,16 @@ async function finalizeEditCommit(
       known?.type === 'daily' && known.date
         ? `daily/${known.date}`
         : known?.title?.trim() || slug
-    const successful = toolCalls.filter(
-      (r) => r.name === 'edit_document' && r.result.ok,
-    )
-    if (successful.length === 0) return
+    // Built-in Edit/Write writes straight to disk; we lean on the
+    // vaultWatcher → dirtyPaths chain (kept in sync by Phase 2.1)
+    // to know what to roll into this commit. The Review panel's
+    // inline diff is the source of truth for what actually changed;
+    // the commit subject is just a human-readable receipt.
+    const dirtyCount = useGitStore.getState().dirtyPaths.size
+    if (dirtyCount === 0) return
     await flushDirty()
-    const subject = `ai-edit: chat reply (${successful.length} edit${successful.length === 1 ? '' : 's'} in ${sourceLabel})`
-    const body = buildEditCommitBody(successful, sourceLabel)
-    const message = body ? `${subject}\n\n${body}` : subject
+    const fileWord = dirtyCount === 1 ? 'file' : 'files'
+    const message = `ai-edit: chat reply (${dirtyCount} ${fileWord}, from ${sourceLabel})`
     await useGitStore.getState().commitChangesNow(message)
   } catch (err) {
     console.warn('[chat] post-turn commit failed', err)

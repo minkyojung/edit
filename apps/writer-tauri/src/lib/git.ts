@@ -43,6 +43,22 @@ export async function gitInit(): Promise<void> {
   await invoke<void>('git_init', { vaultPath: vault })
 }
 
+/** Append `entries` to the vault's `.gitignore` if missing, and
+ * `git rm --cached` any paths the new rules would have ignored.
+ * Returns true when the file changed. Boot-time migration helper —
+ * brings vaults that pre-date a `DEFAULT_GITIGNORE` change in line
+ * with the current rules without losing the user's own additions. */
+export async function gitEnsureGitignoreEntries(
+  entries: string[],
+): Promise<boolean> {
+  const vault = getActiveVaultPath()
+  if (!vault) return false
+  return invoke<boolean>('git_ensure_gitignore_entries', {
+    vaultPath: vault,
+    entries,
+  })
+}
+
 /** Stage everything and commit with `message`. Returns the new HEAD
  * SHA, or null when there was nothing to commit (debounce-fire-after-
  * save scenarios). Errors throw — caller decides whether to toast. */

@@ -28,7 +28,11 @@ import { useThreadsStore } from '@/state/threadsStore'
 import { useGitStore } from '@/state/gitStore'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { pickVault } from '@/lib/vaultPicker'
-import { gitInit, gitHeadTimestamp } from '@/lib/git'
+import {
+  gitInit,
+  gitHeadTimestamp,
+  gitEnsureGitignoreEntries,
+} from '@/lib/git'
 
 /** Daily safety net: if HEAD is older than this, BootGate fires a
  * silent "daily snapshot" commit on app open so a passive user who
@@ -73,6 +77,17 @@ export function BootGate({ children }: Props) {
         await gitInit()
       } catch (err) {
         console.warn('[boot] git init failed (history disabled)', err)
+      }
+      // One-shot migration: pre-existing vaults predate the
+      // `threads/` ignore rule in `DEFAULT_GITIGNORE`, so chat-session
+      // JSON ended up tracked and bloating every commit. Sync the
+      // .gitignore + untrack any matches that snuck in. Idempotent
+      // after the first run — subsequent boots see the entry and
+      // return false.
+      try {
+        await gitEnsureGitignoreEntries(['threads/'])
+      } catch (err) {
+        console.warn('[boot] gitignore migration failed', err)
       }
       bootstrap()
       // Load chat thread metas + turns from `threads/`. Fires in

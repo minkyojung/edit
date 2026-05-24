@@ -32,7 +32,8 @@ use tokio::process::Command;
 const LAST_REVIEWED_REF: &str = "refs/heads/last-reviewed";
 
 /// .gitignore body seeded on `init_repo`. Kept minimal — the vault
-/// IS the user's content, so we only ignore editor + OS junk.
+/// IS the user's content, so we only ignore editor + OS junk plus
+/// ephemeral per-session state we don't want in history.
 const DEFAULT_GITIGNORE: &str = "# Manila vault gitignore — managed by the app, edit freely.\n\
 .DS_Store\n\
 .manila-tmp/\n\
@@ -40,7 +41,13 @@ const DEFAULT_GITIGNORE: &str = "# Manila vault gitignore — managed by the app
 # Yjs binary state — mirrors the .md content. Regenerated on edit;\n\
 # tracking it just bloats history. The .meta.json sidecar IS tracked\n\
 # because it carries durable metadata (aiSummary, archivedAt, …).\n\
-*.ydoc\n";
+*.ydoc\n\
+\n\
+# Chat thread state — per-session JSON the app stores so the Chat\n\
+# panel can resume mid-thread. Pure ephemeral state; users don't read\n\
+# it and committing it would flood every chat-driven git turn with\n\
+# noise alongside the real wiki/daily changes.\n\
+threads/\n";
 
 /// One entry returned by `log_since_ref`. Pretty-printed by the
 /// frontend's ActivityView. Field names are camelCase via serde for
@@ -286,6 +293,99 @@ pub async fn git_init(vault_path: String) -> Result<(), String> {
     run_git(&vault_path, &["update-ref", LAST_REVIEWED_REF, "HEAD"]).await?;
 
     Ok(())
+}
+
+/// Ensure each line in `entries` appears in the vault's `.gitignore`,
+/// and unstage anything currently tracked that the new rules would
+/// have ignored. Idempotent: re-running on an already-migrated vault
+/// is a no-op (returns false).
+///
+/// Used at boot to bring existing vaults in line with rule changes
+/// to `DEFAULT_GITIGNORE` — new vaults pick up the rules from
+/// `init_repo`, old vaults need this migration helper.
+///
+/// `entries` is matched line-by-line against the existing file
+/// (trimmed). Each missing entry is appended; matching tracked paths
+/// (e.g. `threads/foo.json` when adding `threads/`) get
+/// `git rm --cached -r --ignore-unmatch` so the next commit drops
+/// them from the tree. The working-tree files stay in place.
+#[tauri::command]
+pub async fn git_ensure_gitignore_entries(
+    vault_path: String,
+    entries: Vec<String>,
+) -> Result<bool, String> {
+    let gitignore_path = std::path::Path::new(&vault_path).join(".gitignore");
+    let existing = if gitignore_path.exists() {
+        std::fs::read_to_string(&gitignore_path)
+            .map_err(|e| format!("read .gitignore failed: {e}"))?
+    } else {
+        String::new()
+    };
+
+    let existing_lines: std::collections::HashSet<String> = existing
+        .lines()
+        .map(|l| l.trim().to_string())
+        .collect();
+
+    let mut to_append: Vec<String> = Vec::new();
+    for entry in &entries {
+        let trimmed = entry.trim().to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if existing_lines.contains(&trimmed) {
+            continue;
+        }
+        to_append.push(trimmed);
+    }
+
+    if to_append.is_empty() {
+        return Ok(false);
+    }
+
+    let mut next = existing;
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    if !to_append.is_empty() {
+        // A blank line + comment header makes the migration's origin
+        // obvious when the user opens .gitignore later.
+        if !next.is_empty() {
+            next.push('\n');
+        }
+        next.push_str("# Added by Manila migration\n");
+        for line in &to_append {
+            next.push_str(line);
+            next.push('\n');
+        }
+    }
+    std::fs::write(&gitignore_path, next)
+        .map_err(|e| format!("write .gitignore failed: {e}"))?;
+
+    // Untrack anything that the new patterns would have ignored. We
+    // ignore failures here — `git rm --cached` on a path that isn't
+    // tracked exits non-zero, which is fine: --ignore-unmatch + the
+    // `let _ =` together swallow it as a no-op.
+    for entry in &to_append {
+        let stripped = entry.trim_end_matches('/').to_string();
+        if stripped.is_empty() {
+            continue;
+        }
+        let _ = run_git(
+            &vault_path,
+            &[
+                "rm",
+                "-r",
+                "--cached",
+                "--ignore-unmatch",
+                "--quiet",
+                &stripped,
+            ],
+        )
+        .await;
+    }
+
+    Ok(true)
 }
 
 /// Stage all changes and commit with `message`. Returns the new

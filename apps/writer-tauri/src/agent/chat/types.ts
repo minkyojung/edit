@@ -13,7 +13,6 @@ import type {
   ChatTurn,
   MessagePart,
 } from '@/chat/types'
-import type { DirectEdit, EditOutcome } from '../applyDirectEdit'
 
 /** Sentinel string the Claude Agent SDK uses to split a multi-block
  * system prompt into a cacheable static prefix vs a session-specific
@@ -37,11 +36,18 @@ export function agentIdForModel(model: string): string {
   return `ai:${model}`
 }
 
+/** One tool invocation observed during a chat turn. Kept generic
+ * since Claude Agent SDK's built-in tools (Read / Edit / Write /
+ * Grep / Glob / Bash / ...) plus our MCP relays (read_page,
+ * search_wiki, submit_ingest_result, submit_profile) all flow
+ * through the same toolCalls timeline. `result` is whatever the
+ * tool's `tool_result` content block carried back — usually a
+ * short status string, occasionally an object. */
 export interface ToolCallRecord {
   id: string
   name: string
   input: unknown
-  result: EditOutcome
+  result: unknown
 }
 
 export interface RunChatArgs {
@@ -116,11 +122,6 @@ export interface ChatErrorRateLimit {
 }
 
 // ── Sidecar event payloads ─────────────────────────────────────
-
-export interface EditEvent {
-  runId: string
-  input: DirectEdit
-}
 
 /**
  * Loose typing for the SDK notifications we consume — the SDK ships ~30

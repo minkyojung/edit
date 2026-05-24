@@ -187,21 +187,12 @@ function buildSearchWikiTool(vaultPath) {
   )
 }
 
-function buildEditDocumentTool(runId, emit) {
-  return tool(
-    'edit_document',
-    'Edit the current document by replacing one substring with another. Call this once per edit. quote MUST be an exact substring of the document body; the host replaces the first occurrence of quote with content. Use an empty quote to prepend content at the top, and an empty content to delete the matched quote. rationale is shown to the user in the Review panel.',
-    {
-      quote: z.string(),
-      content: z.string(),
-      rationale: z.string().optional(),
-    },
-    async (args) => {
-      emit(notification('chat/edit', { runId, input: args }))
-      return { content: [{ type: 'text', text: 'Edit applied.' }] }
-    },
-  )
-}
+// `edit_document` was the host-bridged Phase 2 / 3.C tool: the model
+// emitted (quote, content, rationale) and the host's editListener →
+// applyDirectEdit did the actual string splice. It has been replaced
+// by Claude's built-in `Edit` tool (Phase 1.1) and is now removed —
+// see the `canUseTool` hook below for the staged-edit gate that
+// supersedes the old chat:edit bridge.
 
 // Ingest result tool. Called once per ingest pass with the complete
 // JSON shape the frontend used to extract from raw assistant text.
@@ -514,18 +505,83 @@ export class Server {
       options.pathToClaudeCodeExecutable = process.env.CLAUDE_CODE_CLI_PATH
     }
 
+    // Phase 1 of the Claude-Code-style migration: when the host gives us
+    // a vaultPath, root the agent in the vault and turn on Claude Code's
+    // full built-in toolset (Read/Edit/Write/Bash/Grep/Glob/...). The
+    // model can now read and edit vault .md files directly through the
+    // tools it already knows from Claude Code — no custom edit relay
+    // required. We keep the legacy `edit_document` MCP tool registered
+    // alongside so a regression in built-in routing falls back instead
+    // of breaking chat. Once the built-in path is verified end-to-end
+    // (Phase 2) the legacy tool and applyDirectEdit host bridge come out.
+    //
+    // Notes:
+    //   * `cwd` scopes the Read/Edit tools' implicit path resolution to
+    //     the vault and is also what the SDK uses as the per-session
+    //     working directory anchor.
+    //   * `tools: { preset: 'claude_code' }` enables the same toolset
+    //     Claude Code ships with. We don't pass `allowedTools` because
+    //     the global `permissionMode = 'bypassPermissions'` already
+    //     auto-runs every tool call without prompting the user.
+    if (vaultPath) {
+      options.cwd = vaultPath
+      options.tools = { type: 'preset', preset: 'claude_code' }
+      // Phase 3.1 of the Cursor-style staged edit migration: every
+      // built-in write-side tool (Edit / Write / MultiEdit / NotebookEdit)
+      // routes through `canUseTool` before it can run. For now we deny
+      // them all and surface the attempt so we can verify on the host
+      // that no fs.write slipped through — the next sub-phase (3.2)
+      // replaces this with a host round-trip that waits for the user
+      // to Apply/Reject. Read / Grep / Glob / Bash are not gated; the
+      // model still needs them to discover context.
+      //
+      // `permissionMode` MUST drop out of `bypassPermissions` for
+      // `canUseTool` to fire — bypass mode short-circuits the
+      // permission check entirely (sdk.d.ts L1806). 'default' is the
+      // standard mode where the SDK consults `canUseTool` (or, absent
+      // a callback, falls back to its interactive CLI prompt — which
+      // doesn't apply to us since we're driving the SDK from a long-
+      // running sidecar).
+      options.permissionMode = 'default'
+      options.canUseTool = async (toolName, input, _opts) => {
+        const stagedNames = new Set([
+          'Edit',
+          'Write',
+          'MultiEdit',
+          'NotebookEdit',
+        ])
+        if (stagedNames.has(toolName)) {
+          // Surface every attempt to the host for inspection. The
+          // host's frontend logs this in dev so we can confirm the
+          // hijack is wired up before plumbing the Apply UI.
+          this.emit(
+            notification('chat/edit-pending', {
+              runId,
+              toolName,
+              input,
+            }),
+          )
+          return {
+            behavior: 'deny',
+            message:
+              'This edit is pending user approval. The user has not enabled auto-apply yet; describe the change you would make in chat and wait for the user to apply it manually.',
+            interrupt: false,
+          }
+        }
+        return { behavior: 'allow', updatedInput: input }
+      }
+    }
+
     // Wire relay tools: each one runs inside this sidecar but its handler
     // just forwards args to the host as a `chat/proposal`-shaped event and
     // returns a brief ack so the model can continue. The actual editor /
     // UI work happens in the frontend.
     const enabledRelay = Array.isArray(relayTools)
       ? relayTools
-      : (this.mode === 'chat' ? ['edit_document'] : [])
+      : (this.mode === 'chat' ? [] : [])
     const relayDefs = []
     for (const name of enabledRelay) {
-      if (name === 'edit_document') {
-        relayDefs.push(buildEditDocumentTool(runId, this.emit))
-      } else if (name === 'submit_ingest_result') {
+      if (name === 'submit_ingest_result') {
         relayDefs.push(buildSubmitIngestResultTool(runId, this.emit))
       } else if (name === 'submit_profile') {
         relayDefs.push(buildSubmitProfileTool(runId, this.emit))

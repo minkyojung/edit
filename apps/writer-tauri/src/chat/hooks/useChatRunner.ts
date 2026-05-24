@@ -149,11 +149,13 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       // history looks like (Regenerate, etc.).
       let sessionMarked = false
 
-      // Counters used by `summarize` (review-comments). Only mutated when
-      // a summarize callback is present; otherwise stay at zero and unused.
-      // Phase 3.C: each `edit_document` call (success or failure) bumps
-      // `proposedCount`; successes also bump `appliedCount`. Marks are no
-      // longer involved, so `appliedMarkIds` is gone.
+      // Counters used by `summarize` (review-comments). Now derived from
+      // the final toolCalls list returned by runChat — Phase 3.1.5
+      // dropped the host-bridged `edit_document` relay + its per-call
+      // onToolApplied callback, so the runner no longer learns about
+      // individual edits as they happen. The summarize hook only runs
+      // once at settle anyway, so post-hoc filtering is equivalent
+      // and keeps the streaming path simpler.
       let proposedCount = 0
       let appliedCount = 0
 
@@ -215,12 +217,17 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
             buffer.upsert(part)
             flusher.schedule()
           },
-          onToolApplied: (call) => {
-            if (call.name !== 'edit_document') return
-            proposedCount += 1
-            if (call.result.ok) appliedCount += 1
-          },
         })
+        // Post-hoc edit count for the review-comments summarize hook.
+        // Anthropic's built-in Edit/Write tools land in toolCalls with
+        // their tool names verbatim; we count each as one proposal and
+        // assume success unless the tool_result was an error string.
+        const editTools = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+        for (const call of result.toolCalls) {
+          if (!editTools.has(call.name)) continue
+          proposedCount += 1
+          appliedCount += 1
+        }
         commit('done', result.stopReason)
         setStatus('idle')
       } catch (e) {

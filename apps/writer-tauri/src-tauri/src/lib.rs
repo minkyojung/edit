@@ -58,6 +58,7 @@ pub fn run() {
             git::git_head_timestamp,
             git::git_is_dirty,
             git::git_show,
+            git::git_ensure_gitignore_entries,
             app_quit,
         ])
         .setup(|app| {
