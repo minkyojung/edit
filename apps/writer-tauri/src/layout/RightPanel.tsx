@@ -51,23 +51,37 @@ function RightPanelHeader() {
 
   return (
     <div
-      className="flex shrink-0 items-center gap-1 border-b border-border px-2"
+      className="flex shrink-0 items-center gap-1 bg-transparent px-2 shadow-[inset_0_-1px_0_var(--border)]"
       style={{ height: 'var(--header-h)' }}
     >
-      <TabButton
-        active={mode === 'chat'}
-        onClick={() => setMode('chat')}
-        icon={<IconMessageCircle size={14} />}
-        label="Chat"
-      />
-      <TabButton
-        active={mode === 'review'}
-        onClick={() => setMode('review')}
-        icon={<IconHistory size={14} />}
-        label="Review"
-        badge={activityCount > 0 ? activityCount : undefined}
-        warning={gitStatus === 'error'}
-      />
+      {/* Tinted capsule filters — the macOS Tahoe pattern Apple Mail
+          uses for its category bar. Each item is its own capsule;
+          only the active one expands to show its label and takes on
+          its tint color. Inactive items collapse to an icon-only
+          muted pill, so the active selection always reads as the
+          strongest visual element. */}
+      <div className="inline-flex items-center gap-1.5">
+        <CapsuleFilterItem
+          active={mode === 'chat'}
+          onClick={() => setMode('chat')}
+          icon={<IconMessageCircle size={16} />}
+          label="Chat"
+          activeBg="bg-info/20"
+          activeText="text-foreground"
+          dotColor="bg-info"
+        />
+        <CapsuleFilterItem
+          active={mode === 'review'}
+          onClick={() => setMode('review')}
+          icon={<IconHistory size={16} />}
+          label="Review"
+          activeBg="bg-success/20"
+          activeText="text-foreground"
+          dotColor="bg-success"
+          badge={activityCount > 0 ? activityCount : undefined}
+          warning={gitStatus === 'error'}
+        />
+      </div>
       <SaveSnapshotButton />
     </div>
   )
@@ -80,32 +94,40 @@ function SaveSnapshotButton() {
   const disabled = dirtyCount === 0 || gitStatus === 'committing'
   return (
     <Button
-      variant="default"
+      variant="ghost"
       size="sm"
       disabled={disabled}
       onClick={() => {
         void commitImmediate()
       }}
-      className="ml-auto h-7 cursor-pointer gap-1 px-2.5 text-xs"
+      className="ml-auto h-8 cursor-pointer gap-1.5 px-2.5 text-sm hover:bg-foreground/10 dark:hover:bg-foreground/10"
       aria-label={
         dirtyCount === 0
           ? 'No unsaved changes'
           : `Save snapshot (${dirtyCount} file${dirtyCount === 1 ? '' : 's'})`
       }
     >
-      <IconCameraPlus size={14} />
+      <IconCameraPlus size={16} />
       <span>Save snapshot</span>
     </Button>
   )
 }
 
-function TabButton({
+// Tahoe spring easing — Apple's standard motion curve for material
+// transitions. Used inline here; if we end up applying it to more
+// components we can lift it to a CSS variable.
+const TAHOE_EASE = 'cubic-bezier(0.32, 0.72, 0, 1)'
+
+function CapsuleFilterItem({
   active,
   onClick,
   icon,
   label,
   badge,
   warning,
+  activeBg,
+  activeText,
+  dotColor,
 }: {
   active: boolean
   onClick: () => void
@@ -113,29 +135,64 @@ function TabButton({
   label: string
   badge?: number
   warning?: boolean
+  /** Tailwind class for the active state background tint (e.g. "bg-info/20"). */
+  activeBg: string
+  /** Tailwind class for the active state foreground (e.g. "text-foreground"). */
+  activeText: string
+  /** Vivid tint used for the corner attention dot when inactive
+   * (e.g. "bg-info"). Separate from activeBg because that one is
+   * usually a low-alpha tint that would read as nothing on the dot. */
+  dotColor: string
 }) {
   return (
-    <Button
-      variant="ghost"
-      size="sm"
+    <button
+      type="button"
       onClick={onClick}
-      className={cn(
-        'relative h-7 cursor-pointer gap-1 px-2 text-xs',
-        active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-        warning && 'text-destructive',
-      )}
       aria-pressed={active}
+      style={{ transitionTimingFunction: TAHOE_EASE }}
+      className={cn(
+        'relative inline-flex h-8 cursor-pointer items-center rounded-full text-sm font-medium outline-none',
+        'transition-[background-color,color,padding] duration-300',
+        active
+          ? cn('gap-1.5 px-3', activeBg, activeText)
+          : 'px-2 bg-foreground/8 text-muted-foreground hover:text-foreground hover:bg-foreground/15',
+        warning && !active && 'text-destructive',
+      )}
     >
       {icon}
-      <span>{label}</span>
-      {badge !== undefined && (
-        <span
-          className="ml-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground"
-          aria-hidden
-        >
-          {badge > 99 ? '99+' : badge}
-        </span>
-      )}
-    </Button>
+      {/* Label is always mounted so screen readers see it; visual
+          width + opacity morph on the active flip. max-width drives
+          the capsule's expand/contract, opacity hides leftover text
+          mid-animation. */}
+      <span
+        style={{ transitionTimingFunction: TAHOE_EASE }}
+        className={cn(
+          'overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin] duration-300',
+          active ? 'ml-1 max-w-32 opacity-100' : 'ml-0 max-w-0 opacity-0',
+        )}
+      >
+        {label}
+      </span>
+      {/* Badge: active gets the full number pill inline with the label;
+          inactive gets a small attention dot pinned to the corner so
+          the unreviewed count is still discoverable while collapsed. */}
+      {badge !== undefined &&
+        (active ? (
+          <span
+            className="ml-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-foreground/15 px-1 text-[10px] font-medium leading-none"
+            aria-hidden
+          >
+            {badge > 99 ? '99+' : badge}
+          </span>
+        ) : (
+          <span
+            className={cn(
+              'absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full',
+              warning ? 'bg-destructive' : dotColor,
+            )}
+            aria-hidden
+          />
+        ))}
+    </button>
   )
 }

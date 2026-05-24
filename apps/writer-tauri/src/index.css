@@ -1145,7 +1145,7 @@
      start at the same Y. --traffic-light-w reserves the macOS
      stoplight zone on whichever surface owns the window's left edge
      (sidebar when open, editor when sidebar is collapsed). */
-  --header-h: 2.25rem;
+  --header-h: 2.5rem;
   --traffic-light-w: 5rem;
 
   /* Editor prose scale. Body holds at 16px so writing surfaces stay
@@ -1164,4 +1164,120 @@
   --prose-lh-heading: 1.25;
   --prose-gap-block: 14px;
   --prose-gap-heading: 28px;
+
+  /* ── Tahoe Design Tokens (Layer 1: Numeric) ──────────────────────────
+     Raw scale values aligned to macOS Tahoe's 4pt grid and SF Pro
+     type ladder. Layer 2 below aliases these into semantic tokens so
+     components reference intent ("text-body", "button-h-base") rather
+     than numbers. */
+
+  /* Spacing — 4pt grid. Tailwind utilities (p-1, m-2, gap-3 ...) already
+     consume these implicitly via Tailwind v4; the named tokens exist so
+     component-level CSS can reference them by intent. */
+  --space-1: 0.25rem;   /* 4 */
+  --space-2: 0.5rem;    /* 8 */
+  --space-3: 0.75rem;   /* 12 */
+  --space-4: 1rem;      /* 16 */
+  --space-5: 1.25rem;   /* 20 */
+  --space-6: 1.5rem;    /* 24 */
+  --space-8: 2rem;      /* 32 */
+  --space-10: 2.5rem;   /* 40 */
+  --space-12: 3rem;     /* 48 */
+
+  /* Font size — Apple HIG type ladder (UI scale, not prose). Numeric
+     tokens hold the raw px; semantic aliases below name them. */
+  --font-size-10: 10px;  /* Caption  */
+  --font-size-11: 11px;  /* Footnote */
+  --font-size-12: 12px;  /* Callout  */
+  --font-size-13: 13px;  /* Body / Headline */
+  --font-size-15: 15px;  /* Title 3 */
+  --font-size-17: 17px;  /* Title 2 */
+  --font-size-22: 22px;  /* Title 1 */
+
+  /* Font weight */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Line height */
+  --line-height-tight: 1.25;
+  --line-height-snug: 1.35;
+  --line-height-normal: 1.45;
+  --line-height-loose: 1.7;
+
+  /* Letter spacing. Korean is unaffected by tracking, but mixed-script
+     UI labels and headings benefit from a touch of tightening at the
+     larger sizes. Caption stays neutral to preserve legibility. */
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
+
+  /* Control height — macOS standard ladder. sm=icon button, md=chip,
+     base=default button, lg=toolbar / capsule, xl=prominent action. */
+  --control-h-sm: 1.5rem;       /* 24 */
+  --control-h-md: 1.75rem;      /* 28 */
+  --control-h-base: 2rem;       /* 32 */
+  --control-h-lg: 2.5rem;       /* 40 */
+  --control-h-xl: 2.75rem;      /* 44 */
+
+  /* Motion. Tahoe's signature spring damping for material transitions
+     plus a more linear standard easing for color-only fades. Durations
+     are intentionally short — macOS motion never feels sluggish. */
+  --ease-tahoe: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+
+  /* Shadow tiers — elevation layered from subtle to floating. Window-
+     level shadow is owned by the native NSWindow, not CSS. */
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-2: 0 4px 12px rgb(0 0 0 / 0.10);
+  --shadow-3: 0 8px 24px rgb(0 0 0 / 0.14);
+
+  /* ── Tahoe Design Tokens (Layer 2: Semantic) ─────────────────────────
+     Intent-named aliases. Components should prefer these over Layer 1
+     so a future scale tweak (e.g. bump --font-size-13 to 14) propagates
+     without touching call sites. */
+
+  /* Text scale — Apple HIG names (Caption, Footnote, ... LargeTitle). */
+  --text-caption: var(--font-size-10);
+  --text-footnote: var(--font-size-11);
+  --text-callout: var(--font-size-12);
+  --text-body: var(--font-size-13);
+  --text-headline: var(--font-size-13);  /* same size as body, semibold */
+  --text-title-3: var(--font-size-15);
+  --text-title-2: var(--font-size-17);
+  --text-title-1: var(--font-size-22);
+
+  /* Component heights. Header rhythm continues to use --header-h above
+     (now 2.5rem) so the cross-column alignment tokens stay one source
+     of truth. */
+  --toolbar-h: var(--control-h-lg);             /* 40 — header row */
+  --sidebar-row-h: var(--control-h-base);       /* 32 — sidebar tree row */
+  --button-h-sm: var(--control-h-md);           /* 28 — small action */
+  --button-h-base: var(--control-h-base);       /* 32 — default action */
+  --capsule-h: var(--control-h-base);           /* 32 — tinted capsule */
+
+  /* Padding / gap semantic — intent-named so the call site reads
+     declaratively (e.g. "padding-card" instead of p-4). */
+  --gap-inline: var(--space-2);                 /* 8 — inline item gap */
+  --gap-row: var(--space-3);                    /* 12 — between rows */
+  --gap-section: var(--space-6);                /* 24 — between sections */
+  --padding-card: var(--space-4);               /* 16 */
+  --padding-row-x: var(--space-3);              /* 12 — horizontal row */
+  --padding-row-y: var(--space-2);              /* 8 — vertical row */
+
+  /* Motion semantic — pair the duration with the right easing per
+     intent. hover = quick color fade, state = squishy material change,
+     layout = slower morph for size/position. */
+  --motion-hover: var(--duration-fast) var(--ease-standard);
+  --motion-state: var(--duration-base) var(--ease-tahoe);
+  --motion-layout: var(--duration-slow) var(--ease-tahoe);
+
+  /* Elevation semantic. */
+  --elevation-sticky: var(--shadow-1);
+  --elevation-card: var(--shadow-2);
+  --elevation-popover: var(--shadow-3);
 }

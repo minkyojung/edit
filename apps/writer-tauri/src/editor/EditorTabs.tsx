@@ -103,13 +103,13 @@ export function EditorTabs() {
                   .catch((err) => console.error('[docs] createNew failed', err))
               }}
               className={cn(
-                'flex size-7 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors',
+                'flex size-8 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors',
                 'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
                 'hover:bg-accent hover:text-foreground',
               )}
               aria-label="New document"
             >
-              <IconPlus size={14} stroke={1.75} />
+              <IconPlus size={16} stroke={1.75} />
             </button>
           </TooltipTrigger>
           <TooltipContent side="bottom">New document</TooltipContent>
@@ -174,13 +174,13 @@ function DocTab({
         }}
         aria-label="Close document"
         className={cn(
-          'flex h-4 w-4 shrink-0 items-center justify-center rounded transition-opacity hover:bg-foreground/10',
+          'flex h-5 w-5 shrink-0 items-center justify-center rounded transition-opacity hover:bg-foreground/10',
           'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
           'opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60 hover:!opacity-100',
           isActive && 'opacity-60',
         )}
       >
-        <IconX size={12} stroke={2} />
+        <IconX size={14} stroke={2} />
       </span>
     </TabsPrimitive.Trigger>
   )
