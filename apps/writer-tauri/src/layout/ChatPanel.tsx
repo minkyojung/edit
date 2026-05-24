@@ -11,11 +11,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { IconMessageCircle } from '@tabler/icons-react'
+import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
 import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
 import { TextSelection } from '@milkdown/kit/prose/state'
 import * as Y from 'yjs'
+import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
+import { useConnectDialog } from '@/stores/connectDialog'
 import { useThreads } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
 import { useActiveThread } from '@/hooks/useActiveThread'
@@ -58,6 +60,7 @@ interface Props {
 
 export function ChatPanel({ editorView, ydoc, slug }: Props) {
   const { account } = useClaudeAuth()
+  const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const threads = useThreads(slug)
   const { activeId, setActiveId } = useActiveThread(slug, threads.active)
   const turnsHook = useThreadTurns(activeId)
@@ -479,10 +482,32 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
       className="relative flex h-full flex-col border-l border-border bg-background"
     >
       {!account.connected && (
-        <div className="absolute inset-0 z-overlay flex flex-col items-center justify-center gap-3 backdrop-blur-[2px] bg-background/60">
-          <p className="text-sm text-muted-foreground text-center px-4">
-            Connect to Claude<br />to start chatting
+        // Disconnected overlay — ContentUnavailableView pattern with an
+        // explicit Connect CTA. The button reuses the same global
+        // ConnectClaudeDialog store the sidebar Avatar menu does, so
+        // there's one dialog in the app and one OAuth flow no matter
+        // which entry point opens it.
+        <div className="absolute inset-0 z-overlay flex flex-col items-center justify-center gap-2 bg-background/70 px-6 backdrop-blur-[2px]">
+          <IconSparkles
+            size={48}
+            stroke={1.5}
+            className="text-muted-foreground/40"
+          />
+          <p className="text-[16px] font-semibold text-foreground">
+            Connect Claude
           </p>
+          <p className="max-w-xs text-center text-[14px] text-muted-foreground">
+            Sign in with your Anthropic account to start chatting.
+          </p>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => setConnectOpen(true)}
+            className="mt-2 gap-1.5"
+          >
+            <IconSparkles size={16} stroke={1.5} />
+            Connect Claude
+          </Button>
         </div>
       )}
 
