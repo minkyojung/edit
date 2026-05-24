@@ -1,48 +1,17 @@
 // State for the editor's IDE-style status footer.
 //
-// Two surfaces feed the footer:
+// Single surface today (Phase 3.B removed the mark-hover publisher):
 //
-//   1. Mark hover — the editor's mark-hover plugin pushes the current
-//      hovered mark's metadata here as the cursor moves over a
-//      proofAuthored / proofSuggestion / proofComment span. The
-//      footer renders source / kind / quote info while it's set.
+//   Doc stats — the AI-vs-human writing ratio for the active doc.
+//   Computed on doc change by a small subscriber in EditorFooter
+//   (walks the doc, sums chars under proofAuthored marks).
 //
-//   2. Doc stats — the AI-vs-human writing ratio for the active doc.
-//      Computed on doc change by a small subscriber in EditorFooter
-//      (walks the doc, sums chars under proofAuthored marks). Lives
-//      here so the footer's two states (hover vs default) read from
-//      one place.
+// The HoveredMark / setHovered API was retired with the mark hover
+// plugin. `stats.aiChars` still reflects historical proofAuthored
+// spans because the schema stays around for legacy vault data; new
+// content lands without authored marks (no propose_change tool).
 
 import { create } from 'zustand'
-
-// 'authored' is the hover kind for any AI-authored span. The inline
-// anchor is a proofAuthored mark (set on accept). The hover plugin
-// emits 'authored' regardless of whether the AuthoredMeta sibling
-// map carries source / acceptedAt data — the footer UX is the same
-// ("From X · accepted Y ago · model Z"), it just shows fewer fields
-// when the metadata is missing.
-export type HoveredMarkKind = 'authored' | 'suggestion' | 'comment'
-
-/** Shape pushed by the mark-hover plugin. Strings are extracted from
- * the rendered DOM attributes the mark schemas set in toDOM — we
- * don't reach back into PM for this; the DOM is the contract. */
-export interface HoveredMark {
-  kind: HoveredMarkKind
-  /** Mark id (proofSuggestion / proofComment) — used by callers that
-   * may want to navigate to the mark. Authored marks may or may
-   * not carry one. */
-  id: string | null
-  sourceLabel: string | null
-  sourceSlug: string | null
-  acceptedAt: string | null
-  createdAt: string | null
-  model: string | null
-  /** suggestionType (replace / insert / delete) for suggestions;
-   * undefined otherwise. */
-  suggestionType: string | null
-  /** Comment text (first ~60 chars, raw) — only set for kind === 'comment'. */
-  commentText: string | null
-}
 
 /** Active-doc writing-source stats. Recomputed whenever the PM doc
  * version bumps (see docVersionPlugin). 0% AI / 100% human when no
@@ -58,15 +27,11 @@ export interface DocStats {
 }
 
 interface EditorFooterState {
-  hovered: HoveredMark | null
   stats: DocStats
-  setHovered: (m: HoveredMark | null) => void
   setStats: (s: DocStats) => void
 }
 
 export const useEditorFooter = create<EditorFooterState>((set) => ({
-  hovered: null,
   stats: { totalChars: 0, aiChars: 0, wordCount: 0, lastAcceptedAt: null },
-  setHovered: (m) => set({ hovered: m }),
   setStats: (s) => set({ stats: s }),
 }))

@@ -35,7 +35,6 @@ import {
   type ChatTurn,
 } from '@/chat/types'
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
-import { cleanupMark } from '@/editor/markActions'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
 import { ReviewProgressBadge } from '@/chat/ReviewProgressBadge'
@@ -415,20 +414,11 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
       if (history.length === 0 || history[history.length - 1].role !== 'user') return
 
       const lastUser = history[history.length - 1]
-      const targetTurn = turns[idx]
-      // Discard the prior run's propose_change marks before the rerun
-      // stamps fresh ones — pressing Regenerate means "throw out what
-      // I just got". Without this, a re-`/proofread` would leave stale
-      // marks layered under the new ones on the same words.
-      if (targetTurn.appliedMarkIds && slug && ydoc) {
-        // Fire-and-forget cleanup — the rerun shouldn't block on the
-        // server-side reject round-trips. Errors stay in the console
-        // (cleanupMark already swallows them) so a flaky network
-        // doesn't strand the regenerate UI.
-        for (const markId of targetTurn.appliedMarkIds) {
-          void cleanupMark(slug, ydoc, markId)
-        }
-      }
+      // Pre-Phase-3.B: regenerate cleaned up the prior run's marks
+      // via `cleanupMark` so a re-`/proofread` wouldn't layer stale
+      // marks under the new ones. With propose_change gone (3.B) the
+      // turn no longer leaves marks behind, so the cleanup loop is
+      // unnecessary — just remove the assistant turn and rerun.
       turnsHook.removeTurn(assistantTurnId)
 
       if (lastUser.slashInvocation) {
@@ -551,7 +541,6 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
           <MessageRow
             key={turn.id}
             turn={turn}
-            slug={slug}
             threadId={activeId}
             threadTitle={activeThread?.title ?? ''}
             onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}

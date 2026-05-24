@@ -28,15 +28,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { IconSparklesFilled, IconUserFilled } from '@tabler/icons-react'
-import {
-  useEditorFooter,
-  type DocStats,
-  type HoveredMark,
-} from '@/stores/editorFooter'
+import { useEditorFooter, type DocStats } from '@/stores/editorFooter'
 import { subscribeToPmDocChanges } from '@/editor/docVersionPlugin'
 import { UnlinkedNotes } from '@/editor/UnlinkedNotes'
 import { formatRelative } from '@/lib/formatRelative'
-import { formatModel } from '@/lib/formatModel'
 import type { CollabStatus } from '@/hooks/useCollabDoc'
 
 // "Loading…" is suppressed during the short window every doc open
@@ -52,7 +47,6 @@ interface Props {
 }
 
 export function EditorFooter({ view, parentSlug, status }: Props) {
-  const hovered = useEditorFooter((s) => s.hovered)
   const stats = useEditorFooter((s) => s.stats)
   const setStats = useEditorFooter((s) => s.setStats)
 
@@ -105,21 +99,20 @@ export function EditorFooter({ view, parentSlug, status }: Props) {
   }, [status])
 
   // Single-slot left content with strict priority: a real
-  // problem takes over the bar; below that, a mark hover beats
-  // the default stats; the default stats are last.
+  // problem takes over the bar; otherwise the default stats render.
+  // (The mark-hover content slot was retired with the hover plugin
+  // in Phase 3.B.)
   const showProblem = status === 'error' || (status === 'loading' && loadingStuck)
-  const content = showProblem
-    ? <ConnectionProblem status={status} />
-    : hovered
-    ? <HoverContent hovered={hovered} />
-    : (
-      <DefaultContent
-        aiPct={aiPct}
-        totalChars={stats.totalChars}
-        wordCount={stats.wordCount}
-        lastAcceptedAt={stats.lastAcceptedAt}
-      />
-    )
+  const content = showProblem ? (
+    <ConnectionProblem status={status} />
+  ) : (
+    <DefaultContent
+      aiPct={aiPct}
+      totalChars={stats.totalChars}
+      wordCount={stats.wordCount}
+      lastAcceptedAt={stats.lastAcceptedAt}
+    />
+  )
 
   return (
     <div
@@ -201,29 +194,10 @@ function ConnectionProblem({ status }: { status: CollabStatus }) {
   )
 }
 
-function HoverContent({ hovered }: { hovered: HoveredMark }) {
-  if (hovered.kind === 'authored') {
-    const parts: string[] = []
-    if (hovered.sourceLabel) parts.push(`From ${hovered.sourceLabel}`)
-    if (hovered.acceptedAt) parts.push(formatRelative(hovered.acceptedAt))
-    if (hovered.model) parts.push(formatModel(hovered.model))
-    return <span className="truncate">{parts.join(' · ') || 'AI-accepted text'}</span>
-  }
-  if (hovered.kind === 'suggestion') {
-    const kind = hovered.suggestionType ?? 'change'
-    const tail = hovered.sourceLabel ? ` from ${hovered.sourceLabel}` : ''
-    return <span className="truncate">{`Suggested ${kind}${tail}`}</span>
-  }
-  if (hovered.kind === 'comment') {
-    const snippet = (hovered.commentText ?? '').trim()
-    return (
-      <span className="truncate">
-        {snippet ? `Comment: ${snippet}` : 'Comment'}
-      </span>
-    )
-  }
-  return <span />
-}
+// HoverContent was removed in Phase 3.B together with the mark hover
+// plugin. Its rendering responsibilities had no replacement: the
+// footer no longer needs to surface per-mark metadata because the
+// marks themselves don't get created.
 
 // ── helpers ───────────────────────────────────────────────────────
 

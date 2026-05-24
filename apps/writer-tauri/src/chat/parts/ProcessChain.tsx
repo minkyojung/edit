@@ -11,7 +11,6 @@ import type { LucideIcon } from 'lucide-react'
 import type { ReasoningPart, ToolPart } from '@/chat/types'
 import { PROPOSE_CHANGE_TOOL } from '@/chat/parts/proposeChangeTool'
 import { humanizeToolCall } from '@/chat/humanizers'
-import { scrollToProposal } from '@/agent/scrollToProposal'
 import {
   ChainOfThought,
   ChainOfThoughtContent,
@@ -36,11 +35,9 @@ type ProcessPart = ReasoningPart | ToolPart
 export function ProcessChain({
   parts,
   isStreaming,
-  slug,
 }: {
   parts: ProcessPart[]
   isStreaming: boolean
-  slug: string | null
 }) {
   const [open, setOpen] = useState(isStreaming)
   useEffect(() => {
@@ -83,7 +80,7 @@ export function ProcessChain({
           />
         )}
         {toolParts.map((part) => (
-          <ToolStep key={part.id} part={part} slug={slug} />
+          <ToolStep key={part.id} part={part} />
         ))}
       </ChainOfThoughtContent>
     </ChainOfThought>
@@ -176,7 +173,7 @@ function CollapsibleStep({
   )
 }
 
-function ToolStep({ part, slug }: { part: ToolPart; slug: string | null }) {
+function ToolStep({ part }: { part: ToolPart }) {
   const { label } = humanizeToolCall(part.toolName, part.input, part.output)
   const isPropose = part.toolName === PROPOSE_CHANGE_TOOL
   const proposalInput = isPropose
@@ -194,21 +191,16 @@ function ToolStep({ part, slug }: { part: ToolPart; slug: string | null }) {
       : part.state === 'approval-requested'
         ? 'pending'
         : 'complete'
-  // Only propose_change steps that successfully landed a mark are
-  // jumpable — anything else (streaming, errored, missing markId)
-  // renders as a plain label so the user doesn't get a dead click.
-  const proposalOutput = (part.output ?? {}) as { ok?: boolean; markId?: string }
-  const jumpMarkId =
-    isPropose && proposalOutput.ok !== false ? proposalOutput.markId : undefined
-  const onActivate =
-    slug && jumpMarkId ? () => scrollToProposal(slug, jumpMarkId) : undefined
+  // Phase 3.B removed the mark-scroll helper (chat panel no longer
+  // jumps to an editor mark — there are no marks). The propose_change
+  // step still renders as a labelled row so the chat history is
+  // readable; click-to-jump is gone.
   return (
     <CollapsibleStep
       icon={icon}
       label={label}
       detail={renderToolDetail(part, proposalInput, isComment)}
       status={status}
-      onActivate={onActivate}
     />
   )
 }

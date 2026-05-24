@@ -16,11 +16,9 @@ import { ProcessChain } from '@/chat/parts/ProcessChain'
 export function PartList({
   parts,
   isStreaming,
-  slug,
 }: {
   parts: MessagePart[]
   isStreaming: boolean
-  slug: string | null
 }) {
   const processParts: Array<ReasoningPart | ToolPart> = []
   const textParts: TextPartType[] = []
@@ -41,7 +39,7 @@ export function PartList({
   return (
     <>
       {processParts.length > 0 && (
-        <ProcessChain parts={processParts} isStreaming={isStreaming} slug={slug} />
+        <ProcessChain parts={processParts} isStreaming={isStreaming} />
       )}
       {textParts.map((part) => (
         <TextPart key={part.id} part={part} isStreaming={isStreaming} />

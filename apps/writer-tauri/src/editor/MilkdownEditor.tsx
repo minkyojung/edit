@@ -16,10 +16,6 @@ import { UndoManager } from 'yjs'
 import { prosemirrorToYDoc, ySyncPluginKey } from 'y-prosemirror'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
-import { createMarkDecoPlugin } from './markDecoPlugin'
-import { createMarkCleanupPlugin } from './markCleanupPlugin'
-import { createMarkClickPlugin } from './markClickPlugin'
-import { createMarkHoverPlugin } from './markHoverPlugin'
 import { createDocVersionPlugin } from './docVersionPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
 import { formatStatePlugin } from './formatStatePlugin'
@@ -72,7 +68,6 @@ import { SlashMenu } from './SlashMenu'
 import { proofSchemaPlugins } from './proofMarks'
 import { dailyGuardPlugin } from './dailyGuardPlugin'
 import { usePendingScroll } from '@/state/pendingScrollStore'
-import { scrollToMark } from '@/editor/scrollToMark'
 import { EditorFooter } from '@/components/EditorFooter'
 import { notify } from '@/lib/notify'
 
@@ -227,10 +222,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       // available before code_block_ext references them in its `marks: '...'`
       // content spec.
       .use(proofSchemaPlugins)
-      .use(createMarkDecoPlugin(ydoc))
-      .use(createMarkCleanupPlugin(ydoc))
-      .use(createMarkClickPlugin())
-      .use(createMarkHoverPlugin(ydoc))
       .use(createDocVersionPlugin())
       .use(createFrozenSelectionPlugin())
       .use(formatStatePlugin)
@@ -375,14 +366,12 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
           setPmView(view)
           onViewReady?.(view)
 
-          // Drain a pending "scroll to this mark" target queued by the
-          // chat panel before this slug's editor was mounted. rAF defers
-          // one paint so decoration plugins finish their first build
-          // pass and the target mark has stable coords.
-          const pendingMarkId = usePendingScroll.getState().drain(handle.slug)
-          if (pendingMarkId) {
-            requestAnimationFrame(() => scrollToMark(view, pendingMarkId))
-          }
+          // Drain any pending mark-scroll target so the queue doesn't
+          // grow indefinitely. The actual scroll-to-mark capability
+          // went away with the mark plugins (Phase 3.B); the chat
+          // panel no longer enqueues new entries, but the drain stays
+          // here as a guardrail.
+          usePendingScroll.getState().drain(handle.slug)
         })
       })
       .catch((err) => {
