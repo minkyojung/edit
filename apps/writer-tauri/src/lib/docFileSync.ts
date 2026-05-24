@@ -40,7 +40,11 @@ import {
   writeVaultFile,
 } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
-import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
+import {
+  applyYDocBinaryAtomically,
+  replaceMarkdownInYDoc,
+  seedMarkdownIntoYDoc,
+} from '@/lib/seedMarkdown'
 import { deriveLabel } from '@/lib/docLabel'
 
 /** Merge `next` over the existing `.meta.json` at `metaPath` so a
@@ -418,12 +422,13 @@ export async function applyVaultBodyToYDoc(
   if (!opts.reload && ydocPath && (await vaultFileExists(ydocPath))) {
     try {
       const binary = await readVaultBinary(ydocPath)
-      if (fragment.length > 0) {
-        ydoc.transact(() => {
-          fragment.delete(0, fragment.length)
-        }, 'doc-init')
-      }
-      Y.applyUpdate(ydoc, binary, 'doc-init')
+      // Atomic: fragment clear + applyUpdate land in one transact.
+      // Skipping this pattern (the original two-step version) caused
+      // the editor mount race documented in seedMarkdown.ts —
+      // observers saw an empty fragment between the two steps and
+      // the MilkdownEditor's empty-fill safety net injected a blank
+      // paragraph that survived the apply.
+      applyYDocBinaryAtomically(ydoc, binary)
       clearDirty(slug)
       return 'applied'
     } catch (err) {
@@ -457,13 +462,15 @@ export async function applyVaultBodyToYDoc(
   const parser = useEditorViewStore.getState().parser
   if (!parser) return 'no-parser'
 
-  if (fragment.length > 0) {
-    ydoc.transact(() => {
-      fragment.delete(0, fragment.length)
-    }, 'doc-init')
-  }
-
-  const ok = seedMarkdownIntoYDoc(ydoc, md, parser)
+  // Branch by whether the fragment already holds content. An empty
+  // fragment uses seedMarkdownIntoYDoc (single applyUpdate, naturally
+  // atomic). A non-empty one needs replaceMarkdownInYDoc so the
+  // clear + apply are bundled into one transact — same mount-race
+  // reason as Tier 1 above.
+  const ok =
+    fragment.length > 0
+      ? replaceMarkdownInYDoc(ydoc, md, parser)
+      : seedMarkdownIntoYDoc(ydoc, md, parser)
   if (!ok) return 'no-parser'
 
   clearDirty(slug)

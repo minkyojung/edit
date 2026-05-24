@@ -106,18 +106,22 @@ export function seedMarkdownIntoYDoc(
 }
 
 /** Replace the entire body of a Y.Doc's prosemirror fragment with
- * the parsed markdown. Used by the profile pipeline so a fresh
- * pipeline run (full or single-zone re-derivation) can rewrite the
- * page contents, where {@link seedMarkdownIntoYDoc} would no-op
- * because the doc already has content.
+ * the parsed markdown. Used by the profile pipeline and the ingest
+ * reload path to rewrite page contents where {@link seedMarkdownIntoYDoc}
+ * would no-op because the doc already has content.
  *
- * Two-phase write: clear the existing fragment, then apply the new
- * state from a temp doc. Both phases use the same 'doc-init' origin
- * so the rewrite stays out of the user's undo stack. The two
- * transactions are sequential (Yjs nesting is fine but two flat
- * transactions are simpler to reason about); no concurrent observer
- * will see the doc in the intermediate "empty" state on the same
- * tick. */
+ * **Atomic**: the fragment clear and the new content apply happen
+ * inside the same `ydoc.transact(..., 'doc-init')`. This matters
+ * because observers (and the MilkdownEditor's mount-time "fragment
+ * is empty → fill with a blank paragraph" safety net) see the doc
+ * in its post-transact state only — they never observe the
+ * intermediate "empty fragment" between the delete and the apply.
+ * A previous two-step version of this function caused a race where
+ * a mount happening mid-rewrite would mistake the brief empty
+ * fragment for a fresh doc and inject a blank paragraph that then
+ * survived the apply (because CRDT merge added it on top of the new
+ * content), eventually causing the next flush to overwrite the new
+ * body with the blank-paragraph state on disk. */
 export function replaceMarkdownInYDoc(
   ydoc: Y.Doc,
   markdown: string,
@@ -145,10 +149,35 @@ export function replaceMarkdownInYDoc(
       if (fragment.length > 0) {
         fragment.delete(0, fragment.length)
       }
+      // Y.applyUpdate inside a transact is supported by yjs — the
+      // outer transact's origin wins, so this lands as a single
+      // 'doc-init' commit that observers see as one event.
+      Y.applyUpdate(ydoc, update, ORIGIN)
     }, ORIGIN)
-    Y.applyUpdate(ydoc, update, ORIGIN)
   } finally {
     seedDoc.destroy()
   }
   return true
+}
+
+/** Atomic equivalent of "clear fragment + apply a `.ydoc` binary",
+ * used by the Tier-1 hydrate path in `applyVaultBodyToYDoc`. Same
+ * race rationale as {@link replaceMarkdownInYDoc}: the delete and
+ * the apply must land in one transact so a concurrent editor mount
+ * can never observe an intermediate empty fragment.
+ *
+ * Caller is responsible for catching errors — a corrupt `.ydoc` is
+ * a recoverable failure (the caller falls back to the markdown
+ * tier) so we don't swallow the throw here. */
+export function applyYDocBinaryAtomically(
+  ydoc: Y.Doc,
+  binary: Uint8Array,
+): void {
+  const fragment = ydoc.getXmlFragment(FRAGMENT_NAME)
+  ydoc.transact(() => {
+    if (fragment.length > 0) {
+      fragment.delete(0, fragment.length)
+    }
+    Y.applyUpdate(ydoc, binary, ORIGIN)
+  }, ORIGIN)
 }
