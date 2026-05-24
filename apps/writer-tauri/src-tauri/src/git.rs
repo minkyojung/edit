@@ -68,6 +68,49 @@ pub struct FileChange {
     pub path: String,
 }
 
+/// Full commit metadata + per-file content diff. Returned by
+/// `git_show`. The Review panel uses this for the expanded card.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDetail {
+    pub sha: String,
+    /// First line of the message.
+    pub subject: String,
+    /// Everything after the subject + blank line. Empty when the
+    /// commit has no body.
+    pub body: String,
+    pub timestamp: i64,
+    pub files: Vec<FileDiff>,
+}
+
+/// One file's diff lines from a commit, in the order they appear in
+/// the unified diff (so a "modify" patch reads `-old / +new` in the
+/// natural before-after sequence). The frontend renders this as a
+/// single list with per-line colouring rather than splitting into
+/// separate added/removed sections.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDiff {
+    pub path: String,
+    /// Status code (`M` `A` `D` `R`); same convention as FileChange.
+    pub status: String,
+    /// Ordered list of changed lines. Context lines aren't included
+    /// because we request `--unified=0`.
+    pub lines: Vec<DiffLine>,
+}
+
+/// One line in a unified diff, classified by direction. Order
+/// across siblings matches the diff's hunk sequence.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffLine {
+    /// `"add"` for `+` lines, `"remove"` for `-` lines. (No `"context"`
+    /// because we use `--unified=0`.)
+    pub kind: &'static str,
+    /// Line text with the `+` / `-` prefix stripped.
+    pub text: String,
+}
+
 /// Build a `Command` anchored at `vault_path` AND pinned to
 /// `vault_path/.git` via `--git-dir` + `--work-tree`. The explicit
 /// pins are what stop git's working-tree discovery from walking up
@@ -450,4 +493,152 @@ pub async fn git_head_timestamp(vault_path: String) -> Result<i64, String> {
 pub async fn git_is_dirty(vault_path: String) -> Result<bool, String> {
     let stdout = run_git(&vault_path, &["status", "--porcelain"]).await?;
     Ok(!stdout.trim().is_empty())
+}
+
+/// Return the full detail for a commit: subject, body, timestamp,
+/// and per-file added / removed content lines. The frontend's
+/// Review-panel detail view consumes this so users can see WHAT
+/// changed (added lines) and WHY (commit body) without leaving the
+/// panel.
+///
+/// We use two `git` invocations rather than one combined parse:
+///   1. `git show -s --format=%H%n%ct%n%s%n%B%n@@END@@` —
+///      header (sha, time, subject, body, terminator). Predictable
+///      single-record parse with no diff to wade through.
+///   2. `git show <sha> --no-color --pretty=format: --unified=0 --no-renames`
+///      → per-file unified diff. We only need the +/- content lines,
+///      not the hunk headers, so unified=0 collapses surrounding
+///      context to nothing.
+#[tauri::command]
+pub async fn git_show(vault_path: String, sha: String) -> Result<CommitDetail, String> {
+    // Header: SHA, committer-time, subject, body separated by NUL
+    // bytes. Body itself can contain newlines; the trailing sentinel
+    // line lets us bound it without escaping.
+    const SENTINEL: &str = "@@END_OF_BODY@@";
+    let header_format = format!("%H%x00%ct%x00%s%x00%B%n{SENTINEL}");
+    let header = run_git(
+        &vault_path,
+        &["show", "-s", &format!("--format={header_format}"), &sha],
+    )
+    .await?;
+
+    // Strip the sentinel + the line break before it. `git show` adds
+    // a single trailing newline after %n; trim_end keeps the body
+    // intact while removing that.
+    let header = header
+        .trim_end()
+        .trim_end_matches(SENTINEL)
+        .trim_end_matches('\n');
+    let mut parts = header.splitn(4, '\u{0000}');
+    let sha_out = parts.next().unwrap_or("").to_string();
+    let ts_str = parts.next().unwrap_or("0");
+    let subject = parts.next().unwrap_or("").to_string();
+    let body_raw = parts.next().unwrap_or("");
+    let timestamp: i64 = ts_str.parse().unwrap_or(0);
+    // %B yields `<subject>\n\n<body>` so strip the leading subject +
+    // blank line if present; otherwise the body equals the subject
+    // and we leave it empty.
+    let body = body_raw
+        .strip_prefix(&subject)
+        .map(|rest| rest.trim_start_matches('\n').to_string())
+        .unwrap_or_else(|| body_raw.to_string());
+
+    // Diff: --unified=0 keeps only changed lines (no surrounding
+    // context). --no-color so we don't have to strip ANSI escapes.
+    let diff_text = run_git(
+        &vault_path,
+        &[
+            "show",
+            &sha,
+            "--no-color",
+            "--pretty=format:",
+            "--unified=0",
+            "--no-renames",
+        ],
+    )
+    .await?;
+
+    let files = parse_unified_diff(&diff_text);
+
+    Ok(CommitDetail {
+        sha: sha_out,
+        subject,
+        body,
+        timestamp,
+        files,
+    })
+}
+
+/// Walk a unified diff and produce one FileDiff per touched file.
+/// Skips hunk headers (`@@ ... @@`), index lines, `+++` / `---`
+/// markers, and diff metadata — only the lines that start with a
+/// single `+` or `-` are recorded.
+fn parse_unified_diff(diff_text: &str) -> Vec<FileDiff> {
+    let mut files: Vec<FileDiff> = Vec::new();
+    let mut current: Option<FileDiff> = None;
+
+    for line in diff_text.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            // Push the in-progress file before starting a new one.
+            if let Some(f) = current.take() {
+                files.push(f);
+            }
+            // `diff --git a/<path> b/<path>` — extract the b-side
+            // path. Quoted paths (with spaces or Unicode) come back
+            // with surrounding quotes; we accept either shape.
+            let path = rest
+                .rsplit_once(" b/")
+                .map(|(_, p)| p.trim_matches('"').to_string())
+                .unwrap_or_else(|| rest.to_string());
+            current = Some(FileDiff {
+                path,
+                status: String::from("M"),
+                lines: Vec::new(),
+            });
+            continue;
+        }
+        // File-mode hints: `new file mode 100644` ↦ status A,
+        // `deleted file mode ...` ↦ status D. Defaults to M.
+        if line == "new file mode 100644" || line.starts_with("new file mode ") {
+            if let Some(f) = current.as_mut() {
+                f.status = String::from("A");
+            }
+            continue;
+        }
+        if line == "deleted file mode 100644" || line.starts_with("deleted file mode ") {
+            if let Some(f) = current.as_mut() {
+                f.status = String::from("D");
+            }
+            continue;
+        }
+        // Skip every other diff metadata line.
+        if line.starts_with("@@")
+            || line.starts_with("index ")
+            || line.starts_with("--- ")
+            || line.starts_with("+++ ")
+            || line.starts_with("Binary files ")
+            || line.starts_with("\\ No newline")
+        {
+            continue;
+        }
+        let Some(f) = current.as_mut() else { continue };
+        if let Some(rest) = line.strip_prefix('+') {
+            f.lines.push(DiffLine {
+                kind: "add",
+                text: rest.to_string(),
+            });
+        } else if let Some(rest) = line.strip_prefix('-') {
+            f.lines.push(DiffLine {
+                kind: "remove",
+                text: rest.to_string(),
+            });
+        }
+        // Context lines (no prefix) shouldn't appear with
+        // --unified=0, so silently ignored.
+    }
+
+    if let Some(f) = current.take() {
+        files.push(f);
+    }
+    files
 }

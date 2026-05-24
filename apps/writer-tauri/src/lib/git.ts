@@ -124,3 +124,45 @@ export async function gitIsDirty(): Promise<boolean> {
   if (!vault) return false
   return invoke<boolean>('git_is_dirty', { vaultPath: vault })
 }
+
+/** Per-file diff inside a commit. `lines` carries change lines in
+ * their on-disk order (so a modify hunk reads `-old / +new` naturally
+ * for an inline git-diff-style render). Status mirrors the FileChange
+ * convention (`M` / `A` / `D` / `R` / `C` / `T`). */
+export interface FileDiff {
+  path: string
+  status: string
+  lines: DiffLine[]
+}
+
+export interface DiffLine {
+  /** `"add"` for `+` lines, `"remove"` for `-` lines. (No
+   * `"context"` because we request `--unified=0`.) */
+  kind: 'add' | 'remove'
+  /** Line text without the `+` / `-` prefix. */
+  text: string
+}
+
+/** Full commit metadata for the Review-panel detail view. */
+export interface CommitDetail {
+  sha: string
+  subject: string
+  /** Everything after the subject + blank line. Empty when the
+   * commit has no body. */
+  body: string
+  timestamp: number
+  files: FileDiff[]
+}
+
+/** Fetch the full detail (body + per-file added/removed) for one
+ * commit. Called lazily by the Review panel when the user opens a
+ * card's detail view — keeping it lazy means the list view stays
+ * cheap regardless of how many commits are unreviewed. */
+export async function gitShow(sha: string): Promise<CommitDetail | null> {
+  const vault = getActiveVaultPath()
+  if (!vault) return null
+  return invoke<CommitDetail>('git_show', {
+    vaultPath: vault,
+    sha,
+  })
+}

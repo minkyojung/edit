@@ -27,8 +27,10 @@ import {
   gitAdvanceRef,
   gitRevert,
   gitCurrentHead,
+  gitShow,
   LAST_REVIEWED_REF,
   type CommitInfo,
+  type CommitDetail,
 } from '@/lib/git'
 import { flushDirty } from '@/lib/docFileSync'
 import { notify } from '@/lib/notify'
@@ -59,6 +61,22 @@ interface GitState {
    * and (b) assemble the auto-generated commit message. */
   dirtyPaths: Set<string>
 
+  /** SHAs of commits the user has expanded inline in the Review
+   * panel. Multiple cards can be open at once. Toggling a sha here
+   * triggers a lazy fetch into `commitDetails` if it's not already
+   * cached. */
+  expandedShas: Set<string>
+
+  /** Memoised commit-detail responses keyed by sha. We never
+   * invalidate them because commit content is immutable — a sha is
+   * a content hash. Cleared only on app reload. */
+  commitDetails: Record<string, CommitDetail>
+
+  /** SHAs currently fetching git_show. Lets each expanded card show
+   * its own loader while siblings render their already-cached
+   * detail. */
+  loadingShas: Set<string>
+
   /** Explicit "commit now with this message". Used by LLM ingest and
    * any other code path that has a meaningful message ready. */
   commitChangesNow: (message: string) => Promise<void>
@@ -87,6 +105,10 @@ interface GitState {
    * editor reflects the rollback without any explicit refresh
    * here. */
   revertCommit: (sha: string) => Promise<void>
+
+  /** Toggle the inline expansion of one card. First open of a
+   * sha kicks off the lazy git_show fetch into `commitDetails`. */
+  toggleCommitDetail: (sha: string) => Promise<void>
 }
 
 /** Build an auto-generated commit message from a set of changed
@@ -164,6 +186,9 @@ export const useGitStore = create<GitState>((set, get) => {
     headSha: null,
     activity: [],
     dirtyPaths: new Set(),
+    expandedShas: new Set<string>(),
+    commitDetails: {},
+    loadingShas: new Set<string>(),
 
     commitChangesNow: async (message) => {
       await runCommit(message)
@@ -238,6 +263,42 @@ export const useGitStore = create<GitState>((set, get) => {
         const msg = err instanceof Error ? err.message : String(err)
         set({ status: 'error', lastError: msg })
         notify.gitRevertFailed()
+      }
+    },
+    toggleCommitDetail: async (sha) => {
+      const wasOpen = get().expandedShas.has(sha)
+      set((s) => {
+        const next = new Set(s.expandedShas)
+        if (wasOpen) next.delete(sha)
+        else next.add(sha)
+        return { expandedShas: next }
+      })
+      // Collapse — nothing else to do. The cached detail stays
+      // around so re-opening the same card is instant.
+      if (wasOpen) return
+      // Cache hit — nothing to fetch. Commit content is immutable
+      // (sha == content hash) so a cached detail is forever valid.
+      if (get().commitDetails[sha]) return
+      set((s) => {
+        const next = new Set(s.loadingShas)
+        next.add(sha)
+        return { loadingShas: next }
+      })
+      try {
+        const detail = await gitShow(sha)
+        if (detail) {
+          set((s) => ({
+            commitDetails: { ...s.commitDetails, [sha]: detail },
+          }))
+        }
+      } catch (err) {
+        console.warn('[git] gitShow failed for', sha, err)
+      } finally {
+        set((s) => {
+          const next = new Set(s.loadingShas)
+          next.delete(sha)
+          return { loadingShas: next }
+        })
       }
     },
   }

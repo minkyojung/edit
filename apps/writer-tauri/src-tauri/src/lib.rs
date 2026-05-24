@@ -57,6 +57,7 @@ pub fn run() {
             git::git_current_head,
             git::git_head_timestamp,
             git::git_is_dirty,
+            git::git_show,
             app_quit,
         ])
         .setup(|app| {
@@ -128,6 +129,28 @@ pub fn run() {
                         }
                     }
                 });
+
+                // Attach an empty NSToolbar so macOS Tahoe classifies the
+                // window as a "toolbar window" and applies the larger
+                // corner radius (~26pt vs the titlebar-only ~16pt). The
+                // toolbar carries no items and titleBarStyle=Overlay lets
+                // our HTML chrome render over it, so this adds no visible
+                // surface — it only flips the system's radius classifier.
+                if let Some(main_window) = app.get_webview_window("main") {
+                    if let Ok(ns_window_ptr) = main_window.ns_window() {
+                        use objc2::{class, msg_send, runtime::AnyObject};
+                        let ns_window = ns_window_ptr as *mut AnyObject;
+                        if !ns_window.is_null() {
+                            unsafe {
+                                let toolbar_class = class!(NSToolbar);
+                                let toolbar: *mut AnyObject =
+                                    msg_send![toolbar_class, alloc];
+                                let toolbar: *mut AnyObject = msg_send![toolbar, init];
+                                let _: () = msg_send![ns_window, setToolbar: toolbar];
+                            }
+                        }
+                    }
+                }
             }
 
             // proof-server spawn removed (Phase 3.D). The app now boots
