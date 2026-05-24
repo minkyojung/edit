@@ -109,6 +109,11 @@ pub struct DiffLine {
     pub kind: &'static str,
     /// Line text with the `+` / `-` prefix stripped.
     pub text: String,
+    /// 1-based line number from the unified-diff hunk header.
+    /// For `add` lines this is the new-side line; for `remove` lines
+    /// it's the old-side line. 0 means "unknown" (only used as a
+    /// defensive default if a hunk header couldn't be parsed).
+    pub line_num: u32,
 }
 
 /// Build a `Command` anchored at `vault_path` AND pinned to
@@ -570,12 +575,20 @@ pub async fn git_show(vault_path: String, sha: String) -> Result<CommitDetail, S
 }
 
 /// Walk a unified diff and produce one FileDiff per touched file.
-/// Skips hunk headers (`@@ ... @@`), index lines, `+++` / `---`
-/// markers, and diff metadata — only the lines that start with a
-/// single `+` or `-` are recorded.
+/// Skips index lines, `+++` / `---` markers, and diff metadata — only
+/// the lines that start with a single `+` or `-` are recorded. Hunk
+/// headers (`@@ -A,B +C,D @@`) are parsed for line-number cursors but
+/// not emitted as DiffLine entries.
 fn parse_unified_diff(diff_text: &str) -> Vec<FileDiff> {
     let mut files: Vec<FileDiff> = Vec::new();
     let mut current: Option<FileDiff> = None;
+    // Running line cursors, reset on every hunk header. `new_cursor`
+    // points at the next `+` line's new-side number; `old_cursor` at
+    // the next `-` line's old-side number. 0 means "no hunk seen yet"
+    // and shouldn't normally occur because `+`/`-` lines only appear
+    // inside hunks.
+    let mut new_cursor: u32 = 0;
+    let mut old_cursor: u32 = 0;
 
     for line in diff_text.lines() {
         if let Some(rest) = line.strip_prefix("diff --git ") {
@@ -595,6 +608,8 @@ fn parse_unified_diff(diff_text: &str) -> Vec<FileDiff> {
                 status: String::from("M"),
                 lines: Vec::new(),
             });
+            new_cursor = 0;
+            old_cursor = 0;
             continue;
         }
         // File-mode hints: `new file mode 100644` ↦ status A,
@@ -611,9 +626,17 @@ fn parse_unified_diff(diff_text: &str) -> Vec<FileDiff> {
             }
             continue;
         }
+        // Hunk header: capture the starting line numbers so subsequent
+        // `+`/`-` lines can be attributed back to file positions.
+        if line.starts_with("@@") {
+            if let Some((old_start, new_start)) = parse_hunk_header(line) {
+                old_cursor = old_start;
+                new_cursor = new_start;
+            }
+            continue;
+        }
         // Skip every other diff metadata line.
-        if line.starts_with("@@")
-            || line.starts_with("index ")
+        if line.starts_with("index ")
             || line.starts_with("--- ")
             || line.starts_with("+++ ")
             || line.starts_with("Binary files ")
@@ -626,12 +649,16 @@ fn parse_unified_diff(diff_text: &str) -> Vec<FileDiff> {
             f.lines.push(DiffLine {
                 kind: "add",
                 text: rest.to_string(),
+                line_num: new_cursor,
             });
+            new_cursor = new_cursor.saturating_add(1);
         } else if let Some(rest) = line.strip_prefix('-') {
             f.lines.push(DiffLine {
                 kind: "remove",
                 text: rest.to_string(),
+                line_num: old_cursor,
             });
+            old_cursor = old_cursor.saturating_add(1);
         }
         // Context lines (no prefix) shouldn't appear with
         // --unified=0, so silently ignored.
@@ -641,4 +668,31 @@ fn parse_unified_diff(diff_text: &str) -> Vec<FileDiff> {
         files.push(f);
     }
     files
+}
+
+/// Parse the starting line numbers out of a unified-diff hunk header.
+/// Format: `@@ -<old_start>[,<old_count>] +<new_start>[,<new_count>] @@ [context]`.
+/// Returns `(old_start, new_start)`. Both are 1-based. When `<count>`
+/// is 0 (pure-insertion or pure-deletion hunks), git emits `<start>`
+/// as "the line before the hunk would appear" — we still treat that
+/// as the cursor's starting value since no `+`/`-` will actually use
+/// it: a 0-count side simply produces no diff lines on that side.
+fn parse_hunk_header(line: &str) -> Option<(u32, u32)> {
+    // Strip leading `@@ ` and the trailing ` @@ ...` so we're left
+    // with the `-A[,B] +C[,D]` core.
+    let after_first = line.strip_prefix("@@ ")?;
+    let (range, _rest) = after_first.split_once(" @@")?;
+    let (old_part, new_part) = range.split_once(' ')?;
+    let old_start = parse_signed_range(old_part, '-')?;
+    let new_start = parse_signed_range(new_part, '+')?;
+    Some((old_start, new_start))
+}
+
+/// Parse one side of a hunk range ("-12,3" or "+45") into its
+/// starting line number. The `sign` argument is the prefix character
+/// expected on that side (`-` for old, `+` for new).
+fn parse_signed_range(part: &str, sign: char) -> Option<u32> {
+    let body = part.strip_prefix(sign)?;
+    let start_str = body.split(',').next()?;
+    start_str.parse::<u32>().ok()
 }

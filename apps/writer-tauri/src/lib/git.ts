@@ -141,6 +141,11 @@ export interface DiffLine {
   kind: 'add' | 'remove'
   /** Line text without the `+` / `-` prefix. */
   text: string
+  /** 1-based line number from the unified-diff hunk header. For
+   * `add` lines this is the new-side line; for `remove` lines it's
+   * the old-side line. `0` means the source hunk header couldn't be
+   * parsed — defensive default only. */
+  lineNum: number
 }
 
 /** Full commit metadata for the Review-panel detail view. */
