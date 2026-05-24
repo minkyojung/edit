@@ -35,6 +35,8 @@ import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
 import {
   appendMarkdownToWikiPage,
   appendToSystemLog,
+  buildIngestCommitBody,
+  type AppliedProposalForCommit,
 } from '@/agent/applyIngest'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
@@ -333,9 +335,11 @@ async function runIngestForSlug(
   // wiki page immediately; no review queue, no banner. The log
   // entry (one per ingest, never per-block) appends to system:log.
   // After every page has been touched we kick a synchronous commit
-  // with a meaningful subject so the Review panel shows one
-  // "ai-edit: ingest from daily/..." card per ingest pass.
-  let appendedCount = 0
+  // with a meaningful subject + a body that names each entity, the
+  // source quote, and the LLM's reason. The body is what makes the
+  // Review panel card useful: a glance at the card subject says
+  // "ingest from daily/X"; expanding reveals the per-entity story.
+  const applied: AppliedProposalForCommit[] = []
   for (const p of proposalsForQueue) {
     if (!p.target) continue
     const targetDoc = useDocsStore
@@ -348,20 +352,26 @@ async function runIngestForSlug(
     const md = assembleProposalMarkdown(p, { withEntityHeading: true })
     if (!md) continue
     const ok = await appendMarkdownToWikiPage(targetDoc.slug, md)
-    if (ok) appendedCount += 1
+    if (ok) {
+      applied.push({
+        targetTitle: targetDoc.title?.trim() || targetDoc.slug,
+        proposal: p,
+      })
+    }
   }
   if (result.logEntry) {
     await appendToSystemLog(result.logEntry)
   }
   // flushDirty drains any active-doc PM transactions to .md /
   // .meta.json / .ydoc; commitChangesNow follows with an explicit
-  // subject so the Review feed shows the ingest as one card rather
-  // than a generic "edit: N files" entry from the idle/ceiling
-  // timer.
+  // subject + body so the Review feed shows the ingest as one card
+  // rather than a generic "edit: N files" entry from the idle/
+  // ceiling timer.
   await flushDirty()
-  await useGitStore.getState().commitChangesNow(
-    `ai-edit: ingest from ${sourceLabel} (${appendedCount} page update${appendedCount === 1 ? '' : 's'})`,
-  )
+  const subject = `ai-edit: ingest from ${sourceLabel} (${applied.length} page update${applied.length === 1 ? '' : 's'})`
+  const body = buildIngestCommitBody(applied, sourceLabel)
+  const message = body ? `${subject}\n\n${body}` : subject
+  await useGitStore.getState().commitChangesNow(message)
   return result.proposals.length
 }
 

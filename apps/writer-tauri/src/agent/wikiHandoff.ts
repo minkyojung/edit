@@ -20,6 +20,8 @@ import { runIngestCore } from '@/agent/ingest/index'
 import {
   appendMarkdownToWikiPage,
   appendToSystemLog,
+  buildIngestCommitBody,
+  type AppliedProposalForCommit,
 } from '@/agent/applyIngest'
 import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
 import { useDocsStore } from '@/state/docsStore'
@@ -88,7 +90,7 @@ export async function runChatToWikiHandoff(
   // an EXISTING page — new-page suggestions from chat fall to the
   // user as a toast hint rather than auto-creating a page. (We can
   // wire materialize in later if it becomes a common ask.)
-  let appliedCount = 0
+  const applied: AppliedProposalForCommit[] = []
   const targetSet = new Set<string>()
   const unresolvedNewPages: string[] = []
   for (const p of core.proposals) {
@@ -104,7 +106,10 @@ export async function runChatToWikiHandoff(
       if (!md) continue
       const ok = await appendMarkdownToWikiPage(targetDoc.slug, md)
       if (ok) {
-        appliedCount += 1
+        applied.push({
+          targetTitle: targetDoc.title?.trim() || targetDoc.slug,
+          proposal: p,
+        })
         targetSet.add(p.target)
       }
     } else if (p.suggestNewPage) {
@@ -117,15 +122,16 @@ export async function runChatToWikiHandoff(
     await appendToSystemLog(core.logEntry)
   }
 
-  if (appliedCount > 0 || core.logEntry) {
+  if (applied.length > 0 || core.logEntry) {
     await flushDirty()
-    await useGitStore.getState().commitChangesNow(
-      `ai-edit: ${label} (${appliedCount} page update${appliedCount === 1 ? '' : 's'})`,
-    )
+    const subject = `ai-edit: ${label} (${applied.length} page update${applied.length === 1 ? '' : 's'})`
+    const body = buildIngestCommitBody(applied, label)
+    const message = body ? `${subject}\n\n${body}` : subject
+    await useGitStore.getState().commitChangesNow(message)
   }
 
   return {
-    enqueued: appliedCount,
+    enqueued: applied.length,
     affectedTargets: Array.from(targetSet),
     malformed: false,
   }

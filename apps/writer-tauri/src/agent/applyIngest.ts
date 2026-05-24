@@ -27,6 +27,7 @@ import { readVaultFile, writeVaultFile, vaultFileExists } from '@/lib/vault'
 import { pathForDoc } from '@/lib/docPaths'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { ensureLogWikiSlug } from '@/state/wikiService'
+import type { IngestProposal } from '@/agent/ingest/types'
 
 /** Drain queued log entries into wiki:log. Called from
  * useApplyPendingLogs when the user navigates to the log page.
@@ -190,4 +191,54 @@ export async function appendToSystemLog(line: string): Promise<void> {
     return
   }
   await appendMarkdownToWikiPage(slug, trimmed)
+}
+
+/** One row in the commit body — what the LLM proposed for a single
+ * target page, with the source line that drove it. */
+export interface AppliedProposalForCommit {
+  /** Display title of the wiki page the bullets landed on. Used as
+   * the per-row header in the body. */
+  targetTitle: string
+  /** The proposal that was successfully applied. */
+  proposal: IngestProposal
+}
+
+/** Build a multi-line commit message body from the proposals an
+ * ingest pass landed. The body sits below the subject (which the
+ * caller controls) and gives the user — when they hover or expand
+ * the Review panel card — enough context to judge the change without
+ * leaving the panel:
+ *
+ *   <entity> → <target>
+ *     Source: "<sourceQuote>"
+ *     Why:    <rationale>
+ *
+ * `Source` and `Why` lines are omitted when the LLM didn't supply
+ * the matching field, so the row collapses to a single header line
+ * for terse proposals. Empty input returns an empty string —
+ * caller can decide whether to commit subject-only or skip body.
+ *
+ * Exported for testing + reuse by the chat-handoff site. */
+export function buildIngestCommitBody(
+  applied: AppliedProposalForCommit[],
+  sourceLabel: string,
+): string {
+  if (applied.length === 0) return ''
+  const rows: string[] = []
+  for (const { targetTitle, proposal } of applied) {
+    const lines: string[] = []
+    lines.push(`${proposal.entity} → ${targetTitle}`)
+    if (proposal.sourceQuote) {
+      lines.push(`  Source: "${proposal.sourceQuote}"`)
+    }
+    if (proposal.rationale) {
+      lines.push(`  Why:    ${proposal.rationale}`)
+    }
+    rows.push(lines.join('\n'))
+  }
+  // Trailing "From: <sourceLabel>" so the body always names the
+  // ingest source — useful when the same target page got updates
+  // from multiple sources in close succession.
+  rows.push(`From: ${sourceLabel}`)
+  return rows.join('\n\n')
 }
