@@ -7,7 +7,7 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/componen
 import { usePanelRef } from 'react-resizable-panels'
 import { PanelErrorFallback } from '@/components/ErrorFallback'
 import { AppSidebar } from './Sidebar'
-import { ChatPanel } from './ChatPanel'
+import { RightPanel } from './RightPanel'
 import { EditorHeader } from './EditorHeader'
 import { FormatToolbar } from '@/editor/FormatToolbar'
 import { CloseConfirmDialog } from '@/components/CloseConfirmDialog'
@@ -123,9 +123,9 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
           >
             <ErrorBoundary
               FallbackComponent={PanelErrorFallback}
-              onError={(error, info) => console.error('[chat-panel] error', error, info)}
+              onError={(error, info) => console.error('[right-panel] error', error, info)}
             >
-              <ChatPanel
+              <RightPanel
                 editorView={editorView ?? null}
                 ydoc={collabHandle?.ydoc ?? null}
                 slug={collabHandle?.slug ?? null}

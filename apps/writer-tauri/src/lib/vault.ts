@@ -35,6 +35,26 @@ import {
 } from '@tauri-apps/plugin-fs'
 import { dirname, join } from '@tauri-apps/api/path'
 import { getActiveVaultPath } from '@/state/settingsStore'
+import { useGitStore } from '@/state/gitStore'
+
+/** Tell the git layer that a path was just modified. This is an
+ * **activity signal**, not a commit trigger — the gitStore decides
+ * when to actually commit based on idle / ceiling / blur boundaries
+ * (see gitStore for the timing model). Safe to call from inside the
+ * write helpers; git operations happen async on the gitStore's
+ * timers, so the write path stays fast. */
+function scheduleAutoCommit(relPath: string): void {
+  // gitStore actions are sync; the actual git commit runs when the
+  // edit session ends (idle / blur / ceiling). Wrapping in try
+  // keeps a missing git binary or a not-yet-initialised repo from
+  // breaking writes — the editor keeps working, the user just
+  // doesn't get auto-history.
+  try {
+    useGitStore.getState().noteActivity(relPath)
+  } catch (err) {
+    console.warn('[vault] scheduleAutoCommit failed', err)
+  }
+}
 
 /** Four subdirectories the app expects inside a vault. Created on
  * first run via {@link ensureVaultStructure}. */
@@ -216,6 +236,7 @@ export async function writeVaultFile(relPath: string, content: string): Promise<
   await mkdir(parent, { recursive: true })
   await markOurRecentContent(new TextEncoder().encode(content))
   await atomicWriteText(path, content)
+  scheduleAutoCommit(relPath)
 }
 
 /** Append UTF-8 text to a vault file, creating it if missing.
@@ -266,6 +287,7 @@ export async function appendVaultFile(
   combined.set(appendBytes, existing.length)
   await markOurRecentContent(combined)
   await writeTextFile(path, new TextDecoder().decode(combined))
+  scheduleAutoCommit(relPath)
 }
 
 /** Atomic binary write — same tmp+rename pattern as
@@ -301,6 +323,11 @@ export async function writeVaultBinary(
   await mkdir(parent, { recursive: true })
   await markOurRecentContent(data)
   await atomicWriteBinary(path, data)
+  // .ydoc files are gitignored so this debounce will mostly resolve
+  // to a no-op commit, but image / video / audio binaries (the other
+  // callers of writeVaultBinary) DO want history — schedule
+  // unconditionally and let git's exclude filter decide.
+  scheduleAutoCommit(relPath)
 }
 
 /** Read a vault file as raw bytes. Used for the `.ydoc` sidecar
@@ -337,6 +364,10 @@ export async function renameVaultFile(
     // there are no events to suppress.
   }
   await rename(fromAbs, toAbs)
+  // Schedule using the destination — that's what's visible in git
+  // after the rename. The source removal is part of the same staged
+  // change set (`git add -A`) so a single commit captures both.
+  scheduleAutoCommit(toRel)
 }
 
 /** List entries (files + directories) inside a vault directory.
@@ -377,6 +408,7 @@ export async function deleteVaultFile(relPath: string): Promise<void> {
   const path = await resolveVaultPath(relPath)
   if (await exists(path)) {
     await remove(path)
+    scheduleAutoCommit(relPath)
   }
 }
 

@@ -17,7 +17,14 @@
 // otherwise). No new tool, no new prompt, no new banner UI.
 
 import { runIngestCore } from '@/agent/ingest/index'
-import { useIngestStore } from '@/state/ingestStore'
+import {
+  appendMarkdownToWikiPage,
+  appendToSystemLog,
+} from '@/agent/applyIngest'
+import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
+import { useDocsStore } from '@/state/docsStore'
+import { useGitStore } from '@/state/gitStore'
+import { flushDirty } from '@/lib/docFileSync'
 
 export interface ChatHandoffArgs {
   /** Assistant or user message body to extract facts from. Empty /
@@ -73,25 +80,53 @@ export async function runChatToWikiHandoff(
     return { enqueued: 0, affectedTargets: [], malformed: false }
   }
 
-  useIngestStore.getState().enqueue({
-    proposals: core.proposals,
-    logEntry: core.logEntry,
-    sourceSlug: args.threadId,
-    sourceLabel: label,
-  })
+  // Phase 2.A — same direct-write path as runIngestForSlug. Chat
+  // handoff is just another ingest source; the only difference is
+  // that suggestNewPage proposals from chat aren't materialized into
+  // wiki pages here (runIngestCore doesn't run materializeNewPageProposals).
+  // For Phase 2.A we restrict chat handoff to proposals that target
+  // an EXISTING page — new-page suggestions from chat fall to the
+  // user as a toast hint rather than auto-creating a page. (We can
+  // wire materialize in later if it becomes a common ask.)
+  let appliedCount = 0
+  const targetSet = new Set<string>()
+  const unresolvedNewPages: string[] = []
+  for (const p of core.proposals) {
+    if (p.target) {
+      const targetDoc = useDocsStore
+        .getState()
+        .knownDocs.find((d) => d.type === p.target && !d.archivedAt)
+      if (!targetDoc) {
+        console.warn('[wikiHandoff] target type not in catalog', p.target)
+        continue
+      }
+      const md = assembleProposalMarkdown(p, { withEntityHeading: true })
+      if (!md) continue
+      const ok = await appendMarkdownToWikiPage(targetDoc.slug, md)
+      if (ok) {
+        appliedCount += 1
+        targetSet.add(p.target)
+      }
+    } else if (p.suggestNewPage) {
+      unresolvedNewPages.push(p.suggestNewPage)
+      targetSet.add(`new:${p.suggestNewPage}`)
+    }
+  }
 
-  const targets = Array.from(
-    new Set(
-      core.proposals
-        .map((p) =>
-          p.target ?? (p.suggestNewPage ? `new:${p.suggestNewPage}` : null),
-        )
-        .filter((t): t is string => t !== null),
-    ),
-  )
+  if (core.logEntry) {
+    await appendToSystemLog(core.logEntry)
+  }
+
+  if (appliedCount > 0 || core.logEntry) {
+    await flushDirty()
+    await useGitStore.getState().commitChangesNow(
+      `ai-edit: ${label} (${appliedCount} page update${appliedCount === 1 ? '' : 's'})`,
+    )
+  }
+
   return {
-    enqueued: core.proposals.length,
-    affectedTargets: targets,
+    enqueued: appliedCount,
+    affectedTargets: Array.from(targetSet),
     malformed: false,
   }
 }

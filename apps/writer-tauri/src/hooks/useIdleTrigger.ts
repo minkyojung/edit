@@ -32,16 +32,19 @@
 import { useEffect, useRef } from 'react'
 import { runIngest } from '@/agent/ingest/index'
 import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
+import {
+  appendMarkdownToWikiPage,
+  appendToSystemLog,
+} from '@/agent/applyIngest'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
-import {
-  ensureLogWikiSlug,
-  createCustomWikiPage,
-} from '@/state/wikiService'
+import { useGitStore } from '@/state/gitStore'
+import { createCustomWikiPage } from '@/state/wikiService'
 import type { IngestProposal } from '@/agent/ingest/types'
 import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
+import { flushDirty } from '@/lib/docFileSync'
 import { effectiveLength } from '@/lib/markdownText'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { extractErrorCode } from '@/chat/utils/errorMessage'
@@ -308,20 +311,15 @@ async function runIngestForSlug(
     return 0
   }
 
-  // wiki:log is the only system-owned wiki page and is created
-  // lazily on first need. Without this, a logEntry would queue but
-  // never drain because the target doc wouldn't exist in the
-  // catalog for the user to navigate to.
-  if (result.logEntry) {
-    await ensureLogWikiSlug()
-  }
+  // (Pre-2.A note: wiki:log used to be ensured here so its drain
+  // queue could find the target. Phase 2.A inlines logging into
+  // `appendToSystemLog`, which ensures the page itself.)
 
   // Materialize any `suggestNewPage` proposals into real wiki pages
-  // before enqueue, so by the time the user clicks the sidebar
-  // entry the doc is already in the catalog (and the pending
-  // proposal already points at it via target).
-  // Failures (e.g. proof-server unreachable) drop the proposal
-  // rather than silently re-routing it elsewhere.
+  // first. createCustomWikiPage seeds the body, so those proposals
+  // are fully landed once materialize returns — only target-bound
+  // proposals (`target: wiki:custom-...`) need a follow-up append.
+  // Failures (slug clash, IO error) drop the proposal silently.
   const sourceLabel =
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
@@ -331,12 +329,39 @@ async function runIngestForSlug(
     sourceLabel,
   )
 
-  useIngestStore.getState().enqueue({
-    proposals: proposalsForQueue,
-    logEntry: result.logEntry,
-    sourceSlug: slug,
-    sourceLabel,
-  })
+  // Phase 2.A — direct write. Each proposal lands in its target
+  // wiki page immediately; no review queue, no banner. The log
+  // entry (one per ingest, never per-block) appends to system:log.
+  // After every page has been touched we kick a synchronous commit
+  // with a meaningful subject so the Review panel shows one
+  // "ai-edit: ingest from daily/..." card per ingest pass.
+  let appendedCount = 0
+  for (const p of proposalsForQueue) {
+    if (!p.target) continue
+    const targetDoc = useDocsStore
+      .getState()
+      .knownDocs.find((d) => d.type === p.target && !d.archivedAt)
+    if (!targetDoc) {
+      console.warn('[ingest:apply] target type not in catalog', p.target)
+      continue
+    }
+    const md = assembleProposalMarkdown(p, { withEntityHeading: true })
+    if (!md) continue
+    const ok = await appendMarkdownToWikiPage(targetDoc.slug, md)
+    if (ok) appendedCount += 1
+  }
+  if (result.logEntry) {
+    await appendToSystemLog(result.logEntry)
+  }
+  // flushDirty drains any active-doc PM transactions to .md /
+  // .meta.json / .ydoc; commitChangesNow follows with an explicit
+  // subject so the Review feed shows the ingest as one card rather
+  // than a generic "edit: N files" entry from the idle/ceiling
+  // timer.
+  await flushDirty()
+  await useGitStore.getState().commitChangesNow(
+    `ai-edit: ingest from ${sourceLabel} (${appendedCount} page update${appendedCount === 1 ? '' : 's'})`,
+  )
   return result.proposals.length
 }
 

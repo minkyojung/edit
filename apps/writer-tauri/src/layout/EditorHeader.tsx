@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/state/layoutStore'
+import { useGitStore } from '@/state/gitStore'
 import { EditorTabs } from '@/editor/EditorTabs'
 import type { CollabStatus } from '@/hooks/useCollabDoc'
 import { DocMenu } from './DocMenu'
@@ -93,6 +94,14 @@ export function EditorHeader({
 function ContextPanelTrigger() {
   const open = useLayoutStore((s) => s.contextPanelOpen)
   const toggle = useLayoutStore((s) => s.toggleContextPanel)
+  // Activity count surfaces here so the user gets a visual signal
+  // when the panel is closed AND there are unreviewed changes — the
+  // alternative (no signal) would let history quietly pile up. When
+  // the panel is open the tab badge inside RightPanelHeader carries
+  // the same info, so we hide the dot here to avoid double-counting.
+  const activityCount = useGitStore((s) => s.activity.length)
+  const gitStatus = useGitStore((s) => s.status)
+  const showDot = !open && (activityCount > 0 || gitStatus === 'error')
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -101,16 +110,27 @@ function ContextPanelTrigger() {
           size="icon-sm"
           onClick={toggle}
           className={cn(
-            'cursor-pointer transition-colors',
+            'relative cursor-pointer transition-colors',
             open ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
           )}
-          aria-label={open ? 'Hide chat panel' : 'Show chat panel'}
+          aria-label={open ? 'Hide right panel' : 'Show right panel'}
           aria-pressed={open}
         >
           <IconLayoutSidebarRightFilled size={16} />
+          {showDot && (
+            <span
+              className={cn(
+                'absolute right-1 top-1 h-1.5 w-1.5 rounded-full',
+                gitStatus === 'error' ? 'bg-destructive' : 'bg-primary',
+              )}
+              aria-hidden
+            />
+          )}
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="bottom">{open ? 'Hide chat panel' : 'Show chat panel'}</TooltipContent>
+      <TooltipContent side="bottom">
+        {open ? 'Hide right panel' : 'Show right panel'}
+      </TooltipContent>
     </Tooltip>
   )
 }

@@ -1,6 +1,7 @@
 mod anthropic;
 pub mod claude_sidecar;
 mod fetch_url;
+mod git;
 mod oauth;
 mod secure_storage;
 
@@ -48,6 +49,14 @@ pub fn run() {
             claude_sidecar::commands::claude_title,
             fetch_url::fetch_url,
             anthropic::anthropic_messages_create,
+            git::git_init,
+            git::git_commit,
+            git::git_log_since_ref,
+            git::git_advance_ref,
+            git::git_revert,
+            git::git_current_head,
+            git::git_head_timestamp,
+            git::git_is_dirty,
             app_quit,
         ])
         .setup(|app| {
