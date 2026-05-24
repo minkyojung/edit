@@ -124,7 +124,7 @@ function CommitCard({ commit }: { commit: CommitInfo }) {
             e.stopPropagation()
             void revert(commit.sha)
           }}
-          className="absolute right-1 top-1 h-6 cursor-pointer gap-1 px-1.5 text-[11px] opacity-0 transition-opacity group-hover:opacity-100"
+          className="absolute right-1 top-1 h-6 cursor-pointer gap-1 px-1.5 text-[12px] opacity-0 transition-opacity group-hover:opacity-100"
           aria-label="Undo this change"
         >
           <IconArrowBackUp size={12} />
@@ -147,17 +147,21 @@ function CardBody({ commit }: { commit: CommitInfo }) {
     [detail],
   )
 
-  // Pick the diff that matches the card title (wiki preferred). The
-  // user clicked into the card expecting "what changed on Tom" —
-  // showing the daily's diff instead would be jarring.
-  const focusFile: FileDiff | undefined = useMemo(() => {
-    if (!detail) return undefined
-    return (
-      detail.files.find((f) => f.path.startsWith('wiki/')) ??
-      detail.files.find((f) => f.path.startsWith('writing/')) ??
-      detail.files.find((f) => f.path.startsWith('daily/')) ??
-      detail.files[0]
-    )
+  // Order files so the card-title's primary file (wiki preferred)
+  // shows first, then writing, then daily, then anything else. The
+  // user clicked into a "Kate" card so seeing wiki/Kate.md at the
+  // top is the natural read; the rest follow as supporting context.
+  const orderedFiles: FileDiff[] = useMemo(() => {
+    if (!detail) return []
+    const priority = (path: string): number => {
+      if (path.startsWith('wiki/')) return 0
+      if (path.startsWith('writing/')) return 1
+      if (path.startsWith('daily/')) return 2
+      return 3
+    }
+    return [...detail.files]
+      .filter((f) => f.lines.length > 0)
+      .sort((a, b) => priority(a.path) - priority(b.path))
   }, [detail])
 
   return (
@@ -168,9 +172,13 @@ function CardBody({ commit }: { commit: CommitInfo }) {
         <>
           {parsed?.source && <Section label="Source" body={parsed.source} />}
 
-          {focusFile && focusFile.lines.length > 0 && (
-            <Section label="Changes">
-              <DiffBlock file={focusFile} />
+          {orderedFiles.length > 0 && (
+            <Section label={orderedFiles.length === 1 ? 'Changes' : `Changes · ${orderedFiles.length} files`}>
+              <div className="flex flex-col gap-3">
+                {orderedFiles.map((file) => (
+                  <FileBlock key={file.path} file={file} />
+                ))}
+              </div>
             </Section>
           )}
 
@@ -181,6 +189,21 @@ function CardBody({ commit }: { commit: CommitInfo }) {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+/** One file's slot inside the Changes section: a small path label
+ * sitting above its diff. The label uses the vault-relative path so
+ * the user can tell at a glance which doc the swap belongs to —
+ * handy when a single chat turn edits multiple files. */
+function FileBlock({ file }: { file: FileDiff }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="font-mono text-[11px] text-muted-foreground">
+        {file.path}
+      </span>
+      <DiffBlock file={file} />
     </div>
   )
 }
@@ -196,7 +219,7 @@ function Section({
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <h3 className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      <h3 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </h3>
       {body && (
@@ -214,7 +237,7 @@ function Section({
  * order so a modify patch reads `-old → +new` naturally. */
 function DiffBlock({ file }: { file: FileDiff }) {
   return (
-    <pre className="overflow-x-auto rounded-md border border-border bg-background p-0 font-mono text-[11px] leading-relaxed">
+    <pre className="overflow-x-auto rounded-md border border-border bg-background p-0 font-mono text-[12px] leading-relaxed">
       {file.lines.map((line, i) => (
         <div
           key={i}
@@ -240,7 +263,7 @@ function DiffBlock({ file }: { file: FileDiff }) {
 function DiffStat({ added, removed }: { added: number; removed: number }) {
   if (added === 0 && removed === 0) return null
   return (
-    <span className="shrink-0 font-mono text-[11px]">
+    <span className="shrink-0 font-mono text-[12px]">
       {added > 0 && (
         <span className="text-green-600 dark:text-green-400">+{added}</span>
       )}

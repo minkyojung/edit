@@ -1184,15 +1184,20 @@
   --space-10: 2.5rem;   /* 40 */
   --space-12: 3rem;     /* 48 */
 
-  /* Font size — Apple HIG type ladder (UI scale, not prose). Numeric
-     tokens hold the raw px; semantic aliases below name them. */
-  --font-size-10: 10px;  /* Caption  */
-  --font-size-11: 11px;  /* Footnote */
-  --font-size-12: 12px;  /* Callout  */
-  --font-size-13: 13px;  /* Body / Headline */
-  --font-size-15: 15px;  /* Title 3 */
-  --font-size-17: 17px;  /* Title 2 */
-  --font-size-22: 22px;  /* Title 1 */
+  /* Font size — Apple HIG type ladder bumped +1px for the webview
+     environment. Native macOS 13pt body looks fine because of system
+     subpixel + grid fitting, but WKWebView lacks those optimizations
+     so the same 13px CSS reads visibly smaller. Linear / Notion /
+     Cursor all land on 14px body for the same reason. Token names
+     keep the HIG semantic (Body / Callout / Footnote) — only the
+     raw values shift up by 1. */
+  --font-size-10: 11px;  /* Caption  */
+  --font-size-11: 12px;  /* Footnote */
+  --font-size-12: 13px;  /* Callout  */
+  --font-size-13: 14px;  /* Body / Headline */
+  --font-size-15: 16px;  /* Title 3 */
+  --font-size-17: 18px;  /* Title 2 */
+  --font-size-22: 24px;  /* Title 1 */
 
   /* Font weight */
   --font-weight-regular: 400;

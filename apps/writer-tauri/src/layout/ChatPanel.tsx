@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
+import { IconMessageCircle } from '@tabler/icons-react'
 import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
 import { TextSelection } from '@milkdown/kit/prose/state'
 import * as Y from 'yjs'
@@ -37,7 +38,6 @@ import {
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
-import { ReviewProgressBadge } from '@/chat/ReviewProgressBadge'
 import { notify } from '@/lib/notify'
 
 /** Parse a submitted prompt string for a leading slash invocation.
@@ -486,20 +486,8 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
         </div>
       )}
 
-      {/* Window-chrome row — mirrors EditorHeader so the two columns
-          align at --header-h. Hosts the review-progress badge on the
-          left; reserved for model / account / right-sidebar toggle on
-          the right once those land. */}
       <div
-        data-tauri-drag-region
-        className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-3"
-        style={{ height: 'var(--header-h)' }}
-      >
-        <ReviewProgressBadge ydoc={ydoc} />
-      </div>
-
-      <div
-        className="flex shrink-0 items-stretch border-b border-border bg-background px-0.5"
+        className="flex shrink-0 items-stretch bg-transparent px-0.5 shadow-[inset_0_-1px_0_var(--border)]"
         style={{ height: 'var(--header-h)' }}
       >
         <ThreadPicker
@@ -530,12 +518,24 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*+*]:mt-3"
       >
         {renderedTurns.length === 0 && (
-          <p className="text-xs text-muted-foreground text-center py-8">
-            Ask anything about this document
-          </p>
+          // ContentUnavailableView pattern (macOS 14+/iOS 17+):
+          // tertiary icon + Title 3 headline + body description.
+          // Centered in the otherwise-empty scroll area so the panel
+          // never reads as "broken" when no turns exist yet.
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-12">
+            <IconMessageCircle
+              size={48}
+              stroke={1.5}
+              className="text-muted-foreground/40"
+            />
+            <p className="text-[16px] font-semibold text-foreground">Ask anything</p>
+            <p className="max-w-xs text-center text-[14px] text-muted-foreground">
+              Type a message or try a slash command like /proofread.
+            </p>
+          </div>
         )}
         {renderedTurns.map((turn) => (
           <MessageRow

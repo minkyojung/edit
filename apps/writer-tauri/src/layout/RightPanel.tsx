@@ -179,7 +179,7 @@ function CapsuleFilterItem({
       {badge !== undefined &&
         (active ? (
           <span
-            className="ml-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-foreground/15 px-1 text-[10px] font-medium leading-none"
+            className="ml-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-foreground/15 px-1 text-[11px] font-medium leading-none"
             aria-hidden
           >
             {badge > 99 ? '99+' : badge}

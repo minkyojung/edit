@@ -170,7 +170,7 @@ export function DayView() {
                   const created = await createChildNote(anchoredDaily.slug)
                   if (created) navigate(buildDayUrl(dayAnchor, created))
                 }}
-                className="text-[12px] text-sidebar-foreground/60 hover:text-sidebar-accent-foreground"
+                className="text-[13px] text-sidebar-foreground/60 hover:text-sidebar-accent-foreground"
               >
                 <IconPlus />
                 <span>New note</span>
@@ -178,7 +178,7 @@ export function DayView() {
             </SidebarMenuItem>
           </SidebarMenu>
         ) : (
-          <div className="mt-1 px-2 py-1.5 text-[12px] text-sidebar-foreground/50">
+          <div className="mt-1 px-2 py-1.5 text-[13px] text-sidebar-foreground/50">
             No entry for this day
           </div>
         )}

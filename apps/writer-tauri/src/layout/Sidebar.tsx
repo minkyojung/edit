@@ -249,10 +249,10 @@ export function AppSidebar() {
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-semibold text-sidebar-foreground truncate">
+                    <p className="text-[14px] font-semibold text-sidebar-foreground truncate">
                       {accountDisplayName(account.email) ?? 'Guest'}
                     </p>
-                    <p className="text-[12px] font-normal text-sidebar-foreground/55 truncate">
+                    <p className="text-[13px] font-normal text-sidebar-foreground/55 truncate">
                       {account.connected ? (account.email ?? 'Connected') : 'Not connected'}
                     </p>
                   </div>

@@ -92,7 +92,7 @@ export function MonthView() {
         {WEEKDAY_LABELS.map((label, i) => (
           <div
             key={i}
-            className="flex h-5 items-center justify-center text-[10px] font-medium text-sidebar-foreground/50"
+            className="flex h-5 items-center justify-center text-[11px] font-medium text-sidebar-foreground/50"
           >
             {label}
           </div>

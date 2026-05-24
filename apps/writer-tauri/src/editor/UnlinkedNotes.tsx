@@ -86,7 +86,7 @@ export function UnlinkedNotes({ view, parentSlug }: Props) {
           aria-label={`${unlinked.length} unlinked child notes`}
           className={cn(
             'flex items-center gap-1',
-            'text-[12px] leading-none text-muted-foreground opacity-80',
+            'text-[13px] leading-none text-muted-foreground opacity-80',
             'transition-opacity hover:opacity-100',
             'outline-none focus-visible:opacity-100',
           )}

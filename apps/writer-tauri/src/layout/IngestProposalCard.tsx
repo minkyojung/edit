@@ -135,7 +135,7 @@ export function IngestProposalCard() {
         <h4 className="text-sm font-medium text-foreground">
           Wiki updates ready
         </h4>
-        <p className="text-[12px] leading-snug text-muted-foreground">
+        <p className="text-[13px] leading-snug text-muted-foreground">
           {previewText(proposals)}
         </p>
         {sourceQuotePreview(proposals) && (
@@ -145,7 +145,7 @@ export function IngestProposalCard() {
         )}
         <span
           className={cn(
-            'mt-1 text-[12px] font-medium text-foreground/80',
+            'mt-1 text-[13px] font-medium text-foreground/80',
             'transition-colors group-hover:text-foreground',
           )}
         >

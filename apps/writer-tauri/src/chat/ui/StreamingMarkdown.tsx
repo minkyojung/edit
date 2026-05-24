@@ -183,7 +183,7 @@ export function StreamingMarkdown({
     // the chat surface; `dark:prose-invert` flips to the dark token
     // set when the app is in dark mode; `max-w-none` lets the surface
     // size respect the chat panel's resizable width.
-    <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+    <div className="prose dark:prose-invert max-w-none text-[14px] leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
       <ReactMarkdown
         remarkPlugins={REMARK_PLUGINS}
         components={markdownComponents}

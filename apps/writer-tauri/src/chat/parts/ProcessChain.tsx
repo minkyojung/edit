@@ -229,7 +229,7 @@ function renderToolDetail(
   // Generic tool: render input as a compact JSON snapshot.
   if (part.input != null && typeof part.input === 'object') {
     return (
-      <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[11px]">
+      <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs">
         {JSON.stringify(part.input, null, 2)}
       </pre>
     )

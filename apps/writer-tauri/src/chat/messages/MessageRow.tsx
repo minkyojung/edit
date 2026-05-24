@@ -31,7 +31,9 @@ export const MessageRow = React.memo(function MessageRow({
   if (turn.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-3xl bg-accent px-3 py-2 text-sm">{turn.content}</div>
+        <div className="max-w-[85%] rounded-3xl bg-info/15 px-3 py-2 text-[14px] text-foreground">
+          {turn.content}
+        </div>
       </div>
     )
   }
@@ -63,7 +65,7 @@ export const MessageRow = React.memo(function MessageRow({
   // - Parts-aware turns: walk the timeline so tool calls / reasoning blocks
   //   appear inline at the moment they happened.
   const body = (
-    <div className="text-sm text-foreground leading-relaxed">
+    <div className="text-[14px] text-foreground leading-relaxed">
       {showActivity && <ActivityStatus parts={turn.parts} />}
       {turn.parts && turn.parts.length > 0 ? (
         <PartList parts={turn.parts} isStreaming={isStreaming} />
