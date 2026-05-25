@@ -57,16 +57,19 @@ export function EditorHeader({
   return (
     <div
       data-tauri-drag-region
-      // Sticky frosted toolbar (HTML fake-frost). The native NSToolbar
-      // path didn't trigger automatic vibrancy on this Tauri/WKWebView
-      // combo, so the header paints its own backdrop instead. Higher
-      // bg opacity (0.8) keeps the active-doc label readable over any
-      // doc content; blur(28) + saturate(160%) gives a close-enough
-      // Tahoe tone. Inline filter style is needed because WKWebView
-      // doesn't always pick up Tailwind's unprefixed backdrop utils.
-      className="absolute left-0 right-0 top-0 z-sticky flex items-center bg-background/80"
+      // Sticky frosted toolbar (HTML fake-frost). Background color is
+      // applied inline via color-mix so the alpha is guaranteed —
+      // Tailwind 4's `bg-background/80` modifier silently degraded to
+      // transparent in this WKWebView setup, leaving the header fully
+      // see-through. color-mix(in oklch, var(--background) 85%,
+      // transparent) keeps the CSS var theming (light/dark switch
+      // continues to work) while pinning the alpha. blur(28) +
+      // saturate(160%) inline because Tailwind's backdrop utils don't
+      // always apply in WKWebView either.
+      className="absolute left-0 right-0 top-0 z-sticky flex items-center"
       style={{
         height: 'var(--header-h)',
+        backgroundColor: 'color-mix(in oklch, var(--background) 85%, transparent)',
         backdropFilter: 'blur(28px) saturate(160%)',
         WebkitBackdropFilter: 'blur(28px) saturate(160%)',
       }}
