@@ -60,9 +60,6 @@ importers:
       '@milkdown/kit':
         specifier: ^7.20.0
         version: 7.20.0(@codemirror/language@6.12.3)(@codemirror/state@6.6.0)(@codemirror/view@6.41.1)(typescript@5.9.3)
-      '@milkdown/plugin-collab':
-        specifier: ^7.20.0
-        version: 7.20.0(y-prosemirror@1.3.7(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.8)(y-protocols@1.0.7(yjs@13.6.30))(yjs@13.6.30))(y-protocols@1.0.7(yjs@13.6.30))(yjs@13.6.30)
       '@milkdown/react':
         specifier: ^7.20.0
         version: 7.20.0(@codemirror/language@6.12.3)(@codemirror/state@6.6.0)(@codemirror/view@6.41.1)(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.8)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.9.3)
@@ -177,12 +174,6 @@ importers:
       unist-util-visit:
         specifier: ^5.1.0
         version: 5.1.0
-      y-prosemirror:
-        specifier: ^1.3.7
-        version: 1.3.7(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.8)(y-protocols@1.0.7(yjs@13.6.30))(yjs@13.6.30)
-      yjs:
-        specifier: ^13.6.30
-        version: 13.6.30
       zustand:
         specifier: ^5.0.12
         version: 5.0.12(@types/react@19.2.14)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
@@ -1194,13 +1185,6 @@ packages:
 
   '@milkdown/plugin-clipboard@7.20.0':
     resolution: {integrity: sha512-PyokNvwgWcO6/I/0LxDRnATpnxvs5upFRlp6eO8PhjwBFZftCIU6D15Wg4JAxwW7Y0NyTWfViWjc9TwiBd6KOQ==}
-
-  '@milkdown/plugin-collab@7.20.0':
-    resolution: {integrity: sha512-Kw6a4L0eh1ODpLxPT9NTG20UYxYl5bmoKlFRmZuhepQgZdtDxfgBZ7kPg0Aq54+mF3lgB4OnrOz4YE6jf/BGLA==}
-    peerDependencies:
-      y-prosemirror: '*'
-      y-protocols: '*'
-      yjs: '*'
 
   '@milkdown/plugin-cursor@7.20.0':
     resolution: {integrity: sha512-goCPwUARBzGV6Hvnr3P57Bj5TnyFjYIfDFLvgWTIlsm/dR2Wr4Syy4HDOtaKO9YL/VtZ8gtiZVgeo0vhc4CzMA==}
@@ -3795,9 +3779,6 @@ packages:
     resolution: {integrity: sha512-6B3tLtFqtQS4ekarvLVMZ+X+VlvQekbe4taUkf/rhVO3d/h0M2rfARm/pXLcPEsjjMsFgrFgSrhQIxcSVrBz8w==}
     engines: {node: '>=18'}
 
-  isomorphic.js@0.2.5:
-    resolution: {integrity: sha512-PIeMbHqMt4DnUP3MA/Flc0HElYjMXArsw1qwJZcm9sqR8mq3l8NYizFMty0pWwE/tzIGH3EKK5+jes5mAr85yw==}
-
   jiti@2.6.1:
     resolution: {integrity: sha512-ekilCSN1jwRvIbgeg/57YFh8qQDNbwDb9xT/qu2DAHbFFZUicIl4ygVaAvzveMhMVr3LnpSKTNnwt8PoOfmKhQ==}
     hasBin: true
@@ -3890,11 +3871,6 @@ packages:
   levn@0.4.1:
     resolution: {integrity: sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ==}
     engines: {node: '>= 0.8.0'}
-
-  lib0@0.2.117:
-    resolution: {integrity: sha512-DeXj9X5xDCjgKLU/7RR+/HQEVzuuEUiwldwOGsHK/sfAfELGWEyTcf0x+uOvCvK3O2zPmZePXWL85vtia6GyZw==}
-    engines: {node: '>=16'}
-    hasBin: true
 
   lightningcss-android-arm64@1.32.0:
     resolution: {integrity: sha512-YK7/ClTt4kAK0vo6w3X+Pnm0D2cf2vPHbhOXdoNti1Ga0al1P4TBZhwjATvjNwLEBCnKvjJc2jQgHXH0NEwlAg==}
@@ -5320,22 +5296,6 @@ packages:
   xmlchars@2.2.0:
     resolution: {integrity: sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==}
 
-  y-prosemirror@1.3.7:
-    resolution: {integrity: sha512-NpM99WSdD4Fx4if5xOMDpPtU3oAmTSjlzh5U4353ABbRHl1HtAFUx6HlebLZfyFxXN9jzKMDkVbcRjqOZVkYQg==}
-    engines: {node: '>=16.0.0', npm: '>=8.0.0'}
-    peerDependencies:
-      prosemirror-model: ^1.7.1
-      prosemirror-state: ^1.2.3
-      prosemirror-view: ^1.9.10
-      y-protocols: ^1.0.1
-      yjs: ^13.5.38
-
-  y-protocols@1.0.7:
-    resolution: {integrity: sha512-YSVsLoXxO67J6eE/nV4AtFtT3QEotZf5sK5BHxFBXso7VDUT3Tx07IfA6hsu5Q5OmBdMkQVmFZ9QOA7fikWvnw==}
-    engines: {node: '>=16.0.0', npm: '>=8.0.0'}
-    peerDependencies:
-      yjs: ^13.0.0
-
   y18n@5.0.8:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
     engines: {node: '>=10'}
@@ -5350,10 +5310,6 @@ packages:
   yargs@17.7.2:
     resolution: {integrity: sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w==}
     engines: {node: '>=12'}
-
-  yjs@13.6.30:
-    resolution: {integrity: sha512-vv/9h42eCMC81ZHDFswuu/MKzkl/vyq1BhaNGfHyOonwlG4CJbQF4oiBBJPvfdeCt/PlVDWh7Nov9D34YY09uQ==}
-    engines: {node: '>=16.0.0', npm: '>=8.0.0'}
 
   yocto-queue@0.1.0:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
@@ -6528,18 +6484,6 @@ snapshots:
       '@milkdown/ctx': 7.20.0
       '@milkdown/prose': 7.20.0
       '@milkdown/utils': 7.20.0
-    transitivePeerDependencies:
-      - supports-color
-
-  '@milkdown/plugin-collab@7.20.0(y-prosemirror@1.3.7(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.8)(y-protocols@1.0.7(yjs@13.6.30))(yjs@13.6.30))(y-protocols@1.0.7(yjs@13.6.30))(yjs@13.6.30)':
-    dependencies:
-      '@milkdown/core': 7.20.0
-      '@milkdown/ctx': 7.20.0
-      '@milkdown/exception': 7.20.0
-      '@milkdown/prose': 7.20.0
-      y-prosemirror: 1.3.7(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.8)(y-protocols@1.0.7(yjs@13.6.30))(yjs@13.6.30)
-      y-protocols: 1.0.7(yjs@13.6.30)
-      yjs: 13.6.30
     transitivePeerDependencies:
       - supports-color
 
@@ -9448,8 +9392,6 @@ snapshots:
 
   isexe@3.1.5: {}
 
-  isomorphic.js@0.2.5: {}
-
   jiti@2.6.1: {}
 
   jose@6.2.3: {}
@@ -9546,10 +9488,6 @@ snapshots:
     dependencies:
       prelude-ls: 1.2.1
       type-check: 0.4.0
-
-  lib0@0.2.117:
-    dependencies:
-      isomorphic.js: 0.2.5
 
   lightningcss-android-arm64@1.32.0:
     optional: true
@@ -11345,20 +11283,6 @@ snapshots:
 
   xmlchars@2.2.0: {}
 
-  y-prosemirror@1.3.7(prosemirror-model@1.25.4)(prosemirror-state@1.4.4)(prosemirror-view@1.41.8)(y-protocols@1.0.7(yjs@13.6.30))(yjs@13.6.30):
-    dependencies:
-      lib0: 0.2.117
-      prosemirror-model: 1.25.4
-      prosemirror-state: 1.4.4
-      prosemirror-view: 1.41.8
-      y-protocols: 1.0.7(yjs@13.6.30)
-      yjs: 13.6.30
-
-  y-protocols@1.0.7(yjs@13.6.30):
-    dependencies:
-      lib0: 0.2.117
-      yjs: 13.6.30
-
   y18n@5.0.8: {}
 
   yallist@3.1.1: {}
@@ -11374,10 +11298,6 @@ snapshots:
       string-width: 4.2.3
       y18n: 5.0.8
       yargs-parser: 21.1.1
-
-  yjs@13.6.30:
-    dependencies:
-      lib0: 0.2.117
 
   yocto-queue@0.1.0: {}
 

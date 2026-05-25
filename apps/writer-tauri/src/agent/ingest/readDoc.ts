@@ -1,9 +1,11 @@
-// Source-text extraction for the ingest pipeline. Two layers:
+// Source-text extraction for the ingest pipeline.
 //
 //   readDocMarkdown(slug)   — preferred: Milkdown serializer over the
 //                             live PM doc (markdown structure preserved).
-//   extractFragmentText(fr) — fallback for non-active docs: flat text
-//                             walk over the Y.XmlFragment.
+//   Non-active doc fallback — `handle.bodyMarkdown` cache (Phase 5a
+//                             of the Yjs-removal migration). Read
+//                             from disk at handle build time;
+//                             refreshed on every seed/replace/reload.
 //
 // Plus a small date helper kept here because it's only used by the
 // ingest user-prompt path; not worth a module of its own.
@@ -66,38 +68,6 @@ export function readDocMarkdown(slug: string): string {
   const trimmed = handle.bodyMarkdown.trim()
   if (isEffectivelyEmpty(trimmed)) return ''
   return trimmed
-}
-
-/** Walk a Y.XmlFragment and collect text content as a flat string.
- * Used by readDocMarkdown's non-active-doc fallback. Markdown
- * structure is lost; for our daily-note workflow that's acceptable
- * (notes are mostly prose). */
-export function extractFragmentText(fragment: import('yjs').XmlFragment): string {
-  const parts: string[] = []
-  function walk(node: import('yjs').XmlElement | import('yjs').XmlText | import('yjs').XmlFragment | import('yjs').XmlHook): void {
-    if ('toString' in node && typeof (node as { toString: () => string }).toString === 'function') {
-      // XmlText 의 toString 은 자체 텍스트만. XmlElement/Fragment 은 자식
-      // 트리 전체. 우리는 자식들의 텍스트만 합치고 싶으므로 element 는
-      // 직접 순회.
-    }
-    const length = (node as { length?: number }).length
-    if (typeof length !== 'number') return
-    for (let i = 0; i < length; i++) {
-      const child = (node as unknown as { get: (i: number) => unknown }).get(i)
-      if (!child) continue
-      if (typeof (child as { toString: () => string }).toString === 'function') {
-        const text = String(child)
-        // XmlElement 가 toString 호출 시 자식 합쳐서 반환하면 단락 사이에
-        // 줄바꿈이 없음. paragraph 단위로 newline 삽입해야 LLM 이 단락
-        // 구분 인식. 단순화: 모든 element 사이에 \n.
-        parts.push(text)
-        parts.push('\n')
-      }
-    }
-    void walk
-  }
-  walk(fragment)
-  return parts.join('')
 }
 
 /** Local-time YYYY-MM-DD. Pinned to local because "today's note"

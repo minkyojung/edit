@@ -33,8 +33,7 @@ import {
   gitHeadTimestamp,
   gitEnsureGitignoreEntries,
 } from '@/lib/git'
-import { migrateYdocV2 } from '@/lib/migrateYdocV2'
-import { migrateMetaV1 } from '@/lib/migrateMetaV1'
+import { cleanupYdocV2 } from '@/lib/cleanupYdocV2'
 
 /** Daily safety net: if HEAD is older than this, BootGate fires a
  * silent "daily snapshot" commit on app open so a passive user who
@@ -93,35 +92,30 @@ export function BootGate({ children }: Props) {
           // Yjs-removal one-shots. Plain filenames (not dot-prefixed)
           // because Tauri's `fs:scope` glob silently excludes dot-
           // files; ignoring them here keeps the user's vault git
-          // history clean.
+          // history clean. `writer-migration-v2.done` and
+          // `writer-meta-migration-v1.done` are kept in the list so
+          // vaults that already wear those markers don't suddenly
+          // surface them as untracked files when the migration
+          // scripts themselves are gone.
           'writer-migration-v2.done',
           'writer-meta-migration-v1.done',
+          'writer-cleanup-ydoc.done',
         ])
       } catch (err) {
         console.warn('[boot] gitignore migration failed', err)
       }
-      // One-shot Yjs-removal migration v2: back-fill `.md` for any
-      // doc whose freshest content currently lives in `.ydoc`
-      // (a leftover footgun from the dual-writer race). Runs BEFORE
-      // bootstrap so the handle-open path that reads `.md` to seed
-      // Y.Doc picks up the recovered content. Sentinel-gated, so
-      // existing vaults pay the walk cost exactly once.
+      // Phase 7 of the Yjs-removal migration: delete the leftover
+      // `.ydoc` binaries now that nothing reads them. Runs BEFORE
+      // bootstrap so the scan-vault catalog never sees a stray
+      // `.ydoc` that Finder / git would otherwise show as untracked
+      // noise. Sentinel-gated; existing vaults pay the walk cost
+      // exactly once. Phase 2's `.md` back-fill ran in an earlier
+      // build, so any content that was unique to `.ydoc` has
+      // already been recovered.
       try {
-        await migrateYdocV2()
+        await cleanupYdocV2()
       } catch (err) {
-        console.warn('[boot] ydoc→md migration failed', err)
-      }
-      // Phase 5b of the Yjs-removal migration: lift each existing
-      // doc's `Y.Map('meta').createdAt` into the `.meta.json` sidecar
-      // so the catalog (which scanVault reads from disk) owns the
-      // field after Y.Doc is retired in 5c. Sentinel-gated; legacy
-      // docs without a Y.Map createdAt simply skip (their KnownDoc
-      // ends up without a createdAt and DocumentInfoDialog renders
-      // `—`, same as a brand-new doc).
-      try {
-        await migrateMetaV1()
-      } catch (err) {
-        console.warn('[boot] meta migration failed', err)
+        console.warn('[boot] ydoc cleanup failed', err)
       }
       bootstrap()
       // Load chat thread metas + turns from `threads/`. Fires in
