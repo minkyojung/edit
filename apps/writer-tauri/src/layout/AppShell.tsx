@@ -75,14 +75,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
     >
       <CloseConfirmDialog />
       <AppSidebar />
-      {/* pt-3 matches the floating sidebar's outer p-3 inset so the
-          editor + chat headers share a baseline with SidebarHeader.
-          Without it the editor panel started at window y=0 while
-          sidebar content started at y=12, leaving the active-doc
-          label visually higher than the sidebar's NavHistory and the
-          macOS traffic lights. Keep in sync with the sidebar
-          variant="floating" + className="p-3" in Sidebar.tsx. */}
-      <SidebarInset className="overflow-hidden pt-3">
+      <SidebarInset className="overflow-hidden">
         <ResizablePanelGroup orientation="horizontal" className="h-full">
           <ResizablePanel defaultSize={75} minSize={30}>
             <div data-editor-panel className="relative flex h-full flex-col">
