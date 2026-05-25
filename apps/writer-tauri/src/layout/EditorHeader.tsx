@@ -57,20 +57,15 @@ export function EditorHeader({
   return (
     <div
       data-tauri-drag-region
-      // Sticky frosted toolbar. Sits absolute on top of the editor
-      // panel so the scroll content underneath slides BEHIND the
-      // header — the backdrop-filter then frosts those scrolled
-      // lines. Inline style applies both standard and -webkit
-      // backdrop-filter (WKWebView won't pick up Tailwind's
-      // unprefixed util reliably) and pairs blur with saturate to
-      // keep the macOS Tahoe vibrancy color feel. bg-background/55
-      // leaves enough transparency that the blur reads clearly.
-      className="absolute left-0 right-0 top-0 z-sticky flex items-center bg-background/55"
-      style={{
-        height: 'var(--header-h)',
-        backdropFilter: 'blur(32px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(32px) saturate(180%)',
-      }}
+      // Sticky toolbar overlay. Background stays transparent so the
+      // macOS NSToolbar's automatic vibrancy (attached in lib.rs)
+      // paints through this region — that's the OS-level frosted
+      // glass Finder/Mail use. tauri.conf's transparent:true is
+      // required for the WebView to let the native effect show; if
+      // that's off the area falls back to whatever sits underneath
+      // (data-editor-panel's bg, currently --background).
+      className="absolute left-0 right-0 top-0 z-sticky flex items-center bg-transparent"
+      style={{ height: 'var(--header-h)' }}
     >
       {showSidebarTrigger && (
         <>
