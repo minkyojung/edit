@@ -3,11 +3,13 @@
 // its own title label in/out — the Apple Notes "sticky title on
 // scroll" pattern.
 //
-// rootMargin top is shrunk by the editor header height so a title
-// that has scrolled *under* the header (still technically in the
-// window viewport) is treated as out-of-view. Without this, the
-// header label would only appear once the title fully cleared the
-// header, leaving a window where both titles read at once.
+// rootMargin top is shrunk by (editor header height + sidebar floating
+// top inset) so a title that has scrolled *under* the header (still
+// technically in the window viewport) is treated as out-of-view.
+// Without this, the header label would only appear once the title
+// fully cleared the header, leaving a window where both titles read
+// at once. The +12px matches SidebarInset's pt-3 in AppShell.tsx —
+// keep in sync if that token changes.
 
 import { useEffect, type RefObject } from 'react'
 import { usePageHeaderStore } from '@/state/pageHeaderStore'
@@ -19,6 +21,7 @@ export function useObservePageTitle(ref: RefObject<HTMLElement | null>): void {
 
     const setTitleInView = usePageHeaderStore.getState().setTitleInView
     const headerH = parseHeaderHeight() ?? 44
+    const TOP_INSET = 12 // matches SidebarInset pt-3 in AppShell.tsx
 
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -26,7 +29,7 @@ export function useObservePageTitle(ref: RefObject<HTMLElement | null>): void {
       },
       {
         root: null,
-        rootMargin: `-${headerH}px 0px 0px 0px`,
+        rootMargin: `-${headerH + TOP_INSET}px 0px 0px 0px`,
         threshold: 0,
       },
     )
