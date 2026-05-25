@@ -75,13 +75,14 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
     >
       <CloseConfirmDialog />
       <AppSidebar />
-      {/* mt-0 + rounded-t-none pulls the inset card flush to the window's
-          top edge so EditorHeader and the right panel's tab bar start at
-          window y=0 — the same baseline the macOS traffic lights live on.
-          Without this the inset's default m-2 left those headers 8px
-          below the stoplights. The window's own corner radius hides the
-          square top-left/top-right edges. */}
-      <SidebarInset className="overflow-hidden mt-0 rounded-t-none">
+      {/* Pull the inset card flush to the window's top edge so EditorHeader
+          and the right panel's tab bar start at window y=0 — the same
+          baseline the macOS traffic lights live on. shadcn's SidebarInset
+          ships `md:peer-data-[variant=inset]:m-2` (8px on all sides) and
+          unconditional `mt-0` doesn't share that prefix, so tailwind-merge
+          treats them as separate groups and the m-2 top still wins. Match
+          the prefix exactly so the override actually lands. */}
+      <SidebarInset className="overflow-hidden md:peer-data-[variant=inset]:mt-0 rounded-t-none">
         <ResizablePanelGroup orientation="horizontal" className="h-full">
           <ResizablePanel defaultSize={75} minSize={40}>
             <div data-editor-panel className="relative flex h-full flex-col">

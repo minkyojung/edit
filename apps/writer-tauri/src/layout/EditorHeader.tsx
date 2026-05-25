@@ -58,11 +58,8 @@ export function EditorHeader({
   return (
     <div
       data-tauri-drag-region
-      className="absolute left-0 right-0 z-sticky flex items-center"
-      style={{
-        top: 'calc((var(--header-h) - 36px) / 2)',
-        height: '36px',
-      }}
+      className="absolute top-0 left-0 right-0 z-sticky flex items-center"
+      style={{ height: 'var(--header-h)' }}
     >
       {/* Traffic-light reservation is only needed when the sidebar is
           collapsed — otherwise the sidebar paints over the stoplight
