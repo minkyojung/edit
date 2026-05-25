@@ -51,6 +51,7 @@ import {
 } from './aiEditGutterPlugin'
 import { createPlaceholderPlugin } from './placeholderPlugin'
 import { useDocsStore } from '@/state/docsStore'
+import { useEditorViewStore } from '@/state/editorViewStore'
 import { useGitStore, isAiEditCommit } from '@/state/gitStore'
 import { usePendingEditsStore } from '@/state/pendingEditsStore'
 import { getActiveVaultPath } from '@/state/settingsStore'
@@ -244,11 +245,11 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .config((ctx) => {
         ctx.set(rootCtx, rootRef.current!)
         ctx.set(editorViewOptionsCtx, { attributes: { class: 'milkdown-editor-root' } })
-        // Explicit empty default so the editor's pre-collab doc state is
-        // documented rather than implicit. Collab's bindDoc replaces this
-        // once handle.contentReady resolves; the ctx exists to keep the
-        // pre-bind window deterministic if Milkdown's internal default
-        // ever changes between versions.
+        // Explicit empty default. Phase 5a of the Yjs-removal
+        // migration seeds the real body via a PM dispatch inside the
+        // post-create `.then` instead of through `defaultValueCtx`,
+        // because the markdown isn't loaded until `contentReady`
+        // resolves and `defaultValueCtx` is consumed synchronously.
         ctx.set(defaultValueCtx, '')
       })
       .config(configureListItemBlock)
@@ -376,54 +377,72 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         }
         editorRef.current = editor
 
-        // Wait for IndexedDB to finish hydrating the ydoc before binding
-        // the collab service. y-prosemirror's sync plugin runs an initial
-        // PM↔Y reconcile the moment it sees a ydoc; if we bind while the
-        // fragment is empty (pre-hydrate) and content fills in after,
-        // PM ends up with a doc where the hydrated paragraphs sit
-        // alongside new client items the initial reconcile created — the
-        // 1→2→4→8 doubling regression. Binding after contentReady means
-        // PM sees the fully-populated fragment from frame one and the
-        // initial reconcile is a no-op. contentReady spans IDB hydrate
-        // AND vault load (Path C) so binding waits for vault-sourced
-        // body + marks to land, not just the in-browser cache.
+        // Wait for the body to land on the handle before painting it
+        // into PM. contentReady resolves once both the Y.Doc fragment
+        // (legacy path) AND `handle.bodyMarkdown` (Phase 5a) are
+        // populated by `buildHandle`.
         await handle.contentReady
         if (!mounted) return
 
-        // All post-create setup runs in one ctx acquisition. After the
-        // Yjs-removal migration the editor stores its working copy in
-        // PM (not Y.Doc), so the bind-collab / build-UndoManager dance
-        // is gone. What remains is a one-shot hydrate: copy whatever
-        // applyVaultBodyToYDoc seeded into the Y.Doc fragment over into
-        // the PM doc via `yXmlFragmentToProseMirrorRootNode`, marked
-        // non-undoable so Cmd-Z doesn't strip the hydrate.
         editor.action((ctx) => {
           const view = ctx.get(editorViewCtx)
 
-          const xmlFragment = ydoc.getXmlFragment('prosemirror')
-          if (xmlFragment.length > 0) {
+          // Phase 5a of the Yjs-removal migration: prefer the
+          // markdown cache as the seed source. We parse + dispatch a
+          // non-undoable replace into PM. Falls back to the Y.Doc
+          // fragment hydrate when bodyMarkdown is empty AND the
+          // fragment isn't — that combination shouldn't occur in
+          // normal operation (both come from the same `.md` read in
+          // `buildHandle`), but the fallback is the safety net for
+          // the transition window.
+          const parser = useEditorViewStore.getState().parser
+          let seededFromMarkdown = false
+          if (handle.bodyMarkdown.trim().length > 0 && parser) {
             try {
-              const root = yXmlFragmentToProseMirrorRootNode(
-                xmlFragment,
-                view.state.schema,
-              )
-              view.dispatch(
-                view.state.tr
-                  .replaceWith(0, view.state.doc.content.size, root.content)
-                  .setMeta('addToHistory', false),
-              )
+              const node = parser(handle.bodyMarkdown.trim())
+              if (node) {
+                const live = view.state.schema.nodeFromJSON(node.toJSON())
+                view.dispatch(
+                  view.state.tr
+                    .replaceWith(0, view.state.doc.content.size, live.content)
+                    .setMeta('addToHistory', false),
+                )
+                seededFromMarkdown = true
+              }
             } catch (err) {
               console.warn(
-                '[MilkdownEditor] Y.Doc → PM hydrate failed',
+                '[MilkdownEditor] markdown → PM hydrate failed',
                 handle.slug,
                 err,
               )
             }
           }
-          // Brand-new docs with an empty fragment fall through: PM's
-          // schema-required minimal fill (one empty paragraph,
-          // installed by Milkdown's defaultValueCtx '') is what the
-          // user sees, and they start typing into a clean slate.
+
+          if (!seededFromMarkdown) {
+            // Legacy fallback: read the Y.Doc fragment and dispatch.
+            // Phase 5a step 8 removes this branch once the markdown
+            // seed is verified across all surfaces.
+            const xmlFragment = ydoc.getXmlFragment('prosemirror')
+            if (xmlFragment.length > 0) {
+              try {
+                const root = yXmlFragmentToProseMirrorRootNode(
+                  xmlFragment,
+                  view.state.schema,
+                )
+                view.dispatch(
+                  view.state.tr
+                    .replaceWith(0, view.state.doc.content.size, root.content)
+                    .setMeta('addToHistory', false),
+                )
+              } catch (err) {
+                console.warn(
+                  '[MilkdownEditor] Y.Doc → PM hydrate failed',
+                  handle.slug,
+                  err,
+                )
+              }
+            }
+          }
 
           // Parser / serializer come from the headless Milkdown built
           // at app boot (lib/headlessMilkdown.ts) — populated globally

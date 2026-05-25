@@ -53,20 +53,31 @@ export interface StoredMark {
 export interface CollabHandle {
   ydoc: Y.Doc
   slug: string
-  /** Resolves once the doc's body + marks have been hydrated into the
-   * ydoc. Sources, in order:
-   *   1. The vault file (.md + .marks.json) via applyVaultToHandle
+  /** Resolves once the doc's body has been hydrated. Sources, in order:
+   *   1. The vault `.md` file (via applyVaultBodyToYDoc + a parallel
+   *      read into `bodyMarkdown` — Phase 5a of the Yjs-removal
+   *      migration)
    *   2. Empty (for brand-new docs with no on-disk file yet — the
    *      auto-flush pipeline writes the first version on the next tick)
    *
-   * Callers that need to read/write content-dependent state (editor
-   * binding, mark application, dirty-bit observers, chat threads)
-   * await this before touching the ydoc.
-   *
-   * Path C: this is the ONLY hydration signal — IDB persistence is
-   * gone, so the ydoc lives only in memory for the session and the
-   * vault file is the durable surface. */
+   * Callers that need to read content-dependent state await this
+   * before touching `bodyMarkdown` or the ydoc fragment. Phase 5c will
+   * retire the ydoc; the contentReady gate moves with `bodyMarkdown`. */
   contentReady: Promise<void>
+  /** Markdown snapshot taken at hydrate time. Phase 5a of the Yjs-
+   * removal migration: the editor reads this as its
+   * `defaultValueCtx` seed (no Y.Doc fragment hydrate), and the three
+   * inactive-doc fragment readers (ingest/readDoc, useIdleTrigger,
+   * wikiService) fall back to it when no PM view is mounted. Updated
+   * on:
+   *   - initial vault load (buildHandle)
+   *   - external reload (handlesSlice.reloadFromVault)
+   *   - background body rewrite (createSlice.seed/replaceDocBody when
+   *     `activeViewForSlug` returns null)
+   * Active-view writes go through `applyMarkdownToEditor` instead;
+   * `flushDirty` then rewrites the `.md` and updates this cache on the
+   * next round. */
+  bodyMarkdown: string
 }
 
 /**

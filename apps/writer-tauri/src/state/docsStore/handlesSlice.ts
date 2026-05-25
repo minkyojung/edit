@@ -28,6 +28,8 @@ import { applyVaultBodyToYDoc, installDocSync } from '@/lib/docFileSync'
 import { writeDocMeta } from '@/hooks/useDocMeta'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
+import { pathForDoc } from '@/lib/docPaths'
+import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { isWikiDoc } from './helpers'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
@@ -193,7 +195,16 @@ function buildHandle(
   // begins AFTER the initial hydrate, so the seed doesn't register
   // as a fresh edit.
   let vaultSyncDisposer: (() => void) | null = null
-  const contentReady = (async () => {
+  const handle: CollabHandle = {
+    ydoc,
+    contentReady: Promise.resolve(), // assigned below after we build
+                                     // the real promise. Placeholder
+                                     // so the handle object can be
+                                     // captured by the IIFE.
+    slug,
+    bodyMarkdown: '',
+  }
+  handle.contentReady = (async () => {
     const fragment = ydoc.getXmlFragment('prosemirror')
     if (deriveLabel(fragment).length === 0) {
       const outcome = await applyVaultBodyToYDoc(ydoc, slug).catch((err) => {
@@ -204,6 +215,16 @@ function buildHandle(
         console.log(`[vault:load] hydrated ${slug} body from vault`)
       }
     }
+    // Phase 5a of the Yjs-removal migration: snapshot the live
+    // PM-equivalent markdown alongside the Y.Doc fragment hydrate.
+    // Right now this is a parallel read off disk (idempotent — the
+    // file just landed via applyVaultBodyToYDoc's parser path or was
+    // already there). Future steps swap the editor's mount seed from
+    // the fragment to this string, then retire the Y.Doc seed path
+    // entirely. Read failures collapse to empty markdown — the
+    // schema-fill in MilkdownEditor still gives the user a usable
+    // editor and the next flush rewrites the file.
+    handle.bodyMarkdown = await loadBodyMarkdown(slug, get)
     vaultSyncDisposer = installDocSync(slug, ydoc)
 
     // Ingest dirty-bit observer. Installed AFTER hydrate so the
@@ -217,11 +238,6 @@ function buildHandle(
       useIngestStore.getState().markEdited(slug)
     })
   })()
-  const handle: CollabHandle = {
-    ydoc,
-    contentReady,
-    slug,
-  }
   // Expose disposer via the handle's destroy chain by piggy-backing
   // on ydoc.destroy. closeDoc already calls ydoc.destroy(); add the
   // disposer call before destroying so observer cleanup runs while
@@ -305,4 +321,29 @@ export function scrubDailyTitleArtifacts(ydoc: Y.Doc): void {
   ydoc.transact(() => {
     ytext.delete(0, ytext.length)
   }, 'doc-init')
+}
+
+/** Read the doc's vault `.md` file as a plain string for the new
+ * `bodyMarkdown` cache on `CollabHandle`. Returns '' for brand-new
+ * docs (no file yet) and for any disk-read failure — the empty
+ * string maps cleanly to "let the editor's schema-fill seed an
+ * empty paragraph" downstream. */
+async function loadBodyMarkdown(
+  slug: string,
+  get: GetDocsState,
+): Promise<string> {
+  const state = get()
+  const known = state.knownDocs.find((d) => d.slug === slug)
+  if (!known) return ''
+  const getDoc = (s: string) =>
+    state.knownDocs.find((d) => d.slug === s)
+  const mdPath = pathForDoc(known, getDoc)
+  if (!mdPath) return ''
+  try {
+    if (!(await vaultFileExists(mdPath))) return ''
+    return await readVaultFile(mdPath)
+  } catch (err) {
+    console.warn('[vault:load] bodyMarkdown read failed for', slug, err)
+    return ''
+  }
 }
