@@ -20,6 +20,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { TAHOE_CHROME } from '@/lib/chrome'
 import { useDocsStore } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { DocumentInfoDialog } from './DocumentInfoDialog'
@@ -55,7 +56,10 @@ export function DocMenu({ editorView }: Props) {
                 size="icon-sm"
                 disabled={disabled}
                 aria-label="Document actions"
-                className="cursor-pointer text-muted-foreground transition-colors hover:text-foreground"
+                className={cn(
+                  'cursor-pointer text-muted-foreground transition-colors hover:text-foreground',
+                  TAHOE_CHROME,
+                )}
               >
                 <IconDots size={16} stroke={1.75} />
               </Button>

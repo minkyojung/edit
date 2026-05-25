@@ -28,6 +28,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { TAHOE_CHROME } from '@/lib/chrome'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useGitStore } from '@/state/gitStore'
 import { EditorTabs } from '@/editor/EditorTabs'
@@ -49,14 +50,6 @@ const STATUS_LABEL: Record<CollabStatus, string | null> = {
   error: 'Storage error',
 }
 
-// Shared Tahoe-style chrome treatment for single-button capsules
-// (SidebarTrigger, ContextPanelTrigger) and pill groups
-// (NavHistoryButtons). Same fill / border / inner highlight / bottom
-// rim shadow so all three read as one chrome family. Buttons get
-// rounded-full so the Button's default rounded-4xl is overridden and
-// the border traces a clean circle.
-const TAHOE_CHROME =
-  'rounded-full border border-foreground/10 bg-foreground/[0.06] shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground)_8%,transparent),0_1px_0_color-mix(in_oklch,var(--background)_60%,transparent)] hover:bg-foreground/[0.08]'
 
 export function EditorHeader({
   showSidebarTrigger,

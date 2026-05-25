@@ -11,6 +11,7 @@
 import { IconArrowLeft, IconArrowRight } from '@tabler/icons-react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
+import { TAHOE_CHROME } from '@/lib/chrome'
 import {
   Tooltip,
   TooltipContent,
@@ -27,7 +28,7 @@ export function NavHistoryButtons() {
     // hover wash on the active button is the only thing that
     // distinguishes them, matching macOS Tahoe's nav-history pill.
     <div
-      className="inline-flex h-8 items-center rounded-full border border-foreground/10 bg-foreground/[0.06] shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground)_8%,transparent),0_1px_0_color-mix(in_oklch,var(--background)_60%,transparent)]"
+      className={`inline-flex h-8 items-center ${TAHOE_CHROME}`}
       role="group"
       aria-label="Navigation history"
     >
