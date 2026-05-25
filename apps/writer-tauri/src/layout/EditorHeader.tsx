@@ -57,8 +57,11 @@ export function EditorHeader({
   return (
     <div
       data-tauri-drag-region
-      className="absolute top-0 left-0 right-0 z-sticky flex items-center bg-background"
-      style={{ height: 'var(--header-h)' }}
+      className="absolute left-0 right-0 z-sticky flex items-center bg-background"
+      style={{
+        top: 'calc((var(--header-h) - 36px) / 2)',
+        height: '36px',
+      }}
     >
       {showSidebarTrigger && (
         <>
