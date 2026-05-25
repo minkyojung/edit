@@ -20,12 +20,23 @@ import {
 export function NavHistoryButtons() {
   const navigate = useNavigate()
   return (
-    <>
+    // Tahoe-style pill group: a single rounded-full container with
+    // a subtle fill, a 1px outer border that hugs the whole capsule,
+    // an inner top highlight, and a 1px bottom rim shadow for the
+    // "Liquid Glass" emboss. No divider between the two buttons —
+    // hover wash on the active button is the only thing that
+    // distinguishes them, matching macOS Tahoe's nav-history pill.
+    <div
+      className="inline-flex h-8 items-center rounded-full border border-foreground/10 bg-foreground/[0.06] shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground)_8%,transparent),0_1px_0_color-mix(in_oklch,var(--background)_60%,transparent)]"
+      role="group"
+      aria-label="Navigation history"
+    >
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
             size="icon-sm"
+            className="rounded-full hover:bg-foreground/[0.08]"
             onClick={() => navigate(-1)}
             aria-label="Go back"
           >
@@ -39,6 +50,7 @@ export function NavHistoryButtons() {
           <Button
             variant="ghost"
             size="icon-sm"
+            className="rounded-full hover:bg-foreground/[0.08]"
             onClick={() => navigate(1)}
             aria-label="Go forward"
           >
@@ -47,6 +59,6 @@ export function NavHistoryButtons() {
         </TooltipTrigger>
         <TooltipContent side="bottom">Forward (⌘])</TooltipContent>
       </Tooltip>
-    </>
+    </div>
   )
 }
