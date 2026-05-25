@@ -197,7 +197,7 @@ export function AppSidebar() {
   }, [openDaily, createChildNote, findDailyAncestorSlug, navigate])
 
   return (
-    <Sidebar variant="inset" className="p-0">
+    <Sidebar>
       <SidebarHeader
         data-tauri-drag-region
         className="flex flex-row items-center p-0 pr-3"

@@ -1,21 +1,28 @@
 // Top window-chrome row above the editor canvas. Sits at --header-h so it
 // lines up with the sidebar header and the chat panel's matching header row.
+// All chrome buttons share the Tahoe-style treatment defined in
+// lib/chrome.ts (translucent fill + hairline border + emboss).
 //
-// Layout zones, left to right:
-//   1. Traffic-light spacer (--traffic-light-w). Drag region — gives
-//      macOS room to paint the stoplight buttons over our content.
-//      Only rendered when the sidebar is collapsed; otherwise the
-//      sidebar paints over this region.
-//   2. Sidebar trigger — only when the sidebar is collapsed; sits
-//      right next to the stoplights, matching how Linear / Cursor
-//      tuck their reveal-sidebar control.
-//   3. Document tabs — pulled up from their own row so the second
-//      header row can host the formatting toolbar. The strip is the
-//      flexible slot, and the macOS window-drag area collapses to
-//      the traffic-light spacer (sufficient for normal use).
-//   4. Collab status label — surfaced just before actions when the
-//      doc isn't connected; hidden during a healthy connection.
-//   5. Actions — DocMenu + chat-panel toggle.
+// Structure: a 3-column flex row. Equal flex-1 columns so the centered
+// active-doc label sits in the visual middle regardless of how the side
+// clusters grow.
+//
+//   ┌───────────────────────┬───────────────────────┬───────────────────────┐
+//   │ Left cluster          │ Center                │ Right cluster         │
+//   │ pl-3, gap-2           │ justify-center        │ pr-3, gap-2, end      │
+//   │                       │                       │                       │
+//   │ [stoplight spacer]*   │ <EditorTabs>          │ [collab status]?      │
+//   │ <SidebarTrigger>      │  (active-doc chip)    │ <DocMenu>             │
+//   │ <NavHistoryButtons>   │                       │ <ContextPanelTrigger> │
+//   └───────────────────────┴───────────────────────┴───────────────────────┘
+//   * Stoplight spacer is only rendered when the sidebar is collapsed —
+//     otherwise the sidebar paints over the traffic-light zone and the
+//     editor header starts right after the sidebar's right edge.
+//
+// The whole row is data-tauri-drag-region so empty bands between the
+// clusters double as window-drag handles. Interactive children
+// (buttons, the active-doc chip's pointer-events-auto column) opt out
+// of dragging via the standard Tauri exclusion list.
 
 import { IconLayoutSidebarRightFilled } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
