@@ -24,6 +24,7 @@ import * as Y from 'yjs'
 import { useIngestStore } from '../ingestStore'
 import { deriveLabel } from '@/lib/docLabel'
 import { applyVaultBodyToYDoc, installDocSync } from '@/lib/docFileSync'
+import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
 import { writeDocMeta } from '@/hooks/useDocMeta'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
@@ -139,20 +140,18 @@ export const createHandlesSlice = (
         const parser = useEditorViewStore.getState().parser
         if (view && parser) {
           try {
-            if (refreshedMarkdown.trim().length > 0) {
-              const node = parser(refreshedMarkdown.trim())
-              if (node) {
-                const live = view.state.schema.nodeFromJSON(node.toJSON())
-                view.dispatch(
-                  view.state.tr
-                    .replaceWith(0, view.state.doc.content.size, live.content)
-                    .setMeta('addToHistory', false),
-                )
-              }
-            } else {
-              // User genuinely emptied the file externally — clear
-              // PM to match. (Distinguished from "couldn't read"
-              // above by `loaded` vs `missing`/`error`.)
+            // `applyMarkdownToEditor` strips `<br />` noise, runs
+            // the schema rehydrate, and dispatches with
+            // `addToHistory: false` — shared with the mount-time
+            // hydrate. Returns false when the (post-strip) markdown
+            // is empty, which we treat as "user emptied the file
+            // externally" and clear PM to match.
+            const applied = applyMarkdownToEditor(
+              view,
+              refreshedMarkdown,
+              parser,
+            )
+            if (!applied) {
               view.dispatch(
                 view.state.tr
                   .delete(0, view.state.doc.content.size)

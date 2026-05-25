@@ -189,12 +189,33 @@ export function replaceMarkdownInYDoc(
  * Returns true on success, false when the parser yields nothing
  * (empty / whitespace-only markdown) — callers treat that as
  * "nothing to apply" rather than an error. */
+/** Drop standalone `<br />` lines from a markdown blob before it
+ * reaches the parser. Commonmark + gfm parse `<br />` as inline HTML
+ * and our PM schema has no node for raw HTML inline — so they fell
+ * through to literal text after the Phase 5a Step 8 switch from the
+ * Y.Doc fragment hydrate to the markdown parser. These tags live in
+ * legacy daily-doc bodies (a structural separator pattern from an
+ * earlier seed routine) and AI Edit calls preserve them as
+ * unchanged context, so without this strip every external reload
+ * paints `<br />` into the body verbatim.
+ *
+ * Self-healing: stripping at parse time means PM never sees the
+ * tags, so the next `flushDirty` round writes a `.md` without them
+ * and the noise fades on its own. */
+export function stripNoiseMarkdownLines(markdown: string): string {
+  if (!markdown.includes('<br')) return markdown
+  return markdown
+    .split('\n')
+    .filter((line) => !/^<br\s*\/?>$/i.test(line.trim()))
+    .join('\n')
+}
+
 export function applyMarkdownToEditor(
   view: EditorView,
   markdown: string,
   parser: MarkdownParser,
 ): boolean {
-  const trimmed = markdown.trim()
+  const trimmed = stripNoiseMarkdownLines(markdown).trim()
   if (trimmed.length === 0) return false
 
   let parsed: ReturnType<MarkdownParser>

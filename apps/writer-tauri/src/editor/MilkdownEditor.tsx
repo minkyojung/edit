@@ -55,6 +55,7 @@ import { useGitStore, isAiEditCommit } from '@/state/gitStore'
 import { usePendingEditsStore } from '@/state/pendingEditsStore'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { pathForDoc } from '@/lib/docPaths'
+import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
 import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { normalizeDailyBody } from '@/lib/docTitle'
@@ -394,25 +395,15 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
           // editor instead of a silent Y.Doc-only seed. Brand-new
           // docs (empty bodyMarkdown) fall through to Milkdown's
           // schema-fill (one empty paragraph).
+          //
+          // Reuse `applyMarkdownToEditor` so the noise-line strip
+          // (`<br />` etc.), schema rehydration, and the
+          // `addToHistory: false` meta stay in one place instead of
+          // being copy-pasted between the mount hydrate and the
+          // reloadFromVault dispatch.
           const parser = useEditorViewStore.getState().parser
-          if (handle.bodyMarkdown.trim().length > 0 && parser) {
-            try {
-              const node = parser(handle.bodyMarkdown.trim())
-              if (node) {
-                const live = view.state.schema.nodeFromJSON(node.toJSON())
-                view.dispatch(
-                  view.state.tr
-                    .replaceWith(0, view.state.doc.content.size, live.content)
-                    .setMeta('addToHistory', false),
-                )
-              }
-            } catch (err) {
-              console.warn(
-                '[MilkdownEditor] markdown → PM hydrate failed',
-                handle.slug,
-                err,
-              )
-            }
+          if (parser) {
+            applyMarkdownToEditor(view, handle.bodyMarkdown, parser)
           }
 
           // Parser / serializer come from the headless Milkdown built
