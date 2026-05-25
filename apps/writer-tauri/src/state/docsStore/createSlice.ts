@@ -256,6 +256,12 @@ export const createCreateSlice = (
     // still go through Y.Doc — the next mount picks them up via
     // MilkdownEditor's `yXmlFragmentToProseMirrorRootNode` hydrate.
     const activeView = activeViewForSlug(slug)
+    // Phase 5a of the Yjs-removal migration: keep `handle.bodyMarkdown`
+    // synchronised with whichever path lands. The cache feeds the
+    // mount-time hydrate (when the user reopens this slug later) and
+    // the 3 inactive-doc readers (ingest / idle / wiki) that step 5
+    // migrates off the Y.Doc fragment.
+    handle.bodyMarkdown = markdown
     if (activeView) {
       return applyMarkdownToEditor(activeView, markdown, parser)
     }
@@ -281,6 +287,8 @@ export const createCreateSlice = (
     // user's current view land via PM dispatch; everything else
     // stages into Y.Doc for the next mount.
     const activeView = activeViewForSlug(slug)
+    // See seedDocBody for the bodyMarkdown rationale.
+    handle.bodyMarkdown = markdown
     if (activeView) {
       return applyMarkdownToEditor(activeView, markdown, parser)
     }

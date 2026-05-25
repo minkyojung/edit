@@ -349,9 +349,13 @@ export function readWikiMarkdown(slug: string | null): string {
     }
   }
 
-  const fragment = handle.ydoc.getXmlFragment('prosemirror')
-  const text = fragment.toString().trim()
-  if (isEffectivelyEmpty(text)) return ''
-  return text
+  // Phase 5a of the Yjs-removal migration: read `handle.bodyMarkdown`
+  // instead of the Y.Doc fragment. The cache survives schema
+  // structure (headings, lists, links) where the previous
+  // `fragment.toString()` collapsed everything to flat text — same
+  // win as the ingest reader migration.
+  const trimmed = handle.bodyMarkdown.trim()
+  if (isEffectivelyEmpty(trimmed)) return ''
+  return trimmed
 }
 

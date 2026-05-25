@@ -56,8 +56,14 @@ export function readDocMarkdown(slug: string): string {
     }
   }
 
-  const text = extractFragmentText(handle.ydoc.getXmlFragment('prosemirror'))
-  const trimmed = text.trim()
+  // Phase 5a of the Yjs-removal migration: the inactive-doc fallback
+  // reads `handle.bodyMarkdown` instead of walking the Y.Doc fragment
+  // for text. The cache is populated by `buildHandle` at load time
+  // and refreshed by `seedDocBody` / `replaceDocBody` /
+  // `reloadFromVault` whenever the body is rewritten. Real markdown
+  // structure (headings, lists, code) survives, where the previous
+  // `extractFragmentText` path collapsed everything to flat text.
+  const trimmed = handle.bodyMarkdown.trim()
   if (isEffectivelyEmpty(trimmed)) return ''
   return trimmed
 }

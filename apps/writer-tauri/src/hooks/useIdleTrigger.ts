@@ -173,11 +173,11 @@ function readDocLength(slug: string): number {
     if (view) return effectiveLength(view.state.doc.textContent)
   }
 
-  // Fallback: count the Y.XmlFragment's serialized text. Loses
-  // structural markdown but only the visible characters matter
-  // for the gate.
-  const fragment = handle.ydoc.getXmlFragment('prosemirror')
-  return effectiveLength(fragment.toString())
+  // Phase 5a of the Yjs-removal migration: count characters off the
+  // `handle.bodyMarkdown` cache instead of the Y.Doc fragment's flat
+  // toString. The cache is the same content the editor seeded PM
+  // with, so the visible-character count stays accurate.
+  return effectiveLength(handle.bodyMarkdown)
 }
 
 /** Run an ingest pass against a specific note slug. Returns the

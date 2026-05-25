@@ -21,7 +21,6 @@
  */
 
 import * as Y from 'yjs'
-import { yXmlFragmentToProseMirrorRootNode } from 'y-prosemirror'
 import { useIngestStore } from '../ingestStore'
 import { deriveLabel } from '@/lib/docLabel'
 import { applyVaultBodyToYDoc, installDocSync } from '@/lib/docFileSync'
@@ -99,6 +98,18 @@ export const createHandlesSlice = (
   reloadFromVault: async (slug) => {
     const handle = get().handles[slug]
     if (!handle?.ydoc) return
+    // Phase 5a of the Yjs-removal migration: read the freshly-edited
+    // markdown straight off disk and treat it as the source of
+    // truth — both for `handle.bodyMarkdown` (the cache the next
+    // mount + the 3 inactive-doc readers consume) and for the live
+    // PM dispatch when this slug is active. The Y.Doc fragment is
+    // still hydrated for the transition window so the legacy mount-
+    // time fallback in MilkdownEditor stays meaningful; once 5a
+    // step 8 retires that fallback, the `applyVaultBodyToYDoc` call
+    // and the `import { yXmlFragmentToProseMirrorRootNode }` follow it
+    // out.
+    const refreshedMarkdown = await loadBodyMarkdown(slug, get)
+    handle.bodyMarkdown = refreshedMarkdown
     const outcome = await applyVaultBodyToYDoc(handle.ydoc, slug, {
       reload: true,
     }).catch((err) => {
@@ -106,28 +117,30 @@ export const createHandlesSlice = (
       return 'no-vault' as const
     })
     if (outcome === 'applied') {
-      // Phase 3 of the Yjs-removal migration: with `@milkdown/plugin-collab`
-      // gone, an applyUpdate to the handle's Y.Doc no longer propagates
-      // into the live ProseMirror EditorState. When the reloaded slug
-      // matches the currently-mounted editor, push the freshly-hydrated
-      // fragment into PM ourselves via a non-undoable replace. Inactive
-      // slugs don't need this — their next mount reads the fragment the
-      // same way (see MilkdownEditor.tsx's post-create hydrate).
       const activeSlug = getActiveSlugFromHash()
       if (activeSlug === slug) {
         const view = useEditorViewStore.getState().view
-        if (view) {
+        const parser = useEditorViewStore.getState().parser
+        if (view && parser) {
           try {
-            const fragment = handle.ydoc.getXmlFragment('prosemirror')
-            const root = yXmlFragmentToProseMirrorRootNode(
-              fragment,
-              view.state.schema,
-            )
-            view.dispatch(
-              view.state.tr
-                .replaceWith(0, view.state.doc.content.size, root.content)
-                .setMeta('addToHistory', false),
-            )
+            if (refreshedMarkdown.trim().length > 0) {
+              const node = parser(refreshedMarkdown.trim())
+              if (node) {
+                const live = view.state.schema.nodeFromJSON(node.toJSON())
+                view.dispatch(
+                  view.state.tr
+                    .replaceWith(0, view.state.doc.content.size, live.content)
+                    .setMeta('addToHistory', false),
+                )
+              }
+            } else {
+              // External delete-to-empty: clear PM as well.
+              view.dispatch(
+                view.state.tr
+                  .delete(0, view.state.doc.content.size)
+                  .setMeta('addToHistory', false),
+              )
+            }
           } catch (err) {
             console.warn(
               '[vault:reload] PM dispatch failed for',
