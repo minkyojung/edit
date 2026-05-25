@@ -13,6 +13,7 @@ import { listItemBlockComponent } from '@milkdown/kit/component/list-item-block'
 import { yXmlFragmentToProseMirrorRootNode } from 'y-prosemirror'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
+import { createDirtyTrackerPlugin } from './dirtyTrackerPlugin'
 import { createDocVersionPlugin } from './docVersionPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
 import { formatStatePlugin } from './formatStatePlugin'
@@ -294,6 +295,12 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       // content spec.
       .use(proofSchemaPlugins)
       .use(createDocVersionPlugin())
+      // Flush-trigger: marks this slug dirty whenever PM's doc
+      // changes, so the auto-flush tick picks it up and writes the
+      // freshest markdown to disk. Replaces the Y.Doc fragment
+      // observer that the collab plugin used to power — see
+      // ./dirtyTrackerPlugin.ts for the migration context.
+      .use(createDirtyTrackerPlugin(handle.slug))
       .use(createFrozenSelectionPlugin())
       .use(formatStatePlugin)
       .use(inlineCodeSafeKeymap)
