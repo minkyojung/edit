@@ -35,6 +35,11 @@ libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
+# NSVisualEffectView wrapper. Apply_vibrancy injects a frosted-glass
+# layer below the WebView contentView so window-transparent gaps
+# (sidebar's floating inset, SidebarInset's pt-3 top strip) take on
+# the macOS Tahoe vibrancy tone instead of a flat fill.
+window-vibrancy = "0.5"
 
 [profile.release]
 panic = "abort"

@@ -153,6 +153,27 @@ pub fn run() {
                         }
                     }
                 }
+
+                // Inject NSVisualEffectView under the WebView so the
+                // window-frame gaps around the floating sidebar pick
+                // up the macOS Tahoe frosted-glass tone instead of a
+                // flat fill. CSS layers above (body bg, sidebar card,
+                // editor canvas) decide how much of the vibrancy
+                // shows through — opaque tokens fully cover it. With
+                // body currently painted in --sidebar this commit
+                // wires the infrastructure without immediate visual
+                // change; a follow-up flips body to transparent.
+                if let Some(main_window) = app.get_webview_window("main") {
+                    use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+                    if let Err(e) = apply_vibrancy(
+                        &main_window,
+                        NSVisualEffectMaterial::Sidebar,
+                        None,
+                        None,
+                    ) {
+                        eprintln!("[chrome] apply_vibrancy failed: {e}");
+                    }
+                }
             }
 
             // proof-server spawn removed (Phase 3.D). The app now boots
