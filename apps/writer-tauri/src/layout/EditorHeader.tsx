@@ -55,6 +55,28 @@ export function EditorHeader({
 }: EditorHeaderProps) {
   const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
   return (
+    <>
+      {/* Blur band sits just below the opaque header, on top of the
+          mask-faded scroll content. The scroll container's mask paints
+          the first ~1rem of doc content at partial alpha; this band
+          applies backdrop-filter blur over that partial-alpha layer so
+          incoming lines feather in with a real defocus rather than
+          just dissolve. The band's own mask fades it out vertically
+          so the blur weakens as content becomes fully opaque below.
+          If WKWebView no-ops backdrop-filter, the band is invisible
+          and we still have the mask fade — graceful degradation. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-0 right-0"
+        style={{
+          top: 'var(--header-h)',
+          height: '1.5rem',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          maskImage: 'linear-gradient(to bottom, black, transparent)',
+          WebkitMaskImage: 'linear-gradient(to bottom, black, transparent)',
+        }}
+      />
     <div
       data-tauri-drag-region
       // Opaque sticky toolbar. Tried HTML frosted glass + native
@@ -96,6 +118,7 @@ export function EditorHeader({
         <ContextPanelTrigger />
       </div>
     </div>
+    </>
   )
 }
 
