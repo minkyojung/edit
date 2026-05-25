@@ -49,6 +49,15 @@ const STATUS_LABEL: Record<CollabStatus, string | null> = {
   error: 'Storage error',
 }
 
+// Shared Tahoe-style chrome treatment for single-button capsules
+// (SidebarTrigger, ContextPanelTrigger) and pill groups
+// (NavHistoryButtons). Same fill / border / inner highlight / bottom
+// rim shadow so all three read as one chrome family. Buttons get
+// rounded-full so the Button's default rounded-4xl is overridden and
+// the border traces a clean circle.
+const TAHOE_CHROME =
+  'rounded-full border border-foreground/10 bg-foreground/[0.06] shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground)_8%,transparent),0_1px_0_color-mix(in_oklch,var(--background)_60%,transparent)] hover:bg-foreground/[0.08]'
+
 export function EditorHeader({
   showSidebarTrigger,
   editorView,
@@ -79,15 +88,15 @@ export function EditorHeader({
           before the cluster columns shrink. */}
       <div
         data-tauri-drag-region
-        className="flex flex-1 items-center self-stretch"
+        className="flex flex-1 items-center gap-2 self-stretch pl-3"
       >
-        <SidebarTrigger />
+        <SidebarTrigger className={TAHOE_CHROME} />
         <NavHistoryButtons />
       </div>
       <div className="flex min-w-0 flex-1 items-center justify-center">
         <EditorTabs />
       </div>
-      <div className="flex flex-1 items-center justify-end gap-0.5 pr-1">
+      <div className="flex flex-1 items-center justify-end gap-2 pr-3">
         {statusLabel && (
           <span
             className={cn(
@@ -125,6 +134,7 @@ function ContextPanelTrigger() {
           onClick={toggle}
           className={cn(
             'relative cursor-pointer transition-colors',
+            TAHOE_CHROME,
             open ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
           )}
           aria-label={open ? 'Hide right panel' : 'Show right panel'}
