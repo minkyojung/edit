@@ -59,12 +59,18 @@ export function EditorHeader({
       data-tauri-drag-region
       // Sticky frosted toolbar. Sits absolute on top of the editor
       // panel so the scroll content underneath slides BEHIND the
-      // header — backdrop-blur then frosts those scrolled lines.
-      // bg-background/70 keeps just enough tint that header glyphs
-      // stay legible against arbitrary doc content. data-editor-panel
-      // is `relative` already, so absolute coords resolve there.
-      className="absolute left-0 right-0 top-0 z-sticky flex items-center bg-background/70 backdrop-blur-xl"
-      style={{ height: 'var(--header-h)' }}
+      // header — the backdrop-filter then frosts those scrolled
+      // lines. Inline style applies both standard and -webkit
+      // backdrop-filter (WKWebView won't pick up Tailwind's
+      // unprefixed util reliably) and pairs blur with saturate to
+      // keep the macOS Tahoe vibrancy color feel. bg-background/55
+      // leaves enough transparency that the blur reads clearly.
+      className="absolute left-0 right-0 top-0 z-sticky flex items-center bg-background/55"
+      style={{
+        height: 'var(--header-h)',
+        backdropFilter: 'blur(32px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(32px) saturate(180%)',
+      }}
     >
       {showSidebarTrigger && (
         <>
