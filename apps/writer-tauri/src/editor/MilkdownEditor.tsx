@@ -513,12 +513,22 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
 
   return (
     <div className="relative flex h-full w-full flex-col">
-      <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* Mask gradient creates a soft fade-out where scrolled lines meet
+          the EditorHeader: top of the scroll container (the header's
+          y-range) is masked transparent, with a 1rem fade-in band just
+          below. Content scrolls up under the opaque header and is
+          smoothly erased at the seam rather than abruptly clipped. */}
+      <div
+        className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        style={{
+          maskImage:
+            'linear-gradient(to bottom, transparent 0, transparent var(--header-h), black calc(var(--header-h) + 1rem))',
+          WebkitMaskImage:
+            'linear-gradient(to bottom, transparent 0, transparent var(--header-h), black calc(var(--header-h) + 1rem))',
+        }}
+      >
         {/* pt accounts for the EditorHeader overlay (var(--header-h))
-            plus the original 3rem of breathing room before PageHeader.
-            Padding lives on the inner content (not the scroll container)
-            so scrolled lines can slide under the frosted header — a
-            scroll-container padding would just leave a permanent gap. */}
+            plus the original 3rem of breathing room before PageHeader. */}
         <div className="mx-auto max-w-2xl px-8 pb-12" style={{ paddingTop: 'calc(var(--header-h) + 3rem)' }}>
           {header}
           <div ref={rootRef} />

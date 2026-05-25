@@ -57,22 +57,16 @@ export function EditorHeader({
   return (
     <div
       data-tauri-drag-region
-      // Sticky frosted toolbar (HTML fake-frost). Background color is
-      // applied inline via color-mix so the alpha is guaranteed —
-      // Tailwind 4's `bg-background/80` modifier silently degraded to
-      // transparent in this WKWebView setup, leaving the header fully
-      // see-through. color-mix(in oklch, var(--background) 85%,
-      // transparent) keeps the CSS var theming (light/dark switch
-      // continues to work) while pinning the alpha. blur(28) +
-      // saturate(160%) inline because Tailwind's backdrop utils don't
-      // always apply in WKWebView either.
-      className="absolute left-0 right-0 top-0 z-sticky flex items-center"
-      style={{
-        height: 'var(--header-h)',
-        backgroundColor: 'color-mix(in oklch, var(--background) 85%, transparent)',
-        backdropFilter: 'blur(28px) saturate(160%)',
-        WebkitBackdropFilter: 'blur(28px) saturate(160%)',
-      }}
+      // Opaque sticky toolbar. Tried HTML frosted glass + native
+      // NSToolbar vibrancy; neither held up in WKWebView reliably
+      // (backdrop-filter and Tailwind alpha modifiers both no-op'd
+      // on this setup). The Claude.ai pattern works without either:
+      // header sits opaque over the editor canvas, and the body
+      // content fades out into the header's bottom edge via a mask
+      // on the scroll container (handled in MilkdownEditor). That
+      // gives readable header chrome + a soft seam to the doc.
+      className="absolute left-0 right-0 top-0 z-sticky flex items-center bg-background"
+      style={{ height: 'var(--header-h)' }}
     >
       {showSidebarTrigger && (
         <>
