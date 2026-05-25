@@ -57,15 +57,19 @@ export function EditorHeader({
   return (
     <div
       data-tauri-drag-region
-      // Sticky toolbar overlay. Background stays transparent so the
-      // macOS NSToolbar's automatic vibrancy (attached in lib.rs)
-      // paints through this region — that's the OS-level frosted
-      // glass Finder/Mail use. tauri.conf's transparent:true is
-      // required for the WebView to let the native effect show; if
-      // that's off the area falls back to whatever sits underneath
-      // (data-editor-panel's bg, currently --background).
-      className="absolute left-0 right-0 top-0 z-sticky flex items-center bg-transparent"
-      style={{ height: 'var(--header-h)' }}
+      // Sticky frosted toolbar (HTML fake-frost). The native NSToolbar
+      // path didn't trigger automatic vibrancy on this Tauri/WKWebView
+      // combo, so the header paints its own backdrop instead. Higher
+      // bg opacity (0.8) keeps the active-doc label readable over any
+      // doc content; blur(28) + saturate(160%) gives a close-enough
+      // Tahoe tone. Inline filter style is needed because WKWebView
+      // doesn't always pick up Tailwind's unprefixed backdrop utils.
+      className="absolute left-0 right-0 top-0 z-sticky flex items-center bg-background/80"
+      style={{
+        height: 'var(--header-h)',
+        backdropFilter: 'blur(28px) saturate(160%)',
+        WebkitBackdropFilter: 'blur(28px) saturate(160%)',
+      }}
     >
       {showSidebarTrigger && (
         <>
