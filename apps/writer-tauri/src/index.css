@@ -25,16 +25,14 @@
 
   body {
     -webkit-font-smoothing: antialiased;
-    /* Window-frame tone. Inner panels (SidebarInset, sidebar card,
-       chat panel) paint their own bg-background / bg-sidebar surfaces
-       on top; this only shows through the outer gaps — the floating
-       sidebar's p-2/p-3 inset and SidebarInset's pt-3 top strip.
-       Using --sidebar here makes those gaps read as the sidebar's
-       outer padding instead of a black void in dark mode (where
-       --background sits well below --sidebar in lightness). */
-    background-color: var(--sidebar);
+    /* Window-frame tone follows the content canvas (--background), not
+       the sidebar. That makes the floating sidebar read as a card
+       *over* the canvas — the outer gaps around the sidebar are the
+       same tone as the editor surface, so the card appears lifted
+       rather than embedded in a separate strip. */
+    background-color: var(--background);
     color: var(--foreground);
-    @apply text-foreground;
+    @apply bg-background text-foreground;
   }
   /* In fullscreen macOS hides the traffic-light buttons, so the 80px
      reservation on the left of EditorHeader / SidebarHeader stops
