@@ -25,14 +25,13 @@
 
   body {
     -webkit-font-smoothing: antialiased;
-    /* Window-frame tone. Inner panels (SidebarInset, sidebar card,
-       chat panel) paint their own bg-background / bg-sidebar surfaces
-       on top; this only shows through the outer gaps — the floating
-       sidebar's p-2/p-3 inset and SidebarInset's pt-3 top strip.
-       Using --sidebar here makes those gaps read as the sidebar's
-       outer padding instead of a black void in dark mode (where
-       --background sits well below --sidebar in lightness). */
-    background-color: var(--sidebar);
+    /* Transparent so the NSVisualEffectView installed in lib.rs
+       (apply_vibrancy, Sidebar material) shows through the outer
+       window-frame gaps — the floating sidebar's p-2/p-3 inset and
+       SidebarInset's pt-3 top strip. Inner panels keep their own
+       bg-background / bg-sidebar / bg-card tokens, so the frosted
+       glass is confined to gaps the chrome doesn't paint over. */
+    background-color: transparent;
     color: var(--foreground);
     @apply text-foreground;
   }
@@ -229,9 +228,10 @@
      decoration is `Decoration.node`, so the class lands on the
      block's own element; position:relative + ::before paints the
      bar in the margin without affecting layout.
-       add     — green (insertion)
-       replace — amber (mixed add+remove)
-       remove  — red   (pure deletion)
+       add     — green  (insertion, committed)
+       replace — amber  (mixed add+remove, committed)
+       remove  — red    (pure deletion, committed)
+       pending — orange (Edit waiting on user Apply/Reject)
      `left` matches the editor's left padding so the bar sits in the
      visible gutter rather than overlapping body text. */
   .ProseMirror .ai-edit-gutter {
@@ -256,6 +256,27 @@
   }
   .ProseMirror .ai-edit-gutter--remove {
     --ai-edit-gutter-color: oklch(0.68 0.20 25);
+  }
+  /* Pending: a warm orange that's adjacent to but distinct from
+     `replace` (amber), so a block can host both a committed-edit
+     marker AND a fresh proposal without the two reading as one.
+     The bar pulses slowly to communicate "waiting on you" — the
+     animation lives on ::before so we don't move the surrounding
+     block when the marker breathes. */
+  .ProseMirror .ai-edit-gutter--pending {
+    --ai-edit-gutter-color: oklch(0.76 0.18 55);
+  }
+  .ProseMirror .ai-edit-gutter--pending::before {
+    animation: ai-edit-gutter-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes ai-edit-gutter-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
   }
 
   /* Empty-body placeholder — the placeholderPlugin tags the first
