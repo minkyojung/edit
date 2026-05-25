@@ -10,10 +10,7 @@ import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { listItemBlockComponent } from '@milkdown/kit/component/list-item-block'
-import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
-import * as Y from 'yjs'
-import { UndoManager } from 'yjs'
-import { prosemirrorToYDoc, ySyncPluginKey } from 'y-prosemirror'
+import { yXmlFragmentToProseMirrorRootNode } from 'y-prosemirror'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
 import { createDocVersionPlugin } from './docVersionPlugin'
@@ -45,10 +42,7 @@ import {
   createWikilinkBrokenPlugin,
   wikilinkBrokenKey,
 } from './wikilinkBrokenPlugin'
-import {
-  historyProviderConfig,
-  historyProviderPlugin,
-} from '@milkdown/kit/plugin/history'
+import { history } from '@milkdown/kit/plugin/history'
 import {
   createAiEditGutterPlugin,
   aiEditGutterKey,
@@ -270,24 +264,21 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       // Obsidian convention. Registered after commonmark for the same
       // priority reason as listKeymap.
       .use(headingKeymap)
-      // PM history is loaded *dormant* here: the provider plugin
-      // tracks transactions onto a PM-native undo stack, but the
-      // matching keymap is NOT registered, so Cmd-Z / Cmd-Shift-Z
-      // continue to flow through y-prosemirror's yUndoPlugin (set up
-      // by the collab plugin below). Phase 3 of the Yjs-removal
-      // migration drops collab + UndoManager and registers
-      // historyKeymap to take over the chord — this two-step keeps
-      // the migration shippable, since the dormant plugin adds
-      // tracking overhead but zero behavior change. The original
-      // worry that motivated leaving PM history out entirely (mark
-      // accepts mutating Y.Map without a paired PM transaction,
-      // breaking accept → Cmd-Z → re-accept) no longer applies:
-      // the mark UI was removed in Phase 2 of the mark refactor and
-      // no live code path writes to ydoc.getMap('marks') today.
-      .use(historyProviderConfig)
-      .use(historyProviderPlugin)
+      // PM history owns Cmd-Z / Cmd-Shift-Z after the Yjs-removal
+      // migration. The `history` bundle from @milkdown/kit ships five
+      // pieces — config, provider plugin, keymap, undoCommand,
+      // redoCommand — all required together. Registering only the
+      // keymap (without the commands it dispatches to) leaves Cmd-Z
+      // captured but unhandled, which manifests as "Cmd-Z silently
+      // does nothing". The y-prosemirror yUndoPlugin (set up by the
+      // now-removed collab plugin) used to claim the chord; with
+      // collab gone, this bundle is the only handler. Behaviour is
+      // closer to user intent now, since the PM stack tracks only
+      // local transactions (external edits hydrated via
+      // `reloadFromVault` dispatch with `addToHistory: false`, so
+      // they don't pollute Cmd-Z).
+      .use(history)
       .use(clipboard)
-      .use(collab)
       // Daily docs: filter out leading h1s so the body never grows a
       // date heading that duplicates the external date label. Non-daily
       // docs have no structural body invariant — whatever the user
@@ -392,79 +383,40 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         await handle.contentReady
         if (!mounted) return
 
-        // All post-create setup runs in one ctx acquisition: seed an
-        // empty fragment, bind collab + UndoManager, expose the view to
-        // React, drain any scroll-to-mark request that arrived before
-        // this slug's editor mounted. The ordering here is meaningful —
-        // seed MUST precede bindDoc, and bindDoc must precede setPmView
-        // so React subscribers always see a fully-wired view.
+        // All post-create setup runs in one ctx acquisition. After the
+        // Yjs-removal migration the editor stores its working copy in
+        // PM (not Y.Doc), so the bind-collab / build-UndoManager dance
+        // is gone. What remains is a one-shot hydrate: copy whatever
+        // applyVaultBodyToYDoc seeded into the Y.Doc fragment over into
+        // the PM doc via `yXmlFragmentToProseMirrorRootNode`, marked
+        // non-undoable so Cmd-Z doesn't strip the hydrate.
         editor.action((ctx) => {
           const view = ctx.get(editorViewCtx)
 
-          // If hydration left the fragment empty (brand-new note),
-          // pre-seed it with the schema's minimal fill (one empty
-          // paragraph) before binding. y-prosemirror's sync plugin
-          // compares PM's filled doc against the fragment on first bind;
-          // an empty fragment vs PM's schema-required <paragraph/>
-          // triggers a PM→Y commit that puts an extra paragraph node
-          // into the fragment for good. After the user types into PM's
-          // paragraph, the fragment ends up with two paragraph items —
-          // the leading empty one is the visible regression. Seeding the
-          // same shape PM would have filled means the diff check is a
-          // no-op and no spurious commit fires.
           const xmlFragment = ydoc.getXmlFragment('prosemirror')
-          if (xmlFragment.length === 0) {
-            const fill = view.state.schema.topNodeType.createAndFill()
-            if (fill) {
-              const seedDoc = prosemirrorToYDoc(fill, 'prosemirror')
-              const update = Y.encodeStateAsUpdate(seedDoc)
-              Y.applyUpdate(ydoc, update, 'doc-init')
-              seedDoc.destroy()
+          if (xmlFragment.length > 0) {
+            try {
+              const root = yXmlFragmentToProseMirrorRootNode(
+                xmlFragment,
+                view.state.schema,
+              )
+              view.dispatch(
+                view.state.tr
+                  .replaceWith(0, view.state.doc.content.size, root.content)
+                  .setMeta('addToHistory', false),
+              )
+            } catch (err) {
+              console.warn(
+                '[MilkdownEditor] Y.Doc → PM hydrate failed',
+                handle.slug,
+                err,
+              )
             }
           }
-
-          // Build a Y.UndoManager that tracks BOTH the prosemirror
-          // XmlFragment (the doc itself) AND the marks Y.Map. Wiring
-          // both into the same undo stack means accept/reject's
-          // mutation on `marks` is reversed atomically with the PM
-          // transaction it accompanied — Cmd+Z after accept correctly
-          // restores the suggestion (PM mark + Y.Map metadata both
-          // come back), so a follow-up re-accept finds the content
-          // exactly where it was.
-          //
-          // trackedOrigins:
-          //   ySyncPluginKey  — y-prosemirror's PM-driven Yjs txns
-          //   mark-action     — acceptMark / rejectMark wraps (dispatch +
-          //                     marksMap mutation, see markActions.ts)
-          //   mark-cleanup    — markCleanupPlugin's microtask follow-up
-          //                     when the user deletes marked text
-          //                     manually. Tracking it means Backspace +
-          //                     Cmd+Z restores BOTH the text and the
-          //                     Y.Map metadata atomically; without it,
-          //                     the text comes back but the mark's
-          //                     stored content stays gone — same dual-
-          //                     source bug we just closed for accept.
-          //                     Yjs's captureTimeout merges the cleanup
-          //                     microtask with the original PM delete
-          //                     into one undo step, so Cmd+Z is one
-          //                     keystroke either way.
-          //
-          // Anything outside these origins stays out of the undo stack
-          // so a programmatic write can't be undone into existence.
-          const collabService = ctx.get(collabServiceCtx)
-          const marksMap = ydoc.getMap('marks')
-          const undoManager = new UndoManager([xmlFragment, marksMap], {
-            trackedOrigins: new Set([
-              ySyncPluginKey,
-              'mark-action',
-              'mark-cleanup',
-            ]),
-            captureTimeout: 500,
-          })
-          collabService.setOptions({ yUndoOpts: { undoManager } })
-          // No awareness (multi-cursor / presence) since Phase 3.C
-          // removed the WebSocket provider — local-only editor.
-          collabService.bindDoc(ydoc).connect()
+          // Brand-new docs with an empty fragment fall through: PM's
+          // schema-required minimal fill (one empty paragraph,
+          // installed by Milkdown's defaultValueCtx '') is what the
+          // user sees, and they start typing into a clean slate.
 
           // Parser / serializer come from the headless Milkdown built
           // at app boot (lib/headlessMilkdown.ts) — populated globally
@@ -497,9 +449,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
     return () => {
       mounted = false
       if (editorRef.current) {
-        editorRef.current.action((ctx) => {
-          ctx.get(collabServiceCtx).disconnect()
-        })
         editorRef.current.destroy()
         editorRef.current = null
       }
@@ -522,9 +471,9 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{
           maskImage:
-            'linear-gradient(to bottom, transparent 0, transparent var(--header-h), black calc(var(--header-h) + 1rem))',
+            'linear-gradient(to bottom, transparent 0, transparent var(--header-h), black calc(var(--header-h) + 1.5rem))',
           WebkitMaskImage:
-            'linear-gradient(to bottom, transparent 0, transparent var(--header-h), black calc(var(--header-h) + 1rem))',
+            'linear-gradient(to bottom, transparent 0, transparent var(--header-h), black calc(var(--header-h) + 1.5rem))',
         }}
       >
         {/* pt accounts for the EditorHeader overlay (var(--header-h))

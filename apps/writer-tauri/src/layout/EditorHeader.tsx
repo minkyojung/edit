@@ -70,7 +70,7 @@ export function EditorHeader({
         className="pointer-events-none absolute left-0 right-0"
         style={{
           top: 'var(--header-h)',
-          height: '1.5rem',
+          height: '2rem',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
           maskImage: 'linear-gradient(to bottom, black, transparent)',
