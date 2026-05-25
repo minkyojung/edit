@@ -606,4 +606,38 @@ if (import.meta.env.DEV) {
   }
   ;(window as unknown as { __applyVault: typeof applyHandle }).__applyVault = applyHandle
   ;(window as unknown as { __activeSlug: () => string | null }).__activeSlug = getActiveSlugFromHash
+  // Manual trigger for the active-doc body rewrite path. The Yjs-removal
+  // migration's Phase 4 swap (PM dispatch when the slug matches the
+  // active editor, Y.Doc fallback otherwise) is hard to exercise from
+  // the UI alone — no buttons drive `replaceDocBody` directly today.
+  // Run `__replaceActive('# new body')` from DevTools to confirm the
+  // active editor updates in place.
+  const replaceActive = async (markdown: string): Promise<boolean> => {
+    const slug = getActiveSlugFromHash()
+    if (!slug) return false
+    return useDocsStore.getState().replaceDocBody(slug, markdown)
+  }
+  ;(window as unknown as {
+    __replaceActive: typeof replaceActive
+  }).__replaceActive = replaceActive
+  // Diagnostics for the active-doc body rewrite path. Prints whatever
+  // `replaceDocBody` would see right now, so a confused test result
+  // can be traced back to "view missing" vs "slug mismatch" vs
+  // "parser missing" without sprinkling console.logs into the slice.
+  const diagnose = () => {
+    const slug = getActiveSlugFromHash()
+    const view = useEditorViewStore.getState().view
+    const parser = useEditorViewStore.getState().parser
+    const handle = slug ? useDocsStore.getState().handles[slug] : null
+    const out = {
+      activeSlug: slug,
+      hasView: Boolean(view),
+      hasParser: Boolean(parser),
+      hasHandle: Boolean(handle),
+      docSize: view?.state.doc.content.size ?? null,
+    }
+    console.log('[__diagnose]', out)
+    return out
+  }
+  ;(window as unknown as { __diagnose: typeof diagnose }).__diagnose = diagnose
 }

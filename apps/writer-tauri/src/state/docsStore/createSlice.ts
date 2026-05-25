@@ -21,8 +21,13 @@
 import { generateClientSlug } from '@/lib/slug'
 import { todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
 import { deriveLabel } from '@/lib/docLabel'
-import { replaceMarkdownInYDoc, seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
+import {
+  applyMarkdownToEditor,
+  replaceMarkdownInYDoc,
+  seedMarkdownIntoYDoc,
+} from '@/lib/seedMarkdown'
 import { useEditorViewStore } from '../editorViewStore'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { scrubDailyTitleArtifacts } from './handlesSlice'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
@@ -243,6 +248,17 @@ export const createCreateSlice = (
     // empty result means real text exists.
     const labelText = deriveLabel(handle.ydoc.getXmlFragment('prosemirror'))
     if (labelText.length > 0) return false
+    // Active-editor branch: when the slug we're seeding is the doc
+    // the user is currently viewing, write to PM directly so the
+    // mount-time hydrate's pre-Phase-3 assumption doesn't strand the
+    // seed inside a Y.Doc that no longer mirrors PM. Inactive slugs
+    // (e.g. background wiki page creation from a chat ingest pass)
+    // still go through Y.Doc — the next mount picks them up via
+    // MilkdownEditor's `yXmlFragmentToProseMirrorRootNode` hydrate.
+    const activeView = activeViewForSlug(slug)
+    if (activeView) {
+      return applyMarkdownToEditor(activeView, markdown, parser)
+    }
     return seedMarkdownIntoYDoc(handle.ydoc, markdown, parser)
   },
 
@@ -260,6 +276,25 @@ export const createCreateSlice = (
       console.warn('[docs] replaceDocBody: parser not ready, skipping', slug)
       return false
     }
+    // Active-editor branch — same rationale as seedDocBody above.
+    // Profile rebuilds and wiki ingest rewrites that target the
+    // user's current view land via PM dispatch; everything else
+    // stages into Y.Doc for the next mount.
+    const activeView = activeViewForSlug(slug)
+    if (activeView) {
+      return applyMarkdownToEditor(activeView, markdown, parser)
+    }
     return replaceMarkdownInYDoc(handle.ydoc, markdown, parser)
   },
 })
+
+/** Returns the live PM EditorView when, and only when, it belongs to
+ * `slug`. The view in `editorViewStore` is whichever doc is currently
+ * mounted; comparing against the URL-derived active slug is the
+ * cheapest way to make sure a background-ingest write doesn't land
+ * in a foreground editor for a different doc. Returns null whenever
+ * the slug isn't active or no editor is mounted. */
+function activeViewForSlug(slug: string) {
+  if (getActiveSlugFromHash() !== slug) return null
+  return useEditorViewStore.getState().view
+}

@@ -28,6 +28,7 @@
 import * as Y from 'yjs'
 import { prosemirrorToYDoc } from 'y-prosemirror'
 import type { Node as PMNode } from '@milkdown/kit/prose/model'
+import type { EditorView } from '@milkdown/kit/prose/view'
 import type { MarkdownParser } from '@/state/editorViewStore'
 
 const FRAGMENT_NAME = 'prosemirror'
@@ -157,6 +158,78 @@ export function replaceMarkdownInYDoc(
   } finally {
     seedDoc.destroy()
   }
+  return true
+}
+
+/** PM-native counterpart to {@link seedMarkdownIntoYDoc} /
+ * {@link replaceMarkdownInYDoc}. Parses `markdown` and dispatches a
+ * single non-undoable transaction that swaps the entire doc content
+ * for the parsed result.
+ *
+ * Why this exists alongside the Y.Doc helpers:
+ *   After Phase 3 of the Yjs-removal migration the collab plugin is
+ *   gone — Y.Doc mutations no longer propagate into the live PM
+ *   EditorState. Callers that want a body rewrite to be visible to
+ *   a user actively viewing the doc must dispatch into PM directly;
+ *   the Y.Doc helpers are only correct for docs whose editor hasn't
+ *   mounted yet (where the mount-time hydrate picks them up).
+ *
+ *   `applyMarkdownToEditor` covers the "doc is currently mounted"
+ *   path. `seedDocBody` / `replaceDocBody` in docsStore pick between
+ *   this and the Y.Doc helper at the call site based on whether the
+ *   slug matches the active editor view.
+ *
+ * Atomicity:
+ *   `view.dispatch` of a single `tr.replaceWith` is one transaction —
+ *   plugins see the post-transaction state only, never a partial.
+ *   The `addToHistory: false` meta keeps the swap out of Cmd-Z so a
+ *   stray undo after, say, a profile rebuild can't leave the doc in a
+ *   half-rewritten state.
+ *
+ * Returns true on success, false when the parser yields nothing
+ * (empty / whitespace-only markdown) — callers treat that as
+ * "nothing to apply" rather than an error. */
+export function applyMarkdownToEditor(
+  view: EditorView,
+  markdown: string,
+  parser: MarkdownParser,
+): boolean {
+  const trimmed = markdown.trim()
+  if (trimmed.length === 0) return false
+
+  let parsed: ReturnType<MarkdownParser>
+  try {
+    parsed = parser(trimmed)
+  } catch (err) {
+    console.warn('[seedMarkdown] applyMarkdownToEditor: parser failed', err)
+    return false
+  }
+  if (!parsed) return false
+
+  const transformed = unwrapBlockImages(parsed)
+  // Schema-rehydration: the parser comes from the headless Milkdown
+  // (lib/headlessMilkdown.ts) which builds its OWN PM schema instance.
+  // The live EditorView has a separate schema instance — structurally
+  // identical, but a different object. PM compares `node.type` by
+  // reference, so dispatching nodes from the headless schema into the
+  // live view silently no-ops the replace. Round-tripping via toJSON
+  // → schema.nodeFromJSON rebuilds the tree against the live schema,
+  // which is the only thing the live view accepts.
+  let liveNode
+  try {
+    liveNode = view.state.schema.nodeFromJSON(transformed.toJSON())
+  } catch (err) {
+    console.warn(
+      '[seedMarkdown] applyMarkdownToEditor: schema rehydrate failed',
+      err,
+    )
+    return false
+  }
+  view.dispatch(
+    view.state.tr
+      .replaceWith(0, view.state.doc.content.size, liveNode.content)
+      .setMeta('addToHistory', false),
+  )
   return true
 }
 
