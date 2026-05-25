@@ -138,6 +138,12 @@ pub fn run() {
                 // toolbar carries no items and titleBarStyle=Overlay lets
                 // our HTML chrome render over it, so this adds no visible
                 // surface — it only flips the system's radius classifier.
+                //
+                // toolbarStyle=Unified (=2) pins the toolbar height to the
+                // 52pt unified band. That locks the traffic lights' Y to a
+                // known value (center y = 26pt) so the HTML header can
+                // match it via --header-h. Without an explicit style, macOS
+                // picks Automatic and the lights drift.
                 if let Some(main_window) = app.get_webview_window("main") {
                     if let Ok(ns_window_ptr) = main_window.ns_window() {
                         use objc2::{class, msg_send, runtime::AnyObject};
@@ -149,6 +155,10 @@ pub fn run() {
                                     msg_send![toolbar_class, alloc];
                                 let toolbar: *mut AnyObject = msg_send![toolbar, init];
                                 let _: () = msg_send![ns_window, setToolbar: toolbar];
+                                // NSWindowToolbarStyle.unified raw value = 3
+                                // (automatic=0, expanded=1, preference=2,
+                                //  unified=3, unifiedCompact=4)
+                                let _: () = msg_send![ns_window, setToolbarStyle: 3isize];
                             }
                         }
                     }

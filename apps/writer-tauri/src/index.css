@@ -1147,10 +1147,13 @@
 
   /* Column header rhythm. Every top-of-column band — sidebar header,
      editor header, chat panel tabs — uses --header-h so the three
-     start at the same Y. --traffic-light-w reserves the macOS
-     stoplight zone on whichever surface owns the window's left edge
-     (sidebar when open, editor when sidebar is collapsed). */
-  --header-h: 2.75rem;
+     start at the same Y. Pinned to 52px to match the macOS unified
+     toolbar band (NSWindowToolbarStyle.unified) we set in lib.rs —
+     centers the traffic lights (center y = 26px) on the same line as
+     items-center'd icons in a 52px row. --traffic-light-w reserves
+     the macOS stoplight zone on whichever surface owns the window's
+     left edge (sidebar when open, editor when sidebar is collapsed). */
+  --header-h: 3.25rem;
   --traffic-light-w: 5rem;
 
   /* Editor prose scale. Body holds at 16px so writing surfaces stay
