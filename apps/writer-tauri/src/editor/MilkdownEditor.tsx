@@ -48,10 +48,13 @@ import {
 import {
   createAiEditGutterPlugin,
   aiEditGutterKey,
+  type PendingEditAnchor,
 } from './aiEditGutterPlugin'
 import { createPlaceholderPlugin } from './placeholderPlugin'
 import { useDocsStore } from '@/state/docsStore'
 import { useGitStore, isAiEditCommit } from '@/state/gitStore'
+import { usePendingEditsStore } from '@/state/pendingEditsStore'
+import { getActiveVaultPath } from '@/state/settingsStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
@@ -173,9 +176,18 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       if (state.knownDocs === prev.knownDocs) return
       refresh()
     })
+    // Pending edits live in their own store; the gutter plugin pulls
+    // them via `getPendingEdits`. Mirror the git refresh path so a
+    // freshly-arrived `chat/edit-pending` (or an Apply/Reject that
+    // clears one) repaints the gutter in the same tick.
+    const unsubPending = usePendingEditsStore.subscribe((state, prev) => {
+      if (state.byId === prev.byId) return
+      refresh()
+    })
     return () => {
       unsubGit()
       unsubDocs()
+      unsubPending()
     }
   }, [pmView])
 
@@ -318,6 +330,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
             return out
           },
           getCommitDetail: (sha) => useGitStore.getState().commitDetails[sha],
+          getPendingEdits: () => collectPendingAnchors(),
         }),
       )
       .use(
@@ -487,7 +500,12 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
   return (
     <div className="relative flex h-full w-full flex-col">
       <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="mx-auto max-w-2xl px-8 pt-12 pb-12">
+        {/* pt accounts for the EditorHeader overlay (var(--header-h))
+            plus the original 3rem of breathing room before PageHeader.
+            Padding lives on the inner content (not the scroll container)
+            so scrolled lines can slide under the frosted header — a
+            scroll-container padding would just leave a permanent gap. */}
+        <div className="mx-auto max-w-2xl px-8 pb-12" style={{ paddingTop: 'calc(var(--header-h) + 3rem)' }}>
           {header}
           <div ref={rootRef} />
         </div>
@@ -506,5 +524,59 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       />
     </div>
   )
+}
+
+/** Snapshot of every still-pending Edit-shaped staged edit, normalised
+ * into the anchor shape the gutter plugin consumes. The gutter only
+ * needs the vault-relative path + the old_string anchor; it filters
+ * out anything pointing at a different doc internally.
+ *
+ * We strip the vault prefix here (instead of inside the plugin) so
+ * the plugin stays oblivious to vault layout — same pattern as the
+ * chat panel's preview card. `Write` / `MultiEdit` / `NotebookEdit`
+ * are skipped: their inputs don't carry an `old_string` anchor we
+ * can map to a single block, and the chat panel card already
+ * surfaces them. */
+function collectPendingAnchors(): PendingEditAnchor[] {
+  const byId = usePendingEditsStore.getState().byId
+  const anchors: PendingEditAnchor[] = []
+  const vault = getActiveVaultPath()
+  for (const edit of Object.values(byId)) {
+    if (edit.status !== 'pending') continue
+    if (edit.toolName !== 'Edit') continue
+    const oldString = typeof edit.input.old_string === 'string'
+      ? edit.input.old_string
+      : ''
+    if (!oldString) continue
+    const filePath = typeof edit.input.file_path === 'string'
+      ? edit.input.file_path
+      : ''
+    if (!filePath) continue
+    anchors.push({
+      pendingId: edit.id,
+      toolName: edit.toolName,
+      relPath: toVaultRelative(filePath, vault),
+      oldString,
+    })
+  }
+  return anchors
+}
+
+/** Strip the active vault root off an absolute file_path. Falls back
+ * to recognised top-level folders so paths resolved through symlinks
+ * still match. Mirrors PendingEditsBar's heuristic — kept inline
+ * here instead of extracting a util because both sites use it once
+ * and the variants don't share enough to make a util worthwhile. */
+function toVaultRelative(filePath: string, vault: string | null): string {
+  if (!filePath) return ''
+  if (vault) {
+    const root = vault.endsWith('/') ? vault : vault + '/'
+    if (filePath.startsWith(root)) return filePath.slice(root.length)
+  }
+  for (const dir of ['daily/', 'wiki/', 'writing/', '_system/']) {
+    const idx = filePath.indexOf('/' + dir)
+    if (idx !== -1) return filePath.slice(idx + 1)
+  }
+  return filePath
 }
 

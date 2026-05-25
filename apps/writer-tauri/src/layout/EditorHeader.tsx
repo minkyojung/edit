@@ -57,7 +57,13 @@ export function EditorHeader({
   return (
     <div
       data-tauri-drag-region
-      className="flex shrink-0 items-center bg-transparent"
+      // Sticky frosted toolbar. Sits absolute on top of the editor
+      // panel so the scroll content underneath slides BEHIND the
+      // header — backdrop-blur then frosts those scrolled lines.
+      // bg-background/70 keeps just enough tint that header glyphs
+      // stay legible against arbitrary doc content. data-editor-panel
+      // is `relative` already, so absolute coords resolve there.
+      className="absolute left-0 right-0 top-0 z-sticky flex items-center bg-background/70 backdrop-blur-xl"
       style={{ height: 'var(--header-h)' }}
     >
       {showSidebarTrigger && (
