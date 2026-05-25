@@ -21,10 +21,13 @@
  */
 
 import * as Y from 'yjs'
+import { yXmlFragmentToProseMirrorRootNode } from 'y-prosemirror'
 import { useIngestStore } from '../ingestStore'
 import { deriveLabel } from '@/lib/docLabel'
 import { applyVaultBodyToYDoc, installDocSync } from '@/lib/docFileSync'
 import { writeDocMeta } from '@/hooks/useDocMeta'
+import { useEditorViewStore } from '@/state/editorViewStore'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { isWikiDoc } from './helpers'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
@@ -101,6 +104,37 @@ export const createHandlesSlice = (
       return 'no-vault' as const
     })
     if (outcome === 'applied') {
+      // Phase 3 of the Yjs-removal migration: with `@milkdown/plugin-collab`
+      // gone, an applyUpdate to the handle's Y.Doc no longer propagates
+      // into the live ProseMirror EditorState. When the reloaded slug
+      // matches the currently-mounted editor, push the freshly-hydrated
+      // fragment into PM ourselves via a non-undoable replace. Inactive
+      // slugs don't need this — their next mount reads the fragment the
+      // same way (see MilkdownEditor.tsx's post-create hydrate).
+      const activeSlug = getActiveSlugFromHash()
+      if (activeSlug === slug) {
+        const view = useEditorViewStore.getState().view
+        if (view) {
+          try {
+            const fragment = handle.ydoc.getXmlFragment('prosemirror')
+            const root = yXmlFragmentToProseMirrorRootNode(
+              fragment,
+              view.state.schema,
+            )
+            view.dispatch(
+              view.state.tr
+                .replaceWith(0, view.state.doc.content.size, root.content)
+                .setMeta('addToHistory', false),
+            )
+          } catch (err) {
+            console.warn(
+              '[vault:reload] PM dispatch failed for',
+              slug,
+              err,
+            )
+          }
+        }
+      }
       console.log(`[vault:reload] ${slug} hydrated from external edit`)
     }
   },
