@@ -33,7 +33,32 @@ import type { CommitDetail, CommitInfo, DiffLine } from '@/lib/git'
 
 export const aiEditGutterKey = new PluginKey<DecorationSet>('aiEditGutter')
 
-export type AiEditGutterKind = 'add' | 'replace' | 'remove'
+export type AiEditGutterKind = 'add' | 'replace' | 'remove' | 'pending'
+
+/** A staged edit awaiting Apply/Reject. The plugin uses
+ * `old_string` to find which top-level block in the PM doc the
+ * proposal anchors on, then paints a pending bar there. Pending
+ * markers win over committed-edit markers on the same block —
+ * "what the user is being asked about right now" is the more
+ * useful signal than historical edit colour. */
+export interface PendingEditAnchor {
+  /** Stable id from the sidecar's canUseTool gate. Drives the
+   * native title on the bar so the same proposal can carry a per-
+   * tool-call hint without colliding with another pending edit on
+   * the adjacent block. */
+  pendingId: string
+  /** Tool name (`Edit` / `Write` / etc.) — only `Edit`-shaped
+   * inputs feed this plugin today; the caller filters before
+   * passing them in. */
+  toolName: string
+  /** Vault-relative path the edit targets (already normalised
+   * against the vault root by the caller). The plugin compares
+   * this to `getActiveRelPath()`; mismatches drop silently. */
+  relPath: string
+  /** `Edit.old_string`. Used only to locate the block — the diff
+   * itself is rendered by PendingEditsBar. */
+  oldString: string
+}
 
 interface GutterMarker {
   /** Top-level block index in the current PM doc. */
@@ -67,6 +92,12 @@ export interface AiEditGutterOpts {
    * inline data-attribute reads back useful context in DevTools.
    * Not required for U.2 rendering. */
   getCommit?: (sha: string) => CommitInfo | undefined
+  /** Staged edits awaiting user Apply/Reject. The plugin paints an
+   * orange pulse bar on the block each anchors on so the user can
+   * see where in the doc the proposal will land without opening
+   * the chat panel. Returning an empty array (no pendings, or none
+   * for the active doc) skips the pending pass entirely. */
+  getPendingEdits?: () => PendingEditAnchor[]
 }
 
 /** Markdown line-count heuristic. Block types this writer actually
@@ -256,10 +287,41 @@ function buildDecos(
     }
   }
 
-  if (byBlock.size === 0) return DecorationSet.empty
+  // Pending pass. Staged edits live in pendingEditsStore (not in
+  // git activity yet — they're proposals waiting on Apply). We map
+  // each one to the block its `old_string` anchors on and override
+  // any committed marker on that block: "what the user is being
+  // asked about right now" beats "what got committed earlier".
+  const pendings = opts.getPendingEdits?.() ?? []
+  const pendingMarkers = new Map<number, { blockIdx: number; pendingIds: string[] }>()
+  if (pendings.length > 0) {
+    for (const pending of pendings) {
+      if (pending.relPath !== relPath) continue
+      const blockIdx = blockIndexForPending(doc, pending.oldString)
+      if (blockIdx === null) continue
+      const existing = pendingMarkers.get(blockIdx)
+      if (existing) {
+        existing.pendingIds.push(pending.pendingId)
+      } else {
+        pendingMarkers.set(blockIdx, {
+          blockIdx,
+          pendingIds: [pending.pendingId],
+        })
+      }
+    }
+  }
+
+  if (byBlock.size === 0 && pendingMarkers.size === 0) {
+    return DecorationSet.empty
+  }
 
   const decos: Decoration[] = []
   for (const marker of byBlock.values()) {
+    // Skip committed markers on blocks that also carry a pending —
+    // the pending bar replaces them (one bar per block, pending
+    // wins). The committed marker comes back automatically once
+    // the pending is resolved + the new sha lands.
+    if (pendingMarkers.has(marker.blockIndex)) continue
     decos.push(
       Decoration.node(
         marker.pos,
@@ -279,8 +341,57 @@ function buildDecos(
       ),
     )
   }
+  for (const pending of pendingMarkers.values()) {
+    const block = map.blocks[pending.blockIdx]
+    if (!block) continue
+    decos.push(
+      Decoration.node(block.pos, block.pos + block.size, {
+        class: 'ai-edit-gutter ai-edit-gutter--pending',
+        'data-ai-edit-kind': 'pending',
+        'data-ai-edit-pending-ids': pending.pendingIds.join(','),
+        title:
+          pending.pendingIds.length > 1
+            ? `AI 편집 제안 — ${pending.pendingIds.length}건 (Apply 대기)`
+            : 'AI 편집 제안 — Apply 대기',
+      }),
+    )
+  }
 
   return DecorationSet.create(doc, decos)
+}
+
+/** Locate the top-level block whose textContent contains the start
+ * of `oldString`. We anchor on the FIRST non-noise line of the old
+ * string so multi-line matches still resolve cleanly (the rest of
+ * the match may span subsequent blocks but the proposal "starts"
+ * here, and that's what the gutter bar marks). Returns null when
+ * no block contains the anchor — e.g. when the active doc and the
+ * proposal's file_path point at different files, or when the
+ * model's old_string has rotted out of sync with the live PM doc. */
+function blockIndexForPending(doc: PMNode, oldString: string): number | null {
+  // Find a useable anchor line. The first non-blank line of the
+  // old string is usually enough; for HTML-spacer-only old strings
+  // (e.g. just `<br />`) we fall back to the raw first line so the
+  // marker still has somewhere to land.
+  const lines = oldString.split('\n')
+  let anchor = ''
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) continue
+    anchor = trimmed
+    break
+  }
+  if (!anchor) anchor = lines[0] ?? ''
+  if (!anchor) return null
+
+  let found: number | null = null
+  doc.forEach((child, _offset, idx) => {
+    if (found !== null) return
+    if (child.textContent.includes(anchor)) {
+      found = idx
+    }
+  })
+  return found
 }
 
 export function createAiEditGutterPlugin(opts: AiEditGutterOpts) {
