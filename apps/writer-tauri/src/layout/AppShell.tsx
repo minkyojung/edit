@@ -77,7 +77,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
       <AppSidebar />
       <SidebarInset className="overflow-hidden">
         <ResizablePanelGroup orientation="horizontal" className="h-full">
-          <ResizablePanel defaultSize={75} minSize={30}>
+          <ResizablePanel defaultSize={75} minSize={40}>
             <div data-editor-panel className="relative flex h-full flex-col">
               <EditorHeader
                 showSidebarTrigger={!sidebarOpen}
@@ -101,7 +101,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
             panelRef={contextPanelRef}
             defaultSize="25%"
             minSize="15%"
-            maxSize="50%"
+            maxSize="45%"
             collapsible
             collapsedSize={0}
             onResize={(size) => {
