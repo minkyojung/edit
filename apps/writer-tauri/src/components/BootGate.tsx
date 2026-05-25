@@ -33,6 +33,7 @@ import {
   gitHeadTimestamp,
   gitEnsureGitignoreEntries,
 } from '@/lib/git'
+import { migrateYdocV2 } from '@/lib/migrateYdocV2'
 
 /** Daily safety net: if HEAD is older than this, BootGate fires a
  * silent "daily snapshot" commit on app open so a passive user who
@@ -88,6 +89,17 @@ export function BootGate({ children }: Props) {
         await gitEnsureGitignoreEntries(['threads/'])
       } catch (err) {
         console.warn('[boot] gitignore migration failed', err)
+      }
+      // One-shot Yjs-removal migration v2: back-fill `.md` for any
+      // doc whose freshest content currently lives in `.ydoc`
+      // (a leftover footgun from the dual-writer race). Runs BEFORE
+      // bootstrap so the handle-open path that reads `.md` to seed
+      // Y.Doc picks up the recovered content. Sentinel-gated, so
+      // existing vaults pay the walk cost exactly once.
+      try {
+        await migrateYdocV2()
+      } catch (err) {
+        console.warn('[boot] ydoc→md migration failed', err)
       }
       bootstrap()
       // Load chat thread metas + turns from `threads/`. Fires in

@@ -28,20 +28,16 @@ import type { Mark } from '@/domain/marks'
 import {
   metaPathForDoc,
   pathForDoc,
-  ydocPathForDoc,
   type DocMetaFile,
 } from '@/lib/docPaths'
 import {
-  readVaultBinary,
   readVaultFile,
   renameVaultFile,
   vaultFileExists,
-  writeVaultBinary,
   writeVaultFile,
 } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import {
-  applyYDocBinaryAtomically,
   replaceMarkdownInYDoc,
   seedMarkdownIntoYDoc,
 } from '@/lib/seedMarkdown'
@@ -407,47 +403,13 @@ export async function applyVaultBodyToYDoc(
   // in memory because someone modified the .md outside the app.
   if (!opts.reload && deriveLabel(fragment).length > 0) return 'not-empty'
 
-  // Tier 1 — try .ydoc binary first. Brings body + marks +
-  // RelativePosition anchors in one Y.applyUpdate. y-prosemirror
-  // syncs the marks into PM automatically on editor mount since
-  // they're attributes on text nodes in the XmlFragment.
-  //
-  // On reload we skip this tier: the .ydoc on disk reflects the last
-  // app-side flush (i.e. the OLD body), so applying it would either
-  // be a no-op (CRDT recognises the state it already has) or — worse
-  // — overwrite the external edit with the stale state. The external
-  // .md is the only source that knows about the change, so we go
-  // straight to Tier 2.
-  const ydocPath = ydocPathForDoc(known, getDoc)
-  if (!opts.reload && ydocPath && (await vaultFileExists(ydocPath))) {
-    try {
-      const binary = await readVaultBinary(ydocPath)
-      // Atomic: fragment clear + applyUpdate land in one transact.
-      // Skipping this pattern (the original two-step version) caused
-      // the editor mount race documented in seedMarkdown.ts —
-      // observers saw an empty fragment between the two steps and
-      // the MilkdownEditor's empty-fill safety net injected a blank
-      // paragraph that survived the apply.
-      applyYDocBinaryAtomically(ydoc, binary)
-      clearDirty(slug)
-      return 'applied'
-    } catch (err) {
-      // Corrupted .ydoc or schema mismatch — fall through to the
-      // markdown tier so the doc still opens with the body the
-      // user can see.
-      console.warn(
-        '[vault:load] .ydoc apply failed, falling back to .md',
-        slug,
-        err,
-      )
-    }
-  }
-
-  // Tier 2 — markdown-only path. Used when no .ydoc exists yet
-  // (externally-created .md, or first session after a vault wipe).
-  // Marks aren't restored — the .marks.json legacy path was removed
-  // in Stage 3.2. New marks the user creates will be persisted in
-  // .ydoc on the next flush.
+  // Yjs-removal migration Phase 2: the `.ydoc` Tier-1 path is gone.
+  // Boot and external-reload both seed Y.Doc from the `.md` body,
+  // making the markdown file the single durable source of truth.
+  // Any doc whose freshest content used to live only in `.ydoc` was
+  // back-filled into `.md` by `migrateYdocV2` before bootstrap; from
+  // there the markdown round-trip is good enough until Phases 5–7
+  // retire the in-memory Y.Doc entirely.
   const mdPath = pathForDoc(known, getDoc)
   if (!mdPath || !(await vaultFileExists(mdPath))) return 'no-file'
 
@@ -515,8 +477,7 @@ export async function flushDirty(): Promise<void> {
     }
     const mdPath = pathForDoc(known, getDoc)
     const metaPath = metaPathForDoc(known, getDoc)
-    const ydocPath = ydocPathForDoc(known, getDoc)
-    if (!mdPath || !metaPath || !ydocPath) {
+    if (!mdPath || !metaPath) {
       clearDirty(slug)
       continue
     }
@@ -546,10 +507,11 @@ export async function flushDirty(): Promise<void> {
     }
     const result = serializeDocToFiles(slug)
     if (!result) continue
-    // Y.Doc binary snapshot — captures the full CRDT state including
-    // RelativePosition mark anchors. The handle's ydoc is the live
-    // in-memory copy.
-    const ydocBinary = Y.encodeStateAsUpdate(handle.ydoc)
+    // Yjs-removal migration Phase 2: the `.ydoc` write path is gone.
+    // `.md` is the single durable surface; the in-memory Y.Doc is
+    // the working copy for this session only. Phases 5–7 will retire
+    // the Y.Doc altogether and switch this flush over to a PM-only
+    // serializer.
     try {
       // Rename-on-change: if this slug was last written at a
       // different path (Untitled note gained a title, wiki page
@@ -560,15 +522,11 @@ export async function flushDirty(): Promise<void> {
       const oldMd = lastWrittenPath.get(slug)
       if (oldMd && oldMd !== mdPath) {
         const oldMeta = oldMd.replace(/\.md$/, '.meta.json')
-        const oldYdoc = oldMd.replace(/\.md$/, '.ydoc')
         if (await vaultFileExists(oldMd)) {
           await renameVaultFile(oldMd, mdPath)
         }
         if (await vaultFileExists(oldMeta)) {
           await renameVaultFile(oldMeta, metaPath)
-        }
-        if (await vaultFileExists(oldYdoc)) {
-          await renameVaultFile(oldYdoc, ydocPath)
         }
       }
       await writeVaultFile(mdPath, result.md)
@@ -578,7 +536,6 @@ export async function flushDirty(): Promise<void> {
       // clobber fields this layer doesn't know about.
       const mergedMeta = await mergeSidecar(metaPath, result.meta)
       await writeVaultFile(metaPath, JSON.stringify(mergedMeta, null, 2))
-      await writeVaultBinary(ydocPath, ydocBinary)
       lastWrittenPath.set(slug, mdPath)
       clearDirty(slug)
       if (known.type.startsWith('wiki:')) wikiTouched = true

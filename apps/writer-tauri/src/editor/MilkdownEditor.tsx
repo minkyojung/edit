@@ -46,6 +46,10 @@ import {
   wikilinkBrokenKey,
 } from './wikilinkBrokenPlugin'
 import {
+  historyProviderConfig,
+  historyProviderPlugin,
+} from '@milkdown/kit/plugin/history'
+import {
   createAiEditGutterPlugin,
   aiEditGutterKey,
   type PendingEditAnchor,
@@ -266,12 +270,22 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       // Obsidian convention. Registered after commonmark for the same
       // priority reason as listKeymap.
       .use(headingKeymap)
-      // No `.use(history)` here on purpose. The collab plugin already
-      // wires y-prosemirror's yUndoPlugin (UndoManager-backed) and
-      // Mod-Z / Mod-Shift-Z keybindings; adding milkdown's PM-only
-      // history plugin on top doubled the undo stacks and only the
-      // PM half saw mark mutations, which broke "accept → Cmd+Z →
-      // re-accept" by leaving Y.Map gone after the undo.
+      // PM history is loaded *dormant* here: the provider plugin
+      // tracks transactions onto a PM-native undo stack, but the
+      // matching keymap is NOT registered, so Cmd-Z / Cmd-Shift-Z
+      // continue to flow through y-prosemirror's yUndoPlugin (set up
+      // by the collab plugin below). Phase 3 of the Yjs-removal
+      // migration drops collab + UndoManager and registers
+      // historyKeymap to take over the chord — this two-step keeps
+      // the migration shippable, since the dormant plugin adds
+      // tracking overhead but zero behavior change. The original
+      // worry that motivated leaving PM history out entirely (mark
+      // accepts mutating Y.Map without a paired PM transaction,
+      // breaking accept → Cmd-Z → re-accept) no longer applies:
+      // the mark UI was removed in Phase 2 of the mark refactor and
+      // no live code path writes to ydoc.getMap('marks') today.
+      .use(historyProviderConfig)
+      .use(historyProviderPlugin)
       .use(clipboard)
       .use(collab)
       // Daily docs: filter out leading h1s so the body never grows a
