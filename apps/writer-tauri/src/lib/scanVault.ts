@@ -143,6 +143,14 @@ export function mdRelToKnownDoc(
   if (meta.titleIntent === 'empty') {
     overlay.title = undefined
   }
+  // Phase 5b of the Yjs-removal migration: the doc's creation time
+  // used to live in `Y.Map('meta').createdAt`; we now read it off
+  // the sidecar so the catalog has it without touching Y.Doc.
+  // Legacy sidecars lack the field — leaves overlay.createdAt
+  // undefined and DocumentInfoDialog renders "—".
+  if (typeof meta.createdAt === 'string') {
+    overlay.createdAt = meta.createdAt
+  }
   return { ...base, ...overlay } as KnownDoc
 }
 

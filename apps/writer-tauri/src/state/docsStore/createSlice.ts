@@ -110,7 +110,8 @@ export const createCreateSlice = (
       // Empty body — dailies derive their label from meta.date, so
       // the body stays visually clean.
       const slug = generateClientSlug()
-      known = { slug, type: 'daily', date: targetDate }
+      const createdAt = new Date().toISOString()
+      known = { slug, type: 'daily', date: targetDate, createdAt }
       set((s) => ({ knownDocs: [...s.knownDocs, known!] }))
     }
     const slug = known.slug
@@ -121,10 +122,14 @@ export const createCreateSlice = (
     const handle = get().handles[slug]
     if (handle) {
       if (!handle.ydoc.getMap('meta').get('type')) {
+        // Y.Map write kept for the Phase 5b dual-write window so any
+        // surface still reading from Y.Map sees the value too. Phase
+        // 5c retires the Y.Map writes; the `KnownDoc.createdAt` above
+        // is the durable source via `buildMetaForKnownDoc`.
         writeDocMeta(handle.ydoc, {
           type: 'daily',
           date: targetDate,
-          createdAt: new Date().toISOString(),
+          createdAt: known.createdAt,
         })
       }
       scrubDailyTitleArtifacts(handle.ydoc)
@@ -149,10 +154,12 @@ export const createCreateSlice = (
     // Empty title + empty body. The displayed label falls back to
     // 'Untitled' in useDocLabel.
     const slug = generateClientSlug()
+    const createdAt = new Date().toISOString()
     const meta: KnownDoc = {
       slug,
       type: 'writing',
       parentId: parentSlug,
+      createdAt,
     }
     set((s) => ({
       knownDocs: [...s.knownDocs, meta],
@@ -163,10 +170,12 @@ export const createCreateSlice = (
     await get().ensureHandle(slug)
     const handle = get().handles[slug]
     if (handle) {
+      // Dual-write window — see openDaily for the same Phase 5b
+      // rationale.
       writeDocMeta(handle.ydoc, {
         type: 'writing',
         parentId: parentSlug,
-        createdAt: new Date().toISOString(),
+        createdAt,
       })
     }
     return slug
@@ -182,11 +191,13 @@ export const createCreateSlice = (
     if (parent.type !== 'daily') return null
     // Empty body — the title comes from the palette input.
     const slug = generateClientSlug()
+    const createdAt = new Date().toISOString()
     const meta: KnownDoc = {
       slug,
       type: 'writing',
       parentId: parentSlug,
       title,
+      createdAt,
     }
     set((s) => ({ knownDocs: [...s.knownDocs, meta] }))
     // Seed the body's first paragraph with the wikilink text via
@@ -199,10 +210,12 @@ export const createCreateSlice = (
     await get().ensureHandle(slug, { seedFirstLine: title })
     const handle = get().handles[slug]
     if (handle) {
+      // Dual-write window — see openDaily for the same Phase 5b
+      // rationale.
       writeDocMeta(handle.ydoc, {
         type: 'writing',
         parentId: parentSlug,
-        createdAt: new Date().toISOString(),
+        createdAt,
       })
     }
     return slug

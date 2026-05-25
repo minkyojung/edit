@@ -177,6 +177,11 @@ function buildMetaForKnownDoc(
     titleIntent,
     archivedAt: known?.archivedAt,
     archivedFromParent: known?.archivedFromParent,
+    // Phase 5b of the Yjs-removal migration: createdAt now lives on
+    // the catalog (sourced from `.meta.json` by scanVault, or set by
+    // createSlice for new docs). flushDirty writes it back via
+    // mergeSidecar, so the sidecar is the durable home.
+    createdAt: known?.createdAt,
   }
 }
 

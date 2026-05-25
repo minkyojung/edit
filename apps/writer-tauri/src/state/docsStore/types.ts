@@ -65,6 +65,13 @@ export interface KnownDoc {
    * the doc back where it was. While archived, `parentId` is left
    * undefined so the doc doesn't pollute the live tree index. */
   archivedFromParent?: string
+  /** ISO timestamp recorded when the doc was first created. Phase 5b
+   * of the Yjs-removal migration lifted this off `Y.Map('meta')` and
+   * onto the catalog / `.meta.json` sidecar — see DocMetaFile in
+   * `apps/writer-tauri/src/lib/docPaths.ts`. Absent on legacy docs
+   * whose Y.Map had no createdAt either; DocumentInfoDialog renders
+   * `—` in that case. */
+  createdAt?: string
 }
 
 /** Coarse classification used by the DOC_POLICIES table below. Every

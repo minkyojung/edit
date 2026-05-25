@@ -85,6 +85,13 @@ export interface DocMetaFile {
    * `'set'` by the boot reader for backward compatibility — they
    * always carried a non-fallback filename. */
   titleIntent?: 'empty' | 'set'
+  /** ISO timestamp recorded when the doc was first created. Migrated
+   * out of `Y.Map('meta')` in Phase 5b of the Yjs-removal migration —
+   * the Y.Map was the prior home for this field, but it's the only
+   * piece of meta the path-derived catalog doesn't already carry, so
+   * the sidecar is the natural permanent home. Absent on legacy
+   * sidecars; DocumentInfoDialog falls back to "—". */
+  createdAt?: string
 }
 
 /** Lookup a doc by slug. Required by {@link pathForDoc} only for

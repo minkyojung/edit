@@ -53,7 +53,14 @@ import { getActiveVaultPath } from '@/state/settingsStore'
 import { initHeadlessParser } from '@/lib/headlessMilkdown'
 import { useEditorViewStore } from '@/state/editorViewStore'
 
-const SENTINEL_REL = '.writer-migration-v2-done'
+// Plain filename (no dot prefix) so Tauri's `fs:scope` glob — which
+// uses `**` and silently excludes dot-prefixed entries — actually
+// matches it. Hidden in Finder vs. user-visible doesn't matter for
+// a vault marker file; what does matter is that `vaultFileExists`
+// can actually probe it. Earlier versions used `.writer-migration-v2-done`
+// and the read silently failed on Documents-scoped vaults, leaving
+// the migration permanently skipped.
+const SENTINEL_REL = 'writer-migration-v2.done'
 
 /** Vault subdirectories that may contain `.ydoc` files. `threads/`
  * is intentionally excluded — chat thread JSON has never been

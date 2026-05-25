@@ -34,6 +34,7 @@ import {
   gitEnsureGitignoreEntries,
 } from '@/lib/git'
 import { migrateYdocV2 } from '@/lib/migrateYdocV2'
+import { migrateMetaV1 } from '@/lib/migrateMetaV1'
 
 /** Daily safety net: if HEAD is older than this, BootGate fires a
  * silent "daily snapshot" commit on app open so a passive user who
@@ -86,7 +87,16 @@ export function BootGate({ children }: Props) {
       // after the first run — subsequent boots see the entry and
       // return false.
       try {
-        await gitEnsureGitignoreEntries(['threads/'])
+        await gitEnsureGitignoreEntries([
+          'threads/',
+          // Migration sentinel files dropped at vault root by the
+          // Yjs-removal one-shots. Plain filenames (not dot-prefixed)
+          // because Tauri's `fs:scope` glob silently excludes dot-
+          // files; ignoring them here keeps the user's vault git
+          // history clean.
+          'writer-migration-v2.done',
+          'writer-meta-migration-v1.done',
+        ])
       } catch (err) {
         console.warn('[boot] gitignore migration failed', err)
       }
@@ -100,6 +110,18 @@ export function BootGate({ children }: Props) {
         await migrateYdocV2()
       } catch (err) {
         console.warn('[boot] ydoc→md migration failed', err)
+      }
+      // Phase 5b of the Yjs-removal migration: lift each existing
+      // doc's `Y.Map('meta').createdAt` into the `.meta.json` sidecar
+      // so the catalog (which scanVault reads from disk) owns the
+      // field after Y.Doc is retired in 5c. Sentinel-gated; legacy
+      // docs without a Y.Map createdAt simply skip (their KnownDoc
+      // ends up without a createdAt and DocumentInfoDialog renders
+      // `—`, same as a brand-new doc).
+      try {
+        await migrateMetaV1()
+      } catch (err) {
+        console.warn('[boot] meta migration failed', err)
       }
       bootstrap()
       // Load chat thread metas + turns from `threads/`. Fires in

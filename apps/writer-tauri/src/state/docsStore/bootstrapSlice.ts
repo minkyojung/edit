@@ -126,11 +126,25 @@ export const createBootstrapSlice = (
         if (handle && known?.type === 'daily' && known.date) {
           const metaMap = handle.ydoc.getMap('meta')
           if (!metaMap.get('type')) {
+            const createdAt = known.createdAt ?? new Date().toISOString()
+            // Phase 5b dual-write window: keep the Y.Map write so
+            // surfaces that still read from Y.Map see the value; the
+            // canonical home is `KnownDoc.createdAt` → `.meta.json`
+            // via `buildMetaForKnownDoc`.
             writeDocMeta(handle.ydoc, {
               type: 'daily',
               date: known.date,
-              createdAt: new Date().toISOString(),
+              createdAt,
             })
+            // Mirror onto the catalog so the next flushDirty serialises
+            // it into the sidecar.
+            if (!known.createdAt) {
+              set((s) => ({
+                knownDocs: s.knownDocs.map((d) =>
+                  d.slug === known.slug ? { ...d, createdAt } : d,
+                ),
+              }))
+            }
           }
           scrubDailyTitleArtifacts(handle.ydoc)
         }
