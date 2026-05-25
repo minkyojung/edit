@@ -485,7 +485,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       >
         {/* pt accounts for the EditorHeader overlay (var(--header-h))
             plus the original 3rem of breathing room before PageHeader. */}
-        <div className="mx-auto max-w-2xl px-8 pb-12" style={{ paddingTop: 'calc(var(--header-h) + 3rem)' }}>
+        <div className="mx-auto max-w-2xl px-8 pb-12" style={{ paddingTop: 'calc(var(--header-h) + 1.5rem)' }}>
           {header}
           <div ref={rootRef} />
         </div>
