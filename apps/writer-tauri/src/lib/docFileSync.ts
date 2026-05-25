@@ -23,8 +23,6 @@ import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
 import { hasExternalConflict } from '@/state/externalConflictStore'
-import { markStore } from '@/domain/markStoreInstance'
-import type { Mark } from '@/domain/marks'
 import {
   metaPathForDoc,
   pathForDoc,
@@ -281,15 +279,15 @@ export function isDirty(slug: string): boolean {
  * should call it so a torn-down handle's leftover dirty flag doesn't
  * trigger a flush against a destroyed ydoc.
  *
- * Observes both the body fragment (text edits, paste, ingest insert)
- * and the marks map (suggestion add / accept / reject); either kind
- * of change should produce a save. */
+ * Observes the body fragment for changes that should trigger a save.
+ * The marks Y.Map observer that used to live alongside this hook went
+ * away with Phase 6 of the Yjs-removal migration — the mark store
+ * had no surviving consumers, and PM transactions feed the dirty bit
+ * directly through `dirtyTrackerPlugin` now. */
 export function installDocSync(slug: string, ydoc: Y.Doc): () => void {
   const fragment = ydoc.getXmlFragment('prosemirror')
-  const marksMap = ydoc.getMap('marks')
   const onChange = () => markDirty(slug)
   fragment.observeDeep(onChange)
-  marksMap.observe(onChange)
   // Mark dirty on install so the first flush tick mirrors this doc
   // to disk regardless of whether the user edits it. Without this,
   // a doc the user opens (or that was already open at boot) but
@@ -301,7 +299,6 @@ export function installDocSync(slug: string, ydoc: Y.Doc): () => void {
   markDirty(slug)
   return () => {
     fragment.unobserveDeep(onChange)
-    marksMap.unobserve(onChange)
     dirtySlugs.delete(slug)
   }
 }
@@ -582,23 +579,15 @@ export function stopAutoFlush(): void {
 // ready yet.
 //   __serializeDoc()              // current active doc
 //   __serializeDoc('wiki:custom-abc')
-//   __listMarks()                  // mark store state of active doc
 if (import.meta.env.DEV) {
   const handle = (slug?: string): SerializedDocFiles | null => {
     const target = slug ?? getActiveSlugFromHash()
     if (!target) return null
     return serializeDocToFiles(target)
   }
-  const listMarks = (slug?: string): Mark[] => {
-    const target = slug ?? getActiveSlugFromHash()
-    if (!target) return []
-    return markStore.list(target)
-  }
   ;(window as unknown as {
     __serializeDoc: typeof handle
-    __listMarks: typeof listMarks
   }).__serializeDoc = handle
-  ;(window as unknown as { __listMarks: typeof listMarks }).__listMarks = listMarks
   ;(window as unknown as { __dirtySlugs: () => string[] }).__dirtySlugs = getDirtySlugs
   const applyHandle = async (
     slug?: string,

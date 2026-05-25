@@ -31,7 +31,6 @@ import {
   useLazyMaterialize,
   type LazyMaterializeConfig,
 } from '@/hooks/useLazyMaterialize'
-import { useMigrateLegacyIngestMarks } from '@/hooks/useMigrateLegacyIngestMarks'
 import { applyPendingLogsForView } from '@/agent/applyIngest'
 // Phase 4.A — dev-only side-effect imports. Each module registers
 // a `window.__X` handle so the picker / vault I/O is reachable from
@@ -184,10 +183,6 @@ function AppContent() {
   // ingest output) stays on the in-page banner surface, not in
   // this lazy-drain pipeline.
   useLazyMaterialize(SYSTEM_DRAIN_CONFIGS)
-  // One-time cleanup of legacy ingest-origin proofSuggestion marks
-  // left over from the pre-banner era. Runs per wiki page on first
-  // mount post-upgrade; no-op afterwards.
-  useMigrateLegacyIngestMarks()
 
   // First-run onboarding trigger. We read bootstrapCompleted from the
   // persisted settings store as the initial value so a returning user
