@@ -469,32 +469,69 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
 
   return (
     <div className="relative flex h-full w-full flex-col">
-      {/* Mask gradient creates a soft fade-out where scrolled lines meet
-          the EditorHeader: top of the scroll container (the header's
-          y-range) is masked transparent, with a 1rem fade-in band just
-          below. Content scrolls up under the opaque header and is
-          smoothly erased at the seam rather than abruptly clipped. */}
+      {/* Header gradient-blur glass band — mirrors EditorFooter's
+          pattern. Lives here (a sibling of the scroll content) rather
+          than inside EditorHeader so backdrop-filter can sample the
+          scroll content's pixels — WebKit can't sample across the
+          scroll container's composited layer boundary. The actual
+          header chrome (tabs/buttons) still renders in AppShell with
+          z-sticky and paints on top of this band. */}
       <div
-        className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        aria-hidden
+        className="pointer-events-none absolute top-0 left-0 right-0 bg-background/90"
         style={{
+          height: 'calc(var(--header-h) + 2rem)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
           maskImage:
-            'linear-gradient(to bottom, transparent 0, transparent var(--header-h), black calc(var(--header-h) + 1.5rem))',
+            'linear-gradient(to bottom, black 0, black calc(var(--header-h) * 0.7), transparent)',
           WebkitMaskImage:
-            'linear-gradient(to bottom, transparent 0, transparent var(--header-h), black calc(var(--header-h) + 1.5rem))',
+            'linear-gradient(to bottom, black 0, black calc(var(--header-h) * 0.7), transparent)',
         }}
-      >
-        {/* pt accounts for the EditorHeader overlay (var(--header-h))
-            plus the original 3rem of breathing room before PageHeader. */}
-        <div className="mx-auto max-w-2xl px-8 pb-12" style={{ paddingTop: 'calc(var(--header-h) + 1.5rem)' }}>
+      />
+      <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {/* pt accounts for the EditorHeader overlay (var(--header-h)).
+            pb leaves room for the EditorFooter overlay (var(--footer-h))
+            plus the 1.5rem fade band so the last paragraph isn't already
+            inside the dissolve when scrolled to bottom. */}
+        <div
+          className="mx-auto max-w-2xl px-8"
+          style={{
+            paddingTop: 'calc(var(--header-h) + 1.5rem)',
+            paddingBottom: 'calc(var(--footer-h) + 3rem)',
+          }}
+        >
           {header}
           <div ref={rootRef} />
         </div>
       </div>
-      <EditorFooter
-        view={pmView}
-        parentSlug={handle?.slug ?? null}
-        status={status}
-      />
+      {/* Footer is a gradient-blur glass band: top edge transparent
+          (no blur), bottom fully blurred. The mask isolates the
+          backdrop-filter to a faded layer so text reads cleanly on
+          top while content scrolling below feathers out. */}
+      <div
+        className="absolute bottom-0 left-0 right-0 z-sticky"
+        style={{ height: 'var(--footer-h)' }}
+      >
+        <div
+          aria-hidden
+          className="pointer-events-none absolute bottom-0 left-0 right-0 bg-background/90"
+          style={{
+            height: 'calc(var(--footer-h) + 2rem)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            maskImage:
+              'linear-gradient(to top, black 0, black calc(var(--footer-h) * 0.7), transparent)',
+            WebkitMaskImage:
+              'linear-gradient(to top, black 0, black calc(var(--footer-h) * 0.7), transparent)',
+          }}
+        />
+        <EditorFooter
+          view={pmView}
+          parentSlug={handle?.slug ?? null}
+          status={status}
+        />
+      </div>
       <LinkHoverBar />
       <SelectionBubble />
       <SlashMenu />

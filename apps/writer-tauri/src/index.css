@@ -1139,21 +1139,30 @@
   /* z-index scale. shadcn primitives bake z-50 into their styles for both
      popovers and modals (they coexist via portal structure, not stacking
      order), so popover and modal map to the same numeric value here —
-     names diverge only to capture intent at the call site. */
-  --z-sticky: 10;
-  --z-overlay: 30;
-  --z-popover: 50;
-  --z-modal: 50;
+     names diverge only to capture intent at the call site.
+     Tailwind v4 generates utilities from the --z-index-* namespace, not
+     --z-*; an earlier `--z-sticky` form silently never emitted a z-sticky
+     class, so all our header chrome was rendering at z:auto and getting
+     painted under siblings that came later in the DOM. */
+  --z-index-sticky: 10;
+  --z-index-overlay: 30;
+  --z-index-popover: 50;
+  --z-index-modal: 50;
 
   /* Column header rhythm. Every top-of-column band — sidebar header,
      editor header, chat panel tabs — uses --header-h so the three
-     start at the same Y. Pinned to 52px to match the macOS unified
-     toolbar band (NSWindowToolbarStyle.unified) we set in lib.rs —
-     centers the traffic lights (center y = 26px) on the same line as
-     items-center'd icons in a 52px row. --traffic-light-w reserves
+     start at the same Y. Derived from --traffic-light-center-y (set
+     at runtime by useWindowChrome via the get_traffic_light_y Rust
+     command). The header is exactly 2× the stoplight center, so an
+     items-center'd row in it lands its icons on the same line as the
+     macOS close button. Fallback 26px gives a 52px header that matches
+     the NSWindowToolbarStyle.unified band — used before measurement
+     completes and on non-macOS platforms. --traffic-light-w reserves
      the macOS stoplight zone on whichever surface owns the window's
      left edge (sidebar when open, editor when sidebar is collapsed). */
-  --header-h: 3.25rem;
+  --traffic-light-center-y: 26px;
+  --header-h: calc(var(--traffic-light-center-y) * 2);
+  --footer-h: 2.25rem;
   --traffic-light-w: 5rem;
 
   /* Editor prose scale. Body holds at 16px so writing surfaces stay
