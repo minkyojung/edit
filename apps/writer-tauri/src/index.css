@@ -1145,7 +1145,7 @@
      start at the same Y. --traffic-light-w reserves the macOS
      stoplight zone on whichever surface owns the window's left edge
      (sidebar when open, editor when sidebar is collapsed). */
-  --header-h: 2.5rem;
+  --header-h: 2.75rem;
   --traffic-light-w: 5rem;
 
   /* Editor prose scale. Body holds at 16px so writing surfaces stay

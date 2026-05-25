@@ -18,7 +18,7 @@ export function useObservePageTitle(ref: RefObject<HTMLElement | null>): void {
     if (!node) return
 
     const setTitleInView = usePageHeaderStore.getState().setTitleInView
-    const headerH = parseHeaderHeight() ?? 40
+    const headerH = parseHeaderHeight() ?? 44
 
     const observer = new IntersectionObserver(
       ([entry]) => {
