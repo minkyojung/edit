@@ -71,25 +71,33 @@ export function EditorHeader({
           style={{ width: 'var(--traffic-light-w)' }}
         />
       )}
-      {/* Sidebar trigger + back/forward live in the editor header for a
-          consistent left-cluster regardless of sidebar state. The
-          sidebar's own header keeps only the date-view picker. */}
-      <SidebarTrigger />
-      <NavHistoryButtons />
-      <div className="flex min-w-0 flex-1 items-stretch self-stretch">
+      {/* 3-column layout: left cluster | center (EditorTabs) | right
+          cluster. Each column is flex-1 so the center pin stays in the
+          visual middle of the header, and the left/right cluster widths
+          can vary (sidebar state, status label) without pushing the
+          title off-center. min-w-0 lets the inner truncate kick in
+          before the cluster columns shrink. */}
+      <div
+        data-tauri-drag-region
+        className="flex flex-1 items-center self-stretch"
+      >
+        <SidebarTrigger />
+        <NavHistoryButtons />
+      </div>
+      <div className="flex min-w-0 flex-1 items-center justify-center">
         <EditorTabs />
       </div>
-      {statusLabel && (
-        <span
-          className={cn(
-            'shrink-0 px-2 text-xs',
-            collabStatus === 'error' ? 'text-destructive' : 'text-muted-foreground',
-          )}
-        >
-          {statusLabel}
-        </span>
-      )}
-      <div className="flex shrink-0 items-center gap-0.5 pr-1">
+      <div className="flex flex-1 items-center justify-end gap-0.5 pr-1">
+        {statusLabel && (
+          <span
+            className={cn(
+              'shrink-0 px-2 text-xs',
+              collabStatus === 'error' ? 'text-destructive' : 'text-muted-foreground',
+            )}
+          >
+            {statusLabel}
+          </span>
+        )}
         <DocMenu editorView={editorView} />
         <ContextPanelTrigger />
       </div>
