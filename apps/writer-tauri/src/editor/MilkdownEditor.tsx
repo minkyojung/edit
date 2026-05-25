@@ -194,35 +194,28 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
   // Daily-doc body normalization: strip the legacy "# YYYY-MM-DD"
   // heading that older builds seeded into the body markdown. Daily
   // docs render their date label outside the editor, so the body
-  // must not duplicate it. Idempotent via meta.titleNormalizedV2 —
-  // see lib/docTitle.ts. Non-daily docs run no normalization.
+  // must not duplicate it. Idempotent — `cleanupDailyDateHeading`
+  // bails at the first non-matching block, so a clean body costs
+  // one node-type check on each mount. Non-daily docs run no
+  // normalization.
   //
-  // Gated on contentReady AND meta.type being populated. The title
-  // structure lives in the Y.Doc that vault load (or fresh creation)
-  // populated; normalization runs after both signals are in.
+  // Gated on contentReady so the legacy headings landed in PM
+  // before we look for them. The catalog (`knownDoc.type` / `.date`)
+  // is the source of truth for whether this is a daily, replacing
+  // the Y.Map gate that Phase 5c retired.
   useEffect(() => {
     if (!handle || !pmView) return
     if (!isDaily) return
-    const { ydoc, contentReady } = handle
+    if (!knownDoc?.date) return
     const view = pmView
-    const metaMap = ydoc.getMap('meta')
-    const opts = { date: knownDoc?.date }
-    let ran = false
-    let hydrated = false
-    const tryRun = () => {
-      if (ran) return
-      if (!hydrated) return
-      if (!metaMap.get('type')) return
-      ran = true
-      normalizeDailyBody(ydoc, view, opts)
-    }
-    void contentReady.then(() => {
-      hydrated = true
-      tryRun()
+    const opts = { date: knownDoc.date }
+    let cancelled = false
+    void handle.contentReady.then(() => {
+      if (cancelled) return
+      normalizeDailyBody(view, opts)
     })
-    metaMap.observe(tryRun)
     return () => {
-      metaMap.unobserve(tryRun)
+      cancelled = true
     }
   }, [handle, pmView, isDaily, knownDoc?.date])
 

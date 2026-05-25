@@ -81,12 +81,12 @@ export const createTabsSlice = (
     const idx = openSlugs.indexOf(slug)
     const neighbor: string | null = next[idx] ?? next[idx - 1] ?? null
     // Stop any chat run bound to this slug BEFORE destroying the
-    // ydoc — a late proposal would otherwise try to apply against a
-    // slug we've already torn down.
+    // handle — a late proposal would otherwise try to apply against
+    // a slug we've already torn down.
     useChatRuns.getState().abortBySlug(slug)
     const handle = handles[slug]
     if (handle) {
-      handle.ydoc.destroy()
+      handle.destroy()
     }
     const nextHandles = { ...handles }
     delete nextHandles[slug]

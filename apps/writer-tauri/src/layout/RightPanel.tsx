@@ -13,7 +13,6 @@
 
 import { IconCameraPlus, IconHistory, IconMessageCircle } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import type * as Y from 'yjs'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/state/layoutStore'
@@ -23,18 +22,17 @@ import { ReviewPanel } from './ReviewPanel'
 
 interface Props {
   editorView: EditorView | null
-  ydoc: Y.Doc | null
   slug: string | null
 }
 
-export function RightPanel({ editorView, ydoc, slug }: Props) {
+export function RightPanel({ editorView, slug }: Props) {
   const mode = useLayoutStore((s) => s.rightPanelMode)
   return (
     <div className="flex h-full flex-col">
       <RightPanelHeader />
       <div className="min-h-0 flex-1">
         {mode === 'chat' ? (
-          <ChatPanel editorView={editorView} ydoc={ydoc} slug={slug} />
+          <ChatPanel editorView={editorView} slug={slug} />
         ) : (
           <ReviewPanel />
         )}

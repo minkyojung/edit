@@ -128,7 +128,6 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
             >
               <RightPanel
                 editorView={editorView ?? null}
-                ydoc={collabHandle?.ydoc ?? null}
                 slug={collabHandle?.slug ?? null}
               />
             </ErrorBoundary>

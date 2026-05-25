@@ -16,28 +16,28 @@
 //      h2/h3 still work, and inserting an h1 after some content is
 //      also allowed (because then it isn't the first block).
 //
-//   2. appendTransaction — after every state change (including remote
-//      y-prosemirror sync trs), if the doc has come to have an EMPTY
-//      h1 as its first block, append a delete tr to remove it. This
-//      repairs docs that already carry the h1 from a pre-fix render —
-//      no migration flag needed, the invariant simply enforces itself
-//      the moment the doc is loaded. Non-empty h1s (which would
-//      indicate real user content) are left alone to avoid data loss,
-//      even though that means the invariant isn't perfectly held in
-//      that edge case.
+//   2. appendTransaction — after every state change, if the doc has
+//      come to have an EMPTY h1 as its first block, append a delete
+//      tr to remove it. This repairs docs that already carry the h1
+//      from a pre-fix render — no migration flag needed, the
+//      invariant simply enforces itself the moment the doc is
+//      loaded. Non-empty h1s (which would indicate real user
+//      content) are left alone to avoid data loss, even though that
+//      means the invariant isn't perfectly held in that edge case.
 //
 // What this plugin does NOT do:
 //   - Touch writing/wiki docs. MilkdownEditor only installs this
 //     guard when the catalog's knownDoc.type is 'daily'; writing
 //     and wiki docs run no body-structure guard at all.
-//   - Block remote updates. The ySyncPluginKey-meta path is allowed
-//     through filterTransaction so collab stays in sync; the
-//     appendTransaction repair is what normalizes any leading h1
-//     a remote peer might have sent.
+//
+// Phase 3 of the Yjs-removal migration retired the collab plugin, so
+// the y-prosemirror ySyncPluginKey escape hatch this guard used to
+// honour for remote sync trs is gone — every transaction now
+// originates locally or from the doc-init normalization path stamped
+// with SYSTEM_DOC_INIT_META.
 
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state'
-import { ySyncPluginKey } from 'y-prosemirror'
 
 // Transaction meta key stamped on every doc-init normalization tr so
 // the guard's filterTransaction lets the migration through (it would
@@ -60,11 +60,6 @@ export const dailyGuardPlugin = $prose(
     new Plugin({
       key: dailyGuardKey,
       filterTransaction(tr, _state) {
-        // Remote (y-prosemirror): never filter, would desync. The
-        // appendTransaction below picks up any leading h1 the remote
-        // brought in and emits a normalization tr for it.
-        if (tr.getMeta(ySyncPluginKey)) return true
-
         // System-driven (our own repair tr from appendTransaction, or
         // docTitle.ts migrations) — always allow so the plugin can
         // dispatch its own corrective edits without recursing through

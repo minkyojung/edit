@@ -14,7 +14,6 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
 import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
 import { TextSelection } from '@milkdown/kit/prose/state'
-import * as Y from 'yjs'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
@@ -55,11 +54,10 @@ function parseSlashInvocation(text: string): { name: string; args: string } | nu
 
 interface Props {
   editorView: EditorView | null
-  ydoc: Y.Doc | null
   slug: string | null
 }
 
-export function ChatPanel({ editorView, ydoc, slug }: Props) {
+export function ChatPanel({ editorView, slug }: Props) {
   const { account } = useClaudeAuth()
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const threads = useThreads(slug)
@@ -92,7 +90,6 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
   // run lifecycle.
   const runner = useChatRunner({
     editorView,
-    ydoc,
     slug,
     activeId,
     activeThreadModel,
@@ -131,7 +128,7 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
     })
   }, [turnsHook.turns, streaming, pinned])
 
-  const ready = !!editorView && !!ydoc && !!activeId
+  const ready = !!editorView && !!activeId
 
   // Track whether the editor currently has *something* selectable for slash
   // commands — either a live non-empty selection or a frozen snapshot taken

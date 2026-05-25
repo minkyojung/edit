@@ -23,11 +23,11 @@
 
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 
-/** Slim metadata mirrored into localStorage so the sidebar can list
- * docs (especially closed dailies whose ydoc isn't loaded). The
- * source of truth still lives in each doc's ydoc.getMap('meta');
- * this is a cache, refreshed whenever a doc is created or its meta
- * changes while open. */
+/** Slim metadata read straight from the on-disk `.meta.json` sidecar
+ * (via scanVault at boot) and persisted back through the flush loop's
+ * `buildMetaForKnownDoc`. Phase 5c of the Yjs-removal migration
+ * retired the in-memory Y.Map('meta') that used to be the source of
+ * truth — fields here ARE the source now. */
 export interface KnownDoc {
   slug: string
   /** `system:*` = agent-owned meta surface (conventions / log / index)
@@ -44,14 +44,12 @@ export interface KnownDoc {
   /** Parent doc's slug for tree-nested writing notes. Undefined for
    * roots (daily entries and any independent writing docs). */
   parentId?: string
-  /** Cached mirror of the doc's Y.Text('title') for writing-type
-   * entries. Lets the sidebar / palette / breadcrumb show the right
-   * label even when the doc's collab handle hasn't been opened yet
-   * (lazy-load strategy). Source of truth is still the Y.Text;
-   * this is a snapshot kept in sync via a per-handle observer (set
-   * up in ensureHandle) and bumped immediately at create time so
-   * brand-new docs aren't briefly "Untitled". Daily entries don't
-   * use this — their label derives from `date`. */
+  /** Display title for writing-type entries. Phase 5c of the
+   * Yjs-removal migration retired the Y.Text('title') mirror this
+   * field used to track — `title` is now the authoritative title,
+   * set by `renameDoc` and persisted as the filename via the
+   * rename-on-change machinery in `docFileSync.flushDirty`. Daily
+   * entries don't use this — their label derives from `date`. */
   title?: string
   /** Archive timestamp (ms since epoch). Set when the user archives
    * the doc; cleared when restored. Archived docs stay in knownDocs

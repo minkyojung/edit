@@ -32,7 +32,6 @@ interface Props {
 
 export function DocMenu({ editorView }: Props) {
   const activeSlug = useActiveSlug()
-  const handle = useDocsStore((s) => (activeSlug ? s.handles[activeSlug] : null))
   const activeDoc = useDocsStore((s) =>
     activeSlug ? s.knownDocs.find((d) => d.slug === activeSlug) : null,
   )
@@ -86,7 +85,6 @@ export function DocMenu({ editorView }: Props) {
       <DocumentInfoDialog
         open={infoOpen}
         onOpenChange={setInfoOpen}
-        ydoc={handle?.ydoc ?? null}
         editorView={editorView}
       />
 

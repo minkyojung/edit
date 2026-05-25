@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import * as Y from 'yjs'
 import { runChat } from '@/agent/chat/index'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
@@ -32,7 +31,6 @@ export type RunOverrides = {
 
 interface UseChatRunnerDeps {
   editorView: EditorView | null
-  ydoc: Y.Doc | null
   /** Slug of the doc this chat is attached to. Forwarded to runChat so
    * the proposal listener can route by slug instead of relying on a
    * captured (and soon-stale) view reference after doc switch. */
@@ -72,7 +70,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
 
   const {
     editorView,
-    ydoc,
     slug,
     activeId,
     activeThreadModel,
@@ -198,7 +195,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       try {
         const result = await runChat({
           view: editorView!,
-          ydoc: ydoc!,
           slug: slug!,
           threadId,
           history,
@@ -242,7 +238,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [editorView, ydoc, slug, activeId, activeThreadModel, activeThreadEffort, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
+    [editorView, slug, activeId, activeThreadModel, activeThreadEffort, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
   return { status, streaming, run }

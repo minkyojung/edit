@@ -17,7 +17,6 @@
 // external-change detection. This module is the glue: when to write,
 // and what (serialise) to write.
 
-import * as Y from 'yjs'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useEditorViewStore } from '@/state/editorViewStore'
@@ -35,11 +34,6 @@ import {
   writeVaultFile,
 } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
-import {
-  replaceMarkdownInYDoc,
-  seedMarkdownIntoYDoc,
-} from '@/lib/seedMarkdown'
-import { deriveLabel } from '@/lib/docLabel'
 
 /** Merge `next` over the existing `.meta.json` at `metaPath` so a
  * flush preserves fields this layer doesn't track (aiSummary written
@@ -275,30 +269,21 @@ export function isDirty(slug: string): boolean {
 }
 
 /** Wire up the dirty tracker for a handle. Returns a disposer that
- * removes observers and clears the slug from `dirtySlugs` — closeDoc
- * should call it so a torn-down handle's leftover dirty flag doesn't
- * trigger a flush against a destroyed ydoc.
+ * clears the slug from `dirtySlugs` — closeDoc should call it so a
+ * torn-down handle's leftover dirty flag doesn't trigger a flush
+ * against a slug whose state has gone away.
  *
- * Observes the body fragment for changes that should trigger a save.
- * The marks Y.Map observer that used to live alongside this hook went
- * away with Phase 6 of the Yjs-removal migration — the mark store
- * had no surviving consumers, and PM transactions feed the dirty bit
- * directly through `dirtyTrackerPlugin` now. */
-export function installDocSync(slug: string, ydoc: Y.Doc): () => void {
-  const fragment = ydoc.getXmlFragment('prosemirror')
-  const onChange = () => markDirty(slug)
-  fragment.observeDeep(onChange)
-  // Mark dirty on install so the first flush tick mirrors this doc
-  // to disk regardless of whether the user edits it. Without this,
-  // a doc the user opens (or that was already open at boot) but
-  // never types into would never reach the vault — leaving gaps
-  // between what the sidebar shows and what's on disk. Idempotent
-  // — clearDirty after the flush completes leaves the doc clean
-  // until the next edit. The cost is one write per doc-mount event;
-  // overwrite is benign even when the file already matches.
+ * Phase 5c of the Yjs-removal migration retired the Y.Doc fragment
+ * observer this helper used to install — PM transactions feed the
+ * dirty bit directly through `dirtyTrackerPlugin` now. All this
+ * function does is mark the slug dirty once so the first flush tick
+ * mirrors a freshly-opened doc to disk regardless of whether the
+ * user edits it (covering the "boot tab the user never touches"
+ * case). The cost is one write per doc-mount event; overwrite is
+ * benign even when the file already matches. */
+export function installDocSync(slug: string): () => void {
   markDirty(slug)
   return () => {
-    fragment.unobserveDeep(onChange)
     dirtySlugs.delete(slug)
   }
 }
@@ -319,127 +304,6 @@ export function installDocSync(slug: string, ydoc: Y.Doc): () => void {
 
 const FLUSH_INTERVAL_MS = 2000
 let flushTimerId: number | null = null
-
-/** Read a doc's vault files (`.md` + `.marks.json`) from disk and
- * return them as raw data. Inverse of {@link serializeDocToFiles}
- * — at the data layer, before any Y.Doc / markStore mutation.
- *
- * Returns null when there's no `.md` for this doc — caller treats
- * that as "no on-disk copy yet, fall back to whatever the in-memory
- * source provides" (currently IDB; eventually a fresh empty doc).
- *
- * Sidecar handling:
- *   - missing `.marks.json`  → returns `{md, sidecar: {version: 1, marks: []}}`
- *     (a vault that was edited only by an external markdown-aware
- *     tool wouldn't have our sidecar; this is the graceful path)
- *   - malformed JSON         → same as missing, but logged once
- *   - unsupported version    → same; sidecar evolution will add
- *     a migrate hook here
- *
- * The function is pure read — no Y.Doc, no markStore. Wiring into
- * the doc lifecycle is the next sub-step (4.B.1.c.ii+). */
-/** Outcome of {@link applyVaultBodyToYDoc} so callers can react to
- * each reason for not applying. The 'no-handle' case is gone in
- * Step 5 — callers now pass the Y.Doc directly, so a missing handle
- * is a caller-side concern (caller chose not to call). */
-export type ApplyVaultOutcome =
-  | 'applied'         // body landed in Y.Doc
-  | 'no-vault'        // vault not selected; nothing to load from
-  | 'no-file'         // .md doesn't exist on disk
-  | 'no-parser'       // editor hasn't mounted yet → no markdown parser
-  | 'not-empty'       // Y.Doc already has content; refuse to merge
-
-/** Apply a vault doc's persisted state into the given Y.Doc.
- *
- * Two-tier load (Path C Stage 2):
- *
- *   Tier 1 — .ydoc binary. The full Yjs CRDT state including the
- *     XmlFragment (body) AND the Y.Map<Mark> (mark metadata) AND
- *     the RelativePosition anchors. Y.applyUpdate restores everything
- *     in one shot. No text-search anchoring needed — the marks land
- *     on the exact same characters they were anchored to in the
- *     prior session. This is the same mechanism IDB persistence
- *     provided before Path C Step 3b removed it; we now persist to
- *     the vault folder instead.
- *
- *   Tier 2 — .md + .marks.json fallback. Used when the .ydoc file
- *     is absent (legacy notes from before Stage 1, or external tools
- *     creating fresh .md files). Body comes from the markdown parser;
- *     marks must be re-anchored later via {@link restoreMarksFromSidecar}
- *     once the EditorView is mounted.
- *
- * Tier 1 covers the "AI rewrites the body" case automatically —
- * Yjs's CRDT tracks where each mark is relative to surrounding
- * characters, so a body mutation slides the mark with the text
- * rather than orphaning it.
- *
- * Safety: only operates on an EMPTY Y.Doc. If the fragment already
- * has real text we refuse rather than merge — Yjs CRDT would
- * otherwise concatenate.
- *
- * The write uses the 'doc-init' origin (see seedMarkdown.ts) so the
- * UndoManager skips it. We also clear the dirty flag after applying
- * since the observer fires on the fragment change and would
- * otherwise schedule a re-save of identical content. */
-export async function applyVaultBodyToYDoc(
-  ydoc: Y.Doc,
-  slug: string,
-  opts: { reload?: boolean } = {},
-): Promise<ApplyVaultOutcome> {
-  if (!getActiveVaultPath()) return 'no-vault'
-
-  const docs = useDocsStore.getState()
-  const known = docs.knownDocs.find((d) => d.slug === slug)
-  if (!known) return 'no-file'
-  const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
-
-  const fragment = ydoc.getXmlFragment('prosemirror')
-  // Initial hydrate: refuse to merge over real text. deriveLabel walks
-  // XmlText inserts, so a one-paragraph stub from MilkdownEditor's
-  // mount fill counts as "still empty" and we proceed. fragment.length
-  // alone would flip to 1 the moment that stub lands and we'd skip
-  // every vault load.
-  //
-  // Reload (vault watcher → external edit): skip the guard — the
-  // caller is explicitly asking for the on-disk body to replace what's
-  // in memory because someone modified the .md outside the app.
-  if (!opts.reload && deriveLabel(fragment).length > 0) return 'not-empty'
-
-  // Yjs-removal migration Phase 2: the `.ydoc` Tier-1 path is gone.
-  // Boot and external-reload both seed Y.Doc from the `.md` body,
-  // making the markdown file the single durable source of truth.
-  // Any doc whose freshest content used to live only in `.ydoc` was
-  // back-filled into `.md` by `migrateYdocV2` before bootstrap; from
-  // there the markdown round-trip is good enough until Phases 5–7
-  // retire the in-memory Y.Doc entirely.
-  const mdPath = pathForDoc(known, getDoc)
-  if (!mdPath || !(await vaultFileExists(mdPath))) return 'no-file'
-
-  let md: string
-  try {
-    md = await readVaultFile(mdPath)
-  } catch (err) {
-    console.warn('[vault:load] read md failed for', slug, err)
-    return 'no-file'
-  }
-
-  const parser = useEditorViewStore.getState().parser
-  if (!parser) return 'no-parser'
-
-  // Branch by whether the fragment already holds content. An empty
-  // fragment uses seedMarkdownIntoYDoc (single applyUpdate, naturally
-  // atomic). A non-empty one needs replaceMarkdownInYDoc so the
-  // clear + apply are bundled into one transact — same mount-race
-  // reason as Tier 1 above.
-  const ok =
-    fragment.length > 0
-      ? replaceMarkdownInYDoc(ydoc, md, parser)
-      : seedMarkdownIntoYDoc(ydoc, md, parser)
-  if (!ok) return 'no-parser'
-
-  clearDirty(slug)
-  return 'applied'
-}
 
 /** Walk dirty slugs once and persist each to its vault file pair.
  * Called from the periodic flush timer. Errors are isolated per
@@ -589,16 +453,6 @@ if (import.meta.env.DEV) {
     __serializeDoc: typeof handle
   }).__serializeDoc = handle
   ;(window as unknown as { __dirtySlugs: () => string[] }).__dirtySlugs = getDirtySlugs
-  const applyHandle = async (
-    slug?: string,
-  ): Promise<ApplyVaultOutcome | 'no-handle'> => {
-    const target = slug ?? getActiveSlugFromHash()
-    if (!target) return 'no-handle'
-    const handle = useDocsStore.getState().handles[target]
-    if (!handle) return 'no-handle'
-    return applyVaultBodyToYDoc(handle.ydoc, target)
-  }
-  ;(window as unknown as { __applyVault: typeof applyHandle }).__applyVault = applyHandle
   ;(window as unknown as { __activeSlug: () => string | null }).__activeSlug = getActiveSlugFromHash
   // Manual trigger for the active-doc body rewrite path. The Yjs-removal
   // migration's Phase 4 swap (PM dispatch when the slug matches the
@@ -632,8 +486,6 @@ if (import.meta.env.DEV) {
       bodyMarkdownLength: handle?.bodyMarkdown?.length ?? null,
       bodyMarkdownPreview:
         handle?.bodyMarkdown?.slice(0, 120) ?? null,
-      ydocFragmentLength:
-        handle?.ydoc.getXmlFragment('prosemirror').length ?? null,
     }
     console.log('[__diagnose]', out)
     return out

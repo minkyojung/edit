@@ -8,7 +8,6 @@
 // RunChatArgs shape without dragging the runner in.
 
 import type { EditorView } from '@milkdown/kit/prose/view'
-import * as Y from 'yjs'
 import type {
   ChatTurn,
   MessagePart,
@@ -52,7 +51,6 @@ export interface ToolCallRecord {
 
 export interface RunChatArgs {
   view: EditorView
-  ydoc: Y.Doc
   /** Slug of the doc this run was started against. Used at proposal-
    * apply time to route to the currently-mounted view (if the user is
    * still on this doc) or to the pending queue (if they've switched

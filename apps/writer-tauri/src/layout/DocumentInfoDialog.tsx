@@ -5,9 +5,12 @@
 // Sources:
 // - word/char count: editorView.state.doc.textBetween (whatever's
 //   currently rendered, including unsaved keystrokes)
-// - createdAt: KnownDoc.createdAt (the .meta.json sidecar). Phase 5b
-//   of the Yjs-removal migration moved this off Y.Map; readDocMeta
-//   stays as a legacy fallback for docs migrated from older builds.
+// - createdAt: KnownDoc.createdAt (the `.meta.json` sidecar). Phase
+//   5b of the Yjs-removal migration moved this off the Y.Map and
+//   onto the catalog; Phase 5c retired the Y.Map fallback the
+//   dialog used to keep in place for not-yet-migrated docs (the
+//   one-shot `migrateMetaV1` boot pass back-fills every legacy
+//   sidecar, so the catalog reading is the only source now).
 //
 // The "AI activity" mark-counting section that used to live here was
 // retired in Phase 6 of the Yjs-removal migration alongside the
@@ -17,8 +20,7 @@
 // Read-only — no setters here. Recomputes on open via a single
 // snapshot, so dialog stays cheap while the editor keeps streaming.
 
-import { useEffect, useMemo, useState } from 'react'
-import * as Y from 'yjs'
+import { useEffect, useState } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import {
   Dialog,
@@ -27,14 +29,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useDocLabel } from '@/hooks/useDocLabel'
-import { readDocMeta } from '@/hooks/useDocMeta'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useDocsStore } from '@/state/docsStore'
 
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
-  ydoc: Y.Doc | null
   editorView: EditorView | null
 }
 
@@ -43,19 +43,12 @@ interface Stats {
   chars: number
 }
 
-export function DocumentInfoDialog({ open, onOpenChange, ydoc, editorView }: Props) {
+export function DocumentInfoDialog({ open, onOpenChange, editorView }: Props) {
   const activeSlug = useActiveSlug()
   const label = useDocLabel(activeSlug)
-  // Phase 5b of the Yjs-removal migration: createdAt now lives on the
-  // catalog (`.meta.json` sidecar via `KnownDoc.createdAt`). Fall back
-  // to the Y.Map read for legacy docs whose sidecar hasn't been
-  // migrated yet (the migration is sentinel-gated and idempotent —
-  // post-boot every doc should have its createdAt on the catalog).
-  const knownCreatedAt = useDocsStore((s) =>
+  const createdAt = useDocsStore((s) =>
     activeSlug ? s.knownDocs.find((d) => d.slug === activeSlug)?.createdAt : undefined,
   )
-  const meta = useMemo(() => (ydoc ? readDocMeta(ydoc) : null), [ydoc, open])
-  const createdAt = knownCreatedAt ?? meta?.createdAt
 
   // Snapshot stats when the dialog opens. Don't subscribe — these are
   // a glance-and-close kind of fact, and live updates would compete

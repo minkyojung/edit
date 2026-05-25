@@ -51,11 +51,6 @@ import { createStreamParser } from './streamParser'
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const {
     view,
-    // ydoc is intentionally not destructured: the proposal listener now
-    // looks up the live ydoc via useDocsStore by slug, since the
-    // captured ydoc could be destroyed by closeDoc while a run is
-    // in flight. Keeping ydoc in RunChatArgs preserves the call-site
-    // shape so existing callers (useChatRunner) need no change.
     slug,
     threadId,
     history,

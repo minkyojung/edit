@@ -7,9 +7,11 @@
  * (system pages, wiki content) lives here too — same lifecycle
  * "make a doc exist, then optionally fill it" pattern.
  *
- * Cross-slice access:
- *   - `get().ensureHandle(slug, opts?)` — handlesSlice
- *   - `scrubDailyTitleArtifacts` — handlesSlice export
+ * Phase 5c of the Yjs-removal migration retired the per-handle
+ * Y.Doc: type / date / parentId / createdAt all live on the
+ * `KnownDoc` catalog (serialised to `.meta.json` by the flush
+ * loop), and body seeding writes to `handle.bodyMarkdown` for
+ * inactive docs or dispatches into PM for the active view.
  *
  * Karpathy invariant: writings nest only 1-deep under a daily. Both
  * `createChildNote` and `createWritingChild` reject non-daily parents
@@ -19,16 +21,11 @@
  */
 
 import { generateClientSlug } from '@/lib/slug'
-import { todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
-import { deriveLabel } from '@/lib/docLabel'
-import {
-  applyMarkdownToEditor,
-  replaceMarkdownInYDoc,
-  seedMarkdownIntoYDoc,
-} from '@/lib/seedMarkdown'
+import { todayLocalDate } from '@/hooks/useDocMeta'
+import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
+import { markSlugDirty } from '@/lib/docFileSync'
 import { useEditorViewStore } from '../editorViewStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
-import { scrubDailyTitleArtifacts } from './handlesSlice'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
 export interface CreateSlice {
@@ -79,10 +76,9 @@ export const createCreateSlice = (
     // brand-new note never reached disk — so it vanished on restart.
     //
     // Going through openDaily + createChildNote reuses the existing
-    // daily-anchoring logic (including handle warmup + writeDocMeta
-    // for the daily so its `daily/<date>.md` lands on disk too — the
-    // boot scan needs that file to resolve the writing's parentId on
-    // next session).
+    // daily-anchoring logic (so its `daily/<date>.md` lands on disk —
+    // the boot scan needs that file to resolve the writing's parentId
+    // on next session).
     //
     // Side effect worth noting: openDaily adds today's daily to the
     // tab strip if it wasn't already there. Calling code (the "+ tab"
@@ -119,21 +115,6 @@ export const createCreateSlice = (
       set((s) => ({ openSlugs: [...s.openSlugs, slug] }))
     }
     await get().ensureHandle(slug)
-    const handle = get().handles[slug]
-    if (handle) {
-      if (!handle.ydoc.getMap('meta').get('type')) {
-        // Y.Map write kept for the Phase 5b dual-write window so any
-        // surface still reading from Y.Map sees the value too. Phase
-        // 5c retires the Y.Map writes; the `KnownDoc.createdAt` above
-        // is the durable source via `buildMetaForKnownDoc`.
-        writeDocMeta(handle.ydoc, {
-          type: 'daily',
-          date: targetDate,
-          createdAt: known.createdAt,
-        })
-      }
-      scrubDailyTitleArtifacts(handle.ydoc)
-    }
     return slug
   },
 
@@ -168,16 +149,6 @@ export const createCreateSlice = (
         : [...s.openSlugs, slug],
     }))
     await get().ensureHandle(slug)
-    const handle = get().handles[slug]
-    if (handle) {
-      // Dual-write window — see openDaily for the same Phase 5b
-      // rationale.
-      writeDocMeta(handle.ydoc, {
-        type: 'writing',
-        parentId: parentSlug,
-        createdAt,
-      })
-    }
     return slug
   },
 
@@ -203,21 +174,12 @@ export const createCreateSlice = (
     // Seed the body's first paragraph with the wikilink text via
     // ensureHandle's seedFirstLine option. Critical: the seed runs
     // *inside* ensureHandle, before the handle is published to the
-    // store, so MilkdownEditor never sees an empty fragment and its
-    // schema-fill branch can't race with this seed. The 'doc-init'
-    // transaction origin keeps the seed out of the undo stack so
-    // Cmd+Z right after opening doesn't strip the name.
+    // store, so MilkdownEditor never sees an empty `bodyMarkdown`
+    // cache and its mount-time hydrate paints the seed straight into
+    // PM. markSlugDirty (inside seedBodyFirstLine) kicks the flush
+    // tick so the seed reaches `.md` on disk even if the user never
+    // types.
     await get().ensureHandle(slug, { seedFirstLine: title })
-    const handle = get().handles[slug]
-    if (handle) {
-      // Dual-write window — see openDaily for the same Phase 5b
-      // rationale.
-      writeDocMeta(handle.ydoc, {
-        type: 'writing',
-        parentId: parentSlug,
-        createdAt,
-      })
-    }
     return slug
   },
 
@@ -240,45 +202,35 @@ export const createCreateSlice = (
     const handle = get().handles[slug]
     if (!handle) return false
     // Wait for the vault load chain to complete before reading or
-    // writing the fragment. Without this we race: the read path
-    // (deriveLabel below) sees an empty fragment, the seed lands a
-    // fresh update, and the vault-loaded content that arrives
-    // microseconds later merges in alongside it.
+    // writing the cache. Without this we race: the read path below
+    // sees an empty cache, the seed lands a fresh body, and the
+    // vault-loaded content that arrives microseconds later
+    // overwrites it.
     await handle.contentReady
-    const parser = useEditorViewStore.getState().parser
-    if (!parser) {
-      // Caller is responsible for retrying once a parser is available
-      // (e.g. after mounting any doc). We log instead of throw so the
-      // calling ingest pipeline doesn't crash.
-      console.warn('[docs] seedDocBody: parser not ready, skipping', slug)
-      return false
-    }
-    // Don't double-seed. The check looks at user-visible text, not
-    // raw XML. fragment.toString() returns wrappers like
-    // `<paragraph></paragraph>` for the schema's empty-doc fill, so a
-    // naive trim().length > 0 would skip every doc that's been opened
-    // once. deriveLabel walks Y.XmlText.toDelta inserts only — a non-
-    // empty result means real text exists.
-    const labelText = deriveLabel(handle.ydoc.getXmlFragment('prosemirror'))
-    if (labelText.length > 0) return false
+    // Don't double-seed. Treat any non-whitespace content in the
+    // cache as "body already exists" — same outcome the old
+    // `deriveLabel` check produced for a fragment populated with
+    // real text. Brand-new docs (cache is empty after contentReady)
+    // proceed to the seed.
+    if (handle.bodyMarkdown.trim().length > 0) return false
     // Active-editor branch: when the slug we're seeding is the doc
     // the user is currently viewing, write to PM directly so the
-    // mount-time hydrate's pre-Phase-3 assumption doesn't strand the
-    // seed inside a Y.Doc that no longer mirrors PM. Inactive slugs
-    // (e.g. background wiki page creation from a chat ingest pass)
-    // still go through Y.Doc — the next mount picks them up via
-    // MilkdownEditor's `yXmlFragmentToProseMirrorRootNode` hydrate.
-    const activeView = activeViewForSlug(slug)
-    // Phase 5a of the Yjs-removal migration: keep `handle.bodyMarkdown`
-    // synchronised with whichever path lands. The cache feeds the
-    // mount-time hydrate (when the user reopens this slug later) and
-    // the 3 inactive-doc readers (ingest / idle / wiki) that step 5
-    // migrates off the Y.Doc fragment.
+    // seed lands in the live editor. Inactive slugs only update the
+    // cache — the next mount picks it up via the mount-time hydrate,
+    // and markSlugDirty kicks the flush tick so the seed reaches
+    // disk regardless of whether the user opens the doc.
     handle.bodyMarkdown = markdown
+    markSlugDirty(slug)
+    const activeView = activeViewForSlug(slug)
     if (activeView) {
+      const parser = useEditorViewStore.getState().parser
+      if (!parser) {
+        console.warn('[docs] seedDocBody: parser not ready, skipping', slug)
+        return false
+      }
       return applyMarkdownToEditor(activeView, markdown, parser)
     }
-    return seedMarkdownIntoYDoc(handle.ydoc, markdown, parser)
+    return true
   },
 
   replaceDocBody: async (slug, markdown) => {
@@ -290,22 +242,22 @@ export const createCreateSlice = (
     // hydration otherwise and the replace can land mid-load, leaving
     // the page in a mixed state on next render.
     await handle.contentReady
-    const parser = useEditorViewStore.getState().parser
-    if (!parser) {
-      console.warn('[docs] replaceDocBody: parser not ready, skipping', slug)
-      return false
-    }
     // Active-editor branch — same rationale as seedDocBody above.
     // Profile rebuilds and wiki ingest rewrites that target the
     // user's current view land via PM dispatch; everything else
-    // stages into Y.Doc for the next mount.
-    const activeView = activeViewForSlug(slug)
-    // See seedDocBody for the bodyMarkdown rationale.
+    // updates the cache for the next mount + kicks the flush.
     handle.bodyMarkdown = markdown
+    markSlugDirty(slug)
+    const activeView = activeViewForSlug(slug)
     if (activeView) {
+      const parser = useEditorViewStore.getState().parser
+      if (!parser) {
+        console.warn('[docs] replaceDocBody: parser not ready, skipping', slug)
+        return false
+      }
       return applyMarkdownToEditor(activeView, markdown, parser)
     }
-    return replaceMarkdownInYDoc(handle.ydoc, markdown, parser)
+    return true
   },
 })
 

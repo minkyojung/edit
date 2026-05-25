@@ -1,21 +1,27 @@
 // Daily-doc body normalization. Strips the legacy "# YYYY-MM-DD"
 // heading that an earlier build seeded into the body markdown of
 // daily entries (the date label now lives outside the editor and is
-// rendered from meta.date). One-shot per doc via the
-// `meta.titleNormalizedV2` flag.
+// rendered from meta.date).
+//
+// Phase 5c of the Yjs-removal migration retired the Y.Map-backed
+// `titleNormalizedV2` flag this routine used to gate on — `cleanupDailyDateHeading`
+// is fully idempotent (it scans for matching legacy h1s and bails on
+// the first non-match, so a clean body costs one node-type check),
+// and `bodyMarkdown` is the only durable home for the body now.
+// Running it on every mount of a daily doc is cheaper than threading
+// state through the catalog or `.meta.json`.
 //
 // Non-daily docs no longer have a structural title slot — whatever
 // the user writes in the body is the body, and the displayed label
 // is derived from the first non-empty block (see lib/docLabel.ts).
 // They run no normalization at all.
 //
-// Origin: 'doc-init'. Deliberately NOT in the UndoManager's
-// trackedOrigins so this system-driven cleanup does not pollute the
-// user's undo stack (Cmd+Z right after first open would otherwise
-// "undo" the migration).
+// Origin: 'doc-init' via the `addToHistory: false` meta + the
+// SYSTEM_DOC_INIT_META sentinel so this system-driven cleanup does
+// not pollute the user's undo stack (Cmd+Z right after first open
+// would otherwise "undo" the migration).
 
 import type { EditorView } from '@milkdown/kit/prose/view'
-import * as Y from 'yjs'
 import { SYSTEM_DOC_INIT_META } from '@/editor/dailyGuardPlugin'
 
 interface NormalizeOptions {
@@ -25,18 +31,10 @@ interface NormalizeOptions {
 }
 
 export function normalizeDailyBody(
-  ydoc: Y.Doc,
   view: EditorView,
   options: NormalizeOptions,
 ): void {
-  const meta = ydoc.getMap('meta')
-  if (meta.get('titleNormalizedV2')) return
-  if (meta.get('type') !== 'daily') return
-
-  ydoc.transact(() => {
-    if (options.date) cleanupDailyDateHeading(view, options.date)
-    meta.set('titleNormalizedV2', true)
-  }, 'doc-init')
+  if (options.date) cleanupDailyDateHeading(view, options.date)
 }
 
 // Daily docs: strip any leading h1 whose text is the daily's date
