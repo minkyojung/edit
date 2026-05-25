@@ -98,22 +98,38 @@ export const createHandlesSlice = (
   reloadFromVault: async (slug) => {
     const handle = get().handles[slug]
     if (!handle?.ydoc) return
-    // Phase 5a of the Yjs-removal migration: read the freshly-edited
-    // markdown straight off disk and treat it as the source of
-    // truth — both for `handle.bodyMarkdown` (the cache the next
-    // mount + the 3 inactive-doc readers consume) and for the live
-    // PM dispatch when this slug is active. The Y.Doc fragment is
-    // still hydrated for the transition window so the legacy mount-
-    // time fallback in MilkdownEditor stays meaningful; once 5a
-    // step 8 retires that fallback, the `applyVaultBodyToYDoc` call
-    // and the `import { yXmlFragmentToProseMirrorRootNode }` follow it
-    // out.
-    const refreshedMarkdown = await loadBodyMarkdown(slug, get)
+    // Robust file-watcher pattern: read first, then decide. A read
+    // that fails (transient disk error) or finds the file missing
+    // (atomic-rename window mid-flight) is NOT the same as "the
+    // user emptied the file" — collapsing the three into a single
+    // empty-string outcome (the previous shape) would push an empty
+    // PM through dispatch, and the next flushDirty tick would write
+    // that empty back to disk, making the transient state permanent.
+    // Same principle every robust file-based editor (VS Code,
+    // Obsidian, iA Writer, …) follows: failures are skipped, the
+    // next watcher event re-tries.
+    const result = await loadBodyMarkdown(slug, get)
+    if (result.kind === 'error') {
+      console.warn(
+        '[vault:reload] read error, keeping current PM',
+        slug,
+        result.error,
+      )
+      return
+    }
+    if (result.kind === 'missing') {
+      console.warn(
+        '[vault:reload] file missing on reload, keeping current PM',
+        slug,
+      )
+      return
+    }
+    const refreshedMarkdown = result.markdown
     handle.bodyMarkdown = refreshedMarkdown
     const outcome = await applyVaultBodyToYDoc(handle.ydoc, slug, {
       reload: true,
     }).catch((err) => {
-      console.warn('[vault:reload] failed for', slug, err)
+      console.warn('[vault:reload] Y.Doc reload failed for', slug, err)
       return 'no-vault' as const
     })
     if (outcome === 'applied') {
@@ -134,7 +150,9 @@ export const createHandlesSlice = (
                 )
               }
             } else {
-              // External delete-to-empty: clear PM as well.
+              // User genuinely emptied the file externally — clear
+              // PM to match. (Distinguished from "couldn't read"
+              // above by `loaded` vs `missing`/`error`.)
               view.dispatch(
                 view.state.tr
                   .delete(0, view.state.doc.content.size)
@@ -230,14 +248,16 @@ function buildHandle(
     }
     // Phase 5a of the Yjs-removal migration: snapshot the live
     // PM-equivalent markdown alongside the Y.Doc fragment hydrate.
-    // Right now this is a parallel read off disk (idempotent — the
-    // file just landed via applyVaultBodyToYDoc's parser path or was
-    // already there). Future steps swap the editor's mount seed from
-    // the fragment to this string, then retire the Y.Doc seed path
-    // entirely. Read failures collapse to empty markdown — the
-    // schema-fill in MilkdownEditor still gives the user a usable
-    // editor and the next flush rewrites the file.
-    handle.bodyMarkdown = await loadBodyMarkdown(slug, get)
+    // The discriminated `LoadBodyResult` separates a real empty
+    // file from a transient read failure (atomic-rename window,
+    // permission glitch). For the initial hydrate we collapse both
+    // failure modes to an empty cache — the editor's schema-fill
+    // gives the user a usable blank doc and the next flush rewrites
+    // the file. The "do not touch" semantics matter on the reload
+    // path below, not here.
+    const initialLoad = await loadBodyMarkdown(slug, get)
+    handle.bodyMarkdown =
+      initialLoad.kind === 'loaded' ? initialLoad.markdown : ''
     vaultSyncDisposer = installDocSync(slug, ydoc)
 
     // Ingest dirty-bit observer. Installed AFTER hydrate so the
@@ -336,27 +356,49 @@ export function scrubDailyTitleArtifacts(ydoc: Y.Doc): void {
   }, 'doc-init')
 }
 
-/** Read the doc's vault `.md` file as a plain string for the new
- * `bodyMarkdown` cache on `CollabHandle`. Returns '' for brand-new
- * docs (no file yet) and for any disk-read failure — the empty
- * string maps cleanly to "let the editor's schema-fill seed an
- * empty paragraph" downstream. */
+/** Three distinct outcomes of a body-markdown read. Conflating them
+ * (the prior `Promise<string>` shape) is the data-loss footgun the
+ * standard file-watcher pattern explicitly prohibits: a transient
+ * absence during an atomic-rename window would otherwise resolve to
+ * `''`, the caller would interpret that as "the doc is now empty",
+ * push that into PM, and the next flushDirty tick would write the
+ * empty PM back to disk — making the transient state permanent.
+ *
+ * - `loaded`: read succeeded. `markdown` may be empty (the user
+ *   genuinely cleared the file) and the caller honours that.
+ * - `missing`: the file is not on disk right now. Two roots — a
+ *   brand-new doc that's never been flushed, or an atomic-rename
+ *   mid-flight. Callers that re-hydrate live state should treat
+ *   this as "do nothing"; callers that initialise (buildHandle) can
+ *   collapse it to an empty default.
+ * - `error`: the read threw (permission, disk hiccup, etc.). Same
+ *   "do nothing on hydrate" rule applies; the next watcher event
+ *   re-triggers the read. */
+export type LoadBodyResult =
+  | { kind: 'loaded'; markdown: string }
+  | { kind: 'missing' }
+  | { kind: 'error'; error: unknown }
+
+/** Read the doc's vault `.md` file. Returns a discriminated result
+ * so callers can distinguish "no content" from "couldn't read" —
+ * see {@link LoadBodyResult}. */
 async function loadBodyMarkdown(
   slug: string,
   get: GetDocsState,
-): Promise<string> {
+): Promise<LoadBodyResult> {
   const state = get()
   const known = state.knownDocs.find((d) => d.slug === slug)
-  if (!known) return ''
+  if (!known) return { kind: 'missing' }
   const getDoc = (s: string) =>
     state.knownDocs.find((d) => d.slug === s)
   const mdPath = pathForDoc(known, getDoc)
-  if (!mdPath) return ''
+  if (!mdPath) return { kind: 'missing' }
   try {
-    if (!(await vaultFileExists(mdPath))) return ''
-    return await readVaultFile(mdPath)
-  } catch (err) {
-    console.warn('[vault:load] bodyMarkdown read failed for', slug, err)
-    return ''
+    if (!(await vaultFileExists(mdPath))) return { kind: 'missing' }
+    const markdown = await readVaultFile(mdPath)
+    return { kind: 'loaded', markdown }
+  } catch (error) {
+    console.warn('[vault:load] bodyMarkdown read failed for', slug, error)
+    return { kind: 'error', error }
   }
 }

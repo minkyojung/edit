@@ -635,6 +635,11 @@ if (import.meta.env.DEV) {
       hasParser: Boolean(parser),
       hasHandle: Boolean(handle),
       docSize: view?.state.doc.content.size ?? null,
+      bodyMarkdownLength: handle?.bodyMarkdown?.length ?? null,
+      bodyMarkdownPreview:
+        handle?.bodyMarkdown?.slice(0, 120) ?? null,
+      ydocFragmentLength:
+        handle?.ydoc.getXmlFragment('prosemirror').length ?? null,
     }
     console.log('[__diagnose]', out)
     return out

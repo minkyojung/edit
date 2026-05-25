@@ -10,7 +10,6 @@ import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { listItemBlockComponent } from '@milkdown/kit/component/list-item-block'
-import { yXmlFragmentToProseMirrorRootNode } from 'y-prosemirror'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
 import { createDirtyTrackerPlugin } from './dirtyTrackerPlugin'
@@ -239,7 +238,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
     if (!rootRef.current || !handle) return
 
     let mounted = true
-    const { ydoc } = handle
 
     Editor.make()
       .config((ctx) => {
@@ -387,16 +385,16 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         editor.action((ctx) => {
           const view = ctx.get(editorViewCtx)
 
-          // Phase 5a of the Yjs-removal migration: prefer the
-          // markdown cache as the seed source. We parse + dispatch a
-          // non-undoable replace into PM. Falls back to the Y.Doc
-          // fragment hydrate when bodyMarkdown is empty AND the
-          // fragment isn't — that combination shouldn't occur in
-          // normal operation (both come from the same `.md` read in
-          // `buildHandle`), but the fallback is the safety net for
-          // the transition window.
+          // Phase 5a step 8 of the Yjs-removal migration: the mount-
+          // time hydrate now reads `handle.bodyMarkdown` only. The
+          // Y.Doc fragment fallback that lived here through the
+          // transition window is gone — every body-rewrite surface
+          // (buildHandle, seedDocBody, replaceDocBody, reloadFromVault)
+          // keeps the cache in sync, so any miss surfaces as a blank
+          // editor instead of a silent Y.Doc-only seed. Brand-new
+          // docs (empty bodyMarkdown) fall through to Milkdown's
+          // schema-fill (one empty paragraph).
           const parser = useEditorViewStore.getState().parser
-          let seededFromMarkdown = false
           if (handle.bodyMarkdown.trim().length > 0 && parser) {
             try {
               const node = parser(handle.bodyMarkdown.trim())
@@ -407,7 +405,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
                     .replaceWith(0, view.state.doc.content.size, live.content)
                     .setMeta('addToHistory', false),
                 )
-                seededFromMarkdown = true
               }
             } catch (err) {
               console.warn(
@@ -415,32 +412,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
                 handle.slug,
                 err,
               )
-            }
-          }
-
-          if (!seededFromMarkdown) {
-            // Legacy fallback: read the Y.Doc fragment and dispatch.
-            // Phase 5a step 8 removes this branch once the markdown
-            // seed is verified across all surfaces.
-            const xmlFragment = ydoc.getXmlFragment('prosemirror')
-            if (xmlFragment.length > 0) {
-              try {
-                const root = yXmlFragmentToProseMirrorRootNode(
-                  xmlFragment,
-                  view.state.schema,
-                )
-                view.dispatch(
-                  view.state.tr
-                    .replaceWith(0, view.state.doc.content.size, root.content)
-                    .setMeta('addToHistory', false),
-                )
-              } catch (err) {
-                console.warn(
-                  '[MilkdownEditor] Y.Doc → PM hydrate failed',
-                  handle.slug,
-                  err,
-                )
-              }
             }
           }
 
