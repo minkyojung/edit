@@ -200,7 +200,7 @@ export function AppSidebar() {
     <Sidebar variant="inset" className="p-0">
       <SidebarHeader
         data-tauri-drag-region
-        className="flex flex-row items-center gap-0.5 p-0 pr-1"
+        className="flex flex-row items-center p-0 pr-3"
         style={{ height: 'var(--header-h)' }}
       >
         {/* Reserve the macOS traffic-light area as a drag region so
@@ -212,7 +212,13 @@ export function AppSidebar() {
           className="h-full shrink-0"
           style={{ width: 'var(--traffic-light-w)' }}
         />
-        <SidebarDateMenu />
+        {/* Cluster wrapper matches EditorHeader's pl-3 + gap-2 so the
+            SidebarDateMenu sits 12px past the stoplight zone, the same
+            distance EditorHeader's SidebarTrigger keeps from the
+            window's left edge. */}
+        <div className="flex items-center gap-2 pl-3">
+          <SidebarDateMenu />
+        </div>
         <div data-tauri-drag-region className="flex-1 h-full" />
       </SidebarHeader>
 
