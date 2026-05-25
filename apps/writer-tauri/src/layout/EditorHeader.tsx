@@ -57,7 +57,13 @@ export function EditorHeader({
   return (
     <div
       data-tauri-drag-region
-      className="flex shrink-0 items-center bg-transparent"
+      // Subtle top→bottom gradient. The top edge picks up a very low
+      // foreground tint and fades to transparent at the header bottom
+      // so the chrome reads as a soft toolbar against the editor
+      // canvas — Tahoe / macOS Notes toolbar tone. Kept under 5% so
+      // it never reads as a hard band; sticky-title fade-in stays the
+      // primary "you scrolled" signal.
+      className="flex shrink-0 items-center bg-gradient-to-b from-foreground/[0.04] to-transparent"
       style={{ height: 'var(--header-h)' }}
     >
       {showSidebarTrigger && (
