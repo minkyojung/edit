@@ -21,6 +21,7 @@ import { IconLayoutSidebarRightFilled } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Button } from '@/components/ui/button'
+import { NavHistoryButtons } from './NavHistoryButtons'
 import {
   Tooltip,
   TooltipContent,
@@ -57,22 +58,27 @@ export function EditorHeader({
   return (
     <div
       data-tauri-drag-region
-      className="absolute left-0 right-0 z-sticky flex items-center bg-background"
+      className="absolute left-0 right-0 z-sticky flex items-center"
       style={{
         top: 'calc((var(--header-h) - 36px) / 2)',
         height: '36px',
       }}
     >
+      {/* Traffic-light reservation is only needed when the sidebar is
+          collapsed — otherwise the sidebar paints over the stoplight
+          zone and the editor header starts right after the sidebar. */}
       {showSidebarTrigger && (
-        <>
-          <div
-            data-tauri-drag-region
-            className="h-full shrink-0"
-            style={{ width: 'var(--traffic-light-w)' }}
-          />
-          <SidebarTrigger />
-        </>
+        <div
+          data-tauri-drag-region
+          className="h-full shrink-0"
+          style={{ width: 'var(--traffic-light-w)' }}
+        />
       )}
+      {/* Sidebar trigger + back/forward live in the editor header for a
+          consistent left-cluster regardless of sidebar state. The
+          sidebar's own header keeps only the date-view picker. */}
+      <SidebarTrigger />
+      <NavHistoryButtons />
       <div className="flex min-w-0 flex-1 items-stretch self-stretch">
         <EditorTabs />
       </div>

@@ -9,7 +9,6 @@ import {
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { SidebarDateMenu } from './SidebarDateMenu'
-import { NavHistoryButtons } from './NavHistoryButtons'
 import { DayView } from './views/DayView'
 import { WeekView } from './views/WeekView'
 import { MonthView } from './views/MonthView'
@@ -40,7 +39,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
 } from '@/components/ui/sidebar'
 
 /** Pull initials from an email's local part, splitting on .+_- so
@@ -214,8 +212,6 @@ export function AppSidebar() {
           className="h-full shrink-0"
           style={{ width: 'var(--traffic-light-w)' }}
         />
-        <SidebarTrigger />
-        <NavHistoryButtons />
         <SidebarDateMenu />
         <div data-tauri-drag-region className="flex-1 h-full" />
       </SidebarHeader>
