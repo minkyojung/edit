@@ -1,22 +1,18 @@
-// Pending tool-call store for the staged-edit flow (Phase 3.2).
+// Pending tool-call store for the staged-edit flow.
 //
 // When the sidecar's `canUseTool` hook gates a write-side built-in
-// (Edit / Write / MultiEdit / NotebookEdit) it emits a `chat/edit-pending`
-// notification. The host's chat runner forwards each one into this
-// store keyed by runId, where the ProcessChain UI can pick it up
-// and render [Apply] / [Reject] affordances next to the matching
-// tool step.
-//
-// Phase 3.2 keeps this purely a memory store; Apply/Reject are
-// wired to the placeholder actions below and don't yet round-trip
-// back to the sidecar. Phase 3.3 plugs the missing half — the
-// sidecar's canUseTool awaits a host decision channel, and Apply
-// resolves it with `behavior: 'allow'`.
+// (Edit / Write / MultiEdit / NotebookEdit) it parks the SDK on a
+// Promise and emits a `chat/edit-pending` notification carrying a
+// `pendingId`. The host's chat runner forwards each one into this
+// store keyed by that id, and the PendingEditsBar renders Apply /
+// Reject affordances. The button handler fires
+// `claude_chat_edit_decision` back to the sidecar; this store only
+// tracks the local "is this card still visible" flag.
 //
 // Lifecycle:
 //   - sidecar emits        → addPending(edit)
-//   - user clicks Apply    → markApplied(id) (Phase 3.3: also resolve)
-//   - user clicks Reject   → markRejected(id) (Phase 3.3: also resolve)
+//   - user clicks Apply    → markApplied(id) + invoke('allow')
+//   - user clicks Reject   → markRejected(id) + invoke('deny')
 //   - run finishes / errors → clearForRun(runId)
 //
 // We never auto-clear from time alone — a long thinking turn could
@@ -26,10 +22,10 @@
 import { create } from 'zustand'
 
 /** One write-side tool call the model attempted, paused at the
- * canUseTool gate awaiting a user decision. `id` is the SDK's
- * toolUseID when available (Phase 3.3) and a client-side UUID
- * otherwise — either way it's stable for the lifetime of the
- * pending edit. */
+ * canUseTool gate awaiting a user decision. `id` is the sidecar-
+ * minted pendingId echoed in `chat/edit-pending`; the host passes
+ * it back via `claude_chat_edit_decision` so the matching paused
+ * Promise resolves. Stable for the lifetime of the pending edit. */
 export interface PendingEdit {
   id: string
   runId: string
@@ -54,9 +50,9 @@ interface PendingEditsState {
     createdAt?: number
   }) => void
 
-  /** Mark the user's decision. Phase 3.2 just flips the status flag;
-   * Phase 3.3 will additionally resolve the matching canUseTool
-   * Promise so the SDK can proceed. */
+  /** Flip the local card status. The PendingEditsBar pairs this with
+   * a `claude_chat_edit_decision` invoke so the sidecar resolves the
+   * matching canUseTool Promise. */
   markApplied: (id: string) => void
   markRejected: (id: string) => void
 

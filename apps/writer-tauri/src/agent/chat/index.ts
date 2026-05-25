@@ -173,22 +173,23 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         if (e.payload.runId !== runId) return
         parser.handleEvent(e.payload.event)
       }),
-      // Phase 3.2 staged-edit gate: the sidecar emits one of these
-      // for every write-side built-in (Edit / Write / MultiEdit /
-      // NotebookEdit) the model attempts. The host stores the
-      // payload so the ProcessChain UI can render Apply / Reject
-      // affordances next to the matching tool step. Phase 3.3 will
-      // additionally round-trip a decision back to the sidecar's
-      // canUseTool callback so Apply actually lets the SDK run the
-      // write; today the click only flips the local status flag.
+      // Phase 3.3 staged-edit gate: the sidecar's canUseTool hook
+      // parks the SDK on every write-side built-in (Edit / Write /
+      // MultiEdit / NotebookEdit) and emits this event with a
+      // sidecar-minted `pendingId`. The PendingEditsBar renders an
+      // Apply / Reject card per event and routes the user's decision
+      // back through `claude_chat_edit_decision` so the matching
+      // canUseTool Promise resolves and the SDK either runs the
+      // tool (allow) or feeds the deny message to the model.
       listen<{
         runId: string
+        pendingId: string
         toolName: string
         input: Record<string, unknown>
       }>('claude:edit-pending', (e) => {
         if (e.payload.runId !== runId) return
         usePendingEditsStore.getState().addPending({
-          id: crypto.randomUUID(),
+          id: e.payload.pendingId,
           runId: e.payload.runId,
           toolName: e.payload.toolName,
           input: e.payload.input,

@@ -180,6 +180,20 @@ function kindForBlock(
   return null
 }
 
+/** Hover-tooltip text for a gutter marker. Korean to match the rest
+ * of the chat UI strings. The count suffix kicks in when multiple
+ * ai-edit shas hit the same block — useful signal to "this block
+ * has been touched by N AI edits since you last reviewed". */
+function titleForKind(kind: AiEditGutterKind, shaCount: number): string {
+  const base =
+    kind === 'add'
+      ? 'AI 편집 — 추가'
+      : kind === 'replace'
+        ? 'AI 편집 — 수정 (추가 + 삭제)'
+        : 'AI 편집 — 삭제'
+  return shaCount > 1 ? `${base} · ${shaCount}건` : base
+}
+
 function buildDecos(
   doc: PMNode,
   opts: AiEditGutterOpts,
@@ -254,6 +268,13 @@ function buildDecos(
           class: `ai-edit-gutter ai-edit-gutter--${marker.kind}`,
           'data-ai-edit-shas': marker.shas.join(','),
           'data-ai-edit-kind': marker.kind,
+          // Native hover hint. The bar itself is a CSS ::before
+          // pseudo-element so we can't put the attribute on it
+          // directly; the browser still surfaces the title on hover
+          // of the underlying block, which is "near enough" to the
+          // bar that the user can find it. `title` survives PM's
+          // DOM diff because it's part of the spec attribute set.
+          title: titleForKind(marker.kind, marker.shas.length),
         },
       ),
     )

@@ -5,14 +5,14 @@
 // the user makes a decision the model's edit sits paused at the
 // staged-edit boundary.
 //
-// Phase 3.2 (this file): clicking [Apply] / [Reject] flips the
-// local status flag but does not yet round-trip back to the sidecar
-// — the next turn is what the model gets to act on. Phase 3.3 will
-// hook these clicks into a host→sidecar response channel so Apply
-// resolves the matching canUseTool Promise with `behavior: 'allow'`
-// and the SDK proceeds with the actual fs.write.
+// Phase 3.3: clicking [Apply] / [Reject] now fires
+// `claude_chat_edit_decision` back to the sidecar, which resolves
+// the matching canUseTool Promise. Allow lets the SDK run the Edit
+// (real fs.write); Reject feeds a "user rejected" message to the
+// model so it can acknowledge and move on.
 
 import { useEffect, useMemo, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { Button } from '@/components/ui/button'
 import { usePendingEditsStore, type PendingEdit } from '@/state/pendingEditsStore'
 import { getActiveVaultPath } from '@/state/settingsStore'
@@ -43,6 +43,27 @@ export function PendingEditsBar() {
 function PendingEditCard({ edit }: { edit: PendingEdit }) {
   const markApplied = usePendingEditsStore((s) => s.markApplied)
   const markRejected = usePendingEditsStore((s) => s.markRejected)
+
+  // Fire-and-forget decision relay. The optimistic local mark
+  // hides the card immediately (good UX even on a slow IPC) and
+  // any send failure is logged but doesn't surface — the worst
+  // case is the canUseTool gate stays parked, which the user can
+  // resolve by cancelling the run.
+  const sendDecision = (decision: 'allow' | 'deny') => {
+    invoke('claude_chat_edit_decision', {
+      args: { runId: edit.runId, pendingId: edit.id, decision },
+    }).catch((err) => {
+      console.warn('[chat] edit-decision failed', err)
+    })
+  }
+  const onApply = () => {
+    markApplied(edit.id)
+    sendDecision('allow')
+  }
+  const onReject = () => {
+    markRejected(edit.id)
+    sendDecision('deny')
+  }
 
   const filePath = readString(edit.input.file_path)
   const oldString = readString(edit.input.old_string)
@@ -98,7 +119,7 @@ function PendingEditCard({ edit }: { edit: PendingEdit }) {
             size="sm"
             variant="ghost"
             className="h-7 px-2 text-[12px]"
-            onClick={() => markRejected(edit.id)}
+            onClick={onReject}
           >
             Reject
           </Button>
@@ -106,7 +127,7 @@ function PendingEditCard({ edit }: { edit: PendingEdit }) {
             size="sm"
             variant="default"
             className="h-7 px-2 text-[12px]"
-            onClick={() => markApplied(edit.id)}
+            onClick={onApply}
           >
             Apply
           </Button>
@@ -245,21 +266,84 @@ function buildContextualDiff(
   const idx = fileText.indexOf(oldText)
   if (idx === -1) return buildLineDiff(oldText, newText, contextLines)
 
-  const beforeText = fileText.slice(0, idx)
-  const startLine = beforeText.split('\n').length - 1
-  const oldLineCount = oldText.split('\n').length
-  const endLine = startLine + oldLineCount - 1
   const fileLines = fileText.split('\n')
 
+  // Find where the new content actually diverges from the old. The
+  // line-based approach (start/end from `oldText.split('\n')`) gets
+  // the position wrong whenever `old_string` matches mid-line: the
+  // line containing the match is treated as part of the edit region
+  // and disappears from pre-context, so the user sees context from
+  // one paragraph earlier than the actual insertion point.
+  //
+  // Instead, walk character-by-character over old/new to find their
+  // common prefix and common suffix. The "insertion anchor" — the
+  // last unchanged character before the new content — sits at
+  // `idx + commonPrefixLen - 1`. The line containing that anchor is
+  // the natural last line of pre-context.
+  let commonPrefixLen = 0
+  const maxPrefix = Math.min(oldText.length, newText.length)
+  while (
+    commonPrefixLen < maxPrefix &&
+    oldText.charCodeAt(commonPrefixLen) ===
+      newText.charCodeAt(commonPrefixLen)
+  ) {
+    commonPrefixLen += 1
+  }
+  let commonSuffixLen = 0
+  const maxSuffix = Math.min(
+    oldText.length - commonPrefixLen,
+    newText.length - commonPrefixLen,
+  )
+  while (
+    commonSuffixLen < maxSuffix &&
+    oldText.charCodeAt(oldText.length - 1 - commonSuffixLen) ===
+      newText.charCodeAt(newText.length - 1 - commonSuffixLen)
+  ) {
+    commonSuffixLen += 1
+  }
+
+  // Line of the last character of the common prefix in the file.
+  // When the prefix is empty (pure replace at idx) anchorLine is the
+  // line containing the start of the change instead.
+  const anchorPrefixIdx =
+    commonPrefixLen > 0 ? idx + commonPrefixLen : idx
+  const anchorLine =
+    fileText.slice(0, anchorPrefixIdx).split('\n').length - 1
+
+  // Pre-context inclusion rule. If we kept the common-prefix tail in
+  // the unchanged region, we include the anchor line as the closest
+  // context (the user expects the line they're appending to to show
+  // right above the +). On a pure replace (prefix empty) including
+  // the anchor line would duplicate content with the `- removed`
+  // row beneath it, so step one line up.
+  const preContextStartLine =
+    commonPrefixLen > 0 ? anchorLine : anchorLine - 1
+
+  // Post-context anchor: the first character AFTER the edited region.
+  // Mirrors the prefix logic using the common suffix so the same
+  // off-by-one between "ends at \n" and "ends mid-line" can't hide
+  // the line directly under the change.
+  const oldEndIdx = idx + oldText.length
+  const postAnchorIdx =
+    commonSuffixLen > 0 ? oldEndIdx - commonSuffixLen : oldEndIdx
+  const postAnchorLine =
+    fileText.slice(0, postAnchorIdx).split('\n').length - 1
+  const postContextStartLine =
+    commonSuffixLen > 0 ? postAnchorLine : postAnchorLine + 1
+
   const preContext: string[] = []
-  for (let i = startLine - 1; i >= 0 && preContext.length < contextLines; i -= 1) {
+  for (
+    let i = preContextStartLine;
+    i >= 0 && preContext.length < contextLines;
+    i -= 1
+  ) {
     if (isNoiseLine(fileLines[i])) continue
     preContext.unshift(fileLines[i])
   }
 
   const postContext: string[] = []
   for (
-    let i = endLine + 1;
+    let i = postContextStartLine;
     i < fileLines.length && postContext.length < contextLines;
     i += 1
   ) {

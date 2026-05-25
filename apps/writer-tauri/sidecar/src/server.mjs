@@ -322,6 +322,13 @@ export class Server {
     // Pending waiters for the next setToken call. Resolved when a new token
     // is pushed; used by the AUTH-retry path to coordinate refreshes.
     this.tokenUpdateWaiters = []
+    // Phase 3.3 staged-edit gate: each call to `canUseTool` for a write-
+    // side built-in parks here until the host pushes a decision via
+    // `chat/edit-decision`. pendingId -> { resolve(decision), runId }.
+    // The map lives at server scope (not per-run) so a single
+    // `chat/edit-decision` notification can find its target without the
+    // host having to know which run the decision belongs to internally.
+    this.pendingEditDecisions = new Map()
   }
 
   async handle(message) {
@@ -347,6 +354,8 @@ export class Server {
           return this.#handleChat(id, params)
         case 'chat/cancel':
           return this.#handleCancel(params)
+        case 'chat/edit-decision':
+          return this.#handleEditDecision(params)
         case 'shutdown':
           return this.#handleShutdown(id)
         default:
@@ -543,32 +552,83 @@ export class Server {
       // doesn't apply to us since we're driving the SDK from a long-
       // running sidecar).
       options.permissionMode = 'default'
-      options.canUseTool = async (toolName, input, _opts) => {
+      options.canUseTool = async (toolName, input, opts) => {
         const stagedNames = new Set([
           'Edit',
           'Write',
           'MultiEdit',
           'NotebookEdit',
         ])
-        if (stagedNames.has(toolName)) {
-          // Surface every attempt to the host for inspection. The
-          // host's frontend logs this in dev so we can confirm the
-          // hijack is wired up before plumbing the Apply UI.
-          this.emit(
-            notification('chat/edit-pending', {
-              runId,
-              toolName,
-              input,
-            }),
-          )
+        if (!stagedNames.has(toolName)) {
+          return { behavior: 'allow', updatedInput: input }
+        }
+        // Phase 3.3: park here until the user picks Apply or Reject in
+        // the host. We mint a `pendingId` so the host's decision can
+        // find its way back without us trusting the SDK to expose its
+        // internal toolUseId. The host echoes the pendingId via
+        // `chat/edit-decision`; #handleEditDecision resolves the
+        // matching Promise and this callback returns the corresponding
+        // PermissionResult, which the SDK then honors by either running
+        // the tool (allow) or feeding the deny message back to the
+        // model.
+        const pendingId = globalThis.crypto.randomUUID()
+        this.emit(
+          notification('chat/edit-pending', {
+            runId,
+            pendingId,
+            toolName,
+            input,
+          }),
+        )
+        const decision = await new Promise((resolve) => {
+          this.pendingEditDecisions.set(pendingId, { resolve, runId })
+          // Three ways out: user decision (resolved by
+          // #handleEditDecision), SDK-level abort on this tool call
+          // (opts.signal), or run-wide cancel (controller.signal). The
+          // latter two collapse to a 'cancel' decision which we
+          // translate to an interrupt-true deny so the SDK tears the
+          // run down instead of letting the model keep retrying.
+          const abort = (reason) => {
+            if (!this.pendingEditDecisions.has(pendingId)) return
+            this.pendingEditDecisions.delete(pendingId)
+            resolve(reason)
+          }
+          const onToolAbort = () => abort('cancel')
+          const onRunAbort = () => abort('cancel')
+          if (opts?.signal) {
+            if (opts.signal.aborted) {
+              abort('cancel')
+              return
+            }
+            opts.signal.addEventListener('abort', onToolAbort, { once: true })
+          }
+          if (controller.signal.aborted) {
+            abort('cancel')
+            return
+          }
+          controller.signal.addEventListener('abort', onRunAbort, {
+            once: true,
+          })
+        })
+        if (decision === 'allow') {
+          return { behavior: 'allow', updatedInput: input }
+        }
+        if (decision === 'cancel') {
           return {
             behavior: 'deny',
-            message:
-              'This edit is pending user approval. The user has not enabled auto-apply yet; describe the change you would make in chat and wait for the user to apply it manually.',
-            interrupt: false,
+            message: 'Cancelled by user.',
+            interrupt: true,
           }
         }
-        return { behavior: 'allow', updatedInput: input }
+        // 'deny' — user explicitly rejected. Leave the run alive
+        // (interrupt: false) so the assistant can acknowledge and the
+        // user can refine the request.
+        return {
+          behavior: 'deny',
+          message:
+            'The user rejected this edit. Acknowledge briefly and wait for further instruction; do not retry the same change.',
+          interrupt: false,
+        }
       }
     }
 
@@ -727,7 +787,26 @@ export class Server {
     const controller = this.activeChats.get(runId)
     if (!controller) return
     controller.abort()
+    // Aborting the run also unparks any canUseTool waiters keyed to
+    // this run via the controller.signal listener installed inside
+    // canUseTool — no explicit drain needed here.
     // The runChat loop will emit CANCELLED and clear the entry.
+  }
+
+  // Host-pushed user decision for a staged edit. Resolves the matching
+  // canUseTool Promise; the SDK then either runs the tool (allow) or
+  // feeds the deny message back to the model. Unknown pendingId is
+  // silent — the gate already settled (cancel, double-click, etc.)
+  // and there's no point surfacing it to the user.
+  #handleEditDecision(params) {
+    const pendingId = params?.pendingId
+    const decision = params?.decision
+    if (typeof pendingId !== 'string' || !pendingId) return
+    if (decision !== 'allow' && decision !== 'deny') return
+    const entry = this.pendingEditDecisions.get(pendingId)
+    if (!entry) return
+    this.pendingEditDecisions.delete(pendingId)
+    entry.resolve(decision)
   }
 
   async #handleShutdown(id) {

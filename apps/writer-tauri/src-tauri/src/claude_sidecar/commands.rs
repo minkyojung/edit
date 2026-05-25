@@ -65,6 +65,20 @@ pub struct ChatCancelArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChatEditDecisionArgs {
+    pub run_id: String,
+    /// pendingId minted by the sidecar's canUseTool gate when it
+    /// emitted `chat/edit-pending`. The host echoes it back so the
+    /// sidecar can look up which paused Promise to resolve.
+    pub pending_id: String,
+    /// "allow" — user clicked Apply; SDK runs the tool.
+    /// "deny"  — user clicked Reject; SDK feeds the deny message back
+    ///           to the model so it can acknowledge and move on.
+    pub decision: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TitleArgs {
     pub run_id: String,
     pub model: String,
@@ -133,6 +147,28 @@ pub async fn claude_chat_cancel(app: AppHandle, args: ChatCancelArgs) -> Result<
     chat.notify("chat/cancel", Some(json!({ "runId": args.run_id })))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Forwards the user's Apply / Reject decision for a single staged edit
+/// to the sidecar's canUseTool gate. Notification only — the sidecar
+/// just needs the matching pendingId to resolve its paused Promise.
+#[tauri::command]
+pub async fn claude_chat_edit_decision(
+    app: AppHandle,
+    args: ChatEditDecisionArgs,
+) -> Result<(), String> {
+    let manager = get_manager(&app)?;
+    let chat = manager.chat_client().await;
+    chat.notify(
+        "chat/edit-decision",
+        Some(json!({
+            "runId": args.run_id,
+            "pendingId": args.pending_id,
+            "decision": args.decision,
+        })),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Runs a single-shot chat on the title sidecar. Used for thread-title
