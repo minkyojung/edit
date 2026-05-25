@@ -57,7 +57,7 @@ export function EditorHeader({
   return (
     <div
       data-tauri-drag-region
-      className="flex shrink-0 items-center bg-transparent shadow-[inset_0_-1px_0_var(--border)]"
+      className="flex shrink-0 items-center bg-transparent"
       style={{ height: 'var(--header-h)' }}
     >
       {showSidebarTrigger && (

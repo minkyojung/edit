@@ -28,6 +28,7 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useDocsStore } from '@/state/docsStore'
+import { useObservePageTitle } from '@/hooks/useObservePageTitle'
 
 interface Props {
   slug: string
@@ -43,6 +44,7 @@ export function EditableTitleInput({ slug, currentTitle }: Props) {
   // user owns it.
   const [draft, setDraft] = useState(currentTitle ?? '')
   const inputRef = useRef<HTMLInputElement | null>(null)
+  useObservePageTitle(inputRef)
 
   // Re-sync draft whenever the underlying doc's title changes. This
   // covers two cases:

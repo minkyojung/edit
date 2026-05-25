@@ -1,30 +1,23 @@
-// Document tab strip in the editor header. Built on Radix Tabs
-// primitive for tablist semantics + keyboard nav, with a global
-// ⌘⇧[ / ⌘⇧] shortcut for cycling tabs. The shortcut is the only
-// global tab-switching chord in the app — chat threads no longer
-// own a competing ⌘⇧[ / ⌘⇧] handler, so we don't need a focus
-// gate to disambiguate.
+// Active document title in the editor header.
 //
-// Each tab pulls its label live from the doc's body (see
-// useDocLabel). Tabs whose handle hasn't been opened yet fall back
-// to the cached knownDocs.title or 'Untitled'.
+// Replaces the multi-tab strip with a single active-doc label,
+// following the Apple Notes / Pages pattern: the header reads as a
+// "you are here" breadcrumb rather than a tab bar. Multi-doc state
+// (openSlugs, closeDoc, createNew) lives in docsStore unchanged —
+// navigation between open docs flows through the sidebar TreeRow
+// active-state and the ⌘⇧[ / ⌘⇧] cycle shortcut kept below.
 
 import { useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { IconFileDescription, IconPlus, IconX } from '@tabler/icons-react'
-import { Tabs as TabsPrimitive } from 'radix-ui'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
+import { IconFileDescription } from '@tabler/icons-react'
 import { useDocsStore } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { useChatRunningForSlug } from '@/hooks/useChatRunningForSlug'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { ChatRunningIcon } from '@/components/icons/ChatRunningIcon'
+import { usePageHeaderStore } from '@/state/pageHeaderStore'
+import { cn } from '@/lib/utils'
 
 export function EditorTabs() {
   const openSlugs = useDocsStore((s) => s.openSlugs)
@@ -32,15 +25,17 @@ export function EditorTabs() {
   const sidebarTab = useDocsStore((s) => s.sidebarTab)
   const dayAnchor = useDocsStore((s) => s.dayAnchor)
   const monthAnchor = useDocsStore((s) => s.monthAnchor)
-  const closeDoc = useDocsStore((s) => s.closeDoc)
-  const createNew = useDocsStore((s) => s.createNew)
   const navigate = useNavigate()
 
-  // Switching a tab preserves the sidebar view & anchor — only the
-  // open-slug portion of the URL moves. Wrapping navigate keeps the
-  // cycle shortcut and the click handler going through the same code
-  // path so a future change (e.g. adding a query parameter on tab
-  // change) lands in one place.
+  const activeLabel = useDocLabel(activeSlug ?? '')
+  const isRunning = useChatRunningForSlug(activeSlug)
+  // Apple Notes pattern: the header label is hidden while the in-body
+  // PageHeader is visible (no duplicate titles), and fades in once
+  // the body title scrolls under the header. PageHeader publishes via
+  // pageHeaderStore.
+  const titleInView = usePageHeaderStore((s) => s.titleInView)
+  const showHeaderTitle = !titleInView
+
   const goToSlug = useCallback(
     (slug: string) => {
       navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
@@ -48,10 +43,9 @@ export function EditorTabs() {
     [navigate, sidebarTab, dayAnchor, monthAnchor],
   )
 
-  // ⌘⇧[ / ⌘⇧] cycles tabs. Global — no focus gate. The chord
-  // isn't bound to anything else in any input we render, so a
-  // user typing in the wikilink palette or tab rename input can
-  // still cycle docs without surprises.
+  // ⌘⇧[ / ⌘⇧] cycles between open docs. The visual tab strip is gone
+  // but the cycle behavior stays — feedback is the sidebar TreeRow's
+  // active-state and this header's title flipping.
   useEffect(() => {
     if (openSlugs.length <= 1) return
     const handler = (e: KeyboardEvent) => {
@@ -72,116 +66,25 @@ export function EditorTabs() {
   }, [openSlugs, activeSlug, goToSlug])
 
   return (
-    <TabsPrimitive.Root
-      value={activeSlug ?? ''}
-      onValueChange={goToSlug}
-      className="flex flex-1 items-stretch gap-1 overflow-hidden"
-    >
-      <TabsPrimitive.List
-        aria-label="Documents"
-        className="flex flex-1 items-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {openSlugs.map((slug) => (
-          <DocTab
-            key={slug}
-            slug={slug}
-            isActive={slug === activeSlug}
-            onClose={() => {
-              const next = closeDoc(slug)
-              if (next) goToSlug(next)
-            }}
-          />
-        ))}
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={() => {
-                createNew()
-                  .then((slug) => goToSlug(slug))
-                  .catch((err) => console.error('[docs] createNew failed', err))
-              }}
-              className={cn(
-                'flex size-8 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors',
-                'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
-                'hover:bg-accent hover:text-foreground',
-              )}
-              aria-label="New document"
-            >
-              <IconPlus size={16} stroke={1.75} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">New document</TooltipContent>
-        </Tooltip>
-      </TabsPrimitive.List>
-    </TabsPrimitive.Root>
-  )
-}
-
-function DocTab({
-  slug,
-  isActive,
-  onClose,
-}: {
-  slug: string
-  isActive: boolean
-  onClose: () => void
-}) {
-  const label = useDocLabel(slug)
-  const isRunning = useChatRunningForSlug(slug)
-  // Every tab is closeable, including today's daily. closeDoc (and the
-  // archive/delete paths in docsStore) reopens today's daily in the
-  // same tick if the strip would otherwise be empty, so this surface
-  // doesn't need its own "never close the last one" guard.
-
-  return (
-    <TabsPrimitive.Trigger
-      value={slug}
+    <div
       className={cn(
-        'group relative flex w-48 shrink-0 items-center gap-1.5 pl-2 pr-1.5 text-left text-sm font-medium transition-colors',
-        'outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40',
-        isActive
-          // Active tab paints in the canvas color and grows a 1px
-          // hairline on each side via inset box-shadow. The shadow
-          // mimics the EditorHeader's bottom hairline (same token, same
-          // weight) so the active tab reads as a small frame "lifted"
-          // out of the header — surface alone wasn't enough contrast
-          // against bg-card in the darker palettes.
-          ? 'bg-background text-foreground shadow-[inset_1px_0_0_var(--border),inset_-1px_0_0_var(--border)]'
-          : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+        'flex min-w-0 items-center gap-1.5 px-2 transition-opacity duration-200 ease-tahoe',
+        showHeaderTitle ? 'opacity-100' : 'pointer-events-none opacity-0',
       )}
+      aria-hidden={!showHeaderTitle}
     >
       {isRunning ? (
         <ChatRunningIcon size={14} className="shrink-0 opacity-70" />
       ) : (
-        <IconFileDescription size={14} stroke={1.75} className="shrink-0 opacity-70" />
+        <IconFileDescription
+          size={14}
+          stroke={1.75}
+          className="shrink-0 text-muted-foreground"
+        />
       )}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span
-        role="button"
-        tabIndex={0}
-        onClick={(e) => {
-          e.stopPropagation()
-          onClose()
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            e.stopPropagation()
-            onClose()
-          }
-        }}
-        aria-label="Close document"
-        className={cn(
-          'flex h-5 w-5 shrink-0 items-center justify-center rounded transition-opacity hover:bg-foreground/10',
-          'outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-          'opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60 hover:!opacity-100',
-          isActive && 'opacity-60',
-        )}
-      >
-        <IconX size={14} stroke={2} />
+      <span className="truncate text-sm font-medium text-foreground">
+        {activeLabel || 'Untitled'}
       </span>
-    </TabsPrimitive.Trigger>
+    </div>
   )
 }

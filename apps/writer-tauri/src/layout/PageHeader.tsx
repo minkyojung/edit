@@ -14,8 +14,10 @@
  *                    rename the file.
  */
 
+import { useRef } from 'react'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
+import { useObservePageTitle } from '@/hooks/useObservePageTitle'
 import { EditableTitleInput } from './EditableTitleInput'
 
 interface Props {
@@ -55,8 +57,11 @@ function ReadOnlyHeader({
   label: string
   ariaLabel: string
 }) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  useObservePageTitle(ref)
   return (
     <div
+      ref={ref}
       aria-label={ariaLabel}
       className="mb-6 w-full text-3xl font-semibold leading-tight text-foreground"
     >
