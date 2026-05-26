@@ -263,6 +263,80 @@
     --ai-edit-gutter-color: oklch(0.68 0.20 25);
   }
 
+  /* Pending AI change preview — `inlineReviewPlugin` mounts these as
+     Decoration.widget at the anchor position. Widgets live alongside
+     the PM doc but aren't part of it (no serialization side-effects),
+     so the visual block sits at the would-be-inserted location
+     without changing the editor's actual content.
+
+     Color follows the same accent the sidebar PendingDot uses
+     (--info / blue) so the user reads "this dot ↔ this preview" as
+     a single signal. `--add` flavour keeps a faint green underline
+     bar for "addition" semantics, matching the convention every
+     reviewed-AI editor (Cursor, Notion, Google Docs Suggesting)
+     uses for inserts.
+
+     `white-space: pre-wrap` preserves the markdown line breaks so
+     `### Heading\n- bullet` reads as two visual lines, the same
+     shape it'll take once accepted. C3 populates `.pending-edit__actions`
+     with the [Keep] / [Remove] buttons. */
+  .ProseMirror .pending-edit {
+    display: block;
+    margin: 0.75em 0;
+    padding: 0.5em 0.75em;
+    border-left: 3px solid var(--info, oklch(0.72 0.15 230));
+    background-color: color-mix(in oklch, var(--info, oklch(0.72 0.15 230)) 8%, transparent);
+    border-radius: 0 4px 4px 0;
+    color: var(--muted-foreground);
+    font-size: 0.95em;
+  }
+  .ProseMirror .pending-edit__body {
+    white-space: pre-wrap;
+    font-family: inherit;
+  }
+  .ProseMirror .pending-edit__actions {
+    display: flex;
+    gap: 0.5em;
+    margin-top: 0.5em;
+  }
+  .ProseMirror .pending-edit__action {
+    /* Chip-shaped buttons. Compact so they don't dominate the
+       widget; clear hover affordance so the user knows they're
+       clickable. cursor: pointer because they're not <a> — without
+       it Safari shows a text caret over the button. */
+    appearance: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.25em 0.75em;
+    border-radius: 9999px;
+    font-size: 0.85em;
+    font-family: inherit;
+    font-weight: 500;
+    line-height: 1.4;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .ProseMirror .pending-edit__action--keep {
+    /* Primary action — solid tint so it reads as the default
+       decision. Uses the info accent (sidebar dot, widget bar) so
+       the whole pending-edit visual stays in one colour family. */
+    background-color: var(--info, oklch(0.72 0.15 230));
+    color: var(--info-foreground, white);
+  }
+  .ProseMirror .pending-edit__action--keep:hover {
+    background-color: color-mix(in oklch, var(--info, oklch(0.72 0.15 230)) 85%, black);
+  }
+  .ProseMirror .pending-edit__action--remove {
+    /* Secondary action — ghost style. Faint until hover so the
+       primary action is clearly the default but rejection is one
+       click away. */
+    background-color: transparent;
+    color: var(--muted-foreground);
+  }
+  .ProseMirror .pending-edit__action--remove:hover {
+    background-color: color-mix(in oklch, var(--muted-foreground) 12%, transparent);
+    color: var(--foreground);
+  }
+
   /* Empty-body placeholder — the placeholderPlugin tags the first
      block with data-placeholder=<hint> when the doc is effectively
      empty (one block, no text or just a ZWS). ::before paints the

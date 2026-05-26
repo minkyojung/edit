@@ -15,6 +15,7 @@ import { listItemBlockComponent } from '@milkdown/kit/component/list-item-block'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
 import { createDirtyTrackerPlugin } from './dirtyTrackerPlugin'
+import { createInlineReviewPlugin } from './inlineReviewPlugin'
 import { createDocVersionPlugin } from './docVersionPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
 import { formatStatePlugin } from './formatStatePlugin'
@@ -296,6 +297,11 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       // observer that the collab plugin used to power — see
       // ./dirtyTrackerPlugin.ts for the migration context.
       .use(createDirtyTrackerPlugin(handle.slug))
+      // Subscribes to pendingChangesStore and surfaces this doc's
+      // staged AI changes as PM decorations. C1 stage: infra only
+      // (returns empty DecorationSet). C2 populates the inline diff
+      // styling, C3 adds the Accept / Reject widget buttons.
+      .use(createInlineReviewPlugin(handle.slug))
       .use(createFrozenSelectionPlugin())
       .use(formatStatePlugin)
       .use(inlineCodeSafeKeymap)

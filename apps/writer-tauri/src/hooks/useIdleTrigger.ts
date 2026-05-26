@@ -384,25 +384,17 @@ async function runIngestForSlug(
         editId,
       ),
     )
-    console.log('[pendingChanges] pushed', {
-      changeId,
-      pageSlug: targetDoc.slug,
-      entity: p.entity,
-      groupId,
-    })
     const ok = await appendMarkdownToWikiPage(targetDoc.slug, md)
     if (ok) {
       applied.push({
         targetTitle: targetDoc.title?.trim() || targetDoc.slug,
         proposal: p,
       })
-      // Auto-resolve: until Phase C wires the inline Accept button,
+      // Auto-resolve: until Phase C4 removes this auto-apply path,
       // every disk write is treated as an implicit user acceptance.
       usePendingChangesStore.getState().accept(changeId)
-      console.log('[pendingChanges] auto-accepted', changeId)
     } else {
       usePendingChangesStore.getState().reject(changeId)
-      console.log('[pendingChanges] auto-rejected (write failed)', changeId)
     }
   }
   if (result.logEntry) {
