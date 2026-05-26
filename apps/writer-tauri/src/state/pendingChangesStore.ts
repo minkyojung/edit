@@ -308,3 +308,18 @@ export const usePendingChangesStore = create<PendingChangesState>()(
     },
   ),
 )
+
+// Dev-only console handle so the store is inspectable from DevTools:
+//   __pendingChanges.list()     — all entries
+//   __pendingChanges.pending()  — only pending
+//   __pendingChanges.state()    — full state
+if (import.meta.env.DEV) {
+  ;(window as unknown as { __pendingChanges: Record<string, unknown> }).__pendingChanges = {
+    list: () => Object.values(usePendingChangesStore.getState().byId),
+    pending: () =>
+      Object.values(usePendingChangesStore.getState().byId).filter(
+        (c) => c.status === 'pending',
+      ),
+    state: () => usePendingChangesStore.getState(),
+  }
+}

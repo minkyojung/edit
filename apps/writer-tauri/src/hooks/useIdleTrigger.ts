@@ -31,6 +31,8 @@
 
 import { useEffect, useRef } from 'react'
 import { runIngest } from '@/agent/ingest/index'
+import { mapIngestProposalToPendingChange } from '@/agent/ingest/toPendingChange'
+import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
 import {
   appendMarkdownToWikiPage,
@@ -339,7 +341,19 @@ async function runIngestForSlug(
   // source quote, and the LLM's reason. The body is what makes the
   // Review panel card useful: a glance at the card subject says
   // "ingest from daily/X"; expanding reveals the per-entity story.
+  //
+  // Phase A.5 of the review-UX migration: mirror every applied
+  // proposal into `pendingChangesStore` as well — push then
+  // immediately `accept`. This dual-write keeps the legacy
+  // auto-apply behaviour intact (so users see no UX change yet)
+  // while letting the new sidebar dot + future inline review
+  // plugin (Phase C) consume the store as their single source of
+  // truth. When Phase C lands the `accept` call moves to the
+  // user's click and `appendMarkdownToWikiPage` becomes the
+  // store-driven apply path; until then this loop is the only
+  // producer.
   const applied: AppliedProposalForCommit[] = []
+  const groupId = crypto.randomUUID()
   for (const p of proposalsForQueue) {
     if (!p.target) continue
     const targetDoc = useDocsStore
@@ -351,12 +365,44 @@ async function runIngestForSlug(
     }
     const md = assembleProposalMarkdown(p, { withEntityHeading: true })
     if (!md) continue
+    // Mirror into pendingChangesStore BEFORE the disk write so the
+    // sidebar dot momentarily turns blue (push) and then settles
+    // (accept) — verifying the store wiring on real data without
+    // changing user-visible behaviour.
+    const changeId = crypto.randomUUID()
+    const editId = crypto.randomUUID()
+    usePendingChangesStore.getState().push(
+      mapIngestProposalToPendingChange(
+        {
+          proposal: { ...p, target: p.target },
+          pageSlug: targetDoc.slug,
+          groupId,
+          sourceLabel,
+          sourceSlug: slug,
+        },
+        changeId,
+        editId,
+      ),
+    )
+    console.log('[pendingChanges] pushed', {
+      changeId,
+      pageSlug: targetDoc.slug,
+      entity: p.entity,
+      groupId,
+    })
     const ok = await appendMarkdownToWikiPage(targetDoc.slug, md)
     if (ok) {
       applied.push({
         targetTitle: targetDoc.title?.trim() || targetDoc.slug,
         proposal: p,
       })
+      // Auto-resolve: until Phase C wires the inline Accept button,
+      // every disk write is treated as an implicit user acceptance.
+      usePendingChangesStore.getState().accept(changeId)
+      console.log('[pendingChanges] auto-accepted', changeId)
+    } else {
+      usePendingChangesStore.getState().reject(changeId)
+      console.log('[pendingChanges] auto-rejected (write failed)', changeId)
     }
   }
   if (result.logEntry) {
