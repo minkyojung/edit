@@ -477,7 +477,7 @@ export function ChatPanel({ editorView, slug }: Props) {
   return (
     <div
       data-chat-panel
-      className="relative flex h-full flex-col border-l border-border bg-background"
+      className="relative flex h-full flex-col"
     >
       {!account.connected && (
         // Disconnected overlay — ContentUnavailableView pattern with an

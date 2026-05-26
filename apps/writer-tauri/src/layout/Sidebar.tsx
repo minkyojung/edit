@@ -21,6 +21,7 @@ import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
 import { useTheme } from '@/components/theme-provider'
+import { useFont, type FontOption } from '@/components/font-provider'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -100,6 +101,19 @@ const PALETTE_OPTIONS: PaletteOption[] = [
   },
 ]
 
+type FontOptionDef = {
+  value: FontOption
+  label: string
+  /** Inline font-family used for the swatch so each row previews its
+   * own typeface — Geist row in Geist, Nunito row in Nunito. */
+  preview: string
+}
+
+const FONT_OPTIONS: FontOptionDef[] = [
+  { value: 'geist', label: 'Geist', preview: "'Geist Variable', sans-serif" },
+  { value: 'nunito', label: 'Nunito Sans', preview: "'Nunito Sans Variable', sans-serif" },
+]
+
 function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
   return (
     <span
@@ -117,6 +131,7 @@ function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
 
 export function AppSidebar() {
   const { palette, setPalette } = useTheme()
+  const { font, setFont } = useFont()
   const connectOpen = useConnectDialog((s) => s.open)
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const { account, refresh, disconnect } = useClaudeAuth()
@@ -243,7 +258,7 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg" className="px-2 h-11">
+                <SidebarMenuButton size="lg" className="px-2 h-[46px]">
                   <Avatar className="size-7 shrink-0">
                     <AvatarImage src="" />
                     <AvatarFallback className="avatar-luma text-xs text-primary-foreground font-medium">
@@ -305,6 +320,24 @@ export function AppSidebar() {
                   {PALETTE_OPTIONS.map((opt) => (
                     <DropdownMenuRadioItem key={opt.value} value={opt.value}>
                       <PaletteSwatch swatch={opt.swatch} />
+                      {opt.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+                  Font
+                </DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={font}
+                  onValueChange={(v) => setFont(v as FontOption)}
+                >
+                  {FONT_OPTIONS.map((opt) => (
+                    <DropdownMenuRadioItem
+                      key={opt.value}
+                      value={opt.value}
+                      style={{ fontFamily: opt.preview }}
+                    >
                       {opt.label}
                     </DropdownMenuRadioItem>
                   ))}
