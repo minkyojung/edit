@@ -477,6 +477,8 @@ export class Server {
       effort,
       sessionId,
       resume,
+      maxTurns,
+      builtinTools,
     } = params
 
     const options = {
@@ -516,6 +518,12 @@ export class Server {
     // resume works across app restarts.
     if (sessionId) options.sessionId = sessionId
     if (resume) options.resume = resume
+    // Cap the agent loop. Forwarded as-is to the SDK (sdk.d.ts:1412
+    // — `Maximum number of conversation turns before the query
+    // stops`). Used by the ingest path so a runaway tool-calling
+    // pass settles instead of churning forever; chat leaves it
+    // undefined for normal multi-turn behaviour.
+    if (typeof maxTurns === 'number' && maxTurns > 0) options.maxTurns = maxTurns
     // Dev only: host points us at the .pnpm-store copy of the platform-specific
     // claude binary. Prod ships the binary inside our own node_modules, so the
     // SDK auto-resolves and the env var is intentionally unset.
@@ -543,7 +551,24 @@ export class Server {
     //     auto-runs every tool call without prompting the user.
     if (vaultPath) {
       options.cwd = vaultPath
-      options.tools = { type: 'preset', preset: 'claude_code' }
+      // Built-in tool exposure is per-caller. Chat needs the full
+      // Claude Code preset (Read / Edit / Write / Bash / Grep / Glob)
+      // so the model can edit the doc on user request, gated through
+      // `canUseTool` + the host's PendingEditsBar. Ingest is a
+      // background flow with a structured-output channel — the LLM
+      // must not write to disk directly, so the host pins it to a
+      // read-only subset (Read / Glob / Grep, typically). Output
+      // lands via the `submit_ingest_result` relay tool and the host
+      // turns proposals into disk writes after user review.
+      //
+      // `tools: ['Read', ...]` (explicit array) is the SDK's "least
+      // privilege" surface (sdk.d.ts:1211) — listed tools are the
+      // only ones the model sees, so Edit/Write are not just denied
+      // but invisible. Caller omits `builtinTools` for the chat
+      // shape and the preset stays.
+      options.tools = Array.isArray(builtinTools) && builtinTools.length > 0
+        ? builtinTools
+        : { type: 'preset', preset: 'claude_code' }
       // Phase 3.1 of the Cursor-style staged edit migration: every
       // built-in write-side tool (Edit / Write / MultiEdit / NotebookEdit)
       // routes through `canUseTool` before it can run. For now we deny

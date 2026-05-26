@@ -61,15 +61,14 @@ export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreRes
   // even for users who skipped the URL bootstrap — the page just
   // starts empty and fills from daily activity instead.
   await ensureProfileWikiSlug()
-  // One facade call replaces the prior three (wiki dump + index +
-  // conventions). Tier 2 hot pages come from [[link]]s in the
-  // source text — same daily / import / chat-handoff can mention
-  // multiple existing wiki pages, and now their bodies ride along
-  // automatically. We skip the Tier 3 tool list (enableTools:
-  // false) because ingest is single-shot — the LLM emits one
-  // submit_ingest_result call and has no room to drive
-  // read_page/search_wiki.
-  const ctx = await assembleContext({ docBody: text, enableTools: false })
+  // Karpathy / Claude Code shape: CLAUDE.md + profile + conventions
+  // ride the system prompt, and the agent uses the SDK's built-in
+  // Read / Glob / Grep (enabled by the sidecar's `tools: { preset:
+  // 'claude_code' }`) to navigate the vault on demand. Tier-3 MCP
+  // tools (`read_page` / `search_wiki`) are intentionally absent
+  // for ingest — the built-ins are equivalent and the model picks
+  // one path instead of being offered redundant choices.
+  const ctx = await assembleContext({ mode: 'ingest' })
 
   const prompt = buildPrompt({
     date: todayLocalDate(),
@@ -77,8 +76,7 @@ export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreRes
     noteMarkdown: text,
   })
   const systemPrompt = composeSystemPrompt({
-    indexSnapshot: ctx.index,
-    hotPages: ctx.hotPages,
+    claudeMd: ctx.claudeMd,
     conventions: ctx.conventions,
     selfProfile: ctx.selfProfile,
   })
@@ -92,19 +90,27 @@ export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreRes
       model: INGEST_MODEL,
       systemPrompt,
       prompt,
-      // Enable the structured-output tool. The sidecar registers
-      // it as an MCP tool on the writer-relay server; the model
-      // calls it exactly once with the full ingest result, which
-      // we receive via the `ingest:result` event in awaitChatRun.
+      // `submit_ingest_result` is the single structured-output
+      // channel — exactly one call ends the run via `claude:done`.
       relayTools: ['submit_ingest_result'],
-      // Plumb the vault path for future read_page / search_wiki
-      // tools. No effect today (those tools aren't in ingest's
-      // relayTools yet), but keeping the parameter consistent
-      // across consumers means we can opt into filesystem tools in
-      // a follow-up commit without touching every call site.
       vaultPath: getActiveVaultPath() ?? undefined,
+      // Read-only built-in surface. Ingest must NOT write to disk
+      // directly — the host turns proposals into wiki edits after
+      // the user reviews them. Pinning `builtinTools` to the
+      // navigation trio means Edit / Write / MultiEdit /
+      // NotebookEdit / Bash are not just denied at canUseTool time
+      // but invisible to the model (SDK strips them from the tool
+      // context entirely). This is the structural guarantee: prompt
+      // wording cannot regress disk safety here.
+      builtinTools: ['Read', 'Glob', 'Grep'],
       effort: 'low',
       sessionId,
+      // Cap the agent loop. 10 turns is generous for the "Read
+      // index, Glob/Grep a couple of pages, emit the tool call"
+      // pattern; runaway tool-calling either hits the cap and
+      // settles (we still get whatever proposals were ready) or
+      // surfaces as a malformed pass that the caller swallows.
+      maxTurns: 10,
     },
   })
   const outcome = await finished

@@ -55,6 +55,25 @@ pub struct ChatStartArgs {
     /// frontend doesn't have to ship a transcript in the prompt.
     #[serde(default)]
     pub resume: Option<String>,
+    /// Optional cap on the SDK agent loop's conversation turns. Used
+    /// by the ingest path so a runaway tool-calling pass settles
+    /// instead of churning forever. Forwarded to the sidecar which
+    /// passes it to the SDK's `maxTurns` option (sdk.d.ts:1412).
+    /// `None` means the SDK's own default applies — which is what
+    /// chat wants (multi-turn conversation, no host-imposed cap).
+    #[serde(default)]
+    pub max_turns: Option<u32>,
+    /// Optional explicit list of SDK built-in tool names to expose to
+    /// the model. When set, only those tools are visible (sdk.d.ts:
+    /// 1216 — `tools: string[]` shape). When omitted, the sidecar
+    /// falls back to the full `claude_code` preset (Read / Edit /
+    /// Write / Bash / Grep / Glob). Ingest passes a read-only subset
+    /// (typically `["Read", "Glob", "Grep"]`) so the model cannot
+    /// write to disk directly — proposals go through
+    /// `submit_ingest_result` and the host applies them after user
+    /// review.
+    #[serde(default)]
+    pub builtin_tools: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -131,6 +150,12 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     }
     if let Some(r) = args.resume {
         params["resume"] = Value::String(r);
+    }
+    if let Some(mt) = args.max_turns {
+        params["maxTurns"] = json!(mt);
+    }
+    if let Some(bt) = args.builtin_tools {
+        params["builtinTools"] = json!(bt);
     }
 
     let chat = manager.chat_client().await;
