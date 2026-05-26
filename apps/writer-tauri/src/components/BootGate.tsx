@@ -34,6 +34,7 @@ import {
   gitEnsureGitignoreEntries,
 } from '@/lib/git'
 import { cleanupYdocV2 } from '@/lib/cleanupYdocV2'
+import { seedClaudeMd } from '@/lib/seedClaudeMd'
 
 /** Daily safety net: if HEAD is older than this, BootGate fires a
  * silent "daily snapshot" commit on app open so a passive user who
@@ -116,6 +117,17 @@ export function BootGate({ children }: Props) {
         await cleanupYdocV2()
       } catch (err) {
         console.warn('[boot] ydoc cleanup failed', err)
+      }
+      // Seed `CLAUDE.md` at the vault root if the file is missing —
+      // the Karpathy / Claude Code schema document the agent reads
+      // every chat to know how this vault is laid out and how it
+      // should behave. Idempotent by file existence (no sentinel
+      // needed); a user who edits the file owns it from there on
+      // and the seed never overwrites their edits.
+      try {
+        await seedClaudeMd()
+      } catch (err) {
+        console.warn('[boot] CLAUDE.md seed failed', err)
       }
       bootstrap()
       // Load chat thread metas + turns from `threads/`. Fires in

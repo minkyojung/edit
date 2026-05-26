@@ -493,6 +493,15 @@ export class Server {
       // The cacheable system-prompt prefix (belief + role) is preserved
       // across compaction; only mid-conversation turns get summarized.
       settings: { autoCompactEnabled: true },
+      // Disable the SDK's filesystem settings auto-load (CLAUDE.md,
+      // .claude/settings.json, etc.). The host injects the vault's
+      // CLAUDE.md explicitly as part of `systemPrompt` so the cache
+      // boundary stays under our control and we don't risk double-
+      // injecting the same content via two paths. Pass `[]` for
+      // full SDK isolation mode — the docs (sdk.d.ts:1637) call
+      // this out explicitly as the right move when the host has its
+      // own schema-injection pipeline.
+      settingSources: [],
     }
     if (model) options.model = model
     if (systemPrompt) options.systemPrompt = systemPrompt

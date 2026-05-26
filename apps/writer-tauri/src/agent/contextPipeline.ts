@@ -1,29 +1,26 @@
-// Context engineering pipeline facade — one call site that pulls
-// Tier 1 (catalog) + Tier 2 (hot pages) + conventions, plus the
-// names of Tier 3 tools the consumer should enable on this run.
+// Context engineering pipeline facade — one call site that assembles
+// the LLM-facing context bundle. Two consumers (chat, ingest) share
+// the function but ask for different shapes via `mode`.
 //
-// Every consumer that calls the LLM with wiki context (chat,
-// ingest, lint) routes through assembleContext. The benefit is
-// twofold:
+//   chat   — Karpathy / Claude Code pattern: only the always-on
+//            schema (`CLAUDE.md`, profile, conventions) lands in the
+//            prefix. Catalogue + page bodies are fetched by the LLM
+//            via Read / Glob / Grep tools when needed. Stops the
+//            "unrelated chat pulls in random wiki pages" failure
+//            mode that the previous always-dump shape produced.
 //
-//   1. Single place to evolve "what does the LLM see?". Want to
-//      add a recent-activity block, drop conventions for a token-
-//      tight run, swap Tier 2 ranking? One file changes.
-//
-//   2. Symmetric consumer code. chat / ingest / lint all assemble
-//      the same shape, then format it for their own prompt. No
-//      one re-implements catalog fetching or hot-page selection.
+//   ingest — Legacy shape preserved for the ingest pipeline. Bundles
+//            the wiki index + hot-page bodies up front so the
+//            structured-output run has the full catalog without
+//            extra tool round-trips. We will revisit ingest in a
+//            follow-up phase; for now its behaviour stays unchanged.
 //
 // The bundle returns raw strings + structured page bodies, NOT a
 // pre-formatted prompt block. Each consumer decides how to layer
-// the pieces into its system prompt (e.g. ingest pins log entries
-// at the end for cache stability; lint puts the daily under review
-// as the user message; chat threads conventions and index together
-// as cacheable prefix). Centralising the prompt format too would
-// couple unrelated concerns — we keep that local to each consumer.
+// the pieces into its system prompt.
 
 import { getWikiIndex } from '@/state/wikiIndex'
-import { readConventions, readSelfProfile } from '@/state/wikiService'
+import { readClaudeMd, readConventions, readSelfProfile } from '@/state/wikiService'
 import { selectHotPages, type WikiPageBody } from './contextSelector'
 
 /** Names of Tier 3 tools available when the sidecar has a vault path.
@@ -33,78 +30,111 @@ import { selectHotPages, type WikiPageBody } from './contextSelector'
 const DEFAULT_TOOLS = ['read_page', 'search_wiki'] as const
 export type Tier3ToolName = (typeof DEFAULT_TOOLS)[number]
 
+export type AssembleContextMode = 'chat' | 'ingest'
+
 export interface ContextBundle {
-  /** Tier 1 — one-line summary of every wiki page. Cheap to ship in
-   * every prompt; the LLM scans this to know what targets exist. */
+  /** Vault-root `CLAUDE.md` body. Karpathy / Claude Code schema
+   * document — vault layout, three-tier rules, operations, tool
+   * usage guidance, citation conventions. Only present in chat
+   * mode; ingest mode leaves it empty (the ingest prompt embeds
+   * its own structured guidance). */
+  claudeMd: string
+  /** Tier 1 — one-line summary of every wiki page. Only present in
+   * ingest mode. Chat mode leaves this empty; the LLM `Read`s
+   * `_system/index.md` directly when the question warrants it. */
   index: string
   /** Tier 2 — pages mentioned in the source via `[[...]]`, with full
-   * bodies. The LLM gets these without having to fetch them. */
+   * bodies. Only present in ingest mode. Chat mode leaves this empty;
+   * the LLM `Read`s individual pages on demand. */
   hotPages: WikiPageBody[]
-  /** User-editable schema document (`wiki:conventions`). The LLM
-   * prepends these to the system prompt so the user can shape how
-   * the wiki grows without touching code. Empty string when the
-   * page doesn't exist yet or is genuinely blank. */
+  /** User-editable schema document (`wiki:conventions`). Shipped in
+   * both modes — small, cache-friendly, and central to how the LLM
+   * understands the user's preferences. */
   conventions: string
-  /** User self-profile (`wiki:profile`) body. Prepended to the
-   * system prompt before everything else so chat / ingest always
-   * see "who the user is" first. Empty string when bootstrap was
-   * skipped or the page hasn't been created yet — consumers handle
-   * the empty case by simply omitting the block. */
+  /** User self-profile (`wiki:profile`) body. Shipped in both modes
+   * — small, cache-friendly, and grounds "who the user is" before
+   * every downstream block. Empty when the page doesn't exist yet. */
   selfProfile: string
   /** Tier 3 tool names the consumer should pass to `relayTools` on
    * the `claude_chat_start` invoke. Empty array when the caller
    * opts out via `enableTools: false`. */
   tools: Tier3ToolName[]
-  /** Rough character count of the user-facing payload (index +
-   * hot pages + conventions). Useful for diagnostics and for the
-   * consumer to decide whether to drop a section if it's about
-   * to bust the prompt budget. */
+  /** Rough character count of the user-facing payload — diagnostics
+   * and budget gating only. */
   budgetUsed: number
 }
 
 export interface AssembleContextOptions {
-  /** Pre-read body of the doc the LLM is acting on. Lint passes
-   * the daily being reviewed; ingest passes the daily being
-   * ingested. Wikilinks in this body surface their target pages
-   * as Tier 2 hot context. Mutually exclusive with `text` in
-   * practice; if both arrive they're concatenated for extraction. */
+  /** Which consumer is calling. `'chat'` returns the Karpathy
+   * agent-fetch shape (CLAUDE.md only, no index / hot pages);
+   * `'ingest'` returns the legacy dump shape until that pipeline
+   * is migrated. Defaults to `'ingest'` so existing callers (the
+   * ingest pipeline) get unchanged behaviour without code changes. */
+  mode?: AssembleContextMode
+  /** Pre-read body of the doc the LLM is acting on. Ingest passes
+   * the daily being ingested; chat doesn't need this (the chat
+   * runner pins the live editor doc past the cache boundary
+   * itself). */
   docBody?: string
-  /** User chat query. Same wikilink-extraction rules apply. */
+  /** User chat query. Only used by ingest's hot-page selector; the
+   * chat path doesn't auto-extract wikilinks anymore — that was
+   * the source of the unrelated-page-pull failure mode. */
   text?: string
   /** Total character budget for Tier 2 hot pages. Caller decides
    * based on remaining headroom after the rest of its prompt is
    * formatted. Defaults to the selector's internal 30K-char limit. */
   budgetChars?: number
   /** When `false`, returns an empty `tools` array — for callers
-   * that explicitly don't want LLM-driven fetch (very rare; today
-   * no consumer sets this). Default `true`. */
+   * that explicitly don't want LLM-driven fetch. Default `true`. */
   enableTools?: boolean
 }
 
 /** Assemble the LLM-facing context bundle. Concurrent reads under
- * the hood — index cache, hot-page selector, conventions read all
- * fire in parallel since they touch independent state. */
+ * the hood — independent state, so we fire them in parallel. */
 export async function assembleContext(
   opts: AssembleContextOptions = {},
 ): Promise<ContextBundle> {
-  const [index, hotPages, conventions, selfProfile] = await Promise.all([
-    getWikiIndex(),
-    selectHotPages(
-      { dailyBody: opts.docBody, queryText: opts.text },
-      { budgetChars: opts.budgetChars },
-    ),
-    readConventions(),
-    readSelfProfile(),
+  const mode: AssembleContextMode = opts.mode ?? 'ingest'
+
+  // Always-on blocks — small, cache-friendly, both modes use them.
+  const baseReads = Promise.all([readConventions(), readSelfProfile()])
+
+  // Mode-specific blocks fire in parallel with the base reads.
+  const chatReads = mode === 'chat' ? readClaudeMd() : Promise.resolve('')
+  const ingestReads =
+    mode === 'ingest'
+      ? Promise.all([
+          getWikiIndex(),
+          selectHotPages(
+            { dailyBody: opts.docBody, queryText: opts.text },
+            { budgetChars: opts.budgetChars },
+          ),
+        ])
+      : Promise.resolve(['', [] as WikiPageBody[]] as const)
+
+  const [[conventions, selfProfile], claudeMd, [index, hotPages]] = await Promise.all([
+    baseReads,
+    chatReads,
+    ingestReads,
   ])
 
   const tools: Tier3ToolName[] =
     opts.enableTools === false ? [] : [...DEFAULT_TOOLS]
 
   const budgetUsed =
+    claudeMd.length +
     index.length +
     hotPages.reduce((sum, p) => sum + p.body.length, 0) +
     conventions.length +
     selfProfile.length
 
-  return { index, hotPages, conventions, selfProfile, tools, budgetUsed }
+  return {
+    claudeMd,
+    index,
+    hotPages,
+    conventions,
+    selfProfile,
+    tools,
+    budgetUsed,
+  }
 }

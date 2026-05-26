@@ -21,6 +21,7 @@ import {
 } from './docsStore'
 import { useEditorViewStore } from './editorViewStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
+import { readVaultFile, vaultFileExists } from '@/lib/vault'
 
 // PROOF_BASE_URL removed (Phase 3.A.2). All wiki body reads go
 // through the local Y.Doc + Milkdown serializer now.
@@ -239,6 +240,24 @@ export async function readSelfProfile(): Promise<string> {
     .knownDocs.find((d) => d.type === 'wiki:profile' && !d.archivedAt)
   if (!doc) return ''
   return readWikiMarkdown(doc.slug)
+}
+
+/** Read the vault's `CLAUDE.md` schema document. This is the Karpathy
+ * / Claude Code convention: a single user-editable file at the vault
+ * root that tells the LLM how the vault is laid out and how it should
+ * behave (operations, tool usage rules, citation conventions). The
+ * BootGate seed routine drops a default into fresh vaults, so a normal
+ * read should succeed; this helper returns '' on the rare failure
+ * paths (vault not selected, file deleted between boots) and the
+ * caller drops the block from the system prompt rather than erroring. */
+export async function readClaudeMd(): Promise<string> {
+  try {
+    if (!(await vaultFileExists('CLAUDE.md'))) return ''
+    return await readVaultFile('CLAUDE.md')
+  } catch (err) {
+    console.warn('[wiki] readClaudeMd failed', err)
+    return ''
+  }
 }
 
 /** No-op placeholder kept so the docsStore bootstrap call site

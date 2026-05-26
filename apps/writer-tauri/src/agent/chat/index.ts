@@ -84,14 +84,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const systemBody = systemPrompt ?? FREE_CHAT_PROMPT
   const prompt = promptOverride ?? buildUserPrompt(history ?? [])
 
-  // Tier 1/2 + conventions via the assembleContext facade. Pass both
-  // the user message and the current doc body so wikilinks in either
-  // surface trigger hot-page inclusion. Failures upstream collapse to
-  // empty fields — chat never blocks on the context round-trip.
-  const ctx = await assembleContext({
-    text: prompt,
-    docBody: docForPrompt,
-  })
+  // Chat mode — Karpathy / Claude Code shape: only the always-on
+  // schema (CLAUDE.md + profile + conventions) lands in the system
+  // prompt. The wiki catalog + page bodies that the legacy shape
+  // injected up-front are intentionally absent here; the LLM uses
+  // Read / Glob / Grep to fetch them on demand when a turn actually
+  // warrants it. Failures upstream collapse to empty fields — chat
+  // never blocks on the context round-trip.
+  const ctx = await assembleContext({ mode: 'chat' })
 
   const system = composeSystemBlocks({
     docForPrompt,
