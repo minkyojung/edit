@@ -105,7 +105,17 @@ export async function appendMarkdownToWikiPage(
       console.warn('[applyIngest] active append: prepare returned null', slug)
       return false
     }
-    view.dispatch(prep.tr)
+    // `addToHistory: false` so the user's Cmd+Z stack doesn't pick
+    // up this AI-driven append. The intent of Cmd+Z is "undo what
+    // *I* just did" — undoing an Accept this way would also wipe
+    // the body without re-surfacing the inline widget, leaving the
+    // user with "text vanished, can't bring it back". The right
+    // surface for reversing an Accept is the inline Reject button,
+    // not the undo stack. (A future phase may wrap Accept + body
+    // append into one history-aware transaction so Cmd+Z reads as
+    // "re-stage the change"; until then this guard prevents the
+    // obvious data-loss-looking failure mode.)
+    view.dispatch(prep.tr.setMeta('addToHistory', false))
     return true
   }
 

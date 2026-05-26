@@ -43,6 +43,7 @@ import '@/lib/vault'
 import '@/lib/scanVault'
 import { startAutoFlush } from '@/lib/docFileSync'
 import { startVaultWatcher } from '@/lib/vaultWatcher'
+import { startPendingChangesApplier } from '@/state/pendingChangesApplier'
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
@@ -54,6 +55,12 @@ startAutoFlush()
 // auto-picker is still up, it logs an inert message and no-ops.
 // The picker re-invokes after selecting a vault.
 void startVaultWatcher()
+
+// Listen for `pending → accepted` transitions in pendingChangesStore
+// and run the matching disk-write path. Without this no click on the
+// inline Keep button changes the file on disk — the store just
+// flips status and the widget vanishes. Idempotent.
+startPendingChangesApplier()
 
 // Module-scope so the configs array reference is stable across
 // renders — required by useLazyMaterialize's caller contract

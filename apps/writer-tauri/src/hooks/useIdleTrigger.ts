@@ -34,21 +34,13 @@ import { runIngest } from '@/agent/ingest/index'
 import { mapIngestProposalToPendingChange } from '@/agent/ingest/toPendingChange'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
-import {
-  appendMarkdownToWikiPage,
-  appendToSystemLog,
-  buildIngestCommitBody,
-  type AppliedProposalForCommit,
-} from '@/agent/applyIngest'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
-import { useGitStore } from '@/state/gitStore'
 import { createCustomWikiPage } from '@/state/wikiService'
 import type { IngestProposal } from '@/agent/ingest/types'
 import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
-import { flushDirty } from '@/lib/docFileSync'
 import { effectiveLength } from '@/lib/markdownText'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { extractErrorCode } from '@/chat/utils/errorMessage'
@@ -333,27 +325,21 @@ async function runIngestForSlug(
     sourceLabel,
   )
 
-  // Phase 2.A — direct write. Each proposal lands in its target
-  // wiki page immediately; no review queue, no banner. The log
-  // entry (one per ingest, never per-block) appends to system:log.
-  // After every page has been touched we kick a synchronous commit
-  // with a meaningful subject + a body that names each entity, the
-  // source quote, and the LLM's reason. The body is what makes the
-  // Review panel card useful: a glance at the card subject says
-  // "ingest from daily/X"; expanding reveals the per-entity story.
+  // Phase C4a — staged preview shape. Each proposal becomes a
+  // PendingChange in `pendingChangesStore`; the disk is NOT touched
+  // here. The user clicks Accept on the inline widget (rendered by
+  // `inlineReviewPlugin`) to commit a change to disk; the wiring
+  // lives in `pendingChangesApplier` (Phase C4b). Reject just drops
+  // the staged change with no disk effect.
   //
-  // Phase A.5 of the review-UX migration: mirror every applied
-  // proposal into `pendingChangesStore` as well — push then
-  // immediately `accept`. This dual-write keeps the legacy
-  // auto-apply behaviour intact (so users see no UX change yet)
-  // while letting the new sidebar dot + future inline review
-  // plugin (Phase C) consume the store as their single source of
-  // truth. When Phase C lands the `accept` call moves to the
-  // user's click and `appendMarkdownToWikiPage` becomes the
-  // store-driven apply path; until then this loop is the only
-  // producer.
-  const applied: AppliedProposalForCommit[] = []
+  // The `logEntry` produced by the LLM is intentionally discarded
+  // here. wiki:log used to record every ingest pass, but the Review
+  // Panel timeline (Phase D) reads the pendingChangesStore directly
+  // — log lines would duplicate that signal. If we revive a wiki:log
+  // file later it should be derived from accepted changes, not
+  // emitted speculatively at ingest time.
   const groupId = crypto.randomUUID()
+  let staged = 0
   for (const p of proposalsForQueue) {
     if (!p.target) continue
     const targetDoc = useDocsStore
@@ -365,10 +351,6 @@ async function runIngestForSlug(
     }
     const md = assembleProposalMarkdown(p, { withEntityHeading: true })
     if (!md) continue
-    // Mirror into pendingChangesStore BEFORE the disk write so the
-    // sidebar dot momentarily turns blue (push) and then settles
-    // (accept) — verifying the store wiring on real data without
-    // changing user-visible behaviour.
     const changeId = crypto.randomUUID()
     const editId = crypto.randomUUID()
     usePendingChangesStore.getState().push(
@@ -384,32 +366,9 @@ async function runIngestForSlug(
         editId,
       ),
     )
-    const ok = await appendMarkdownToWikiPage(targetDoc.slug, md)
-    if (ok) {
-      applied.push({
-        targetTitle: targetDoc.title?.trim() || targetDoc.slug,
-        proposal: p,
-      })
-      // Auto-resolve: until Phase C4 removes this auto-apply path,
-      // every disk write is treated as an implicit user acceptance.
-      usePendingChangesStore.getState().accept(changeId)
-    } else {
-      usePendingChangesStore.getState().reject(changeId)
-    }
+    staged += 1
   }
-  if (result.logEntry) {
-    await appendToSystemLog(result.logEntry)
-  }
-  // flushDirty drains any active-doc PM transactions to .md /
-  // .meta.json / .ydoc; commitChangesNow follows with an explicit
-  // subject + body so the Review feed shows the ingest as one card
-  // rather than a generic "edit: N files" entry from the idle/
-  // ceiling timer.
-  await flushDirty()
-  const subject = `ai-edit: ingest from ${sourceLabel} (${applied.length} page update${applied.length === 1 ? '' : 's'})`
-  const body = buildIngestCommitBody(applied, sourceLabel)
-  const message = body ? `${subject}\n\n${body}` : subject
-  await useGitStore.getState().commitChangesNow(message)
+  console.log(`[ingest] staged ${staged} change(s) for review`, { groupId })
   return result.proposals.length
 }
 
