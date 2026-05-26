@@ -31,13 +31,13 @@ import { type MouseEvent } from 'react'
 import {
   IconArchive,
   IconChevronRight,
-  IconFileDescription,
   IconPlus,
 } from '@tabler/icons-react'
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { cn } from '@/lib/utils'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
+import { PendingDot } from './PendingDot'
 import {
   TreeRow,
   TreeRowLabel,
@@ -194,9 +194,7 @@ export function DocTreeNode({
           >
             <TreeRow active={isActive}>
               <TreeRowLead asChild>
-                <span aria-hidden>
-                  <IconFileDescription size={16} stroke={1.75} />
-                </span>
+                <PendingDot slug={doc.slug} />
               </TreeRowLead>
               <TreeRowLabel onClick={() => onSelect(doc.slug)}>
                 <span className="truncate">{label}</span>

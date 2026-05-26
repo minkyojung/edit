@@ -22,9 +22,9 @@
 
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { PendingDot } from './PendingDot'
 import {
   IconArchive,
-  IconFileDescription,
   IconPlus,
   IconRefresh,
   IconLoader2,
@@ -213,7 +213,7 @@ function SystemRow({
   const fallback = doc.type.replace(/^(?:wiki|system):/, '')
   return (
     <SidebarMenuButton onClick={onSelect} isActive={isActive}>
-      <IconFileDescription />
+      <PendingDot slug={doc.slug} />
       <span>{label || fallback}</span>
     </SidebarMenuButton>
   )
@@ -236,7 +236,7 @@ function WikiRow({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <SidebarMenuButton onClick={onSelect} isActive={isActive}>
-          <IconFileDescription />
+          <PendingDot slug={doc.slug} />
           <span>{label || fallback}</span>
         </SidebarMenuButton>
       </ContextMenuTrigger>
