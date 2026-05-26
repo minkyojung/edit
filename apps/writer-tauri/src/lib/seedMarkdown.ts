@@ -99,28 +99,18 @@ export function applyMarkdownToEditor(
   }
   if (!parsed) return false
 
+  // `parser` is published by the live MilkdownEditor on mount
+  // (editor.action ctx.get(parserCtx)), so the parsed node carries
+  // the same PM schema instance the EditorView uses. No round-trip
+  // through toJSON / nodeFromJSON — that step existed only because
+  // a separate headless Milkdown owned the parser and produced
+  // schema-incompatible nodes (e.g. `list_item.spread` typed as
+  // string vs boolean). With one editor owning everything, schema
+  // mismatch is structurally impossible.
   const transformed = unwrapBlockImages(parsed)
-  // Schema-rehydration: the parser comes from the headless Milkdown
-  // (lib/headlessMilkdown.ts) which builds its OWN PM schema instance.
-  // The live EditorView has a separate schema instance — structurally
-  // identical, but a different object. PM compares `node.type` by
-  // reference, so dispatching nodes from the headless schema into the
-  // live view silently no-ops the replace. Round-tripping via toJSON
-  // → schema.nodeFromJSON rebuilds the tree against the live schema,
-  // which is the only thing the live view accepts.
-  let liveNode
-  try {
-    liveNode = view.state.schema.nodeFromJSON(transformed.toJSON())
-  } catch (err) {
-    console.warn(
-      '[seedMarkdown] applyMarkdownToEditor: schema rehydrate failed',
-      err,
-    )
-    return false
-  }
   view.dispatch(
     view.state.tr
-      .replaceWith(0, view.state.doc.content.size, liveNode.content)
+      .replaceWith(0, view.state.doc.content.size, transformed.content)
       .setMeta('addToHistory', false),
   )
   return true

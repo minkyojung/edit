@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'r
 import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { ThemeProvider } from '@/components/theme-provider'
+import { FontProvider } from '@/components/font-provider'
 import { AppToaster } from '@/components/AppToaster'
 import { BootGate } from '@/components/BootGate'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -40,16 +41,8 @@ import { applyPendingLogsForView } from '@/agent/applyIngest'
 import '@/lib/vaultPicker'
 import '@/lib/vault'
 import '@/lib/scanVault'
-import { initHeadlessParser } from '@/lib/headlessMilkdown'
 import { startAutoFlush } from '@/lib/docFileSync'
 import { startVaultWatcher } from '@/lib/vaultWatcher'
-
-// Path C Step 3c — boot the headless Milkdown so parser / serializer
-// land in editorViewStore before any doc-loading code runs. Without
-// this, applyVaultToHandle (called from buildHandle's contentReady)
-// would race the per-doc MilkdownEditor mount and silently fall back
-// to 'no-parser', leaving the body empty on every fresh open.
-void initHeadlessParser()
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
@@ -85,14 +78,16 @@ export function App() {
   // above it doesn't change any timing.
   return (
     <ThemeProvider defaultPalette="charcoal" storageKey="writer-palette">
-      <TooltipProvider delayDuration={200}>
-        <HashRouter>
-          <BootGate>
-            <AppContent />
-          </BootGate>
-          <AppToaster />
-        </HashRouter>
-      </TooltipProvider>
+      <FontProvider defaultFont="geist" storageKey="writer-font">
+        <TooltipProvider delayDuration={200}>
+          <HashRouter>
+            <BootGate>
+              <AppContent />
+            </BootGate>
+            <AppToaster />
+          </HashRouter>
+        </TooltipProvider>
+      </FontProvider>
     </ThemeProvider>
   )
 }

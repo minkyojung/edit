@@ -5,6 +5,8 @@ import {
   editorViewOptionsCtx,
   editorViewCtx,
   defaultValueCtx,
+  parserCtx,
+  serializerCtx,
 } from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
@@ -379,31 +381,31 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         editor.action((ctx) => {
           const view = ctx.get(editorViewCtx)
 
-          // Phase 5a step 8 of the Yjs-removal migration: the mount-
-          // time hydrate now reads `handle.bodyMarkdown` only. The
-          // Y.Doc fragment fallback that lived here through the
-          // transition window is gone — every body-rewrite surface
-          // (buildHandle, seedDocBody, replaceDocBody, reloadFromVault)
-          // keeps the cache in sync, so any miss surfaces as a blank
-          // editor instead of a silent Y.Doc-only seed. Brand-new
-          // docs (empty bodyMarkdown) fall through to Milkdown's
-          // schema-fill (one empty paragraph).
-          //
-          // Reuse `applyMarkdownToEditor` so the noise-line strip
-          // (`<br />` etc.), schema rehydration, and the
-          // `addToHistory: false` meta stay in one place instead of
-          // being copy-pasted between the mount hydrate and the
-          // reloadFromVault dispatch.
-          const parser = useEditorViewStore.getState().parser
-          if (parser) {
-            applyMarkdownToEditor(view, handle.bodyMarkdown, parser)
-          }
+          // Publish the LIVE editor's parser + serializer to the
+          // app-wide store. This is the single source of markdown
+          // conversion — same schema instance the EditorView itself
+          // uses, so `applyMarkdownToEditor` can dispatch the parsed
+          // node directly without a JSON round-trip. The previous
+          // arrangement (a headless ghost Milkdown owning parser /
+          // serializer for the app lifetime) created TWO PM schemas
+          // that drifted apart on `list_item.spread` and broke any
+          // reload that fed a bullet-list page back into PM. One
+          // editor, one schema — no drift possible.
+          const parser = ctx.get(parserCtx)
+          const serializer = ctx.get(serializerCtx)
+          useEditorViewStore.getState().setParser(parser)
+          useEditorViewStore.getState().setSerializer(serializer)
 
-          // Parser / serializer come from the headless Milkdown built
-          // at app boot (lib/headlessMilkdown.ts) — populated globally
-          // in editorViewStore before any doc opens. Per-doc editor
-          // instances no longer publish them, removing the race that
-          // left vault load waiting on parser-not-set.
+          // Mount-time hydrate. Reads `handle.bodyMarkdown` only —
+          // the cache populated by `buildHandle` / `reloadFromVault`
+          // / `seedDocBody` / `replaceDocBody`. Brand-new docs
+          // (empty bodyMarkdown) fall through to Milkdown's
+          // schema-fill (one empty paragraph). `applyMarkdownToEditor`
+          // centralises the noise-line strip (`<br />`) and the
+          // `addToHistory: false` meta so the mount hydrate and the
+          // reloadFromVault dispatch share one path.
+          applyMarkdownToEditor(view, handle.bodyMarkdown, parser)
+
           setPmView(view)
           onViewReady?.(view)
 
@@ -435,9 +437,14 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       }
       setPmView(null)
       onViewReady?.(null)
-      // Parser / serializer are owned by the headless Milkdown
-      // (lib/headlessMilkdown.ts) for the app's lifetime — don't
-      // null them on per-doc unmount.
+      // Clear parser / serializer on unmount. The next MilkdownEditor
+      // mount publishes a fresh pair from its own ctx. Any reader
+      // that lands in the gap (very narrow — between editor destroy
+      // and the next mount's post-create `.then`) sees `null` and
+      // skips the dispatch; that's the same gate every consumer
+      // already has (`if (view && parser)`).
+      useEditorViewStore.getState().setParser(null)
+      useEditorViewStore.getState().setSerializer(null)
     }
   }, [handle])
 
