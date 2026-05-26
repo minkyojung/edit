@@ -11,9 +11,8 @@
 // mounts (Resizable just hides it visually) so opening the panel
 // shows the last-active mode without a re-mount flicker.
 
-import { IconCameraPlus, IconHistory, IconMessageCircle } from '@tabler/icons-react'
+import { IconHistory, IconMessageCircle } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useGitStore } from '@/state/gitStore'
@@ -50,7 +49,7 @@ function RightPanelHeader() {
   return (
     <div
       className="flex shrink-0 items-center gap-1 bg-transparent px-2 shadow-[inset_0_-1px_0_var(--border)]"
-      style={{ height: 'var(--header-h)' }}
+      style={{ height: '36px' }}
     >
       {/* Tinted capsule filters — the macOS Tahoe pattern Apple Mail
           uses for its category bar. Each item is its own capsule;
@@ -80,34 +79,7 @@ function RightPanelHeader() {
           warning={gitStatus === 'error'}
         />
       </div>
-      <SaveSnapshotButton />
     </div>
-  )
-}
-
-function SaveSnapshotButton() {
-  const dirtyCount = useGitStore((s) => s.dirtyPaths.size)
-  const gitStatus = useGitStore((s) => s.status)
-  const commitImmediate = useGitStore((s) => s.commitImmediate)
-  const disabled = dirtyCount === 0 || gitStatus === 'committing'
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      disabled={disabled}
-      onClick={() => {
-        void commitImmediate()
-      }}
-      className="ml-auto h-8 cursor-pointer gap-1.5 px-2.5 text-sm hover:bg-foreground/10 dark:hover:bg-foreground/10"
-      aria-label={
-        dirtyCount === 0
-          ? 'No unsaved changes'
-          : `Save snapshot (${dirtyCount} file${dirtyCount === 1 ? '' : 's'})`
-      }
-    >
-      <IconCameraPlus size={16} />
-      <span>Save snapshot</span>
-    </Button>
   )
 }
 

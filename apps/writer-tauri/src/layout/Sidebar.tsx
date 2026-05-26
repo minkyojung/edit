@@ -6,6 +6,7 @@ import {
   IconSelector,
   IconLogout,
   IconSparkles,
+  IconCameraPlus,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { SidebarDateMenu } from './SidebarDateMenu'
@@ -16,6 +17,7 @@ import { WikiSection } from './WikiSection'
 import { ArchivedDocsPopover } from './ArchivedDocsPopover'
 import { IngestProposalCard } from './IngestProposalCard'
 import { useDocsStore } from '@/state/docsStore'
+import { useGitStore } from '@/state/gitStore'
 import { buildDayUrl, buildViewUrl, getActiveSlugFromHash } from '@/lib/viewUrl'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
@@ -136,6 +138,10 @@ export function AppSidebar() {
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const { account, refresh, disconnect } = useClaudeAuth()
   const sidebarTab = useDocsStore((s) => s.sidebarTab)
+  const dirtyCount = useGitStore((s) => s.dirtyPaths.size)
+  const gitStatus = useGitStore((s) => s.status)
+  const commitImmediate = useGitStore((s) => s.commitImmediate)
+  const saveSnapshotDisabled = dirtyCount === 0 || gitStatus === 'committing'
 
   const handleSignOut = useCallback(async () => {
     if (account.connected) {
@@ -301,6 +307,20 @@ export function AppSidebar() {
                     <DropdownMenuSeparator />
                   </>
                 )}
+                <DropdownMenuItem
+                  disabled={saveSnapshotDisabled}
+                  onSelect={() => {
+                    void commitImmediate()
+                  }}
+                >
+                  <IconCameraPlus size={16} stroke={1.5} />
+                  <span>Save snapshot</span>
+                  {dirtyCount > 0 && (
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {dirtyCount}
+                    </span>
+                  )}
+                </DropdownMenuItem>
                 <DropdownMenuItem disabled title="Coming soon">
                   <IconSettings size={16} stroke={1.5} />
                   Settings
