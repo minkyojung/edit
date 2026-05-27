@@ -30,6 +30,7 @@ import {
   type PendingChange,
   type PendingEdit,
 } from '@/state/pendingChangesStore'
+import { useDocsStore } from '@/state/docsStore'
 
 /** Resolved anchor — what `resolveAnchorPosition` returns. */
 export interface ResolvedAnchor {
@@ -41,105 +42,62 @@ export interface ResolvedAnchor {
   exact: boolean
 }
 
-/** Convert a content-based anchor into a PM doc position.
+/** Convert a content-based anchor into a PM doc position + decide
+ * whether the anchor target is still present.
  *
- * Rules (in priority order):
- *   1. Empty anchor → end of doc. Ingest proposals use this since
- *      the legacy auto-apply path always appends.
- *   2. Anchor matches a single text node in the doc → PM position
- *      immediately AFTER the matched substring.
- *   3. Anchor matches a single text node after stripping line-leading
- *      markdown prefixes (`* `, `- `, `# `, `> `, `1. `, etc.) — the
- *      LLM's Edit tool quotes raw markdown (the on-disk shape) but
- *      PM stores it as structured content with the markers absorbed
- *      into node types. Without this fallback every chat replace on
- *      a bullet / heading / quote misses.
- *   4. Neither hits → end of doc with `exact: false`. The replace
- *      widget renders this in stale mode (Keep disabled).
+ * Phase K4 split:
+ *   - `exact` (stale flag) is decided by checking the slug's
+ *     `handle.bodyMarkdown` — the serialized markdown form, the
+ *     same string the applier (`applyToWikiPage`) matches against
+ *     with `oldMd.includes(before)`. This keeps the widget's Keep
+ *     button enabled iff the apply will actually succeed.
+ *   - `pos` is best-effort: a per-text-node walk in PM gives a
+ *     precise visual anchor when the target lives in one node, and
+ *     falls back to end-of-doc otherwise. The widget renders fine
+ *     at end-of-doc when the apply path is multi-block (heading +
+ *     bullet, etc.) — the user clicks Keep and the swap lands
+ *     correctly regardless of where the widget appeared.
  *
- * Why per-text-node walk instead of `doc.textBetween` + `indexOf`
- * (the E3.5 shape): `textBetween` replaces each block boundary
- * with a single character (`\n`), but PM positions count each
- * block open + close as TWO positions. So a flat-text index drifts
- * away from the equivalent PM position by 1 per block crossed —
- * fine on a one-paragraph doc, badly wrong on a long page with
- * many headings / list items. Walking text nodes directly lets us
- * read positions from PM's own coordinate space, eliminating the
- * drift. (E3.7 fix.)
- *
- * Known limit: target must live within ONE text node. PM splits
- * text at every mark boundary, so a target spanning `**bold**` or
- * a `[link](url)` won't match. Common-case chat Edits quote plain
- * prose, which lives in a single text node — good enough for v1.
- *
- * Pure / testable: no zustand reads, no decoration construction.
- * Caller supplies `doc`, function returns position. */
+ * Why we need `handle.bodyMarkdown` and not `doc.textBetween`:
+ * PM's flat text strips markdown syntax (link `[X](url)` → "X",
+ * bullets / headings collapsed). The LLM, by contrast, reads the
+ * file from disk and quotes the on-disk markdown verbatim. Only
+ * the serialized markdown — what bodyMarkdown carries — matches
+ * what the LLM saw. */
 export function resolveAnchorPosition(
   doc: PMNode,
   anchorBefore: string,
+  slug: string,
 ): ResolvedAnchor {
   const endPos = doc.content.size
   if (anchorBefore.length === 0) {
     return { pos: endPos, exact: false }
   }
 
-  // Rule 2 — literal target in a single text node.
-  let r = findInTextNodes(doc, anchorBefore)
-  if (r.exact) return r
+  // Stale check: does the slug's serialized markdown contain the
+  // anchor? Phase K4 — same predicate as `applyToWikiPage`'s
+  // `oldMd.includes(before)`, so widget Keep-enabled ↔ apply
+  // succeeds.
+  const handle = useDocsStore.getState().handles[slug]
+  const bodyMd = handle?.bodyMarkdown ?? ''
+  const hit = bodyMd.includes(anchorBefore)
 
-  // Rule 3 — same walk against the stripped target.
-  const stripped = stripMarkdownLinePrefixes(anchorBefore)
-  if (stripped !== anchorBefore && stripped.length > 0) {
-    r = findInTextNodes(doc, stripped)
-    if (r.exact) return r
-  }
-
-  return { pos: endPos, exact: false }
-}
-
-/** Walk the doc tree looking for `target` inside a single text
- * node. Returns the PM position immediately AFTER the match (so
- * a widget anchored there reads as "right after this text"). Uses
- * `lastIndexOf` to match the legacy semantics of preferring the
- * later occurrence when a doc happens to repeat the same string. */
-function findInTextNodes(
-  doc: PMNode,
-  target: string,
-): ResolvedAnchor {
-  let foundPos = -1
-  doc.descendants((node, pos) => {
-    if (foundPos >= 0) return false
+  // Position: best-effort per-text-node walk (E3.7). Returns
+  // end-of-doc if the target spans multiple nodes — visual
+  // imperfection, not a stale signal.
+  let pos = endPos
+  doc.descendants((node, nodePos) => {
+    if (pos !== endPos) return false
     if (!node.isText || !node.text) return true
-    const idx = node.text.lastIndexOf(target)
+    const idx = node.text.lastIndexOf(anchorBefore)
     if (idx >= 0) {
-      // `pos` is the PM position before this text node's first
-      // character. `idx + target.length` is the offset within
-      // the node text to the end of the match. Sum is the PM
-      // position immediately after the match.
-      foundPos = pos + idx + target.length
+      pos = nodePos + idx + anchorBefore.length
       return false
     }
     return true
   })
-  if (foundPos >= 0) return { pos: foundPos, exact: true }
-  return { pos: doc.content.size, exact: false }
-}
 
-/** Strip line-leading markdown syntax. Handles the common cases the
- * LLM emits as `old_string`:
- *   - bullets:    `* `, `- `, `+ `
- *   - ordered:    `1. `, `12. `
- *   - headings:   `# ` through `###### `
- *   - blockquote: `> `
- * Inline syntax (bold, italic, links) is deliberately left alone —
- * those need a more careful handler and aren't the common miss. */
-function stripMarkdownLinePrefixes(text: string): string {
-  return text
-    .split('\n')
-    .map((line) =>
-      line.replace(/^(?:[*+-]|#{1,6}|>|\d+\.)\s+/, ''),
-    )
-    .join('\n')
+  return { pos, exact: hit }
 }
 
 /** One resolved (change, edit) pair. Per-edit rather than per-change
@@ -188,7 +146,11 @@ function resolveAll(doc: PMNode, pending: PendingChange[]): ResolvedEntry[] {
   const out: ResolvedEntry[] = []
   for (const change of pending) {
     for (const edit of change.edits) {
-      const resolved = resolveAnchorPosition(doc, searchTargetForEdit(edit))
+      const resolved = resolveAnchorPosition(
+        doc,
+        searchTargetForEdit(edit),
+        change.pageSlug,
+      )
       out.push({
         change,
         edit,
@@ -434,6 +396,7 @@ export function createInlineReviewPlugin(slug: string) {
               const r = resolveAnchorPosition(
                 newState.doc,
                 searchTargetForEdit(entry.edit),
+                entry.change.pageSlug,
               )
               return { ...entry, anchorPos: r.pos, exact: r.exact }
             })

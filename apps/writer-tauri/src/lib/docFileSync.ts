@@ -102,14 +102,26 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
   const handle = docs.handles[slug]
   if (!handle) return null
 
+  // K-followup safety: never flush when the handle is still loading
+  // its initial body from disk. The default `bodyMarkdown` on a fresh
+  // handle is the empty string; if anything (a stray PM transaction,
+  // an applyToWikiPage call) marks the slug dirty before
+  // `ensureHandle`'s disk read resolves, the flush would write that
+  // empty string and wipe the disk file. The Daniel.md 0-byte
+  // incident traced back to exactly this race. Once `status: 'ready'`
+  // flips, bodyMarkdown carries either the hydrated disk content or
+  // a real user edit, and the flush proceeds normally.
+  const status = docs.status[slug]
+  if (status !== 'ready') {
+    console.log('[vault:flush] skip — handle still loading', slug, status)
+    return null
+  }
+
   // Phase I: read from `handle.bodyMarkdown`, which dirtyTrackerPlugin
   // keeps in sync with the live PM doc on every transaction. This
   // removes the legacy "active doc only" gate: a slug that was
   // dirtied moments before the user navigated away still flushes
-  // because the cache survived the editor unmount. The previous
-  // shape serialized from `useEditorViewStore.getState().view`,
-  // which evaporated the instant the editor tore down — the source
-  // of the typing-lost-on-navigation race.
+  // because the cache survived the editor unmount.
   const md = handle.bodyMarkdown
 
   // `titleIntent` reflects whether the in-memory title is the user's
@@ -297,6 +309,23 @@ export function installDocSync(slug: string): () => void {
 const FLUSH_INTERVAL_MS = 500
 let flushTimerId: number | null = null
 
+/** Single-flight guard. Multiple call sites trigger flushDirty (the
+ * 500 ms timer, Editor unmount, the autoflush spinner button). Without
+ * coordination two flushes can step on each other inside the
+ * `writeVaultFile` atomic-rename window: one creates `.md.tmp`, the
+ * other tries to rename a `.md.tmp` that's already been moved away,
+ * and the OS surfaces "No such file or directory". We've seen this
+ * since the interval shortened to 500 ms in Phase I.
+ *
+ * Semantics: at most one flush running at a time. A request that
+ * arrives during an in-flight flush sets `flushQueued = true` instead
+ * of dropping silently — the in-flight pass might have started before
+ * the latest mutations were dirty, so we need to come back through
+ * once more after it finishes. Repeated requests while queued collapse
+ * to a single follow-up. */
+let flushInProgress = false
+let flushQueued = false
+
 /** Walk dirty slugs once and persist each to its vault file pair.
  * Called from the periodic flush timer. Errors are isolated per
  * slug — a single failed write doesn't block the others — and the
@@ -310,7 +339,27 @@ let flushTimerId: number | null = null
  *                                    placement — e.g. 'writing')
  *   - serializeDocToFiles null     → skip (active not ready,
  *                                    transient — wait for view) */
+/** Public flush entry point with single-flight guard. See the
+ * `flushInProgress` / `flushQueued` comment above for the contract.
+ * The actual work lives in `flushDirtyOnce` below. */
 export async function flushDirty(): Promise<void> {
+  if (flushInProgress) {
+    flushQueued = true
+    return
+  }
+  flushInProgress = true
+  try {
+    await flushDirtyOnce()
+    while (flushQueued) {
+      flushQueued = false
+      await flushDirtyOnce()
+    }
+  } finally {
+    flushInProgress = false
+  }
+}
+
+async function flushDirtyOnce(): Promise<void> {
   if (!getActiveVaultPath()) return
   const docs = useDocsStore.getState()
   const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)

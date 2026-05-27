@@ -39,7 +39,6 @@ import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
 import { createCustomWikiPage } from '@/state/wikiService'
 import type { IngestProposal } from '@/agent/ingest/types'
-import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
 import { effectiveLength } from '@/lib/markdownText'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { extractErrorCode } from '@/chat/utils/errorMessage'
@@ -119,14 +118,16 @@ async function materializeNewPageProposals(
     const known = useDocsStore.getState().knownDocs.find((d) => d.slug === newSlug)
     if (known) nameToType.set(name, known.type)
 
-    // Phase G: the LLM emits final markdown directly per the
-    // CLAUDE.md formatting rules. We pass it through the wikilink
-    // resolver as a safety net (in case the model emits raw `[[X]]`
-    // tokens) but otherwise stage verbatim. sourceLabel is no longer
-    // mixed into the body here — the LLM is expected to include any
-    // citation it deems useful inside `markdownToAppend` itself.
+    // Phase G + K2: the LLM emits final markdown per the CLAUDE.md
+    // formatting rules and we stage / write it verbatim. Wikilink
+    // tokens (`[[Title]]`) survive to disk in their literal form so
+    // memory and disk stay byte-equivalent — required for the
+    // replace path's `oldMd.includes(before)` match against what the
+    // LLM saw when it read the file. sourceLabel is no longer mixed
+    // into the body here either; the LLM includes any citation it
+    // deems useful inside `markdownToAppend` itself.
     void sourceLabel
-    const after = resolveWikilinksInMarkdown(p.markdownToAppend)
+    const after = p.markdownToAppend
     usePendingChangesStore.getState().push({
       id: crypto.randomUUID(),
       source: 'ingest',
