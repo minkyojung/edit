@@ -1,16 +1,27 @@
-// Right-side panel surface for reviewing recent changes.
+// Right-side panel surface for reviewing AI changes.
 //
-// One view, expandable cards. The list shows a minimal header per
-// commit (entity + diff stat + source + time); clicking a card
-// expands an inline body with Source / Added / Why pulled from the
-// commit message + diff. Multiple cards can be open at once so the
-// user can scan related changes without navigating away.
+// Two sections, top to bottom:
 //
-// File-selection rule: wiki/ → writing/ → daily/. An LLM ingest
-// commit usually touches both the daily (where the user wrote) and
-// the wiki page (where the LLM filed). The card is "about" the
-// destination — the wiki page — so we prefer that for the title
-// and the "Added" diff.
+//   1. **Pending review** — entries from `pendingChangesStore`:
+//      pending plus recently-decided (10 min retention). One row per
+//      change. M2 ships the list view; M3 will make rows expand to
+//      a side-by-side diff with Apply / Reject actions.
+//
+//   2. **Recent changes** — git activity from `gitStore`. Same
+//      expandable card pattern this panel always used. Commits land
+//      here AFTER the user accepts a pending change (the applier
+//      writes disk → group-commit → gitStore.activity).
+//
+// The split reflects the natural lifecycle: a change is "proposed"
+// (pending), then "decided" (briefly visible in both sections), then
+// "committed" (only in section 2 after the decided retention
+// window expires).
+//
+// File-selection rule for git cards: wiki/ → writing/ → daily/.
+// An LLM ingest commit usually touches both the daily (where the
+// user wrote) and the wiki page (where the LLM filed). The card is
+// "about" the destination — the wiki page — so we prefer that for
+// the title and the "Added" diff.
 
 import { useEffect, useMemo } from 'react'
 import {
@@ -22,12 +33,19 @@ import {
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useGitStore } from '@/state/gitStore'
+import {
+  usePendingChangesStore,
+  type PendingChange,
+} from '@/state/pendingChangesStore'
+import { useDocsStore } from '@/state/docsStore'
+import { renderMarkdownToFragment } from '@/lib/renderMarkdownInline'
 import type { CommitInfo, FileDiff } from '@/lib/git'
 import { cn } from '@/lib/utils'
 
 export function ReviewPanel() {
   const activity = useGitStore((s) => s.activity)
   const markAllReviewed = useGitStore((s) => s.markAllReviewed)
+  const pendingEntries = usePendingReviewEntries()
 
   // Refresh on mount so the panel reflects the latest state even if
   // the user opened it after a long gap.
@@ -36,26 +54,27 @@ export function ReviewPanel() {
   }, [])
 
   const hasActivity = activity.length > 0
+  const hasPending = pendingEntries.length > 0
+  const isEmpty = !hasActivity && !hasPending
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 flex-col gap-0.5 bg-transparent px-4 py-3 shadow-[inset_0_-1px_0_var(--border)]">
-        <h2 className="text-[15px] font-semibold text-foreground">Recent changes</h2>
-        {hasActivity && (
+        <h2 className="text-[15px] font-semibold text-foreground">Review</h2>
+        {hasPending && (
           <p className="text-[13px] text-muted-foreground">
-            {`${activity.length} change${activity.length === 1 ? '' : 's'} since you last reviewed`}
+            {`${pendingEntries.length} change${pendingEntries.length === 1 ? '' : 's'} awaiting your decision`}
+          </p>
+        )}
+        {!hasPending && hasActivity && (
+          <p className="text-[13px] text-muted-foreground">
+            {`${activity.length} recent change${activity.length === 1 ? '' : 's'}`}
           </p>
         )}
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        {hasActivity ? (
-          <div className="flex flex-col p-2">
-            {activity.map((commit) => (
-              <CommitCard key={commit.sha} commit={commit} />
-            ))}
-          </div>
-        ) : (
+        {isEmpty ? (
           // ContentUnavailableView pattern (macOS 14+/iOS 17+):
           // tertiary icon + Title 3 headline + body description. Matches
           // the ChatPanel empty state so the right column reads as one
@@ -72,6 +91,15 @@ export function ReviewPanel() {
             <p className="max-w-xs text-center text-[14px] text-muted-foreground">
               Nothing new since your last review.
             </p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4 p-2">
+            {hasPending && (
+              <PendingSection entries={pendingEntries} />
+            )}
+            {hasActivity && (
+              <HistorySection commits={activity} />
+            )}
           </div>
         )}
       </ScrollArea>
@@ -91,6 +119,223 @@ export function ReviewPanel() {
       </div>
     </div>
   )
+}
+
+// ── Pending review section ──────────────────────────────────────
+
+/** Subscribe to `pendingChangesStore` and return the entries the
+ * panel should render. Sort order: pending first (newest first),
+ * then recently-decided (also newest first). The decided window is
+ * already capped by `pruneDecided` (10 min retention) — anything
+ * older has been swept by the time we read.
+ *
+ * Returns a stable identity per render only when the underlying
+ * byId / decided window hasn't shifted, so React's diff keeps the
+ * row DOM if the user is in the middle of interacting. */
+function usePendingReviewEntries(): PendingChange[] {
+  const byId = usePendingChangesStore((s) => s.byId)
+  return useMemo(() => {
+    const all = Object.values(byId)
+    const pending = all
+      .filter((c) => c.status === 'pending')
+      .sort((a, b) => b.createdAt - a.createdAt)
+    const decided = all
+      .filter((c) => c.status !== 'pending')
+      .sort((a, b) => (b.decidedAt ?? 0) - (a.decidedAt ?? 0))
+    return [...pending, ...decided]
+  }, [byId])
+}
+
+function PendingSection({ entries }: { entries: PendingChange[] }) {
+  return (
+    <section className="flex flex-col">
+      <h3 className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Pending review
+      </h3>
+      <div className="flex flex-col gap-1">
+        {entries.map((entry) => (
+          <PendingRow key={entry.id} entry={entry} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function HistorySection({ commits }: { commits: CommitInfo[] }) {
+  return (
+    <section className="flex flex-col">
+      <h3 className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Recent changes
+      </h3>
+      <div className="flex flex-col">
+        {commits.map((commit) => (
+          <CommitCard key={commit.sha} commit={commit} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/** One pending-change row. M2 = read-only display. M3 will wire the
+ * click into an expanded diff with Apply / Reject actions. */
+function PendingRow({ entry }: { entry: PendingChange }) {
+  const title = usePageTitle(entry.pageSlug)
+  const preview = previewLine(entry)
+  const time = relativeTime(Math.floor(entry.createdAt / 1000))
+  const stat = useMemo(() => diffStat(entry), [entry])
+
+  return (
+    <div
+      className={cn(
+        'flex flex-col gap-0.5 rounded-md px-3 py-2 text-left',
+        'hover:bg-muted/60 transition-colors',
+      )}
+    >
+      <div className="flex items-center gap-2 text-sm">
+        <StatusDot status={entry.status} />
+        <span className="truncate font-medium">{title}</span>
+        <DiffStatChars added={stat.added} removed={stat.removed} />
+        <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+          {time}
+        </span>
+      </div>
+      {preview && (
+        <PreviewLine markdown={preview} />
+      )}
+    </div>
+  )
+}
+
+/** Character-count diff stat for a pending row. Replaces the
+ * source-type chip — same idea as the github-style `+N -M` summary,
+ * just measured in characters so it scales sensibly for prose. We
+ * skip the zero side so a pure-add change reads as a clean `+33`
+ * without a `-0` companion. */
+function DiffStatChars({
+  added,
+  removed,
+}: {
+  added: number
+  removed: number
+}) {
+  if (added === 0 && removed === 0) return null
+  return (
+    <span className="shrink-0 font-mono text-[11px]">
+      {added > 0 && (
+        <span className="text-green-600 dark:text-green-400">+{added}</span>
+      )}
+      {removed > 0 && (
+        <span className={cn('text-destructive', added > 0 && 'ml-1')}>
+          -{removed}
+        </span>
+      )}
+    </span>
+  )
+}
+
+/** Sum the `before` / `after` character counts across every edit in
+ * the change. `add` only contributes to `added`; `delete` only to
+ * `removed`; `replace` contributes to both (counted against the full
+ * before / after strings, including any surrounding context the LLM
+ * cited — the goal is "how much of the page is shifting" rather
+ * than a strict net-line count). `write` (whole-doc replace, no
+ * before) shows as additions only because we don't have the prior
+ * content available in the edit payload. */
+function diffStat(entry: PendingChange): { added: number; removed: number } {
+  let added = 0
+  let removed = 0
+  for (const edit of entry.edits) {
+    added += edit.after?.length ?? 0
+    removed += edit.before?.length ?? 0
+  }
+  return { added, removed }
+}
+
+/** Status indicator dot — three states, three colours. Compact 6px
+ * dot to match Linear-style row density.
+ *
+ * The dot is centred inside a `h-5` wrapper that matches `text-sm`
+ * line-height (20px). Without the wrapper, the parent flex row
+ * centres the dot against the line-box middle, but optical-centre
+ * of the text glyph sits ~1 px lower; that mismatch read as
+ * "dot is too high" against the row's title. Forcing the dot's
+ * surrounding container to the text's line height lets it land on
+ * the glyph's visual centre. */
+function StatusDot({ status }: { status: PendingChange['status'] }) {
+  const cls =
+    status === 'pending'
+      ? 'bg-info'
+      : status === 'accepted'
+        ? 'bg-green-500'
+        : 'bg-muted-foreground/40'
+  return (
+    <span
+      aria-hidden
+      className="flex h-5 shrink-0 items-center"
+    >
+      <span className={cn('h-1.5 w-1.5 rounded-full', cls)} />
+    </span>
+  )
+}
+
+/** Single-line markdown preview rendered via M1's inline renderer.
+ * Uses a portal-style `dangerouslySetInnerHTML`-equivalent by
+ * appending the fragment into a div ref — this keeps wikilink anchor
+ * elements semantically correct (not stuffed into innerHTML) and
+ * stays consistent with the editor's rendering path. */
+function PreviewLine({ markdown }: { markdown: string }) {
+  return (
+    <div
+      ref={(el) => {
+        if (!el) return
+        el.innerHTML = ''
+        el.appendChild(renderMarkdownToFragment(markdown))
+      }}
+      className={cn(
+        'pl-[14px] truncate text-[12px] text-muted-foreground',
+        '[&_.md-wikilink]:text-info [&_.md-link]:text-info',
+        // Flatten the renderer's block elements for a one-line row —
+        // headings stop being big, lists stop being indented blocks,
+        // paragraphs lose their margin. The mini-renderer surfaces
+        // its full DOM here only because M3 will re-use the same
+        // markup for the expanded view; for the row preview we just
+        // want the text + link colouring through.
+        '[&_h1]:inline [&_h2]:inline [&_h3]:inline [&_h4]:inline',
+        '[&_h5]:inline [&_h6]:inline [&_p]:inline [&_p]:m-0',
+        '[&_ul]:inline [&_ul]:list-none [&_ul]:m-0 [&_ul]:p-0',
+        '[&_li]:inline [&_li]:after:content-["·_"] [&_li:last-child]:after:content-none',
+        '[&_blockquote]:inline [&_blockquote]:m-0',
+      )}
+    />
+  )
+}
+
+/** Pick the first non-empty line from the proposal's markdown to use
+ * as the row preview. Headings keep their `#` marker because the
+ * inline renderer strips it; bullets keep their content. Falls back
+ * to an empty string when the change carries no add-able content
+ * (delete-only future kind). */
+function previewLine(entry: PendingChange): string {
+  for (const edit of entry.edits) {
+    const text = edit.after ?? edit.before ?? ''
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim()
+      if (trimmed) return trimmed
+    }
+  }
+  return ''
+}
+
+/** Resolve the doc title for a slug. Returns a fallback when the doc
+ * isn't in the catalog — usually means the page got archived after
+ * the change was queued; we still want the row to identify it
+ * legibly. */
+function usePageTitle(slug: string): string {
+  return useDocsStore((s) => {
+    const doc = s.knownDocs.find((d) => d.slug === slug)
+    if (!doc) return slug.slice(0, 8)
+    return doc.title?.trim() || doc.type || slug.slice(0, 8)
+  })
 }
 
 // ── Card ────────────────────────────────────────────────────────
