@@ -22,12 +22,16 @@ import { useDocsStore } from '@/state/docsStore'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { useIngestStore, type PendingProposal } from '@/state/ingestStore'
 
-/** Clamp an entity name to fit in the card's one-line preview. The
- * old version had to dig the entity out of free-form markdown
- * (`extractTitle`); with the new atomic schema the LLM already gives
- * us the entity directly, so this is just a length guard. */
-function shortEntity(entity: string): string {
-  const cleaned = entity.trim()
+/** Pick a short readable hint for a proposal. Phase G: the LLM emits
+ * `markdownToAppend` directly so the card hints at the FIRST non-
+ * empty line (stripped of common markdown prefixes), capped to a
+ * one-line size. */
+function proposalHint(p: PendingProposal): string {
+  const firstLine = p.markdownToAppend
+    .split('\n')
+    .map((l) => l.replace(/^(?:[*+-]|#{1,6}|>|\d+\.)\s+/, '').trim())
+    .find((l) => l.length > 0)
+  const cleaned = (firstLine ?? '').trim()
   return cleaned.length > 28 ? `${cleaned.slice(0, 28)}…` : cleaned
 }
 
@@ -43,7 +47,7 @@ function previewText(proposals: PendingProposal[]): string {
     sources.size === 1
       ? `from ${proposals[0].sourceLabel}`
       : `from ${sources.size} notes`
-  const titles = proposals.slice(0, 2).map((p) => shortEntity(p.entity))
+  const titles = proposals.slice(0, 2).map((p) => proposalHint(p))
   const titlesText = titles.join(', ') + (proposals.length > 2 ? ', …' : '')
   const noun = proposals.length === 1 ? 'update' : 'updates'
   return `${proposals.length} ${noun} ${sourceLabel} — ${titlesText}`

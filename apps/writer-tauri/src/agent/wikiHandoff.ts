@@ -23,7 +23,6 @@ import {
   buildIngestCommitBody,
   type AppliedProposalForCommit,
 } from '@/agent/applyIngest'
-import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
 import { useDocsStore } from '@/state/docsStore'
 import { useGitStore } from '@/state/gitStore'
 import { flushDirty } from '@/lib/docFileSync'
@@ -102,7 +101,10 @@ export async function runChatToWikiHandoff(
         console.warn('[wikiHandoff] target type not in catalog', p.target)
         continue
       }
-      const md = assembleProposalMarkdown(p, { withEntityHeading: true })
+      // Phase G: the LLM's markdownToAppend is the final shape; no
+      // host-side assembly. Empty / whitespace-only proposals are
+      // dropped because they'd add nothing to the page.
+      const md = p.markdownToAppend.trim()
       if (!md) continue
       const ok = await appendMarkdownToWikiPage(targetDoc.slug, md)
       if (ok) {

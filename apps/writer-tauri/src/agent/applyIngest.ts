@@ -449,7 +449,7 @@ export function buildIngestCommitBody(
   const rows: string[] = []
   for (const { targetTitle, proposal } of applied) {
     const lines: string[] = []
-    lines.push(`${proposal.entity} → ${targetTitle}`)
+    lines.push(`→ ${targetTitle}`)
     if (proposal.sourceQuote) {
       lines.push(`  Source: "${proposal.sourceQuote}"`)
     }

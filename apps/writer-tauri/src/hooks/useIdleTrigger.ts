@@ -33,7 +33,6 @@ import { useEffect, useRef } from 'react'
 import { runIngest } from '@/agent/ingest/index'
 import { mapIngestProposalToPendingChange } from '@/agent/ingest/toPendingChange'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
-import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useEditorViewStore } from '@/state/editorViewStore'
@@ -99,8 +98,8 @@ async function materializeNewPageProposals(
     // non-empty block and copies its plain text into knownDocs.title,
     // so the sidebar / palette / breadcrumb read it as the page name.
     // Without this heading the mirror would catch the first staged
-    // bullet (once the user Keeps it) and rename the page to that.
-    const titleHeading = `# ${p.suggestNewPage?.trim() ?? p.entity}`
+    // body line (once the user Keeps it) and rename the page to that.
+    const titleHeading = `# ${name}`
 
     // Karpathy-style flat wiki: every entity is its own page at
     // the same level. We deliberately don't pass a parent — the
@@ -120,21 +119,14 @@ async function materializeNewPageProposals(
     const known = useDocsStore.getState().knownDocs.find((d) => d.slug === newSlug)
     if (known) nameToType.set(name, known.type)
 
-    // Stage the body content. `withEntityHeading: false` because the
-    // page title (# Entity) already carries the topic; a body-level
-    // `### Entity` heading would render redundantly under the H1.
-    //
-    // resolveWikilinks rewrites [[Other Page]] tokens to real markdown
-    // links so the LLM-emitted brackets don't land as literal text
-    // once the user Keeps the change. sourceQuote stays verbatim — it
-    // mirrors the user's note and the LLM is not allowed to rewrite it.
-    const bullets = assembleProposalMarkdown(p, { withEntityHeading: false })
-    if (!bullets) continue
-    const resolvedBullets = resolveWikilinksInMarkdown(bullets)
-    const provenanceFooter = p.sourceQuote
-      ? `\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
-      : ''
-    const after = `${resolvedBullets}${provenanceFooter}`
+    // Phase G: the LLM emits final markdown directly per the
+    // CLAUDE.md formatting rules. We pass it through the wikilink
+    // resolver as a safety net (in case the model emits raw `[[X]]`
+    // tokens) but otherwise stage verbatim. sourceLabel is no longer
+    // mixed into the body here — the LLM is expected to include any
+    // citation it deems useful inside `markdownToAppend` itself.
+    void sourceLabel
+    const after = resolveWikilinksInMarkdown(p.markdownToAppend)
     usePendingChangesStore.getState().push({
       id: crypto.randomUUID(),
       source: 'ingest',
@@ -363,8 +355,10 @@ async function runIngestForSlug(
       console.warn('[ingest:apply] target type not in catalog', p.target)
       continue
     }
-    const md = assembleProposalMarkdown(p, { withEntityHeading: true })
-    if (!md) continue
+    // Phase G: the LLM's markdownToAppend is the final shape; we no
+    // longer assemble or wrap it. mapIngestProposalToPendingChange
+    // forwards it verbatim onto the edit's `after` field.
+    if (!p.markdownToAppend.trim()) continue
     const changeId = crypto.randomUUID()
     const editId = crypto.randomUUID()
     usePendingChangesStore.getState().push(

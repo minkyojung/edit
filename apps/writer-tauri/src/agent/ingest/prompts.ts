@@ -63,23 +63,21 @@ When in doubt, omit. A clean empty pass is better than noise.
 
 The INDEX includes \`[wiki:profile]\` — the user's own profile page (the person described in the SELF PROFILE block above). Route facts about the USER themselves there: career or role changes, location moves, new interests they're committing to, stable beliefs about themselves. Casual self-reports stay out per the filter above; mentions of other people go to those people's pages, not the profile.
 
-\`entity\` for a wiki:profile proposal is what the update is about (e.g. \`Career\`, \`Move to Seoul\`, \`Reading goals\`). The host appends it as \`### {entity}\` like any other page.
-
 ## Invariants (do not violate)
 
-- APPEND ONLY. Never propose modifying or deleting existing lines.
+- APPEND ONLY. Never propose modifying or deleting existing lines on the target page. The \`markdownToAppend\` you produce is added at the end of the page; it is your responsibility to make sure the result reads cleanly.
 - \`target\` is the verbatim \`[<type-id>]\` from the INDEX line — never invent ids.
-- Each proposal is atomic: ONE \`entity\` (topic name — a person, a book, a project) and a list of \`bullets\` (the facts about that entity). DO NOT emit page-level or sub-section headings inside bullets — the host assembles \`### {entity}\\n- {bullet}\` automatically. Bullets are plain text only: no leading \`-\`, no nested headings, no \`##\` or \`###\`.
-- Always include a \`sourceQuote\`: the exact sentence (or short clause) the proposal was derived from, echoed from the note verbatim.
+- Each proposal is atomic: one routing decision (target OR suggestNewPage) plus the markdown you want appended. Format that markdown per the rules in the user's CLAUDE.md above — that file is authoritative for how wiki content should look in THIS vault.
+- Always include a \`sourceQuote\`: the exact sentence (or short clause) the proposal was derived from, echoed from the note verbatim. The host uses it for dedup + provenance display.
 - The wiki is FLAT — every entity is its own page at the same level. Do not create category pages. Each fact about a person belongs on a page named after that person, not on a shared "People" page. Same for books, projects, concepts.
 
-## Cross-linking
+## Markdown formatting
 
-When a bullet mentions another wiki page that already exists in the INDEX, wrap that page's title with double-brackets so it renders as a clickable link. Use the title exactly as it appears in the INDEX line. Skip the link when:
-- The page being mentioned is the same one you're writing to (no self-links — don't link \`entity\` from inside its own bullets either).
-- No existing page matches the mention (don't invent links).
+The vault-root CLAUDE.md describes the user's formatting conventions in detail (no duplicate page-title headings, wiki-link syntax, source-citation style, etc.). Follow those conventions when writing \`markdownToAppend\`. As a baseline:
 
-Example: if "Alex" appears as the title of \`[wiki:custom-9k4...]\` in the INDEX, a bullet should read \`Working with [[Alex]] on the project\`, not \`Working with Alex on the project\`. This applies to both \`target\`-bound and \`suggestNewPage\` proposals.
+- Each page is dedicated to one entity, so the page's own title heading already exists — do NOT emit another \`### Sera\` heading inside a Sera page's append; just write the bullets / paragraphs.
+- Cross-references to other wiki pages use \`[[Page Title]]\` syntax (exact match against the INDEX). Skip the link if the mentioned page doesn't exist.
+- When the new content directly comes from a quotable line in the note, include the citation right after the new content, e.g. \`> "exact quote here"\`.
 
 ## Output
 
@@ -87,9 +85,9 @@ Call \`submit_ingest_result\` exactly once with arguments shaped like:
 
 {
   "proposals": [
-    { "target": "wiki:custom-7ntdvj41", "entity": "Sarah", "bullets": ["Now reports directly to me"], "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
-    { "target": "wiki:profile", "entity": "Career", "bullets": ["Joined Acme as Senior Engineer (Apr 2026)"], "sourceQuote": "Started at Acme today as a senior engineer.", "rationale": "user's career change — updates the profile" },
-    { "suggestNewPage": "The Pragmatic Programmer", "entity": "The Pragmatic Programmer", "bullets": ["Software craftsmanship", "Started reading this week"], "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "new entity not in INDEX yet" }
+    { "target": "wiki:custom-7ntdvj41", "markdownToAppend": "- Now reports directly to me\\n> \\"Sarah is now reporting to me\\"", "sourceQuote": "Sarah is now reporting to me", "rationale": "added detail to existing entity" },
+    { "target": "wiki:profile", "markdownToAppend": "- Joined Acme as Senior Engineer (Apr 2026)", "sourceQuote": "Started at Acme today as a senior engineer.", "rationale": "user's career change — updates the profile" },
+    { "suggestNewPage": "The Pragmatic Programmer", "markdownToAppend": "- Software craftsmanship\\n- Started reading this week", "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "new entity not in INDEX yet" }
   ],
   "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; logged new role on profile; created The Pragmatic Programmer page"
 }

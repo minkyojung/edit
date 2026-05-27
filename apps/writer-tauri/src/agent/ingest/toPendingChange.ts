@@ -15,7 +15,6 @@
 
 import type { IngestProposal } from './types'
 import type { PendingChange } from '@/state/pendingChangesStore'
-import { assembleProposalMarkdown } from './markdown'
 
 export interface MapProposalArgs {
   /** A proposal post-materialise — `target` is guaranteed populated
@@ -44,12 +43,11 @@ export function mapIngestProposalToPendingChange(
   changeId: string,
   editId: string,
 ): Omit<PendingChange, 'status' | 'decidedAt' | 'viewedAt'> {
-  // Assemble the markdown that would land on disk if accepted — the
-  // same string the existing auto-apply path produces. Stored on
-  // the edit's `after` field so the inline review plugin can render
-  // a faithful preview without re-walking the proposal shape.
-  const markdown =
-    assembleProposalMarkdown(args.proposal, { withEntityHeading: true }) ?? ''
+  // Phase G: the LLM already produced final markdown per the
+  // CLAUDE.md formatting rules; we stash it verbatim. The inline
+  // review widget renders it as-is so the user sees exactly what
+  // will land on disk if accepted.
+  const markdown = args.proposal.markdownToAppend
 
   return {
     id: changeId,
