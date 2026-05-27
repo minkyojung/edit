@@ -57,6 +57,10 @@ import { useGitStore, isAiEditCommit } from '@/state/gitStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { flushDirty } from '@/lib/docFileSync'
 import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
+import {
+  resolveWikilinksInMarkdown,
+  condenseWikilinksInMarkdown,
+} from '@/lib/wikilinkResolve'
 import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
 import { normalizeDailyBody } from '@/lib/docTitle'
@@ -392,8 +396,20 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
           // that drifted apart on `list_item.spread` and broke any
           // reload that fed a bullet-list page back into PM. One
           // editor, one schema — no drift possible.
-          const parser = ctx.get(parserCtx)
-          const serializer = ctx.get(serializerCtx)
+          //
+          // Phase L1: wrap both with wikilink form translators so PM
+          // sees `[Title](note:slug)` (which it already understands
+          // as a link mark) while disk + bodyMarkdown carry the
+          // canonical `[[Title]]` shape. The wrappers preserve
+          // identity on input that doesn't contain wikilinks (the
+          // regex is no-op for plain markdown) so unrelated content
+          // is untouched.
+          const rawParser = ctx.get(parserCtx)
+          const rawSerializer = ctx.get(serializerCtx)
+          const parser = (md: string) =>
+            rawParser(resolveWikilinksInMarkdown(md))
+          const serializer = (doc: Parameters<typeof rawSerializer>[0]) =>
+            condenseWikilinksInMarkdown(rawSerializer(doc))
           useEditorViewStore.getState().setParser(parser)
           useEditorViewStore.getState().setSerializer(serializer)
 
