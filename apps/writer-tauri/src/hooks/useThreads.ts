@@ -2,12 +2,12 @@
 // zustand store that mirrors the on-disk `threads/<id>.json` +
 // `threads/<id>.turns.jsonl` pair (Phase 4.F file-based layout).
 //
-// Threads are anchored to a doc via `ThreadMeta.parentSlug`; this
-// hook filters the global store down to a single slug's threads so
-// the caller (ChatPanel) doesn't have to know about the file-based
-// model. The pre-4.F implementation took a Y.Doc + `contentReady`
-// promise — `slug` replaces both since the file-based store reads
-// directly from the vault folder rather than from a per-doc Y.Doc.
+// Phase H (Cursor-style threads): threads are GLOBAL. They no
+// longer filter by `parentSlug` — the active thread persists
+// across page navigation and lives across the whole app. The
+// optional `currentSlug` argument only feeds new-thread creation
+// so we still stamp the doc the user was on as informational
+// provenance; it does NOT affect the returned list.
 
 import { useCallback, useMemo } from 'react'
 import {
@@ -38,30 +38,28 @@ export interface UseThreadsResult {
   markSessionStarted: (id: string) => void
 }
 
-export function useThreads(slug: string | null): UseThreadsResult {
+/** Global thread surface. `currentSlug` is purely informational — it
+ * stamps `parentSlug` on newly-created threads so the user can see
+ * "this conversation started while I was on the X page", but the
+ * returned thread list is the same regardless of which page the
+ * user is on. */
+export function useThreads(currentSlug: string | null = null): UseThreadsResult {
   const hydrated = useThreadsStore((s) => s.hydrated)
   const threadsById = useThreadsStore((s) => s.threads)
 
-  // Restrict to the threads anchored to this slug. Legacy threads
-  // without `parentSlug` (carried over from the Y.Array layout) are
-  // surfaced nowhere — they show as orphaned in the file system and
-  // can be reattached or deleted manually. New threads always carry
-  // the field because `createThread` below sets it.
-  const threads = useMemo(() => {
-    if (!slug) return []
-    return Object.values(threadsById).filter((t) => t.parentSlug === slug)
-  }, [threadsById, slug])
+  const threads = useMemo(() => Object.values(threadsById), [threadsById])
 
   const createThread = useCallback<UseThreadsResult['createThread']>(
     async (initialTitle = '') => {
-      if (!slug) return null
       const activeCount = threads.filter((t) => !t.archived).length
       if (activeCount >= MAX_ACTIVE_THREADS) return null
 
       const now = Date.now()
       const meta: ThreadMeta = {
         id: crypto.randomUUID(),
-        parentSlug: slug,
+        // Informational only post-Phase H. Empty string when the user
+        // creates a thread without an active page (rare).
+        parentSlug: currentSlug ?? '',
         title: initialTitle,
         createdAt: now,
         updatedAt: now,
@@ -73,11 +71,11 @@ export function useThreads(slug: string | null): UseThreadsResult {
       // being visible in the threads list when this resolves. Without
       // this, useActiveThread's reconcile effect would race the disk
       // write and revert activeId back to the previous thread because
-      // the new id isn't in the filtered active list yet.
+      // the new id isn't in the active list yet.
       await useThreadsStore.getState().createThread(meta)
       return meta.id
     },
-    [slug, threads],
+    [currentSlug, threads],
   )
 
   const archiveThread = useCallback<UseThreadsResult['archiveThread']>(
@@ -163,12 +161,15 @@ export function useThreads(slug: string | null): UseThreadsResult {
     const a: ThreadMeta[] = []
     const r: ThreadMeta[] = []
     for (const t of threads) (t.archived ? r : a).push(t)
+    // Active threads: most recently updated first — Cursor-style "what
+    // I was just working on" surface in the picker.
+    a.sort((x, y) => y.updatedAt - x.updatedAt)
     r.sort((x, y) => (y.archivedAt ?? 0) - (x.archivedAt ?? 0))
     return { active: a, archived: r }
   }, [threads])
 
   return {
-    ready: hydrated && !!slug,
+    ready: hydrated,
     threads,
     active,
     archived,

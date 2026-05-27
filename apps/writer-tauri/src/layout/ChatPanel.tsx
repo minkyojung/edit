@@ -60,8 +60,13 @@ interface Props {
 export function ChatPanel({ editorView, slug }: Props) {
   const { account } = useClaudeAuth()
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
+  // Phase H: threads are global. `slug` is still passed (informational
+  // — it stamps `parentSlug` on newly-created threads so the user can
+  // see "this conversation started while I was on the X page") but
+  // the list of threads + the active thread no longer change when the
+  // user navigates to a different doc.
   const threads = useThreads(slug)
-  const { activeId, setActiveId } = useActiveThread(slug, threads.active)
+  const { activeId, setActiveId } = useActiveThread(threads.active)
   const turnsHook = useThreadTurns(activeId)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
