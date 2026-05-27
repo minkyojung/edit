@@ -98,6 +98,12 @@ export interface PendingChange {
   context: {
     /** Chat: the thread that originated this change. */
     threadId?: string
+    /** Chat: the LLM-run id the sidecar emitted with `chat/edit-pending`.
+     * The applier sends this back as part of `claude_chat_edit_decision`
+     * so the sidecar can route the allow/deny verdict to the right
+     * parked canUseTool Promise. Distinct from `threadId` — one thread
+     * can host many runs. */
+    runId?: string
     /** Ingest: the daily / source note this was derived from. */
     sourceSlug?: string
     /** Ingest: short rationale the LLM emitted ("user career
@@ -115,6 +121,13 @@ export interface PendingChange {
   /** ms since epoch when `status` flipped away from `pending`. Null
    * while still pending. */
   decidedAt: number | null
+  /** ms since epoch when the user first opened the target page
+   * after this change was created. The sidebar dot subscribes to
+   * this — once it's set, the dot is gray. Deliberately
+   * independent of `status`: clicking Apply in the chat panel
+   * does NOT clear the dot, because the user hasn't yet seen the
+   * result of that Apply. Only navigating to the page does. */
+  viewedAt: number | null
 }
 
 interface PendingChangesState {
@@ -127,9 +140,14 @@ interface PendingChangesState {
    * ingest: a fresh UUID). Idempotent on the id — re-push with the
    * same id is treated as a content refresh, preserving status only
    * if it's still `pending`. */
-  push: (change: Omit<PendingChange, 'status' | 'decidedAt' | 'createdAt'> & {
-    createdAt?: number
-  }) => void
+  push: (
+    change: Omit<
+      PendingChange,
+      'status' | 'decidedAt' | 'createdAt' | 'viewedAt'
+    > & {
+      createdAt?: number
+    },
+  ) => void
 
   /** User clicked Accept on one change. Flips status; the host's
    * apply path (a subscriber to this store) reads the accepted
@@ -145,6 +163,13 @@ interface PendingChangesState {
    * page-level "AI made this page — reject everything" affordance
    * (Phase C banner) and by the Review Panel's bulk action. */
   rejectGroup: (groupId: string) => void
+
+  /** Mark every change targeting `pageSlug` as viewed. Called when
+   * the user navigates to that page — the moment the page is on
+   * screen, the user has seen whatever AI changes were queued for
+   * it, so the sidebar dot clears. Idempotent; re-marking an
+   * already-viewed change is a no-op. */
+  markPageViewed: (pageSlug: string) => void
 
   /** Drop changes whose `pageSlug` doesn't match any live doc
    * anymore (page deleted / archived). Idempotent. Called by the
@@ -165,9 +190,17 @@ interface PendingChangesState {
   pendingForPage: (pageSlug: string) => PendingChange[]
 
   /** All slugs with at least one pending change — the set the
-   * sidebar dot indicator subscribes to. Recomputed cheaply (the
+   * inline review widget subscribes to. Recomputed cheaply (the
    * set rarely exceeds a few dozen entries). */
   pagesWithPending: () => Set<string>
+
+  /** All slugs that have unviewed changes (any status except
+   * rejected — rejected = user dismissed = treat as viewed). The
+   * sidebar dot subscribes to this. Replaces `pagesWithPending`
+   * for the dot indicator so the dot's lifecycle is "AI touched
+   * this page + you haven't visited", independent of decision
+   * state. */
+  pagesWithUnviewed: () => Set<string>
 }
 
 /** How long an accepted / rejected change stays in the store before
@@ -198,6 +231,7 @@ export const usePendingChangesStore = create<PendingChangesState>()(
             context: change.context,
             status: 'pending',
             decidedAt: null,
+            viewedAt: null,
           }
           return { byId: { ...s.byId, [change.id]: next } }
         })
@@ -226,6 +260,23 @@ export const usePendingChangesStore = create<PendingChangesState>()(
               [id]: { ...existing, status: 'rejected', decidedAt: Date.now() },
             },
           }
+        })
+      },
+
+      markPageViewed: (pageSlug) => {
+        set((s) => {
+          const now = Date.now()
+          const next: Record<string, PendingChange> = {}
+          let changed = false
+          for (const [id, c] of Object.entries(s.byId)) {
+            if (c.pageSlug === pageSlug && c.viewedAt === null) {
+              next[id] = { ...c, viewedAt: now }
+              changed = true
+            } else {
+              next[id] = c
+            }
+          }
+          return changed ? { byId: next } : s
         })
       },
 
@@ -297,14 +348,46 @@ export const usePendingChangesStore = create<PendingChangesState>()(
         }
         return out
       },
+
+      pagesWithUnviewed: () => {
+        const out = new Set<string>()
+        for (const c of Object.values(get().byId)) {
+          // Rejected = user explicitly dismissed (via PendingEditsBar
+          // or inline widget). Treat as if viewed — keeping a blue
+          // dot after the user said "no" would be noise. Accepted +
+          // not yet viewed stays blue: file changed, user hasn't
+          // seen the result.
+          if (c.status === 'rejected') continue
+          if (c.viewedAt === null) out.add(c.pageSlug)
+        }
+        return out
+      },
     }),
     {
       name: 'writer-tauri:pending-changes',
-      version: 1,
+      version: 2,
       // Persist the queue across reloads so a user who closes the
       // app mid-review doesn't lose pending changes. Only the data
       // — not the selector functions — survives serialisation.
       partialize: (s) => ({ byId: s.byId }),
+      // v1 → v2: introduced `viewedAt`. Existing persisted entries
+      // pre-date the dot-as-notification model and the user has had
+      // the app open while they queued; treat them as already viewed
+      // (timestamp = now) so they don't all flash blue post-upgrade.
+      migrate: (persisted, fromVersion) => {
+        if (fromVersion < 2 && persisted && typeof persisted === 'object') {
+          const s = persisted as { byId?: Record<string, PendingChange> }
+          if (s.byId) {
+            const now = Date.now()
+            for (const c of Object.values(s.byId)) {
+              if ((c as PendingChange).viewedAt === undefined) {
+                ;(c as PendingChange).viewedAt = now
+              }
+            }
+          }
+        }
+        return persisted as { byId: Record<string, PendingChange> }
+      },
     },
   ),
 )

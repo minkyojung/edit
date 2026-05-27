@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Button } from '@/components/ui/button'
 import { usePendingEditsStore, type PendingEdit } from '@/state/pendingEditsStore'
+import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
@@ -44,11 +45,12 @@ function PendingEditCard({ edit }: { edit: PendingEdit }) {
   const markApplied = usePendingEditsStore((s) => s.markApplied)
   const markRejected = usePendingEditsStore((s) => s.markRejected)
 
-  // Fire-and-forget decision relay. The optimistic local mark
-  // hides the card immediately (good UX even on a slow IPC) and
-  // any send failure is logged but doesn't surface — the worst
-  // case is the canUseTool gate stays parked, which the user can
-  // resolve by cancelling the run.
+  // Fire-and-forget decision relay — used only when the unified store
+  // doesn't have an entry for this edit (mapping failed in
+  // chat/index.ts: unknown tool, unmappable file path, etc.). When
+  // the entry IS in the new store, the applier handles the sidecar
+  // gate as a side effect of the status flip, so we route through
+  // that path instead and the two stores stay in lockstep.
   const sendDecision = (decision: 'allow' | 'deny') => {
     invoke('claude_chat_edit_decision', {
       args: { runId: edit.runId, pendingId: edit.id, decision },
@@ -56,13 +58,31 @@ function PendingEditCard({ edit }: { edit: PendingEdit }) {
       console.warn('[chat] edit-decision failed', err)
     })
   }
+  const decide = (decision: 'allow' | 'deny') => {
+    // pendingChangesStore is keyed by the same pendingId we mint in
+    // chat/index.ts's listener (Phase E2). When the entry exists, it
+    // is the source of truth — flipping its status fires the applier
+    // subscriber, which sends the sidecar decision. Updating the
+    // legacy store too keeps PendingEditsBar's local hide-on-decide
+    // animation working during the transition.
+    const inNewStore = !!usePendingChangesStore.getState().byId[edit.id]
+    if (inNewStore) {
+      if (decision === 'allow') usePendingChangesStore.getState().accept(edit.id)
+      else usePendingChangesStore.getState().reject(edit.id)
+    } else {
+      // Fallback: the mapper couldn't translate this tool call into a
+      // PendingChange (no slug match, unsupported tool). Use the legacy
+      // direct-invoke path so the user still has a working decision.
+      sendDecision(decision)
+    }
+  }
   const onApply = () => {
     markApplied(edit.id)
-    sendDecision('allow')
+    decide('allow')
   }
   const onReject = () => {
     markRejected(edit.id)
-    sendDecision('deny')
+    decide('deny')
   }
 
   const filePath = readString(edit.input.file_path)

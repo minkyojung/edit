@@ -1,23 +1,31 @@
 // Sidebar dot indicator — replaces the per-doc file icon in the
 // sidebar tree. The dot is the user's only signal that an AI
-// surface has staged a change on that page.
+// surface has touched that page since they last looked.
 //
 // Visual states:
 //   - default: a faint round dot that reads as "just a list-item
 //     bullet", same footprint as the previous IconFileDescription so
 //     row alignment stays put.
-//   - pending: same dot in `bg-info` (the app's accent blue, the
+//   - unviewed: same dot in `bg-info` (the app's accent blue, the
 //     same tint the Chat capsule and other "AI-attention" affordances
 //     use). Subtle but discoverable while the user is browsing.
 //
-// Subscribes to `usePendingChangesStore`. Re-renders are cheap — the
-// selector returns a Set and the `has(slug)` check is the entire
-// equality contract; React only re-renders rows whose state flipped.
+// Lifecycle (intentionally decoupled from decision state — Phase E2.8):
+//   - Blue when:    an AI change targets this page and the user has
+//                   not yet visited (`viewedAt === null`).
+//   - Grey when:    the user has navigated to the page since the
+//                   change was queued, OR the user explicitly
+//                   rejected the change in chat.
+//
+// Apply / Keep alone does NOT clear the dot — the file may have
+// changed but the user hasn't seen the result yet, and the dot is
+// the signal to "go look". This matches Slack / Notion / Linear's
+// "unread badge" pattern rather than an "inbox/to-do" pattern.
 //
 // No click handler: the dot itself is purely informational. The row
 // is already clickable (SidebarMenuButton / TreeRow), and clicking
-// navigates the user to the page where the inline review UI (Phase C)
-// renders the actual Accept / Reject affordances.
+// navigates the user to the page (which both clears this dot and
+// surfaces the inline review widget if the change is still pending).
 
 import { cn } from '@/lib/utils'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -31,9 +39,16 @@ interface Props {
 }
 
 export function PendingDot({ slug, className }: Props) {
-  const hasPending = usePendingChangesStore((s) =>
+  // `viewedAt === null` AND not rejected — see store's
+  // `pagesWithUnviewed` selector for the matching set-level form.
+  // Inlined per-slug here to keep React equality cheap (boolean vs
+  // a Set that allocates each call).
+  const hasUnviewed = usePendingChangesStore((s) =>
     Object.values(s.byId).some(
-      (c) => c.status === 'pending' && c.pageSlug === slug,
+      (c) =>
+        c.pageSlug === slug &&
+        c.status !== 'rejected' &&
+        c.viewedAt === null,
     ),
   )
   return (
@@ -52,7 +67,7 @@ export function PendingDot({ slug, className }: Props) {
           // to settled (or back) reads as a soft fade rather than
           // a hard swap.
           'h-1.5 w-1.5 rounded-full transition-colors',
-          hasPending ? 'bg-info' : 'bg-muted-foreground/40',
+          hasUnviewed ? 'bg-info' : 'bg-muted-foreground/40',
         )}
       />
     </span>

@@ -28,6 +28,8 @@ import { useChatRuns } from '@/stores/chatRuns'
 import { useGitStore } from '@/state/gitStore'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingEditsStore } from '@/state/pendingEditsStore'
+import { usePendingChangesStore } from '@/state/pendingChangesStore'
+import { mapChatEditToPendingChange } from './toPendingChange'
 import { flushDirty } from '@/lib/docFileSync'
 import {
   agentIdForModel,
@@ -183,12 +185,37 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         input: Record<string, unknown>
       }>('claude:edit-pending', (e) => {
         if (e.payload.runId !== runId) return
+        // Legacy surface: PendingEditsBar above the chat input. Kept
+        // alive during Phase E so users always have a decision surface
+        // even when the unified-store mapping below fails (unknown
+        // tool, file outside the catalog, Write to a brand-new path).
+        // Removed in Phase E5.
         usePendingEditsStore.getState().addPending({
           id: e.payload.pendingId,
           runId: e.payload.runId,
           toolName: e.payload.toolName,
           input: e.payload.input,
         })
+        // New surface: inline review widget on the affected page +
+        // sidebar dot. The mapper returns null when it can't resolve
+        // the tool call into our line-level shape; in that case the
+        // legacy bar above is the only surface, which is the
+        // documented (a)-strategy fallback for Phase E.
+        const mapped = mapChatEditToPendingChange(
+          {
+            runId: e.payload.runId,
+            pendingId: e.payload.pendingId,
+            toolName: e.payload.toolName,
+            input: e.payload.input,
+          },
+          {
+            knownDocs: useDocsStore.getState().knownDocs,
+            vaultPath: getActiveVaultPath(),
+          },
+        )
+        if (mapped) {
+          usePendingChangesStore.getState().push(mapped)
+        }
       }),
       listen<DoneEvent>('claude:done', (e) => {
         if (e.payload.runId !== runId) return

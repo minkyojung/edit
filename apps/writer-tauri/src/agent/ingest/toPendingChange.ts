@@ -43,7 +43,7 @@ export function mapIngestProposalToPendingChange(
   args: MapProposalArgs,
   changeId: string,
   editId: string,
-): Omit<PendingChange, 'status' | 'decidedAt'> {
+): Omit<PendingChange, 'status' | 'decidedAt' | 'viewedAt'> {
   // Assemble the markdown that would land on disk if accepted — the
   // same string the existing auto-apply path produces. Stored on
   // the edit's `after` field so the inline review plugin can render

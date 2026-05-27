@@ -14,6 +14,7 @@ import { CommandPalette } from '@/layout/CommandPalette'
 import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
 import { ImageAltDialog } from '@/editor/ImageAltDialog'
 import { useDocsStore } from '@/state/docsStore'
+import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore } from '@/state/settingsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
@@ -178,6 +179,18 @@ function AppContent() {
   // date-poll timer share a single lifetime across the session.
   useIdleTrigger()
   useWindowChrome()
+
+  // Sidebar dot semantic (Phase E2.8): the dot flips to "viewed"
+  // (grey) the moment the user navigates to a page that has staged
+  // AI changes. This effect is the trigger — markPageViewed stamps
+  // `viewedAt` on every entry targeting `activeSlug`. Idempotent;
+  // re-marking already-viewed entries is a no-op inside the store.
+  // Lives at the root rather than in Page.tsx so the inline review
+  // plugin / editor doesn't need to know about dot lifecycle.
+  useEffect(() => {
+    if (!activeSlug) return
+    usePendingChangesStore.getState().markPageViewed(activeSlug)
+  }, [activeSlug])
   // Drains queued log entries / index updates into their respective
   // system pages when the user navigates there. One hook, one
   // configs table — adding system:about or system:lint later is a
