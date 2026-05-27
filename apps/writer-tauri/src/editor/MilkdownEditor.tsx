@@ -49,14 +49,11 @@ import { history } from '@milkdown/kit/plugin/history'
 import {
   createAiEditGutterPlugin,
   aiEditGutterKey,
-  type PendingEditAnchor,
 } from './aiEditGutterPlugin'
 import { createPlaceholderPlugin } from './placeholderPlugin'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useGitStore, isAiEditCommit } from '@/state/gitStore'
-import { usePendingEditsStore } from '@/state/pendingEditsStore'
-import { getActiveVaultPath } from '@/state/settingsStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
 import { WikilinkPalette } from './WikilinkPalette'
@@ -179,18 +176,16 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       if (state.knownDocs === prev.knownDocs) return
       refresh()
     })
-    // Pending edits live in their own store; the gutter plugin pulls
-    // them via `getPendingEdits`. Mirror the git refresh path so a
-    // freshly-arrived `chat/edit-pending` (or an Apply/Reject that
-    // clears one) repaints the gutter in the same tick.
-    const unsubPending = usePendingEditsStore.subscribe((state, prev) => {
-      if (state.byId === prev.byId) return
-      refresh()
-    })
+    // Phase F: pending-edit gutter markers retired. The chat-edit
+    // flow now stages proposals in `pendingChangesStore` and renders
+    // them via the inline review widget on the page, which carries
+    // the diff + Keep/Reject inline. A separate gutter bar would be
+    // duplicate signal for the same change. Committed-side markers
+    // (`unsubGit`) stay — those still surface "where the AI just
+    // committed" once the inline widget resolves.
     return () => {
       unsubGit()
       unsubDocs()
-      unsubPending()
     }
   }, [pmView])
 
@@ -343,7 +338,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
             return out
           },
           getCommitDetail: (sha) => useGitStore.getState().commitDetails[sha],
-          getPendingEdits: () => collectPendingAnchors(),
         }),
       )
       .use(
@@ -541,46 +535,10 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
  * are skipped: their inputs don't carry an `old_string` anchor we
  * can map to a single block, and the chat panel card already
  * surfaces them. */
-function collectPendingAnchors(): PendingEditAnchor[] {
-  const byId = usePendingEditsStore.getState().byId
-  const anchors: PendingEditAnchor[] = []
-  const vault = getActiveVaultPath()
-  for (const edit of Object.values(byId)) {
-    if (edit.status !== 'pending') continue
-    if (edit.toolName !== 'Edit') continue
-    const oldString = typeof edit.input.old_string === 'string'
-      ? edit.input.old_string
-      : ''
-    if (!oldString) continue
-    const filePath = typeof edit.input.file_path === 'string'
-      ? edit.input.file_path
-      : ''
-    if (!filePath) continue
-    anchors.push({
-      pendingId: edit.id,
-      toolName: edit.toolName,
-      relPath: toVaultRelative(filePath, vault),
-      oldString,
-    })
-  }
-  return anchors
-}
 
 /** Strip the active vault root off an absolute file_path. Falls back
  * to recognised top-level folders so paths resolved through symlinks
  * still match. Mirrors PendingEditsBar's heuristic — kept inline
  * here instead of extracting a util because both sites use it once
  * and the variants don't share enough to make a util worthwhile. */
-function toVaultRelative(filePath: string, vault: string | null): string {
-  if (!filePath) return ''
-  if (vault) {
-    const root = vault.endsWith('/') ? vault : vault + '/'
-    if (filePath.startsWith(root)) return filePath.slice(root.length)
-  }
-  for (const dir of ['daily/', 'wiki/', 'writing/', '_system/']) {
-    const idx = filePath.indexOf('/' + dir)
-    if (idx !== -1) return filePath.slice(idx + 1)
-  }
-  return filePath
-}
 

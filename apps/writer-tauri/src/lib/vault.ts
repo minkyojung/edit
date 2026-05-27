@@ -139,20 +139,6 @@ const RECENT_WRITE_WINDOW_MS = 30_000
  * VS Code approach. */
 const recentWriteHashes = new Map<string, number>()
 
-/** Track vault-relative paths the host expects to be written by a
- * process OTHER than its own writeVault helpers — currently used for
- * chat edits where the Claude SDK does the actual `fs.write` after
- * our applier resolves its canUseTool gate. We can't pre-hash the
- * bytes (the SDK constructs them), so we cover the echo with a
- * one-shot path expectation: the next watcher event on this path
- * within the TTL is suppressed.
- *
- * One-shot semantics: the entry is consumed by `isOurRecentWrite` on
- * first match so an unrelated subsequent edit to the same path
- * (genuine external) still surfaces. */
-const expectedExternalWrites = new Map<string, number>()
-const EXPECTED_WRITE_WINDOW_MS = 10_000
-
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   // Web Crypto types BufferSource as `ArrayBuffer | ArrayBufferView<ArrayBuffer>`.
   // `Uint8Array<ArrayBufferLike>` (the modern TS lib signature) isn't a
@@ -178,35 +164,13 @@ async function markOurRecentContent(bytes: Uint8Array): Promise<void> {
   recentWriteHashes.set(hash, Date.now())
 }
 
-/** Mark `relPath` as a write the host expects to land in the next
- * EXPECTED_WRITE_WINDOW_MS. Used by the chat-edit applier before it
- * resolves the SDK's canUseTool gate — the SDK will write the file
- * itself in the next few hundred ms, and that write would otherwise
- * register as an external edit. One-shot: consumed on first matching
- * watcher event. */
-export function markExpectedExternalWrite(relPath: string): void {
-  expectedExternalWrites.set(relPath, Date.now())
-}
-
 /** Did the on-disk content at `relPath` come from one of our recent
- * writes? Two paths:
- *   1. Path-based expectation (chat-edit gate flow) — one-shot,
- *      consumed on match so an unrelated subsequent edit on the
- *      same file still surfaces.
- *   2. Content-hash (writeVault helpers) — survives the window so
- *      back-to-back identical writes are all suppressed.
- * Async because path 2 touches disk. */
+ * writes? Reads the file, hashes the bytes, checks against the
+ * recent-write hash set. Async because it touches disk.
+ *
+ * Stale entries are lazily pruned on read so the Map doesn't grow
+ * unbounded over long sessions. */
 export async function isOurRecentWrite(relPath: string): Promise<boolean> {
-  const expectedAt = expectedExternalWrites.get(relPath)
-  if (expectedAt !== undefined) {
-    expectedExternalWrites.delete(relPath)
-    if (Date.now() - expectedAt < EXPECTED_WRITE_WINDOW_MS) {
-      return true
-    }
-    // Stale entry — fall through to hash check in case a writeVault
-    // helper also covered this path.
-  }
-
   try {
     const path = await resolveVaultPath(relPath)
     const bytes = await readFile(path)

@@ -216,11 +216,11 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             "chat/done" => "claude:done",
             "chat/error" => "claude:error",
             "chat/proposal" => "claude:proposal",
-            // Staged-edit gate (Phase 3.2): emitted whenever the
-            // sidecar's `canUseTool` hook intercepts a write-side
-            // built-in (Edit / Write / MultiEdit / NotebookEdit).
-            // The host stores it in `pendingEditsStore` and renders
-            // Apply / Reject affordances in the chat UI.
+            // Host-applies proposal (Phase E6): emitted whenever the
+            // sidecar's `propose_edit` / `propose_write` /
+            // `propose_multi_edit` MCP tools run. The host queues the
+            // proposal in `pendingChangesStore` and applies it on
+            // user Keep via the inline review widget.
             "chat/edit-pending" => "claude:edit-pending",
             // Structured ingest output. The sidecar's
             // submit_ingest_result MCP tool relays its full input

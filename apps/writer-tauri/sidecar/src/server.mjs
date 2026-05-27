@@ -444,13 +444,6 @@ export class Server {
     // Pending waiters for the next setToken call. Resolved when a new token
     // is pushed; used by the AUTH-retry path to coordinate refreshes.
     this.tokenUpdateWaiters = []
-    // Phase 3.3 staged-edit gate: each call to `canUseTool` for a write-
-    // side built-in parks here until the host pushes a decision via
-    // `chat/edit-decision`. pendingId -> { resolve(decision), runId }.
-    // The map lives at server scope (not per-run) so a single
-    // `chat/edit-decision` notification can find its target without the
-    // host having to know which run the decision belongs to internally.
-    this.pendingEditDecisions = new Map()
   }
 
   async handle(message) {
@@ -476,8 +469,6 @@ export class Server {
           return this.#handleChat(id, params)
         case 'chat/cancel':
           return this.#handleCancel(params)
-        case 'chat/edit-decision':
-          return this.#handleEditDecision(params)
         case 'shutdown':
           return this.#handleShutdown(id)
         default:
@@ -886,22 +877,6 @@ export class Server {
     // this run via the controller.signal listener installed inside
     // canUseTool — no explicit drain needed here.
     // The runChat loop will emit CANCELLED and clear the entry.
-  }
-
-  // Host-pushed user decision for a staged edit. Resolves the matching
-  // canUseTool Promise; the SDK then either runs the tool (allow) or
-  // feeds the deny message back to the model. Unknown pendingId is
-  // silent — the gate already settled (cancel, double-click, etc.)
-  // and there's no point surfacing it to the user.
-  #handleEditDecision(params) {
-    const pendingId = params?.pendingId
-    const decision = params?.decision
-    if (typeof pendingId !== 'string' || !pendingId) return
-    if (decision !== 'allow' && decision !== 'deny') return
-    const entry = this.pendingEditDecisions.get(pendingId)
-    if (!entry) return
-    this.pendingEditDecisions.delete(pendingId)
-    entry.resolve(decision)
   }
 
   async #handleShutdown(id) {

@@ -1,16 +1,17 @@
 // Adapter from a sidecar `chat/edit-pending` payload to the unified
-// `pendingChangesStore` shape. Phase E2 of the inline-review
-// migration — runs alongside the legacy `pendingEditsStore.addPending`
-// during the transition so the inline widget (new) and the
-// PendingEditsBar (old) both surface the same change. The user can
-// decide from either surface; both routes invoke
-// `claude_chat_edit_decision` against the same sidecar gate.
+// `pendingChangesStore` shape. The payload arrives whenever the
+// sidecar's host-applies MCP tools (`propose_edit` / `propose_write`
+// / `propose_multi_edit`) run; the LLM already saw the tool succeed
+// (those tools return immediately) and our job is just to queue the
+// proposal so the inline review widget on the target page can show
+// the diff + Keep/Reject.
 //
 // Returns null when the mapping can't succeed (unknown tool, file
-// path that doesn't resolve to a doc in the catalog, Write to a
-// brand-new file, etc.). The caller treats null as "fall back to the
-// PendingEditsBar only" — the gate still gets resolved through that
-// surface, no edit is lost.
+// path that doesn't resolve to a doc in the catalog). The chat
+// listener logs the miss; no decision surface is wired up for
+// unmappable proposals, so the LLM's "queued" answer becomes a no-op
+// on the host side. Falls into the "rare edge case" bucket — the
+// vast majority of LLM Edit/Write calls target catalog docs.
 
 import type { PendingChange, PendingEdit } from '@/state/pendingChangesStore'
 import type { KnownDoc } from '@/state/docsStore'

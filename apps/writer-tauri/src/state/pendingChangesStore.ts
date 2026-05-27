@@ -18,12 +18,11 @@
 //
 // Why a single store:
 //   The two AI surfaces (chat tool calls, ingest proposals) used to
-//   live in separate stores with separate UIs (`pendingEditsStore`,
-//   `useIngestStore.pendingProposals`, plus a separate Review Panel
-//   for git activity). Users had to learn three patterns for the
-//   same underlying action — "AI proposes a change → I decide".
-//   Folding them into one queue gives one mental model and one set
-//   of UI affordances.
+//   live in separate stores with separate UIs, plus a separate
+//   Review Panel for git activity. Users had to learn three patterns
+//   for the same underlying action — "AI proposes a change → I
+//   decide". Folding them into one queue gives one mental model and
+//   one set of UI affordances.
 //
 // What this store does NOT do:
 //   - It does NOT write to disk. Acceptance is signalled here; the
@@ -189,26 +188,11 @@ interface PendingChangesState {
    * iterates the list. */
   pendingForPage: (pageSlug: string) => PendingChange[]
 
-  /** All slugs with at least one pending change — the set the
-   * inline review widget subscribes to. Recomputed cheaply (the
-   * set rarely exceeds a few dozen entries). */
-  pagesWithPending: () => Set<string>
-
   /** All slugs that have unviewed changes (any status except
    * rejected — rejected = user dismissed = treat as viewed). The
-   * sidebar dot subscribes to this. Replaces `pagesWithPending`
-   * for the dot indicator so the dot's lifecycle is "AI touched
-   * this page + you haven't visited", independent of decision
-   * state. */
+   * sidebar dot subscribes to this. Lifecycle: "AI touched this
+   * page + you haven't visited", independent of decision state. */
   pagesWithUnviewed: () => Set<string>
-
-  /** Still-pending chat changes from one run (groupId === runId).
-   * The chat panel's ProposedChangesCard reads this to render a
-   * compact list of affected pages — no decision UI, just
-   * navigation chips. When the user accepts / rejects via the
-   * inline widget on the page, the entry drops from this list
-   * and the card collapses naturally. */
-  pendingChatForRun: (runId: string) => PendingChange[]
 }
 
 /** How long an accepted / rejected change stays in the store before
@@ -346,26 +330,6 @@ export const usePendingChangesStore = create<PendingChangesState>()(
         const all = Object.values(get().byId)
         return all
           .filter((c) => c.status === 'pending' && c.pageSlug === pageSlug)
-          .sort((a, b) => a.createdAt - b.createdAt)
-      },
-
-      pagesWithPending: () => {
-        const out = new Set<string>()
-        for (const c of Object.values(get().byId)) {
-          if (c.status === 'pending') out.add(c.pageSlug)
-        }
-        return out
-      },
-
-      pendingChatForRun: (runId) => {
-        const all = Object.values(get().byId)
-        return all
-          .filter(
-            (c) =>
-              c.source === 'chat' &&
-              c.groupId === runId &&
-              c.status === 'pending',
-          )
           .sort((a, b) => a.createdAt - b.createdAt)
       },
 
