@@ -188,6 +188,218 @@ export async function appendMarkdownToWikiPage(
   return true
 }
 
+/** Replace `before` text with `after` in wiki page `slug`. Mirrors
+ * the `appendMarkdownToWikiPage` flow but for the "chat Edit"
+ * shape — the LLM proposed `before → after`, the user clicked
+ * Keep, we now apply it ourselves (the SDK no longer touches disk
+ * for chat edits; see E6 host-applies pattern in sidecar).
+ *
+ * Two paths, same as append:
+ *   - **Active** — PM-transaction dispatch so the user sees the
+ *     swap instantly. The doc-flush loop persists on the next tick.
+ *   - **Inactive** — string replace on the `.md` then `reloadFromVault`
+ *     so any pre-mounted handle picks up the new content.
+ *
+ * Returns false when:
+ *   - slug isn't in the catalog,
+ *   - `before` can't be located in the doc / file (the change is
+ *     stale relative to the current content),
+ *   - vault IO failed.
+ * Caller treats false as "decision recorded, but no disk effect" —
+ * the store entry is still flipped to `accepted` so the inline
+ * widget vanishes; the data on disk just doesn't get the swap. */
+export async function applyReplaceInWikiPage(
+  slug: string,
+  before: string,
+  after: string,
+): Promise<boolean> {
+  if (before.length === 0) return false
+  const resolvedAfter = resolveWikilinksInMarkdown(after)
+
+  const docs = useDocsStore.getState()
+  const known = docs.knownDocs.find((d) => d.slug === slug && !d.archivedAt)
+  if (!known) {
+    console.warn('[applyReplace] unknown slug', slug)
+    return false
+  }
+
+  // Active path: locate `before` in the PM doc, replace the range
+  // with the parsed `after` fragment. The PM dispatch route gives
+  // instant visual feedback — the chief reason E6 exists.
+  const view = useEditorViewStore.getState().view
+  const activeSlug = getActiveSlugFromHash()
+  if (view && activeSlug === slug) {
+    const range = findTextRangeInDoc(view.state.doc, before)
+    if (!range) {
+      console.warn('[applyReplace] before-text not found in active doc', slug)
+      // Fall through to the inactive path so the on-disk content
+      // can still pick up the swap if the literal string is there
+      // (markdown syntax that PM normalises away — bullets, headings
+      // — round-trip via the file). The active-doc reload will then
+      // bring the new content back into PM.
+    } else {
+      const parser = useEditorViewStore.getState().parser
+      if (!parser) {
+        console.warn('[applyReplace] parser unavailable')
+        return false
+      }
+      const parsed = parser(resolvedAfter)
+      if (!parsed) {
+        console.warn('[applyReplace] parse failed')
+        return false
+      }
+      const tr = view.state.tr.replaceWith(
+        range.from,
+        range.to,
+        parsed.content,
+      )
+      // `addToHistory: false` matches the append path — Cmd+Z
+      // shouldn't wipe an AI-driven swap because there's no widget
+      // to re-summon afterwards. The right reverse-Apply surface is
+      // the inline Reject button while the change is still pending.
+      view.dispatch(tr.setMeta('addToHistory', false))
+      return true
+    }
+  }
+
+  // Inactive path (or active-but-not-found fallback): string replace
+  // on disk + reload. Same .md / .ydoc lockstep ordering as the
+  // append path — write .md first, then reload so the docFileSync
+  // observer marks dirty and flushes both stores together.
+  const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
+  const mdPath = pathForDoc(known, getDoc)
+  if (!mdPath) {
+    console.warn('[applyReplace] no md path for', slug)
+    return false
+  }
+  if (!(await vaultFileExists(mdPath))) {
+    console.warn('[applyReplace] file does not exist', mdPath)
+    return false
+  }
+  let existing: string
+  try {
+    existing = await readVaultFile(mdPath)
+  } catch (err) {
+    console.warn('[applyReplace] read failed', mdPath, err)
+    return false
+  }
+  if (!existing.includes(before)) {
+    console.warn('[applyReplace] before-text not found on disk', slug, mdPath)
+    return false
+  }
+  // First occurrence only — matches the SDK Edit tool's default
+  // semantics. If a future caller wants global replace it can be
+  // added as a flag.
+  const next = existing.replace(before, resolvedAfter)
+  try {
+    await writeVaultFile(mdPath, next)
+  } catch (err) {
+    console.error('[applyReplace] write failed', mdPath, err)
+    return false
+  }
+  try {
+    await docs.ensureHandle(slug)
+    await docs.reloadFromVault(slug)
+  } catch (err) {
+    console.warn('[applyReplace] Y.Doc resync failed', slug, err)
+  }
+  return true
+}
+
+/** Overwrite wiki page `slug` with `content` (the chat Write tool
+ * shape). Active doc: PM dispatch that replaces the entire body.
+ * Inactive: write file + reload. */
+export async function applyWriteWikiPage(
+  slug: string,
+  content: string,
+): Promise<boolean> {
+  const resolved = resolveWikilinksInMarkdown(content)
+  const docs = useDocsStore.getState()
+  const known = docs.knownDocs.find((d) => d.slug === slug && !d.archivedAt)
+  if (!known) {
+    console.warn('[applyWrite] unknown slug', slug)
+    return false
+  }
+
+  const view = useEditorViewStore.getState().view
+  const activeSlug = getActiveSlugFromHash()
+  if (view && activeSlug === slug) {
+    const parser = useEditorViewStore.getState().parser
+    if (!parser) return false
+    const parsed = parser(resolved)
+    if (!parsed) return false
+    const tr = view.state.tr.replaceWith(
+      0,
+      view.state.doc.content.size,
+      parsed.content,
+    )
+    view.dispatch(tr.setMeta('addToHistory', false))
+    return true
+  }
+
+  const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
+  const mdPath = pathForDoc(known, getDoc)
+  if (!mdPath) return false
+  try {
+    await writeVaultFile(mdPath, resolved)
+  } catch (err) {
+    console.error('[applyWrite] write failed', mdPath, err)
+    return false
+  }
+  try {
+    await docs.ensureHandle(slug)
+    await docs.reloadFromVault(slug)
+  } catch (err) {
+    console.warn('[applyWrite] Y.Doc resync failed', slug, err)
+  }
+  return true
+}
+
+/** Locate `target` text inside a single PM text node and return its
+ * range. Mirrors the inline-review plugin's resolver semantics:
+ *   - literal match first
+ *   - markdown line-prefix strip fallback (`* `, `- `, `# `, `> `, `1. `)
+ * Returns null when the target isn't in any single text node — the
+ * caller falls back to the disk path. */
+function findTextRangeInDoc(
+  doc: import('@milkdown/kit/prose/model').Node,
+  target: string,
+): { from: number; to: number } | null {
+  if (target.length === 0) return null
+  const literal = findRange(doc, target)
+  if (literal) return literal
+  const stripped = stripMarkdownLinePrefixes(target)
+  if (stripped !== target && stripped.length > 0) {
+    return findRange(doc, stripped)
+  }
+  return null
+}
+
+function findRange(
+  doc: import('@milkdown/kit/prose/model').Node,
+  target: string,
+): { from: number; to: number } | null {
+  let result: { from: number; to: number } | null = null
+  doc.descendants((node, pos) => {
+    if (result) return false
+    if (!node.isText || !node.text) return true
+    const idx = node.text.lastIndexOf(target)
+    if (idx >= 0) {
+      result = { from: pos + idx, to: pos + idx + target.length }
+      return false
+    }
+    return true
+  })
+  return result
+}
+
+function stripMarkdownLinePrefixes(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/^(?:[*+-]|#{1,6}|>|\d+\.)\s+/, ''))
+    .join('\n')
+}
+
 /** Append a log line to the system:log page. Creates the page on
  * first use (idempotent via ensureLogWikiSlug). The host of the
  * agent's append-only timeline ("## [2026-05-24] ingest | daily/...

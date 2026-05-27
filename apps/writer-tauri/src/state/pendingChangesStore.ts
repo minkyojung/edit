@@ -201,6 +201,14 @@ interface PendingChangesState {
    * this page + you haven't visited", independent of decision
    * state. */
   pagesWithUnviewed: () => Set<string>
+
+  /** Still-pending chat changes from one run (groupId === runId).
+   * The chat panel's ProposedChangesCard reads this to render a
+   * compact list of affected pages — no decision UI, just
+   * navigation chips. When the user accepts / rejects via the
+   * inline widget on the page, the entry drops from this list
+   * and the card collapses naturally. */
+  pendingChatForRun: (runId: string) => PendingChange[]
 }
 
 /** How long an accepted / rejected change stays in the store before
@@ -347,6 +355,18 @@ export const usePendingChangesStore = create<PendingChangesState>()(
           if (c.status === 'pending') out.add(c.pageSlug)
         }
         return out
+      },
+
+      pendingChatForRun: (runId) => {
+        const all = Object.values(get().byId)
+        return all
+          .filter(
+            (c) =>
+              c.source === 'chat' &&
+              c.groupId === runId &&
+              c.status === 'pending',
+          )
+          .sort((a, b) => a.createdAt - b.createdAt)
       },
 
       pagesWithUnviewed: () => {

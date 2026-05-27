@@ -28,6 +28,7 @@ import type { Node as PMNode } from '@milkdown/kit/prose/model'
 import {
   usePendingChangesStore,
   type PendingChange,
+  type PendingEdit,
 } from '@/state/pendingChangesStore'
 
 /** Resolved anchor — what `resolveAnchorPosition` returns. */
@@ -45,18 +46,31 @@ export interface ResolvedAnchor {
  * Rules (in priority order):
  *   1. Empty anchor → end of doc. Ingest proposals use this since
  *      the legacy auto-apply path always appends.
- *   2. Anchor found in doc's flat text → position immediately AFTER
- *      the last character of the matched substring. "After" because
- *      `anchorBefore` semantically means "the text immediately
- *      preceding the insertion".
- *   3. Anchor not found → fall back to end of doc. Marked `exact:
- *      false` so callers (or diagnostics) can see the miss.
+ *   2. Anchor matches a single text node in the doc → PM position
+ *      immediately AFTER the matched substring.
+ *   3. Anchor matches a single text node after stripping line-leading
+ *      markdown prefixes (`* `, `- `, `# `, `> `, `1. `, etc.) — the
+ *      LLM's Edit tool quotes raw markdown (the on-disk shape) but
+ *      PM stores it as structured content with the markers absorbed
+ *      into node types. Without this fallback every chat replace on
+ *      a bullet / heading / quote misses.
+ *   4. Neither hits → end of doc with `exact: false`. The replace
+ *      widget renders this in stale mode (Keep disabled).
  *
- * Why textBetween instead of node walking: a content-based anchor
- * is a flat string by design — node structure isn't part of the
- * matching contract. The two-pass cost (textBetween + indexOf) is
- * cheap at our doc sizes; if it ever shows up in a profile we can
- * cache per-doc-version.
+ * Why per-text-node walk instead of `doc.textBetween` + `indexOf`
+ * (the E3.5 shape): `textBetween` replaces each block boundary
+ * with a single character (`\n`), but PM positions count each
+ * block open + close as TWO positions. So a flat-text index drifts
+ * away from the equivalent PM position by 1 per block crossed —
+ * fine on a one-paragraph doc, badly wrong on a long page with
+ * many headings / list items. Walking text nodes directly lets us
+ * read positions from PM's own coordinate space, eliminating the
+ * drift. (E3.7 fix.)
+ *
+ * Known limit: target must live within ONE text node. PM splits
+ * text at every mark boundary, so a target spanning `**bold**` or
+ * a `[link](url)` won't match. Common-case chat Edits quote plain
+ * prose, which lives in a single text node — good enough for v1.
  *
  * Pure / testable: no zustand reads, no decoration construction.
  * Caller supplies `doc`, function returns position. */
@@ -68,22 +82,122 @@ export function resolveAnchorPosition(
   if (anchorBefore.length === 0) {
     return { pos: endPos, exact: false }
   }
-  // `textBetween` with `\n` separators gives us a deterministic flat
-  // string we can search. The position we compute is in the same
-  // coordinate space as PM's doc.size — PM counts each text char as
-  // one position and block boundaries as one position each, which
-  // is exactly what `\n` separation models.
-  const flat = doc.textBetween(0, endPos, '\n', '\n')
-  const idx = flat.lastIndexOf(anchorBefore)
-  if (idx < 0) return { pos: endPos, exact: false }
-  return { pos: idx + anchorBefore.length, exact: true }
+
+  // Rule 2 — literal target in a single text node.
+  let r = findInTextNodes(doc, anchorBefore)
+  if (r.exact) return r
+
+  // Rule 3 — same walk against the stripped target.
+  const stripped = stripMarkdownLinePrefixes(anchorBefore)
+  if (stripped !== anchorBefore && stripped.length > 0) {
+    r = findInTextNodes(doc, stripped)
+    if (r.exact) return r
+  }
+
+  return { pos: endPos, exact: false }
+}
+
+/** Walk the doc tree looking for `target` inside a single text
+ * node. Returns the PM position immediately AFTER the match (so
+ * a widget anchored there reads as "right after this text"). Uses
+ * `lastIndexOf` to match the legacy semantics of preferring the
+ * later occurrence when a doc happens to repeat the same string. */
+function findInTextNodes(
+  doc: PMNode,
+  target: string,
+): ResolvedAnchor {
+  let foundPos = -1
+  doc.descendants((node, pos) => {
+    if (foundPos >= 0) return false
+    if (!node.isText || !node.text) return true
+    const idx = node.text.lastIndexOf(target)
+    if (idx >= 0) {
+      // `pos` is the PM position before this text node's first
+      // character. `idx + target.length` is the offset within
+      // the node text to the end of the match. Sum is the PM
+      // position immediately after the match.
+      foundPos = pos + idx + target.length
+      return false
+    }
+    return true
+  })
+  if (foundPos >= 0) return { pos: foundPos, exact: true }
+  return { pos: doc.content.size, exact: false }
+}
+
+/** Strip line-leading markdown syntax. Handles the common cases the
+ * LLM emits as `old_string`:
+ *   - bullets:    `* `, `- `, `+ `
+ *   - ordered:    `1. `, `12. `
+ *   - headings:   `# ` through `###### `
+ *   - blockquote: `> `
+ * Inline syntax (bold, italic, links) is deliberately left alone —
+ * those need a more careful handler and aren't the common miss. */
+function stripMarkdownLinePrefixes(text: string): string {
+  return text
+    .split('\n')
+    .map((line) =>
+      line.replace(/^(?:[*+-]|#{1,6}|>|\d+\.)\s+/, ''),
+    )
+    .join('\n')
+}
+
+/** One resolved (change, edit) pair. Per-edit rather than per-change
+ * because chat changes can carry multiple edits (MultiEdit) and each
+ * one has its own anchor — `before` for replace, `anchorBefore` for
+ * add. Building decorations directly off this list keeps the
+ * rendering loop simple. */
+interface ResolvedEntry {
+  change: PendingChange
+  edit: PendingEdit
+  /** PM doc position the widget anchors at:
+   *   - add:     position after `anchorBefore` (end of doc when empty)
+   *   - replace: position after the matched `before` text
+   *   - stale:   end of doc (when the search target wasn't found) */
+  anchorPos: number
+  /** True when the anchor matched the literal search target. False
+   * when we fell back to end-of-doc — drives the `--stale` modifier
+   * the widget uses to grey out Keep on out-of-context replacements. */
+  exact: boolean
 }
 
 interface PluginState {
   decorations: DecorationSet
-  /** Cached resolved positions for each pending change. Recomputed
+  /** Cached resolved positions for each pending edit. Recomputed
    * when the store changes; mapped forward when the doc changes. */
-  resolved: Array<{ change: PendingChange; anchorPos: number }>
+  resolved: ResolvedEntry[]
+}
+
+/** Pick the right search target for the resolver based on edit kind.
+ *   - add:     `anchorBefore` (the text preceding the insertion point)
+ *   - replace: `before` (the text being replaced)
+ *   - delete:  `before` (same as replace — the text being removed)
+ *
+ * Centralised here so `state.init` / `apply` / `view.dispatch` all
+ * stay in lockstep when we add more kinds later. */
+function searchTargetForEdit(edit: PendingEdit): string {
+  if (edit.kind === 'add') return edit.anchorBefore
+  return edit.before ?? edit.anchorBefore
+}
+
+/** Walk every pending change's edits and resolve each to a PM
+ * position. One entry per edit, not per change, because different
+ * edits in the same change can land at different positions
+ * (MultiEdit). */
+function resolveAll(doc: PMNode, pending: PendingChange[]): ResolvedEntry[] {
+  const out: ResolvedEntry[] = []
+  for (const change of pending) {
+    for (const edit of change.edits) {
+      const resolved = resolveAnchorPosition(doc, searchTargetForEdit(edit))
+      out.push({
+        change,
+        edit,
+        anchorPos: resolved.pos,
+        exact: resolved.exact,
+      })
+    }
+  }
+  return out
 }
 
 export const inlineReviewKey = new PluginKey<PluginState>('inline-review')
@@ -115,12 +229,13 @@ interface StoreUpdateMeta {
  * else and the decoration set stays clean. */
 function buildDecorations(
   doc: PMNode,
-  resolved: PluginState['resolved'],
+  resolved: ResolvedEntry[],
 ): DecorationSet {
   const decorations: Decoration[] = []
   for (const entry of resolved) {
-    for (const edit of entry.change.edits) {
-      if (edit.kind !== 'add' || !edit.after) continue
+    const { change, edit, anchorPos, exact } = entry
+    if (edit.kind === 'add') {
+      if (!edit.after) continue
       // `widget` decorations don't participate in document
       // serialization — PM treats them as a DOM-only side channel
       // anchored to a position. side: 1 keeps the widget after the
@@ -128,34 +243,42 @@ function buildDecorations(
       // appended here" semantics.
       decorations.push(
         Decoration.widget(
-          entry.anchorPos,
-          () => renderPendingWidget(entry.change, edit.after ?? ''),
-          { side: 1, key: `${entry.change.id}:${edit.id}` },
+          anchorPos,
+          () => renderAddWidget(change, edit.after ?? ''),
+          { side: 1, key: `${change.id}:${edit.id}` },
         ),
       )
+      continue
     }
+    if (edit.kind === 'replace') {
+      // Replace shows a diff card anchored after the `before` text in
+      // the doc. The original text stays visible (we don't strike it
+      // through inline — that would mutate the visual flow of
+      // unchanged content). The widget itself carries the diff.
+      decorations.push(
+        Decoration.widget(
+          anchorPos,
+          () =>
+            renderReplaceWidget(
+              change,
+              edit.before ?? '',
+              edit.after ?? '',
+              { stale: !exact },
+            ),
+          { side: 1, key: `${change.id}:${edit.id}` },
+        ),
+      )
+      continue
+    }
+    // 'delete' kind (future) — would render a strike-through card.
   }
   return DecorationSet.create(doc, decorations)
 }
 
-/** Build the DOM node for a single pending-add edit. C2 keeps the
- * preview as plain text (whitespace preserved via CSS) — the
- * `### Career\n- Promoted...` shape is recognisable enough at this
- * stage without standing up a full markdown sub-renderer.
- *
- * Structure:
- *   <div class="pending-edit pending-edit--add">
- *     <div class="pending-edit__body">{preview text}</div>
- *     <div class="pending-edit__actions">
- *       <button class="...--keep">Keep</button>
- *       <button class="...--remove">Remove</button>
- *     </div>
- *   </div>
- *
- * Button handlers call the store directly. The store mutation
- * triggers a re-build via the plugin's view subscription, which
- * removes this widget on the next tick — no manual DOM cleanup. */
-function renderPendingWidget(
+/** Build the DOM for an `add` edit's preview widget. Plain text
+ * preview, Keep / Reject buttons. The `### Career\n- Promoted...`
+ * shape is recognisable without a full markdown sub-renderer. */
+function renderAddWidget(
   change: PendingChange,
   preview: string,
 ): HTMLElement {
@@ -172,6 +295,64 @@ function renderPendingWidget(
   body.textContent = preview
   root.appendChild(body)
 
+  root.appendChild(buildActionsRow(change))
+  return root
+}
+
+/** Build the DOM for a `replace` edit's diff card. Shows the
+ * `before` text in a red row and the `after` text in a green row,
+ * stacked. The actual `before` text in the doc is NOT struck
+ * through — keeping doc-content untouched until the user decides
+ * means a Reject leaves zero residue and a Keep does its work via
+ * the disk-write path (chat: SDK fires real Edit on allow).
+ *
+ * `stale` is set when the resolver couldn't find `before` in the
+ * doc (user already edited that area, or the LLM cited a slightly
+ * different string). The widget renders at end-of-doc in that case,
+ * with a `--stale` modifier the caller can style as dimmed +
+ * disabled-Keep so the user understands the replacement no longer
+ * has a target. */
+function renderReplaceWidget(
+  change: PendingChange,
+  before: string,
+  after: string,
+  opts: { stale: boolean },
+): HTMLElement {
+  const root = document.createElement('div')
+  root.className = 'pending-edit pending-edit--replace'
+  if (opts.stale) root.classList.add('pending-edit--stale')
+  root.dataset.pendingEdit = 'replace'
+
+  if (opts.stale) {
+    // One-line explanation at the top so the user understands why
+    // Keep is disabled. Surfaces above the diff rows.
+    const note = document.createElement('div')
+    note.className = 'pending-edit__stale-note'
+    note.textContent =
+      'Original text no longer matches — Reject this change, or rerun.'
+    root.appendChild(note)
+  }
+
+  const beforeRow = document.createElement('div')
+  beforeRow.className = 'pending-edit__line pending-edit__line--before'
+  beforeRow.textContent = `- ${before}`
+  root.appendChild(beforeRow)
+
+  const afterRow = document.createElement('div')
+  afterRow.className = 'pending-edit__line pending-edit__line--after'
+  afterRow.textContent = `+ ${after}`
+  root.appendChild(afterRow)
+
+  root.appendChild(buildActionsRow(change, { keepDisabled: opts.stale }))
+  return root
+}
+
+/** Shared Keep / Reject buttons. Pulled out so add / replace render
+ * identical action rows — visual variance lives in the body above. */
+function buildActionsRow(
+  change: PendingChange,
+  opts: { keepDisabled?: boolean } = {},
+): HTMLElement {
   const actions = document.createElement('div')
   actions.className = 'pending-edit__actions'
 
@@ -180,6 +361,7 @@ function renderPendingWidget(
   keepBtn.className =
     'pending-edit__action pending-edit__action--keep'
   keepBtn.textContent = 'Keep'
+  if (opts.keepDisabled) keepBtn.disabled = true
   keepBtn.addEventListener('click', (e) => {
     // Stop the click from bubbling into the editor (PM would
     // otherwise read it as a selection change and re-focus the
@@ -202,8 +384,7 @@ function renderPendingWidget(
   })
   actions.appendChild(removeBtn)
 
-  root.appendChild(actions)
-  return root
+  return actions
 }
 
 /** Plugin factory. Bound to a specific doc slug so the editor only
@@ -216,13 +397,7 @@ export function createInlineReviewPlugin(slug: string) {
         state: {
           init(_config, state) {
             const pending = collectPendingForSlug(slug)
-            const resolved = pending.map((change) => ({
-              change,
-              anchorPos: resolveAnchorPosition(
-                state.doc,
-                change.edits[0]?.anchorBefore ?? '',
-              ).pos,
-            }))
+            const resolved = resolveAll(state.doc, pending)
             return {
               decorations: buildDecorations(state.doc, resolved),
               resolved,
@@ -236,29 +411,43 @@ export function createInlineReviewPlugin(slug: string) {
               // Store changed — rebuild from the fresh pending list.
               // The doc may also have changed in the same tr (rare
               // but possible), so use `newState.doc`.
-              const resolved = meta.pending.map((change) => ({
-                change,
-                anchorPos: resolveAnchorPosition(
-                  newState.doc,
-                  change.edits[0]?.anchorBefore ?? '',
-                ).pos,
-              }))
+              const resolved = resolveAll(newState.doc, meta.pending)
               return {
                 decorations: buildDecorations(newState.doc, resolved),
                 resolved,
               }
             }
-            // Doc transaction — map existing positions forward, leave
-            // the resolved list otherwise unchanged. PM's mapping
-            // handles inserts before / after / inside the anchored
-            // position correctly; we just delegate.
+            // Doc transaction — usually just map existing positions
+            // forward. PM's mapping handles inserts before / after /
+            // inside the anchored position correctly. The exception
+            // is stale entries (exact=false): those resolved against
+            // an earlier doc state that didn't contain the target,
+            // and now the doc may have settled with the real content
+            // (defaultValueCtx seed lands one tick after editor mount).
+            // Give them another chance to find their target on every
+            // doc change; exact entries skip the re-search.
             if (!tr.docChanged) return prev
-            const resolved = prev.resolved.map((entry) => ({
-              change: entry.change,
-              anchorPos: tr.mapping.map(entry.anchorPos),
-            }))
+            const resolved = prev.resolved.map((entry) => {
+              if (entry.exact) {
+                return { ...entry, anchorPos: tr.mapping.map(entry.anchorPos) }
+              }
+              const r = resolveAnchorPosition(
+                newState.doc,
+                searchTargetForEdit(entry.edit),
+              )
+              return { ...entry, anchorPos: r.pos, exact: r.exact }
+            })
+            // Rebuild decorations from scratch when any stale entry
+            // just promoted to exact — the widget's `stale` prop
+            // depends on the exact flag, and `decorations.map` would
+            // carry forward the old (stale-styled) DOM.
+            const promoted = prev.resolved.some(
+              (entry, i) => !entry.exact && resolved[i]?.exact,
+            )
             return {
-              decorations: prev.decorations.map(tr.mapping, newState.doc),
+              decorations: promoted
+                ? buildDecorations(newState.doc, resolved)
+                : prev.decorations.map(tr.mapping, newState.doc),
               resolved,
             }
           },

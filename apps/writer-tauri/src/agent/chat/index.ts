@@ -27,7 +27,6 @@ import { getActiveVaultPath } from '@/state/settingsStore'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useGitStore } from '@/state/gitStore'
 import { useDocsStore } from '@/state/docsStore'
-import { usePendingEditsStore } from '@/state/pendingEditsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { mapChatEditToPendingChange } from './toPendingChange'
 import { flushDirty } from '@/lib/docFileSync'
@@ -60,7 +59,17 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     systemPrompt,
     model = DEFAULT_MODEL,
     effort: effortOverride,
-    relayTools = ['read_page', 'search_wiki'],
+    relayTools = [
+      'read_page',
+      'search_wiki',
+      // Phase E6: host-applies pattern. The LLM uses these custom
+      // MCP tools instead of the built-in Edit / Write / MultiEdit;
+      // they emit `chat/edit-pending` and return success without
+      // touching disk. The host applies the proposal on user Keep.
+      'propose_edit',
+      'propose_write',
+      'propose_multi_edit',
+    ],
     appendDocument = true,
     signal,
     onTextDelta,
@@ -185,22 +194,18 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         input: Record<string, unknown>
       }>('claude:edit-pending', (e) => {
         if (e.payload.runId !== runId) return
-        // Legacy surface: PendingEditsBar above the chat input. Kept
-        // alive during Phase E so users always have a decision surface
-        // even when the unified-store mapping below fails (unknown
-        // tool, file outside the catalog, Write to a brand-new path).
-        // Removed in Phase E5.
-        usePendingEditsStore.getState().addPending({
-          id: e.payload.pendingId,
-          runId: e.payload.runId,
-          toolName: e.payload.toolName,
-          input: e.payload.input,
-        })
-        // New surface: inline review widget on the affected page +
-        // sidebar dot. The mapper returns null when it can't resolve
-        // the tool call into our line-level shape; in that case the
-        // legacy bar above is the only surface, which is the
-        // documented (a)-strategy fallback for Phase E.
+        // Phase E5: unified flow. Map the sidecar payload into a
+        // PendingChange and push. The sidebar dot lights up, the
+        // ProposedChangesCard surfaces the affected file as a chip,
+        // and the inline review widget renders the diff on the
+        // target page. There is no longer a separate PendingEditsBar
+        // entry — `pendingChangesStore` is the single source of
+        // truth for chat edits.
+        //
+        // Mapping failure (unknown tool, file outside the catalog,
+        // Write to a brand-new path) leaves the sidecar gate parked.
+        // The user can resolve that by cancelling the run — better
+        // than silently writing to disk for a case we can't preview.
         const mapped = mapChatEditToPendingChange(
           {
             runId: e.payload.runId,
@@ -215,6 +220,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         )
         if (mapped) {
           usePendingChangesStore.getState().push(mapped)
+        } else {
+          console.warn(
+            '[chat] edit-pending unmappable; gate stays parked until cancel',
+            { toolName: e.payload.toolName, pendingId: e.payload.pendingId },
+          )
         }
       }),
       listen<DoneEvent>('claude:done', (e) => {
@@ -286,6 +296,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         systemPrompt: system,
         prompt,
         relayTools,
+        // Phase E6: explicit least-privilege builtin set. Write-side
+        // built-ins (Edit / Write / MultiEdit / NotebookEdit) are
+        // OMITTED — the LLM uses the host-applies `propose_*` MCP
+        // tools (in `relayTools` above) for any disk-changing
+        // intent. Sidecar's `canUseTool` gate is therefore dormant
+        // for chat now; without write-side built-ins on the surface,
+        // there's nothing for it to gate. Read-side / search / shell
+        // remain since the model needs them to discover context.
+        builtinTools: ['Read', 'Glob', 'Grep', 'Bash'],
         // Forwarded so sidecar's read_page / search_wiki handlers
         // can resolve vault-relative paths against the user's chosen
         // folder. Undefined when no vault selected — the sidecar

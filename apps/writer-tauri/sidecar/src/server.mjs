@@ -276,6 +276,128 @@ function buildSubmitIngestResultTool(runId, emit) {
   )
 }
 
+// E6 "host-applies" pattern: instead of letting the SDK's built-in
+// Edit / Write / MultiEdit tools touch disk themselves (gated through
+// `canUseTool` and then resolved by user via the host), we register
+// custom MCP tools with matching schemas that just FORWARD the
+// proposal to the host as a `chat/edit-pending` notification and
+// return success immediately. The model believes the edit succeeded;
+// the host queues the proposal in `pendingChangesStore` and applies
+// it on user Keep. Symmetry with ingest's `submit_ingest_result`
+// (host does the writes after the LLM emits proposals).
+//
+// Why this is the right shape:
+//   * Disk write timing is fully under host control — no IPC roundtrip
+//     on Keep, no SDK gate-resolve dance, no echo-suppression hacks.
+//   * Single store (`pendingChangesStore`) is the truth for both
+//     chat AND ingest proposals.
+//   * Failures localised: anything that goes wrong happens inside the
+//     host's `appendMarkdownToWikiPage` / `applyReplaceInWikiPage`,
+//     which we can debug + retry directly.
+//
+// Each tool's description deliberately echoes the built-in Claude
+// Code semantics ("edits a file at path X by replacing old_string with
+// new_string"). The model has prior experience with those names — the
+// `propose_` prefix is the only visible difference, and the matching
+// input shape keeps the tool-call ergonomics unchanged.
+function buildProposeEditTool(runId, emit) {
+  return tool(
+    'propose_edit',
+    'Propose an edit to a file in the user\'s vault. The host queues this proposal for user review and applies it on approval. Use this exactly the way the built-in Edit tool would be used: provide the absolute file_path, the exact old_string to replace, and the new_string. Returns immediately — do not wait for the user.',
+    {
+      file_path: z.string(),
+      old_string: z.string(),
+      new_string: z.string(),
+      replace_all: z.boolean().optional(),
+    },
+    async (input) => {
+      const pendingId = globalThis.crypto.randomUUID()
+      emit(
+        notification('chat/edit-pending', {
+          runId,
+          pendingId,
+          toolName: 'Edit',
+          input,
+        }),
+      )
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Edit queued for user review (${pendingId.slice(0, 8)}).`,
+          },
+        ],
+      }
+    },
+  )
+}
+
+function buildProposeWriteTool(runId, emit) {
+  return tool(
+    'propose_write',
+    'Propose creating or overwriting a file in the user\'s vault. The host queues this proposal for user review and applies it on approval. Use the same way as the built-in Write tool: provide the absolute file_path and the full content. Returns immediately — do not wait for the user.',
+    {
+      file_path: z.string(),
+      content: z.string(),
+    },
+    async (input) => {
+      const pendingId = globalThis.crypto.randomUUID()
+      emit(
+        notification('chat/edit-pending', {
+          runId,
+          pendingId,
+          toolName: 'Write',
+          input,
+        }),
+      )
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Write queued for user review (${pendingId.slice(0, 8)}).`,
+          },
+        ],
+      }
+    },
+  )
+}
+
+function buildProposeMultiEditTool(runId, emit) {
+  return tool(
+    'propose_multi_edit',
+    'Propose multiple edits to a single file in one transaction. The host queues this proposal for user review and applies it on approval. Use the same way as the built-in MultiEdit tool: provide the file_path and an array of edits, each with old_string and new_string. Returns immediately — do not wait for the user.',
+    {
+      file_path: z.string(),
+      edits: z.array(
+        z.object({
+          old_string: z.string(),
+          new_string: z.string(),
+          replace_all: z.boolean().optional(),
+        }),
+      ),
+    },
+    async (input) => {
+      const pendingId = globalThis.crypto.randomUUID()
+      emit(
+        notification('chat/edit-pending', {
+          runId,
+          pendingId,
+          toolName: 'MultiEdit',
+          input,
+        }),
+      )
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `MultiEdit queued for user review (${pendingId.slice(0, 8)}).`,
+          },
+        ],
+      }
+    },
+  )
+}
+
 const SIDECAR_VERSION = '0.1.0'
 
 /** Dump a thrown error's full context to stderr so the Rust supervisor's
@@ -585,85 +707,18 @@ export class Server {
       // a callback, falls back to its interactive CLI prompt — which
       // doesn't apply to us since we're driving the SDK from a long-
       // running sidecar).
-      options.permissionMode = 'default'
-      options.canUseTool = async (toolName, input, opts) => {
-        const stagedNames = new Set([
-          'Edit',
-          'Write',
-          'MultiEdit',
-          'NotebookEdit',
-        ])
-        if (!stagedNames.has(toolName)) {
-          return { behavior: 'allow', updatedInput: input }
-        }
-        // Phase 3.3: park here until the user picks Apply or Reject in
-        // the host. We mint a `pendingId` so the host's decision can
-        // find its way back without us trusting the SDK to expose its
-        // internal toolUseId. The host echoes the pendingId via
-        // `chat/edit-decision`; #handleEditDecision resolves the
-        // matching Promise and this callback returns the corresponding
-        // PermissionResult, which the SDK then honors by either running
-        // the tool (allow) or feeding the deny message back to the
-        // model.
-        const pendingId = globalThis.crypto.randomUUID()
-        this.emit(
-          notification('chat/edit-pending', {
-            runId,
-            pendingId,
-            toolName,
-            input,
-          }),
-        )
-        const decision = await new Promise((resolve) => {
-          this.pendingEditDecisions.set(pendingId, { resolve, runId })
-          // Three ways out: user decision (resolved by
-          // #handleEditDecision), SDK-level abort on this tool call
-          // (opts.signal), or run-wide cancel (controller.signal). The
-          // latter two collapse to a 'cancel' decision which we
-          // translate to an interrupt-true deny so the SDK tears the
-          // run down instead of letting the model keep retrying.
-          const abort = (reason) => {
-            if (!this.pendingEditDecisions.has(pendingId)) return
-            this.pendingEditDecisions.delete(pendingId)
-            resolve(reason)
-          }
-          const onToolAbort = () => abort('cancel')
-          const onRunAbort = () => abort('cancel')
-          if (opts?.signal) {
-            if (opts.signal.aborted) {
-              abort('cancel')
-              return
-            }
-            opts.signal.addEventListener('abort', onToolAbort, { once: true })
-          }
-          if (controller.signal.aborted) {
-            abort('cancel')
-            return
-          }
-          controller.signal.addEventListener('abort', onRunAbort, {
-            once: true,
-          })
-        })
-        if (decision === 'allow') {
-          return { behavior: 'allow', updatedInput: input }
-        }
-        if (decision === 'cancel') {
-          return {
-            behavior: 'deny',
-            message: 'Cancelled by user.',
-            interrupt: true,
-          }
-        }
-        // 'deny' — user explicitly rejected. Leave the run alive
-        // (interrupt: false) so the assistant can acknowledge and the
-        // user can refine the request.
-        return {
-          behavior: 'deny',
-          message:
-            'The user rejected this edit. Acknowledge briefly and wait for further instruction; do not retry the same change.',
-          interrupt: false,
-        }
-      }
+      // Phase E6: the chat surface no longer exposes write-side
+      // built-in tools (Edit / Write / MultiEdit / NotebookEdit are
+      // omitted from `builtinTools` by the host). Disk-changing
+      // intent now flows through the host-applies `propose_*` MCP
+      // tools (registered in the relay loop below), which emit a
+      // `chat/edit-pending` notification and return immediately
+      // without parking a Promise. The host queues the proposal in
+      // `pendingChangesStore` and applies it on user Keep.
+      //
+      // permissionMode stays 'bypassPermissions' (its default) so
+      // the SDK auto-runs the remaining read-side tools without a
+      // CLI prompt. No `canUseTool` callback needed.
     }
 
     // Wire relay tools: each one runs inside this sidecar but its handler
@@ -695,6 +750,12 @@ export class Server {
           continue
         }
         relayDefs.push(buildSearchWikiTool(vaultPath))
+      } else if (name === 'propose_edit') {
+        relayDefs.push(buildProposeEditTool(runId, this.emit))
+      } else if (name === 'propose_write') {
+        relayDefs.push(buildProposeWriteTool(runId, this.emit))
+      } else if (name === 'propose_multi_edit') {
+        relayDefs.push(buildProposeMultiEditTool(runId, this.emit))
       }
     }
     if (relayDefs.length > 0) {

@@ -18,9 +18,12 @@
 //   called once from App.tsx is the simplest shape. Idempotent so
 //   StrictMode's double-effect-invocation doesn't double-subscribe.
 
-import { invoke } from '@tauri-apps/api/core'
 import { usePendingChangesStore, type PendingChange } from './pendingChangesStore'
-import { appendMarkdownToWikiPage } from '@/agent/applyIngest'
+import {
+  appendMarkdownToWikiPage,
+  applyReplaceInWikiPage,
+  applyWriteWikiPage,
+} from '@/agent/applyIngest'
 import { useGitStore } from './gitStore'
 import { flushDirty } from '@/lib/docFileSync'
 
@@ -41,79 +44,58 @@ let pruneTimer: ReturnType<typeof setInterval> | null = null
  * because `pruneDecided` was defined but never invoked. */
 const PRUNE_INTERVAL_MS = 60_000
 
-/** Send a chat edit decision back to the sidecar so the parked
- * `canUseTool` Promise resolves with the user's verdict. The sidecar
- * keyed its Promise on `pendingId`; we mint our PendingChange.id to
- * equal that pendingId so the lookup is just `change.id`. `runId`
- * lives on `context` because one chat thread can host many runs and
- * the sidecar needs both to route the verdict.
- *
- * Fire-and-forget — IPC errors are logged but don't surface, matching
- * the PendingEditsBar precedent. The worst case is the sidecar gate
- * stays parked, which the user can resolve by cancelling the run. */
-async function sendChatEditDecision(
-  change: PendingChange,
-  decision: 'allow' | 'deny',
-): Promise<boolean> {
-  const runId = change.context.runId
-  if (!runId) {
-    console.warn(
-      '[applier] chat change missing runId; cannot relay decision',
-      change.id,
-    )
-    return false
-  }
-  try {
-    await invoke('claude_chat_edit_decision', {
-      args: { runId, pendingId: change.id, decision },
-    })
-    return true
-  } catch (err) {
-    console.warn('[applier] edit-decision relay failed', change.id, err)
-    return false
-  }
-}
-
 /** Per-change apply path. Returns true on success so the caller
  * (or future retry logic) can tell whether the work took.
  *
- *   - ingest: writes the edit to disk via `appendMarkdownToWikiPage`
- *   - chat:   relays the user's `allow` decision to the sidecar; the
- *             SDK then runs the Edit/Write tool itself and writes to
- *             disk. The applier never touches disk for chat changes
- *             — the SDK is still the writer, we just delayed when it
- *             gets to run. */
+ * Phase E6 host-applies: both `chat` and `ingest` write disk
+ * directly via the same helpers — `applyReplaceInWikiPage`,
+ * `applyWriteWikiPage`, `appendMarkdownToWikiPage`. The chat path
+ * no longer round-trips through the sidecar's canUseTool gate
+ * (the LLM uses the custom `propose_*` MCP tools, which return
+ * immediately without parking a Promise). One write path,
+ * observable from inside the host. */
 async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
-  if (change.source === 'chat') {
-    return sendChatEditDecision(change, 'allow')
-  }
-  if (change.source !== 'ingest') {
-    console.warn(
-      '[applier] unknown source — no apply path yet',
-      change.source,
-    )
-    return false
-  }
   let allOk = true
   for (const edit of change.edits) {
-    if (edit.kind !== 'add' || !edit.after) {
-      console.warn(
-        '[applier] unsupported edit kind for ingest source',
-        edit.kind,
-      )
-      allOk = false
+    if (edit.kind === 'add') {
+      if (!edit.after) {
+        allOk = false
+        continue
+      }
+      const ok = await appendMarkdownToWikiPage(change.pageSlug, edit.after)
+      if (!ok) allOk = false
       continue
     }
-    const ok = await appendMarkdownToWikiPage(change.pageSlug, edit.after)
-    if (!ok) {
-      console.error(
-        '[applier] disk write failed for change',
-        change.id,
-        'page',
+    if (edit.kind === 'replace') {
+      // `before` undefined means whole-doc replace (chat Write tool
+      // shape — toPendingChange leaves before empty since the SDK
+      // would have overwritten the entire file). Route to the
+      // wholesale writer; range-replace covers the Edit / MultiEdit
+      // shape where `before` carries the literal text to swap.
+      if (!edit.before) {
+        const ok = await applyWriteWikiPage(change.pageSlug, edit.after ?? '')
+        if (!ok) allOk = false
+        continue
+      }
+      const ok = await applyReplaceInWikiPage(
         change.pageSlug,
+        edit.before,
+        edit.after ?? '',
       )
-      allOk = false
+      if (!ok) allOk = false
+      continue
     }
+    if (edit.kind === 'delete') {
+      if (!edit.before) {
+        allOk = false
+        continue
+      }
+      const ok = await applyReplaceInWikiPage(change.pageSlug, edit.before, '')
+      if (!ok) allOk = false
+      continue
+    }
+    console.warn('[applier] unknown edit kind', edit.kind)
+    allOk = false
   }
   return allOk
 }
@@ -192,35 +174,10 @@ const handledIds = new Set<string>()
 export function startPendingChangesApplier(): void {
   if (unsub) return
 
-  // Sweep stale chat entries left over from a prior process. Chat
-  // changes are 1:1 with a sidecar canUseTool Promise that lives
-  // only for the run that spawned it — when the app restarts that
-  // Promise is gone, the SDK is gone, and there is no path that can
-  // ever resolve the pending state again. Without this sweep the
-  // store accumulates zombie entries across sessions: the sidebar
-  // dot stays blue forever for pages that were edited mid-decide in
-  // an earlier launch, and `pruneDecided` can't reach them because
-  // they never reached `accepted` / `rejected`.
-  //
-  // Ingest entries are NOT swept — those survive restart by design
-  // (the staged body is the only state the apply path needs; no
-  // process-bound handle is involved).
-  const store = usePendingChangesStore.getState()
-  let zombies = 0
-  for (const c of Object.values(store.byId)) {
-    if (c.source === 'chat' && c.status === 'pending') {
-      store.reject(c.id)
-      // Mark as handled so the subscription's first-fire doesn't run
-      // sendChatEditDecision('deny') against a gate that no longer
-      // exists — that would be a wasted IPC at best, a console warn
-      // at worst.
-      handledIds.add(c.id)
-      zombies += 1
-    }
-  }
-  if (zombies > 0) {
-    console.log(`[applier] swept ${zombies} stale chat entr${zombies === 1 ? 'y' : 'ies'} from prior session`)
-  }
+  // Phase E6 removed the canUseTool-gate flow for chat, so chat
+  // pending entries are no longer process-bound and survive
+  // restarts the same way ingest entries do. The boot sweep that
+  // used to reject stale chat entries (E2.6) is no longer needed.
 
   // Seed the handled set with anything already decided at startup
   // so the first subscribe call (which fires once on subscribe)
@@ -258,15 +215,13 @@ export function startPendingChangesApplier(): void {
           }
         })
       } else if (c.status === 'rejected') {
-        // Chat: tell the sidecar the user said no. Without this the
-        // canUseTool Promise stays parked forever and the SDK can't
-        // progress past the gated tool call. Ingest: nothing to do
-        // — there's no disk write to undo and no parked Promise.
-        if (c.source === 'chat') {
-          void sendChatEditDecision(c, 'deny')
-        } else {
-          console.log('[applier] rejected', c.id, 'page', c.pageSlug)
-        }
+        // Phase E6: both sources are pure store mutations now. Chat
+        // proposals come from the `propose_*` MCP tools which return
+        // immediately (no parked Promise to resolve), and the LLM
+        // sees the "queued for review" success message regardless.
+        // Reject = drop the entry from the apply queue; the disk
+        // is never touched. Logged for diagnostics only.
+        console.log('[applier] rejected', c.id, 'page', c.pageSlug, 'source', c.source)
       }
     }
   })

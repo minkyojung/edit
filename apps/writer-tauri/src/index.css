@@ -336,6 +336,41 @@
     background-color: color-mix(in oklch, var(--muted-foreground) 12%, transparent);
     color: var(--foreground);
   }
+  /* Replace-kind diff card (E3). Two stacked rows: before in red,
+     after in green — `- old / + new` git-diff convention. The card
+     re-uses `.pending-edit` for outer chrome so spacing / radius /
+     background stay consistent with add-kind widgets. */
+  .ProseMirror .pending-edit--replace {
+    border-left-color: color-mix(in oklch, var(--info, oklch(0.72 0.15 230)) 80%, transparent);
+  }
+  .ProseMirror .pending-edit__line {
+    white-space: pre-wrap;
+    font-family: inherit;
+    padding: 0.15em 0;
+  }
+  .ProseMirror .pending-edit__line--before {
+    color: oklch(0.62 0.18 25);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in oklch, oklch(0.62 0.18 25) 60%, transparent);
+  }
+  .ProseMirror .pending-edit__line--after {
+    color: oklch(0.62 0.15 145);
+  }
+  /* Stale state — original text no longer matches. Dim the whole
+     card and the Keep button so the user reads it as "you can't
+     apply this without re-running the chat". Reject still works. */
+  .ProseMirror .pending-edit--stale {
+    opacity: 0.6;
+  }
+  .ProseMirror .pending-edit__stale-note {
+    font-size: 0.85em;
+    color: var(--muted-foreground);
+    margin-bottom: 0.35em;
+  }
+  .ProseMirror .pending-edit__action--keep[disabled] {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
 
   /* Empty-body placeholder — the placeholderPlugin tags the first
      block with data-placeholder=<hint> when the doc is effectively
