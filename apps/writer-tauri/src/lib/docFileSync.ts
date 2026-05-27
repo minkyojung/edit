@@ -102,23 +102,15 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
   const handle = docs.handles[slug]
   if (!handle) return null
 
-  // Active-doc happy path: the live PM view + serializer give the
-  // most accurate body (markdown is regenerated from the doc the
-  // user can actually see). Inactive handles fall through to null
-  // until 4.B.1.b.iii lands a fragment-based fallback.
-  const isActive = getActiveSlugFromHash() === slug
-  if (!isActive) return null
-
-  const { view, serializer } = useEditorViewStore.getState()
-  if (!view || !serializer) return null
-
-  let md: string
-  try {
-    md = serializer(view.state.doc)
-  } catch (err) {
-    console.warn('[docFileSync] serializer failed for slug', slug, err)
-    return null
-  }
+  // Phase I: read from `handle.bodyMarkdown`, which dirtyTrackerPlugin
+  // keeps in sync with the live PM doc on every transaction. This
+  // removes the legacy "active doc only" gate: a slug that was
+  // dirtied moments before the user navigated away still flushes
+  // because the cache survived the editor unmount. The previous
+  // shape serialized from `useEditorViewStore.getState().view`,
+  // which evaporated the instant the editor tore down — the source
+  // of the typing-lost-on-navigation race.
+  const md = handle.bodyMarkdown
 
   // `titleIntent` reflects whether the in-memory title is the user's
   // chosen value or whether `pathForDoc` had to fall back to
@@ -290,19 +282,19 @@ export function installDocSync(slug: string): () => void {
 
 // ── Auto-flush timer ─────────────────────────────────────────────
 //
-// Obsidian-style periodic flush: every FLUSH_INTERVAL_MS the timer
-// checks `dirtySlugs` and writes the changed docs to the vault.
-// This module owns the timer lifecycle so the rest of the app sees
-// a simple start/stop API.
+// Periodic flush: every FLUSH_INTERVAL_MS the timer checks
+// `dirtySlugs` and writes the changed docs to the vault.
 //
-// The 2000ms interval matches what Obsidian observes in practice
-// (~2s periodic flush during continuous typing, per its plugin
-// surface). It's the "natural feel" point — short enough that
-// power loss won't lose more than a couple of seconds of typing,
-// long enough that a fast typist doesn't trigger constant disk
-// I/O.
+// Phase I tuned this down from 2000 ms to 500 ms. The previous value
+// was inherited from the Yjs era when an IndexedDB autopersist was
+// the real safety net and the .md write was just a "also save to
+// disk" backup. Yjs is gone; the .md write is now the only
+// persistence, so the interval IS the data-loss window on app crash
+// or external SIGKILL. 500 ms is short enough that a power loss
+// loses at most a sentence, long enough that a fast typist still
+// settles between writes.
 
-const FLUSH_INTERVAL_MS = 2000
+const FLUSH_INTERVAL_MS = 500
 let flushTimerId: number | null = null
 
 /** Walk dirty slugs once and persist each to its vault file pair.

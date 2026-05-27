@@ -55,6 +55,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useGitStore, isAiEditCommit } from '@/state/gitStore'
 import { pathForDoc } from '@/lib/docPaths'
+import { flushDirty } from '@/lib/docFileSync'
 import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
 import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
@@ -431,6 +432,15 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
 
     return () => {
       mounted = false
+      // Phase I: poke the flush before tearing the editor down. The
+      // in-memory mirror (`handle.bodyMarkdown`) is already current
+      // because dirtyTrackerPlugin updates it per-transaction, so
+      // even if this `flushDirty` runs asynchronously after the
+      // unmount returns it still finds the latest content via the
+      // handle (no PM needed). Fire-and-forget on purpose — React
+      // cleanup can't be async, and a failed write retries on the
+      // next interval tick anyway.
+      void flushDirty()
       if (editorRef.current) {
         editorRef.current.destroy()
         editorRef.current = null

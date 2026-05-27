@@ -36,17 +36,42 @@
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
 import { markSlugDirty } from '@/lib/docFileSync'
+import { useEditorViewStore } from '@/state/editorViewStore'
+import { useDocsStore } from '@/state/docsStore'
 
-/** Build a PM plugin that flags the given `slug` dirty on every
- * content-changing transaction. */
+/** Build a PM plugin that:
+ *   1. Flags `slug` dirty on every content-changing transaction.
+ *   2. Mirrors the serialized markdown back into `handle.bodyMarkdown`
+ *      so the in-memory cache is always fresh — surviving editor
+ *      unmount and unblocking the flush path from its "active doc
+ *      only" gate.
+ *
+ * Phase I rationale: post-Yjs the flush path used to serialize from
+ * the live PM doc, which evaporated the moment the editor unmounted.
+ * Mirroring per-transaction makes `handle.bodyMarkdown` the canonical
+ * in-memory source of truth — `flushDirty` reads from it without
+ * needing the editor to still be alive. */
 export function createDirtyTrackerPlugin(slug: string) {
   return $prose(
     () =>
       new Plugin({
         view: () => ({
           update: (view, prevState) => {
-            if (view.state.doc !== prevState.doc) {
-              markSlugDirty(slug)
+            if (view.state.doc === prevState.doc) return
+            markSlugDirty(slug)
+            // Serialize once per content-changing transaction and stash
+            // on the handle. The cost is one markdown serialize per
+            // keystroke at editor speed — same cost the auto-flush
+            // would pay every 500ms anyway, just moved up to the
+            // source of truth.
+            const { serializer } = useEditorViewStore.getState()
+            if (!serializer) return
+            try {
+              const md = serializer(view.state.doc)
+              const handle = useDocsStore.getState().handles[slug]
+              if (handle) handle.bodyMarkdown = md
+            } catch (err) {
+              console.warn('[dirtyTracker] serialize failed', slug, err)
             }
           },
         }),
