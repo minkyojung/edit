@@ -269,47 +269,55 @@
      so the visual block sits at the would-be-inserted location
      without changing the editor's actual content.
 
-     Color follows the same accent the sidebar PendingDot uses
-     (--info / blue) so the user reads "this dot ↔ this preview" as
-     a single signal. `--add` flavour keeps a faint green underline
-     bar for "addition" semantics, matching the convention every
-     reviewed-AI editor (Cursor, Notion, Google Docs Suggesting)
-     uses for inserts.
+     Composition:
+       .pending-edit-host         outer wrapper, minimal spacing only
+       .pending-edit-tone--{add|remove}  diff body (tints inner blocks)
+       .pending-edit__actions     Keep / Reject button row
+       .pending-edit__stale-note  banner when anchor no longer matches */
 
-     `white-space: pre-wrap` preserves the markdown line breaks so
-     `### Heading\n- bullet` reads as two visual lines, the same
-     shape it'll take once accepted. C3 populates `.pending-edit__actions`
-     with the [Keep] / [Remove] buttons. */
-  .ProseMirror .pending-edit {
+  /* Outer host. The diff body inside (DiffHunkProse) carries its own
+     tone tint, so the host only needs minimal vertical breathing
+     room so it doesn't crash into surrounding prose. The `--stale`
+     modifier dims the whole widget when the resolver couldn't find
+     the change's anchor in the doc (Keep button is disabled
+     separately). */
+  .ProseMirror .pending-edit-host {
     display: block;
-    margin: 0.75em 0;
-    padding: 0.5em 0.75em;
-    border-left: 3px solid var(--info, oklch(0.72 0.15 230));
-    background-color: color-mix(in oklch, var(--info, oklch(0.72 0.15 230)) 8%, transparent);
-    border-radius: 0 4px 4px 0;
-    color: var(--muted-foreground);
-    font-size: 0.95em;
+    margin: 0.15em 0;
   }
-  .ProseMirror .pending-edit__body {
-    white-space: pre-wrap;
-    font-family: inherit;
+  .ProseMirror .pending-edit-host--stale {
+    opacity: 0.6;
   }
+  /* Suppress the macOS / WKWebView native selection backdrop over
+     the widget DOM. PM places a Range adjacent to the widget when
+     the cursor is nearby; WKWebView paints that range with the
+     system accent colour, which reads as a second outer box around
+     our tone tint when the accent isn't blue. Same fix the card
+     NodeViews use (see `.image-card ::selection` below). The widget
+     is read-only chrome, so losing the selection paint inside it is
+     correct, not a regression. */
+  .ProseMirror .pending-edit-host ::selection,
+  .ProseMirror .pending-edit-host::selection {
+    background: transparent;
+  }
+
+  /* Action row — compact bar of small chip buttons just under the
+     diff body. Compact enough that the whole widget reads as "an
+     editor line + a small action chip", not a two-row card. */
   .ProseMirror .pending-edit__actions {
     display: flex;
-    gap: 0.5em;
-    margin-top: 0.5em;
+    gap: 0.25em;
+    margin-top: 0.15em;
   }
   .ProseMirror .pending-edit__action {
-    /* Chip-shaped buttons. Compact so they don't dominate the
-       widget; clear hover affordance so the user knows they're
-       clickable. cursor: pointer because they're not <a> — without
-       it Safari shows a text caret over the button. */
+    /* Chip-shaped buttons. cursor: pointer because they're not <a>
+       — without it Safari shows a text caret over the button. */
     appearance: none;
     border: none;
     cursor: pointer;
-    padding: 0.25em 0.75em;
+    padding: 0.05em 0.55em;
     border-radius: 9999px;
-    font-size: 0.85em;
+    font-size: 0.75em;
     font-family: inherit;
     font-weight: 500;
     line-height: 1.4;
@@ -317,18 +325,22 @@
   }
   .ProseMirror .pending-edit__action--keep {
     /* Primary action — solid tint so it reads as the default
-       decision. Uses the info accent (sidebar dot, widget bar) so
-       the whole pending-edit visual stays in one colour family. */
+       decision. Uses the info accent (also the sidebar PendingDot
+       colour) so the user reads "this dot ↔ this widget" as one
+       signal. */
     background-color: var(--info, oklch(0.72 0.15 230));
     color: var(--info-foreground, white);
   }
   .ProseMirror .pending-edit__action--keep:hover {
     background-color: color-mix(in oklch, var(--info, oklch(0.72 0.15 230)) 85%, black);
   }
+  .ProseMirror .pending-edit__action--keep[disabled] {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
   .ProseMirror .pending-edit__action--remove {
-    /* Secondary action — ghost style. Faint until hover so the
-       primary action is clearly the default but rejection is one
-       click away. */
+    /* Secondary action — ghost. Faint until hover so the primary
+       action is clearly the default but rejection is one click away. */
     background-color: transparent;
     color: var(--muted-foreground);
   }
@@ -336,40 +348,64 @@
     background-color: color-mix(in oklch, var(--muted-foreground) 12%, transparent);
     color: var(--foreground);
   }
-  /* Replace-kind diff card (E3). Two stacked rows: before in red,
-     after in green — `- old / + new` git-diff convention. The card
-     re-uses `.pending-edit` for outer chrome so spacing / radius /
-     background stay consistent with add-kind widgets. */
-  .ProseMirror .pending-edit--replace {
-    border-left-color: color-mix(in oklch, var(--info, oklch(0.72 0.15 230)) 80%, transparent);
-  }
-  .ProseMirror .pending-edit__line {
-    white-space: pre-wrap;
-    font-family: inherit;
-    padding: 0.15em 0;
-  }
-  .ProseMirror .pending-edit__line--before {
-    color: oklch(0.62 0.18 25);
-    text-decoration: line-through;
-    text-decoration-color: color-mix(in oklch, oklch(0.62 0.18 25) 60%, transparent);
-  }
-  .ProseMirror .pending-edit__line--after {
-    color: oklch(0.62 0.15 145);
-  }
-  /* Stale state — original text no longer matches. Dim the whole
-     card and the Keep button so the user reads it as "you can't
-     apply this without re-running the chat". Reject still works. */
-  .ProseMirror .pending-edit--stale {
-    opacity: 0.6;
-  }
+
+  /* Stale banner — short note above the diff when the original text
+     no longer matches and Keep is disabled. */
   .ProseMirror .pending-edit__stale-note {
     font-size: 0.85em;
     color: var(--muted-foreground);
     margin-bottom: 0.35em;
   }
-  .ProseMirror .pending-edit__action--keep[disabled] {
-    cursor: not-allowed;
-    opacity: 0.5;
+  /* Suppress the macOS / WKWebView native selection backdrop over
+     the widget DOM. PM places a Range adjacent to the widget when
+     the cursor is nearby; WKWebView paints that range with the
+     system accent colour, which reads as a second outer box around
+     our tone tint when the accent isn't blue. Same fix the card
+     NodeViews use (see `.image-card ::selection` below). The widget
+     is read-only chrome, so losing the selection paint inside it is
+     correct, not a regression. */
+  .ProseMirror .pending-edit-host ::selection,
+  .ProseMirror .pending-edit-host::selection {
+    background: transparent;
+  }
+
+  /* Inline widget actions — compact bar of small chip buttons just
+     under the diff body. Lower margin + smaller padding so the whole
+     widget reads as "an editor line + a small action chip", not a
+     two-row card. */
+  .ProseMirror .pending-edit-host .pending-edit__actions {
+    margin-top: 0.15em;
+    gap: 0.25em;
+  }
+  .ProseMirror .pending-edit-host .pending-edit__action {
+    padding: 0.05em 0.55em;
+    font-size: 0.75em;
+  }
+
+  /* Prose-mode tone blocks (DiffHunkProse / proseDom). The block is
+     a `.ProseMirror` host carrying a tone modifier; rules below
+     paint the inner content with a faint bg tint and reset
+     paragraph margins so the highlight hugs the editor's natural
+     line height. Headings / lists / blockquotes get the same tint
+     since they're block elements rendered by the editor's
+     serializer.
+     Selector matches the bare `.pending-edit-tone` class so it
+     applies in both surfaces — the inline widget (inside the live
+     editor's `.ProseMirror`) AND the Review panel (rendered in its
+     own React tree, no `.ProseMirror` ancestor). */
+  .pending-edit-tone :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, pre) {
+    margin-top: 0;
+    margin-bottom: 0;
+    padding: 0 0.3em;
+    border-radius: 2px;
+  }
+  .pending-edit-tone--add :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, pre) {
+    background-color: color-mix(in oklch, oklch(0.72 0.18 145) 14%, transparent);
+  }
+  .pending-edit-tone--remove :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, pre) {
+    background-color: color-mix(in oklch, oklch(0.68 0.20 25) 12%, transparent);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in oklch, oklch(0.68 0.20 25) 60%, transparent);
   }
 
   /* Empty-body placeholder — the placeholderPlugin tags the first

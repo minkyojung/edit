@@ -31,6 +31,7 @@ import {
   type PendingEdit,
 } from '@/state/pendingChangesStore'
 import { useDocsStore } from '@/state/docsStore'
+import { buildDiffHunkProseBody } from '@/lib/diffHunk/proseDom'
 
 /** Resolved anchor — what `resolveAnchorPosition` returns. */
 export interface ResolvedAnchor {
@@ -237,41 +238,36 @@ function buildDecorations(
   return DecorationSet.create(doc, decorations)
 }
 
-/** Build the DOM for an `add` edit's preview widget. Plain text
- * preview, Keep / Reject buttons. The `### Career\n- Promoted...`
- * shape is recognisable without a full markdown sub-renderer. */
+/** Build the DOM for an `add` edit's preview widget. Diff body
+ * above (Prose: editor-typography preview), Keep / Reject buttons
+ * below. */
 function renderAddWidget(
   change: PendingChange,
   preview: string,
 ): HTMLElement {
   const root = document.createElement('div')
-  root.className = 'pending-edit pending-edit--add'
+  root.className = 'pending-edit-host'
   // Mark this node so future PM passes (e.g. dailyGuardPlugin) can
   // ignore widget DOM. PM already isolates widgets from doc
   // serialization, but the data attribute is a cheap belt-and-
   // suspenders affordance for any code walking the editor DOM.
   root.dataset.pendingEdit = 'add'
 
-  const body = document.createElement('div')
-  body.className = 'pending-edit__body'
-  body.textContent = preview
-  root.appendChild(body)
-
+  root.appendChild(buildDiffHunkProseBody(undefined, preview))
   root.appendChild(buildActionsRow(change))
   return root
 }
 
-/** Build the DOM for a `replace` edit's diff card. Shows the
- * `before` text in a red row and the `after` text in a green row,
- * stacked. The actual `before` text in the doc is NOT struck
- * through — keeping doc-content untouched until the user decides
- * means a Reject leaves zero residue and a Keep does its work via
- * the disk-write path (chat: SDK fires real Edit on allow).
+/** Build the DOM for a `replace` edit's diff card. The actual
+ * `before` text in the doc is NOT modified — keeping doc content
+ * untouched until the user decides means a Reject leaves zero
+ * residue and a Keep does its work via the disk-write path (chat:
+ * SDK fires real Edit on allow).
  *
  * `stale` is set when the resolver couldn't find `before` in the
  * doc (user already edited that area, or the LLM cited a slightly
  * different string). The widget renders at end-of-doc in that case,
- * with a `--stale` modifier the caller can style as dimmed +
+ * with a `--stale` modifier the caller styles as dimmed +
  * disabled-Keep so the user understands the replacement no longer
  * has a target. */
 function renderReplaceWidget(
@@ -281,8 +277,8 @@ function renderReplaceWidget(
   opts: { stale: boolean },
 ): HTMLElement {
   const root = document.createElement('div')
-  root.className = 'pending-edit pending-edit--replace'
-  if (opts.stale) root.classList.add('pending-edit--stale')
+  root.className = 'pending-edit-host'
+  if (opts.stale) root.classList.add('pending-edit-host--stale')
   root.dataset.pendingEdit = 'replace'
 
   if (opts.stale) {
@@ -295,16 +291,7 @@ function renderReplaceWidget(
     root.appendChild(note)
   }
 
-  const beforeRow = document.createElement('div')
-  beforeRow.className = 'pending-edit__line pending-edit__line--before'
-  beforeRow.textContent = `- ${before}`
-  root.appendChild(beforeRow)
-
-  const afterRow = document.createElement('div')
-  afterRow.className = 'pending-edit__line pending-edit__line--after'
-  afterRow.textContent = `+ ${after}`
-  root.appendChild(afterRow)
-
+  root.appendChild(buildDiffHunkProseBody(before, after))
   root.appendChild(buildActionsRow(change, { keepDisabled: opts.stale }))
   return root
 }

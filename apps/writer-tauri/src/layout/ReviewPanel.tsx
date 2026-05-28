@@ -38,7 +38,7 @@ import {
   type PendingChange,
 } from '@/state/pendingChangesStore'
 import { useDocsStore } from '@/state/docsStore'
-import { renderMarkdownToFragment } from '@/lib/renderMarkdownInline'
+import { DiffHunkProse } from '@/components/diffHunk/DiffHunkProse'
 import type { CommitInfo, FileDiff } from '@/lib/git'
 import { cn } from '@/lib/utils'
 
@@ -152,7 +152,7 @@ function PendingSection({ entries }: { entries: PendingChange[] }) {
       <h3 className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         Pending review
       </h3>
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-3">
         {entries.map((entry) => (
           <PendingRow key={entry.id} entry={entry} />
         ))}
@@ -176,22 +176,19 @@ function HistorySection({ commits }: { commits: CommitInfo[] }) {
   )
 }
 
-/** One pending-change row. M2 = read-only display. M3 will wire the
- * click into an expanded diff with Apply / Reject actions. */
+/** One pending-change row. Header (status + title + diff stat +
+ * time) sits above the always-visible detail (diff + context +
+ * actions). No accordion — every row reads top-to-bottom in the
+ * scroll list so a user can scan multiple changes without
+ * click-to-expand friction. */
 function PendingRow({ entry }: { entry: PendingChange }) {
   const title = usePageTitle(entry.pageSlug)
-  const preview = previewLine(entry)
   const time = relativeTime(Math.floor(entry.createdAt / 1000))
   const stat = useMemo(() => diffStat(entry), [entry])
 
   return (
-    <div
-      className={cn(
-        'flex flex-col gap-0.5 rounded-md px-3 py-2 text-left',
-        'hover:bg-muted/60 transition-colors',
-      )}
-    >
-      <div className="flex items-center gap-2 text-sm">
+    <div className="flex flex-col">
+      <div className="flex items-center gap-2 px-3 py-1.5 text-sm">
         <StatusDot status={entry.status} />
         <span className="truncate font-medium">{title}</span>
         <DiffStatChars added={stat.added} removed={stat.removed} />
@@ -199,11 +196,100 @@ function PendingRow({ entry }: { entry: PendingChange }) {
           {time}
         </span>
       </div>
-      {preview && (
-        <PreviewLine markdown={preview} />
+      <PendingDetail entry={entry} />
+    </div>
+  )
+}
+
+// ── Expanded detail ─────────────────────────────────────────────
+
+/** Pulls the per-edit diff, the source / rationale / quote context,
+ * and the Apply / Reject action row into one inline expanded view.
+ * Layered under the row's button so the panel reads as a single
+ * scrollable column rather than a modal. */
+function PendingDetail({ entry }: { entry: PendingChange }) {
+  const accept = usePendingChangesStore((s) => s.accept)
+  const reject = usePendingChangesStore((s) => s.reject)
+  const sourceLabel = useSourceLabel(entry)
+
+  return (
+    <div className="ml-[18px] mr-2 mb-2 flex flex-col gap-3 rounded-md border border-border bg-muted/20 px-3 py-3">
+      {entry.edits.map((edit) => (
+        <DiffHunkProse key={edit.id} before={edit.before} after={edit.after} />
+      ))}
+
+      {(sourceLabel || entry.context.rationale || entry.context.sourceQuote) && (
+        <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+          {sourceLabel && (
+            <div>
+              <span className="font-medium">From: </span>
+              {sourceLabel}
+            </div>
+          )}
+          {entry.context.rationale && (
+            <div>
+              <span className="font-medium">Why: </span>
+              {entry.context.rationale}
+            </div>
+          )}
+          {entry.context.sourceQuote && (
+            <blockquote className="border-l-2 border-border pl-2 italic">
+              &ldquo;{entry.context.sourceQuote}&rdquo;
+            </blockquote>
+          )}
+        </div>
+      )}
+
+      {entry.status === 'pending' ? (
+        <div className="flex items-center gap-2 pt-1">
+          <Button
+            size="sm"
+            variant="default"
+            className="h-7 gap-1 px-3 text-[12px]"
+            onClick={() => accept(entry.id)}
+          >
+            Apply
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 gap-1 px-3 text-[12px] text-muted-foreground"
+            onClick={() => reject(entry.id)}
+          >
+            Reject
+          </Button>
+        </div>
+      ) : (
+        <div className="pt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+          {entry.status === 'accepted' ? 'Applied' : 'Rejected'}
+        </div>
       )}
     </div>
   )
+}
+
+/** Resolve a friendly source label for the detail view:
+ *   - chat: "chat thread "{title}"" if we can find it
+ *   - ingest: "daily/2026-05-27" or the source page's title
+ * Falls back to the source kind alone when neither store has
+ * enough to build a richer label. */
+function useSourceLabel(entry: PendingChange): string | null {
+  return useDocsStore((s) => {
+    if (entry.source === 'ingest') {
+      const sourceSlug = entry.context.sourceSlug
+      if (!sourceSlug) return 'ingest'
+      const doc = s.knownDocs.find((d) => d.slug === sourceSlug)
+      if (!doc) return `ingest from ${sourceSlug.slice(0, 8)}`
+      if (doc.type === 'daily' && doc.date) return `daily/${doc.date}`
+      const title = doc.title?.trim()
+      return title ? `ingest from ${title}` : `ingest from ${doc.type}`
+    }
+    // chat — threadId is the canonical handle. We don't read
+    // threadsStore here to keep the selector cheap; the label
+    // falls back to a generic "chat" if no other context is
+    // available. M5+ may augment this with a thread-title lookup.
+    return 'chat'
+  })
 }
 
 /** Character-count diff stat for a pending row. Replaces the
@@ -276,54 +362,6 @@ function StatusDot({ status }: { status: PendingChange['status'] }) {
       <span className={cn('h-1.5 w-1.5 rounded-full', cls)} />
     </span>
   )
-}
-
-/** Single-line markdown preview rendered via M1's inline renderer.
- * Uses a portal-style `dangerouslySetInnerHTML`-equivalent by
- * appending the fragment into a div ref — this keeps wikilink anchor
- * elements semantically correct (not stuffed into innerHTML) and
- * stays consistent with the editor's rendering path. */
-function PreviewLine({ markdown }: { markdown: string }) {
-  return (
-    <div
-      ref={(el) => {
-        if (!el) return
-        el.innerHTML = ''
-        el.appendChild(renderMarkdownToFragment(markdown))
-      }}
-      className={cn(
-        'pl-[14px] truncate text-[12px] text-muted-foreground',
-        '[&_.md-wikilink]:text-info [&_.md-link]:text-info',
-        // Flatten the renderer's block elements for a one-line row —
-        // headings stop being big, lists stop being indented blocks,
-        // paragraphs lose their margin. The mini-renderer surfaces
-        // its full DOM here only because M3 will re-use the same
-        // markup for the expanded view; for the row preview we just
-        // want the text + link colouring through.
-        '[&_h1]:inline [&_h2]:inline [&_h3]:inline [&_h4]:inline',
-        '[&_h5]:inline [&_h6]:inline [&_p]:inline [&_p]:m-0',
-        '[&_ul]:inline [&_ul]:list-none [&_ul]:m-0 [&_ul]:p-0',
-        '[&_li]:inline [&_li]:after:content-["·_"] [&_li:last-child]:after:content-none',
-        '[&_blockquote]:inline [&_blockquote]:m-0',
-      )}
-    />
-  )
-}
-
-/** Pick the first non-empty line from the proposal's markdown to use
- * as the row preview. Headings keep their `#` marker because the
- * inline renderer strips it; bullets keep their content. Falls back
- * to an empty string when the change carries no add-able content
- * (delete-only future kind). */
-function previewLine(entry: PendingChange): string {
-  for (const edit of entry.edits) {
-    const text = edit.after ?? edit.before ?? ''
-    for (const line of text.split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed) return trimmed
-    }
-  }
-  return ''
 }
 
 /** Resolve the doc title for a slug. Returns a fallback when the doc
