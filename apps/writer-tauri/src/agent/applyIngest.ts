@@ -227,19 +227,83 @@ export async function applyWriteWikiPage(
   return applyToWikiPage(slug, () => content)
 }
 
-/** Append a log line to the system:log page. Creates the page on
- * first use (idempotent via ensureLogWikiSlug). The host of the
- * agent's append-only timeline ("## [2026-05-24] ingest | daily/...
- * — added Sarah's promotion"). */
-export async function appendToSystemLog(line: string): Promise<void> {
-  const trimmed = line.trim()
-  if (trimmed.length === 0) return
+/** Append a log row to the system:log page. Creates the page on
+ * first use (idempotent via ensureLogWikiSlug).
+ *
+ * The page is a markdown table — `| Date | Kind | Source | Summary |`.
+ * Callers pass a structured `LogEntry`; this helper formats it into
+ * the row + bootstraps the header on the first write. The LLM never
+ * sees the format — system:log is host-managed end-to-end (same
+ * shape as system:index), so format drift between LLM emissions and
+ * the page's table layout can't happen.
+ *
+ * Three cases handled per write:
+ *   - empty page          → write header + separator + the row
+ *   - has our header      → append the row underneath
+ *   - has legacy prose    → leave the prose intact, add a blank
+ *                           line, then bootstrap the table + the row
+ *                           below it. Old entries stay readable;
+ *                           new entries land in the table for
+ *                           scannable columns. */
+const LOG_HEADER = '| Date | Kind | Source | Summary |'
+const LOG_SEPARATOR = '|------|------|--------|---------|'
+
+export interface LogEntry {
+  /** YYYY-MM-DD (host's local date when the change is applied). */
+  date: string
+  /** Coarse source of the change — typically `chat` or `ingest`. */
+  kind: string
+  /** Vault-relative path of the page the change targets
+   * (e.g. `wiki/Sera.md`). */
+  source: string
+  /** One-line human-readable summary. Newlines collapsed; pipes
+   * escaped, so cells never break the table. */
+  summary: string
+}
+
+export async function appendToSystemLog(entry: LogEntry): Promise<void> {
+  const row = formatLogRow(entry)
+  if (row === null) return
   const slug = await ensureLogWikiSlug()
   if (!slug) {
     console.warn('[applyIngest] could not ensure system:log slug')
     return
   }
-  await appendMarkdownToWikiPage(slug, trimmed)
+  await applyToWikiPage(slug, (oldMd) => {
+    const head = oldMd.trimEnd()
+    if (head.length === 0) {
+      return `${LOG_HEADER}\n${LOG_SEPARATOR}\n${row}\n`
+    }
+    if (head.includes(LOG_HEADER)) {
+      // Table already present — just append the row. Table rows
+      // don't take blank-line separation (would break the table).
+      return `${head}\n${row}\n`
+    }
+    // Legacy prose log content. Preserve it; bootstrap the table
+    // underneath so new entries get the column layout while the
+    // user's history isn't lost.
+    return `${head}\n\n${LOG_HEADER}\n${LOG_SEPARATOR}\n${row}\n`
+  })
+}
+
+/** Format a `LogEntry` into a markdown table row. Returns null when
+ * the entry has no useful summary (we skip empty rows rather than
+ * filing whitespace). */
+function formatLogRow(entry: LogEntry): string | null {
+  const summary = escapeLogCell(entry.summary)
+  if (summary.length === 0) return null
+  return `| ${escapeLogCell(entry.date)} | ${escapeLogCell(entry.kind)} | ${escapeLogCell(entry.source)} | ${summary} |`
+}
+
+/** Sanitise a value for safe placement inside a markdown table cell.
+ * Pipes → `\|`, newlines → spaces, trim. Cells stay single-line so
+ * the row doesn't fragment the table. */
+function escapeLogCell(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ')
+    .trim()
 }
 
 /** One row in the commit body — what the LLM proposed for a single

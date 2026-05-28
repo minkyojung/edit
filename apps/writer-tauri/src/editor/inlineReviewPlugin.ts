@@ -72,13 +72,28 @@ export interface ResolvedAnchor {
   applyReady: boolean
 }
 
+/** What `resolveAnchor` returns for one edit. Three distinct
+ * outcomes:
+ *   - `placed`   — the inline plugin renders the change at this anchor
+ *   - `unplaced` — the inline plugin tried to pin the change but the
+ *                  literal target isn't in the doc (LLM data mismatch);
+ *                  the user is told via the top-of-doc "unplaced"
+ *                  banner so the change isn't lost
+ *   - `silent`   — the inline plugin deliberately defers to another
+ *                  surface (typically the Review panel); no banner,
+ *                  no widget. Used for whole-file replaces on pages
+ *                  that already carry content, where overlaying the
+ *                  full proposed body would duplicate what the panel
+ *                  already shows. */
+export type AnchorResolution =
+  | { status: 'placed'; anchor: ResolvedAnchor }
+  | { status: 'unplaced' }
+  | { status: 'silent' }
+
 interface ResolvedEntry {
   change: PendingChange
   edit: PendingEdit
-  /** null = couldn't pin the anchor anywhere (LLM data mismatch).
-   * The plugin renders a single "unplaced" banner instead of a
-   * misleading widget. */
-  anchor: ResolvedAnchor | null
+  resolution: AnchorResolution
 }
 
 // ── Anchor resolution ───────────────────────────────────────────
@@ -89,15 +104,16 @@ export function resolveAnchor(
   doc: PMNode,
   edit: PendingEdit,
   slug: string,
-): ResolvedAnchor | null {
+): AnchorResolution {
   const bodyMd = useDocsStore.getState().handles[slug]?.bodyMarkdown ?? ''
 
   if (edit.kind === 'add') {
     const insertAt = resolveAddInsertion(doc, edit.anchorBefore)
-    if (insertAt === null) return null
-    // add never needs to find existing text — the apply path always
-    // succeeds as long as the anchor resolves.
-    return { insertAt, applyReady: true }
+    if (insertAt === null) return { status: 'unplaced' }
+    return {
+      status: 'placed',
+      anchor: { insertAt, applyReady: true },
+    }
   }
 
   // Whole-file replace (Phase F declarative-only edits): `kind`
@@ -105,25 +121,61 @@ export function resolveAnchor(
   // declared the full target state via `propose_write`. The apply
   // path routes this to `applyWriteWikiPage` (whole-file overwrite),
   // which never fails on a match check — there's nothing to match.
-  // For the inline widget we anchor the added content at the very
-  // top of the doc so the user sees the proposed new state in
-  // place, even when the page is empty.
+  //
+  // The inline surface only makes sense when the page is otherwise
+  // EMPTY: anchor the proposed content at the top so the user sees
+  // the new state in place of the empty page. When the page already
+  // has content, "where" is undefined — the whole page is being
+  // replaced, not any particular position — and a giant top-of-doc
+  // widget over real content reads as redundant noise. Review panel
+  // shows the diff for that case; we go 'silent' here.
   if (edit.kind === 'replace' && !edit.before) {
-    return { insertAt: 0, applyReady: true }
+    if (isDocEmpty(doc)) {
+      return {
+        status: 'placed',
+        anchor: { insertAt: 0, applyReady: true },
+      }
+    }
+    return { status: 'silent' }
   }
 
   // replace / delete with a literal `before`: need the range in the doc
   const target = edit.before
-  if (!target) return null
+  if (!target) return { status: 'unplaced' }
   const range = findTextRange(doc, target)
-  if (!range) return null
+  if (!range) return { status: 'unplaced' }
 
   const applyReady = bodyMd.includes(target)
   if (edit.kind === 'delete') {
-    return { from: range.from, to: range.to, applyReady }
+    return {
+      status: 'placed',
+      anchor: { from: range.from, to: range.to, applyReady },
+    }
   }
   // replace
-  return { from: range.from, to: range.to, insertAt: range.to, applyReady }
+  return {
+    status: 'placed',
+    anchor: {
+      from: range.from,
+      to: range.to,
+      insertAt: range.to,
+      applyReady,
+    },
+  }
+}
+
+/** True when the doc carries no user content — a single empty
+ * paragraph (PM's "blank canvas" shape) or nothing at all. Used to
+ * decide whether a whole-file replace proposal deserves an inline
+ * preview widget: empty pages do (the widget IS the preview), pages
+ * with content don't (the Review panel handles the diff). */
+function isDocEmpty(doc: PMNode): boolean {
+  if (doc.content.size === 0) return true
+  if (doc.childCount !== 1) return false
+  const first = doc.firstChild
+  if (!first) return true
+  if (!first.isTextblock) return false
+  return first.content.size === 0
 }
 
 /** Find the PM position where `add`-kind content should land:
@@ -217,7 +269,7 @@ function resolveAll(doc: PMNode, pending: PendingChange[]): ResolvedEntry[] {
       out.push({
         change,
         edit,
-        anchor: resolveAnchor(doc, edit, change.pageSlug),
+        resolution: resolveAnchor(doc, edit, change.pageSlug),
       })
     }
   }
@@ -232,11 +284,18 @@ function buildDecorations(
   let unplacedCount = 0
 
   for (const entry of resolved) {
-    if (!entry.anchor) {
+    // 'silent': the plugin deliberately defers to another surface
+    // (Review panel). No widget, no banner — the entry isn't lost,
+    // it's just not the inline plugin's job.
+    if (entry.resolution.status === 'silent') continue
+    // 'unplaced': we tried to pin and couldn't. Surface in the banner
+    // so the user knows changes exist.
+    if (entry.resolution.status === 'unplaced') {
       unplacedCount += 1
       continue
     }
-    const { change, edit, anchor } = entry
+    const { change, edit } = entry
+    const anchor = entry.resolution.anchor
 
     // 1. Mark the removed range (replace / delete).
     if (
@@ -472,28 +531,28 @@ export function createInlineReviewPlugin(slug: string) {
               }
             }
             if (!tr.docChanged) return prev
-            // Doc transaction. Two passes:
-            //   - Pinned entries: just map their positions forward
-            //     via tr.mapping (PM handles inserts/deletes
-            //     before/after/inside the range correctly).
-            //   - Unpinned entries: re-resolve — a doc change may
-            //     have brought the target into existence (typical
-            //     during the seed-after-mount tick).
+            // Doc transaction. Three cases per entry:
+            //   - 'placed':   map stored positions forward via tr.mapping
+            //   - 'unplaced': re-resolve — a doc change may have
+            //                 brought the target into existence (typical
+            //                 during the seed-after-mount tick)
+            //   - 'silent':   could also flip (page was emptied →
+            //                 whole-file replace now wants a widget),
+            //                 so re-resolve too
             let anyPromoted = false
             const resolved = prev.resolved.map((entry) => {
-              if (entry.anchor === null) {
+              if (entry.resolution.status !== 'placed') {
                 const fresh = resolveAnchor(
                   newState.doc,
                   entry.edit,
                   entry.change.pageSlug,
                 )
-                if (fresh) {
+                if (fresh.status !== entry.resolution.status) {
                   anyPromoted = true
-                  return { ...entry, anchor: fresh }
                 }
-                return entry
+                return { ...entry, resolution: fresh }
               }
-              const a = entry.anchor
+              const a = entry.resolution.anchor
               const mapped: ResolvedAnchor = {
                 from: a.from !== undefined ? tr.mapping.map(a.from) : undefined,
                 to: a.to !== undefined ? tr.mapping.map(a.to) : undefined,
@@ -501,11 +560,14 @@ export function createInlineReviewPlugin(slug: string) {
                   a.insertAt !== undefined ? tr.mapping.map(a.insertAt) : undefined,
                 applyReady: a.applyReady,
               }
-              return { ...entry, anchor: mapped }
+              return {
+                ...entry,
+                resolution: { status: 'placed' as const, anchor: mapped },
+              }
             })
-            // If an unpinned entry just resolved, rebuild from
-            // scratch (the banner count + new decorations need to
-            // be re-derived).
+            // If any non-placed entry just changed status, rebuild
+            // from scratch (the banner count + decoration set both
+            // need to be re-derived).
             return {
               decorations: anyPromoted
                 ? buildDecorations(newState.doc, resolved)
@@ -528,8 +590,15 @@ export function createInlineReviewPlugin(slug: string) {
           // coordination via a generic "has overlay" signal.
           attributes(state): Record<string, string> {
             const pluginState = inlineReviewKey.getState(state)
-            if (!pluginState || pluginState.resolved.length === 0) return {}
-            return { class: 'pm-has-pending' }
+            if (!pluginState) return {}
+            // Only count entries the inline plugin actually renders
+            // (placed widget or unplaced banner). 'silent' entries
+            // defer to the panel and shouldn't suppress the body
+            // placeholder — the page truly has nothing inline-y.
+            const visible = pluginState.resolved.some(
+              (e) => e.resolution.status !== 'silent',
+            )
+            return visible ? { class: 'pm-has-pending' } : {}
           },
         },
         view(view) {

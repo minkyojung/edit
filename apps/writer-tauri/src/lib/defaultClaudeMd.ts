@@ -68,7 +68,7 @@ threads/                 — chat thread storage, off-limits to you
 1. Read the source.
 2. Extract entities, claims, and concepts the wiki cares about.
 3. Update or create relevant \`wiki/*.md\` pages. One source typically touches 5–15 wiki pages.
-4. Append to \`_system/log.md\`: \`## [YYYY-MM-DD] ingest | <source path> — <one-line summary>\`.
+4. Do NOT write to \`_system/log.md\` directly — it's host-managed. The app appends a row automatically every time an accepted change lands. Your job is to make the wiki edits; the log keeps itself.
 
 **Lint** — the user asks for a health check.
 

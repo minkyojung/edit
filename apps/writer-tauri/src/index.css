@@ -178,6 +178,36 @@
     margin: var(--prose-gap-heading) 0;
   }
 
+  /* GFM tables — system pages (log / index) render their records as
+     markdown tables so columns align for the user. The Milkdown GFM
+     preset parses the table; these rules give it readable defaults
+     without redesigning the whole table editing UX (Phase 2 will add
+     sort / filter on top via a custom NodeView). overflow-x lets
+     wide tables scroll horizontally in the narrow right panel. */
+  .ProseMirror .tableWrapper {
+    overflow-x: auto;
+    margin-bottom: var(--prose-gap-block);
+  }
+  .ProseMirror table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.92em;
+  }
+  .ProseMirror th,
+  .ProseMirror td {
+    border: 1px solid var(--border);
+    padding: 0.35em 0.6em;
+    text-align: left;
+    vertical-align: top;
+  }
+  .ProseMirror th {
+    background-color: color-mix(in oklch, var(--muted) 60%, transparent);
+    font-weight: 600;
+  }
+  .ProseMirror tr:nth-child(even) td {
+    background-color: color-mix(in oklch, var(--muted) 20%, transparent);
+  }
+
   .ProseMirror a {
     color: var(--info);
     text-decoration: underline;

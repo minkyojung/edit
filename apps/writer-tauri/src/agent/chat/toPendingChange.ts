@@ -46,6 +46,24 @@ export function mapChatEditToPendingChange(
   const slug = resolveSlugForVaultPath(filePath, ctx.knownDocs, ctx.vaultPath)
   if (!slug) return null
 
+  // System pages (system:log, system:index, system:conventions, ...)
+  // are host-managed. We deterministically build their bodies — the
+  // LLM has no business writing to them directly. If a chat
+  // propose_write targets one, drop the proposal: the LLM's reply
+  // already claimed "queued for user review" so nothing visible
+  // breaks, and the host's own per-accept side-effects (e.g.
+  // appendToSystemLog from the applier) keep the page up to date.
+  const targetDoc = ctx.knownDocs.find((d) => d.slug === slug)
+  if (targetDoc?.type.startsWith('system:')) {
+    console.warn(
+      '[toPendingChange] dropping LLM write to system page',
+      filePath,
+      'kind',
+      targetDoc.type,
+    )
+    return null
+  }
+
   const edits = buildEditsForTool(payload.toolName, payload.input)
   if (edits.length === 0) return null
 

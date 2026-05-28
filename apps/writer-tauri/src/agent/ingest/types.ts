@@ -47,9 +47,10 @@ export interface IngestProposal {
 export interface IngestResult {
   /** Append-only edits the LLM thinks the wiki should reflect. */
   proposals: IngestProposal[]
-  /** Pre-formatted log line for wiki:log, or null if nothing was
-   * meaningful enough to log. Format follows Karpathy's convention:
-   * `## [YYYY-MM-DD] <kind> | <summary>`. */
+  /** Deprecated. The host now writes `_system/log.md` automatically
+   * (one row per applied proposal, formatted from data the host
+   * already has). Kept in the schema for backward compat with older
+   * LLM emissions; readers should ignore. */
   logEntry: string | null
   /** Raw assistant text for debugging. Useful when JSON parsing
    * fails so we can see what the model actually returned. */

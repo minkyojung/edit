@@ -26,6 +26,7 @@ import {
 import { useDocsStore } from '@/state/docsStore'
 import { useGitStore } from '@/state/gitStore'
 import { flushDirty } from '@/lib/docFileSync'
+import { todayLocalDate } from '@/hooks/useDocMeta'
 
 export interface ChatHandoffArgs {
   /** Assistant or user message body to extract facts from. Empty /
@@ -120,11 +121,24 @@ export async function runChatToWikiHandoff(
     }
   }
 
-  if (core.logEntry) {
-    await appendToSystemLog(core.logEntry)
+  // Phase G2 — system:log is host-managed end-to-end. The LLM's
+  // pre-formatted logEntry (deprecated) is ignored; the host emits
+  // a structured row from data it already knows (date, source label,
+  // the proposals that just landed). No drift between the LLM's
+  // formatting habits and the page's table layout — same shape as
+  // system:index, which has always been host-deterministic.
+  if (applied.length > 0) {
+    await appendToSystemLog({
+      date: todayLocalDate(),
+      kind: 'ingest',
+      source: label,
+      summary: applied
+        .map((a) => a.proposal.rationale?.trim() || a.targetTitle)
+        .join('; '),
+    })
   }
 
-  if (applied.length > 0 || core.logEntry) {
+  if (applied.length > 0) {
     await flushDirty()
     const subject = `ai-edit: ${label} (${applied.length} page update${applied.length === 1 ? '' : 's'})`
     const body = buildIngestCommitBody(applied, label)

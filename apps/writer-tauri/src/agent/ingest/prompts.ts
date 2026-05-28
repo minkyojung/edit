@@ -89,12 +89,12 @@ Call \`submit_ingest_result\` exactly once with arguments shaped like:
     { "target": "wiki:profile", "markdownToAppend": "- Joined Acme as Senior Engineer (Apr 2026)", "sourceQuote": "Started at Acme today as a senior engineer.", "rationale": "user's career change — updates the profile" },
     { "suggestNewPage": "The Pragmatic Programmer", "markdownToAppend": "- Software craftsmanship\\n- Started reading this week", "sourceQuote": "Started reading The Pragmatic Programmer this week", "rationale": "new entity not in INDEX yet" }
   ],
-  "logEntry": "## [2026-05-07] ingest | daily/2026-05-07: added Sarah's role; logged new role on profile; created The Pragmatic Programmer page"
+  "logEntry": null
 }
 
-If you found nothing worth filing, still call the tool — pass an empty array for proposals AND pass \`null\` (not a string) for logEntry. The host suppresses empty passes entirely so they don't pile up in wiki:log. A pass without a tool call is treated as malformed and discarded.
+\`logEntry\` is now ignored — the host writes \`_system/log.md\` deterministically from the proposals you submitted. Always pass \`null\` for this field. (The field is kept in the schema for backward compat; it may be removed in a future revision.)
 
-When you DO have something to file (proposals is non-empty), the logEntry must be a single line summarizing what got filed — one entry per ingest, never per-block verdicts.`
+If you found nothing worth filing, still call the tool — pass an empty array for proposals. The host suppresses empty passes entirely so they don't pile up in \`_system/log.md\`. A pass without a tool call is treated as malformed and discarded.`
 
 /** Compose the system prompt as a cacheable string[] for the Agent
  * SDK. Block order matters for cache stability:
