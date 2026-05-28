@@ -296,14 +296,33 @@ function renderReplaceWidget(
   return root
 }
 
-/** Shared Keep / Reject buttons. Pulled out so add / replace render
- * identical action rows — visual variance lives in the body above. */
+/** Shared Reject / Keep text buttons. Pulled out so add / replace
+ * render identical action rows — visual variance lives in the diff
+ * body above. Order: Reject (left, secondary), Keep (right, primary)
+ * — primary on the right matches the macOS dialog button convention
+ * the rest of the app follows. Same class set as the panel's
+ * PendingDetail so both surfaces show identical chrome. */
 function buildActionsRow(
   change: PendingChange,
   opts: { keepDisabled?: boolean } = {},
 ): HTMLElement {
   const actions = document.createElement('div')
   actions.className = 'pending-edit__actions'
+
+  const rejectBtn = document.createElement('button')
+  rejectBtn.type = 'button'
+  rejectBtn.className =
+    'pending-edit__action pending-edit__action--reject'
+  rejectBtn.textContent = 'Reject'
+  rejectBtn.addEventListener('click', (e) => {
+    // Stop the click from bubbling into the editor (PM would
+    // otherwise read it as a selection change and re-focus the
+    // editor mid-action).
+    e.preventDefault()
+    e.stopPropagation()
+    usePendingChangesStore.getState().reject(change.id)
+  })
+  actions.appendChild(rejectBtn)
 
   const keepBtn = document.createElement('button')
   keepBtn.type = 'button'
@@ -312,26 +331,11 @@ function buildActionsRow(
   keepBtn.textContent = 'Keep'
   if (opts.keepDisabled) keepBtn.disabled = true
   keepBtn.addEventListener('click', (e) => {
-    // Stop the click from bubbling into the editor (PM would
-    // otherwise read it as a selection change and re-focus the
-    // editor mid-action).
     e.preventDefault()
     e.stopPropagation()
     usePendingChangesStore.getState().accept(change.id)
   })
   actions.appendChild(keepBtn)
-
-  const removeBtn = document.createElement('button')
-  removeBtn.type = 'button'
-  removeBtn.className =
-    'pending-edit__action pending-edit__action--remove'
-  removeBtn.textContent = 'Remove'
-  removeBtn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    usePendingChangesStore.getState().reject(change.id)
-  })
-  actions.appendChild(removeBtn)
 
   return actions
 }

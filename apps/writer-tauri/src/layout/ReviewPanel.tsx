@@ -23,11 +23,12 @@
 // "about" the destination — the wiki page — so we prefer that for
 // the title and the "Added" diff.
 
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   IconArrowBackUp,
   IconChevronDown,
   IconChevronRight,
+  IconChevronUp,
   IconHistory,
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
@@ -38,7 +39,8 @@ import {
   type PendingChange,
 } from '@/state/pendingChangesStore'
 import { useDocsStore } from '@/state/docsStore'
-import { DiffHunkProse } from '@/components/diffHunk/DiffHunkProse'
+import { DiffHunkProseInContext } from '@/components/diffHunk/DiffHunkProseInContext'
+import { pathForDoc } from '@/lib/docPaths'
 import type { CommitInfo, FileDiff } from '@/lib/git'
 import { cn } from '@/lib/utils'
 
@@ -59,18 +61,8 @@ export function ReviewPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 flex-col gap-0.5 bg-transparent px-4 py-3 shadow-[inset_0_-1px_0_var(--border)]">
+      <div className="flex shrink-0 items-center bg-transparent px-4 py-3 shadow-[inset_0_-1px_0_var(--border)]">
         <h2 className="text-[15px] font-semibold text-foreground">Review</h2>
-        {hasPending && (
-          <p className="text-[13px] text-muted-foreground">
-            {`${pendingEntries.length} change${pendingEntries.length === 1 ? '' : 's'} awaiting your decision`}
-          </p>
-        )}
-        {!hasPending && hasActivity && (
-          <p className="text-[13px] text-muted-foreground">
-            {`${activity.length} recent change${activity.length === 1 ? '' : 's'}`}
-          </p>
-        )}
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -93,7 +85,7 @@ export function ReviewPanel() {
             </p>
           </div>
         ) : (
-          <div className="flex flex-col gap-4 p-2">
+          <div className="flex flex-col">
             {hasPending && (
               <PendingSection entries={pendingEntries} />
             )}
@@ -149,14 +141,9 @@ function usePendingReviewEntries(): PendingChange[] {
 function PendingSection({ entries }: { entries: PendingChange[] }) {
   return (
     <section className="flex flex-col">
-      <h3 className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Pending review
-      </h3>
-      <div className="flex flex-col gap-3">
-        {entries.map((entry) => (
-          <PendingRow key={entry.id} entry={entry} />
-        ))}
-      </div>
+      {entries.map((entry) => (
+        <PendingRow key={entry.id} entry={entry} />
+      ))}
     </section>
   )
 }
@@ -176,46 +163,111 @@ function HistorySection({ commits }: { commits: CommitInfo[] }) {
   )
 }
 
-/** One pending-change row. Header (status + title + diff stat +
- * time) sits above the always-visible detail (diff + context +
- * actions). No accordion — every row reads top-to-bottom in the
- * scroll list so a user can scan multiple changes without
- * click-to-expand friction. */
+/** One pending-change row. Header sits above an expandable detail
+ * pane (diff + context + actions). File-icon at the left is tinted
+ * by status so the colour cue rides on the same icon that names the
+ * file — no separate status dot needed. Chevron at the right rotates
+ * to indicate expand/collapse; clicking anywhere on the header
+ * toggles the detail. Default is expanded so the panel reads
+ * top-to-bottom on first open; users with many rows collapse the
+ * ones they're not actively deciding. */
 function PendingRow({ entry }: { entry: PendingChange }) {
-  const title = usePageTitle(entry.pageSlug)
+  const filename = usePageFilename(entry.pageSlug)
   const time = relativeTime(Math.floor(entry.createdAt / 1000))
   const stat = useMemo(() => diffStat(entry), [entry])
+  // Default expanded for every status. Decided rows stay open
+  // (Cursor-style frozen card): the snapshot-backed contextualised
+  // view keeps showing the change in its place on the page even
+  // after Keep, so the card reads as a faithful "this is what
+  // happened" record. The user can still collapse manually via the
+  // chevron.
+  const [expanded, setExpanded] = useState(true)
 
+  // No border on the card — the row is delineated by spacing and
+  // hover instead. Outer wrapper owns the hover bg so the whole
+  // card area (header + expanded body) lights up together; the
+  // inner button only handles click + focus, with no bg of its own
+  // so the two paints don't stack.
   return (
-    <div className="flex flex-col">
-      <div className="flex items-center gap-2 px-3 py-1.5 text-sm">
-        <StatusDot status={entry.status} />
-        <span className="truncate font-medium">{title}</span>
+    <div className="rounded-none transition-colors hover:bg-muted/40">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left focus-visible:outline-none"
+      >
+        <PendingDot status={entry.status} />
+        <span className="truncate font-mono text-[12px] text-foreground">
+          {filename}
+        </span>
         <DiffStatChars added={stat.added} removed={stat.removed} />
+        {entry.status !== 'pending' && (
+          <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+            {entry.status === 'accepted' ? 'Kept' : 'Rejected'}
+          </span>
+        )}
         <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
           {time}
         </span>
-      </div>
-      <PendingDetail entry={entry} />
+        {expanded ? (
+          <IconChevronUp size={12} className="shrink-0 text-muted-foreground" />
+        ) : (
+          <IconChevronDown size={12} className="shrink-0 text-muted-foreground" />
+        )}
+      </button>
+      {expanded && <PendingDetail entry={entry} />}
     </div>
+  )
+}
+
+/** Small status-coloured dot to the left of the filename. Three
+ * states, three colours; centred inside an `h-5` wrapper so its
+ * optical centre lines up with the row's `text-sm` line (without
+ * the wrapper the dot reads as floating ~1px high against the
+ * filename's glyph centre). */
+function PendingDot({ status }: { status: PendingChange['status'] }) {
+  const cls =
+    status === 'pending'
+      ? 'bg-info'
+      : status === 'accepted'
+        ? 'bg-green-500'
+        : 'bg-muted-foreground/40'
+  return (
+    <span aria-hidden className="flex h-5 shrink-0 items-center">
+      <span className={cn('h-1.5 w-1.5 rounded-full', cls)} />
+    </span>
   )
 }
 
 // ── Expanded detail ─────────────────────────────────────────────
 
 /** Pulls the per-edit diff, the source / rationale / quote context,
- * and the Apply / Reject action row into one inline expanded view.
- * Layered under the row's button so the panel reads as a single
- * scrollable column rather than a modal. */
+ * and the Reject / Keep action row into one inline expanded view.
+ * The outer card chrome (border, bg) lives on `PendingRow` so the
+ * whole header + body reads as one bordered container; this child
+ * only provides inner padding and stacking. */
 function PendingDetail({ entry }: { entry: PendingChange }) {
   const accept = usePendingChangesStore((s) => s.accept)
   const reject = usePendingChangesStore((s) => s.reject)
   const sourceLabel = useSourceLabel(entry)
 
+  // Same contextualised render for all statuses. We pass the
+  // store's pageMarkdownSnapshot (captured at push time) as the
+  // source of truth so the card stays a faithful before-state
+  // preview even after Keep flips the live page. Pending entries
+  // see live ≈ snapshot (no time has passed); decided entries see
+  // the frozen snapshot.
+  const isPending = entry.status === 'pending'
+
   return (
-    <div className="ml-[18px] mr-2 mb-2 flex flex-col gap-3 rounded-md border border-border bg-muted/20 px-3 py-3">
+    <div className="flex flex-col gap-3 px-3 pt-1 pb-3">
       {entry.edits.map((edit) => (
-        <DiffHunkProse key={edit.id} before={edit.before} after={edit.after} />
+        <DiffHunkProseInContext
+          key={edit.id}
+          pageSlug={entry.pageSlug}
+          edit={edit}
+          pageMarkdownOverride={entry.pageMarkdownSnapshot}
+        />
       ))}
 
       {(sourceLabel || entry.context.rationale || entry.context.sourceQuote) && (
@@ -240,28 +292,27 @@ function PendingDetail({ entry }: { entry: PendingChange }) {
         </div>
       )}
 
-      {entry.status === 'pending' ? (
-        <div className="flex items-center gap-2 pt-1">
-          <Button
-            size="sm"
-            variant="default"
-            className="h-7 gap-1 px-3 text-[12px]"
-            onClick={() => accept(entry.id)}
-          >
-            Apply
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 gap-1 px-3 text-[12px] text-muted-foreground"
+      {isPending && (
+        // Same segmented text chip the inline widget uses
+        // (`.pending-edit__actions` rules in index.css). Reject on
+        // left, Keep on right (primary on the right matches macOS
+        // dialog convention). Decided rows skip this row entirely —
+        // the header carries the KEPT / REJECTED badge.
+        <div className="pending-edit__actions">
+          <button
+            type="button"
+            className="pending-edit__action pending-edit__action--reject"
             onClick={() => reject(entry.id)}
           >
             Reject
-          </Button>
-        </div>
-      ) : (
-        <div className="pt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-          {entry.status === 'accepted' ? 'Applied' : 'Rejected'}
+          </button>
+          <button
+            type="button"
+            className="pending-edit__action pending-edit__action--keep"
+            onClick={() => accept(entry.id)}
+          >
+            Keep
+          </button>
         </div>
       )}
     </div>
@@ -337,42 +388,24 @@ function diffStat(entry: PendingChange): { added: number; removed: number } {
   return { added, removed }
 }
 
-/** Status indicator dot — three states, three colours. Compact 6px
- * dot to match Linear-style row density.
- *
- * The dot is centred inside a `h-5` wrapper that matches `text-sm`
- * line-height (20px). Without the wrapper, the parent flex row
- * centres the dot against the line-box middle, but optical-centre
- * of the text glyph sits ~1 px lower; that mismatch read as
- * "dot is too high" against the row's title. Forcing the dot's
- * surrounding container to the text's line height lets it land on
- * the glyph's visual centre. */
-function StatusDot({ status }: { status: PendingChange['status'] }) {
-  const cls =
-    status === 'pending'
-      ? 'bg-info'
-      : status === 'accepted'
-        ? 'bg-green-500'
-        : 'bg-muted-foreground/40'
-  return (
-    <span
-      aria-hidden
-      className="flex h-5 shrink-0 items-center"
-    >
-      <span className={cn('h-1.5 w-1.5 rounded-full', cls)} />
-    </span>
-  )
-}
-
-/** Resolve the doc title for a slug. Returns a fallback when the doc
- * isn't in the catalog — usually means the page got archived after
- * the change was queued; we still want the row to identify it
- * legibly. */
-function usePageTitle(slug: string): string {
+/** Resolve the doc's vault-relative filename (e.g. `wiki/Mark.md`,
+ * `daily/2026-05-27.md`). Routes through `pathForDoc` so the path
+ * exactly matches what the applier writes to disk — same string the
+ * user would see in their vault folder. Returns a slug-suffix
+ * fallback when the doc isn't in the catalog (usually means the
+ * page got archived after the change was queued; we still want the
+ * row to identify it legibly). */
+function usePageFilename(slug: string): string {
   return useDocsStore((s) => {
     const doc = s.knownDocs.find((d) => d.slug === slug)
-    if (!doc) return slug.slice(0, 8)
-    return doc.title?.trim() || doc.type || slug.slice(0, 8)
+    if (!doc) return `${slug.slice(0, 8)}.md`
+    const getDoc = (id: string) => s.knownDocs.find((d) => d.slug === id)
+    const path = pathForDoc(doc, getDoc)
+    if (path) return path
+    // pathForDoc returns null for orphaned writing docs and dailies
+    // without a date — fall back to a synthesised name so the row
+    // still identifies itself.
+    return `${doc.title?.trim() || doc.type || slug.slice(0, 8)}.md`
   })
 }
 

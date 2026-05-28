@@ -38,6 +38,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { useDocsStore } from '@/state/docsStore'
 
 /** A single line-level edit inside a PendingChange. One PendingChange
  * may carry several `edits` when a single intent (e.g. one ingest
@@ -127,6 +128,14 @@ export interface PendingChange {
    * does NOT clear the dot, because the user hasn't yet seen the
    * result of that Apply. Only navigating to the page does. */
   viewedAt: number | null
+  /** Snapshot of the page's `bodyMarkdown` captured at push time —
+   * i.e. the page state the LLM was working against. The Review
+   * Panel renders the contextualised diff against this snapshot so
+   * the card stays a faithful frozen record even after the user
+   * accepts and the live page has moved on. Optional for backwards
+   * compat with already-persisted entries; the panel falls back to
+   * the live `bodyMarkdown` when absent. */
+  pageMarkdownSnapshot?: string
 }
 
 interface PendingChangesState {
@@ -213,6 +222,15 @@ export const usePendingChangesStore = create<PendingChangesState>()(
           // user's decision sticks. Only `pending` (or first-time
           // push) refreshes the content.
           if (existing && existing.status !== 'pending') return s
+          // Snapshot the page's markdown at the moment the proposal
+          // lands. The Review Panel's contextualised diff renders
+          // against this snapshot so the card stays a faithful
+          // before-state record even after the user accepts and
+          // the live page moves on. Empty when the handle hasn't
+          // hydrated yet — the panel falls back to live markdown
+          // (best-effort).
+          const snapshot =
+            useDocsStore.getState().handles[change.pageSlug]?.bodyMarkdown ?? ''
           const next: PendingChange = {
             id: change.id,
             source: change.source,
@@ -224,6 +242,7 @@ export const usePendingChangesStore = create<PendingChangesState>()(
             status: 'pending',
             decidedAt: null,
             viewedAt: null,
+            pageMarkdownSnapshot: snapshot,
           }
           return { byId: { ...s.byId, [change.id]: next } }
         })

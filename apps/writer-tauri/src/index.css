@@ -301,57 +301,67 @@
     background: transparent;
   }
 
-  /* Action row — compact bar of small chip buttons just under the
-     diff body. Compact enough that the whole widget reads as "an
-     editor line + a small action chip", not a two-row card. */
-  .ProseMirror .pending-edit__actions {
+  /* Action row — segmented text chip in the bottom-right of the
+     widget. Two text buttons (Reject / Keep, Keep on the right as
+     the primary action) inside a thin-bordered rounded container so
+     the whole row reads as one small affordance instead of two
+     loose buttons. Same class set is reused by the Review panel's
+     PendingDetail so both surfaces show identical chrome — no
+     `.ProseMirror` prefix below for that reason. `margin-left: auto`
+     + `width: fit-content` floats the chip to the right; the
+     actions row stays a block so its position under the diff body
+     is predictable. */
+  .pending-edit__actions {
     display: flex;
-    gap: 0.25em;
-    margin-top: 0.15em;
+    gap: 2px;
+    width: fit-content;
+    margin: 0.2em 0 0 auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px;
+    /* Solid muted background so the chip reads as a small elevated
+       surface on both backgrounds — over the editor's plain
+       --background (inline widget) and over the panel's muted/20
+       detail card. Without a solid bg the chip blends into the
+       editor on the inline surface. */
+    background-color: var(--muted);
   }
-  .ProseMirror .pending-edit__action {
-    /* Chip-shaped buttons. cursor: pointer because they're not <a>
-       — without it Safari shows a text caret over the button. */
+  .pending-edit__action {
     appearance: none;
     border: none;
     cursor: pointer;
-    padding: 0.05em 0.55em;
-    border-radius: 9999px;
-    font-size: 0.75em;
+    padding: 2px 10px;
+    border-radius: 4px;
     font-family: inherit;
+    font-size: 12px;
     font-weight: 500;
     line-height: 1.4;
-    transition: background-color 120ms ease, color 120ms ease;
-  }
-  .ProseMirror .pending-edit__action--keep {
-    /* Primary action — solid tint so it reads as the default
-       decision. Uses the info accent (also the sidebar PendingDot
-       colour) so the user reads "this dot ↔ this widget" as one
-       signal. */
-    background-color: var(--info, oklch(0.72 0.15 230));
-    color: var(--info-foreground, white);
-  }
-  .ProseMirror .pending-edit__action--keep:hover {
-    background-color: color-mix(in oklch, var(--info, oklch(0.72 0.15 230)) 85%, black);
-  }
-  .ProseMirror .pending-edit__action--keep[disabled] {
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
-  .ProseMirror .pending-edit__action--remove {
-    /* Secondary action — ghost. Faint until hover so the primary
-       action is clearly the default but rejection is one click away. */
     background-color: transparent;
     color: var(--muted-foreground);
+    transition: background-color 120ms ease, color 120ms ease;
   }
-  .ProseMirror .pending-edit__action--remove:hover {
+  .pending-edit__action--keep {
+    /* Primary action — coloured text by default so the user
+       distinguishes Keep from Reject at a glance even without
+       hover. Uses --info (same accent as the sidebar PendingDot)
+       so the whole pending-change visual stays in one colour family. */
+    color: var(--info, oklch(0.72 0.15 230));
+  }
+  .pending-edit__action--keep:hover {
+    background-color: color-mix(in oklch, var(--info, oklch(0.72 0.15 230)) 15%, transparent);
+  }
+  .pending-edit__action--reject:hover {
     background-color: color-mix(in oklch, var(--muted-foreground) 12%, transparent);
     color: var(--foreground);
+  }
+  .pending-edit__action[disabled] {
+    cursor: not-allowed;
+    opacity: 0.5;
   }
 
   /* Stale banner — short note above the diff when the original text
      no longer matches and Keep is disabled. */
-  .ProseMirror .pending-edit__stale-note {
+  .pending-edit__stale-note {
     font-size: 0.85em;
     color: var(--muted-foreground);
     margin-bottom: 0.35em;
