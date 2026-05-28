@@ -100,7 +100,19 @@ export function resolveAnchor(
     return { insertAt, applyReady: true }
   }
 
-  // replace / delete: need the range of `before` in the doc
+  // Whole-file replace (Phase F declarative-only edits): `kind`
+  // is 'replace' but `before` is undefined, which means the LLM
+  // declared the full target state via `propose_write`. The apply
+  // path routes this to `applyWriteWikiPage` (whole-file overwrite),
+  // which never fails on a match check — there's nothing to match.
+  // For the inline widget we anchor the added content at the very
+  // top of the doc so the user sees the proposed new state in
+  // place, even when the page is empty.
+  if (edit.kind === 'replace' && !edit.before) {
+    return { insertAt: 0, applyReady: true }
+  }
+
+  // replace / delete with a literal `before`: need the range in the doc
   const target = edit.before
   if (!target) return null
   const range = findTextRange(doc, target)
@@ -505,6 +517,19 @@ export function createInlineReviewPlugin(slug: string) {
         props: {
           decorations(state) {
             return inlineReviewKey.getState(state)?.decorations
+          },
+          // Surface a presentation signal on the editor's outer DOM
+          // when any pending entry is rendered (placed widget OR
+          // unplaced banner). CSS reads this to suppress the
+          // body-placeholder hint — without it the "Start writing…"
+          // hint paints under our widget on an empty page, which
+          // contradicts what the user sees. The placeholder plugin
+          // stays domain-naive; this is presentation-layer
+          // coordination via a generic "has overlay" signal.
+          attributes(state): Record<string, string> {
+            const pluginState = inlineReviewKey.getState(state)
+            if (!pluginState || pluginState.resolved.length === 0) return {}
+            return { class: 'pm-has-pending' }
           },
         },
         view(view) {

@@ -62,13 +62,18 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     relayTools = [
       'read_page',
       'search_wiki',
-      // Phase E6: host-applies pattern. The LLM uses these custom
-      // MCP tools instead of the built-in Edit / Write / MultiEdit;
-      // they emit `chat/edit-pending` and return success without
-      // touching disk. The host applies the proposal on user Keep.
-      'propose_edit',
+      // Phase F: declarative-only edits. The LLM no longer chooses
+      // between Edit (partial / fragile, fails when `old_string`
+      // isn't found verbatim) and Write (whole-file). Only
+      // `propose_write` is exposed — the model declares the page's
+      // target state and the host computes the diff. Eliminates the
+      // "couldn't find old_string" failure mode entirely; the
+      // applier always succeeds because there's nothing to match.
+      // `propose_edit` / `propose_multi_edit` definitions remain in
+      // the sidecar for backward compat with any inflight relay
+      // registration but aren't requested here, so the model never
+      // sees them.
       'propose_write',
-      'propose_multi_edit',
     ],
     appendDocument = true,
     signal,

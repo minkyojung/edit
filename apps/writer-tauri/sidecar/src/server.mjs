@@ -333,7 +333,7 @@ function buildProposeEditTool(runId, emit) {
 function buildProposeWriteTool(runId, emit) {
   return tool(
     'propose_write',
-    'Propose creating or overwriting a file in the user\'s vault. The host queues this proposal for user review and applies it on approval. Use the same way as the built-in Write tool: provide the absolute file_path and the full content. Returns immediately — do not wait for the user.',
+    'Propose the target state of a file in the user\'s vault. This is the ONE tool for every kind of change: brand-new file, whole-file overwrite, partial edit, append, single-line tweak — all of them are expressed by sending the FULL desired content of the file. The host computes the diff against the current content and queues it for user review. Do NOT try to send only the changed lines — send the full new file content every time. To modify an existing file, first read it with read_page, then send `content` = the entire file as it should be after your change. Returns immediately — do not wait for the user.',
     {
       file_path: z.string(),
       content: z.string(),

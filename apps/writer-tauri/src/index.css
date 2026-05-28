@@ -449,6 +449,15 @@
     position: absolute;
     opacity: 0.6;
   }
+  /* Hide the placeholder when the inline review plugin is showing
+     any pending widget or unplaced-banner overlay — the page isn't
+     visually empty, so the "Start writing…" hint contradicts what
+     the user sees. The class is set by inlineReviewPlugin's
+     `props.attributes` and only persists while pending entries
+     exist for this page. */
+  .ProseMirror.pm-has-pending [data-placeholder]::before {
+    content: none;
+  }
 
   .ProseMirror:focus,
   .ProseMirror:focus-visible,
