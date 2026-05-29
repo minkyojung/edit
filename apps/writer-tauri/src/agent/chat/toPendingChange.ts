@@ -30,6 +30,11 @@ interface MapContext {
   /** Optional thread id for the chat run, surfaced in the Review
    * Panel later. Pass undefined when not available. */
   threadId?: string
+  /** The user message that triggered this run. A chat edit has no
+   * AI-supplied rationale, so this is its "why" in the Review panel —
+   * "this change exists because you asked: …". Omitted when unknown
+   * (e.g. one-shot prompts with no history). */
+  userRequest?: string
 }
 
 /** Map a sidecar pending-edit payload into a PendingChange ready to
@@ -80,6 +85,11 @@ export function mapChatEditToPendingChange(
     context: {
       threadId: ctx.threadId,
       runId: payload.runId,
+      // Surface the triggering user request as the change's rationale
+      // ("Why" in the Review panel). Chat edits have no other grounding;
+      // this is what the user asked for, which is exactly the answer to
+      // "why is this change here?". Trimmed empty → omitted.
+      rationale: ctx.userRequest?.trim() || undefined,
     },
   }
 }

@@ -13,6 +13,12 @@
 
 import { IconHistory, IconMessageCircle } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
+import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useGitStore } from '@/state/gitStore'
@@ -45,117 +51,89 @@ function RightPanelHeader() {
   const setMode = useLayoutStore((s) => s.setRightPanelMode)
   const activityCount = useGitStore((s) => s.activity.length)
   const gitStatus = useGitStore((s) => s.status)
+  const showActivityDot =
+    mode !== 'review' && (activityCount > 0 || gitStatus === 'error')
+  const reviewTooltip =
+    gitStatus === 'error'
+      ? 'Review (storage error)'
+      : activityCount > 0
+        ? `Review (${activityCount} new)`
+        : 'Review'
 
   return (
     <div
-      className="flex shrink-0 items-center gap-1 bg-transparent px-2 shadow-[inset_0_-1px_0_var(--border)]"
+      className="flex shrink-0 items-center gap-0.5 px-1 shadow-[inset_0_-1px_0_var(--border)]"
       style={{ height: '36px' }}
     >
-      {/* Tinted capsule filters — the macOS Tahoe pattern Apple Mail
-          uses for its category bar. Each item is its own capsule;
-          only the active one expands to show its label and takes on
-          its tint color. Inactive items collapse to an icon-only
-          muted pill, so the active selection always reads as the
-          strongest visual element. */}
-      <div className="inline-flex items-center gap-1.5">
-        <CapsuleFilterItem
-          active={mode === 'chat'}
-          onClick={() => setMode('chat')}
-          icon={<IconMessageCircle size={16} />}
-          label="Chat"
-          activeBg="bg-info/20"
-          activeText="text-foreground"
-          dotColor="bg-info"
-        />
-        <CapsuleFilterItem
-          active={mode === 'review'}
-          onClick={() => setMode('review')}
-          icon={<IconHistory size={16} />}
-          label="Review"
-          activeBg="bg-success/20"
-          activeText="text-foreground"
-          dotColor="bg-success"
-          badge={activityCount > 0 ? activityCount : undefined}
-          warning={gitStatus === 'error'}
-        />
-      </div>
+      <ModeToggleButton
+        active={mode === 'chat'}
+        onClick={() => setMode('chat')}
+        icon={<IconMessageCircle size={16} />}
+        tooltip="Chat"
+        ariaLabel="Chat"
+      />
+      <ModeToggleButton
+        active={mode === 'review'}
+        onClick={() => setMode('review')}
+        icon={<IconHistory size={16} />}
+        tooltip={reviewTooltip}
+        ariaLabel="Review"
+        dot={
+          showActivityDot
+            ? gitStatus === 'error'
+              ? 'destructive'
+              : 'primary'
+            : undefined
+        }
+      />
     </div>
   )
 }
 
-function CapsuleFilterItem({
+function ModeToggleButton({
   active,
   onClick,
   icon,
-  label,
-  badge,
-  warning,
-  activeBg,
-  activeText,
-  dotColor,
+  tooltip,
+  ariaLabel,
+  dot,
 }: {
   active: boolean
   onClick: () => void
   icon: React.ReactNode
-  label: string
-  badge?: number
-  warning?: boolean
-  /** Tailwind class for the active state background tint (e.g. "bg-info/20"). */
-  activeBg: string
-  /** Tailwind class for the active state foreground (e.g. "text-foreground"). */
-  activeText: string
-  /** Vivid tint used for the corner attention dot when inactive
-   * (e.g. "bg-info"). Separate from activeBg because that one is
-   * usually a low-alpha tint that would read as nothing on the dot. */
-  dotColor: string
+  tooltip: string
+  ariaLabel: string
+  dot?: 'primary' | 'destructive'
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'relative inline-flex h-8 cursor-pointer items-center rounded-full text-sm font-medium outline-none',
-        'transition-[background-color,color,padding] duration-300 ease-tahoe',
-        active
-          ? cn('gap-1.5 px-3', activeBg, activeText)
-          : 'px-2 bg-foreground/8 text-muted-foreground hover:text-foreground hover:bg-foreground/15',
-        warning && !active && 'text-destructive',
-      )}
-    >
-      {icon}
-      {/* Label is always mounted so screen readers see it; visual
-          width + opacity morph on the active flip. max-width drives
-          the capsule's expand/contract, opacity hides leftover text
-          mid-animation. */}
-      <span
-        className={cn(
-          'overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin] duration-300 ease-tahoe',
-          active ? 'ml-1 max-w-32 opacity-100' : 'ml-0 max-w-0 opacity-0',
-        )}
-      >
-        {label}
-      </span>
-      {/* Badge: active gets the full number pill inline with the label;
-          inactive gets a small attention dot pinned to the corner so
-          the unreviewed count is still discoverable while collapsed. */}
-      {badge !== undefined &&
-        (active ? (
-          <span
-            className="ml-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-foreground/15 px-1 text-[11px] font-medium leading-none"
-            aria-hidden
-          >
-            {badge > 99 ? '99+' : badge}
-          </span>
-        ) : (
-          <span
-            className={cn(
-              'absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full',
-              warning ? 'bg-destructive' : dotColor,
-            )}
-            aria-hidden
-          />
-        ))}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onClick}
+          aria-pressed={active}
+          aria-label={ariaLabel}
+          className={cn(
+            'relative cursor-pointer transition-colors',
+            active
+              ? 'bg-accent text-foreground hover:bg-accent'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {icon}
+          {dot && (
+            <span
+              className={cn(
+                'absolute right-1 top-1 h-1.5 w-1.5 rounded-full',
+                dot === 'destructive' ? 'bg-destructive' : 'bg-primary',
+              )}
+              aria-hidden
+            />
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{tooltip}</TooltipContent>
+    </Tooltip>
   )
 }

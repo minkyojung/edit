@@ -39,9 +39,9 @@ import {
   type PendingChange,
 } from '@/state/pendingChangesStore'
 import { useDocsStore } from '@/state/docsStore'
-import { DiffHunkProseInContext } from '@/components/diffHunk/DiffHunkProseInContext'
 import { pathForDoc } from '@/lib/docPaths'
-import type { CommitInfo, FileDiff } from '@/lib/git'
+import { computePendingDiffLines } from '@/lib/pendingDiff'
+import type { CommitInfo, DiffLine, FileDiff } from '@/lib/git'
 import { cn } from '@/lib/utils'
 
 export function ReviewPanel() {
@@ -241,34 +241,26 @@ function PendingDot({ status }: { status: PendingChange['status'] }) {
 
 // ── Expanded detail ─────────────────────────────────────────────
 
-/** Pulls the per-edit diff, the source / rationale / quote context,
- * and the Reject / Keep action row into one inline expanded view.
- * The outer card chrome (border, bg) lives on `PendingRow` so the
- * whole header + body reads as one bordered container; this child
- * only provides inner padding and stacking. */
+/** Body of one pending-change card. Renders the change as a git-style
+ * `+`/`-` diff — the same `DiffBlock` the committed-change cards use,
+ * so both review surfaces look the same. This replaced an embedded
+ * live-Milkdown preview whose snapshot / parser / overlay seams kept
+ * breaking; a plain diff has no editor to go wrong.
+ *
+ * Outer card chrome (border, hover bg) lives on `PendingRow`; this
+ * child provides inner padding for the diff + the supporting metadata
+ * (From / Why / source quote) + the Reject / Keep action row. */
 function PendingDetail({ entry }: { entry: PendingChange }) {
+  const sourceLabel = useSourceLabel(entry)
   const accept = usePendingChangesStore((s) => s.accept)
   const reject = usePendingChangesStore((s) => s.reject)
-  const sourceLabel = useSourceLabel(entry)
 
-  // Same contextualised render for all statuses. We pass the
-  // store's pageMarkdownSnapshot (captured at push time) as the
-  // source of truth so the card stays a faithful before-state
-  // preview even after Keep flips the live page. Pending entries
-  // see live ≈ snapshot (no time has passed); decided entries see
-  // the frozen snapshot.
+  const diffLines = useMemo(() => computePendingDiffLines(entry), [entry])
   const isPending = entry.status === 'pending'
 
   return (
     <div className="flex flex-col gap-3 px-3 pt-1 pb-3">
-      {entry.edits.map((edit) => (
-        <DiffHunkProseInContext
-          key={edit.id}
-          pageSlug={entry.pageSlug}
-          edit={edit}
-          pageMarkdownOverride={entry.pageMarkdownSnapshot}
-        />
-      ))}
+      {diffLines.length > 0 && <DiffBlock lines={diffLines} />}
 
       {(sourceLabel || entry.context.rationale || entry.context.sourceQuote) && (
         <div className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -280,7 +272,11 @@ function PendingDetail({ entry }: { entry: PendingChange }) {
           )}
           {entry.context.rationale && (
             <div>
-              <span className="font-medium">Why: </span>
+              {/* Chat: the rationale IS the user's request → "Requested".
+                  Ingest: the LLM's own reason → "Why". */}
+              <span className="font-medium">
+                {entry.source === 'chat' ? 'Requested: ' : 'Why: '}
+              </span>
               {entry.context.rationale}
             </div>
           )}
@@ -292,12 +288,10 @@ function PendingDetail({ entry }: { entry: PendingChange }) {
         </div>
       )}
 
+      {/* Decision row — React-controlled, so it clears the instant the
+          entry is decided (the header's KEPT / REJECTED badge carries
+          the status from then on). */}
       {isPending && (
-        // Same segmented text chip the inline widget uses
-        // (`.pending-edit__actions` rules in index.css). Reject on
-        // left, Keep on right (primary on the right matches macOS
-        // dialog convention). Decided rows skip this row entirely —
-        // the header carries the KEPT / REJECTED badge.
         <div className="pending-edit__actions">
           <button
             type="button"
@@ -370,20 +364,18 @@ function DiffStatChars({
   )
 }
 
-/** Sum the `before` / `after` character counts across every edit in
- * the change. `add` only contributes to `added`; `delete` only to
- * `removed`; `replace` contributes to both (counted against the full
- * before / after strings, including any surrounding context the LLM
- * cited — the goal is "how much of the page is shifting" rather
- * than a strict net-line count). `write` (whole-doc replace, no
- * before) shows as additions only because we don't have the prior
- * content available in the edit payload. */
+/** Char counts for the row's `+N -M` summary, derived from the SAME
+ * diff lines the card body renders. Counting the actual delta (not the
+ * raw before/after strings) keeps the header honest: an "append a line"
+ * edit — `before` = anchor, `after` = anchor + new line — now reads
+ * `+<added>` with no phantom `-<anchor length>` the raw-length version
+ * used to show. */
 function diffStat(entry: PendingChange): { added: number; removed: number } {
   let added = 0
   let removed = 0
-  for (const edit of entry.edits) {
-    added += edit.after?.length ?? 0
-    removed += edit.before?.length ?? 0
+  for (const line of computePendingDiffLines(entry)) {
+    if (line.kind === 'add') added += line.text.length
+    else removed += line.text.length
   }
   return { added, removed }
 }
@@ -534,7 +526,7 @@ function FileBlock({ file }: { file: FileDiff }) {
       <span className="font-mono text-[11px] text-muted-foreground">
         {file.path}
       </span>
-      <DiffBlock file={file} />
+      <DiffBlock lines={file.lines} />
     </div>
   )
 }
@@ -563,13 +555,14 @@ function Section({
   )
 }
 
-/** Render one file's diff lines git-style: `+` / `-` prefix, green
- * for added, red for removed. Lines are shown in the original hunk
- * order so a modify patch reads `-old → +new` naturally. */
-function DiffBlock({ file }: { file: FileDiff }) {
+/** Render diff lines git-style: `+` / `-` prefix, green for added, red
+ * for removed, in order so a modify reads `-old → +new` naturally.
+ * Shared by committed-change cards and pending-change cards so both
+ * review surfaces present a diff the same way. */
+function DiffBlock({ lines }: { lines: DiffLine[] }) {
   return (
     <pre className="overflow-x-auto rounded-md border border-border bg-background p-0 font-mono text-[12px] leading-relaxed">
-      {file.lines.map((line, i) => (
+      {lines.map((line, i) => (
         <div
           key={i}
           className={cn(

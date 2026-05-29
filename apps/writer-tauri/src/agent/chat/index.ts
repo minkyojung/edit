@@ -62,17 +62,22 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     relayTools = [
       'read_page',
       'search_wiki',
-      // Phase F: declarative-only edits. The LLM no longer chooses
-      // between Edit (partial / fragile, fails when `old_string`
-      // isn't found verbatim) and Write (whole-file). Only
-      // `propose_write` is exposed — the model declares the page's
-      // target state and the host computes the diff. Eliminates the
-      // "couldn't find old_string" failure mode entirely; the
-      // applier always succeeds because there's nothing to match.
-      // `propose_edit` / `propose_multi_edit` definitions remain in
-      // the sidecar for backward compat with any inflight relay
-      // registration but aren't requested here, so the model never
-      // sees them.
+      // Path A: operational edits restored. `propose_edit` /
+      // `propose_multi_edit` let the model state exactly what changes
+      // (old_string → new_string), so the host applies a surgical
+      // in-place edit instead of diffing a whole-body blob to *guess*
+      // what changed. That guessing (Phase F's declarative-only model)
+      // was the shared root of the misplaced-insert, stray-cursor, and
+      // empty-panel bugs — the host can't reconstruct intent the model
+      // never sent. The historical reason this was disabled — the
+      // "couldn't find old_string" failure — is mitigated by the
+      // tolerant matcher on the apply path (lib/looseMatch: exact →
+      // normalized-line, so a benign bullet/spacing drift still
+      // resolves). `propose_write` stays for brand-new pages and
+      // explicit full rewrites only; the CLAUDE.md editing rules
+      // already steer the model to Edit-first for existing files.
+      'propose_edit',
+      'propose_multi_edit',
       'propose_write',
     ],
     appendDocument = true,
@@ -94,6 +99,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // Caller's explicit choice always wins.
   const effort: 'low' | 'medium' | 'high' =
     effortOverride ?? (model.includes('haiku') ? 'low' : 'medium')
+
+  // The user message that triggered this run — the last user turn in
+  // history (which includes it, per RunChatArgs.history). Attached to
+  // any pending edit this run proposes as its Review-panel "why".
+  const triggeringRequest = [...(history ?? [])]
+    .reverse()
+    .find((t) => t.role === 'user')
+    ?.content?.trim()
 
   const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
   const docForPrompt = truncateDocForPrompt(docText)
@@ -221,6 +234,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           {
             knownDocs: useDocsStore.getState().knownDocs,
             vaultPath: getActiveVaultPath(),
+            threadId,
+            userRequest: triggeringRequest,
           },
         )
         if (mapped) {

@@ -36,6 +36,7 @@
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
 import { markSlugDirty } from '@/lib/docFileSync'
+import { stripPendingFromDoc } from '@/lib/stripPendingFromDoc'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useDocsStore } from '@/state/docsStore'
 
@@ -67,7 +68,13 @@ export function createDirtyTrackerPlugin(slug: string) {
             const { serializer } = useEditorViewStore.getState()
             if (!serializer) return
             try {
-              const md = serializer(view.state.doc)
+              // Strip pending-insert regions before serializing: pending
+              // add content lives in the live doc as real nodes (for
+              // NodeView-faithful rendering) but must never reach disk
+              // until Keep. This is the single serialization choke point
+              // (see stripPendingFromDoc). No-op when no pending marks
+              // exist — returns the same doc reference.
+              const md = serializer(stripPendingFromDoc(view.state.doc))
               const handle = useDocsStore.getState().handles[slug]
               if (handle) handle.bodyMarkdown = md
             } catch (err) {

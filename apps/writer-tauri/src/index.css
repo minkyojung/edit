@@ -317,6 +317,25 @@
     padding: 0 0.05em;
   }
 
+  /* Mark-native pending (the live editor's `materialize` mode). Block-
+     shaped pending content lives in the doc as real nodes carrying a
+     `proofSuggestion` mark, rendered by Milkdown's NodeViews so it
+     matches committed body exactly. The mark span only tints the text:
+       - insert → green (added, not yet on disk — see stripPendingFromDoc)
+       - delete → red + strikethrough (slated for removal on Keep)
+     Mirrors the .pending-add-widget__content / .pending-mark--remove
+     colours so the two rendering paths look identical. */
+  .ProseMirror span[data-proof='suggestion'][data-kind='insert'] {
+    background-color: color-mix(in oklch, oklch(0.72 0.18 145) 14%, transparent);
+    border-radius: 2px;
+  }
+  .ProseMirror span[data-proof='suggestion'][data-kind='delete'] {
+    background-color: color-mix(in oklch, oklch(0.68 0.20 25) 14%, transparent);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in oklch, oklch(0.68 0.20 25) 60%, transparent);
+    border-radius: 2px;
+  }
+
   /* Widget for added content. Inline span flows next to the cursor
      for paragraph-shaped `after` (small phrase / single sentence);
      block div for content that carries headings, lists, multiple
@@ -332,10 +351,20 @@
     background: transparent;
   }
   .ProseMirror .pending-add-widget--inline {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 0.35em;
+    /* Plain `inline` (not inline-flex) so the added text sits in the
+       same line box as the surrounding text — an inline-flex wrapper
+       established a taller line box, making the green box taller than
+       the red strike and inflating the caret next to it. The chip's
+       spacing rides on its own `margin-left` (below), so dropping the
+       flex `gap` is safe. */
+    display: inline;
+    vertical-align: baseline;
     margin: 0 0.15em;
+  }
+  /* Keep the chip from stretching the text line — center it on the
+     line box instead of letting its button height set the line. */
+  .ProseMirror .pending-add-widget--inline .pending-edit__actions {
+    vertical-align: middle;
   }
   .ProseMirror .pending-add-widget--block {
     display: block;
@@ -464,6 +493,27 @@
     background-color: color-mix(in oklch, oklch(0.68 0.20 25) 12%, transparent);
     text-decoration: line-through;
     text-decoration-color: color-mix(in oklch, oklch(0.68 0.20 25) 60%, transparent);
+  }
+  /* List rendering — restore default bullet / number markers inside
+     the preview tone block. The editor body wraps its lists in a
+     custom NodeView that draws its own markers (and so `.ProseMirror
+     ul/ol { list-style: none; padding-left: 0 }` is set above to
+     prevent duplicate markers). But preview surfaces (Review panel
+     diff, inline-widget block content) render via plain DOMSerializer
+     with no NodeView — without overriding the list-style:none
+     inherited from `.ProseMirror`, list items render with no marker
+     at all. Restoring disc / decimal makes the preview match what
+     the user sees on the live page once Keep lands. */
+  .pending-edit-tone ul {
+    list-style: disc;
+    padding-left: 1.5em;
+  }
+  .pending-edit-tone ol {
+    list-style: decimal;
+    padding-left: 1.5em;
+  }
+  .pending-edit-tone li {
+    display: list-item;
   }
 
   /* Empty-body placeholder — the placeholderPlugin tags the first

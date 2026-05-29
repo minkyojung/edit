@@ -24,6 +24,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { prepareMarkdownAppend } from '@/lib/markdownAppend'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { markSlugDirty } from '@/lib/docFileSync'
+import { looseReplace } from '@/lib/looseMatch'
 import { ensureLogWikiSlug } from '@/state/wikiService'
 import type { IngestProposal } from '@/agent/ingest/types'
 
@@ -197,9 +198,14 @@ export async function applyReplaceInWikiPage(
   if (before.length === 0) return false
   let foundMatch = false
   const ok = await applyToWikiPage(slug, (oldMd) => {
-    if (!oldMd.includes(before)) return oldMd
+    // Tolerant match (exact → normalized-line) so a benign drift in the
+    // model's `old_string` (leading bullet, colon spacing, trailing
+    // space) still resolves instead of failing the edit — the failure
+    // mode that made `propose_edit` get disabled in the first place.
+    const replaced = looseReplace(oldMd, before, after)
+    if (replaced === null) return oldMd
     foundMatch = true
-    return oldMd.replace(before, after)
+    return replaced
   })
   if (!ok) return false
   if (!foundMatch) {
