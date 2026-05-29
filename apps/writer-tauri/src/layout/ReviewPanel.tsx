@@ -41,7 +41,8 @@ import {
 import { useDocsStore } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { computePendingDiffLines } from '@/lib/pendingDiff'
-import type { CommitInfo, DiffLine, FileDiff } from '@/lib/git'
+import type { CommitInfo, FileDiff } from '@/lib/git'
+import { DiffBlock } from '@/components/DiffBlock'
 import { cn } from '@/lib/utils'
 
 export function ReviewPanel() {
@@ -552,35 +553,6 @@ function Section({
       )}
       {children}
     </div>
-  )
-}
-
-/** Render diff lines git-style: `+` / `-` prefix, green for added, red
- * for removed, in order so a modify reads `-old → +new` naturally.
- * Shared by committed-change cards and pending-change cards so both
- * review surfaces present a diff the same way. */
-function DiffBlock({ lines }: { lines: DiffLine[] }) {
-  return (
-    <pre className="overflow-x-auto rounded-md border border-border bg-background p-0 font-mono text-[12px] leading-relaxed">
-      {lines.map((line, i) => (
-        <div
-          key={i}
-          className={cn(
-            'flex items-start gap-2 px-3 py-0.5',
-            line.kind === 'add'
-              ? 'bg-green-500/10 text-green-700 dark:text-green-300'
-              : 'bg-red-500/10 text-destructive',
-          )}
-        >
-          <span className="shrink-0 select-none opacity-70">
-            {line.kind === 'add' ? '+' : '-'}
-          </span>
-          <span className="whitespace-pre-wrap break-words">
-            {line.text.length === 0 ? ' ' : line.text}
-          </span>
-        </div>
-      ))}
-    </pre>
   )
 }
 

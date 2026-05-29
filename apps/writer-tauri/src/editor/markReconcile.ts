@@ -21,7 +21,7 @@
 // case) is NOT handled here; that path stays on decorations.
 
 import type { EditorState, Transaction } from '@milkdown/kit/prose/state'
-import type { Fragment, Node as PMNode } from '@milkdown/kit/prose/model'
+import type { Fragment, Mark, Node as PMNode } from '@milkdown/kit/prose/model'
 import { isBlockFullyPending, isInsertMarked } from '@/lib/stripPendingFromDoc'
 import { proofSuggestionType, stampPending } from './markStamp'
 
@@ -236,6 +236,87 @@ export function reconcilePendingDeletes(
     stampPending(tr, schema, from, to, 'delete', { id: markId })
   }
 
+  tr.setMeta('addToHistory', false)
+  return tr
+}
+
+// ── Commit (the Keep path) ──────────────────────────────────────
+
+/** The change id is the prefix of a mark's `id`
+ * (`${change.id}:${edit.id}[:hunk:i]`). Change ids are colon-free
+ * UUIDs, so the first segment is the change id. */
+function changeIdOf(mark: Mark): string | null {
+  const head = ((mark.attrs.id as string | null) ?? '').split(':')[0]
+  return head.length > 0 ? head : null
+}
+
+function proofMark(node: PMNode): Mark | undefined {
+  return node.marks.find((m) => m.type.name === 'proofSuggestion')
+}
+
+/** True iff every text descendant of `node` carries a delete-mark for
+ * `changeId` (and there is at least one) — a wholly-removed block, so
+ * Keep deletes the block itself rather than emptying it. */
+function isBlockFullyDeleted(node: PMNode, changeId: string): boolean {
+  let hasText = false
+  let allDeleted = true
+  node.descendants((d) => {
+    if (d.isText) {
+      hasText = true
+      const m = proofMark(d)
+      if (!(m && m.attrs.kind === 'delete' && changeIdOf(m) === changeId)) {
+        allDeleted = false
+      }
+    }
+    return true
+  })
+  return hasText && allDeleted
+}
+
+/** Commit a suggestion (the Keep path's doc mutation): in one
+ * transaction, KEEP inserted content by removing its insert mark (the
+ * node stays as ordinary body) and REMOVE delete-marked content.
+ * Returns null when the change has no marks in the doc.
+ *
+ * After this, dirtyTrackerPlugin serialises the now-mark-free doc and
+ * flush persists it — no separate markdown re-apply, so the saved page
+ * is exactly what was on screen and the cursor isn't disturbed.
+ * Flagged `addToHistory: false` to match the established convention:
+ * AI-driven accept swaps don't enter the user's Cmd+Z stack (reversal
+ * is the Reject button while pending, or git revert once committed). */
+export function commitSuggestionInDoc(
+  state: EditorState,
+  changeId: string,
+): Transaction | null {
+  const unmark: Array<{ from: number; to: number }> = []
+  const remove: Array<{ from: number; to: number }> = []
+
+  state.doc.descendants((node, pos) => {
+    // A wholly delete-marked block is removed outright (no empty
+    // residue); don't descend into its leaves.
+    if (node.isBlock && isBlockFullyDeleted(node, changeId)) {
+      remove.push({ from: pos, to: pos + node.nodeSize })
+      return false
+    }
+    if (node.isText) {
+      const m = proofMark(node)
+      if (m && changeIdOf(m) === changeId) {
+        const span = { from: pos, to: pos + node.nodeSize }
+        if (m.attrs.kind === 'insert') unmark.push(span)
+        else if (m.attrs.kind === 'delete') remove.push(span)
+      }
+    }
+    return true
+  })
+
+  if (unmark.length === 0 && remove.length === 0) return null
+
+  const { tr } = state
+  const type = proofSuggestionType(state.schema)
+  // Marks first (position-preserving), then deletions back-to-front so
+  // the not-yet-processed ranges' positions stay valid.
+  for (const r of unmark) tr.removeMark(r.from, r.to, type)
+  remove.sort((a, b) => b.from - a.from).forEach((r) => tr.delete(r.from, r.to))
   tr.setMeta('addToHistory', false)
   return tr
 }

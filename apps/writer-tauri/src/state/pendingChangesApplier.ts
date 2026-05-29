@@ -27,6 +27,9 @@ import {
 } from '@/agent/applyIngest'
 import { useGitStore } from './gitStore'
 import { useDocsStore } from './docsStore'
+import { useEditorViewStore } from './editorViewStore'
+import { commitSuggestionInDoc } from '@/editor/markReconcile'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { flushDirty } from '@/lib/docFileSync'
 import { pathForDoc } from '@/lib/docPaths'
 import { todayLocalDate } from '@/hooks/useDocMeta'
@@ -59,6 +62,26 @@ const PRUNE_INTERVAL_MS = 60_000
  * immediately without parking a Promise). One write path,
  * observable from inside the host. */
 async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
+  // Fast path — the change's page is the active editor AND its content
+  // is materialised there as suggestion marks: commit it surgically in
+  // the doc (drop insert marks → content becomes body; delete the
+  // delete-marked text). dirtyTracker + flush then persist exactly
+  // what was on screen, with the cursor undisturbed — no whole-doc
+  // replaceWith, no markdown re-match. The applier subscribes before
+  // any editor mounts, so this runs before the inline-review plugin's
+  // reconcile, which then finds no marks for the (now-committed) change
+  // and no-ops. Returns null when the change isn't materialised here
+  // (inactive page, or it couldn't be placed) — fall through to the
+  // markdown-level apply below.
+  const view = useEditorViewStore.getState().view
+  if (view && getActiveSlugFromHash() === change.pageSlug) {
+    const tr = commitSuggestionInDoc(view.state, change.id)
+    if (tr) {
+      view.dispatch(tr)
+      return true
+    }
+  }
+
   let allOk = true
   for (const edit of change.edits) {
     if (edit.kind === 'add') {

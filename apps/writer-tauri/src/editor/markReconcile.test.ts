@@ -4,6 +4,7 @@ import { EditorState } from '@milkdown/kit/prose/state'
 import {
   reconcilePendingInserts,
   reconcilePendingDeletes,
+  commitSuggestionInDoc,
   blockBoundaryAfter,
   type DesiredInsert,
   type DesiredDelete,
@@ -45,10 +46,23 @@ function content(text: string): Fragment {
   return Fragment.from(para(text))
 }
 
+/** A paragraph whose text carries a proofSuggestion mark of `kind`
+ * with markId `id`. Used to build already-materialised pending docs. */
+function markedPara(text: string, kind: string, id: string): PMNode {
+  const mark = schema.marks.proofSuggestion.create({ kind, id })
+  return schema.nodes.paragraph.create(null, schema.text(text, [mark]))
+}
+
 /** Apply the reconcile transaction (if any) and return the new doc. */
 function run(d: PMNode, desired: DesiredInsert[]): PMNode {
   const state = EditorState.create({ doc: d })
   const tr = reconcilePendingInserts(state, desired)
+  return tr ? state.apply(tr).doc : d
+}
+
+function runCommit(d: PMNode, changeId: string): PMNode {
+  const state = EditorState.create({ doc: d })
+  const tr = commitSuggestionInDoc(state, changeId)
   return tr ? state.apply(tr).doc : d
 }
 
@@ -178,6 +192,48 @@ describe('reconcilePendingDeletes', () => {
     const out = runDeletes(marked, [])
     expect(pendingKinds(out)).toEqual([])
     expect(out.textContent).toBe('hello world')
+  })
+})
+
+describe('commitSuggestionInDoc', () => {
+  it('keeps an inserted block by removing its mark (content survives, no pending left)', () => {
+    const d = doc(para('body'), markedPara('새 항목', 'insert', 'c1:e1'))
+    const out = runCommit(d, 'c1')
+    expect(out.childCount).toBe(2)
+    expect(out.child(1).textContent).toBe('새 항목')
+    expect(pendingKinds(out)).toEqual([]) // mark gone → ordinary body
+    // committed content is now real: strip leaves it untouched
+    expect(stripPendingFromDoc(out).eq(out)).toBe(true)
+  })
+
+  it('removes a fully delete-marked block', () => {
+    const d = doc(para('keep'), markedPara('지울 줄', 'delete', 'c1:e2'))
+    const out = runCommit(d, 'c1')
+    expect(out.childCount).toBe(1)
+    expect(out.textContent).toBe('keep')
+  })
+
+  it('handles a replace (keep the insert, drop the delete) in one change', () => {
+    const d = doc(
+      markedPara('옛 값', 'delete', 'c1:e1'),
+      markedPara('새 값', 'insert', 'c1:e1'),
+    )
+    const out = runCommit(d, 'c1')
+    expect(out.textContent).toBe('새 값')
+    expect(pendingKinds(out)).toEqual([])
+  })
+
+  it('only touches the requested change, leaving other changes pending', () => {
+    const d = doc(markedPara('A', 'insert', 'c1:e1'), markedPara('B', 'insert', 'c2:e1'))
+    const out = runCommit(d, 'c1')
+    // c1 committed (no mark), c2 still pending (insert mark intact)
+    expect(out.child(0).child(0).marks.length).toBe(0)
+    expect(pendingKinds(out)).toEqual(['insert'])
+  })
+
+  it('returns null when the change has no marks in the doc', () => {
+    const state = EditorState.create({ doc: doc(para('body')) })
+    expect(commitSuggestionInDoc(state, 'c1')).toBeNull()
   })
 })
 
