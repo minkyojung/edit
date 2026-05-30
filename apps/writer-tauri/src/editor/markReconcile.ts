@@ -242,12 +242,15 @@ export function reconcilePendingDeletes(
 
 // ── Commit (the Keep path) ──────────────────────────────────────
 
-/** The change id is the prefix of a mark's `id`
- * (`${change.id}:${edit.id}[:hunk:i]`). Change ids are colon-free
- * UUIDs, so the first segment is the change id. */
-function changeIdOf(mark: Mark): string | null {
-  const head = ((mark.attrs.id as string | null) ?? '').split(':')[0]
-  return head.length > 0 ? head : null
+/** Parse a suggestion mark's id, shaped `${change.id}:${edit.id}[:hunk:i]`.
+ * Change ids are colon-free UUIDs, so segment 0 = change, segment 1 =
+ * edit. Returns null when the id is missing/malformed. */
+export function parseMarkId(
+  id: string | null | undefined,
+): { changeId: string; editId: string } | null {
+  const parts = (id ?? '').split(':')
+  if (parts.length < 2 || !parts[0] || !parts[1]) return null
+  return { changeId: parts[0], editId: parts[1] }
 }
 
 function proofMark(node: PMNode): Mark | undefined {
@@ -264,7 +267,7 @@ function isBlockFullyDeleted(node: PMNode, changeId: string): boolean {
     if (d.isText) {
       hasText = true
       const m = proofMark(d)
-      if (!(m && m.attrs.kind === 'delete' && changeIdOf(m) === changeId)) {
+      if (!(m && m.attrs.kind === 'delete' && parseMarkId(m.attrs.id as string)?.changeId === changeId)) {
         allDeleted = false
       }
     }
@@ -276,34 +279,55 @@ function isBlockFullyDeleted(node: PMNode, changeId: string): boolean {
 /** Commit a suggestion (the Keep path's doc mutation): in one
  * transaction, KEEP inserted content by removing its insert mark (the
  * node stays as ordinary body) and REMOVE delete-marked content.
- * Returns null when the change has no marks in the doc.
+ * Returns null when the change has no marks in the doc, else the
+ * transaction PLUS the set of `edit.id`s it actually handled.
+ *
+ * The caller (the applier) needs `handledEditIds` because a single
+ * change can be MIXED: some edits materialised as marks (handled here),
+ * others live only as decorations or were unplaced (no marks). The
+ * applier markdown-applies exactly the edits NOT in this set, so no
+ * edit is silently dropped.
  *
  * After this, dirtyTrackerPlugin serialises the now-mark-free doc and
- * flush persists it — no separate markdown re-apply, so the saved page
- * is exactly what was on screen and the cursor isn't disturbed.
- * Flagged `addToHistory: false` to match the established convention:
- * AI-driven accept swaps don't enter the user's Cmd+Z stack (reversal
- * is the Reject button while pending, or git revert once committed). */
+ * flush persists it — no separate markdown re-apply for the handled
+ * edits, so the saved page is exactly what was on screen and the cursor
+ * isn't disturbed. Flagged `addToHistory: false` to match the
+ * convention: AI-driven accept swaps don't enter the user's Cmd+Z stack
+ * (reversal is Reject while pending, or git revert once committed). */
 export function commitSuggestionInDoc(
   state: EditorState,
   changeId: string,
-): Transaction | null {
+): { tr: Transaction; handledEditIds: Set<string> } | null {
   const unmark: Array<{ from: number; to: number }> = []
   const remove: Array<{ from: number; to: number }> = []
+  const handledEditIds = new Set<string>()
+
+  const note = (mark: Mark): void => {
+    const parsed = parseMarkId(mark.attrs.id as string)
+    if (parsed && parsed.changeId === changeId) handledEditIds.add(parsed.editId)
+  }
 
   state.doc.descendants((node, pos) => {
     // A wholly delete-marked block is removed outright (no empty
     // residue); don't descend into its leaves.
     if (node.isBlock && isBlockFullyDeleted(node, changeId)) {
       remove.push({ from: pos, to: pos + node.nodeSize })
+      node.descendants((d) => {
+        if (d.isText) {
+          const m = proofMark(d)
+          if (m) note(m)
+        }
+        return true
+      })
       return false
     }
     if (node.isText) {
       const m = proofMark(node)
-      if (m && changeIdOf(m) === changeId) {
+      if (m && parseMarkId(m.attrs.id as string)?.changeId === changeId) {
         const span = { from: pos, to: pos + node.nodeSize }
         if (m.attrs.kind === 'insert') unmark.push(span)
         else if (m.attrs.kind === 'delete') remove.push(span)
+        note(m)
       }
     }
     return true
@@ -318,5 +342,5 @@ export function commitSuggestionInDoc(
   for (const r of unmark) tr.removeMark(r.from, r.to, type)
   remove.sort((a, b) => b.from - a.from).forEach((r) => tr.delete(r.from, r.to))
   tr.setMeta('addToHistory', false)
-  return tr
+  return { tr, handledEditIds }
 }

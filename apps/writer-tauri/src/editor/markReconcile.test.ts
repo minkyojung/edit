@@ -62,8 +62,8 @@ function run(d: PMNode, desired: DesiredInsert[]): PMNode {
 
 function runCommit(d: PMNode, changeId: string): PMNode {
   const state = EditorState.create({ doc: d })
-  const tr = commitSuggestionInDoc(state, changeId)
-  return tr ? state.apply(tr).doc : d
+  const res = commitSuggestionInDoc(state, changeId)
+  return res ? state.apply(res.tr).doc : d
 }
 
 function runDeletes(d: PMNode, desired: DesiredDelete[]): PMNode {
@@ -234,6 +234,24 @@ describe('commitSuggestionInDoc', () => {
   it('returns null when the change has no marks in the doc', () => {
     const state = EditorState.create({ doc: doc(para('body')) })
     expect(commitSuggestionInDoc(state, 'c1')).toBeNull()
+  })
+
+  it('reports the edit ids it handled (so the applier can apply the rest)', () => {
+    // c1 has two materialised edits (e1 insert, e2 delete); e3 is NOT in
+    // the doc (decoration-only / unplaced) and must NOT be reported.
+    const d = doc(
+      markedPara('새 값', 'insert', 'c1:e1'),
+      markedPara('지울 값', 'delete', 'c1:e2'),
+    )
+    const res = commitSuggestionInDoc(EditorState.create({ doc: d }), 'c1')
+    expect(res).not.toBeNull()
+    expect([...res!.handledEditIds].sort()).toEqual(['e1', 'e2'])
+  })
+
+  it('parses a hunk markId to its edit id (handled at edit granularity)', () => {
+    const d = doc(markedPara('hunk add', 'insert', 'c1:e1:hunk:0'))
+    const res = commitSuggestionInDoc(EditorState.create({ doc: d }), 'c1')
+    expect([...res!.handledEditIds]).toEqual(['e1'])
   })
 })
 

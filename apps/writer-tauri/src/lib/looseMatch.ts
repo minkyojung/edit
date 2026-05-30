@@ -20,33 +20,7 @@
 //     verbatim return null and the caller surfaces them as unplaced
 //     rather than risk a wrong splice.
 
-import { stripWikilinks } from './wikilinkSyntax'
-
-/** Strip a leading block marker (heading / bullet / ordered / quote)
- * plus its trailing whitespace. Returns the marker length so callers
- * can preserve the marker when replacing only the line's content. */
-function leadingMarkerLength(line: string): number {
-  const m = line.match(/^\s*(?:#+|[-*+]|\d+\.|>)\s+/)
-  return m ? m[0].length : 0
-}
-
-/** Normalize one line for tolerant comparison: reduce wikilinks to
- * their bare label (so `[[Sera]]` matches a rendered `Sera`), drop the
- * leading block marker, collapse whitespace around colons
- * (`나이 : 47` → `나이:47`), collapse remaining whitespace runs, and
- * trim. The wikilink step is shared with the editor-side resolver
- * (anchorSearch) so disk-apply and editor-placement agree on what
- * "the same line" means. Comparison-only — the caller maps the match
- * back to the ORIGINAL line's range, so stripping here never shifts
- * what gets replaced. CJK-friendly: never joins separate words. */
-function normalizeLine(line: string): string {
-  const bare = stripWikilinks(line)
-  return bare
-    .slice(leadingMarkerLength(bare))
-    .replace(/\s*:\s*/g, ':')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
+import { canonicalizeLine, leadingMarkerLength } from './lineCanonical'
 
 interface LineSpan {
   text: string
@@ -96,11 +70,11 @@ export function looseFindRange(
   // Tier 2 — normalized, single-line only.
   const nLines = needleLines(needle)
   if (nLines.length !== 1) return null
-  const target = normalizeLine(nLines[0])
+  const target = canonicalizeLine(nLines[0])
   if (target.length === 0) return null
 
   for (const span of lineSpans(body)) {
-    if (normalizeLine(span.text) !== target) continue
+    if (canonicalizeLine(span.text) !== target) continue
     const markerLen = leadingMarkerLength(span.text)
     return { start: span.start + markerLen, end: span.end }
   }

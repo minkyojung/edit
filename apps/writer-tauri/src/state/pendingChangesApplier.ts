@@ -62,28 +62,36 @@ const PRUNE_INTERVAL_MS = 60_000
  * immediately without parking a Promise). One write path,
  * observable from inside the host. */
 async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
-  // Fast path — the change's page is the active editor AND its content
-  // is materialised there as suggestion marks: commit it surgically in
-  // the doc (drop insert marks → content becomes body; delete the
-  // delete-marked text). dirtyTracker + flush then persist exactly
-  // what was on screen, with the cursor undisturbed — no whole-doc
-  // replaceWith, no markdown re-match. The applier subscribes before
-  // any editor mounts, so this runs before the inline-review plugin's
-  // reconcile, which then finds no marks for the (now-committed) change
-  // and no-ops. Returns null when the change isn't materialised here
-  // (inactive page, or it couldn't be placed) — fall through to the
-  // markdown-level apply below.
+  // Fast path — for edits materialised as suggestion marks in the
+  // ACTIVE editor, commit them surgically in the doc (drop insert marks
+  // → content becomes body; delete the delete-marked text). dirtyTracker
+  // + flush then persist exactly what was on screen, cursor undisturbed
+  // — no whole-doc replaceWith, no markdown re-match. The applier
+  // subscribes before any editor mounts, so this runs before the inline-
+  // review plugin's reconcile, which then finds no marks and no-ops.
+  //
+  // CRUCIAL: a single change can be MIXED — some edits materialise as
+  // marks (committed here), others live only as decorations or were
+  // unplaced (no marks). `commitSuggestionInDoc` reports which edit.ids
+  // it handled; we markdown-apply ONLY the rest below. (Committing then
+  // returning early would silently drop the non-materialised edits.)
   const view = useEditorViewStore.getState().view
-  if (view && getActiveSlugFromHash() === change.pageSlug) {
-    const tr = commitSuggestionInDoc(view.state, change.id)
-    if (tr) {
-      view.dispatch(tr)
-      return true
-    }
+  const committed =
+    view && getActiveSlugFromHash() === change.pageSlug
+      ? commitSuggestionInDoc(view.state, change.id)
+      : null
+  const handledEditIds = committed?.handledEditIds ?? new Set<string>()
+  if (committed && view) {
+    // The committed content is now ordinary body; dirtyTracker mirrors
+    // it into handle.bodyMarkdown synchronously on dispatch, so the
+    // markdown applies below see the updated body.
+    view.dispatch(committed.tr)
   }
 
   let allOk = true
   for (const edit of change.edits) {
+    // Already committed surgically in the doc — skip the markdown apply.
+    if (handledEditIds.has(edit.id)) continue
     if (edit.kind === 'add') {
       if (!edit.after) {
         allOk = false
