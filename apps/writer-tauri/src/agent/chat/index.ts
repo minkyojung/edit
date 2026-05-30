@@ -97,7 +97,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // Effort default: Haiku is the copyeditor lane (short, latency-
   // sensitive turns) → 'low'. Sonnet/Opus are the chat lane → 'medium'.
   // Caller's explicit choice always wins.
-  const effort: 'low' | 'medium' | 'high' =
+  const effort: 'low' | 'medium' | 'high' | 'xhigh' =
     effortOverride ?? (model.includes('haiku') ? 'low' : 'medium')
 
   // The user message that triggered this run — the last user turn in

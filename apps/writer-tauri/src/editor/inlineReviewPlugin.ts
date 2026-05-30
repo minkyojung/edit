@@ -62,6 +62,8 @@ import {
 import {
   reconcilePendingInserts,
   reconcilePendingDeletes,
+  getSuggestionMark,
+  parseMarkId,
 } from './markReconcile'
 import { anchorToTargets, isBlockInsertionReplace } from './pendingTargets'
 import { findTextRange } from './anchorSearch'
@@ -565,18 +567,15 @@ function scanPendingChangeAnchors(doc: PMNode): Map<string, number> {
   const out = new Map<string, number>()
   doc.descendants((node, pos) => {
     if (!node.isText) return true
-    const mark = node.marks.find(
-      (m) =>
-        m.type.name === 'proofSuggestion' &&
-        (m.attrs.kind === 'insert' || m.attrs.kind === 'delete'),
-    )
-    if (!mark) return true
-    const id = (mark.attrs.id as string | null) ?? ''
-    const changeId = id.split(':')[0]
-    if (!changeId) return true
+    const mark = getSuggestionMark(node)
+    if (!mark || (mark.attrs.kind !== 'insert' && mark.attrs.kind !== 'delete')) {
+      return true
+    }
+    const parsed = parseMarkId(mark.attrs.id as string)
+    if (!parsed) return true
     const end = pos + node.nodeSize
-    const cur = out.get(changeId)
-    if (cur === undefined || end > cur) out.set(changeId, end)
+    const cur = out.get(parsed.changeId)
+    if (cur === undefined || end > cur) out.set(parsed.changeId, end)
     return true
   })
   return out

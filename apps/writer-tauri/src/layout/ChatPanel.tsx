@@ -34,7 +34,8 @@ import { PromptInput } from '@/chat/PromptInput'
 import { ProposedChangesCard } from '@/chat/ProposedChangesCard'
 import {
   DEFAULT_CHAT_EFFORT,
-  DEFAULT_CHAT_MODEL,
+  clampEffort,
+  normalizeModel,
   type ChatTurn,
 } from '@/chat/types'
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
@@ -85,9 +86,16 @@ export function ChatPanel({ editorView, slug }: Props) {
 
   // Active thread's preferred model / effort. Threads created before these
   // fields existed return undefined; fall back to the defaults in that case.
+  // normalizeModel coerces a retired stored id (e.g. claude-opus-4-7) to a
+  // current one, and clampEffort snaps a stored `xhigh` down to `high` when
+  // the resolved model doesn't support it — so both the UI and the SDK call
+  // always see a valid pairing even for legacy threads.
   const activeThread = threads.threads.find((t) => t.id === activeId)
-  const activeThreadModel = activeThread?.model ?? DEFAULT_CHAT_MODEL
-  const activeThreadEffort = activeThread?.effort ?? DEFAULT_CHAT_EFFORT
+  const activeThreadModel = normalizeModel(activeThread?.model)
+  const activeThreadEffort = clampEffort(
+    activeThread?.effort ?? DEFAULT_CHAT_EFFORT,
+    activeThreadModel,
+  )
 
   // Single hook owns the streaming buffer state, the chat-level status, and
   // the run() dispatcher. Handlers below (handleSend / handleRegenerate /

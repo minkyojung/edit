@@ -67,8 +67,7 @@ function blockInsertId(node: PMNode): string | null {
   node.descendants((d) => {
     if (id !== null) return false
     if (d.isText && isInsertMarked(d)) {
-      const mark = d.marks.find((m) => m.type.name === 'proofSuggestion')
-      id = (mark?.attrs.id as string | null) ?? null
+      id = (getSuggestionMark(d)?.attrs.id as string | null) ?? null
       return false
     }
     return true
@@ -191,10 +190,8 @@ function presentDeletes(doc: PMNode): Map<string, { from: number; to: number }> 
   const present = new Map<string, { from: number; to: number }>()
   doc.descendants((node, pos) => {
     if (!node.isText) return true
-    const mark = node.marks.find(
-      (m) => m.type.name === 'proofSuggestion' && m.attrs.kind === 'delete',
-    )
-    if (!mark) return true
+    const mark = getSuggestionMark(node)
+    if (!mark || mark.attrs.kind !== 'delete') return true
     const id = (mark.attrs.id as string | null) ?? ''
     const from = pos
     const to = pos + node.nodeSize
@@ -253,7 +250,7 @@ export function parseMarkId(
   return { changeId: parts[0], editId: parts[1] }
 }
 
-function proofMark(node: PMNode): Mark | undefined {
+export function getSuggestionMark(node: PMNode): Mark | undefined {
   return node.marks.find((m) => m.type.name === 'proofSuggestion')
 }
 
@@ -266,7 +263,7 @@ function isBlockFullyDeleted(node: PMNode, changeId: string): boolean {
   node.descendants((d) => {
     if (d.isText) {
       hasText = true
-      const m = proofMark(d)
+      const m = getSuggestionMark(d)
       if (!(m && m.attrs.kind === 'delete' && parseMarkId(m.attrs.id as string)?.changeId === changeId)) {
         allDeleted = false
       }
@@ -314,7 +311,7 @@ export function commitSuggestionInDoc(
       remove.push({ from: pos, to: pos + node.nodeSize })
       node.descendants((d) => {
         if (d.isText) {
-          const m = proofMark(d)
+          const m = getSuggestionMark(d)
           if (m) note(m)
         }
         return true
@@ -322,7 +319,7 @@ export function commitSuggestionInDoc(
       return false
     }
     if (node.isText) {
-      const m = proofMark(node)
+      const m = getSuggestionMark(node)
       if (m && parseMarkId(m.attrs.id as string)?.changeId === changeId) {
         const span = { from: pos, to: pos + node.nodeSize }
         if (m.attrs.kind === 'insert') unmark.push(span)

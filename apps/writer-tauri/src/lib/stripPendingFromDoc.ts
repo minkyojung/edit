@@ -73,6 +73,23 @@ function collectPendingRanges(doc: PMNode): Array<[number, number]> {
   return ranges
 }
 
+/** Single cheap pass: does the doc contain ANY insert mark? Early-exits
+ * on the first hit. Lets the common no-pending case (every keystroke,
+ * via dirtyTracker) skip the expensive `collectPendingRanges`, whose
+ * per-block `isBlockFullyPending` does a nested descent. */
+function hasInsertMark(doc: PMNode): boolean {
+  let found = false
+  doc.descendants((node) => {
+    if (found) return false
+    if (node.isText && isInsertMarked(node)) {
+      found = true
+      return false
+    }
+    return true
+  })
+  return found
+}
+
 /** Return a copy of `doc` with every pending-insert region removed, or
  * the same `doc` reference unchanged when there is no pending content.
  *
@@ -82,6 +99,10 @@ function collectPendingRanges(doc: PMNode): Array<[number, number]> {
  * fixup (joining, lifting empty wrappers), so this function never does
  * manual Fragment surgery. */
 export function stripPendingFromDoc(doc: PMNode): PMNode {
+  // Hot path: no pending insert anywhere → nothing to strip. Avoids the
+  // nested-walk cost of collectPendingRanges on the common keystroke.
+  if (!hasInsertMark(doc)) return doc
+
   const ranges = collectPendingRanges(doc)
   if (ranges.length === 0) return doc
 

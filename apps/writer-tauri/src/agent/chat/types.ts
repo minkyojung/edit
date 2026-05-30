@@ -72,8 +72,9 @@ export interface RunChatArgs {
   /** Anthropic model id. Defaults to claude-sonnet-4-6. */
   model?: string
   /** Reasoning effort level passed straight to the SDK's first-class
-   * `effort` option. Omit to let the SDK pick its default. */
-  effort?: 'low' | 'medium' | 'high'
+   * `effort` option. `xhigh` is Opus-only; the SDK falls back to `high` on
+   * other models. Omit to let the SDK pick its default. */
+  effort?: 'low' | 'medium' | 'high' | 'xhigh'
   /** Relay-tool names the sidecar should expose for this run. Defaults to
    * `['propose_change']` so existing callers (free chat, review) keep
    * inline mark editing. Slash commands pass an empty list (or a kind-

@@ -19,7 +19,7 @@ export type RunOverrides = {
   systemPrompt: string
   prompt: string
   model?: string
-  effort?: 'low' | 'medium' | 'high'
+  effort?: ChatEffort
   relayTools: string[]
   /** Optional final-content override. Called once the run settles
    * successfully — receives counts of propose_change calls observed,

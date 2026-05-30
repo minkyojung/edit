@@ -1,16 +1,16 @@
 // Reasoning-effort toggle for the PromptInput footer.
 //
-// Visual: three concentric circles (target/bullseye) whose rings fade in
-// as effort climbs — low fills only the centre, high fills all three.
-// Click cycles low → medium → high → low. Disabled while a turn is
-// streaming for the same reason ModelSelect is: switching mid-flight
+// Visual: concentric circles (target/bullseye), one ring per effort level
+// the current model supports — so the icon shows three rings for Sonnet/
+// Haiku and four for Opus (which unlocks `xhigh`). Rings fill inward-out as
+// effort climbs: the lowest level lights only the centre, the highest lights
+// them all. Click cycles through the model's levels. Disabled while a turn
+// is streaming for the same reason ModelSelect is: switching mid-flight
 // would mismatch the prompt with the new effort on the next retry.
 
 import { useRef, useState } from 'react'
 import {
-  CHAT_EFFORTS,
   CHAT_EFFORT_LABELS,
-  CHAT_EFFORT_OPACITIES,
   type ChatEffort,
 } from '@/chat/types'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -18,12 +18,25 @@ import { cn } from '@/lib/utils'
 
 interface Props {
   value: ChatEffort
+  /** Levels the current model offers, ascending. Drives both the cycle
+   * order and the number of rings drawn. */
+  efforts: readonly ChatEffort[]
   onChange: (next: ChatEffort) => void
   disabled?: boolean
 }
 
-export function EffortButton({ value, onChange, disabled }: Props) {
-  const [inner, middle, outer] = CHAT_EFFORT_OPACITIES[value]
+// Bullseye geometry inside the 24×24 viewBox: rings spread evenly from the
+// centre dot (r=2) to the outer edge (r=10), so the outer ring sits in the
+// same place regardless of count and only the in-between spacing changes.
+function ringRadii(count: number): number[] {
+  if (count <= 1) return [2]
+  return Array.from({ length: count }, (_, i) => 2 + (i * 8) / (count - 1))
+}
+
+export function EffortButton({ value, efforts, onChange, disabled }: Props) {
+  // -1 (value not in the list, e.g. mid-clamp) falls back to the centre.
+  const index = Math.max(0, efforts.indexOf(value))
+  const radii = ringRadii(efforts.length)
   // Controlled tooltip so a click cycles the value without dismissing the
   // popup (Radix's default behavior is to close on pointerdown). We keep
   // it open while the pointer is over the trigger; the label re-renders
@@ -33,8 +46,8 @@ export function EffortButton({ value, onChange, disabled }: Props) {
 
   function cycle() {
     if (disabled) return
-    const idx = CHAT_EFFORTS.indexOf(value)
-    onChange(CHAT_EFFORTS[(idx + 1) % CHAT_EFFORTS.length])
+    const idx = efforts.indexOf(value)
+    onChange(efforts[(idx + 1) % efforts.length])
     setOpen(true)
   }
 
@@ -83,27 +96,18 @@ export function EffortButton({ value, onChange, disabled }: Props) {
             strokeLinecap="round"
             strokeLinejoin="round"
           >
-            <circle
-              cx="12"
-              cy="12"
-              r="10"
-              opacity={outer}
-              style={{ transition: 'opacity 0.15s' }}
-            />
-            <circle
-              cx="12"
-              cy="12"
-              r="6"
-              opacity={middle}
-              style={{ transition: 'opacity 0.15s' }}
-            />
-            <circle
-              cx="12"
-              cy="12"
-              r="2"
-              opacity={inner}
-              style={{ transition: 'opacity 0.15s' }}
-            />
+            {radii.map((r, i) => (
+              <circle
+                key={i}
+                cx="12"
+                cy="12"
+                r={r}
+                // A ring is lit once effort reaches its level — rings at or
+                // below the selected index are solid, the rest dimmed.
+                opacity={i <= index ? 1 : 0.2}
+                style={{ transition: 'opacity 0.15s' }}
+              />
+            ))}
           </svg>
         </button>
       </TooltipTrigger>

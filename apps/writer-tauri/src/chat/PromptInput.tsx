@@ -15,7 +15,7 @@ import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
 import { SlashPalette } from '@/chat/SlashPalette'
 import { listCommands, type LoadedCommand } from '@/chat/commands'
-import type { ChatEffort, ChatModel } from '@/chat/types'
+import { effortsForModel, type ChatEffort, type ChatModel } from '@/chat/types'
 import { cn } from '@/lib/utils'
 
 // Matches a slash command at the start of input — `/`, then optional
@@ -248,7 +248,12 @@ export function PromptInput({
         )}
       />
       <div className="flex items-center justify-between gap-2">
-        <EffortButton value={effort} onChange={onEffortChange} disabled={isStreaming} />
+        <EffortButton
+          value={effort}
+          efforts={effortsForModel(model)}
+          onChange={onEffortChange}
+          disabled={isStreaming}
+        />
         <div className="flex items-center gap-1">
           <ModelSelect value={model} onChange={onModelChange} disabled={isStreaming} />
           <Tooltip>

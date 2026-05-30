@@ -16,42 +16,71 @@
 /** Models the user can pick from in the PromptInput model selector.
  * Kept narrow + explicit so the UI can display friendly labels without
  * round-tripping through agent ids. The sidecar accepts the raw id. */
-export type ChatModel = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-7'
+export type ChatModel = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-8'
 
 export const CHAT_MODELS: readonly ChatModel[] = [
   'claude-haiku-4-5',
   'claude-sonnet-4-6',
-  'claude-opus-4-7',
+  'claude-opus-4-8',
 ] as const
 
 export const CHAT_MODEL_LABELS: Record<ChatModel, string> = {
   'claude-haiku-4-5': 'Haiku 4.5',
   'claude-sonnet-4-6': 'Sonnet 4.6',
-  'claude-opus-4-7': 'Opus 4.7',
+  'claude-opus-4-8': 'Opus 4.8',
 }
 
 export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-4-6'
 
-/** Reasoning effort the model puts into a turn. Mirrors the Claude Agent
- * SDK's first-class `effort` option (we expose its 3 most common levels;
- * `xhigh` / `max` are skipped as they're Opus-specific). */
-export type ChatEffort = 'low' | 'medium' | 'high'
+/** Coerce a persisted model id to a currently-offered one. Threads created
+ * before a model was retired carry an id no longer in CHAT_MODELS (e.g.
+ * `claude-opus-4-7`); map the known predecessor to its successor and fall
+ * back to the default for anything else, so the selector and the per-model
+ * effort list never read an unknown key. */
+export function normalizeModel(model: string | undefined): ChatModel {
+  if (model && (CHAT_MODELS as readonly string[]).includes(model)) return model as ChatModel
+  if (model === 'claude-opus-4-7') return 'claude-opus-4-8'
+  return DEFAULT_CHAT_MODEL
+}
 
-export const CHAT_EFFORTS: readonly ChatEffort[] = ['low', 'medium', 'high'] as const
+/** Reasoning effort the model puts into a turn. Mirrors the Claude Agent
+ * SDK's first-class `effort` option. `xhigh` is Opus-only — the SDK falls
+ * back to `high` on other models, so we only offer it where it's real (see
+ * EFFORTS_BY_MODEL). `max` is intentionally not exposed: its token/time cost
+ * is disproportionate for a writing tool. */
+export type ChatEffort = 'low' | 'medium' | 'high' | 'xhigh'
+
+/** Every valid effort value — the enum used to validate slash-command
+ * frontmatter. The per-model subset a user can actually pick lives in
+ * EFFORTS_BY_MODEL. */
+export const CHAT_EFFORTS: readonly ChatEffort[] = ['low', 'medium', 'high', 'xhigh'] as const
+
+/** Effort levels offered per model, in ascending order. Opus exposes the
+ * extra `xhigh` gear; the others top out at `high`. The EffortButton draws
+ * one ring per entry, so this also drives how many circles the icon shows. */
+export const EFFORTS_BY_MODEL: Record<ChatModel, readonly ChatEffort[]> = {
+  'claude-haiku-4-5': ['low', 'medium', 'high'],
+  'claude-sonnet-4-6': ['low', 'medium', 'high'],
+  'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh'],
+}
+
+export function effortsForModel(model: ChatModel): readonly ChatEffort[] {
+  return EFFORTS_BY_MODEL[model]
+}
+
+/** Snap an effort to one the model supports, falling back to its highest
+ * level. Keeps a thread's stored `xhigh` from leaking into the UI / the SDK
+ * call after the user switches to a model that tops out at `high`. */
+export function clampEffort(effort: ChatEffort, model: ChatModel): ChatEffort {
+  const allowed = EFFORTS_BY_MODEL[model]
+  return allowed.includes(effort) ? effort : allowed[allowed.length - 1]
+}
 
 export const CHAT_EFFORT_LABELS: Record<ChatEffort, string> = {
   low: 'Fast response',
   medium: 'Balanced',
   high: 'Deep thinking',
-}
-
-/** Per-ring opacity tuple [inner, middle, outer] for the EffortButton's
- * concentric-circle target icon — the rings fill outward as effort
- * increases. */
-export const CHAT_EFFORT_OPACITIES: Record<ChatEffort, [number, number, number]> = {
-  low: [1, 0.2, 0.2],
-  medium: [1, 1, 0.2],
-  high: [1, 1, 1],
+  xhigh: 'Maximum thinking',
 }
 
 export const DEFAULT_CHAT_EFFORT: ChatEffort = 'medium'
