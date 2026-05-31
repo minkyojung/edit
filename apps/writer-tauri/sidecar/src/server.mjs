@@ -398,6 +398,23 @@ function buildProposeMultiEditTool(runId, emit) {
 
 const SIDECAR_VERSION = '0.1.0'
 
+// Plan-mode workflow body. Replaces the SDK's default code-implementation
+// plan steps (the CLI still wraps this with its read-only preamble + the
+// ExitPlanMode footer). This is a prose/wiki vault, not a codebase, so we
+// steer the model away from diff-style output — a plan rendered as a
+// ```diff block looks like a pile of edits in the chat, which it isn't.
+const PLAN_MODE_INSTRUCTIONS = [
+  "You are planning changes to a personal wiki / writing vault — prose, not code.",
+  "Write the plan as short, plain prose and bullet points, in the user's language",
+  '(Korean when the conversation is in Korean).',
+  '',
+  'Do NOT format the plan as a diff: no ```diff fences, no code blocks for the',
+  'plan body, no leading +/- markers. Those make a plan look like edits.',
+  '',
+  'Just state briefly: which page(s) you will change, what each change is, and why.',
+  'Keep it tight. When the plan is ready, ask the user to proceed.',
+].join('\n')
+
 /** Dump a thrown error's full context to stderr so the Rust supervisor's
  * stderr drain (and the dev console downstream) can see what actually
  * happened. The user-facing chat/error notification stays terse — this
@@ -669,6 +686,10 @@ export class Server {
     //     longer consulted, so the post-approval edits run normally.
     //   reads (built-in + read_page/search_wiki) → pass through.
     if (permissionMode === 'plan') {
+      // Steer the plan workflow toward prose (no diff blocks) — see the
+      // PLAN_MODE_INSTRUCTIONS note. The SDK wraps this with its own
+      // read-only + ExitPlanMode protocol text.
+      options.planModeInstructions = PLAN_MODE_INSTRUCTIONS
       options.canUseTool = async (toolName, input) => {
         if (toolName === 'ExitPlanMode' || toolName === 'AskUserQuestion') {
           awaitingDecision++
