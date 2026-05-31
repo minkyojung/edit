@@ -32,6 +32,7 @@ import { useContextUsageStore } from '@/state/contextUsageStore'
 import { usePendingPermissions } from '@/state/pendingPermissionsStore'
 import { usePermissionGate } from '@/chat/hooks/usePermissionGate'
 import { QuestionCard } from '@/chat/QuestionCard'
+import { PlanApprovalCard } from '@/chat/PlanApprovalCard'
 import { PromptInput } from '@/chat/PromptInput'
 import {
   DEFAULT_CHAT_EFFORT,
@@ -573,6 +574,11 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
         {pendingPermission?.toolName === 'AskUserQuestion' && (
           <div className="px-1">
             <QuestionCard pending={pendingPermission} />
+          </div>
+        )}
+        {pendingPermission?.toolName === 'ExitPlanMode' && (
+          <div className="px-1">
+            <PlanApprovalCard pending={pendingPermission} />
           </div>
         )}
         <div ref={bottomRef} />

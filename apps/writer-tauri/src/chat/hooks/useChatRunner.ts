@@ -208,12 +208,20 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           prompt: overrides?.prompt,
           systemPrompt: overrides?.systemPrompt,
           appendDocument: overrides ? false : undefined,
-          relayTools: isPlan ? [] : overrides?.relayTools,
+          // Plan turns keep the propose_* relays available so the model can
+          // execute once the plan is approved. The gate (sidecar canUseTool)
+          // denies them while planning and allows them after ExitPlanMode is
+          // approved; read_page/search_wiki are allowed throughout.
+          relayTools: isPlan
+            ? ['read_page', 'search_wiki', 'propose_edit', 'propose_multi_edit', 'propose_write']
+            : overrides?.relayTools,
           permissionMode: isPlan ? 'plan' : undefined,
-          // AskUserQuestion lets the model ask clarifying questions before
-          // planning; it must be in the tool list or the SDK never offers it.
-          // (ExitPlanMode + the propose_* relays come with C3.)
-          builtinTools: isPlan ? ['Read', 'Glob', 'Grep', 'AskUserQuestion'] : undefined,
+          // Interactive plan tools must be in the list or the SDK never offers
+          // them: AskUserQuestion (ask before planning), ExitPlanMode (propose
+          // the finished plan for approval).
+          builtinTools: isPlan
+            ? ['Read', 'Glob', 'Grep', 'AskUserQuestion', 'ExitPlanMode']
+            : undefined,
           model: overrides?.model ?? activeThreadModel,
           effort: overrides?.effort ?? activeThreadEffort,
           sessionStarted,
