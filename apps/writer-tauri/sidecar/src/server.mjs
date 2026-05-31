@@ -756,6 +756,7 @@ export class Server {
     // fresh token and retry once. Any other error (or a second AUTH) ends
     // the chat.
     let lastResult = null
+    let lastContextUsage = null
     for (let attempt = 1; attempt <= 2; attempt++) {
       // Hand the token to the SDK via options.env so we don't mutate the
       // sidecar's own process.env (which other concurrent chats share).
@@ -769,6 +770,7 @@ export class Server {
 
       let streamError = null
       lastResult = null
+      lastContextUsage = null
       // Inactivity watchdog. The Claude Agent SDK delegates the actual HTTPS
       // request to a `claude` CLI subprocess; if the network drops mid-stream
       // (Wi-Fi off, ISP hang) the subprocess sits waiting on TCP, no events
@@ -787,20 +789,53 @@ export class Server {
           controller.abort()
         }
       }, 5_000)
+      // STEP 3: streaming-input mode. Passing `prompt` as an async iterable
+      // (not a bare string) keeps the SDK control channel open — the only
+      // way to issue control requests like getContextUsage(). The generator
+      // yields the single user message, then parks on `inputClosed` so the
+      // query stays alive; we release it AFTER fetching the context breakdown
+      // at result time, so the subprocess tears down only once we're done.
+      // Releasing naively (returning right after the yield) closes the query
+      // before the result lands — see the spike notes in
+      // docs/llm-control-surface.md.
+      let releaseInput
+      const inputClosed = new Promise((resolve) => {
+        releaseInput = resolve
+      })
+      const makeInput = async function* () {
+        yield {
+          type: 'user',
+          message: { role: 'user', content: prompt },
+          parent_tool_use_id: null,
+        }
+        await inputClosed
+      }
       try {
-        const stream = query({ prompt, options })
+        const stream = query({ prompt: makeInput(), options })
         for await (const event of stream) {
           if (controller.signal.aborted) break
           lastEventAt = Date.now()
           this.emit(notification('chat/event', { runId, event }))
           if (event?.type === 'result') {
             lastResult = event
+            // Fetch the per-category context breakdown while the input is
+            // still open (control requests need a live streaming session).
+            // Best-effort: on any failure the host falls back to the `usage`
+            // totals also carried on chat/done.
+            try {
+              lastContextUsage = await stream.getContextUsage()
+            } catch (err) {
+              logErrorContext('getContextUsage', runId, err, { mode: this.mode })
+              lastContextUsage = null
+            }
+            releaseInput() // close input → query ends, loop completes
           }
         }
       } catch (err) {
         streamError = err
       } finally {
         clearInterval(watchdog)
+        releaseInput() // never leave the input generator parked
       }
 
       if (controller.signal.aborted) {
@@ -856,6 +891,9 @@ export class Server {
         stopReason: lastResult?.stop_reason ?? null,
         usage: lastResult?.usage ?? null,
         totalCostUsd: lastResult?.total_cost_usd ?? null,
+        // STEP 3: full per-category breakdown from getContextUsage(), or null
+        // when the control request failed (host falls back to `usage`).
+        contextUsage: lastContextUsage,
       }),
     )
     this.activeChats.delete(runId)
