@@ -256,7 +256,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       }),
       listen<DoneEvent>('claude:done', (e) => {
         if (e.payload.runId !== runId) return
-        recordContextUsage(threadId, model, e.payload.usage)
+        recordContextUsage(threadId, model, e.payload.usage, e.payload.contextUsage)
         settleOk(e.payload.stopReason)
       }),
       listen<ErrorEvent>('claude:error', (e) => {
@@ -396,7 +396,30 @@ function recordContextUsage(
   threadId: string,
   model: string,
   usage: DoneEvent['usage'],
+  contextUsage?: DoneEvent['contextUsage'],
 ): void {
+  // STEP 3: prefer the exact per-category breakdown from getContextUsage().
+  // It carries the authoritative window size and the auto-compact trigger,
+  // so the gauge shows real category rows and aligns its warning line to the
+  // point compaction actually fires (converted from tokens to a 0..1
+  // fraction the gauge/popover compare against).
+  if (contextUsage && contextUsage.maxTokens > 0) {
+    useContextUsageStore.getState().set(threadId, {
+      totalTokens: contextUsage.totalTokens,
+      maxTokens: contextUsage.maxTokens,
+      model: contextUsage.model ?? model,
+      categories: contextUsage.categories,
+      autoCompactThreshold:
+        contextUsage.autoCompactThreshold != null
+          ? contextUsage.autoCompactThreshold / contextUsage.maxTokens
+          : undefined,
+      updatedAt: Date.now(),
+    })
+    return
+  }
+  // Fallback (no contextUsage): approximate the total from `usage` and the
+  // per-model window estimate. A turn with no usage leaves the prior
+  // snapshot untouched.
   if (!usage) return
   const total =
     (usage.input_tokens ?? 0) +

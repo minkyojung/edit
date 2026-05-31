@@ -197,6 +197,23 @@ export interface DoneEvent {
     cache_creation_input_tokens?: number
   } | null
   totalCostUsd?: number | null
+  /** STEP 3: exact per-category context breakdown from the sidecar's
+   * query.getContextUsage() call, when available. `maxTokens` and
+   * `autoCompactThreshold` are token counts (the threshold is the point
+   * at which auto-compaction triggers). Null when the control request
+   * failed — the gauge then falls back to the `usage` totals. */
+  contextUsage?: {
+    totalTokens: number
+    maxTokens: number
+    model?: string
+    categories?: Array<{
+      name: string
+      tokens: number
+      color?: string
+      isDeferred?: boolean
+    }>
+    autoCompactThreshold?: number
+  } | null
 }
 
 export interface ErrorEvent {
