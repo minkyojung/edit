@@ -438,6 +438,9 @@ export class Server {
     this.token = null
     // runId -> AbortController
     this.activeChats = new Map()
+    // decisionId -> { resolve, reject } for in-flight canUseTool gates
+    // (plan approval / clarifying questions) awaiting a host decision.
+    this.pendingDecisions = new Map()
     this.shuttingDown = false
     // Pending waiters for the next setToken call. Resolved when a new token
     // is pushed; used by the AUTH-retry path to coordinate refreshes.
@@ -467,6 +470,8 @@ export class Server {
           return this.#handleChat(id, params)
         case 'chat/cancel':
           return this.#handleCancel(params)
+        case 'chat/decision':
+          return this.#handleDecision(params)
         case 'shutdown':
           return this.#handleShutdown(id)
         default:
@@ -592,6 +597,17 @@ export class Server {
       builtinTools,
     } = params
 
+    // Plan-mode interactive gate (canUseTool) state. `awaitingDecision` pauses
+    // the idle watchdog while a decision (plan approval / clarifying question)
+    // is parked on the user. `activeStream` is the live query, captured in the
+    // attempt loop so the gate can call setPermissionMode on plan approval.
+    let awaitingDecision = 0
+    let activeStream = null
+    // Flipped true once the user approves an ExitPlanMode plan — after which
+    // the gate stops denying the propose_* write relays so the model can
+    // execute the approved plan.
+    let planApproved = false
+
     const options = {
       permissionMode,
       abortController: controller,
@@ -640,6 +656,70 @@ export class Server {
     // SDK auto-resolves and the env var is intentionally unset.
     if (process.env.CLAUDE_CODE_CLI_PATH) {
       options.pathToClaudeCodeExecutable = process.env.CLAUDE_CODE_CLI_PATH
+    }
+
+    // Plan mode routes through the SDK's canUseTool gate so interactive tools
+    // pause for the user. Attached ONLY for 'plan' — edit turns run under
+    // bypassPermissions, which never consults canUseTool, so this is dormant
+    // there (matching the pre-existing behaviour). Routing:
+    //   ExitPlanMode / AskUserQuestion → ask the host (chat/permission →
+    //     user → chat/decision), park until the user decides.
+    //   propose_* writes → denied while planning (read-only). On plan
+    //     approval the mode flips to bypassPermissions and this gate is no
+    //     longer consulted, so the post-approval edits run normally.
+    //   reads (built-in + read_page/search_wiki) → pass through.
+    if (permissionMode === 'plan') {
+      options.canUseTool = async (toolName, input) => {
+        if (toolName === 'ExitPlanMode' || toolName === 'AskUserQuestion') {
+          awaitingDecision++
+          try {
+            const decision = await this.#requestDecision(runId, toolName, input, controller)
+            if (toolName === 'AskUserQuestion') {
+              return {
+                behavior: 'allow',
+                updatedInput: { questions: input.questions, answers: decision?.answers ?? {} },
+              }
+            }
+            // ExitPlanMode: approve → leave plan mode (switch to 'default')
+            // and flip planApproved so the propose_* relays are allowed below.
+            // We use 'default' rather than 'bypassPermissions' because the
+            // latter requires launching with --dangerously-skip-permissions;
+            // 'default' keeps every post-plan tool under this same gate.
+            // Reject → feed the message back so the model revises the plan.
+            if (decision?.type === 'approve') {
+              planApproved = true
+              if (activeStream) {
+                try {
+                  await activeStream.setPermissionMode('default')
+                } catch (e) {
+                  logErrorContext('setPermissionMode', runId, e, { mode: this.mode })
+                }
+              }
+              return { behavior: 'allow', updatedInput: input }
+            }
+            return {
+              behavior: 'deny',
+              message:
+                decision?.message ||
+                'The user asked you to revise the plan before proceeding.',
+            }
+          } finally {
+            awaitingDecision--
+          }
+        }
+        if (typeof toolName === 'string' && toolName.includes('propose_')) {
+          // Blocked while planning; allowed once the plan is approved so the
+          // model can execute it. Each proposal still surfaces as a Keep/Reject
+          // card on the host — approval gates the batch, not each edit.
+          if (planApproved) return { behavior: 'allow', updatedInput: input }
+          return {
+            behavior: 'deny',
+            message:
+              'Plan mode is read-only. Lay out the full plan, then call ExitPlanMode to proceed.',
+          }
+        }
+        return { behavior: 'allow', updatedInput: input }
+      }
     }
 
     // Phase 1 of the Claude-Code-style migration: when the host gives us
@@ -784,6 +864,14 @@ export class Server {
       let lastEventAt = Date.now()
       const watchdog = setInterval(() => {
         if (controller.signal.aborted) return
+        // Paused while a decision (plan approval / clarifying question) is
+        // parked on the user — no events flow during the wait, and the user
+        // may take as long as they like. Keep lastEventAt fresh so the turn
+        // doesn't time out the instant the decision resolves.
+        if (awaitingDecision > 0) {
+          lastEventAt = Date.now()
+          return
+        }
         if (Date.now() - lastEventAt > IDLE_MS) {
           idleTimedOut = true
           controller.abort()
@@ -811,8 +899,8 @@ export class Server {
         await inputClosed
       }
       try {
-        const stream = query({ prompt: makeInput(), options })
-        for await (const event of stream) {
+        activeStream = query({ prompt: makeInput(), options })
+        for await (const event of activeStream) {
           if (controller.signal.aborted) break
           lastEventAt = Date.now()
           this.emit(notification('chat/event', { runId, event }))
@@ -823,7 +911,7 @@ export class Server {
             // Best-effort: on any failure the host falls back to the `usage`
             // totals also carried on chat/done.
             try {
-              lastContextUsage = await stream.getContextUsage()
+              lastContextUsage = await activeStream.getContextUsage()
             } catch (err) {
               logErrorContext('getContextUsage', runId, err, { mode: this.mode })
               lastContextUsage = null
@@ -901,6 +989,44 @@ export class Server {
 
   #emitChatError(runId, code, message, retryable) {
     this.emit(notification('chat/error', { runId, code, message, retryable }))
+  }
+
+  // Park a canUseTool gate: emit a `chat/permission` notification carrying the
+  // tool + input, and return a Promise that resolves when the host sends the
+  // matching `chat/decision`. Rejected if the run is cancelled while waiting
+  // (the controller.abort listener), so a pending gate never leaks.
+  #requestDecision(runId, toolName, input, controller) {
+    return new Promise((resolve, reject) => {
+      const decisionId = globalThis.crypto.randomUUID()
+      const onAbort = () => {
+        this.pendingDecisions.delete(decisionId)
+        reject(new DOMException('cancelled while awaiting user decision', 'AbortError'))
+      }
+      this.pendingDecisions.set(decisionId, {
+        resolve: (d) => {
+          controller.signal.removeEventListener('abort', onAbort)
+          resolve(d)
+        },
+        reject: (e) => {
+          controller.signal.removeEventListener('abort', onAbort)
+          reject(e)
+        },
+      })
+      controller.signal.addEventListener('abort', onAbort, { once: true })
+      this.emit(notification('chat/permission', { runId, decisionId, toolName, input }))
+    })
+  }
+
+  // Host's answer to a parked gate. Resolves the matching pending decision so
+  // canUseTool returns and the SDK continues. Unknown / already-settled ids
+  // are ignored.
+  #handleDecision(params) {
+    const decisionId = params?.decisionId
+    if (typeof decisionId !== 'string') return
+    const pending = this.pendingDecisions.get(decisionId)
+    if (!pending) return
+    this.pendingDecisions.delete(decisionId)
+    pending.resolve(params?.decision ?? {})
   }
 
   #handleCancel(params) {

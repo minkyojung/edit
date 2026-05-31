@@ -84,6 +84,18 @@ pub struct ChatCancelArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChatDecisionArgs {
+    pub run_id: String,
+    pub decision_id: String,
+    /// Opaque decision payload forwarded verbatim to the sidecar's
+    /// canUseTool gate. Shapes: `{ "type": "approve" }` /
+    /// `{ "type": "reject", "message": "..." }` (ExitPlanMode) or
+    /// `{ "answers": { ... } }` (AskUserQuestion).
+    pub decision: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TitleArgs {
     pub run_id: String,
     pub model: String,
@@ -158,6 +170,25 @@ pub async fn claude_chat_cancel(app: AppHandle, args: ChatCancelArgs) -> Result<
     chat.notify("chat/cancel", Some(json!({ "runId": args.run_id })))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Answers a parked plan-mode gate (ExitPlanMode / AskUserQuestion). Routes
+/// the user's decision back to the sidecar's canUseTool callback so the turn
+/// resumes. Notification only — no response expected.
+#[tauri::command]
+pub async fn claude_chat_decision(app: AppHandle, args: ChatDecisionArgs) -> Result<(), String> {
+    let manager = get_manager(&app)?;
+    let chat = manager.chat_client().await;
+    chat.notify(
+        "chat/decision",
+        Some(json!({
+            "runId": args.run_id,
+            "decisionId": args.decision_id,
+            "decision": args.decision,
+        })),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Runs a single-shot chat on the title sidecar. Used for thread-title

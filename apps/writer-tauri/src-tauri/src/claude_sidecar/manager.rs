@@ -222,6 +222,11 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             // proposal in `pendingChangesStore` and applies it on
             // user Keep via the inline review widget.
             "chat/edit-pending" => "claude:edit-pending",
+            // Plan-mode interactive gate (canUseTool): the sidecar parks an
+            // ExitPlanMode / AskUserQuestion decision and emits this so the
+            // host can render the approval / question card. The user's choice
+            // returns via the `claude_chat_decision` command (chat/decision).
+            "chat/permission" => "claude:permission",
             // Structured ingest output. The sidecar's
             // submit_ingest_result MCP tool relays its full input
             // payload via this notification; the frontend's ingest
