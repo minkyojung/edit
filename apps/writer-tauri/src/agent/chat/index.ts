@@ -214,11 +214,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         if (e.payload.runId !== runId) return
         // Phase E5: unified flow. Map the sidecar payload into a
         // PendingChange and push. The sidebar dot lights up, the
-        // ProposedChangesCard surfaces the affected file as a chip,
-        // and the inline review widget renders the diff on the
-        // target page. There is no longer a separate PendingEditsBar
-        // entry — `pendingChangesStore` is the single source of
-        // truth for chat edits.
+        // inline suggestion card in the chat answer renders the diff
+        // with Keep / Reject, and the inline review widget renders the
+        // diff on the target page. There is no separate tray —
+        // `pendingChangesStore` is the single source of truth for chat
+        // edits, and every surface reads it.
         //
         // Mapping failure (unknown tool, file outside the catalog,
         // Write to a brand-new path) leaves the sidecar gate parked.

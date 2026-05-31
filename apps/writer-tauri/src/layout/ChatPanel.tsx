@@ -31,7 +31,6 @@ import {
 import { useChatRuns } from '@/stores/chatRuns'
 import { ThreadPicker } from '@/chat/ThreadPicker'
 import { PromptInput } from '@/chat/PromptInput'
-import { ProposedChangesCard } from '@/chat/ProposedChangesCard'
 import {
   DEFAULT_CHAT_EFFORT,
   clampEffort,
@@ -590,7 +589,6 @@ export function ChatPanel({ editorView, slug }: Props) {
           visible={!pinned && renderedTurns.length > 0}
           onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
         />
-        <ProposedChangesCard />
         <PromptInput
           status={chatStatus}
           disabled={!ready || !account.connected}

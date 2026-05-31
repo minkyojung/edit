@@ -322,7 +322,7 @@ function buildProposeEditTool(runId, emit) {
         content: [
           {
             type: 'text',
-            text: `Edit queued for user review (${pendingId.slice(0, 8)}).`,
+            text: `Edit queued for user review (id: ${pendingId}).`,
           },
         ],
       }
@@ -352,7 +352,7 @@ function buildProposeWriteTool(runId, emit) {
         content: [
           {
             type: 'text',
-            text: `Write queued for user review (${pendingId.slice(0, 8)}).`,
+            text: `Write queued for user review (id: ${pendingId}).`,
           },
         ],
       }
@@ -388,7 +388,7 @@ function buildProposeMultiEditTool(runId, emit) {
         content: [
           {
             type: 'text',
-            text: `MultiEdit queued for user review (${pendingId.slice(0, 8)}).`,
+            text: `MultiEdit queued for user review (id: ${pendingId}).`,
           },
         ],
       }

@@ -32,21 +32,15 @@ function toLines(value: string): string[] {
   return lines
 }
 
-/** Flatten a pending change's edits into `+`/`-` diff lines.
- *
- * Per edit the "before" text is:
- *   - whole-file replace (replace with no `before`) → the page snapshot
- *   - otherwise → the edit's own `before` (empty for a pure add)
- * and the "after" is the edit's `after` (empty for a pure delete). */
-export function computePendingDiffLines(change: PendingChange): DiffLine[] {
+/** Flatten `{ before, after }` pairs into `+`/`-` diff lines. The shared
+ * primitive behind both the store-backed pending diff and the chat
+ * message's input-derived diff, so every surface renders edits the same
+ * way. */
+export function diffPairsToLines(
+  pairs: Array<{ before: string; after: string }>,
+): DiffLine[] {
   const out: DiffLine[] = []
-  for (const edit of change.edits) {
-    const before =
-      edit.kind === 'replace' && !edit.before
-        ? (change.pageMarkdownSnapshot ?? '')
-        : (edit.before ?? '')
-    const after = edit.after ?? ''
-
+  for (const { before, after } of pairs) {
     const parts = diffLines(withTrailingNewline(before), withTrailingNewline(after))
     for (const part of parts) {
       if (!part.added && !part.removed) continue // unchanged context — skip
@@ -57,4 +51,22 @@ export function computePendingDiffLines(change: PendingChange): DiffLine[] {
     }
   }
   return out
+}
+
+/** Flatten a pending change's edits into `+`/`-` diff lines.
+ *
+ * Per edit the "before" text is:
+ *   - whole-file replace (replace with no `before`) → the page snapshot
+ *   - otherwise → the edit's own `before` (empty for a pure add)
+ * and the "after" is the edit's `after` (empty for a pure delete). */
+export function computePendingDiffLines(change: PendingChange): DiffLine[] {
+  return diffPairsToLines(
+    change.edits.map((edit) => ({
+      before:
+        edit.kind === 'replace' && !edit.before
+          ? (change.pageMarkdownSnapshot ?? '')
+          : (edit.before ?? ''),
+      after: edit.after ?? '',
+    })),
+  )
 }

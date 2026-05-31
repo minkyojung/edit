@@ -218,6 +218,13 @@ export interface ToolPart {
   state: ToolPartState
   output?: unknown
   errorText?: string
+  /** For host-bridged edit tools (propose_edit / propose_write /
+   * propose_multi_edit): the sidecar-minted pendingId of the
+   * PendingChange this call queued, parsed from the tool_result text.
+   * Links this message part to its `pendingChangesStore` entry so the
+   * inline suggestion card can render the diff and drive Keep / Reject.
+   * Undefined until the tool_result lands (and for non-edit tools). */
+  pendingId?: string
 }
 
 export interface StepStartPart {
