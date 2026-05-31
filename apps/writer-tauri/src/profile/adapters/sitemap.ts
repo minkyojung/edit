@@ -10,7 +10,7 @@
 
 import type { Document } from './index'
 import { fetchPage, MAX_DOCS_PER_RUN } from './index'
-import { fetchViaReadability } from './readability'
+import { extractPage } from './extractPage'
 
 const SITEMAP_NS = 'http://www.sitemaps.org/schemas/sitemap/0.9'
 
@@ -25,13 +25,13 @@ export async function fetchViaSitemap(inputUrl: string): Promise<Document[]> {
   if (urls.length === 0) return []
 
   // Cap before fetching so we don't fire 200 GETs for a big sitemap.
-  // Each URL goes through Readability sequentially-ish (in batches)
-  // so the LLM-bound network doesn't get hammered.
+  // Each URL goes through extractPage sequentially so the LLM-bound
+  // network doesn't get hammered.
   const limited = urls.slice(0, MAX_DOCS_PER_RUN)
   const docs: Document[] = []
   for (const url of limited) {
     try {
-      const result = await fetchViaReadability(url)
+      const result = await extractPage(url)
       if (result[0]) docs.push(result[0])
     } catch (err) {
       console.warn('[adapters] sitemap entry failed', url, err)

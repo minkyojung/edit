@@ -13,9 +13,10 @@
 // strips BOM and XML-invalid control chars, so the parser doesn't
 // reject otherwise-fine feeds.
 
+import { createMarkdownContent } from 'defuddle/full'
 import type { Document, FetchedPage } from './index'
 import { fetchPage, MAX_DOCS_PER_RUN } from './index'
-import { htmlToPlainText, resolveUrl } from './html'
+import { resolveUrl } from './html'
 
 const ATOM_NS = 'http://www.w3.org/2005/Atom'
 const CONTENT_NS = 'http://purl.org/rss/1.0/modules/content/'
@@ -95,10 +96,11 @@ function parseRssItem(el: Element, feedUrl: string): Document {
   // often just a summary. Prefer content:encoded when present.
   const contentHtml =
     textOfNS(el, CONTENT_NS, 'encoded') ?? textOf(el, 'description') ?? ''
+  const sourceUrl = resolveUrl(link, feedUrl)
   return {
-    sourceUrl: resolveUrl(link, feedUrl),
+    sourceUrl,
     title: title.trim(),
-    contentMarkdown: htmlToPlainText(contentHtml),
+    contentMarkdown: createMarkdownContent(contentHtml, sourceUrl),
     publishedAt: pubDate ?? undefined,
     author: author?.trim(),
   }
@@ -116,10 +118,11 @@ function parseAtomEntry(el: Element, feedUrl: string): Document {
   const author = textOfNS(el.getElementsByTagNameNS(ATOM_NS, 'author')[0] ?? el, ATOM_NS, 'name')
   const contentHtml =
     textOfNS(el, ATOM_NS, 'content') ?? textOfNS(el, ATOM_NS, 'summary') ?? ''
+  const sourceUrl = resolveUrl(link, feedUrl)
   return {
-    sourceUrl: resolveUrl(link, feedUrl),
+    sourceUrl,
     title: title.trim(),
-    contentMarkdown: htmlToPlainText(contentHtml),
+    contentMarkdown: createMarkdownContent(contentHtml, sourceUrl),
     publishedAt: published ?? undefined,
     author: author?.trim(),
   }

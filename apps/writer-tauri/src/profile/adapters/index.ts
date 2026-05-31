@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { fetchViaRss } from './rss'
 import { fetchViaSitemap } from './sitemap'
-import { fetchViaReadability } from './readability'
+import { extractPage } from './extractPage'
 
 /** A single fetched post. Adapter output and pipeline input.
  * Plain text in contentMarkdown (HTML tags stripped) — the LLM
@@ -42,7 +42,7 @@ export async function fetchPage(url: string): Promise<FetchedPage> {
 export const MAX_DOCS_PER_RUN = 8
 
 export interface DiscoveryResult {
-  adapter: 'rss' | 'sitemap' | 'readability' | 'none'
+  adapter: 'rss' | 'sitemap' | 'page' | 'none'
   documents: Document[]
 }
 
@@ -50,13 +50,13 @@ export interface DiscoveryResult {
  * Order rationale:
  *   - RSS first: cheapest, structured, gives 10-20 posts at once
  *   - Sitemap next: covers blogs without feeds but with sitemap.xml
- *   - Readability last: single-post fallback for when the input is
+ *   - Page last: single-post fallback for when the input is
  *     a leaf article URL, not a blog root */
 export async function discoverAndFetch(url: string): Promise<DiscoveryResult> {
   for (const [name, fn] of [
     ['rss', fetchViaRss],
     ['sitemap', fetchViaSitemap],
-    ['readability', fetchViaReadability],
+    ['page', extractPage],
   ] as const) {
     try {
       const docs = await fn(url)
