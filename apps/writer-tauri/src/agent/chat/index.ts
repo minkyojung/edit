@@ -86,6 +86,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       'propose_write',
     ],
     appendDocument = true,
+    permissionMode,
+    builtinTools,
     signal,
     onTextDelta,
     onThinkingDelta,
@@ -324,15 +326,20 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         systemPrompt: system,
         prompt,
         relayTools,
+        // Read-only planning turns set this to 'plan'; edit turns omit it
+        // (sidecar defaults to bypassPermissions). In plan mode the SDK
+        // blocks tool execution, and the caller also passes an empty
+        // relayTools + a Bash-free builtinTools so the propose_* MCP
+        // tools aren't even offered (they'd be permission-denied anyway).
+        permissionMode,
         // Phase E6: explicit least-privilege builtin set. Write-side
         // built-ins (Edit / Write / MultiEdit / NotebookEdit) are
         // OMITTED — the LLM uses the host-applies `propose_*` MCP
         // tools (in `relayTools` above) for any disk-changing
-        // intent. Sidecar's `canUseTool` gate is therefore dormant
-        // for chat now; without write-side built-ins on the surface,
-        // there's nothing for it to gate. Read-side / search / shell
-        // remain since the model needs them to discover context.
-        builtinTools: ['Read', 'Glob', 'Grep', 'Bash'],
+        // intent. Read-side / search / shell remain since the model
+        // needs them to discover context. Plan turns drop Bash via
+        // the caller-supplied `builtinTools`.
+        builtinTools: builtinTools ?? ['Read', 'Glob', 'Grep', 'Bash'],
         // Forwarded so sidecar's read_page / search_wiki handlers
         // can resolve vault-relative paths against the user's chosen
         // folder. Undefined when no vault selected — the sidecar

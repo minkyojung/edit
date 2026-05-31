@@ -80,6 +80,14 @@ export interface RunChatArgs {
    * inline mark editing. Slash commands pass an empty list (or a kind-
    * specific list) to scope the toolset. */
   relayTools?: string[]
+  /** Permission mode forwarded to the SDK. Omit for normal edit chat
+   * (sidecar defaults to bypassPermissions). Set to `'plan'` for a
+   * read-only planning turn — the SDK blocks tool execution and the
+   * caller also drops the propose_* relays + Bash. */
+  permissionMode?: 'plan'
+  /** Built-in SDK tool names to expose. Omit for the edit default
+   * (Read/Glob/Grep/Bash). Plan turns pass ['Read','Glob','Grep']. */
+  builtinTools?: string[]
   /** When true (default) the document text is appended to the system
    * prompt under a `--- DOCUMENT ---` header. Slash commands that already
    * embed `{{document}}` in their body should pass false to avoid the

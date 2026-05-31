@@ -32,6 +32,7 @@ import { useContextUsageStore } from '@/state/contextUsageStore'
 import { PromptInput } from '@/chat/PromptInput'
 import {
   DEFAULT_CHAT_EFFORT,
+  DEFAULT_CHAT_MODE,
   clampEffort,
   normalizeModel,
   type ChatTurn,
@@ -92,6 +93,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     activeThread?.effort ?? DEFAULT_CHAT_EFFORT,
     activeThreadModel,
   )
+  const activeThreadMode = activeThread?.mode ?? DEFAULT_CHAT_MODE
 
   // Post-turn context-usage snapshot for the PromptInput gauge. Subscribed
   // reactively so the gauge refreshes the moment the chat runner records a
@@ -110,6 +112,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     activeId,
     activeThreadModel,
     activeThreadEffort,
+    activeThreadMode,
     appendTurn: turnsHook.appendTurn,
     markSessionStarted: threads.markSessionStarted,
     sessionStarted: activeThread?.sessionStarted ?? false,
@@ -573,6 +576,8 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
           onModelChange={(m) => activeId && threads.setThreadModel(activeId, m)}
           effort={activeThreadEffort}
           onEffortChange={(e) => activeId && threads.setThreadEffort(activeId, e)}
+          mode={activeThreadMode}
+          onModeChange={(m) => activeId && threads.setThreadMode(activeId, m)}
           contextSnapshot={contextSnapshot}
           validate={validatePrompt}
           selectionText={selectionPreview}

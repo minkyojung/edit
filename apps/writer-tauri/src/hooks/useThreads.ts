@@ -15,6 +15,7 @@ import {
   DEFAULT_CHAT_MODEL,
   MAX_ACTIVE_THREADS,
   type ChatEffort,
+  type ChatMode,
   type ChatModel,
   type ThreadMeta,
 } from '@/chat/types'
@@ -32,6 +33,7 @@ export interface UseThreadsResult {
   renameThread: (id: string, title: string) => void
   setThreadModel: (id: string, model: ChatModel) => void
   setThreadEffort: (id: string, effort: ChatEffort) => void
+  setThreadMode: (id: string, mode: ChatMode) => void
   /** Marks the thread as having a confirmed SDK session. Called once per
    * thread, on the first stream event of its first run. Idempotent — repeat
    * calls short-circuit so we don't write the same value again. */
@@ -148,6 +150,18 @@ export function useThreads(currentSlug: string | null = null): UseThreadsResult 
     [],
   )
 
+  const setThreadMode = useCallback<UseThreadsResult['setThreadMode']>(
+    (id, mode) => {
+      const cur = useThreadsStore.getState().threads[id]
+      if (!cur || cur.mode === mode) return
+      void useThreadsStore.getState().updateMeta(id, {
+        mode,
+        updatedAt: Date.now(),
+      })
+    },
+    [],
+  )
+
   const markSessionStarted = useCallback<UseThreadsResult['markSessionStarted']>(
     (id) => {
       const cur = useThreadsStore.getState().threads[id]
@@ -179,6 +193,7 @@ export function useThreads(currentSlug: string | null = null): UseThreadsResult 
     renameThread,
     setThreadModel,
     setThreadEffort,
+    setThreadMode,
     markSessionStarted,
   }
 }

@@ -13,12 +13,14 @@ import { IconArrowUp, IconPlayerStop, IconQuote, IconX } from '@tabler/icons-rea
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
+import { ModeToggle } from '@/chat/ModeToggle'
 import { ContextGauge } from '@/chat/ContextGauge'
 import { SlashPalette } from '@/chat/SlashPalette'
 import { listCommands, type LoadedCommand } from '@/chat/commands'
 import {
   effortsForModel,
   type ChatEffort,
+  type ChatMode,
   type ChatModel,
   type ContextSnapshot,
 } from '@/chat/types'
@@ -56,6 +58,8 @@ interface Props {
   onModelChange: (model: ChatModel) => void
   effort: ChatEffort
   onEffortChange: (effort: ChatEffort) => void
+  mode: ChatMode
+  onModeChange: (mode: ChatMode) => void
   /** Post-turn context-window snapshot for the gauge (left of ModelSelect).
    * Undefined/null until the active thread has completed at least one turn. */
   contextSnapshot?: ContextSnapshot | null
@@ -89,6 +93,8 @@ export function PromptInput({
   onModelChange,
   effort,
   onEffortChange,
+  mode,
+  onModeChange,
   contextSnapshot,
   validate,
   selectionText,
@@ -258,12 +264,15 @@ export function PromptInput({
         )}
       />
       <div className="flex items-center justify-between gap-2">
-        <EffortButton
-          value={effort}
-          efforts={effortsForModel(model)}
-          onChange={onEffortChange}
-          disabled={isStreaming}
-        />
+        <div className="flex items-center gap-1">
+          <ModeToggle value={mode} onChange={onModeChange} disabled={isStreaming} />
+          <EffortButton
+            value={effort}
+            efforts={effortsForModel(model)}
+            onChange={onEffortChange}
+            disabled={isStreaming}
+          />
+        </div>
         <div className="flex items-center gap-1">
           <ContextGauge snapshot={contextSnapshot} />
           <ModelSelect value={model} onChange={onModelChange} disabled={isStreaming} />

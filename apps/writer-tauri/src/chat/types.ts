@@ -85,6 +85,13 @@ export const CHAT_EFFORT_LABELS: Record<ChatEffort, string> = {
 
 export const DEFAULT_CHAT_EFFORT: ChatEffort = 'medium'
 
+/** Chat interaction mode. `edit` (default) lets the model propose changes;
+ * `plan` is read-only — the model explores and writes a plan but cannot
+ * propose or apply edits (enforced by permissionMode 'plan' + dropping the
+ * propose_* relay tools and Bash for the turn). */
+export type ChatMode = 'edit' | 'plan'
+export const DEFAULT_CHAT_MODE: ChatMode = 'edit'
+
 // ── Context usage (gauge) ───────────────────────────────────────
 //
 // Snapshot of how full the model's context window is after a turn.
@@ -141,6 +148,9 @@ export interface ThreadMeta {
   /** Per-thread reasoning effort. Older threads default to
    * DEFAULT_CHAT_EFFORT when this field is absent. */
   effort?: ChatEffort
+  /** Per-thread interaction mode (edit vs plan). Absent on older threads;
+   * treat absence as DEFAULT_CHAT_MODE. */
+  mode?: ChatMode
   /** True once the SDK has confirmed a session for this thread (set on the
    * first stream event of the first run). Subsequent runs must use `resume`
    * regardless of history shape — including Regenerate, which deletes the

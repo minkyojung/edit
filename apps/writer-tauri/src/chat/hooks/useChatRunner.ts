@@ -3,7 +3,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { runChat } from '@/agent/chat/index'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
-import type { ChatEffort, ChatModel, ChatTurn } from '@/chat/types'
+import type { ChatEffort, ChatMode, ChatModel, ChatTurn } from '@/chat/types'
 import type { PromptStatus } from '@/chat/PromptInput'
 import { classifyRunError } from '@/chat/utils/errorMessage'
 import { createStreamingBuffer } from '@/chat/utils/streamingBuffer'
@@ -38,6 +38,8 @@ interface UseChatRunnerDeps {
   activeId: string | null
   activeThreadModel: ChatModel
   activeThreadEffort: ChatEffort
+  /** Active thread's interaction mode. 'plan' makes the turn read-only. */
+  activeThreadMode: ChatMode
   appendTurn: (turn: ChatTurn) => void
   /** Called once per run, on the first stream event we receive — the moment
    * the SDK has confirmed a session for this thread. Idempotent at the
@@ -74,6 +76,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
     activeId,
     activeThreadModel,
     activeThreadEffort,
+    activeThreadMode,
     appendTurn,
     markSessionStarted,
     sessionStarted,
@@ -193,6 +196,10 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       }
 
       try {
+        // Plan turns go read-only: 'plan' permission mode blocks tool
+        // execution, and we drop the propose_* relays + Bash so the model
+        // explores with Read/Glob/Grep and writes a plan instead of editing.
+        const isPlan = activeThreadMode === 'plan'
         const result = await runChat({
           view: editorView!,
           slug: slug!,
@@ -201,7 +208,9 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           prompt: overrides?.prompt,
           systemPrompt: overrides?.systemPrompt,
           appendDocument: overrides ? false : undefined,
-          relayTools: overrides?.relayTools,
+          relayTools: isPlan ? [] : overrides?.relayTools,
+          permissionMode: isPlan ? 'plan' : undefined,
+          builtinTools: isPlan ? ['Read', 'Glob', 'Grep'] : undefined,
           model: overrides?.model ?? activeThreadModel,
           effort: overrides?.effort ?? activeThreadEffort,
           sessionStarted,
@@ -238,7 +247,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [editorView, slug, activeId, activeThreadModel, activeThreadEffort, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
+    [editorView, slug, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
   return { status, streaming, run }
