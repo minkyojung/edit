@@ -1,9 +1,9 @@
-// Wrapper for the right-hand column. Shows a small mode toggle
-// at the top — Chat / Review — and swaps the body component
-// accordingly. The toggle owns the entry point for both surfaces;
-// the editor header no longer carries a git status badge because
-// the Review tab IS the badge (it shows the unreviewed count
-// inline).
+// Wrapper for the right-hand column. A single top bar carries the
+// thread picker on the left and a History toggle on the right; the
+// body below swaps between the chat transcript and the history view
+// (git activity + undo). The History button doubles as the
+// unreviewed-changes badge — its dot shows the new-activity count —
+// so the editor header doesn't need its own git status badge.
 //
 // The wrapper itself doesn't manage open/closed state — that's
 // `contextPanelOpen` in layoutStore, controlled by the ResizablePanel
@@ -11,7 +11,7 @@
 // mounts (Resizable just hides it visually) so opening the panel
 // shows the last-active mode without a re-mount flicker.
 
-import { IconHistory, IconMessageCircle } from '@tabler/icons-react'
+import { IconHistory } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { Button } from '@/components/ui/button'
 import {
@@ -22,6 +22,10 @@ import {
 import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useGitStore } from '@/state/gitStore'
+import { useThreads, type UseThreadsResult } from '@/hooks/useThreads'
+import { useActiveThread } from '@/hooks/useActiveThread'
+import { ThreadPicker } from '@/chat/ThreadPicker'
+import { notify } from '@/lib/notify'
 import { ChatPanel } from './ChatPanel'
 import { ReviewPanel } from './ReviewPanel'
 
@@ -32,12 +36,28 @@ interface Props {
 
 export function RightPanel({ editorView, slug }: Props) {
   const mode = useLayoutStore((s) => s.rightPanelMode)
+  // Threads are owned here, not in ChatPanel, so the picker can live in
+  // the shared top bar that sits above BOTH the chat transcript and the
+  // history view. useActiveThread holds a single useState — calling it
+  // in two places would fork the active id — so it stays at this one
+  // mount point and the id flows down to ChatPanel as a prop.
+  const threads = useThreads(slug)
+  const { activeId, setActiveId } = useActiveThread(threads.active)
   return (
     <div className="flex h-full flex-col">
-      <RightPanelHeader />
+      <RightPanelHeader
+        threads={threads}
+        activeId={activeId}
+        setActiveId={setActiveId}
+      />
       <div className="min-h-0 flex-1">
         {mode === 'chat' ? (
-          <ChatPanel editorView={editorView} slug={slug} />
+          <ChatPanel
+            editorView={editorView}
+            slug={slug}
+            threads={threads}
+            activeId={activeId}
+          />
         ) : (
           <ReviewPanel />
         )}
@@ -46,38 +66,68 @@ export function RightPanel({ editorView, slug }: Props) {
   )
 }
 
-function RightPanelHeader() {
+function RightPanelHeader({
+  threads,
+  activeId,
+  setActiveId,
+}: {
+  threads: UseThreadsResult
+  activeId: string | null
+  setActiveId: (id: string | null) => void
+}) {
   const mode = useLayoutStore((s) => s.rightPanelMode)
   const setMode = useLayoutStore((s) => s.setRightPanelMode)
   const activityCount = useGitStore((s) => s.activity.length)
   const gitStatus = useGitStore((s) => s.status)
   const showActivityDot =
     mode !== 'review' && (activityCount > 0 || gitStatus === 'error')
-  const reviewTooltip =
+  const historyTooltip =
     gitStatus === 'error'
-      ? 'Review (storage error)'
+      ? 'History (storage error)'
       : activityCount > 0
-        ? `Review (${activityCount} new)`
-        : 'Review'
+        ? `History (${activityCount} new)`
+        : 'History'
 
   return (
     <div
-      className="flex shrink-0 items-center gap-0.5 px-1 shadow-[inset_0_-1px_0_var(--border)]"
-      style={{ height: '36px' }}
+      className="flex shrink-0 items-center gap-0.5 bg-transparent px-0.5 shadow-[inset_0_-1px_0_var(--border)]"
+      style={{ height: 'var(--header-h)' }}
     >
-      <ModeToggleButton
-        active={mode === 'chat'}
-        onClick={() => setMode('chat')}
-        icon={<IconMessageCircle size={16} />}
-        tooltip="Chat"
-        ariaLabel="Chat"
+      <ThreadPicker
+        active={threads.active}
+        archived={threads.archived}
+        activeId={activeId}
+        onSelect={(id) => {
+          setActiveId(id)
+          // Picking a thread means "take me to that conversation" — snap
+          // back to chat if the history view happens to be showing.
+          setMode('chat')
+        }}
+        onCreate={async () => {
+          const id = await threads.createThread()
+          if (id) setActiveId(id)
+          setMode('chat')
+        }}
+        onArchive={(id) => {
+          threads.archiveThread(id)
+          // Active thread reconciles in useActiveThread when active list shifts.
+        }}
+        onRename={threads.renameThread}
+        onRestore={(id) => {
+          const r = threads.restoreThread(id)
+          if (r.ok) setActiveId(id)
+          return r
+        }}
+        onRestoreLimitReached={() => {
+          notify.threadLimitReached()
+        }}
       />
       <ModeToggleButton
         active={mode === 'review'}
-        onClick={() => setMode('review')}
+        onClick={() => setMode(mode === 'review' ? 'chat' : 'review')}
         icon={<IconHistory size={16} />}
-        tooltip={reviewTooltip}
-        ariaLabel="Review"
+        tooltip={historyTooltip}
+        ariaLabel="History"
         dot={
           showActivityDot
             ? gitStatus === 'error'

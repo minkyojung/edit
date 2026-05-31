@@ -17,9 +17,8 @@ import { TextSelection } from '@milkdown/kit/prose/state'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
-import { useThreads } from '@/hooks/useThreads'
+import { type UseThreadsResult } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
-import { useActiveThread } from '@/hooks/useActiveThread'
 import { generateThreadTitle } from '@/agent/generateThreadTitle'
 import {
   CommandRenderError,
@@ -29,7 +28,6 @@ import {
   type LoadedCommand,
 } from '@/chat/commands'
 import { useChatRuns } from '@/stores/chatRuns'
-import { ThreadPicker } from '@/chat/ThreadPicker'
 import { PromptInput } from '@/chat/PromptInput'
 import {
   DEFAULT_CHAT_EFFORT,
@@ -40,7 +38,6 @@ import {
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
-import { notify } from '@/lib/notify'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -55,18 +52,17 @@ function parseSlashInvocation(text: string): { name: string; args: string } | nu
 interface Props {
   editorView: EditorView | null
   slug: string | null
+  // Threads + active id are owned by RightPanel (so the picker can sit
+  // in the shared top bar) and passed down here. `slug` is still passed
+  // independently — it's informational, stamping `parentSlug` on newly-
+  // created threads — and feeds the run dispatcher.
+  threads: UseThreadsResult
+  activeId: string | null
 }
 
-export function ChatPanel({ editorView, slug }: Props) {
+export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   const { account } = useClaudeAuth()
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
-  // Phase H: threads are global. `slug` is still passed (informational
-  // — it stamps `parentSlug` on newly-created threads so the user can
-  // see "this conversation started while I was on the X page") but
-  // the list of threads + the active thread no longer change when the
-  // user navigates to a different doc.
-  const threads = useThreads(slug)
-  const { activeId, setActiveId } = useActiveThread(threads.active)
   const turnsHook = useThreadTurns(activeId)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -520,35 +516,6 @@ export function ChatPanel({ editorView, slug }: Props) {
           </Button>
         </div>
       )}
-
-      <div
-        className="flex shrink-0 items-stretch bg-transparent px-0.5 shadow-[inset_0_-1px_0_var(--border)]"
-        style={{ height: 'var(--header-h)' }}
-      >
-        <ThreadPicker
-          active={threads.active}
-          archived={threads.archived}
-          activeId={activeId}
-          onSelect={setActiveId}
-          onCreate={async () => {
-            const id = await threads.createThread()
-            if (id) setActiveId(id)
-          }}
-          onArchive={(id) => {
-            threads.archiveThread(id)
-            // Active thread reconciles in useActiveThread when active list shifts.
-          }}
-          onRename={threads.renameThread}
-          onRestore={(id) => {
-            const r = threads.restoreThread(id)
-            if (r.ok) setActiveId(id)
-            return r
-          }}
-          onRestoreLimitReached={() => {
-            notify.threadLimitReached()
-          }}
-        />
-      </div>
 
       <div
         ref={scrollRef}

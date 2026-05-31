@@ -62,10 +62,6 @@ export function ReviewPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center bg-transparent px-4 py-3 shadow-[inset_0_-1px_0_var(--border)]">
-        <h2 className="text-[15px] font-semibold text-foreground">Review</h2>
-      </div>
-
       <ScrollArea className="min-h-0 flex-1">
         {isEmpty ? (
           // ContentUnavailableView pattern (macOS 14+/iOS 17+):

@@ -12,10 +12,18 @@
 // unmappable proposals, so the LLM's "queued" answer becomes a no-op
 // on the host side. Falls into the "rare edge case" bucket — the
 // vast majority of LLM Edit/Write calls target catalog docs.
+//
+// One mapping miss IS recoverable: a `propose_write` to a wiki path
+// that doesn't exist yet (the model is creating a brand-new page).
+// `materializeChatNewWikiPage` handles that — it creates the page (so
+// it gets a real slug) and returns a PendingChange staging the body,
+// mirroring ingest's `materializeNewPageProposals`. The chat listener
+// falls through to it when the pure mapper returns null.
 
 import type { PendingChange, PendingEdit } from '@/state/pendingChangesStore'
 import type { KnownDoc } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
+import { createCustomWikiPage } from '@/state/wikiService'
 
 export interface ChatEditPendingPayload {
   runId: string
@@ -92,6 +100,85 @@ export function mapChatEditToPendingChange(
       rationale: ctx.userRequest?.trim() || undefined,
     },
   }
+}
+
+/** Create a brand-new wiki page for a chat `propose_write` whose target
+ * path doesn't resolve to an existing doc, then return a PendingChange
+ * staging its body for review. Mirrors ingest's
+ * `materializeNewPageProposals`: the page is born with just its H1
+ * title (so it exists in the catalog, shows in the sidebar, and can
+ * host a staged change), and the body sits in the review queue until
+ * the user Keeps it.
+ *
+ * Returns null when this isn't a new-wiki-page write — wrong tool
+ * (only whole-file `propose_write`/`Write` creates pages; Edit /
+ * MultiEdit target existing text, where a missing target is a real
+ * miss), a non-wiki path (daily / writing have date / parent placement
+ * rules this path doesn't model), no body, or an already-resolvable
+ * path — and when page creation itself fails. The caller then falls
+ * through to the existing "unmappable" warning. */
+export async function materializeChatNewWikiPage(
+  payload: ChatEditPendingPayload,
+  ctx: MapContext,
+): Promise<Omit<PendingChange, 'status' | 'decidedAt' | 'viewedAt'> | null> {
+  if (payload.toolName !== 'Write') return null
+  const filePath = readString(payload.input.file_path)
+  const content = readString(payload.input.content)
+  if (!filePath || !content.trim()) return null
+
+  const relative = toVaultRelative(filePath, ctx.vaultPath)
+  if (!relative.startsWith('wiki/') || !relative.endsWith('.md')) return null
+
+  // Belt-and-suspenders: if the path already resolves to a live doc
+  // this isn't a creation (the pure mapper owns it). Guards against a
+  // duplicate page if this ever runs for a resolvable path.
+  if (resolveSlugForVaultPath(filePath, ctx.knownDocs, ctx.vaultPath)) return null
+
+  const name = relative.slice('wiki/'.length).replace(/\.md$/, '').trim()
+  if (!name) return null
+
+  // Seed the page with its H1 title only — the title-mirror reads the
+  // first block as the page name, so the heading must be present before
+  // any body lands (else the first Kept body line would become the
+  // title). Stage the rest for review; drop a leading H1 in the model's
+  // content so the seeded title isn't duplicated.
+  const stagedBody = stripLeadingH1(content)
+  const slug = await createCustomWikiPage(name, `# ${name}`)
+  if (!slug) return null
+
+  return {
+    id: payload.pendingId,
+    source: 'chat',
+    pageSlug: slug,
+    groupId: payload.runId,
+    createdAt: Date.now(),
+    edits: [
+      {
+        id: crypto.randomUUID(),
+        kind: 'add',
+        anchorBefore: '',
+        after: stagedBody,
+      },
+    ],
+    context: {
+      threadId: ctx.threadId,
+      runId: payload.runId,
+      rationale: ctx.userRequest?.trim() || undefined,
+    },
+  }
+}
+
+/** Drop a leading level-1 heading line (plus one trailing blank) from a
+ * markdown body. Used when seeding a new page's title separately from
+ * its staged body so the H1 doesn't render twice. */
+function stripLeadingH1(md: string): string {
+  const lines = md.split('\n')
+  let i = 0
+  while (i < lines.length && lines[i].trim() === '') i++
+  if (i >= lines.length || !/^#\s+/.test(lines[i])) return md
+  lines.splice(0, i + 1)
+  if (lines.length > 0 && lines[0].trim() === '') lines.shift()
+  return lines.join('\n')
 }
 
 /** Vault-relative or absolute path → catalog slug. Returns null when

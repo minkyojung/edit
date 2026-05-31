@@ -28,7 +28,10 @@ import { useChatRuns } from '@/stores/chatRuns'
 import { useGitStore } from '@/state/gitStore'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
-import { mapChatEditToPendingChange } from './toPendingChange'
+import {
+  mapChatEditToPendingChange,
+  materializeChatNewWikiPage,
+} from './toPendingChange'
 import { flushDirty } from '@/lib/docFileSync'
 import {
   agentIdForModel,
@@ -210,7 +213,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         pendingId: string
         toolName: string
         input: Record<string, unknown>
-      }>('claude:edit-pending', (e) => {
+      }>('claude:edit-pending', async (e) => {
         if (e.payload.runId !== runId) return
         // Phase E5: unified flow. Map the sidecar payload into a
         // PendingChange and push. The sidebar dot lights up, the
@@ -219,30 +222,32 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // diff on the target page. There is no separate tray —
         // `pendingChangesStore` is the single source of truth for chat
         // edits, and every surface reads it.
-        //
-        // Mapping failure (unknown tool, file outside the catalog,
-        // Write to a brand-new path) leaves the sidecar gate parked.
-        // The user can resolve that by cancelling the run — better
-        // than silently writing to disk for a case we can't preview.
-        const mapped = mapChatEditToPendingChange(
-          {
-            runId: e.payload.runId,
-            pendingId: e.payload.pendingId,
-            toolName: e.payload.toolName,
-            input: e.payload.input,
-          },
-          {
-            knownDocs: useDocsStore.getState().knownDocs,
-            vaultPath: getActiveVaultPath(),
-            threadId,
-            userRequest: triggeringRequest,
-          },
-        )
+        const payload = {
+          runId: e.payload.runId,
+          pendingId: e.payload.pendingId,
+          toolName: e.payload.toolName,
+          input: e.payload.input,
+        }
+        const ctx = {
+          knownDocs: useDocsStore.getState().knownDocs,
+          vaultPath: getActiveVaultPath(),
+          threadId,
+          userRequest: triggeringRequest,
+        }
+        // First the pure mapper (existing doc). If it can't resolve a
+        // catalog slug, the one recoverable miss is a `propose_write`
+        // creating a brand-new wiki page: materialize the page (so it
+        // gets a slug) and stage its body. Anything still unmapped is a
+        // genuine miss — logged, no decision surface.
+        let mapped = mapChatEditToPendingChange(payload, ctx)
+        if (!mapped) {
+          mapped = await materializeChatNewWikiPage(payload, ctx)
+        }
         if (mapped) {
           usePendingChangesStore.getState().push(mapped)
         } else {
           console.warn(
-            '[chat] edit-pending unmappable; gate stays parked until cancel',
+            '[chat] edit-pending unmappable; no decision surface',
             { toolName: e.payload.toolName, pendingId: e.payload.pendingId },
           )
         }

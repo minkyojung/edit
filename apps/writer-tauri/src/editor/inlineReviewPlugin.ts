@@ -53,7 +53,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { renderMarkdownToFragment } from '@/lib/renderMarkdownInline'
-import { looseFindRange } from '@/lib/looseMatch'
+import { looseFindRange, looseReplace } from '@/lib/looseMatch'
 import { splitEdit } from '@/lib/intraEditDiff'
 import {
   computePendingHunks,
@@ -170,28 +170,45 @@ export function resolveAnchor(
   const target = edit.before
   if (!target) return { status: 'unplaced' }
   const range = findTextRange(doc, target)
-  if (!range) return { status: 'unplaced' }
-
-  // Keep stays enabled whenever the apply path could locate `target` —
-  // mirror its tolerant matcher (not a bare literal `includes`) so the
-  // button isn't disabled for an edit that would actually apply.
-  const applyReady = looseFindRange(bodyMd, target) !== null
-  if (edit.kind === 'delete') {
+  if (range) {
+    // Keep stays enabled whenever the apply path could locate `target` —
+    // mirror its tolerant matcher (not a bare literal `includes`) so the
+    // button isn't disabled for an edit that would actually apply.
+    const applyReady = looseFindRange(bodyMd, target) !== null
+    if (edit.kind === 'delete') {
+      return {
+        status: 'placed',
+        anchor: { from: range.from, to: range.to, applyReady },
+      }
+    }
+    // replace
     return {
       status: 'placed',
-      anchor: { from: range.from, to: range.to, applyReady },
+      anchor: {
+        from: range.from,
+        to: range.to,
+        insertAt: range.to,
+        applyReady,
+      },
     }
   }
-  // replace
-  return {
-    status: 'placed',
-    anchor: {
-      from: range.from,
-      to: range.to,
-      insertAt: range.to,
-      applyReady,
-    },
+
+  // No single contiguous block range. Almost always a `before` that
+  // spans block boundaries (multi-line) — findTextRange searches block
+  // by block, so it can't pin a target that crosses paragraphs / list
+  // items, even though the disk apply could. Reproduce the disk apply
+  // (looseReplace on bodyMarkdown — the SAME matcher Keep uses) and
+  // surface the result as block-level hunks via the whole-file-replace
+  // pipeline. This keeps draw ⟺ apply in lockstep: if the edit would
+  // apply, it draws here; if not, it stays unplaced.
+  const newBody = looseReplace(bodyMd, target, edit.after ?? '')
+  if (newBody !== null && newBody !== bodyMd) {
+    const hunks = computePendingHunks(bodyMd, newBody, doc)
+    if (hunks && hunks.length > 0) {
+      return { status: 'hunks', hunks, applyReady: true }
+    }
   }
+  return { status: 'unplaced' }
 }
 
 /** Find the PM position where `add`-kind content should land:
