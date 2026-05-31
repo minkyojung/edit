@@ -210,7 +210,10 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           appendDocument: overrides ? false : undefined,
           relayTools: isPlan ? [] : overrides?.relayTools,
           permissionMode: isPlan ? 'plan' : undefined,
-          builtinTools: isPlan ? ['Read', 'Glob', 'Grep'] : undefined,
+          // AskUserQuestion lets the model ask clarifying questions before
+          // planning; it must be in the tool list or the SDK never offers it.
+          // (ExitPlanMode + the propose_* relays come with C3.)
+          builtinTools: isPlan ? ['Read', 'Glob', 'Grep', 'AskUserQuestion'] : undefined,
           model: overrides?.model ?? activeThreadModel,
           effort: overrides?.effort ?? activeThreadEffort,
           sessionStarted,

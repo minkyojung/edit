@@ -29,6 +29,9 @@ import {
 } from '@/chat/commands'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useContextUsageStore } from '@/state/contextUsageStore'
+import { usePendingPermissions } from '@/state/pendingPermissionsStore'
+import { usePermissionGate } from '@/chat/hooks/usePermissionGate'
+import { QuestionCard } from '@/chat/QuestionCard'
 import { PromptInput } from '@/chat/PromptInput'
 import {
   DEFAULT_CHAT_EFFORT,
@@ -100,6 +103,14 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   // new snapshot on `claude:done`.
   const contextSnapshot = useContextUsageStore((s) =>
     activeId ? s.byThread[activeId] : undefined,
+  )
+
+  // Plan-mode interactive gate: mount the global `claude:permission` listener
+  // and read the pending decision (if any) for the active thread, so the
+  // matching card can render inline in the transcript.
+  usePermissionGate()
+  const pendingPermission = usePendingPermissions((s) =>
+    activeId ? Object.values(s.byRun).find((p) => p.threadId === activeId) : undefined,
   )
 
   // Single hook owns the streaming buffer state, the chat-level status, and
@@ -559,6 +570,11 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
             onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
           />
         ))}
+        {pendingPermission?.toolName === 'AskUserQuestion' && (
+          <div className="px-1">
+            <QuestionCard pending={pendingPermission} />
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
