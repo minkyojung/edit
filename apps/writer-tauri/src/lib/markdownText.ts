@@ -48,6 +48,38 @@ export function effectiveLength(text: string): number {
   return text.replace(EFFECTIVELY_EMPTY_RE, '').length
 }
 
+/** If `md` opens with a level-1 heading whose text equals `title`
+ * (trimmed), drop that line (plus one trailing blank). Returns the
+ * body and the removed heading text — `removed` is null when nothing
+ * was stripped, so callers can log the dedup.
+ *
+ * Wiki pages keep the title in a separate header field (decoupled from
+ * the body in Path C Step 4), so a body that opens by restating the
+ * page's own name as an H1 shows the title twice. This removes that one
+ * redundant line and ONLY that — a leading heading whose text differs
+ * from the title (a real section header like `# 배경`) is left intact.
+ * Exact trimmed match, never a fuzzy guess: a section header equal to
+ * the page's own name has no legitimate meaning, so the rule can't eat
+ * real content. */
+export function stripDuplicateTitleHeading(
+  md: string,
+  title: string,
+): { body: string; removed: string | null } {
+  const wanted = title.trim()
+  if (!wanted) return { body: md, removed: null }
+  const lines = md.split('\n')
+  let i = 0
+  while (i < lines.length && lines[i].trim() === '') i++
+  if (i >= lines.length) return { body: md, removed: null }
+  const m = /^#\s+(.*)$/.exec(lines[i])
+  if (!m) return { body: md, removed: null }
+  const headingText = m[1].trim()
+  if (headingText !== wanted) return { body: md, removed: null }
+  lines.splice(0, i + 1)
+  if (lines.length > 0 && lines[0].trim() === '') lines.shift()
+  return { body: lines.join('\n'), removed: headingText }
+}
+
 /** First line in `text` that contains anything beyond whitespace +
  * zero-width chars, trimmed. Returns null when no such line exists.
  *

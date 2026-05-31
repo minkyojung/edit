@@ -39,7 +39,7 @@ import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
 import { createCustomWikiPage } from '@/state/wikiService'
 import type { IngestProposal } from '@/agent/ingest/types'
-import { effectiveLength } from '@/lib/markdownText'
+import { effectiveLength, stripDuplicateTitleHeading } from '@/lib/markdownText'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { extractErrorCode } from '@/chat/utils/errorMessage'
 import { notify } from '@/lib/notify'
@@ -92,19 +92,17 @@ async function materializeNewPageProposals(
     }
     const name = p.suggestNewPage?.trim()
     if (!name) continue
-    // First line of the body MUST be the page title as a level-1
-    // heading. The title-mirror (installTitleMirror) walks the first
-    // non-empty block and copies its plain text into knownDocs.title,
-    // so the sidebar / palette / breadcrumb read it as the page name.
-    // Without this heading the mirror would catch the first staged
-    // body line (once the user Keeps it) and rename the page to that.
-    const titleHeading = `# ${name}`
 
     // Karpathy-style flat wiki: every entity is its own page at
     // the same level. We deliberately don't pass a parent — the
     // sidebar shows the catalog as a flat list and the LLM finds
     // pages via the WIKI / INDEX blocks, not via tree navigation.
-    const newSlug = await createCustomWikiPage(name, titleHeading)
+    //
+    // The page is born EMPTY: its title lives in the header field
+    // (createCustomWikiPage sets it from `name`), decoupled from the
+    // body. Seeding a `# name` heading here would render the title
+    // twice once the body lands.
+    const newSlug = await createCustomWikiPage(name)
     if (!newSlug) {
       console.warn(
         '[ingest] suggestNewPage failed; dropping proposal',
@@ -127,7 +125,17 @@ async function materializeNewPageProposals(
     // into the body here either; the LLM includes any citation it
     // deems useful inside `markdownToAppend` itself.
     void sourceLabel
-    const after = p.markdownToAppend
+    // Defense-in-depth: if the model opened its content with the page's
+    // own title as an H1, drop that one redundant line (the header field
+    // already shows the title). A different leading heading is real
+    // content and stays.
+    const { body: after, removed } = stripDuplicateTitleHeading(
+      p.markdownToAppend,
+      name,
+    )
+    if (removed) {
+      console.log('[ingest] dropped duplicate title heading from new page body', { name })
+    }
     usePendingChangesStore.getState().push({
       id: crypto.randomUUID(),
       source: 'ingest',

@@ -24,6 +24,7 @@ import type { PendingChange, PendingEdit } from '@/state/pendingChangesStore'
 import type { KnownDoc } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { createCustomWikiPage } from '@/state/wikiService'
+import { stripDuplicateTitleHeading } from '@/lib/markdownText'
 
 export interface ChatEditPendingPayload {
   runId: string
@@ -137,13 +138,17 @@ export async function materializeChatNewWikiPage(
   const name = relative.slice('wiki/'.length).replace(/\.md$/, '').trim()
   if (!name) return null
 
-  // Seed the page with its H1 title only — the title-mirror reads the
-  // first block as the page name, so the heading must be present before
-  // any body lands (else the first Kept body line would become the
-  // title). Stage the rest for review; drop a leading H1 in the model's
-  // content so the seeded title isn't duplicated.
-  const stagedBody = stripLeadingH1(content)
-  const slug = await createCustomWikiPage(name, `# ${name}`)
+  // The page title lives in the header field (createCustomWikiPage sets
+  // it from `name`), decoupled from the body — so we DON'T seed a `#
+  // name` heading into the body, which would render the title twice.
+  // The model often opens its content with that same title heading
+  // anyway; strip it (and only it — a different leading heading is real
+  // content) so the page doesn't show the name twice.
+  const { body: stagedBody, removed } = stripDuplicateTitleHeading(content, name)
+  if (removed) {
+    console.log('[chat] dropped duplicate title heading from new page body', { name })
+  }
+  const slug = await createCustomWikiPage(name)
   if (!slug) return null
 
   return {
@@ -166,19 +171,6 @@ export async function materializeChatNewWikiPage(
       rationale: ctx.userRequest?.trim() || undefined,
     },
   }
-}
-
-/** Drop a leading level-1 heading line (plus one trailing blank) from a
- * markdown body. Used when seeding a new page's title separately from
- * its staged body so the H1 doesn't render twice. */
-function stripLeadingH1(md: string): string {
-  const lines = md.split('\n')
-  let i = 0
-  while (i < lines.length && lines[i].trim() === '') i++
-  if (i >= lines.length || !/^#\s+/.test(lines[i])) return md
-  lines.splice(0, i + 1)
-  if (lines.length > 0 && lines[0].trim() === '') lines.shift()
-  return lines.join('\n')
 }
 
 /** Vault-relative or absolute path → catalog slug. Returns null when

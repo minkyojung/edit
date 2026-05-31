@@ -7,8 +7,8 @@ const createCustomWikiPage = vi.fn<
   (name: string, body?: string) => Promise<string | null>
 >()
 vi.mock('@/state/wikiService', () => ({
-  createCustomWikiPage: (name: string, body?: string) =>
-    createCustomWikiPage(name, body),
+  createCustomWikiPage: (...args: [string, string?]) =>
+    createCustomWikiPage(...args),
 }))
 
 import { materializeChatNewWikiPage } from './toPendingChange'
@@ -31,7 +31,7 @@ describe('materializeChatNewWikiPage', () => {
     createCustomWikiPage.mockResolvedValue('new-slug')
   })
 
-  it('creates the page (title-only) and stages the body for a new wiki write', async () => {
+  it('creates an EMPTY page (no H1 seed) and stages the body for a new wiki write', async () => {
     const result = await materializeChatNewWikiPage(
       payload({
         file_path: 'wiki/Sera & Daniel 결혼식 이벤트.md',
@@ -40,11 +40,9 @@ describe('materializeChatNewWikiPage', () => {
       baseCtx,
     )
 
-    // Page seeded with H1 title derived from the path basename.
-    expect(createCustomWikiPage).toHaveBeenCalledWith(
-      'Sera & Daniel 결혼식 이벤트',
-      '# Sera & Daniel 결혼식 이벤트',
-    )
+    // Page created with NO body — title lives in the header field, so we
+    // don't seed a `# name` heading that would render the title twice.
+    expect(createCustomWikiPage).toHaveBeenCalledWith('Sera & Daniel 결혼식 이벤트')
     expect(result).not.toBeNull()
     expect(result!.source).toBe('chat')
     expect(result!.pageSlug).toBe('new-slug')
@@ -54,16 +52,21 @@ describe('materializeChatNewWikiPage', () => {
     expect(result!.context.rationale).toBe('결혼식 이벤트 페이지 만들어줘')
   })
 
-  it('strips a leading H1 from the content so the title is not duplicated', async () => {
+  it('strips a leading H1 only when it equals the title (the duplicate-title case)', async () => {
     const result = await materializeChatNewWikiPage(
-      payload({
-        file_path: 'wiki/Foo.md',
-        content: '# Foo\n\n본문 첫 줄',
-      }),
+      payload({ file_path: 'wiki/Foo.md', content: '# Foo\n\n본문 첫 줄' }),
       baseCtx,
     )
-    expect(createCustomWikiPage).toHaveBeenCalledWith('Foo', '# Foo')
+    expect(createCustomWikiPage).toHaveBeenCalledWith('Foo')
     expect(result!.edits[0].after).toBe('본문 첫 줄')
+  })
+
+  it('preserves a leading heading that is NOT the title (real section header)', async () => {
+    const result = await materializeChatNewWikiPage(
+      payload({ file_path: 'wiki/Foo.md', content: '# 배경\n내용' }),
+      baseCtx,
+    )
+    expect(result!.edits[0].after).toBe('# 배경\n내용')
   })
 
   it('returns null for Edit / MultiEdit (those target existing text, not new pages)', async () => {
