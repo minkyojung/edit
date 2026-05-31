@@ -14,6 +14,7 @@ import { DayView } from './views/DayView'
 import { WeekView } from './views/WeekView'
 import { MonthView } from './views/MonthView'
 import { WikiSection } from './WikiSection'
+import { WikiMetaRows } from './WikiMetaRows'
 import { ArchivedDocsPopover } from './ArchivedDocsPopover'
 import { IngestProposalCard } from './IngestProposalCard'
 import { useDocsStore } from '@/state/docsStore'
@@ -258,6 +259,9 @@ export function AppSidebar() {
             notice without crowding the doc tree above. */}
         <IngestProposalCard />
         <SidebarMenu>
+          {/* Profile + Conventions: always-present, low-frequency wiki
+              surfaces, stacked just above Archived. */}
+          <WikiMetaRows />
           <SidebarMenuItem>
             <ArchivedDocsPopover />
           </SidebarMenuItem>
