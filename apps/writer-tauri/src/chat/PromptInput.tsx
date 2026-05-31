@@ -13,9 +13,15 @@ import { IconArrowUp, IconPlayerStop, IconQuote, IconX } from '@tabler/icons-rea
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
+import { ContextGauge } from '@/chat/ContextGauge'
 import { SlashPalette } from '@/chat/SlashPalette'
 import { listCommands, type LoadedCommand } from '@/chat/commands'
-import { effortsForModel, type ChatEffort, type ChatModel } from '@/chat/types'
+import {
+  effortsForModel,
+  type ChatEffort,
+  type ChatModel,
+  type ContextSnapshot,
+} from '@/chat/types'
 import { cn } from '@/lib/utils'
 
 // Matches a slash command at the start of input — `/`, then optional
@@ -50,6 +56,9 @@ interface Props {
   onModelChange: (model: ChatModel) => void
   effort: ChatEffort
   onEffortChange: (effort: ChatEffort) => void
+  /** Post-turn context-window snapshot for the gauge (left of ModelSelect).
+   * Undefined/null until the active thread has completed at least one turn. */
+  contextSnapshot?: ContextSnapshot | null
   /** Optional pre-submit validator. Runs on every keystroke; an `ok: false`
    * result both renders an inline hint and prevents Send. */
   validate?: (text: string) => ValidationResult
@@ -80,6 +89,7 @@ export function PromptInput({
   onModelChange,
   effort,
   onEffortChange,
+  contextSnapshot,
   validate,
   selectionText,
   onClearSelection,
@@ -255,6 +265,7 @@ export function PromptInput({
           disabled={isStreaming}
         />
         <div className="flex items-center gap-1">
+          <ContextGauge snapshot={contextSnapshot} />
           <ModelSelect value={model} onChange={onModelChange} disabled={isStreaming} />
           <Tooltip>
           <TooltipTrigger asChild>

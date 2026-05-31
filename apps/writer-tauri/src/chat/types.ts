@@ -85,6 +85,43 @@ export const CHAT_EFFORT_LABELS: Record<ChatEffort, string> = {
 
 export const DEFAULT_CHAT_EFFORT: ChatEffort = 'medium'
 
+// ── Context usage (gauge) ───────────────────────────────────────
+//
+// Snapshot of how full the model's context window is after a turn.
+// STEP 2 fills only the totals (derived from the SDK `usage` already
+// emitted on chat/done). `categories` + `autoCompactThreshold` arrive
+// in STEP 3, once the sidecar switches to streaming-input mode and can
+// call query.getContextUsage(). The gauge/popover render `categories`
+// when present and fall back to a Used/Free split otherwise.
+
+/** One row of the context breakdown (system prompt, messages, tools, …).
+ * Mirrors `getContextUsage().categories[]`. `color` is the SDK-provided
+ * swatch; absent in the STEP-2 fallback. */
+export interface ContextCategory {
+  name: string
+  tokens: number
+  color?: string
+  isDeferred?: boolean
+}
+
+export interface ContextSnapshot {
+  /** Tokens currently occupying the context window. */
+  totalTokens: number
+  /** Context window size. STEP-2 estimate (contextLimitForModel);
+   * replaced by the real getContextUsage().maxTokens in STEP 3. */
+  maxTokens: number
+  /** Model the snapshot was measured against — kept so the gauge stays
+   * in sync when the user switches models. */
+  model: string
+  /** Per-category breakdown. Absent until STEP 3. */
+  categories?: ContextCategory[]
+  /** Fraction (0..1) of the window at which auto-compaction triggers.
+   * Absent until STEP 3; the gauge uses a fixed 0.8 warning line until
+   * the real value is available. */
+  autoCompactThreshold?: number
+  updatedAt: number
+}
+
 export interface ThreadMeta {
   id: string
   /** Slug of the doc this thread is anchored to. Threads always

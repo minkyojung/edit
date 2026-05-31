@@ -33,6 +33,8 @@ import {
   materializeChatNewWikiPage,
 } from './toPendingChange'
 import { flushDirty } from '@/lib/docFileSync'
+import { useContextUsageStore } from '@/state/contextUsageStore'
+import { contextLimitForModel } from '@/lib/contextLimit'
 import {
   agentIdForModel,
   DEFAULT_MODEL,
@@ -254,6 +256,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       }),
       listen<DoneEvent>('claude:done', (e) => {
         if (e.payload.runId !== runId) return
+        recordContextUsage(threadId, model, e.payload.usage)
         settleOk(e.payload.stopReason)
       }),
       listen<ErrorEvent>('claude:error', (e) => {
@@ -379,4 +382,31 @@ async function finalizeEditCommit(slug: string): Promise<void> {
   } catch (err) {
     console.warn('[chat] post-turn commit failed', err)
   }
+}
+
+/** Record the post-turn context-window occupancy for the gauge.
+ *
+ * STEP 2: the total is approximated from the SDK `usage` the sidecar
+ * already emits on chat/done — the full prompt that was in context for
+ * this turn = fresh input + cached prefix (read + creation). The window
+ * size is the per-model estimate. STEP 3 replaces this with the exact
+ * breakdown from query.getContextUsage(). Best-effort: a turn with no
+ * usage (or zero tokens) leaves the prior snapshot untouched. */
+function recordContextUsage(
+  threadId: string,
+  model: string,
+  usage: DoneEvent['usage'],
+): void {
+  if (!usage) return
+  const total =
+    (usage.input_tokens ?? 0) +
+    (usage.cache_read_input_tokens ?? 0) +
+    (usage.cache_creation_input_tokens ?? 0)
+  if (total <= 0) return
+  useContextUsageStore.getState().set(threadId, {
+    totalTokens: total,
+    maxTokens: contextLimitForModel(model),
+    model,
+    updatedAt: Date.now(),
+  })
 }

@@ -185,6 +185,18 @@ export interface ChatEvent {
 export interface DoneEvent {
   runId: string
   stopReason: string | null
+  /** Token usage for the final result of the turn. The sidecar
+   * (server.mjs chat/done) already emits this from the SDK result
+   * message; the context gauge derives its post-turn total from it.
+   * STEP 3 will add a richer `contextUsage` breakdown sourced from
+   * query.getContextUsage(). */
+  usage?: {
+    input_tokens: number
+    output_tokens: number
+    cache_read_input_tokens?: number
+    cache_creation_input_tokens?: number
+  } | null
+  totalCostUsd?: number | null
 }
 
 export interface ErrorEvent {

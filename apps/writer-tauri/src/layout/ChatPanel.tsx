@@ -28,6 +28,7 @@ import {
   type LoadedCommand,
 } from '@/chat/commands'
 import { useChatRuns } from '@/stores/chatRuns'
+import { useContextUsageStore } from '@/state/contextUsageStore'
 import { PromptInput } from '@/chat/PromptInput'
 import {
   DEFAULT_CHAT_EFFORT,
@@ -90,6 +91,13 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   const activeThreadEffort = clampEffort(
     activeThread?.effort ?? DEFAULT_CHAT_EFFORT,
     activeThreadModel,
+  )
+
+  // Post-turn context-usage snapshot for the PromptInput gauge. Subscribed
+  // reactively so the gauge refreshes the moment the chat runner records a
+  // new snapshot on `claude:done`.
+  const contextSnapshot = useContextUsageStore((s) =>
+    activeId ? s.byThread[activeId] : undefined,
   )
 
   // Single hook owns the streaming buffer state, the chat-level status, and
@@ -565,6 +573,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
           onModelChange={(m) => activeId && threads.setThreadModel(activeId, m)}
           effort={activeThreadEffort}
           onEffortChange={(e) => activeId && threads.setThreadEffort(activeId, e)}
+          contextSnapshot={contextSnapshot}
           validate={validatePrompt}
           selectionText={selectionPreview}
           onClearSelection={handleClearSelection}
