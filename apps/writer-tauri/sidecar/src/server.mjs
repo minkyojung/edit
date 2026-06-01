@@ -616,6 +616,7 @@ export class Server {
       vaultPath,
       permissionMode = 'bypassPermissions',
       effort,
+      fastMode,
       sessionId,
       resume,
       maxTurns,
@@ -646,7 +647,10 @@ export class Server {
       // layer, which has higher precedence than user settings.json.
       // The cacheable system-prompt prefix (belief + role) is preserved
       // across compaction; only mid-conversation turns get summarized.
-      settings: { autoCompactEnabled: true },
+      // fastMode (faster output on supporting models) is a `Settings` member,
+      // same layer as autoCompactEnabled. Only set when requested; the host
+      // already gated on model support.
+      settings: { autoCompactEnabled: true, ...(fastMode ? { fastMode: true } : {}) },
       // Disable the SDK's filesystem settings auto-load (CLAUDE.md,
       // .claude/settings.json, etc.). The host injects the vault's
       // CLAUDE.md explicitly as part of `systemPrompt` so the cache
@@ -1049,6 +1053,9 @@ export class Server {
         // STEP 3: full per-category breakdown from getContextUsage(), or null
         // when the control request failed (host falls back to `usage`).
         contextUsage: lastContextUsage,
+        // Actual fast-mode state for the turn (on / cooldown / off). `cooldown`
+        // means a rate limit forced it off despite the request.
+        fastModeState: lastResult?.fast_mode_state ?? null,
       }),
     )
     this.activeChats.delete(runId)

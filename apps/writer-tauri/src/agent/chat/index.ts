@@ -32,6 +32,7 @@ import {
   materializeChatNewWikiPage,
 } from './toPendingChange'
 import { useContextUsageStore } from '@/state/contextUsageStore'
+import { useFastModeStore } from '@/state/fastModeStore'
 import { contextLimitForModel } from '@/lib/contextLimit'
 import {
   agentIdForModel,
@@ -86,6 +87,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     appendDocument = true,
     permissionMode,
     builtinTools,
+    fastMode,
     signal,
     onTextDelta,
     onThinkingDelta,
@@ -259,6 +261,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       listen<DoneEvent>('claude:done', (e) => {
         if (e.payload.runId !== runId) return
         recordContextUsage(threadId, model, e.payload.usage, e.payload.contextUsage)
+        // Reflect the SDK's actual fast-mode state (on / cooldown / off) for the
+        // toggle. Absent → off (e.g. a model that doesn't support fast mode).
+        useFastModeStore.getState().set(threadId, e.payload.fastModeState ?? 'off')
         settleOk(e.payload.stopReason)
       }),
       listen<ErrorEvent>('claude:error', (e) => {
@@ -348,6 +353,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // then skips registering filesystem tools (warns once).
         vaultPath: getActiveVaultPath() ?? undefined,
         effort,
+        // Forwarded to the SDK's settings.fastMode. The caller already gated on
+        // model support; only send `true` so non-fast runs stay clean.
+        fastMode: fastMode || undefined,
         sessionId: isResume ? undefined : threadId,
         resume: isResume ? threadId : undefined,
       },

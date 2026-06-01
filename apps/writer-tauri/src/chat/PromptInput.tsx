@@ -14,15 +14,18 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
 import { ModeToggle } from '@/chat/ModeToggle'
+import { FastToggle } from '@/chat/FastToggle'
 import { ContextGauge } from '@/chat/ContextGauge'
 import { SlashPalette } from '@/chat/SlashPalette'
 import { listCommands, type LoadedCommand } from '@/chat/commands'
 import {
   effortsForModel,
+  modelSupportsFastMode,
   type ChatEffort,
   type ChatMode,
   type ChatModel,
   type ContextSnapshot,
+  type FastModeState,
 } from '@/chat/types'
 import { cn } from '@/lib/utils'
 
@@ -60,6 +63,12 @@ interface Props {
   onEffortChange: (effort: ChatEffort) => void
   mode: ChatMode
   onModeChange: (mode: ChatMode) => void
+  /** Fast-mode request (per-thread). The toggle only renders for models that
+   * support fast mode (modelSupportsFastMode). */
+  fastMode: boolean
+  onFastModeChange: (fastMode: boolean) => void
+  /** Actual fast-mode state from the last turn (on / cooldown / off). */
+  fastModeState?: FastModeState
   /** Post-turn context-window snapshot for the gauge (left of ModelSelect).
    * Undefined/null until the active thread has completed at least one turn. */
   contextSnapshot?: ContextSnapshot | null
@@ -95,6 +104,9 @@ export function PromptInput({
   onEffortChange,
   mode,
   onModeChange,
+  fastMode,
+  onFastModeChange,
+  fastModeState,
   contextSnapshot,
   validate,
   selectionText,
@@ -265,13 +277,21 @@ export function PromptInput({
       />
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1">
-          <ModeToggle value={mode} onChange={onModeChange} disabled={isStreaming} />
           <EffortButton
             value={effort}
             efforts={effortsForModel(model)}
             onChange={onEffortChange}
             disabled={isStreaming}
           />
+          {modelSupportsFastMode(model) && (
+            <FastToggle
+              value={fastMode}
+              onChange={onFastModeChange}
+              state={fastModeState}
+              disabled={isStreaming}
+            />
+          )}
+          <ModeToggle value={mode} onChange={onModeChange} disabled={isStreaming} />
         </div>
         <div className="flex items-center gap-1">
           <ContextGauge snapshot={contextSnapshot} />

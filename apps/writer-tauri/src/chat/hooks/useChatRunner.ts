@@ -3,6 +3,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { runChat } from '@/agent/chat/index'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
+import { modelSupportsFastMode } from '@/chat/types'
 import type { ChatEffort, ChatMode, ChatModel, ChatTurn } from '@/chat/types'
 import type { PromptStatus } from '@/chat/PromptInput'
 import { classifyRunError } from '@/chat/utils/errorMessage'
@@ -42,6 +43,9 @@ interface UseChatRunnerDeps {
   activeThreadEffort: ChatEffort
   /** Active thread's interaction mode. 'plan' makes the turn read-only. */
   activeThreadMode: ChatMode
+  /** Active thread's fast-mode preference. Only forwarded to the SDK when the
+   * resolved model supports it (gated here). */
+  activeThreadFastMode: boolean
   appendTurn: (turn: ChatTurn) => void
   /** Called once per run, on the first stream event we receive — the moment
    * the SDK has confirmed a session for this thread. Idempotent at the
@@ -79,6 +83,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
     activeThreadModel,
     activeThreadEffort,
     activeThreadMode,
+    activeThreadFastMode,
     appendTurn,
     markSessionStarted,
     sessionStarted,
@@ -301,6 +306,10 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
             : undefined,
           model: overrides?.model ?? activeThreadModel,
           effort: overrides?.effort ?? activeThreadEffort,
+          // Only request fast mode when the thread asked for it AND the model
+          // supports it — switching to Haiku/Sonnet shouldn't leak a stale
+          // fastMode request the SDK would ignore anyway.
+          fastMode: activeThreadFastMode && modelSupportsFastMode(activeThreadModel),
           sessionStarted,
           onSessionStart: () => markSessionStarted(threadId),
           onPart: (part) => {
@@ -349,7 +358,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [editorView, slug, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
+    [editorView, slug, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
   return { status, streaming, run }

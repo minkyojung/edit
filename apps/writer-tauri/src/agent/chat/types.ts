@@ -75,6 +75,10 @@ export interface RunChatArgs {
    * `effort` option. `xhigh` is Opus-only; the SDK falls back to `high` on
    * other models. Omit to let the SDK pick its default. */
   effort?: 'low' | 'medium' | 'high' | 'xhigh'
+  /** Request fast mode (faster output) for this run — forwarded to the SDK's
+   * `settings.fastMode`. Only honored on models that support it; the caller
+   * gates on modelSupportsFastMode before setting it. Omit/false = off. */
+  fastMode?: boolean
   /** Relay-tool names the sidecar should expose for this run. Defaults to
    * `['propose_change']` so existing callers (free chat, review) keep
    * inline mark editing. Slash commands pass an empty list (or a kind-
@@ -229,6 +233,10 @@ export interface DoneEvent {
     }>
     autoCompactThreshold?: number
   } | null
+  /** Actual fast-mode state for the turn, read from the SDK result's
+   * `fast_mode_state`. `cooldown` means a rate limit forced it off even though
+   * it was requested. Null when the SDK didn't report it. */
+  fastModeState?: 'off' | 'cooldown' | 'on' | null
 }
 
 export interface ErrorEvent {

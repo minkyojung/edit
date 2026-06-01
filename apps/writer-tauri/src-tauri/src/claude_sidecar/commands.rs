@@ -74,6 +74,11 @@ pub struct ChatStartArgs {
     /// review.
     #[serde(default)]
     pub builtin_tools: Option<Vec<String>>,
+    /// Request fast mode (faster output) for this run. Forwarded to the
+    /// sidecar which sets the SDK's `settings.fastMode`. The frontend only
+    /// sends `Some(true)` after gating on model support; `None` = off.
+    #[serde(default)]
+    pub fast_mode: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -154,6 +159,9 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     }
     if let Some(bt) = args.builtin_tools {
         params["builtinTools"] = json!(bt);
+    }
+    if let Some(fm) = args.fast_mode {
+        params["fastMode"] = json!(fm);
     }
 
     let chat = manager.chat_client().await;

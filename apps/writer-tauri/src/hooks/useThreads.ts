@@ -34,6 +34,7 @@ export interface UseThreadsResult {
   setThreadModel: (id: string, model: ChatModel) => void
   setThreadEffort: (id: string, effort: ChatEffort) => void
   setThreadMode: (id: string, mode: ChatMode) => void
+  setThreadFastMode: (id: string, fastMode: boolean) => void
   /** Marks the thread as having a confirmed SDK session. Called once per
    * thread, on the first stream event of its first run. Idempotent — repeat
    * calls short-circuit so we don't write the same value again. */
@@ -162,6 +163,18 @@ export function useThreads(currentSlug: string | null = null): UseThreadsResult 
     [],
   )
 
+  const setThreadFastMode = useCallback<UseThreadsResult['setThreadFastMode']>(
+    (id, fastMode) => {
+      const cur = useThreadsStore.getState().threads[id]
+      if (!cur || (cur.fastMode ?? false) === fastMode) return
+      void useThreadsStore.getState().updateMeta(id, {
+        fastMode,
+        updatedAt: Date.now(),
+      })
+    },
+    [],
+  )
+
   const markSessionStarted = useCallback<UseThreadsResult['markSessionStarted']>(
     (id) => {
       const cur = useThreadsStore.getState().threads[id]
@@ -194,6 +207,7 @@ export function useThreads(currentSlug: string | null = null): UseThreadsResult 
     setThreadModel,
     setThreadEffort,
     setThreadMode,
+    setThreadFastMode,
     markSessionStarted,
   }
 }

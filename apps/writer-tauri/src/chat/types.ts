@@ -43,6 +43,19 @@ export function normalizeModel(model: string | undefined): ChatModel {
   return DEFAULT_CHAT_MODEL
 }
 
+/** Fast mode = faster output without downgrading the model. The SDK marks
+ * which models support it (`supportsFastMode`); in our lineup only Opus does.
+ * Mirrors effortsForModel's client-side capability gating, so the toggle only
+ * shows where it's real. */
+export function modelSupportsFastMode(model: ChatModel): boolean {
+  return model === 'claude-opus-4-8'
+}
+
+/** Actual fast-mode state the SDK reports on the turn result (`fast_mode_state`)
+ * — the truth, not just what we requested: `on` active, `cooldown` temporarily
+ * forced off after a rate limit, `off` not enabled. */
+export type FastModeState = 'off' | 'cooldown' | 'on'
+
 /** Reasoning effort the model puts into a turn. Mirrors the Claude Agent
  * SDK's first-class `effort` option. `xhigh` is Opus-only — the SDK falls
  * back to `high` on other models, so we only offer it where it's real (see
@@ -151,6 +164,9 @@ export interface ThreadMeta {
   /** Per-thread interaction mode (edit vs plan). Absent on older threads;
    * treat absence as DEFAULT_CHAT_MODE. */
   mode?: ChatMode
+  /** Per-thread fast-mode preference (faster Opus output). Absent/false = off.
+   * Only meaningful where modelSupportsFastMode(model) is true. */
+  fastMode?: boolean
   /** True once the SDK has confirmed a session for this thread (set on the
    * first stream event of the first run). Subsequent runs must use `resume`
    * regardless of history shape — including Regenerate, which deletes the

@@ -29,6 +29,7 @@ import {
 } from '@/chat/commands'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useContextUsageStore } from '@/state/contextUsageStore'
+import { useFastModeStore } from '@/state/fastModeStore'
 import { usePendingPermissions } from '@/state/pendingPermissionsStore'
 import { usePermissionGate } from '@/chat/hooks/usePermissionGate'
 import { GatePanel } from '@/chat/GatePanel'
@@ -98,11 +99,17 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     activeThreadModel,
   )
   const activeThreadMode = activeThread?.mode ?? DEFAULT_CHAT_MODE
+  const activeThreadFastMode = activeThread?.fastMode ?? false
 
   // Post-turn context-usage snapshot for the PromptInput gauge. Subscribed
   // reactively so the gauge refreshes the moment the chat runner records a
   // new snapshot on `claude:done`.
   const contextSnapshot = useContextUsageStore((s) =>
+    activeId ? s.byThread[activeId] : undefined,
+  )
+  // Actual fast-mode state the SDK last reported (on / cooldown / off) — drives
+  // the FastToggle's real-state display, refreshed on each claude:done.
+  const fastModeState = useFastModeStore((s) =>
     activeId ? s.byThread[activeId] : undefined,
   )
 
@@ -132,6 +139,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     activeThreadModel,
     activeThreadEffort,
     activeThreadMode,
+    activeThreadFastMode,
     appendTurn: turnsHook.appendTurn,
     markSessionStarted: threads.markSessionStarted,
     sessionStarted: activeThread?.sessionStarted ?? false,
@@ -623,6 +631,9 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
             onEffortChange={(e) => activeId && threads.setThreadEffort(activeId, e)}
             mode={activeThreadMode}
             onModeChange={(m) => activeId && threads.setThreadMode(activeId, m)}
+            fastMode={activeThreadFastMode}
+            onFastModeChange={(v) => activeId && threads.setThreadFastMode(activeId, v)}
+            fastModeState={fastModeState}
             contextSnapshot={contextSnapshot}
             validate={validatePrompt}
             selectionText={selectionPreview}
