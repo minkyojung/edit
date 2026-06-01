@@ -73,6 +73,13 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   const turnsHook = useThreadTurns(activeId)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // The composer floats over the transcript (absolute) so chat content can
+  // scroll behind its rounded corners instead of being cut off in a straight
+  // line above it. We measure its live height — the input grows as you type,
+  // and the gate panel swaps in at a different height — and pad the
+  // transcript's bottom to match, so the last message always clears it.
+  const footerRef = useRef<HTMLDivElement>(null)
+  const [footerHeight, setFooterHeight] = useState(0)
   // Synchronous send-in-flight latch. Flipping `chatStatus` to 'streaming'
   // only takes effect on the *next* render, so a fast double-Enter could
   // squeeze a second handleSend in before the React state caught up. The
@@ -151,6 +158,19 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     if (!c) return
     const distance = c.scrollHeight - c.scrollTop - c.clientHeight
     setPinned(distance < 80)
+  }, [])
+
+  // Track the floating composer's height so the transcript's bottom padding
+  // matches it. A ResizeObserver keeps it in sync as the input grows or the
+  // gate panel swaps in.
+  useEffect(() => {
+    const el = footerRef.current
+    if (!el) return
+    const sync = () => setFooterHeight(el.offsetHeight)
+    sync()
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [])
 
   // Auto-create the first thread once threads hydrate from the doc's
@@ -565,7 +585,10 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*+*]:mt-4"
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*+*]:mt-6"
+        // Reserve room for the floating composer so the last message clears it
+        // (the composer is absolute, so it no longer pushes content up).
+        style={{ paddingBottom: footerHeight + 12 }}
       >
         {renderedTurns.length === 0 && (
           // ContentUnavailableView pattern (macOS 14+/iOS 17+):
@@ -608,7 +631,28 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      <div className="relative shrink-0 px-3 pb-3 space-y-2">
+      {/* Glass fade band: the transcript dissolves into the composer instead
+          of stopping in a hard line, and content can't harshly pool below it.
+          Frosted panel colour, fully covering the composer area, masked to
+          fade to transparent just above it — so content softly disappears as
+          it scrolls under. Sits behind the composer (painted first) and over
+          the transcript. Mirrors the editor's header/footer glass bands. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute bottom-0 left-0 right-0 bg-sidebar/90"
+        style={{
+          height: footerHeight + 48,
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          maskImage: `linear-gradient(to top, black, black ${footerHeight}px, transparent)`,
+          WebkitMaskImage: `linear-gradient(to top, black, black ${footerHeight}px, transparent)`,
+        }}
+      />
+
+      <div
+        ref={footerRef}
+        className="absolute bottom-0 left-0 right-0 px-3 pb-3"
+      >
         <ScrollToBottomButton
           visible={!pinned && renderedTurns.length > 0}
           onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}

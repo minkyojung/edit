@@ -39,7 +39,7 @@ export const MessageRow = React.memo(function MessageRow({
             preserve their line breaks (normal typed messages keep the
             single-line treatment). */}
         <div
-          className={`max-w-[85%] rounded-3xl bg-info/15 px-4 py-2.5 text-[15px] text-foreground${
+          className={`max-w-[85%] rounded-3xl bg-sidebar-active px-4 py-2.5 text-[15px] text-foreground${
             turn.synthetic ? ' whitespace-pre-line' : ''
           }`}
         >

@@ -214,8 +214,7 @@ export function PromptInput({
   return (
     <div
       className={cn(
-        'relative flex flex-col gap-1.5 rounded-3xl border border-border/40 bg-muted p-2.5 transition-colors',
-        'focus-within:border-foreground/20',
+        'relative flex flex-col gap-1.5 rounded-3xl bg-muted p-2.5 transition-colors',
         disabled && 'opacity-60',
       )}
     >
