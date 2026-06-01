@@ -21,6 +21,7 @@ import {
   usePendingPermissions,
   type PendingPermission,
 } from '@/state/pendingPermissionsStore'
+import { useAnsweredQuestions } from '@/state/answeredQuestionsStore'
 import { cn } from '@/lib/utils'
 
 interface QOption {
@@ -85,15 +86,37 @@ export function QuestionPanel({ pending, onClose }: Props) {
     return answers
   }
 
-  async function send(decision: unknown) {
+  // Q/A summary of what the user chose, used for the display-only answer
+  // bubble the runner inserts in the transcript. One "Q:/A:" block per
+  // answered question, blocks separated by a blank line. Q is labelled by the
+  // short `header` when present, else the full question. (Newlines render in
+  // the bubble because synthetic turns use `whitespace-pre-line`.)
+  function summarizeAnswers(answers: Record<string, string>): string {
+    const blocks: string[] = []
+    for (const qq of questions) {
+      const a = answers[qq.question]
+      if (!a) continue
+      blocks.push(`Q: ${qq.header || qq.question}\nA: ${a}`)
+    }
+    return blocks.join('\n\n')
+  }
+
+  // `summary` is the answer-bubble text. Stashed before the round-trip so the
+  // runner can pick it up when the answer returns; cleared again on failure so
+  // a later, unrelated answer never inherits a stale bubble.
+  async function send(decision: unknown, summary: string) {
     if (sending) return
     setSending(true)
+    if (summary.trim()) {
+      useAnsweredQuestions.getState().record(pending.threadId, summary.trim())
+    }
     try {
       await invoke('claude_chat_decision', {
         args: { runId: pending.runId, decisionId: pending.decisionId, decision },
       })
     } catch (err) {
       console.error('[QuestionPanel] decision failed', err)
+      useAnsweredQuestions.getState().take(pending.threadId)
       setSending(false)
       return
     }
@@ -105,7 +128,8 @@ export function QuestionPanel({ pending, onClose }: Props) {
   // current question (unanswered questions are simply omitted).
   function advance() {
     if (isLast) {
-      void send({ answers: buildAnswers() })
+      const answers = buildAnswers()
+      void send({ answers }, summarizeAnswers(answers))
       return
     }
     setIndex((i) => Math.min(i + 1, questions.length - 1))
@@ -130,7 +154,7 @@ export function QuestionPanel({ pending, onClose }: Props) {
                 type="button"
                 onClick={() => setIndex((i) => Math.max(0, i - 1))}
                 disabled={index === 0}
-                aria-label="이전 질문"
+                aria-label="Previous question"
                 className="rounded-full p-0.5 hover:bg-accent disabled:opacity-30"
               >
                 <IconChevronLeft size={16} />
@@ -142,7 +166,7 @@ export function QuestionPanel({ pending, onClose }: Props) {
                 type="button"
                 onClick={() => setIndex((i) => Math.min(questions.length - 1, i + 1))}
                 disabled={isLast}
-                aria-label="다음 질문"
+                aria-label="Next question"
                 className="rounded-full p-0.5 hover:bg-accent disabled:opacity-30"
               >
                 <IconChevronRight size={16} />
@@ -152,7 +176,7 @@ export function QuestionPanel({ pending, onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            aria-label="질문 닫기 (턴 중지)"
+            aria-label="Close (stop the turn)"
             className="ml-1 rounded-full p-0.5 hover:bg-accent hover:text-foreground"
           >
             <IconX size={16} />
@@ -199,7 +223,7 @@ export function QuestionPanel({ pending, onClose }: Props) {
               autoFocus
               value={customText}
               onChange={(e) => setCustom((p) => ({ ...p, [q.question]: e.target.value }))}
-              placeholder="직접 입력…"
+              placeholder="Type your own…"
               className="flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
             />
           ) : (
@@ -235,7 +259,7 @@ export function QuestionPanel({ pending, onClose }: Props) {
               : 'bg-foreground text-background hover:bg-foreground/90',
           )}
         >
-          {isLast ? '답변 보내기' : '다음'}
+          {isLast ? 'Send' : 'Next'}
         </button>
       </div>
 
@@ -247,7 +271,7 @@ export function QuestionPanel({ pending, onClose }: Props) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.nativeEvent.isComposing && reply.trim()) {
               e.preventDefault()
-              void send({ response: reply.trim() })
+              void send({ response: reply.trim() }, reply.trim())
             }
           }}
           placeholder="Or reply directly…"
@@ -256,11 +280,11 @@ export function QuestionPanel({ pending, onClose }: Props) {
         {reply.trim() && (
           <button
             type="button"
-            onClick={() => void send({ response: reply.trim() })}
+            onClick={() => void send({ response: reply.trim() }, reply.trim())}
             disabled={sending}
             className="rounded-full bg-foreground px-3 py-1 text-xs font-medium text-background hover:bg-foreground/90 disabled:opacity-50"
           >
-            보내기
+            Send
           </button>
         )}
       </div>

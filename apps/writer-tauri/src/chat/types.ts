@@ -206,6 +206,14 @@ export interface ChatTurn {
    * executeCommand's path — same system prompt, same relayTools, same
    * summarize hook — instead of replaying the literal text as plain chat. */
   slashInvocation?: { name: string; args: string }
+  /** Display-only turn injected by the UI, not produced by a model run.
+   * Currently set on the user-side "answer bubble" that records what the
+   * user chose for an AskUserQuestion (plan-mode clarifying question). The
+   * answer already reached the model as the tool's result (canUseTool), so
+   * this bubble must NOT feed back into prompt building — buildUserPrompt and
+   * the triggering-request lookup skip synthetic turns. It still renders and
+   * persists like any other turn. */
+  synthetic?: boolean
   /** Mark ids that propose_change produced during this assistant turn.
    * handleRegenerate reads these on the turn it's about to discard so it
    * can clear the matching marks from the editor before the rerun stamps

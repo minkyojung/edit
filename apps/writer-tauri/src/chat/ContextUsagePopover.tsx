@@ -41,7 +41,7 @@ export function ContextUsagePopover({ snapshot }: { snapshot: ContextSnapshot | 
   if (!snapshot) {
     return (
       <div className="text-muted-foreground text-xs">
-        아직 측정 전입니다 — 첫 메시지를 보내면 표시됩니다.
+        No data yet — send a message to see usage.
       </div>
     )
   }

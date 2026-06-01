@@ -9,6 +9,8 @@ import { classifyRunError } from '@/chat/utils/errorMessage'
 import { createStreamingBuffer } from '@/chat/utils/streamingBuffer'
 import { createThrottledFlusher } from '@/chat/utils/throttledFlusher'
 import { watchOffline } from '@/chat/utils/watchOffline'
+import { useAnsweredQuestions } from '@/state/answeredQuestionsStore'
+import { useThreadsStore } from '@/state/threadsStore'
 
 /** Optional per-run overrides for slash commands. When provided, the
  * command's rendered body becomes the system prompt, and chat.ts skips
@@ -92,7 +94,15 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
   const run = useCallback(
     async (threadId: string, history: ChatTurn[], overrides?: RunOverrides) => {
       const startedAt = Date.now()
-      const assistantId = crypto.randomUUID()
+      // Discard any answer summary left over from a prior run (e.g. one whose
+      // tool result never arrived because the turn was aborted) so this run's
+      // questions can't inherit a stale bubble.
+      useAnsweredQuestions.getState().take(threadId)
+      // `let`, not `const`: an AskUserQuestion answer splits the turn — the
+      // pre-question content commits as one assistant turn, then a fresh
+      // streaming turn (new id) carries the post-answer continuation. See
+      // `rotateForAnswer` below.
+      let assistantId = crypto.randomUUID()
 
       // Seed the live assistant turn in local state. No Yjs op fires until
       // the turn settles, so streaming deltas don't trigger collab traffic
@@ -126,7 +136,11 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       // them in arrival order, and the throttled flusher syncs into
       // streaming state behind a 120ms gate so multiple deltas land in
       // one Streamdown commit.
-      const buffer = createStreamingBuffer()
+      // `let`: rotateForAnswer swaps in a fresh buffer for the post-answer
+      // turn so the continuation's parts don't co-mingle with the committed
+      // pre-question turn. The flusher/commit/onPart closures read `buffer`
+      // by reference, so they always see the current one.
+      let buffer = createStreamingBuffer()
 
       const flusher = createThrottledFlusher(120, () => {
         const parts = buffer.buildParts()
@@ -195,6 +209,69 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         setStreaming(null)
       }
 
+      // AskUserQuestion answers we've already split on — guards against a
+      // second onPart for the same resolved tool part re-triggering a rotate.
+      const rotatedQuestionPartIds = new Set<string>()
+
+      // Split the in-flight assistant turn at an answered clarifying question.
+      // The SDK delivers the answer as the AskUserQuestion tool result, which
+      // arrives BEFORE the model streams its continuation — so at this instant
+      // the buffer holds exactly the pre-question content. We:
+      //   1. commit that as a finished assistant turn (unless it's only the
+      //      question itself, which already lived in the footer panel),
+      //   2. append the user's answer as a display-only `synthetic` bubble,
+      //   3. start a fresh streaming turn + buffer for the continuation,
+      // yielding the canonical [assistant] → [you answered] → [assistant]
+      // ordering instead of one merged block.
+      const rotateForAnswer = (qaText: string) => {
+        flusher.cancel()
+        const parts = buffer.buildParts()
+        const content = buffer.joinByType('text')
+        const thinking = buffer.joinByType('reasoning')
+        // Drop a pre-question turn that carries nothing the footer didn't
+        // already show — i.e. only the AskUserQuestion call, no prose/reasoning
+        // and no other tool work.
+        const meaningful =
+          content.trim().length > 0 ||
+          thinking.trim().length > 0 ||
+          parts.some((p) => p.type === 'tool' && p.toolName !== 'AskUserQuestion')
+        const toAppend: ChatTurn[] = []
+        if (meaningful) {
+          toAppend.push({
+            id: assistantId,
+            role: 'assistant',
+            content,
+            thinking: thinking || undefined,
+            parts,
+            ts: Date.now(),
+            status: 'done',
+            durationMs: Date.now() - startedAt,
+            stopReason: null,
+          })
+        }
+        toAppend.push({
+          id: crypto.randomUUID(),
+          role: 'user',
+          content: qaText,
+          ts: Date.now(),
+          status: 'done',
+          synthetic: true,
+        })
+        // Swap to a fresh streaming turn + buffer BEFORE persisting, so any
+        // continuation part that races in lands on the new turn (it's post-
+        // answer content), never back on the committed pre-question turn.
+        assistantId = crypto.randomUUID()
+        buffer = createStreamingBuffer()
+        setStreaming({
+          threadId,
+          turn: { id: assistantId, role: 'assistant', content: '', ts: Date.now(), status: 'streaming' },
+        })
+        // One atomic append for the committed turn + answer bubble — separate
+        // appendTurn calls would race on appendVaultFile's read-modify-write
+        // and could reorder or drop one.
+        void useThreadsStore.getState().appendTurns(threadId, toAppend)
+      }
+
       try {
         // Plan turns go read-only: 'plan' permission mode blocks tool
         // execution, and we drop the propose_* relays + Bash so the model
@@ -234,6 +311,23 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
               markSessionStarted(threadId)
             }
             buffer.upsert(part)
+            // An AskUserQuestion tool part flipping to output-available means
+            // the user's answer just came back. Split the turn and drop in the
+            // answer bubble — but only when we actually recorded a choice
+            // (a bare Skip leaves nothing, so we keep one continuous turn).
+            if (
+              part.type === 'tool' &&
+              part.toolName === 'AskUserQuestion' &&
+              part.state === 'output-available' &&
+              !rotatedQuestionPartIds.has(part.id)
+            ) {
+              rotatedQuestionPartIds.add(part.id)
+              const qaText = useAnsweredQuestions.getState().take(threadId)
+              if (qaText) {
+                rotateForAnswer(qaText)
+                return
+              }
+            }
             flusher.schedule()
           },
         })

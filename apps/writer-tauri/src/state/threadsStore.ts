@@ -38,6 +38,7 @@ import { create } from 'zustand'
 import type { ChatTurn, ThreadMeta } from '@/chat/types'
 import {
   appendThreadTurn,
+  appendThreadTurns,
   deleteThreadFiles,
   listThreadIds,
   readThreadMeta,
@@ -77,6 +78,13 @@ interface ThreadsState {
    * (vault.ts's appendVaultFile) — the on-disk file gets the new
    * line as a single write. */
   appendTurn: (id: string, turn: ChatTurn) => Promise<void>
+
+  /** Append several turns to a thread in one atomic write, preserving their
+   * order. Needed when more than one turn must land back-to-back (the
+   * AskUserQuestion turn-split appends the committed pre-question turn and the
+   * answer bubble together) — separate appendTurn calls would race on the
+   * read-modify-write and could drop or reorder a turn. */
+  appendTurns: (id: string, turns: ChatTurn[]) => Promise<void>
 
   /** Replace a thread's turn list outright. Used by Regenerate
    * (drop the last assistant turn before running a fresh one).
@@ -146,6 +154,14 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
     await appendThreadTurn(id, turn)
     set((s) => ({
       turns: { ...s.turns, [id]: [...(s.turns[id] ?? []), turn] },
+    }))
+  },
+
+  appendTurns: async (id, turns) => {
+    if (!get().threads[id] || turns.length === 0) return
+    await appendThreadTurns(id, turns)
+    set((s) => ({
+      turns: { ...s.turns, [id]: [...(s.turns[id] ?? []), ...turns] },
     }))
   },
 

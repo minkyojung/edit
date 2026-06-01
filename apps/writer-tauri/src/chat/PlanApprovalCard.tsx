@@ -45,11 +45,11 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
     <div className="rounded-3xl border border-border/40 bg-muted p-3 text-sm">
       {/* Header: prompt + close */}
       <div className="mb-2 flex items-start justify-between gap-3 px-1">
-        <div className="font-medium text-foreground">이 계획대로 진행할까요?</div>
+        <div className="font-medium text-foreground">Proceed with this plan?</div>
         <button
           type="button"
           onClick={onClose}
-          aria-label="닫기 (턴 중지)"
+          aria-label="Close (stop the turn)"
           className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
         >
           <IconX size={16} />
@@ -58,15 +58,19 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
 
       {/* The plan is rendered in the transcript (chat answer); this panel is
           the decision surface only. */}
+      {/* Transparent, borderless textarea — same treatment as the main
+          PromptInput editor (PromptInput.tsx), so it blends into the card's
+          bg-muted instead of reading as a nested box. */}
       <textarea
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
-        placeholder="수정할 점이 있으면 적어주세요 (선택)"
-        rows={2}
+        placeholder="Anything to change? (optional)"
+        rows={1}
         className={cn(
-          'mb-2 w-full resize-none rounded-xl border border-border/40 bg-background/50 px-2.5 py-1.5',
-          'text-sm text-foreground outline-none placeholder:text-muted-foreground',
-          'focus-visible:border-foreground/20',
+          'mb-2 w-full resize-none bg-transparent px-1.5 py-1.5',
+          'text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground',
+          'field-sizing-content max-h-48 min-h-8',
+          '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
         )}
       />
 
@@ -83,7 +87,7 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/30 disabled:opacity-50',
           )}
         >
-          수정 요청
+          Request changes
         </button>
         <button
           type="button"
@@ -95,7 +99,7 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/30 disabled:opacity-50',
           )}
         >
-          {sending ? '진행 중…' : '승인'}
+          {sending ? 'Working…' : 'Approve'}
         </button>
       </div>
     </div>

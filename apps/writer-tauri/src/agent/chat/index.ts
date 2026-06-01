@@ -112,7 +112,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // any pending edit this run proposes as its Review-panel "why".
   const triggeringRequest = [...(history ?? [])]
     .reverse()
-    .find((t) => t.role === 'user')
+    .find((t) => t.role === 'user' && !t.synthetic)
     ?.content?.trim()
 
   const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')

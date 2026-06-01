@@ -21,7 +21,11 @@ import { DOC_CHAR_CAP, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from './types'
  * a transcript here; that broke prompt-cache reuse and was
  * explicitly flagged as a temporary bridge. */
 export function buildUserPrompt(history: ChatTurn[]): string {
-  const turns = history.filter((t) => t.content.trim().length > 0)
+  // `synthetic` turns (e.g. the AskUserQuestion answer bubble) are display-
+  // only — the model already received that answer via the tool result, so
+  // they must never become the prompt (Regenerate would otherwise re-send
+  // the chosen answer text as a fresh question).
+  const turns = history.filter((t) => !t.synthetic && t.content.trim().length > 0)
   if (turns.length === 0) return ''
   return turns[turns.length - 1].content
 }
