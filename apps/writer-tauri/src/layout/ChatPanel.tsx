@@ -32,6 +32,7 @@ import { useContextUsageStore } from '@/state/contextUsageStore'
 import { usePendingPermissions } from '@/state/pendingPermissionsStore'
 import { usePermissionGate } from '@/chat/hooks/usePermissionGate'
 import { GatePanel } from '@/chat/GatePanel'
+import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
 import { PromptInput } from '@/chat/PromptInput'
 import {
   DEFAULT_CHAT_EFFORT,
@@ -112,6 +113,13 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   const pendingPermission = usePendingPermissions((s) =>
     activeId ? Object.values(s.byRun).find((p) => p.threadId === activeId) : undefined,
   )
+  // Plan mode puts the plan in ExitPlanMode's `plan` arg (the chat answer stays
+  // minimal). Render it as the assistant's answer in the transcript — the card
+  // below is the decision surface only.
+  const pendingPlanText =
+    pendingPermission?.toolName === 'ExitPlanMode'
+      ? (pendingPermission.input as { plan?: string } | null)?.plan?.trim()
+      : undefined
 
   // Single hook owns the streaming buffer state, the chat-level status, and
   // the run() dispatcher. Handlers below (handleSend / handleRegenerate /
@@ -577,6 +585,11 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
             }
           />
         ))}
+        {pendingPlanText && (
+          <div className="px-1 text-[14px] leading-relaxed text-foreground">
+            <StreamingMarkdown content={pendingPlanText} isStreaming={false} />
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 

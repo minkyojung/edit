@@ -14,7 +14,6 @@ import {
   usePendingPermissions,
   type PendingPermission,
 } from '@/state/pendingPermissionsStore'
-import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -24,10 +23,6 @@ interface Props {
 }
 
 export function PlanApprovalCard({ pending, onClose }: Props) {
-  // The plan the model put in ExitPlanMode's `plan` argument — the single
-  // version the user reviews here. Plan mode keeps the chat answer minimal, so
-  // this card is where the plan is actually read (and approved / revised).
-  const plan = (pending.input as { plan?: string } | null)?.plan?.trim()
   const [notes, setNotes] = useState('')
   const [sending, setSending] = useState(false)
 
@@ -61,12 +56,8 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
         </button>
       </div>
 
-      {plan && (
-        <div className="mb-2 max-h-72 overflow-auto rounded-xl bg-background/40 px-2.5 py-1.5">
-          <StreamingMarkdown content={plan} isStreaming={false} />
-        </div>
-      )}
-
+      {/* The plan is rendered in the transcript (chat answer); this panel is
+          the decision surface only. */}
       <textarea
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
