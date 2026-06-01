@@ -218,9 +218,12 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           permissionMode: isPlan ? 'plan' : undefined,
           // Interactive plan tools must be in the list or the SDK never offers
           // them: AskUserQuestion (ask before planning), ExitPlanMode (propose
-          // the finished plan for approval).
+          // the finished plan for approval). Write is included so the model can
+          // record its plan to the plan file (the canonical flow that lands a
+          // clean plan in ExitPlanMode.plan); the sidecar gate confines Write
+          // to the plans directory, so the vault stays read-only.
           builtinTools: isPlan
-            ? ['Read', 'Glob', 'Grep', 'AskUserQuestion', 'ExitPlanMode']
+            ? ['Read', 'Glob', 'Grep', 'Write', 'AskUserQuestion', 'ExitPlanMode']
             : undefined,
           model: overrides?.model ?? activeThreadModel,
           effort: overrides?.effort ?? activeThreadEffort,

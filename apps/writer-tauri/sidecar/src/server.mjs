@@ -757,6 +757,26 @@ export class Server {
               'Plan mode is read-only. Lay out the full plan, then call ExitPlanMode to proceed.',
           }
         }
+        // Built-in write tools: in plan mode the model uses Write to record its
+        // plan to the plan file (the canonical flow). Allow that — but ONLY
+        // under the plans directory — and deny writes to the vault, so the
+        // source stays read-only even though the Write tool is on the surface.
+        if (
+          toolName === 'Write' ||
+          toolName === 'Edit' ||
+          toolName === 'MultiEdit' ||
+          toolName === 'NotebookEdit'
+        ) {
+          const filePath = typeof input?.file_path === 'string' ? input.file_path : ''
+          if (filePath.startsWith(PLAN_MODE_PLANS_DIR)) {
+            return { behavior: 'allow', updatedInput: input }
+          }
+          return {
+            behavior: 'deny',
+            message:
+              'Plan mode is read-only. Put the plan in ExitPlanMode instead of editing files.',
+          }
+        }
         return { behavior: 'allow', updatedInput: input }
       }
     }
