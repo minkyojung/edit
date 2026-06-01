@@ -269,9 +269,9 @@ export function PromptInput({
         disabled={disabled}
         rows={1}
         className={cn(
-          'w-full resize-none bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none',
+          'w-full resize-none bg-transparent px-1.5 py-1.5 text-[15px] leading-relaxed text-foreground outline-none',
           'placeholder:text-muted-foreground',
-          'field-sizing-content max-h-48 min-h-8',
+          'field-sizing-content max-h-48 min-h-16',
           '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
         )}
       />

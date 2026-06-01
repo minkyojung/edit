@@ -565,7 +565,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*+*]:mt-3"
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*+*]:mt-4"
       >
         {renderedTurns.length === 0 && (
           // ContentUnavailableView pattern (macOS 14+/iOS 17+):
@@ -601,7 +601,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
           />
         ))}
         {pendingPlanText && (
-          <div className="px-1 text-[14px] leading-relaxed text-foreground">
+          <div className="px-1 text-[15px] leading-relaxed text-foreground">
             <StreamingMarkdown content={pendingPlanText} isStreaming={false} />
           </div>
         )}

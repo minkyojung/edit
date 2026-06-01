@@ -39,7 +39,7 @@ export const MessageRow = React.memo(function MessageRow({
             preserve their line breaks (normal typed messages keep the
             single-line treatment). */}
         <div
-          className={`max-w-[85%] rounded-3xl bg-info/15 px-3 py-2 text-[14px] text-foreground${
+          className={`max-w-[85%] rounded-3xl bg-info/15 px-4 py-2.5 text-[15px] text-foreground${
             turn.synthetic ? ' whitespace-pre-line' : ''
           }`}
         >
@@ -76,7 +76,7 @@ export const MessageRow = React.memo(function MessageRow({
   // - Parts-aware turns: walk the timeline so tool calls / reasoning blocks
   //   appear inline at the moment they happened.
   const body = (
-    <div className="text-[14px] text-foreground leading-relaxed">
+    <div className="text-[15px] text-foreground leading-relaxed">
       {showActivity && <ActivityStatus parts={turn.parts} />}
       {turn.parts && turn.parts.length > 0 ? (
         <PartList parts={turn.parts} isStreaming={isStreaming} hideText={hideText} />
