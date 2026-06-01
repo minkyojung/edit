@@ -696,10 +696,16 @@ export class Server {
           try {
             const decision = await this.#requestDecision(runId, toolName, input, controller)
             if (toolName === 'AskUserQuestion') {
-              return {
-                behavior: 'allow',
-                updatedInput: { questions: input.questions, answers: decision?.answers ?? {} },
+              // `answers` = per-question choices; `response` = a free-form
+              // reply the user typed instead ("Or reply directly…"). The SDK
+              // forwards either; when `response` is set the model receives
+              // "The user responded: …" rather than the structured answers.
+              const updatedInput = {
+                questions: input.questions,
+                answers: decision?.answers ?? {},
               }
+              if (decision?.response) updatedInput.response = decision.response
+              return { behavior: 'allow', updatedInput }
             }
             // ExitPlanMode: approve → leave plan mode (switch to 'default')
             // and flip planApproved so the propose_* relays are allowed below.

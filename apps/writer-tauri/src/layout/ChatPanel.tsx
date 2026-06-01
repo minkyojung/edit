@@ -31,7 +31,7 @@ import { useChatRuns } from '@/stores/chatRuns'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { usePendingPermissions } from '@/state/pendingPermissionsStore'
 import { usePermissionGate } from '@/chat/hooks/usePermissionGate'
-import { QuestionCard } from '@/chat/QuestionCard'
+import { QuestionPanel } from '@/chat/QuestionPanel'
 import { PlanApprovalCard } from '@/chat/PlanApprovalCard'
 import { PromptInput } from '@/chat/PromptInput'
 import {
@@ -571,11 +571,6 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
             onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
           />
         ))}
-        {pendingPermission?.toolName === 'AskUserQuestion' && (
-          <div className="px-1">
-            <QuestionCard pending={pendingPermission} />
-          </div>
-        )}
         {pendingPermission?.toolName === 'ExitPlanMode' && (
           <div className="px-1">
             <PlanApprovalCard pending={pendingPermission} />
@@ -589,22 +584,29 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
           visible={!pinned && renderedTurns.length > 0}
           onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
         />
-        <PromptInput
-          status={chatStatus}
-          disabled={!ready || !account.connected}
-          onSubmit={handleSend}
-          onStop={handleStop}
-          model={activeThreadModel}
-          onModelChange={(m) => activeId && threads.setThreadModel(activeId, m)}
-          effort={activeThreadEffort}
-          onEffortChange={(e) => activeId && threads.setThreadEffort(activeId, e)}
-          mode={activeThreadMode}
-          onModeChange={(m) => activeId && threads.setThreadMode(activeId, m)}
-          contextSnapshot={contextSnapshot}
-          validate={validatePrompt}
-          selectionText={selectionPreview}
-          onClearSelection={handleClearSelection}
-        />
+        {pendingPermission?.toolName === 'AskUserQuestion' ? (
+          // While a clarifying question is parked, the question panel takes
+          // the prompt input's place (Claude's official question UI). Closing
+          // it stops the turn via the existing abort path.
+          <QuestionPanel pending={pendingPermission} onClose={handleStop} />
+        ) : (
+          <PromptInput
+            status={chatStatus}
+            disabled={!ready || !account.connected}
+            onSubmit={handleSend}
+            onStop={handleStop}
+            model={activeThreadModel}
+            onModelChange={(m) => activeId && threads.setThreadModel(activeId, m)}
+            effort={activeThreadEffort}
+            onEffortChange={(e) => activeId && threads.setThreadEffort(activeId, e)}
+            mode={activeThreadMode}
+            onModeChange={(m) => activeId && threads.setThreadMode(activeId, m)}
+            contextSnapshot={contextSnapshot}
+            validate={validatePrompt}
+            selectionText={selectionPreview}
+            onClearSelection={handleClearSelection}
+          />
+        )}
       </div>
     </div>
   )
