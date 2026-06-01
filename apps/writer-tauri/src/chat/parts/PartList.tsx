@@ -23,9 +23,13 @@ import { InlineSuggestion } from '@/chat/suggestions/InlineSuggestion'
 export function PartList({
   parts,
   isStreaming,
+  hideText = false,
 }: {
   parts: MessagePart[]
   isStreaming: boolean
+  /** Suppress text parts — used for a parked plan turn, whose plan lives in
+   * the approval card, so the (often redundant) answer text isn't shown twice. */
+  hideText?: boolean
 }) {
   const processParts: Array<ReasoningPart | ToolPart> = []
   const textParts: TextPartType[] = []
@@ -52,9 +56,10 @@ export function PartList({
       {processParts.length > 0 && (
         <ProcessChain parts={processParts} isStreaming={isStreaming} />
       )}
-      {textParts.map((part) => (
-        <TextPart key={part.id} part={part} isStreaming={isStreaming} />
-      ))}
+      {!hideText &&
+        textParts.map((part) => (
+          <TextPart key={part.id} part={part} isStreaming={isStreaming} />
+        ))}
       {editParts.map((part) => (
         <InlineSuggestion key={part.id} part={part} />
       ))}

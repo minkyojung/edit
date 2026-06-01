@@ -568,6 +568,13 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
             threadId={activeId}
             threadTitle={activeThread?.title ?? ''}
             onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
+            // While a plan is parked for approval, its plan lives in the
+            // approval card — hide the (redundant) answer text so the plan
+            // isn't shown twice.
+            hideText={
+              turn.status === 'streaming' &&
+              pendingPermission?.toolName === 'ExitPlanMode'
+            }
           />
         ))}
         <div ref={bottomRef} />

@@ -15,6 +15,7 @@ export const MessageRow = React.memo(function MessageRow({
   threadId,
   threadTitle,
   onRegenerate,
+  hideText = false,
 }: {
   turn: ChatTurn
   /** Active thread id — needed by the file-to-wiki action so the
@@ -27,6 +28,9 @@ export const MessageRow = React.memo(function MessageRow({
   /** Provided only when this turn is the latest settled assistant turn —
    * the only one Regenerate is allowed on. */
   onRegenerate?: (turnId: string) => void
+  /** Suppress the answer text — set for a parked plan turn whose plan is
+   * shown in the approval card, so it isn't duplicated in the transcript. */
+  hideText?: boolean
 }) {
   if (turn.role === 'user') {
     return (
@@ -68,13 +72,15 @@ export const MessageRow = React.memo(function MessageRow({
     <div className="text-[14px] text-foreground leading-relaxed">
       {showActivity && <ActivityStatus parts={turn.parts} />}
       {turn.parts && turn.parts.length > 0 ? (
-        <PartList parts={turn.parts} isStreaming={isStreaming} />
+        <PartList parts={turn.parts} isStreaming={isStreaming} hideText={hideText} />
       ) : (
         <>
           {hasThinking && (
             <ThinkingPanel content={turn.thinking!} streamingNoText={isStreaming && !hasText} />
           )}
-          {hasText && <StreamingMarkdown content={turn.content} isStreaming={isStreaming} />}
+          {hasText && !hideText && (
+            <StreamingMarkdown content={turn.content} isStreaming={isStreaming} />
+          )}
         </>
       )}
     </div>
