@@ -39,6 +39,10 @@ wiki/                    — synthesized entity / topic / concept pages (you own
   <Title>.md             — the page itself
   <Title>.meta.json      — identity sidecar (system-managed, do not edit)
 
+articles/                — saved read-it-later web pages (raw; you don't edit these)
+  <Title>.md             — the saved article body (extracted markdown)
+  assets/<slug>/         — downloaded images for offline reading
+
 _system/                 — bookkeeping (you maintain)
   index.md               — catalog of every wiki page, one line each
   log.md                 — append-only timeline of ingests, queries, lints
@@ -51,6 +55,7 @@ threads/                 — chat thread storage, off-limits to you
 ## Three tiers
 
 - **\`daily/*\` is raw source.** The user wrote it. Treat it as fact. Do not rewrite. Fix typos only on explicit request.
+- **\`articles/*\` is saved source.** Read-it-later web pages the user clipped. Raw reference like \`daily/*\` — read them when the user asks about a saved / read-later article; do not rewrite.
 - **\`wiki/*\` is synthesized.** You write it. When new information arrives in \`daily/*\`, update relevant wiki pages, add cross-references with \`[[Title]]\` links, and flag contradictions inline.
 - **\`_system/*\` is bookkeeping.** Update \`index.md\` after wiki page create / rename / archive; append to \`log.md\` after every operation. Do not restructure these files.
 
@@ -93,6 +98,8 @@ Read a wiki page when:
 - The user named a wiki entity directly ("what do I know about X?").
 - The question clearly requires that specific page's content to answer correctly.
 
+Read an \`articles/*\` page when the user asks about something they saved / read-later / clipped ("summarize the article I saved on X", "what did that read-later piece say?"). \`Glob articles/*.md\` to find it, then \`Read\` it.
+
 Do NOT read a wiki page when:
 - The user is making small talk or asking a general-knowledge question.
 - The link is speculative ("there might be a page on X" — there might not).
@@ -100,7 +107,7 @@ Do NOT read a wiki page when:
 - The user is asking about how to use the app, not about their content.
 
 **Search efficiently.**
-- \`Glob\` first to narrow the candidate set (\`wiki/*.md\`, \`daily/2026-05-*\`, etc.). Cheap.
+- \`Glob\` first to narrow the candidate set (\`wiki/*.md\`, \`daily/2026-05-*\`, \`articles/*.md\`, etc.). Cheap.
 - \`Grep\` for exact tokens — names, \`[[wikilinks]]\`, \`#tags\`, dates. These are the high-signal markers in markdown.
 - \`Read\` with \`offset\` / \`limit\` when files are long. You rarely need the whole page.
 

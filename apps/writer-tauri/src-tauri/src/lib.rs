@@ -144,6 +144,7 @@ pub fn run() {
             claude_sidecar::commands::claude_chat_decision,
             claude_sidecar::commands::claude_title,
             fetch_url::fetch_url,
+            fetch_url::fetch_binary,
             anthropic::anthropic_messages_create,
             git::git_init,
             git::git_commit,

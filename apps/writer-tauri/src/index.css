@@ -592,6 +592,18 @@
     -webkit-user-select: none;
     user-select: none;
   }
+  /* Image presentation: never overflow the column (max-width), keep the
+     aspect ratio (height auto), center, and soften the corners. Small
+     images (e.g. downloaded thumbnails) stay at natural size — centered
+     rather than upscaled, so they read crisp — while large images shrink
+     to fit. Applies to all editor images, saved articles included. */
+  .ProseMirror .image-card img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin-inline: auto;
+    border-radius: 8px;
+  }
   .ProseMirror .image-card.ProseMirror-selectednode,
   .ProseMirror .video-card.ProseMirror-selectednode,
   .ProseMirror .audio-card.ProseMirror-selectednode {

@@ -13,6 +13,7 @@
 import { extractPage } from '@/profile/adapters/extractPage'
 import { appendMarkdownToWikiPage } from '@/agent/applyIngest'
 import { createArticle } from '@/state/articleService'
+import { localizeArticleImages } from '@/lib/articleAssets'
 import { generateClientSlug } from '@/lib/slug'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { notify } from '@/lib/notify'
@@ -61,6 +62,11 @@ export async function saveArticleFromUrl(url: string): Promise<SaveArticleResult
     return { ok: false }
   }
 
+  // Localize images in the background so the save returns instantly.
+  // The article first shows with remote image URLs; once downloads
+  // finish, the body is rewritten to local copies (offline-ready).
+  void localizeImagesInBackground(slug, doc.contentMarkdown, doc.sourceUrl)
+
   // Breadcrumb in today's daily. Non-fatal: the article is already
   // saved; a failed append shouldn't fail the whole action.
   try {
@@ -72,6 +78,25 @@ export async function saveArticleFromUrl(url: string): Promise<SaveArticleResult
 
   notify.articleSaved({ title: doc.title })
   return { ok: true, slug }
+}
+
+/** Download the article's images into the vault and swap the body's
+ * image links to the local copies. Best-effort and fire-and-forget:
+ * runs after the save returns, replaces the body only if something was
+ * actually localized. */
+async function localizeImagesInBackground(
+  slug: string,
+  markdown: string,
+  sourceUrl?: string,
+): Promise<void> {
+  try {
+    const rewritten = await localizeArticleImages(slug, markdown, sourceUrl)
+    if (rewritten !== markdown) {
+      await useDocsStore.getState().replaceDocBody(slug, rewritten)
+    }
+  } catch (err) {
+    console.warn('[readlater] image localization failed', err)
+  }
 }
 
 /** Today's daily slug, creating the catalog entry if missing — WITHOUT
