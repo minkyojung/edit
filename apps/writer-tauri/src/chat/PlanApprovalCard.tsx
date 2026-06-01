@@ -14,6 +14,7 @@ import {
   usePendingPermissions,
   type PendingPermission,
 } from '@/state/pendingPermissionsStore'
+import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -23,6 +24,9 @@ interface Props {
 }
 
 export function PlanApprovalCard({ pending, onClose }: Props) {
+  // The plan lives in ExitPlanMode's `plan` argument (the canonical single
+  // source, populated because the sidecar configures a plans directory).
+  const plan = (pending.input as { plan?: string } | null)?.plan?.trim()
   const [notes, setNotes] = useState('')
   const [sending, setSending] = useState(false)
 
@@ -56,8 +60,14 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
         </button>
       </div>
 
-      {/* The plan itself is the assistant's answer text in the transcript —
-          this panel is the decision surface only. */}
+      {/* The plan the model put in ExitPlanMode's `plan` argument — the single
+          version the user reviews here, rendered as markdown. */}
+      {plan && (
+        <div className="mb-2 max-h-72 overflow-auto rounded-xl bg-background/40 px-2.5 py-1.5">
+          <StreamingMarkdown content={plan} isStreaming={false} />
+        </div>
+      )}
+
       <textarea
         value={notes}
         onChange={(e) => setNotes(e.target.value)}

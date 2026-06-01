@@ -1,5 +1,6 @@
-import { readFile, readdir } from 'node:fs/promises'
-import { normalize, resolve as resolvePath } from 'node:path'
+import { mkdir, readFile, readdir } from 'node:fs/promises'
+import { join, normalize, resolve as resolvePath } from 'node:path'
+import { tmpdir } from 'node:os'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import {
@@ -404,14 +405,22 @@ const SIDECAR_VERSION = '0.1.0'
 // steer the model away from diff-style output — a plan rendered as a
 // ```diff block looks like a pile of edits in the chat, which it isn't.
 const PLAN_MODE_INSTRUCTIONS = [
-  'Present your plan as your normal response text — a short, readable summary the',
-  "user sees in the transcript, in the user's language (Korean when the",
-  'conversation is Korean). Then call ExitPlanMode to ask the user to proceed.',
+  'When the plan is ready, call ExitPlanMode and put the COMPLETE plan in its',
+  '`plan` argument as markdown — that single plan is what the user reviews and',
+  'approves. Do NOT also write the plan as your normal response; keep any chat',
+  'text to a sentence at most.',
   '',
-  'This is a writing / wiki vault, not code. A few sentences or bullets saying which',
-  'page you will change, what the change is, and why. No ```diff or code blocks, and',
-  'do not paste the full file content — the edit shows the exact change after approval.',
+  "Write the plan in the user's language (Korean when the conversation is Korean).",
+  'This is a writing / wiki vault, not code: concise prose and bullets saying which',
+  'page(s) you will change, what the change is, and why. No ```diff or code blocks,',
+  'and do not paste the full file content.',
 ].join('\n')
+
+// Setting a plans directory flips the model into the canonical plan-file flow:
+// it puts the full plan in ExitPlanMode's `plan` argument (clean markdown) instead
+// of improvising it as chat text. The file itself is not written in this mode; the
+// directory just needs to exist for the behaviour to engage.
+const PLAN_MODE_PLANS_DIR = join(tmpdir(), 'writer-tauri-plans')
 
 /** Dump a thrown error's full context to stderr so the Rust supervisor's
  * stderr drain (and the dev console downstream) can see what actually
@@ -684,6 +693,11 @@ export class Server {
     //     longer consulted, so the post-approval edits run normally.
     //   reads (built-in + read_page/search_wiki) → pass through.
     if (permissionMode === 'plan') {
+      // Engage the canonical plan-file flow so the full plan lands in
+      // ExitPlanMode's `plan` argument (the single source the host renders),
+      // rather than being improvised as chat text. The dir just needs to exist.
+      await mkdir(PLAN_MODE_PLANS_DIR, { recursive: true }).catch(() => {})
+      options.plansDirectory = PLAN_MODE_PLANS_DIR
       // Steer the plan workflow toward prose (no diff blocks) — see the
       // PLAN_MODE_INSTRUCTIONS note. The SDK wraps this with its own
       // read-only + ExitPlanMode protocol text.
