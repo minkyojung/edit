@@ -404,19 +404,13 @@ const SIDECAR_VERSION = '0.1.0'
 // steer the model away from diff-style output — a plan rendered as a
 // ```diff block looks like a pile of edits in the chat, which it isn't.
 const PLAN_MODE_INSTRUCTIONS = [
-  'You are planning changes to a personal wiki / writing vault — prose, not code.',
-  "Write the plan in the user's language (Korean when the conversation is Korean),",
-  'as a few short bullet points. Each bullet = which page + what change + why,',
-  'in one or two lines.',
+  'Present your plan as your normal response text — a short, readable summary the',
+  "user sees in the transcript, in the user's language (Korean when the",
+  'conversation is Korean). Then call ExitPlanMode to ask the user to proceed.',
   '',
-  'Critical — keep the plan ABSTRACT and short:',
-  '- Do NOT reproduce the file content or the rewritten "after" version. The edit',
-  '  itself shows the exact content for review later; repeating it in the plan just',
-  '  duplicates the same text on screen.',
-  '- No ```diff fences, no code blocks, no +/- markers. A plan must read as a plan,',
-  '  not as a diff or an edit.',
-  '',
-  'Keep it to a handful of lines. When the plan is ready, ask the user to proceed.',
+  'This is a writing / wiki vault, not code. A few sentences or bullets saying which',
+  'page you will change, what the change is, and why. No ```diff or code blocks, and',
+  'do not paste the full file content — the edit shows the exact change after approval.',
 ].join('\n')
 
 /** Dump a thrown error's full context to stderr so the Rust supervisor's

@@ -23,7 +23,6 @@ interface Props {
 }
 
 export function PlanApprovalCard({ pending, onClose }: Props) {
-  const plan = (pending.input as { plan?: string } | null)?.plan?.trim()
   const [notes, setNotes] = useState('')
   const [sending, setSending] = useState(false)
 
@@ -57,14 +56,8 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
         </button>
       </div>
 
-      {/* The plan content normally lives in the transcript answer; show it here
-          only when ExitPlanMode actually carried a `plan` body. */}
-      {plan && (
-        <div className="mb-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-xl bg-background/50 p-2 text-xs text-muted-foreground">
-          {plan}
-        </div>
-      )}
-
+      {/* The plan itself is the assistant's answer text in the transcript —
+          this panel is the decision surface only. */}
       <textarea
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
