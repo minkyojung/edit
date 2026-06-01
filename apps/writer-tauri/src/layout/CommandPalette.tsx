@@ -21,6 +21,7 @@ import { useNavigate } from 'react-router-dom'
 import * as chrono from 'chrono-node'
 import {
   IconArchive,
+  IconBookmarkPlus,
   IconCalendar,
   IconCalendarTime,
   IconEdit,
@@ -40,6 +41,7 @@ import {
   type KnownDoc,
 } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
+import { useSaveArticleDialogStore } from '@/state/saveArticleDialogStore'
 import { buildDayUrl, buildViewUrl } from '@/lib/viewUrl'
 import {
   formatLocalDate,
@@ -71,6 +73,7 @@ export function CommandPalette() {
   const openDaily = useDocsStore((s) => s.openDaily)
   const archiveDoc = useDocsStore((s) => s.archiveDoc)
   const renameDoc = useDocsStore((s) => s.renameDoc)
+  const openSaveArticle = useSaveArticleDialogStore((s) => s.openDialog)
   const navigate = useNavigate()
 
   // Active doc — used by the "Archive current note" action. Only
@@ -222,10 +225,23 @@ export function CommandPalette() {
         onValueChange={setQuery}
       />
       <CommandList>
-        {/* Actions on the active note. Rename works for wiki + writing;
-            archive only for writing (dailies aren't archivable). */}
-        {(renameableDoc || activeDoc) && (
+        {/* Actions. "Save to Read Later" is always available in any-mode;
+            rename works for wiki + writing; archive only for writing
+            (dailies aren't archivable). */}
+        {mode === 'any' && (
           <CommandGroup heading="Actions">
+            <CommandItem
+              value="action:save-article"
+              onSelect={() => {
+                setOpen(false)
+                // Defer so the palette's dismiss animation doesn't race
+                // the dialog mount (same reason as the rename prompt).
+                setTimeout(() => openSaveArticle(), 0)
+              }}
+            >
+              <IconBookmarkPlus size={16} stroke={1.75} />
+              <span className="flex-1 truncate">Save URL to Read Later</span>
+            </CommandItem>
             {renameableDoc && (
               <CommandItem
                 value="action:rename-active"

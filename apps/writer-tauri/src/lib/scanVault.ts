@@ -151,6 +151,15 @@ export function mdRelToKnownDoc(
   if (typeof meta.createdAt === 'string') {
     overlay.createdAt = meta.createdAt
   }
+  // Read-it-later article metadata. Only meaningful on type 'article',
+  // but harmless to layer regardless — non-article sidecars never carry
+  // these fields. Restores source URL / site / favicon / read state so
+  // the queue survives the boot rebuild.
+  if (typeof meta.sourceUrl === 'string') overlay.sourceUrl = meta.sourceUrl
+  if (typeof meta.siteName === 'string') overlay.siteName = meta.siteName
+  if (typeof meta.faviconUrl === 'string') overlay.faviconUrl = meta.faviconUrl
+  if (typeof meta.savedAt === 'string') overlay.savedAt = meta.savedAt
+  if (typeof meta.readAt === 'string') overlay.readAt = meta.readAt
   return { ...base, ...overlay } as KnownDoc
 }
 
@@ -195,6 +204,13 @@ function mdRelToBaseDoc(
       type: `system:${systemMatch[1]}` as KnownDoc['type'],
     }
   }
+  // articles/<title>.md — a saved read-it-later page. Flat (no nesting).
+  // Source metadata (url/site/favicon/read state) is layered from the
+  // sidecar by mdRelToKnownDoc; the title comes from the filename.
+  const articleMatch = mdRel.match(/^articles\/([^/]+)\.md$/)
+  if (articleMatch) {
+    return { slug, type: 'article', title: articleMatch[1] }
+  }
   return null
 }
 
@@ -209,6 +225,7 @@ export async function scanVault(): Promise<KnownDoc[]> {
     ...(await listMdRecursive('wiki')),
     ...(await listMdRecursive('daily')),
     ...(await listMdRecursive('_system')),
+    ...(await listMdRecursive('articles')),
   ]
 
   // Pass 1: resolve slug + load sidecar metadata for every file in one

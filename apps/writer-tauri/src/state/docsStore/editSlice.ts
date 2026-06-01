@@ -27,6 +27,11 @@ export interface EditSlice {
    * and refuse empty strings; the caller's UI should validate
    * before calling, but this is a hard backstop. */
   renameDoc: (slug: string, newTitle: string) => boolean
+  /** Toggle the read/unread state of a read-it-later article. Sets
+   * `readAt` to now when marking read, clears it (undefined) when
+   * marking unread, then flushes so the `.meta.json` sidecar reflects
+   * the change immediately. No-op for non-article docs. */
+  setArticleRead: (slug: string, read: boolean) => void
 }
 
 export const createEditSlice = (
@@ -56,5 +61,21 @@ export const createEditSlice = (
     markSlugDirty(slug)
     void flushDirty()
     return true
+  },
+  setArticleRead: (slug, read) => {
+    const idx = get().knownDocs.findIndex((d) => d.slug === slug)
+    if (idx < 0) return
+    const cur = get().knownDocs[idx]
+    if (cur.type !== 'article') return
+    const readAt = read ? new Date().toISOString() : undefined
+    if (cur.readAt === readAt) return
+    const list = [...get().knownDocs]
+    // Explicit `readAt` (even when undefined) so buildMetaForKnownDoc
+    // writes the cleared value through mergeSidecar — same trick the
+    // archive unarchive path uses to drop a sidecar field.
+    list[idx] = { ...cur, readAt }
+    set({ knownDocs: list })
+    markSlugDirty(slug)
+    void flushDirty()
   },
 })

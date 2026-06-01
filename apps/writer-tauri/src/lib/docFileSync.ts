@@ -178,6 +178,13 @@ function buildMetaForKnownDoc(
     // createSlice for new docs). flushDirty writes it back via
     // mergeSidecar, so the sidecar is the durable home.
     createdAt: known?.createdAt,
+    // Read-it-later article metadata (present only on type 'article').
+    // Undefined for every other doc type, so mergeSidecar drops them.
+    sourceUrl: known?.sourceUrl,
+    siteName: known?.siteName,
+    faviconUrl: known?.faviconUrl,
+    savedAt: known?.savedAt,
+    readAt: known?.readAt,
   }
 }
 

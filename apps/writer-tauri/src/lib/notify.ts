@@ -269,6 +269,21 @@ export const notify = {
     })
   },
 
+  // ── Read it later ─────────────────────────────────────────────
+  /** A URL was saved as an article doc. */
+  articleSaved(args: { title: string }) {
+    toast.success('Saved to Read Later', {
+      description: args.title,
+    })
+  },
+  /** extractPage returned nothing usable for the given URL (404,
+   * login wall, JS-only page, or empty extraction). */
+  articleSaveFailed() {
+    toast.error("Couldn't save this page", {
+      description: "We couldn't read its content. Check the URL.",
+    })
+  },
+
   // ── Bootstrap import ──────────────────────────────────────────
   /** Final summary toast for the first-run Import pipeline. Without
    * it the dialog just closes silently — user has no way to tell

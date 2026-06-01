@@ -13,6 +13,7 @@ import { Page } from '@/layout/Page'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
 import { ImageAltDialog } from '@/editor/ImageAltDialog'
+import { SaveArticleDialog } from '@/components/SaveArticleDialog'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore } from '@/state/settingsStore'
@@ -268,6 +269,7 @@ function AppContent() {
           onClose={() => setOnboardingOpen(false)}
         />
         <ImageAltDialog />
+        <SaveArticleDialog />
       </>
     </ErrorBoundary>
   )

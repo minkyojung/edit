@@ -109,6 +109,25 @@ describe('pathForDoc', () => {
     const note = known({ slug: 'n1', type: 'writing', title: 'No lookup' })
     expect(pathForDoc(note)).toBeNull()
   })
+
+  it('places articles under articles/ by title', () => {
+    expect(
+      pathForDoc(known({ type: 'article', title: 'A Recipe for Training' })),
+    ).toBe('articles/A Recipe for Training.md')
+  })
+
+  it('sanitises reserved characters in article titles', () => {
+    expect(
+      pathForDoc(known({ type: 'article', title: 'URL: https://example.com' })),
+    ).toBe('articles/URL- https---example.com.md')
+  })
+
+  it('falls back to Untitled for blank-titled articles', () => {
+    expect(pathForDoc(known({ type: 'article', title: '   ' }))).toBe(
+      'articles/Untitled.md',
+    )
+    expect(pathForDoc(known({ type: 'article' }))).toBe('articles/Untitled.md')
+  })
 })
 
 describe('metaPathForDoc', () => {

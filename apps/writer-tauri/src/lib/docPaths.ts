@@ -92,6 +92,16 @@ export interface DocMetaFile {
    * the sidecar is the natural permanent home. Absent on legacy
    * sidecars; DocumentInfoDialog falls back to "—". */
   createdAt?: string
+  /** Read-it-later article metadata. Present only on docs of type
+   * `article` (saved web pages). Persisted here because the catalog is
+   * rebuilt from disk on every boot — without the sidecar, source URL,
+   * site name, favicon, and read/unread state would be lost on
+   * restart. Mirrors how `archivedAt` survives. */
+  sourceUrl?: string
+  siteName?: string
+  faviconUrl?: string
+  savedAt?: string
+  readAt?: string
 }
 
 /** Lookup a doc by slug. Required by {@link pathForDoc} only for
@@ -121,6 +131,10 @@ export function pathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null {
     if (!dailyAncestor?.date) return null
     const filename = sanitizeFilename(doc.title?.trim() || 'Untitled')
     return `daily/${dailyAncestor.date}/${filename}.md`
+  }
+  if (doc.type === 'article') {
+    const filename = sanitizeFilename(doc.title?.trim() || 'Untitled')
+    return `articles/${filename}.md`
   }
   return null
 }

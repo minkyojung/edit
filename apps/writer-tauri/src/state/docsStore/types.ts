@@ -38,7 +38,7 @@ export interface KnownDoc {
    * pre-2026-05-13 single `wiki:*` bucket so sidebar grouping, prompt
    * channels, and write-protection guards line up with Karpathy's
    * schema-vs-wiki separation. */
-  type: 'daily' | 'writing' | `system:${string}` | `wiki:${string}`
+  type: 'daily' | 'writing' | 'article' | `system:${string}` | `wiki:${string}`
   /** YYYY-MM-DD when type === 'daily'. */
   date?: string
   /** Parent doc's slug for tree-nested writing notes. Undefined for
@@ -70,6 +70,17 @@ export interface KnownDoc {
    * whose Y.Map had no createdAt either; DocumentInfoDialog renders
    * `—` in that case. */
   createdAt?: string
+  /** Read-it-later source metadata. Set only on `type === 'article'`
+   * docs (saved web pages). Populated by `createArticle` from the
+   * defuddle extraction and persisted via the `.meta.json` sidecar
+   * (DocMetaFile) so they survive restart. `readAt` is set when the
+   * user marks the article read; absent = unread. */
+  sourceUrl?: string
+  siteName?: string
+  faviconUrl?: string
+  description?: string
+  savedAt?: string
+  readAt?: string
 }
 
 /** Coarse classification used by the DOC_POLICIES table below. Every
@@ -85,6 +96,7 @@ export type DocCategory =
   | 'wiki-content'  // agent-created, user-editable wiki page (wiki:custom-*)
   | 'wiki-profile'  // user self-profile — editable + ingest-updatable, non-archivable
   | 'system-meta'   // agent-managed config / metadata (system:conventions/log/index)
+  | 'article'       // user-saved read-later page (external raw source)
 
 /** Capability matrix for one doc category. Every caller that used
  * to ask "can this doc be archived / moved / ingested" reads from
@@ -95,7 +107,7 @@ export interface DocPolicy {
   /** Which sidebar region this doc belongs in. The Day / Week / Month
    * views render `date` and `none` (latter never appears); the
    * Wiki section splits `wiki` (content) and `system` (meta). */
-  sidebarGroup: 'date' | 'wiki' | 'system' | 'none'
+  sidebarGroup: 'date' | 'wiki' | 'system' | 'article' | 'none'
   /** User can soft-delete via archive UI. Karpathy write-ownership
    * invariant: only docs the user authored or owns can be wiped. */
   canArchive: boolean
@@ -249,6 +261,9 @@ export interface DocsState {
    * and refuse empty strings; the caller's UI should validate
    * before calling, but this is a hard backstop. */
   renameDoc: (slug: string, newTitle: string) => boolean
+  /** Toggle a read-it-later article's read/unread state (sets/clears
+   * `readAt` and flushes the sidecar). No-op for non-article docs. */
+  setArticleRead: (slug: string, read: boolean) => void
   /** Switch the sidebar date view. */
   setSidebarTab: (tab: 'day' | 'week' | 'month') => void
   /** Set the Month view's anchor month (YYYY-MM). */

@@ -14,6 +14,7 @@ import { DayView } from './views/DayView'
 import { WeekView } from './views/WeekView'
 import { MonthView } from './views/MonthView'
 import { WikiSection } from './WikiSection'
+import { ArticlesSection } from './ArticlesSection'
 import { WikiMetaRows } from './WikiMetaRows'
 import { ArchivedDocsPopover } from './ArchivedDocsPopover'
 import { IngestProposalCard } from './IngestProposalCard'
@@ -250,6 +251,7 @@ export function AppSidebar() {
           {sidebarTab === 'week' && <WeekView />}
           {sidebarTab === 'month' && <MonthView />}
         </div>
+        <ArticlesSection />
         <WikiSection />
       </SidebarContent>
 
