@@ -22,6 +22,13 @@ export function InlineSuggestion({ part }: { part: ToolPart }) {
     part.pendingId ? s.byId[part.pendingId] : undefined,
   )
 
+  // `_system/*` writes (log.md, index.md, …) are host-managed bookkeeping:
+  // toPendingChange drops them from the review queue and the host appends the
+  // log itself. So don't render their (fallback) diff in the chat — they're
+  // not content the user reviews, and showing the auto-log clutters the answer.
+  const filePath = (part.input as { file_path?: string } | null)?.file_path
+  if (typeof filePath === 'string' && filePath.includes('_system/')) return null
+
   const fallbackDiff = useMemo(
     () => diffLinesFromToolInput(part.toolName, part.input),
     [part.toolName, part.input],
