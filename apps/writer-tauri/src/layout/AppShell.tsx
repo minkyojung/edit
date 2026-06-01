@@ -116,12 +116,12 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
             }}
           >
             {/* Apple sidebar-inset chrome: the right panel reads as
-                its own floating card next to the editor. rounded-3xl
-                lands concentric with the Tahoe ~26pt window corner
-                (26 − 8px outer margin ≈ 19px). Treatment matches the
-                left AppSidebar's variant="inset" — bg-sidebar fill,
-                no ring, no shadow. */}
-            <div className="h-full py-2 pr-2">
+                its own card next to the editor. Only `pr-2` for the window-
+                right margin — NO vertical inset, so the card's top/bottom line
+                up with the editor area (SidebarInset's my-2 already insets both
+                from the window). This keeps the right-panel header on the exact
+                same baseline as the editor header. bg-sidebar fill, no ring. */}
+            <div className="h-full pr-2">
               <div className="h-full overflow-hidden rounded-3xl bg-sidebar">
                 <ErrorBoundary
                   FallbackComponent={PanelErrorFallback}
