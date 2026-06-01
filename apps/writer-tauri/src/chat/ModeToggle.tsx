@@ -29,7 +29,7 @@ export function ModeToggle({ value, onChange, disabled }: Props) {
           aria-label={isPlan ? 'Plan mode (read-only)' : 'Edit mode'}
           aria-pressed={isPlan}
           className={cn(
-            'flex h-7 items-center gap-1 rounded-full px-2 text-xs font-medium transition-colors',
+            'flex h-7 items-center gap-1 rounded-full px-2 text-sm font-medium transition-colors',
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
             'disabled:pointer-events-none disabled:opacity-50',
             isPlan
@@ -38,7 +38,7 @@ export function ModeToggle({ value, onChange, disabled }: Props) {
           )}
         >
           {/* One fixed icon for both states; only the label + highlight change. */}
-          <IconClipboardList size={14} stroke={2} />
+          <IconClipboardList size={16} stroke={2} />
           {isPlan && <span>Plan</span>}
         </button>
       </TooltipTrigger>
