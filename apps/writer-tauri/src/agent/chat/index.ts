@@ -327,10 +327,12 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         prompt,
         relayTools,
         // Read-only planning turns set this to 'plan'; edit turns omit it
-        // (sidecar defaults to bypassPermissions). In plan mode the SDK
-        // blocks tool execution, and the caller also passes an empty
-        // relayTools + a Bash-free builtinTools so the propose_* MCP
-        // tools aren't even offered (they'd be permission-denied anyway).
+        // (sidecar defaults to bypassPermissions). In plan mode the sidecar's
+        // canUseTool gate — NOT tool omission — enforces read-only: the caller
+        // still passes the full propose_* relayTools (so the model can execute
+        // once the plan is approved), and the gate denies them while planning
+        // and allows them after ExitPlanMode is approved. builtinTools drops
+        // Bash but keeps Write (confined to the plans dir by the same gate).
         permissionMode,
         // Phase E6: explicit least-privilege builtin set. Write-side
         // built-ins (Edit / Write / MultiEdit / NotebookEdit) are

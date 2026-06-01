@@ -248,7 +248,14 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   const regeneratableTurnId = (() => {
     if (chatStatus === 'streaming' || streaming) return null
     for (let i = turnsHook.turns.length - 1; i >= 0; i--) {
-      if (turnsHook.turns[i].role === 'assistant') return turnsHook.turns[i].id
+      if (turnsHook.turns[i].role === 'assistant') {
+        // Don't offer Regenerate on a continuation that follows an
+        // AskUserQuestion answer bubble: its history slice would end at the
+        // synthetic user turn, so re-running resumes past the already-answered
+        // question with mismatched semantics.
+        if (turnsHook.turns[i - 1]?.synthetic) return null
+        return turnsHook.turns[i].id
+      }
       // Stop at the first non-assistant from the end — only the trailing
       // assistant turn is regeneratable.
       return null

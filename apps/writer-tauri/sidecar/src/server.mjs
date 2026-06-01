@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { join, normalize, resolve as resolvePath } from 'node:path'
 import { tmpdir } from 'node:os'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
@@ -416,10 +416,11 @@ const PLAN_MODE_INSTRUCTIONS = [
   'and do not paste the full file content.',
 ].join('\n')
 
-// Setting a plans directory flips the model into the canonical plan-file flow:
-// it puts the full plan in ExitPlanMode's `plan` argument (clean markdown) instead
-// of improvising it as chat text. The file itself is not written in this mode; the
-// directory just needs to exist for the behaviour to engage.
+// Allow-prefix for the plan-mode Write gate: in plan mode the built-in Write is
+// permitted only for paths under this dir, so the vault stays read-only while
+// planning. (It is NOT the SDK's plansDirectory — that's a `Settings` member we
+// don't set; the plan reaches the host via ExitPlanMode.input.plan, driven by
+// PLAN_MODE_INSTRUCTIONS, not a file on disk.)
 const PLAN_MODE_PLANS_DIR = join(tmpdir(), 'writer-tauri-plans')
 
 /** Dump a thrown error's full context to stderr so the Rust supervisor's
@@ -693,14 +694,13 @@ export class Server {
     //     longer consulted, so the post-approval edits run normally.
     //   reads (built-in + read_page/search_wiki) → pass through.
     if (permissionMode === 'plan') {
-      // Engage the canonical plan-file flow so the full plan lands in
-      // ExitPlanMode's `plan` argument (the single source the host renders),
-      // rather than being improvised as chat text. The dir just needs to exist.
-      await mkdir(PLAN_MODE_PLANS_DIR, { recursive: true }).catch(() => {})
-      options.plansDirectory = PLAN_MODE_PLANS_DIR
-      // Steer the plan workflow toward prose (no diff blocks) — see the
-      // PLAN_MODE_INSTRUCTIONS note. The SDK wraps this with its own
-      // read-only + ExitPlanMode protocol text.
+      // The full plan lands in ExitPlanMode's `plan` argument — the single
+      // source the host renders — because PLAN_MODE_INSTRUCTIONS steers the
+      // model to put it there (prose, no diff blocks) and the SDK wraps those
+      // instructions with its own read-only + ExitPlanMode protocol.
+      // We deliberately do NOT set plansDirectory: it's a `Settings` member the
+      // SDK ignores when assigned on `Options`, and nothing reads the plan file
+      // from disk anyway — the host renders ExitPlanMode.input.plan, not a file.
       options.planModeInstructions = PLAN_MODE_INSTRUCTIONS
       options.canUseTool = async (toolName, input) => {
         if (toolName === 'ExitPlanMode' || toolName === 'AskUserQuestion') {
