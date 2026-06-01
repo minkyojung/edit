@@ -22,6 +22,7 @@ import * as chrono from 'chrono-node'
 import {
   IconArchive,
   IconBookmarkPlus,
+  IconBookmarks,
   IconCalendar,
   IconCalendarTime,
   IconEdit,
@@ -241,6 +242,16 @@ export function CommandPalette() {
             >
               <IconBookmarkPlus size={16} stroke={1.75} />
               <span className="flex-1 truncate">Save URL to Read Later</span>
+            </CommandItem>
+            <CommandItem
+              value="action:open-read-later"
+              onSelect={() => {
+                setOpen(false)
+                navigate('/read-later')
+              }}
+            >
+              <IconBookmarks size={16} stroke={1.75} />
+              <span className="flex-1 truncate">Open Read Later</span>
             </CommandItem>
             {renameableDoc && (
               <CommandItem

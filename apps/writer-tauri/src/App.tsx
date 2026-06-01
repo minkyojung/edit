@@ -10,6 +10,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { AppShell } from '@/layout/AppShell'
 import { Page } from '@/layout/Page'
+import { ReadLaterQueue } from '@/layout/ReadLaterQueue'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
 import { ImageAltDialog } from '@/editor/ImageAltDialog'
@@ -117,6 +118,13 @@ export function App() {
 // daily under the URL's current view shape). This replaces the
 // earlier one-shot bootTargetSlug pattern: every entry into a
 // broken URL self-heals, not just the cold-boot one.
+//
+// Exception: first-class routes that intentionally carry NO slug (they
+// render their own React surface instead of a document) must be exempt —
+// otherwise the self-heal reads their null slug as "broken" and bounces
+// the user back to today's daily.
+const SLUGLESS_ROUTES = new Set(['/read-later'])
+
 function RouteSyncBridge() {
   useRouteSync()
   usePersistLastPath()
@@ -129,6 +137,11 @@ function RouteSyncBridge() {
 
   useEffect(() => {
     if (bootstrapping) return
+    // Slug-less first-class routes (the Read Later queue) are valid
+    // WITHOUT a document. Without this guard the self-heal below sees a
+    // null slug, judges the URL "broken", and bounces back to today's
+    // daily a beat after the queue paints.
+    if (SLUGLESS_ROUTES.has(pathname)) return
     const slug = parseSlugFromPath(pathname)
     const valid = slug !== null && knownDocs.some((d) => d.slug === slug)
     if (valid) return
@@ -261,6 +274,7 @@ function AppContent() {
             <Route path="/week/:slug" element={notesElement} />
             <Route path="/month/:ym" element={notesElement} />
             <Route path="/month/:ym/:slug" element={notesElement} />
+            <Route path="/read-later" element={<ReadLaterQueue />} />
           </Routes>
         </AppShell>
         <CommandPalette />
