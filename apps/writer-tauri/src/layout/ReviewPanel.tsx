@@ -82,7 +82,8 @@ export function ReviewPanel() {
             </p>
           </div>
         ) : (
-          <div className="flex flex-col">
+          // Top padding clears the overlay header (content scrolls behind it).
+          <div className="flex flex-col pt-[var(--header-h)]">
             {hasPending && (
               <PendingSection entries={pendingEntries} />
             )}

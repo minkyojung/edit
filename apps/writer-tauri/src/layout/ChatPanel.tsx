@@ -586,9 +586,9 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
         ref={scrollRef}
         onScroll={handleScroll}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*+*]:mt-6"
-        // Reserve room for the floating composer so the last message clears it
-        // (the composer is absolute, so it no longer pushes content up).
-        style={{ paddingBottom: footerHeight + 12 }}
+        // Top: clear the overlay header (content scrolls behind it).
+        // Bottom: clear the floating composer so the last message isn't hidden.
+        style={{ paddingTop: 'calc(var(--header-h) + 0.25rem)', paddingBottom: footerHeight + 12 }}
       >
         {renderedTurns.length === 0 && (
           // ContentUnavailableView pattern (macOS 14+/iOS 17+):

@@ -44,12 +44,7 @@ export function RightPanel({ editorView, slug }: Props) {
   const threads = useThreads(slug)
   const { activeId, setActiveId } = useActiveThread(threads.active)
   return (
-    <div className="flex h-full flex-col">
-      <RightPanelHeader
-        threads={threads}
-        activeId={activeId}
-        setActiveId={setActiveId}
-      />
+    <div className="relative flex h-full flex-col">
       <div className="min-h-0 flex-1">
         {mode === 'chat' ? (
           <ChatPanel
@@ -61,6 +56,29 @@ export function RightPanel({ editorView, slug }: Props) {
         ) : (
           <ReviewPanel />
         )}
+      </div>
+      {/* Glass fade band: content dissolves UNDER the header instead of being
+          cut by a divider — the same treatment as the editor header and the
+          chat composer. The header chrome paints on top (z-sticky). */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 z-sticky bg-sidebar/90"
+        style={{
+          height: 'calc(var(--header-h) + 2rem)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          maskImage:
+            'linear-gradient(to bottom, black, black calc(var(--header-h) * 0.7), transparent)',
+          WebkitMaskImage:
+            'linear-gradient(to bottom, black, black calc(var(--header-h) * 0.7), transparent)',
+        }}
+      />
+      <div className="absolute inset-x-0 top-0 z-sticky">
+        <RightPanelHeader
+          threads={threads}
+          activeId={activeId}
+          setActiveId={setActiveId}
+        />
       </div>
     </div>
   )
@@ -90,7 +108,7 @@ function RightPanelHeader({
 
   return (
     <div
-      className="flex shrink-0 items-center gap-0.5 bg-transparent px-0.5 shadow-[inset_0_-1px_0_var(--border)]"
+      className="flex items-center gap-0.5 bg-transparent px-0.5"
       style={{ height: 'var(--header-h)' }}
     >
       <ThreadPicker
