@@ -12,14 +12,21 @@ import { fetchViaSitemap } from './sitemap'
 import { extractPage } from './extractPage'
 
 /** A single fetched post. Adapter output and pipeline input.
- * Plain text in contentMarkdown (HTML tags stripped) — the LLM
- * only needs the signal, not perfect markdown rendering. */
+ * contentMarkdown is structure-preserving Markdown (headings, lists,
+ * links survive) produced by defuddle. */
 export interface Document {
   sourceUrl: string
   title: string
   contentMarkdown: string
   publishedAt?: string
   author?: string
+  // Source metadata for display surfaces (e.g. a read-it-later card in
+  // the daily note) and for length-based heuristics. Populated by the
+  // single-page path (extractPage); absent on the RSS path.
+  siteName?: string
+  faviconUrl?: string
+  description?: string
+  wordCount?: number
 }
 
 /** Raw response from the Tauri fetch_url command. Re-exported here
