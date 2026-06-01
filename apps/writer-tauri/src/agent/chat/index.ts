@@ -25,14 +25,12 @@ import { FREE_CHAT_PROMPT } from '../skills/freeChat'
 import { assembleContext } from '@/agent/contextPipeline'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useChatRuns } from '@/stores/chatRuns'
-import { useGitStore } from '@/state/gitStore'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import {
   mapChatEditToPendingChange,
   materializeChatNewWikiPage,
 } from './toPendingChange'
-import { flushDirty } from '@/lib/docFileSync'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { contextLimitForModel } from '@/lib/contextLimit'
 import {
@@ -174,23 +172,13 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       if (settled) return
       settled = true
       cleanup()
-      // Resolve the caller immediately; the per-turn commit runs
-      // fire-and-forget so the chat UI doesn't wait on disk I/O.
-      // The Review panel's 30 s background poll surfaces the new
-      // commit shortly after; any user who opens the panel sooner
-      // triggers a refresh on mount that catches it too.
       resolve({ stopReason, toolCalls })
-      // Vault changes from this turn flow through the vaultWatcher
-      // → noteActivity chain: Claude's built-in Edit/Write writes the
-      // .md file → OS fsevent → watcher → dirtyPaths. When dirtyPaths
-      // is non-empty at settle time, the turn produced disk changes
-      // worth committing as one logical "ai-edit" entry. When it's
-      // empty, the turn was pure conversation (question + answer)
-      // and there's nothing to record.
-      const hasDirtyPaths = useGitStore.getState().dirtyPaths.size > 0
-      if (hasDirtyPaths) {
-        void finalizeEditCommit(slug)
-      }
+      // No commit at turn end. Chat edits write NOTHING to disk during
+      // the turn — the propose_* tools only stage proposals — so there's
+      // nothing to record here. The commit happens when the user Keeps a
+      // change: pendingChangesApplier observes the accept, writes disk,
+      // and lands one `ai-edit: chat reply` commit per burst (the same
+      // group-commit coordinator ingest uses).
     }
     const settleErr = (err: unknown) => {
       if (settled) return
@@ -358,39 +346,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   return finished
 }
 
-/** Post-turn commit: flush any pending Y.Doc → disk writes the edits
- * touched, then land a single `ai-edit: chat reply (...)` commit so
- * the Review panel shows the turn as one card with rationale + diff.
- *
- * Fire-and-forget from settleOk; the caller already has its
- * RunChatResult and doesn't need to wait on git. A failure here
- * logs but doesn't surface — the commit message is best-effort and
- * the underlying disk state is already correct. */
-async function finalizeEditCommit(slug: string): Promise<void> {
-  try {
-    const known = useDocsStore
-      .getState()
-      .knownDocs.find((d) => d.slug === slug)
-    const sourceLabel =
-      known?.type === 'daily' && known.date
-        ? `daily/${known.date}`
-        : known?.title?.trim() || slug
-    // Built-in Edit/Write writes straight to disk; we lean on the
-    // vaultWatcher → dirtyPaths chain (kept in sync by Phase 2.1)
-    // to know what to roll into this commit. The Review panel's
-    // inline diff is the source of truth for what actually changed;
-    // the commit subject is just a human-readable receipt.
-    const dirtyCount = useGitStore.getState().dirtyPaths.size
-    if (dirtyCount === 0) return
-    await flushDirty()
-    const fileWord = dirtyCount === 1 ? 'file' : 'files'
-    const message = `ai-edit: chat reply (${dirtyCount} ${fileWord}, from ${sourceLabel})`
-    await useGitStore.getState().commitChangesNow(message)
-  } catch (err) {
-    console.warn('[chat] post-turn commit failed', err)
-  }
-}
-
 /** Record the post-turn context-window occupancy for the gauge.
  *
  * STEP 2: the total is approximated from the SDK `usage` the sidecar
@@ -440,3 +395,4 @@ function recordContextUsage(
     updatedAt: Date.now(),
   })
 }
+

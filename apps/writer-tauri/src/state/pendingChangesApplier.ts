@@ -185,12 +185,11 @@ async function logAcceptedChange(change: PendingChange): Promise<void> {
   }
 }
 
-/** Group-level commit coordinator. When the LAST pending change of
- * a group is decided (accepted or rejected), we collect every
- * accepted entity from that group and land them in a single
- * `ai-edit: ingest from <source> (N page updates)` commit. This
- * keeps git history clean — one ingest pass = one commit, not one
- * commit per Accept click. */
+/** Group-level commit coordinator, shared by chat and ingest. As the
+ * pending changes of a group (one chat run or one ingest pass, keyed by
+ * groupId) are accepted, we collect them and, after a quiet debounce,
+ * land them in a single `ai-edit: ...` commit. This keeps git history
+ * clean — one run/pass = one commit, not one commit per Keep click. */
 const groupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const groupAccepts = new Map<
   string,
@@ -239,7 +238,15 @@ async function commitGroup(
   } catch (err) {
     console.warn('[applier] flushDirty failed before commit', err)
   }
-  const subject = `ai-edit: ingest from ${sourceLabel} (${accepts.length} page update${accepts.length === 1 ? '' : 's'})`
+  const n = accepts.length
+  const plural = n === 1 ? '' : 's'
+  // Chat and ingest share this coordinator; only the subject differs.
+  // Both keep the `ai-edit:` prefix so isAiEditCommit + the Review
+  // panel's commitSource parser recognise them.
+  const subject =
+    accepts[0]?.change.source === 'chat'
+      ? `ai-edit: chat reply (${n} page update${plural})`
+      : `ai-edit: ingest from ${sourceLabel} (${n} page update${plural})`
   try {
     await useGitStore.getState().commitChangesNow(subject)
   } catch (err) {
@@ -298,14 +305,13 @@ export function startPendingChangesApplier(): void {
           if (ok && c.source === 'chat') {
             void logAcceptedChange(c)
           }
-          // Group-commit is an ingest-only concern: it batches accept
-          // clicks into one `ai-edit: ingest ...` commit. Chat already
-          // has its own finalizeEditCommit flow that fires on turn
-          // end, so we skip the group path for chat changes — calling
-          // it would either land an empty commit or double-commit.
-          if (c.source === 'ingest') {
-            scheduleGroupCommit(c, ok)
-          }
+          // Commit at accept time for BOTH sources — Keep is when the
+          // disk actually changes. The coordinator debounces a burst of
+          // Keeps from the same run/pass into a single commit. Chat used
+          // to commit at turn end (finalizeEditCommit), but the propose_*
+          // flow writes nothing until Keep, so that never fired and the
+          // turn-end path was removed; this is now the only commit path.
+          scheduleGroupCommit(c, ok)
         })
       } else if (c.status === 'rejected') {
         // Phase E6: both sources are pure store mutations now. Chat
