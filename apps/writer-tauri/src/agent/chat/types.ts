@@ -50,7 +50,14 @@ export interface ToolCallRecord {
 }
 
 export interface RunChatArgs {
-  view: EditorView
+  /** The editor view whose text is the chat's "current page" context.
+   * Null on surfaces with no document — e.g. the Read Later queue route,
+   * where `pageContextMarkdown` supplies the page text instead. */
+  view: EditorView | null
+  /** Stand-in "current page" text used when `view` is null (no editor
+   * mounted). The Read Later queue passes a generated article list here
+   * so the agent can answer about the queue. */
+  pageContextMarkdown?: string
   /** Slug of the doc this run was started against. Used at proposal-
    * apply time to route to the currently-mounted view (if the user is
    * still on this doc) or to the pending queue (if they've switched

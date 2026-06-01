@@ -10,6 +10,7 @@
 // user is directed back to the body to act on individual highlights.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
 import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
@@ -68,6 +69,9 @@ interface Props {
 }
 
 export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
+  // Read Later queue route: no editor document, so chat runs read-only with
+  // a generated article-list page context (see useChatRunner / runChat).
+  const isQueue = useLocation().pathname === '/read-later'
   const { account } = useClaudeAuth()
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const turnsHook = useThreadTurns(activeId)
@@ -141,6 +145,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   // run lifecycle.
   const runner = useChatRunner({
     editorView,
+    isQueue,
     slug,
     activeId,
     activeThreadModel,
@@ -194,7 +199,9 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     })
   }, [turnsHook.turns, streaming, pinned])
 
-  const ready = !!editorView && !!activeId
+  // On the queue route there's no editor view, but chat still works
+  // (read-only Q&A over the article list) — gate on the thread only.
+  const ready = !!activeId && (!!editorView || isQueue)
 
   // Track whether the editor currently has *something* selectable for slash
   // commands — either a live non-empty selection or a frozen snapshot taken
@@ -651,7 +658,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
 
       <div
         ref={footerRef}
-        className="absolute bottom-0 left-0 right-0 px-3 pb-3"
+        className="absolute bottom-0 left-0 right-0 px-1 pb-1"
       >
         <ScrollToBottomButton
           visible={!pinned && renderedTurns.length > 0}

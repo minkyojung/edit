@@ -56,6 +56,7 @@ import { createStreamParser } from './streamParser'
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const {
     view,
+    pageContextMarkdown,
     slug,
     threadId,
     history,
@@ -116,7 +117,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     .find((t) => t.role === 'user' && !t.synthetic)
     ?.content?.trim()
 
-  const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
+  // No `view` (e.g. the Read Later queue route) → use the caller-supplied
+  // page markdown as the current-page context instead of editor text.
+  const docText = view
+    ? view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
+    : (pageContextMarkdown ?? '')
   const docForPrompt = truncateDocForPrompt(docText)
   const systemBody = systemPrompt ?? FREE_CHAT_PROMPT
   const prompt = promptOverride ?? buildUserPrompt(history ?? [])

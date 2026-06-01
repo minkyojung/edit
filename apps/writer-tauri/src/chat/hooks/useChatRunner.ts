@@ -12,6 +12,12 @@ import { createThrottledFlusher } from '@/chat/utils/throttledFlusher'
 import { watchOffline } from '@/chat/utils/watchOffline'
 import { useAnsweredQuestions } from '@/state/answeredQuestionsStore'
 import { useThreadsStore } from '@/state/threadsStore'
+import { buildQueueContextMarkdown } from '@/agent/chat/buildQueueContext'
+
+/** Synthetic slug for chat turns started on the Read Later queue (no
+ * document). Only used as the run-registry key; there's no doc to route
+ * edits to (queue turns are read-only Q&A). */
+const QUEUE_SLUG = 'read-later:queue'
 
 /** Optional per-run overrides for slash commands. When provided, the
  * command's rendered body becomes the system prompt, and chat.ts skips
@@ -34,6 +40,10 @@ export type RunOverrides = {
 
 interface UseChatRunnerDeps {
   editorView: EditorView | null
+  /** True when the chat is running on the Read Later queue route (no
+   * document mounted). Turns run read-only with a generated article-list
+   * page context instead of editor text. */
+  isQueue: boolean
   /** Slug of the doc this chat is attached to. Forwarded to runChat so
    * the proposal listener can route by slug instead of relying on a
    * captured (and soon-stale) view reference after doc switch. */
@@ -78,6 +88,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
 
   const {
     editorView,
+    isQueue,
     slug,
     activeId,
     activeThreadModel,
@@ -280,8 +291,14 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         // explores with Read/Glob/Grep and writes a plan instead of editing.
         const isPlan = activeThreadMode === 'plan'
         const result = await runChat({
-          view: editorView!,
-          slug: slug!,
+          // Null on the queue route — runChat falls back to the page
+          // markdown below instead of reading editor text.
+          view: editorView,
+          // Queue turns have no doc; a synthetic slug keeps run-registry
+          // bookkeeping happy. Edits never target it (read-only Q&A).
+          slug: slug ?? QUEUE_SLUG,
+          // On the queue, feed the saved-article list as the "current page".
+          pageContextMarkdown: isQueue ? buildQueueContextMarkdown() : undefined,
           threadId,
           history,
           prompt: overrides?.prompt,
@@ -291,9 +308,13 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           // execute once the plan is approved. The gate (sidecar canUseTool)
           // denies them while planning and allows them after ExitPlanMode is
           // approved; read_page/search_wiki are allowed throughout.
+          // Queue turns are read-only: no propose_* (there's no doc to edit);
+          // the model reads article bodies via the built-in Read/Glob/Grep.
           relayTools: isPlan
             ? ['read_page', 'search_wiki', 'propose_edit', 'propose_multi_edit', 'propose_write']
-            : overrides?.relayTools,
+            : isQueue
+              ? []
+              : overrides?.relayTools,
           permissionMode: isPlan ? 'plan' : undefined,
           // Interactive plan tools must be in the list or the SDK never offers
           // them: AskUserQuestion (ask before planning), ExitPlanMode (propose
@@ -358,7 +379,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [editorView, slug, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
+    [editorView, isQueue, slug, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
   return { status, streaming, run }
