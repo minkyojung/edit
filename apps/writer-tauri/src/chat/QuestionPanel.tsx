@@ -176,8 +176,11 @@ export function QuestionPanel({ pending, onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
+            // Disabled once an answer is in flight, so sending then hitting ✕
+            // can't race the decision against an abort that cancels the run.
+            disabled={sending}
             aria-label="Close (stop the turn)"
-            className="ml-1 rounded-full p-0.5 hover:bg-accent hover:text-foreground"
+            className="ml-1 rounded-full p-0.5 hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
           >
             <IconX size={16} />
           </button>

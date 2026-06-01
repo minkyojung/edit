@@ -104,6 +104,13 @@ export interface RunChatArgs {
    * upserts by `part.id` to maintain its own ordered list. */
   onPart?: (part: MessagePart) => void
   onToolApplied?: (call: ToolCallRecord) => void
+  /** Fired once, on the FIRST claude:event of any kind for this run — the
+   * SDK's session-init signal, which lands before any content part. The caller
+   * marks the thread's session as started here (not on the first content part)
+   * so a first turn that fails mid-think — after the SDK created the session
+   * but before any text streamed — still flips the resume flag and avoids a
+   * duplicate-create on the next run. */
+  onSessionStart?: () => void
   /** Authoritative resume hint from the host. True once the SDK has
    * confirmed a session for this thread (set by the runner on the first
    * stream event of the first run, persisted on ThreadMeta). When set we

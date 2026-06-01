@@ -156,12 +156,9 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         )
       })
 
-      // Latch for marking the thread's session as started — fires exactly
-      // once on the first stream event of this run. Receiving any part
-      // means the SDK accepted the request and a session now exists for
-      // this thread; future runs must `resume` it regardless of what the
-      // history looks like (Regenerate, etc.).
-      let sessionMarked = false
+      // Session-started marking now happens via runChat's onSessionStart
+      // (fired on the first claude:event, the SDK's session-init signal),
+      // not on the first content part — see that callback below.
 
       // Counters used by `summarize` (review-comments). Now derived from
       // the final toolCalls list returned by runChat — Phase 3.1.5
@@ -305,11 +302,8 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           model: overrides?.model ?? activeThreadModel,
           effort: overrides?.effort ?? activeThreadEffort,
           sessionStarted,
+          onSessionStart: () => markSessionStarted(threadId),
           onPart: (part) => {
-            if (!sessionMarked) {
-              sessionMarked = true
-              markSessionStarted(threadId)
-            }
             buffer.upsert(part)
             // An AskUserQuestion tool part flipping to output-available means
             // the user's answer just came back. Split the turn and drop in the

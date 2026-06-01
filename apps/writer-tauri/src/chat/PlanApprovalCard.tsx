@@ -49,8 +49,12 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
         <button
           type="button"
           onClick={onClose}
+          // Once a decision is in flight, the gate is committing — disable the
+          // stop affordance so an Approve immediately followed by ✕ can't race
+          // (the abort would cancel the run after the approval was consumed).
+          disabled={sending}
           aria-label="Close (stop the turn)"
-          className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
         >
           <IconX size={16} />
         </button>

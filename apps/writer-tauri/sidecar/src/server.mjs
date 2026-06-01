@@ -975,7 +975,11 @@ export class Server {
               logErrorContext('getContextUsage', runId, err, { mode: this.mode })
               lastContextUsage = null
             }
-            releaseInput() // close input → query ends, loop completes
+            releaseInput() // close input → query ends
+            // Result in hand — leave the loop now. Waiting for the next
+            // iteration risks the top-of-loop abort check discarding a result
+            // that already landed (a watchdog/cancel firing in the same tick).
+            break
           }
         }
       } catch (err) {
@@ -985,7 +989,11 @@ export class Server {
         releaseInput() // never leave the input generator parked
       }
 
-      if (controller.signal.aborted) {
+      // A result already in hand means the turn completed — prefer it over an
+      // abort that raced in at the same tick. Without the `!lastResult` guard, a
+      // watchdog/cancel firing exactly as the final result lands would surface a
+      // spurious timeout/cancel on a turn that actually finished.
+      if (controller.signal.aborted && !lastResult) {
         if (idleTimedOut) {
           this.#emitChatError(
             runId,

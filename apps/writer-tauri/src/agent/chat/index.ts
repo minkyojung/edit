@@ -90,6 +90,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     onTextDelta,
     onThinkingDelta,
     onPart,
+    onSessionStart,
     sessionStarted,
   } = args
   // agentIdForModel was used to stamp marks; with marks gone the
@@ -168,6 +169,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   const finished = new Promise<RunChatResult>((resolve, reject) => {
     let settled = false
+    // Latches the once-per-run session-start signal (first claude:event).
+    let sessionEventSeen = false
     const settleOk = (stopReason: string | null) => {
       if (settled) return
       settled = true
@@ -190,6 +193,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     Promise.all([
       listen<ChatEvent>('claude:event', (e) => {
         if (e.payload.runId !== runId) return
+        // First event of any kind = the SDK has confirmed/created the session
+        // for this thread (its `system` init lands before any content). Mark
+        // session-started here so a turn that dies mid-think still flips the
+        // resume flag — gating on the first content part (onPart) was too late
+        // and let a duplicate-create slip through on the retry.
+        if (!sessionEventSeen) {
+          sessionEventSeen = true
+          onSessionStart?.()
+        }
         parser.handleEvent(e.payload.event)
       }),
       // Phase 3.3 staged-edit gate: the sidecar's canUseTool hook
