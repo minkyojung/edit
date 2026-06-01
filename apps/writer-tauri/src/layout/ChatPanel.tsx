@@ -31,8 +31,7 @@ import { useChatRuns } from '@/stores/chatRuns'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { usePendingPermissions } from '@/state/pendingPermissionsStore'
 import { usePermissionGate } from '@/chat/hooks/usePermissionGate'
-import { QuestionPanel } from '@/chat/QuestionPanel'
-import { PlanApprovalCard } from '@/chat/PlanApprovalCard'
+import { GatePanel } from '@/chat/GatePanel'
 import { PromptInput } from '@/chat/PromptInput'
 import {
   DEFAULT_CHAT_EFFORT,
@@ -571,11 +570,6 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
             onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
           />
         ))}
-        {pendingPermission?.toolName === 'ExitPlanMode' && (
-          <div className="px-1">
-            <PlanApprovalCard pending={pendingPermission} />
-          </div>
-        )}
         <div ref={bottomRef} />
       </div>
 
@@ -584,11 +578,12 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
           visible={!pinned && renderedTurns.length > 0}
           onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
         />
-        {pendingPermission?.toolName === 'AskUserQuestion' ? (
-          // While a clarifying question is parked, the question panel takes
-          // the prompt input's place (Claude's official question UI). Closing
-          // it stops the turn via the existing abort path.
-          <QuestionPanel pending={pendingPermission} onClose={handleStop} />
+        {pendingPermission?.toolName === 'AskUserQuestion' ||
+        pendingPermission?.toolName === 'ExitPlanMode' ? (
+          // Any parked gate (clarifying question or plan approval) takes the
+          // prompt input's place. GatePanel routes to the right inner panel by
+          // tool; ✕ stops the turn via the existing abort path.
+          <GatePanel pending={pendingPermission} onClose={handleStop} />
         ) : (
           <PromptInput
             status={chatStatus}

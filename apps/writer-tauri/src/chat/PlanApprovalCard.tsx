@@ -1,21 +1,28 @@
-// Plan-approval card for plan mode (ExitPlanMode).
+// Plan-approval panel for plan mode (ExitPlanMode).
 //
-// When the model finishes planning it calls ExitPlanMode, which the sidecar
-// gate (C1) parks. This card renders inline: the plan itself is the answer
-// text right above it (ExitPlanMode's `plan` input is usually empty), so the
-// card is the decision surface — Approve flips the sidecar to 'default' mode
-// and lets the model execute via the propose_* relays (each still a Keep/
-// Reject card); Revise sends the user's notes back so the model re-plans.
+// Rendered by GatePanel in the prompt input's place (same slot as the
+// question panel). The plan itself is the answer text above in the
+// transcript; this panel is the decision surface — Approve flips the sidecar
+// to 'default' and lets the model execute via propose_* (each edit still a
+// Keep/Reject card); Revise sends the user's notes back to re-plan; ✕ stops
+// the turn (reuses the host abort path, same as the question panel).
 
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { IconX } from '@tabler/icons-react'
 import {
   usePendingPermissions,
   type PendingPermission,
 } from '@/state/pendingPermissionsStore'
 import { cn } from '@/lib/utils'
 
-export function PlanApprovalCard({ pending }: { pending: PendingPermission }) {
+interface Props {
+  pending: PendingPermission
+  /** Stop the turn (✕). Reuses the host abort path. */
+  onClose: () => void
+}
+
+export function PlanApprovalCard({ pending, onClose }: Props) {
   const plan = (pending.input as { plan?: string } | null)?.plan?.trim()
   const [notes, setNotes] = useState('')
   const [sending, setSending] = useState(false)
@@ -36,13 +43,28 @@ export function PlanApprovalCard({ pending }: { pending: PendingPermission }) {
   }
 
   return (
-    <div className="rounded-2xl border border-border/50 bg-muted/40 p-3 text-sm">
-      <div className="mb-2 font-medium text-foreground">이 계획대로 진행할까요?</div>
+    <div className="rounded-3xl border border-border/40 bg-muted p-3 text-sm">
+      {/* Header: prompt + close */}
+      <div className="mb-2 flex items-start justify-between gap-3 px-1">
+        <div className="font-medium text-foreground">이 계획대로 진행할까요?</div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="닫기 (턴 중지)"
+          className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <IconX size={16} />
+        </button>
+      </div>
+
+      {/* The plan content normally lives in the transcript answer; show it here
+          only when ExitPlanMode actually carried a `plan` body. */}
       {plan && (
-        <div className="mb-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-xl bg-background/50 p-2 text-xs text-muted-foreground">
+        <div className="mb-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-xl bg-background/50 p-2 text-xs text-muted-foreground">
           {plan}
         </div>
       )}
+
       <textarea
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
@@ -54,7 +76,8 @@ export function PlanApprovalCard({ pending }: { pending: PendingPermission }) {
           'focus-visible:border-foreground/20',
         )}
       />
-      <div className="flex justify-end gap-2">
+
+      <div className="flex justify-end gap-2 px-1">
         <button
           type="button"
           onClick={() =>
