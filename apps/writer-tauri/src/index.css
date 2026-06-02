@@ -1181,14 +1181,14 @@
        NOT gap-derived, so the curve stays put when the gap changes. Keep
        it at or above (--window-radius minus --window-inset); otherwise a
        squarer corner pokes into the window rounding. Floor here is
-       26 minus 12 = 14px and we use 22px, so we are safe.
+       26 minus 8 = 18px and we use 22px, so we are safe.
      --window-inset: gap from the window edge (right-panel card pr- and
        SidebarInset my- and ml-).
      --surface-inset: gap from the card to the floating composer (footer
        padding). The transcript text column derives from it too. */
   --window-radius: 26px;
   --surface-radius: 22px;
-  --window-inset: 12px;
+  --window-inset: 8px;
   --surface-inset: 8px;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);

@@ -6,10 +6,10 @@
 // so the editor header doesn't need its own git status badge.
 //
 // The wrapper itself doesn't manage open/closed state — that's
-// `contextPanelOpen` in layoutStore, controlled by the ResizablePanel
-// in AppShell. When the panel is collapsed this component still
-// mounts (Resizable just hides it visually) so opening the panel
-// shows the last-active mode without a re-mount flicker.
+// `contextPanelOpen` in layoutStore. AppShell drives the inspector
+// column's width from it (a CSS-flex layout, not react-resizable-panels).
+// When closed the column is width 0 but this component stays mounted, so
+// reopening shows the last-active mode without a re-mount flicker.
 
 import { IconHistory } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
