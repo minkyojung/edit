@@ -22,6 +22,7 @@
  */
 
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
+import type { HighlightRecord } from '@/lib/highlightTypes'
 
 /** Slim metadata read straight from the on-disk `.meta.json` sidecar
  * (via scanVault at boot) and persisted back through the flush loop's
@@ -81,6 +82,10 @@ export interface KnownDoc {
   description?: string
   savedAt?: string
   readAt?: string
+  /** User highlights on this article (type 'article' only). Source of
+   * truth, persisted via `.meta.json`; the editor re-anchors each one to
+   * the body on mount. */
+  highlights?: HighlightRecord[]
 }
 
 /** Coarse classification used by the DOC_POLICIES table below. Every

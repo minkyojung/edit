@@ -63,6 +63,7 @@ import {
 } from '@/lib/wikilinkResolve'
 import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
+import { useHighlightMarks } from './useHighlightMarks'
 import { normalizeDailyBody } from '@/lib/docTitle'
 import { LinkHoverBar } from './LinkHoverBar'
 import { SelectionBubble } from './SelectionBubble'
@@ -126,6 +127,10 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
   // child's title changes, so anchor text never drifts from the
   // truth.
   useWikilinkTitleSync(pmView, handle?.slug ?? null)
+
+  // Paint saved-article highlights (records → proofHighlight marks),
+  // re-anchored on mount and whenever the record set changes.
+  useHighlightMarks(pmView, handle?.slug ?? null)
 
   // Refresh broken-wikilink decorations whenever the docs registry
   // changes — adding or removing a doc moves the boundary between

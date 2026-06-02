@@ -89,7 +89,7 @@ export function applyPendingLogsForView(view: EditorView): number {
  * Returns false on hard failures only (unknown slug, ensureHandle
  * failure, parser missing for an active doc); a no-op transform
  * still returns true. */
-async function applyToWikiPage(
+export async function applyToWikiPage(
   slug: string,
   transform: (currentMd: string) => string,
 ): Promise<boolean> {

@@ -185,6 +185,10 @@ function buildMetaForKnownDoc(
     faviconUrl: known?.faviconUrl,
     savedAt: known?.savedAt,
     readAt: known?.readAt,
+    // Full highlight set, re-emitted each flush (KnownDoc holds the
+    // authoritative array). Undefined for non-articles → mergeSidecar
+    // drops the key.
+    highlights: known?.highlights,
   }
 }
 

@@ -335,6 +335,15 @@
     text-decoration-color: color-mix(in oklch, oklch(0.68 0.20 25) 60%, transparent);
     border-radius: 2px;
   }
+  /* User highlight on a saved article — a warm amber wash. A box-shadow
+     (not padding) gives the tint a little breathing room without shifting
+     text baseline. Cursor hint signals it's interactive (hover card). */
+  .ProseMirror span[data-highlight] {
+    background-color: color-mix(in oklch, oklch(0.85 0.16 85) 32%, transparent);
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px color-mix(in oklch, oklch(0.85 0.16 85) 20%, transparent);
+    cursor: pointer;
+  }
 
   /* Widget for added content. Inline span flows next to the cursor
      for paragraph-shaped `after` (small phrase / single sentence);

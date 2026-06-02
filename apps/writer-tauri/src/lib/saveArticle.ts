@@ -102,8 +102,10 @@ async function localizeImagesInBackground(
 /** Today's daily slug, creating the catalog entry if missing — WITHOUT
  * opening it as a tab (a read-later save shouldn't steal focus). The
  * append's ensureHandle + flush lands the daily file on disk. Mirrors
- * the creation half of docsStore `openDaily`, minus the activation. */
-function ensureTodayDailySlug(): string {
+ * the creation half of docsStore `openDaily`, minus the activation.
+ * Exported so other "drop a breadcrumb in today's daily" callers (e.g.
+ * highlight → daily) reuse the exact same focus-free creation. */
+export function ensureTodayDailySlug(): string {
   const today = todayLocalDate()
   const existing = useDocsStore
     .getState()

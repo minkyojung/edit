@@ -120,3 +120,53 @@ export function findTextRange(
   // Tier 2 — tolerant canonical whole-line fallback.
   return searchCanonicalLine(doc, target, last)
 }
+
+/** Every literal occurrence of `target` within a single textblock,
+ * in document order, as PM ranges. Non-overlapping. Used for highlight
+ * anchoring, where the SAME quote can appear several times and we must
+ * re-attach to the exact one the user marked (by index). Single-block
+ * only — a `target` containing a newline returns []. */
+function eachOccurrence(
+  doc: PMNode,
+  target: string,
+): Array<{ from: number; to: number }> {
+  const out: Array<{ from: number; to: number }> = []
+  if (target.length === 0 || target.includes('\n')) return out
+  doc.descendants((node, pos) => {
+    if (!node.isTextblock) return true
+    const text = node.textContent
+    let idx = text.indexOf(target)
+    while (idx >= 0) {
+      const from = pos + 1 + idx
+      out.push({ from, to: from + target.length })
+      idx = text.indexOf(target, idx + target.length)
+    }
+    return false
+  })
+  return out
+}
+
+/** Resolve a highlight's PM range from its quote + 0-based occurrence
+ * index. Falls back to the first occurrence if the index is out of
+ * range (e.g. the article body changed), and null if the quote is gone. */
+export function findHighlightRange(
+  doc: PMNode,
+  quote: string,
+  occurrence: number,
+): { from: number; to: number } | null {
+  const all = eachOccurrence(doc, quote)
+  return all[occurrence] ?? all[0] ?? null
+}
+
+/** Which occurrence index a selection starting at `from` is, among all
+ * matches of `quote` in the doc. Used at create time to record a stable
+ * anchor. Defaults to 0 when the position isn't found among matches. */
+export function occurrenceIndexAt(
+  doc: PMNode,
+  quote: string,
+  from: number,
+): number {
+  const all = eachOccurrence(doc, quote)
+  const i = all.findIndex((r) => r.from === from)
+  return i >= 0 ? i : 0
+}

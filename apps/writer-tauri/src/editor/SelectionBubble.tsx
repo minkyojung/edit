@@ -23,6 +23,7 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import {
   IconBold,
   IconCode,
+  IconHighlight,
   IconItalic,
   IconLink,
   IconStrikethrough,
@@ -37,8 +38,13 @@ import {
 import { cn } from '@/lib/utils'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useFormatStateStore } from '@/state/formatStateStore'
+import { useDocsStore } from '@/state/docsStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
+import { addHighlightRecord, removeHighlightRecord } from '@/lib/highlights'
+import { appendHighlightToDaily } from '@/lib/appendHighlightToDaily'
 import { toggleInlineCodeSafe } from './inlineCodeSafe'
 import { unionCoords } from './formatStatePlugin'
+import { occurrenceIndexAt } from './anchorSearch'
 import { LinkEditInput } from './LinkEditInput'
 import { applyLinkMark } from './linkUtils'
 
@@ -50,6 +56,13 @@ export function SelectionBubble() {
   const selectionEmpty = useFormatStateStore((s) => s.selectionEmpty)
   const selectionRect = useFormatStateStore((s) => s.selectionRect)
   const activeMarks = useFormatStateStore((s) => s.activeMarks)
+  // Highlight is a read-it-later feature — only offered on saved articles.
+  const activeSlug = useActiveSlug()
+  const isArticle = useDocsStore((s) =>
+    activeSlug
+      ? s.knownDocs.find((d) => d.slug === activeSlug)?.type === 'article'
+      : false,
+  )
 
   const bubbleRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
@@ -128,6 +141,50 @@ export function SelectionBubble() {
     view.focus()
   }
 
+  const isHighlighted = activeMarks.has('proofHighlight')
+
+  // Toggle a highlight over the current selection. The record (in the
+  // article's .meta.json) is the source of truth; useHighlightMarks
+  // repaints the mark reactively. Removing reuses the mark's id, found
+  // by scanning the selection.
+  const toggleHighlight = () => {
+    if (!view || !activeSlug) return
+    const { from, to } = view.state.selection
+    if (from === to) return
+    const markType = view.state.schema.marks.proofHighlight
+    if (!markType) return
+    let existingId: string | null = null
+    view.state.doc.nodesBetween(from, to, (node) => {
+      if (existingId) return false
+      const m = markType.isInSet(node.marks)
+      if (m) {
+        existingId = (m.attrs.id as string) ?? null
+        return false
+      }
+      return undefined
+    })
+    if (existingId) {
+      // Append-once: removing the highlight drops the record + mark, but
+      // leaves the daily journal line in place.
+      removeHighlightRecord(activeSlug, existingId)
+    } else {
+      const quote = view.state.doc.textBetween(from, to, '\n', '\n')
+      addHighlightRecord(activeSlug, {
+        id: crypto.randomUUID(),
+        quote,
+        occurrence: occurrenceIndexAt(view.state.doc, quote, from),
+        createdAt: new Date().toISOString(),
+      })
+      // Mirror into today's daily under the article's breadcrumb. Fire-
+      // and-forget — a failed daily write never fails the highlight.
+      const title = useDocsStore
+        .getState()
+        .knownDocs.find((d) => d.slug === activeSlug)?.title
+      if (title) void appendHighlightToDaily(title, quote)
+    }
+    view.focus()
+  }
+
   return (
     <div
       ref={bubbleRef}
@@ -187,6 +244,18 @@ export function SelectionBubble() {
       >
         <IconCode size={14} stroke={2.25} />
       </Button>
+      {isArticle && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={toggleHighlight}
+          aria-label="Highlight"
+          aria-pressed={isHighlighted}
+          className={cn('h-7 w-7 rounded-full transition-colors', isHighlighted ? 'bg-accent text-accent-foreground' : 'hover:bg-foreground/15 dark:hover:bg-foreground/15')}
+        >
+          <IconHighlight size={14} stroke={2.25} />
+        </Button>
+      )}
       <LinkButton view={view} active={activeMarks.has('link')} />
     </div>
   )

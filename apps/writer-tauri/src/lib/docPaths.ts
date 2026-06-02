@@ -29,6 +29,7 @@
 // shapes without standing up the rest of the app.
 
 import type { KnownDoc } from '@/state/docsStore'
+import type { HighlightRecord } from '@/lib/highlightTypes'
 
 /**
  * Doc identity sidecar — the `<stem>.meta.json` file that scanVault
@@ -102,6 +103,10 @@ export interface DocMetaFile {
   faviconUrl?: string
   savedAt?: string
   readAt?: string
+  /** User highlights on a saved article (type 'article' only). Source of
+   * truth for highlights — the editor re-anchors each to the body on
+   * mount. Absent on every other doc type. */
+  highlights?: HighlightRecord[]
 }
 
 /** Lookup a doc by slug. Required by {@link pathForDoc} only for
