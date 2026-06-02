@@ -304,6 +304,11 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
         // card can sit flush at the window's right edge. Only the left
         // corners are rounded; the right edge bleeds into whatever
         // floating chrome lives to the right (chat panel etc).
+        // NOTE: these inset-variant classes are inactive — the Sidebar
+        // renders with the default variant="sidebar", not "inset". The
+        // editor + right panel are full-bleed against the window top/
+        // bottom; surfaces that need a window gap set it themselves (see
+        // the right-panel card's py-/pr-[var(--window-inset)] in AppShell).
         "relative flex w-full flex-1 flex-col bg-background md:peer-data-[variant=inset]:my-2 md:peer-data-[variant=inset]:mx-0 md:peer-data-[variant=inset]:rounded-l-2xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2",
         className
       )}

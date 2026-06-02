@@ -592,7 +592,12 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*+*]:mt-6"
+        // Aligns the transcript text with the composer's textarea text, so
+        // messages and the input share one column. Composer text sits at
+        // --surface-inset (footer) + PromptInput p-2.5 (10px) + textarea
+        // px-1.5 (6px) = --surface-inset + 1rem from the card edge, so this
+        // tracks the gap automatically.
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto px-[calc(var(--surface-inset)_+_1rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*+*]:mt-6"
         // Top: clear the overlay header (content scrolls behind it).
         // Bottom: clear the floating composer so the last message isn't hidden.
         style={{ paddingTop: 'calc(var(--header-h) + 0.25rem)', paddingBottom: footerHeight + 12 }}
@@ -658,7 +663,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
 
       <div
         ref={footerRef}
-        className="absolute bottom-0 left-0 right-0 px-1 pb-1"
+        className="absolute bottom-0 left-0 right-0 px-[var(--surface-inset)] pb-[var(--surface-inset)]"
       >
         <ScrollToBottomButton
           visible={!pinned && renderedTurns.length > 0}

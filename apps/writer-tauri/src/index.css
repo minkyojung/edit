@@ -152,7 +152,11 @@
     font-family: var(--font-mono, ui-monospace, monospace);
     font-size: 0.9em;
     background: var(--muted);
-    padding: 0.125rem 0.3rem;
+    /* Inline marks decorate with PAINT ONLY (background / colour) — never
+       box-model (vertical padding / border / box-shadow), which enlarges
+       the inline box and so the WebKit caret next to it. Horizontal
+       padding is fine (width only). Trade: no vertical chip breathing. */
+    padding: 0 0.3rem;
     border-radius: 0.25rem;
   }
 
@@ -222,7 +226,10 @@
   .ProseMirror a[href^="note:"] {
     color: var(--info);
     background-color: color-mix(in oklch, var(--info) 12%, transparent);
-    padding: 0.05em 0.3em;
+    /* Paint-only (see inline code): background + horizontal padding only.
+       No vertical padding / box-shadow, so the pill never enlarges the
+       inline box and the caret stays uniform across every line. */
+    padding: 0 0.3em;
     border-radius: 0.25em;
     text-decoration: none;
     cursor: pointer;
@@ -335,14 +342,13 @@
     text-decoration-color: color-mix(in oklch, oklch(0.68 0.20 25) 60%, transparent);
     border-radius: 2px;
   }
-  /* User highlight on a saved article — a warm amber wash. A box-shadow
-     (not padding) gives the tint a little breathing room without shifting
-     text baseline. Cursor hint signals it's interactive (hover card). */
+  /* User highlight on a saved article — a warm amber wash behind the text.
+     No cursor override (natural text I-beam — selecting / clicking is
+     handled by a plugin, not a button) and no box-shadow ring (it read as
+     a boxy block). Background only, so no layout / caret impact. */
   .ProseMirror span[data-highlight] {
     background-color: color-mix(in oklch, oklch(0.85 0.16 85) 32%, transparent);
     border-radius: 2px;
-    box-shadow: 0 0 0 1px color-mix(in oklch, oklch(0.85 0.16 85) 20%, transparent);
-    cursor: pointer;
   }
 
   /* Widget for added content. Inline span flows next to the cursor
@@ -888,6 +894,20 @@
     --tw-prose-invert-td-borders: var(--border);
   }
 
+  /* Graphite is a deliberately cool (hue-258) palette, so its
+     --muted-foreground carries a faint blue that bleeds into the chat
+     markdown's bullets/counters. Neutralise just those decorations to
+     a true gray, keeping the same lightness (0.62). Scoped to
+     .palette-graphite so plain dark mode is untouched; the invert
+     tokens are the ones that apply because graphite also sets .dark
+     (the chat prose runs in prose-invert there). */
+  .palette-graphite .prose {
+    --tw-prose-bullets: oklch(0.62 0 0);
+    --tw-prose-counters: oklch(0.62 0 0);
+    --tw-prose-invert-bullets: oklch(0.62 0 0);
+    --tw-prose-invert-counters: oklch(0.62 0 0);
+  }
+
   .mark-focused {
     outline: 2px solid rgba(59, 130, 246, 0.6);
     outline-offset: 1px;
@@ -1146,6 +1166,30 @@
      bump propagates app-wide. Sized to sit one step inside the Tahoe
      ~26pt window corner — concentric, not competing. */
   --radius: 0.625rem;
+  /* Window/surface geometry. Two independent knobs (corner curve and
+     edge gaps) read by the layout via arbitrary-value classes, so the
+     chain stays in one place instead of drifting across three files.
+     NOTE: html root is 14px, so rem utilities render at 0.875x their
+     16px nominal size. These gaps use px so they stay absolute, like
+     the window corner they answer to.
+
+     --window-radius: the macOS Tahoe toolbar-window corner (about 26px,
+       back-derived: the known-good card was rounded-3xl, about 19px,
+       sitting a 7px gap inside the window). Reference only; nothing
+       renders it. It bounds the curve below.
+     --surface-radius: the card and editor corner curve. A DESIGN value,
+       NOT gap-derived, so the curve stays put when the gap changes. Keep
+       it at or above (--window-radius minus --window-inset); otherwise a
+       squarer corner pokes into the window rounding. Floor here is
+       26 minus 12 = 14px and we use 22px, so we are safe.
+     --window-inset: gap from the window edge (right-panel card pr- and
+       SidebarInset my- and ml-).
+     --surface-inset: gap from the card to the floating composer (footer
+       padding). The transcript text column derives from it too. */
+  --window-radius: 26px;
+  --surface-radius: 22px;
+  --window-inset: 12px;
+  --surface-inset: 8px;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
