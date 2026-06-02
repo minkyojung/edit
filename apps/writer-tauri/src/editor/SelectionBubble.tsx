@@ -41,7 +41,7 @@ import { useFormatStateStore } from '@/state/formatStateStore'
 import { useDocsStore } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { addHighlightRecord, removeHighlightRecord } from '@/lib/highlights'
-import { appendHighlightToDaily } from '@/lib/appendHighlightToDaily'
+import { useHighlightNoteStore } from '@/state/highlightNoteStore'
 import { toggleInlineCodeSafe } from './inlineCodeSafe'
 import { unionCoords } from './formatStatePlugin'
 import { occurrenceIndexAt } from './anchorSearch'
@@ -167,22 +167,35 @@ export function SelectionBubble() {
       // Append-once: removing the highlight drops the record + mark, but
       // leaves the daily journal line in place.
       removeHighlightRecord(activeSlug, existingId)
-    } else {
-      const quote = view.state.doc.textBetween(from, to, '\n', '\n')
-      addHighlightRecord(activeSlug, {
-        id: crypto.randomUUID(),
-        quote,
-        occurrence: occurrenceIndexAt(view.state.doc, quote, from),
-        createdAt: new Date().toISOString(),
-      })
-      // Mirror into today's daily under the article's breadcrumb. Fire-
-      // and-forget — a failed daily write never fails the highlight.
-      const title = useDocsStore
-        .getState()
-        .knownDocs.find((d) => d.slug === activeSlug)?.title
-      if (title) void appendHighlightToDaily(title, quote)
+      view.focus()
+      return
     }
-    view.focus()
+
+    const quote = view.state.doc.textBetween(from, to, '\n', '\n')
+    const id = crypto.randomUUID()
+    addHighlightRecord(activeSlug, {
+      id,
+      quote,
+      occurrence: occurrenceIndexAt(view.state.doc, quote, from),
+      createdAt: new Date().toISOString(),
+    })
+    // Open the note popover anchored just below the selection. It writes
+    // the note (if any) and appends the daily line on commit, so the
+    // line is written once — with or without a note. Don't refocus the
+    // editor here; the popover takes focus.
+    const title = useDocsStore
+      .getState()
+      .knownDocs.find((d) => d.slug === activeSlug)?.title
+    if (title) {
+      const coords = view.coordsAtPos(to)
+      useHighlightNoteStore.getState().openNote({
+        slug: activeSlug,
+        id,
+        quote,
+        title,
+        anchor: { top: coords.bottom + 6, left: coords.left },
+      })
+    }
   }
 
   return (

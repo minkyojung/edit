@@ -67,6 +67,7 @@ import { useHighlightMarks } from './useHighlightMarks'
 import { normalizeDailyBody } from '@/lib/docTitle'
 import { LinkHoverBar } from './LinkHoverBar'
 import { SelectionBubble } from './SelectionBubble'
+import { HighlightNotePopover } from './HighlightNotePopover'
 import { SlashMenu } from './SlashMenu'
 // Proof schemas come from proof-sdk via a thin adapter so client and
 // server share one canonical definition. The previous local copy
@@ -546,6 +547,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       </div>
       <LinkHoverBar />
       <SelectionBubble />
+      <HighlightNotePopover />
       <SlashMenu />
       <WikilinkPalette
         parentSlug={handle?.slug ?? null}

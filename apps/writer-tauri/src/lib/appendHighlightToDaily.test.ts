@@ -54,4 +54,48 @@ describe('insertHighlightUnderSource', () => {
     const out = insertHighlightUnderSource(`- [[${TITLE}]]`, TITLE, `  ${long}  `)
     expect(out).toBe(`- [[${TITLE}]]\n  - "${'x'.repeat(200)}…"`)
   })
+
+  // Robustness to Milkdown's re-serialization of the daily.
+
+  it('matches an asterisk-bullet breadcrumb (Milkdown rewrites - to *)', () => {
+    const md = `* [[${TITLE}]]\n  * "first"`
+    expect(insertHighlightUnderSource(md, TITLE, 'second')).toBe(
+      `- [[${TITLE}]]\n  * "first"\n  - "second"`,
+    )
+  })
+
+  it('matches a breadcrumb with escaped brackets', () => {
+    const md = `- \\[\\[${TITLE}\\]\\]`
+    expect(insertHighlightUnderSource(md, TITLE, 'q')).toBe(
+      `- [[${TITLE}]]\n  - "q"`,
+    )
+  })
+
+  it('handles a loose list (blank lines between children) and tightens it', () => {
+    const md = `* [[${TITLE}]]\n\n  * "first"\n\n  * "second"`
+    expect(insertHighlightUnderSource(md, TITLE, 'third')).toBe(
+      `- [[${TITLE}]]\n  * "first"\n  * "second"\n  - "third"`,
+    )
+  })
+
+  it('merges duplicate breadcrumbs for the same article', () => {
+    const md = `* [[${TITLE}]]\n  * "a"\n\n* [[${TITLE}]]\n  * "b"`
+    expect(insertHighlightUnderSource(md, TITLE, 'c')).toBe(
+      `- [[${TITLE}]]\n  * "a"\n  * "b"\n  - "c"\n`,
+    )
+  })
+
+  it('dedups regardless of bullet marker', () => {
+    const md = `* [[${TITLE}]]\n  * "dup"`
+    expect(insertHighlightUnderSource(md, TITLE, 'dup')).toBe(
+      `- [[${TITLE}]]\n  * "dup"`,
+    )
+  })
+
+  it('leaves an unrelated following section intact when merging', () => {
+    const md = `* [[${TITLE}]]\n  * "a"\n\nSome later note`
+    expect(insertHighlightUnderSource(md, TITLE, 'b')).toBe(
+      `- [[${TITLE}]]\n  * "a"\n  - "b"\n\nSome later note`,
+    )
+  })
 })
