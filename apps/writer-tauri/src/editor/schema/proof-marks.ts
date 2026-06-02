@@ -284,11 +284,7 @@ export const proofAuthoredSchema = $markSchema('proofAuthored', (ctx) => ({
 // and this mark is just the re-anchored *render* of that record. So the
 // mark carries only `id` — the note text is looked up from the record.
 // Silent in markdown like the other proof marks (keeps the .md clean).
-export const proofHighlightAttr = $markAttr('proofHighlight', () => ({
-  id: {},
-}));
-
-export const proofHighlightSchema = $markSchema('proofHighlight', (ctx) => ({
+export const proofHighlightSchema = $markSchema('proofHighlight', () => ({
   attrs: {
     id: { default: null },
   },
@@ -302,18 +298,14 @@ export const proofHighlightSchema = $markSchema('proofHighlight', (ctx) => ({
       }),
     },
   ],
-  toDOM: (mark) => {
-    const attrs = ctx.get(proofHighlightAttr.key)(mark);
-    return [
-      'span',
-      {
-        'data-highlight': 'true',
-        'data-id': mark.attrs.id ?? null,
-        ...attrs,
-      },
-      0,
-    ];
-  },
+  // Set data-id directly from the mark. (The earlier `$markAttr` spread
+  // wrote a stray `id="[object Object]"` — `$markAttr` adds the attr name
+  // with its config object as the value, which isn't what we want here.)
+  toDOM: (mark) => [
+    'span',
+    { 'data-highlight': 'true', 'data-id': (mark.attrs.id as string) ?? '' },
+    0,
+  ],
   parseMarkdown: {
     match: (node) => (node as ProofNode).type === 'proofMark' && (node as ProofNode).proof === 'highlight',
     runner: (state, node, markType) => {
@@ -339,6 +331,5 @@ export const proofMarkPlugins = [
   proofFlaggedSchema,
   proofAuthoredAttr,
   proofAuthoredSchema,
-  proofHighlightAttr,
   proofHighlightSchema,
 ];
