@@ -114,6 +114,7 @@ type FontOptionDef = {
 }
 
 const FONT_OPTIONS: FontOptionDef[] = [
+  { value: 'pretendard', label: 'Pretendard', preview: "'Pretendard Variable', sans-serif" },
   { value: 'geist', label: 'Geist', preview: "'Geist Variable', sans-serif" },
   { value: 'nunito', label: 'Nunito Sans', preview: "'Nunito Sans Variable', sans-serif" },
 ]

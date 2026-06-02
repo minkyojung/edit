@@ -111,7 +111,7 @@ function extractCodeText(node: unknown): { code: string; lang: BundledLanguage }
 }
 
 const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
-  p: ({ children }) => <p className="leading-tight">{children}</p>,
+  p: ({ children }) => <p className="leading-snug">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
   code: ({ children }) => (
@@ -183,7 +183,7 @@ export function StreamingMarkdown({
     // the chat surface; `dark:prose-invert` flips to the dark token
     // set when the app is in dark mode; `max-w-none` lets the surface
     // size respect the chat panel's resizable width.
-    <div className="prose dark:prose-invert max-w-none text-[15px] leading-tight [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+    <div className="prose dark:prose-invert max-w-none text-[15px] leading-snug [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
       <ReactMarkdown
         remarkPlugins={REMARK_PLUGINS}
         components={markdownComponents}

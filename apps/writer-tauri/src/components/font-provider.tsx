@@ -1,8 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 
-export type FontOption = 'geist' | 'nunito'
+export type FontOption = 'geist' | 'nunito' | 'pretendard'
 
-const FONTS: FontOption[] = ['geist', 'nunito']
+const FONTS: FontOption[] = ['geist', 'nunito', 'pretendard']
 
 type FontProviderProps = {
   children: React.ReactNode
@@ -16,7 +16,7 @@ type FontProviderState = {
 }
 
 const initialState: FontProviderState = {
-  font: 'geist',
+  font: 'pretendard',
   setFont: () => null,
 }
 
@@ -29,7 +29,7 @@ function readStoredFont(storageKey: string, fallback: FontOption): FontOption {
 
 export function FontProvider({
   children,
-  defaultFont = 'geist',
+  defaultFont = 'pretendard',
   storageKey = 'writer-tauri:font',
   ...props
 }: FontProviderProps): React.ReactElement {

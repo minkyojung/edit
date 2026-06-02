@@ -30,6 +30,7 @@ import { mediaDropPastePlugin } from './mediaDropPastePlugin'
 import { inlineCodeSafeKeymap } from './inlineCodeSafe'
 import { createLinkClickPlugin } from './linkClickPlugin'
 import { createLinkHoverPlugin } from './linkHoverPlugin'
+import { createCustomCaretPlugin } from './customCaretPlugin'
 import { createPasteSanitizerPlugin } from './pasteSanitizerPlugin'
 import { createSlashTriggerPlugin } from './slashTriggerPlugin'
 import { configureListItemBlock } from './listItemConfig'
@@ -317,6 +318,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .use(imageInlineNodeView)
       .use(cardDropAdvanceCursor)
       .use($prose(() => dropCursor({ color: false, width: 2, class: 'pm-drop-cursor' })))
+      .use(createCustomCaretPlugin())
       .use(mediaDropPastePlugin)
       .use(createPasteSanitizerPlugin())
       .use(createLinkClickPlugin())

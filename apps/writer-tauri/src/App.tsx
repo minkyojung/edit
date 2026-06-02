@@ -44,6 +44,7 @@ import { applyPendingLogsForView } from '@/agent/applyIngest'
 import '@/lib/vaultPicker'
 import '@/lib/vault'
 import '@/lib/scanVault'
+import '@/lib/caretDebug'
 import { startAutoFlush } from '@/lib/docFileSync'
 import { startVaultWatcher } from '@/lib/vaultWatcher'
 import { startPendingChangesApplier } from '@/state/pendingChangesApplier'
@@ -88,7 +89,7 @@ export function App() {
   // above it doesn't change any timing.
   return (
     <ThemeProvider defaultPalette="charcoal" storageKey="writer-palette">
-      <FontProvider defaultFont="geist" storageKey="writer-font">
+      <FontProvider defaultFont="pretendard" storageKey="writer-font">
         <TooltipProvider delayDuration={200}>
           <HashRouter>
             <BootGate>

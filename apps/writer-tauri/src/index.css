@@ -4,6 +4,13 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/nunito-sans";
+/* Pretendard — single font covering Latin + Korean + punctuation with
+   ONE consistent set of vertical metrics. Geist/Nunito are Latin-only, so
+   Korean (and some web-article punctuation) fell back to a system CJK font
+   with larger metrics → the line box (and the native caret) jumped between
+   scripts. Pretendard removes the fallback, so the caret stays uniform.
+   Dynamic-subset build loads only the glyph ranges actually used. */
+@import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 
 @custom-variant dark (&:is(.dark *));
 @custom-variant hover (&:hover);
@@ -50,8 +57,17 @@
   html {
     font-family: var(--font-sans);
   }
+  /* Explicit per-choice overrides. The :root default is Pretendard
+     (Korean-safe); FontProvider always adds a `font-<choice>` class, so
+     each Latin-only option opts back out here. */
+  html.font-geist {
+    --font-sans: 'Geist Variable', sans-serif;
+  }
   html.font-nunito {
     --font-sans: 'Nunito Sans Variable', sans-serif;
+  }
+  html.font-pretendard {
+    --font-sans: 'Pretendard Variable', sans-serif;
   }
 }
 
@@ -62,6 +78,12 @@
   .ProseMirror {
     font-family: var(--font-sans);
     font-size: var(--prose-base);
+    /* Body line spacing from the design token. The text caret is drawn by
+       customCaretPlugin (the native caret is hidden), so line-height is now
+       purely a reading-rhythm choice and no longer affects caret height —
+       the earlier integer-px hack for "caret uniformity" was a misdiagnosis
+       (native WebKit sizes the caret to the line box by design; we replaced
+       the native caret instead). Headings / pre override below. */
     line-height: var(--prose-lh-body);
     color: var(--foreground);
     outline: none;
@@ -77,6 +99,29 @@
 
   .ProseMirror p {
     margin-bottom: var(--prose-gap-block);
+  }
+
+  /* Custom caret (customCaretPlugin.ts). The native macOS-WebKit caret is the
+     full line-box height by design; we hide it and draw our own at the text
+     height so it hugs the glyphs and stays uniform line-to-line. The class is
+     toggled on only while our caret is shown — during selection / blur / IME
+     composition it comes off so the native caret returns. */
+  .ProseMirror.pm-native-caret-hidden {
+    caret-color: transparent;
+  }
+  .pm-custom-caret {
+    position: fixed;
+    width: 1.5px;
+    background: var(--foreground);
+    border-radius: 1px;
+    pointer-events: none;
+    z-index: 30;
+    will-change: left, top, height;
+    animation: pm-caret-blink 1.06s steps(1, end) infinite;
+  }
+  @keyframes pm-caret-blink {
+    0%, 50% { opacity: 1; }
+    50.01%, 100% { opacity: 0; }
   }
 
   /* Drop cursor (prosemirror-dropcursor). Color comes from the
@@ -1484,7 +1529,9 @@
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-trigger: var(--sidebar-trigger);
   --font-heading: var(--font-sans);
-  --font-sans: 'Geist Variable', sans-serif;
+  /* Default to Pretendard (Latin + Korean, unified metrics). Latin-only
+     choices (Geist / Nunito) opt back in via their html.font-* class. */
+  --font-sans: 'Pretendard Variable', sans-serif;
 
   /* z-index scale. shadcn primitives bake z-50 into their styles for both
      popovers and modals (they coexist via portal structure, not stacking
