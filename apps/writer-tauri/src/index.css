@@ -394,6 +394,14 @@
   .ProseMirror span[data-highlight] {
     background-color: color-mix(in oklch, oklch(0.85 0.16 85) 32%, transparent);
     border-radius: 2px;
+    transition: background-color 120ms ease;
+  }
+  /* Hover: deepen the wash as an interaction affordance, so the reader can
+     tell the highlight is clickable (a click selects it + opens the menu).
+     Background only and the I-beam cursor is kept, so the text stays
+     directly editable and the line box / caret are untouched. */
+  .ProseMirror span[data-highlight]:hover {
+    background-color: color-mix(in oklch, oklch(0.85 0.16 85) 46%, transparent);
   }
 
   /* Widget for added content. Inline span flows next to the cursor
