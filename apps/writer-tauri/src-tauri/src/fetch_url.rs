@@ -196,7 +196,7 @@ pub async fn fetch_binary(
     if let Some(r) = referer {
         req = req.header("referer", r);
     }
-    let resp = req.send().await.map_err(|e| format!("fetch: {e}"))?;
+    let mut resp = req.send().await.map_err(|e| format!("fetch: {e}"))?;
     let status = resp.status().as_u16();
     let final_url = resp.url().to_string();
     let content_type = resp
@@ -205,14 +205,29 @@ pub async fn fetch_binary(
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
 
-    let bytes = resp.bytes().await.map_err(|e| format!("body read: {e}"))?;
-    if bytes.len() > MAX_ASSET_BYTES {
-        return Err(format!(
-            "asset too large: {} bytes (cap {MAX_ASSET_BYTES})",
-            bytes.len()
-        ));
+    // Early reject when the server advertises an oversized body — skips
+    // streaming a payload we'd discard anyway.
+    if let Some(len) = resp.content_length() {
+        if len > MAX_ASSET_BYTES as u64 {
+            return Err(format!(
+                "asset too large: {len} bytes (cap {MAX_ASSET_BYTES})"
+            ));
+        }
     }
-    let base64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    // Stream the body and enforce the cap incrementally. `bytes()` would
+    // buffer the *entire* response into memory before any size check, so
+    // a runaway or Content-Length-lying server could exhaust memory
+    // before being rejected. Accumulate chunk-by-chunk and bail the
+    // moment the running total exceeds the cap.
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| format!("body read: {e}"))? {
+        if buf.len() + chunk.len() > MAX_ASSET_BYTES {
+            return Err(format!("asset too large: exceeds cap {MAX_ASSET_BYTES} bytes"));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    let base64 = base64::engine::general_purpose::STANDARD.encode(&buf);
 
     Ok(FetchedBinary {
         url: final_url,
