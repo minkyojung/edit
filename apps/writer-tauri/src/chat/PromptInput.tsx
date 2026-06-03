@@ -13,9 +13,20 @@ import { IconArrowUp, IconPlayerStop, IconQuote, IconX } from '@tabler/icons-rea
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
+import { ModeToggle } from '@/chat/ModeToggle'
+import { FastToggle } from '@/chat/FastToggle'
+import { ContextGauge } from '@/chat/ContextGauge'
 import { SlashPalette } from '@/chat/SlashPalette'
 import { listCommands, type LoadedCommand } from '@/chat/commands'
-import type { ChatEffort, ChatModel } from '@/chat/types'
+import {
+  effortsForModel,
+  modelSupportsFastMode,
+  type ChatEffort,
+  type ChatMode,
+  type ChatModel,
+  type ContextSnapshot,
+  type FastModeState,
+} from '@/chat/types'
 import { cn } from '@/lib/utils'
 
 // Matches a slash command at the start of input — `/`, then optional
@@ -50,6 +61,17 @@ interface Props {
   onModelChange: (model: ChatModel) => void
   effort: ChatEffort
   onEffortChange: (effort: ChatEffort) => void
+  mode: ChatMode
+  onModeChange: (mode: ChatMode) => void
+  /** Fast-mode request (per-thread). The toggle only renders for models that
+   * support fast mode (modelSupportsFastMode). */
+  fastMode: boolean
+  onFastModeChange: (fastMode: boolean) => void
+  /** Actual fast-mode state from the last turn (on / cooldown / off). */
+  fastModeState?: FastModeState
+  /** Post-turn context-window snapshot for the gauge (left of ModelSelect).
+   * Undefined/null until the active thread has completed at least one turn. */
+  contextSnapshot?: ContextSnapshot | null
   /** Optional pre-submit validator. Runs on every keystroke; an `ok: false`
    * result both renders an inline hint and prevents Send. */
   validate?: (text: string) => ValidationResult
@@ -80,6 +102,12 @@ export function PromptInput({
   onModelChange,
   effort,
   onEffortChange,
+  mode,
+  onModeChange,
+  fastMode,
+  onFastModeChange,
+  fastModeState,
+  contextSnapshot,
   validate,
   selectionText,
   onClearSelection,
@@ -186,8 +214,7 @@ export function PromptInput({
   return (
     <div
       className={cn(
-        'relative flex flex-col gap-1.5 rounded-3xl border border-border/40 bg-muted p-2.5 transition-colors',
-        'focus-within:border-foreground/20',
+        'relative flex flex-col gap-1.5 rounded-3xl bg-muted p-2.5 transition-colors',
         disabled && 'opacity-60',
       )}
     >
@@ -241,15 +268,32 @@ export function PromptInput({
         disabled={disabled}
         rows={1}
         className={cn(
-          'w-full resize-none bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none',
+          'w-full resize-none bg-transparent px-1.5 py-1.5 text-[15px] leading-relaxed text-foreground outline-none',
           'placeholder:text-muted-foreground',
-          'field-sizing-content max-h-48 min-h-8',
+          'field-sizing-content max-h-48 min-h-16',
           '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
         )}
       />
       <div className="flex items-center justify-between gap-2">
-        <EffortButton value={effort} onChange={onEffortChange} disabled={isStreaming} />
         <div className="flex items-center gap-1">
+          <EffortButton
+            value={effort}
+            efforts={effortsForModel(model)}
+            onChange={onEffortChange}
+            disabled={isStreaming}
+          />
+          {modelSupportsFastMode(model) && (
+            <FastToggle
+              value={fastMode}
+              onChange={onFastModeChange}
+              state={fastModeState}
+              disabled={isStreaming}
+            />
+          )}
+          <ModeToggle value={mode} onChange={onModeChange} disabled={isStreaming} />
+        </div>
+        <div className="flex items-center gap-1">
+          <ContextGauge snapshot={contextSnapshot} />
           <ModelSelect value={model} onChange={onModelChange} disabled={isStreaming} />
           <Tooltip>
           <TooltipTrigger asChild>

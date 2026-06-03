@@ -52,8 +52,9 @@ export interface PendingProposal extends IngestProposal {
 export interface PendingLogEntry {
   id: string
   sourceSlug: string
-  /** The pre-formatted log line (`## [DATE] ingest | ...`). Goes
-   * straight into wiki:log on apply. */
+  /** Deprecated — `_system/log.md` is host-managed now. Field
+   * retained for type compat with persisted entries from older
+   * sessions; not read by any apply path. */
   line: string
   proposedAt: number
 }

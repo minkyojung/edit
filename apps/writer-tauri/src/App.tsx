@@ -3,19 +3,20 @@ import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'r
 import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { ThemeProvider } from '@/components/theme-provider'
+import { FontProvider } from '@/components/font-provider'
 import { AppToaster } from '@/components/AppToaster'
 import { BootGate } from '@/components/BootGate'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { FullPageErrorFallback } from '@/components/ErrorFallback'
-import { MarkPopoverLayer } from '@/components/agent/MarkPopoverLayer'
-import { MarkHoverActionsLayer } from '@/components/agent/MarkHoverActionsLayer'
 import { AppShell } from '@/layout/AppShell'
 import { Page } from '@/layout/Page'
+import { ReadLaterQueue } from '@/layout/ReadLaterQueue'
 import { CommandPalette } from '@/layout/CommandPalette'
-import { WikiPageBanner } from '@/layout/WikiPageBanner'
 import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
 import { ImageAltDialog } from '@/editor/ImageAltDialog'
+import { SaveArticleDialog } from '@/components/SaveArticleDialog'
 import { useDocsStore } from '@/state/docsStore'
+import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore } from '@/state/settingsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
@@ -23,6 +24,7 @@ import { useIdleTrigger } from '@/hooks/useIdleTrigger'
 import { useRouteSync } from '@/hooks/useRouteSync'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { usePersistLastPath } from '@/hooks/usePersistLastPath'
+import { useWindowChrome } from '@/hooks/useWindowChrome'
 import {
   buildDayUrl,
   buildMonthUrl,
@@ -33,7 +35,6 @@ import {
   useLazyMaterialize,
   type LazyMaterializeConfig,
 } from '@/hooks/useLazyMaterialize'
-import { useMigrateLegacyIngestMarks } from '@/hooks/useMigrateLegacyIngestMarks'
 import { applyPendingLogsForView } from '@/agent/applyIngest'
 // Phase 4.A — dev-only side-effect imports. Each module registers
 // a `window.__X` handle so the picker / vault I/O is reachable from
@@ -43,16 +44,10 @@ import { applyPendingLogsForView } from '@/agent/applyIngest'
 import '@/lib/vaultPicker'
 import '@/lib/vault'
 import '@/lib/scanVault'
-import { initHeadlessParser } from '@/lib/headlessMilkdown'
+import '@/lib/caretDebug'
 import { startAutoFlush } from '@/lib/docFileSync'
 import { startVaultWatcher } from '@/lib/vaultWatcher'
-
-// Path C Step 3c — boot the headless Milkdown so parser / serializer
-// land in editorViewStore before any doc-loading code runs. Without
-// this, applyVaultToHandle (called from buildHandle's contentReady)
-// would race the per-doc MilkdownEditor mount and silently fall back
-// to 'no-parser', leaving the body empty on every fresh open.
-void initHeadlessParser()
+import { startPendingChangesApplier } from '@/state/pendingChangesApplier'
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
@@ -64,6 +59,12 @@ startAutoFlush()
 // auto-picker is still up, it logs an inert message and no-ops.
 // The picker re-invokes after selecting a vault.
 void startVaultWatcher()
+
+// Listen for `pending → accepted` transitions in pendingChangesStore
+// and run the matching disk-write path. Without this no click on the
+// inline Keep button changes the file on disk — the store just
+// flips status and the widget vanishes. Idempotent.
+startPendingChangesApplier()
 
 // Module-scope so the configs array reference is stable across
 // renders — required by useLazyMaterialize's caller contract
@@ -88,14 +89,16 @@ export function App() {
   // above it doesn't change any timing.
   return (
     <ThemeProvider defaultPalette="charcoal" storageKey="writer-palette">
-      <TooltipProvider delayDuration={200}>
-        <HashRouter>
-          <BootGate>
-            <AppContent />
-          </BootGate>
-          <AppToaster />
-        </HashRouter>
-      </TooltipProvider>
+      <FontProvider defaultFont="pretendard" storageKey="writer-font">
+        <TooltipProvider delayDuration={200}>
+          <HashRouter>
+            <BootGate>
+              <AppContent />
+            </BootGate>
+            <AppToaster />
+          </HashRouter>
+        </TooltipProvider>
+      </FontProvider>
     </ThemeProvider>
   )
 }
@@ -116,6 +119,13 @@ export function App() {
 // daily under the URL's current view shape). This replaces the
 // earlier one-shot bootTargetSlug pattern: every entry into a
 // broken URL self-heals, not just the cold-boot one.
+//
+// Exception: first-class routes that intentionally carry NO slug (they
+// render their own React surface instead of a document) must be exempt —
+// otherwise the self-heal reads their null slug as "broken" and bounces
+// the user back to today's daily.
+const SLUGLESS_ROUTES = new Set(['/read-later'])
+
 function RouteSyncBridge() {
   useRouteSync()
   usePersistLastPath()
@@ -128,6 +138,11 @@ function RouteSyncBridge() {
 
   useEffect(() => {
     if (bootstrapping) return
+    // Slug-less first-class routes (the Read Later queue) are valid
+    // WITHOUT a document. Without this guard the self-heal below sees a
+    // null slug, judges the URL "broken", and bounces back to today's
+    // daily a beat after the queue paints.
+    if (SLUGLESS_ROUTES.has(pathname)) return
     const slug = parseSlugFromPath(pathname)
     const valid = slug !== null && knownDocs.some((d) => d.slug === slug)
     if (valid) return
@@ -178,6 +193,19 @@ function AppContent() {
   // over. Mounted once here at the root so subscriptions and the
   // date-poll timer share a single lifetime across the session.
   useIdleTrigger()
+  useWindowChrome()
+
+  // Sidebar dot semantic (Phase E2.8): the dot flips to "viewed"
+  // (grey) the moment the user navigates to a page that has staged
+  // AI changes. This effect is the trigger — markPageViewed stamps
+  // `viewedAt` on every entry targeting `activeSlug`. Idempotent;
+  // re-marking already-viewed entries is a no-op inside the store.
+  // Lives at the root rather than in Page.tsx so the inline review
+  // plugin / editor doesn't need to know about dot lifecycle.
+  useEffect(() => {
+    if (!activeSlug) return
+    usePendingChangesStore.getState().markPageViewed(activeSlug)
+  }, [activeSlug])
   // Drains queued log entries / index updates into their respective
   // system pages when the user navigates there. One hook, one
   // configs table — adding system:about or system:lint later is a
@@ -185,10 +213,6 @@ function AppContent() {
   // ingest output) stays on the in-page banner surface, not in
   // this lazy-drain pipeline.
   useLazyMaterialize(SYSTEM_DRAIN_CONFIGS)
-  // One-time cleanup of legacy ingest-origin proofSuggestion marks
-  // left over from the pre-banner era. Runs per wiki page on first
-  // mount post-upgrade; no-op afterwards.
-  useMigrateLegacyIngestMarks()
 
   // First-run onboarding trigger. We read bootstrapCompleted from the
   // persisted settings store as the initial value so a returning user
@@ -208,28 +232,20 @@ function AppContent() {
   // pure mapping from path → same surface, so adding a new view
   // route later is a one-line addition rather than a copy of the JSX.
   const notesElement = (
-    <>
-      {/* Banner mounts above the editor and self-hides
-          when the active doc isn't a wiki:* page with
-          pending proposals. Lives in the scroll area
-          so it doesn't shift layout when it appears/
-          disappears. */}
-      <WikiPageBanner />
-      <Page
-        key={activeSlug ?? 'no-doc'}
-        handle={activeHandle}
-        status={activeStatus}
-        onViewReady={(v) => {
-          // Mirror into the global store so non-React
-          // consumers (banner accept, future palette
-          // commands) can reach the live view without
-          // prop drilling. Local state stays the source
-          // of truth for sibling renders below.
-          setView(v)
-          useEditorViewStore.getState().setView(v)
-        }}
-      />
-    </>
+    <Page
+      key={activeSlug ?? 'no-doc'}
+      handle={activeHandle}
+      status={activeStatus}
+      onViewReady={(v) => {
+        // Mirror into the global store so non-React
+        // consumers (future palette commands) can reach
+        // the live view without prop drilling. Local
+        // state stays the source of truth for sibling
+        // renders below.
+        setView(v)
+        useEditorViewStore.getState().setView(v)
+      }}
+    />
   )
 
   return (
@@ -259,16 +275,16 @@ function AppContent() {
             <Route path="/week/:slug" element={notesElement} />
             <Route path="/month/:ym" element={notesElement} />
             <Route path="/month/:ym/:slug" element={notesElement} />
+            <Route path="/read-later" element={<ReadLaterQueue />} />
           </Routes>
         </AppShell>
-        <MarkHoverActionsLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
-        <MarkPopoverLayer editorView={view} ydoc={activeHandle?.ydoc ?? null} />
         <CommandPalette />
         <OnboardingDialog
           open={onboardingOpen}
           onClose={() => setOnboardingOpen(false)}
         />
         <ImageAltDialog />
+        <SaveArticleDialog />
       </>
     </ErrorBoundary>
   )

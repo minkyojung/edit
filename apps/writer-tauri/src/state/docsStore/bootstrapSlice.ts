@@ -19,10 +19,9 @@
  */
 
 import { generateClientSlug } from '@/lib/slug'
-import { todayLocalDate, writeDocMeta } from '@/hooks/useDocMeta'
+import { todayLocalDate } from '@/hooks/useDocMeta'
 import { scanVault } from '@/lib/scanVault'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
-import { scrubDailyTitleArtifacts } from './handlesSlice'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
 export interface BootstrapSlice {
@@ -121,18 +120,19 @@ export const createBootstrapSlice = (
         urlSlug && knownSlugs.has(urlSlug) ? urlSlug : todaysDaily.slug
       if (slugToOpen) {
         await get().ensureHandle(slugToOpen)
-        const handle = get().handles[slugToOpen]
         const known = get().knownDocs.find((d) => d.slug === slugToOpen)
-        if (handle && known?.type === 'daily' && known.date) {
-          const metaMap = handle.ydoc.getMap('meta')
-          if (!metaMap.get('type')) {
-            writeDocMeta(handle.ydoc, {
-              type: 'daily',
-              date: known.date,
-              createdAt: new Date().toISOString(),
-            })
-          }
-          scrubDailyTitleArtifacts(handle.ydoc)
+        // Backfill `createdAt` on the catalog for legacy daily docs
+        // that pre-date the `.meta.json` sidecar carrying it. The
+        // next flushDirty serialises this into the sidecar via
+        // `buildMetaForKnownDoc`, so the next boot picks it up
+        // directly from disk without needing this fallback.
+        if (known?.type === 'daily' && known.date && !known.createdAt) {
+          const createdAt = new Date().toISOString()
+          set((s) => ({
+            knownDocs: s.knownDocs.map((d) =>
+              d.slug === known.slug ? { ...d, createdAt } : d,
+            ),
+          }))
         }
       }
 

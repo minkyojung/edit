@@ -55,12 +55,48 @@ pub struct ChatStartArgs {
     /// frontend doesn't have to ship a transcript in the prompt.
     #[serde(default)]
     pub resume: Option<String>,
+    /// Optional cap on the SDK agent loop's conversation turns. Used
+    /// by the ingest path so a runaway tool-calling pass settles
+    /// instead of churning forever. Forwarded to the sidecar which
+    /// passes it to the SDK's `maxTurns` option (sdk.d.ts:1412).
+    /// `None` means the SDK's own default applies — which is what
+    /// chat wants (multi-turn conversation, no host-imposed cap).
+    #[serde(default)]
+    pub max_turns: Option<u32>,
+    /// Optional explicit list of SDK built-in tool names to expose to
+    /// the model. When set, only those tools are visible (sdk.d.ts:
+    /// 1216 — `tools: string[]` shape). When omitted, the sidecar
+    /// falls back to the full `claude_code` preset (Read / Edit /
+    /// Write / Bash / Grep / Glob). Ingest passes a read-only subset
+    /// (typically `["Read", "Glob", "Grep"]`) so the model cannot
+    /// write to disk directly — proposals go through
+    /// `submit_ingest_result` and the host applies them after user
+    /// review.
+    #[serde(default)]
+    pub builtin_tools: Option<Vec<String>>,
+    /// Request fast mode (faster output) for this run. Forwarded to the
+    /// sidecar which sets the SDK's `settings.fastMode`. The frontend only
+    /// sends `Some(true)` after gating on model support; `None` = off.
+    #[serde(default)]
+    pub fast_mode: Option<bool>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatCancelArgs {
     pub run_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatDecisionArgs {
+    pub run_id: String,
+    pub decision_id: String,
+    /// Opaque decision payload forwarded verbatim to the sidecar's
+    /// canUseTool gate. Shapes: `{ "type": "approve" }` /
+    /// `{ "type": "reject", "message": "..." }` (ExitPlanMode) or
+    /// `{ "answers": { ... } }` (AskUserQuestion).
+    pub decision: Value,
 }
 
 #[derive(Deserialize)]
@@ -118,6 +154,15 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     if let Some(r) = args.resume {
         params["resume"] = Value::String(r);
     }
+    if let Some(mt) = args.max_turns {
+        params["maxTurns"] = json!(mt);
+    }
+    if let Some(bt) = args.builtin_tools {
+        params["builtinTools"] = json!(bt);
+    }
+    if let Some(fm) = args.fast_mode {
+        params["fastMode"] = json!(fm);
+    }
 
     let chat = manager.chat_client().await;
     chat.request("chat", Some(params))
@@ -133,6 +178,25 @@ pub async fn claude_chat_cancel(app: AppHandle, args: ChatCancelArgs) -> Result<
     chat.notify("chat/cancel", Some(json!({ "runId": args.run_id })))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Answers a parked plan-mode gate (ExitPlanMode / AskUserQuestion). Routes
+/// the user's decision back to the sidecar's canUseTool callback so the turn
+/// resumes. Notification only — no response expected.
+#[tauri::command]
+pub async fn claude_chat_decision(app: AppHandle, args: ChatDecisionArgs) -> Result<(), String> {
+    let manager = get_manager(&app)?;
+    let chat = manager.chat_client().await;
+    chat.notify(
+        "chat/decision",
+        Some(json!({
+            "runId": args.run_id,
+            "decisionId": args.decision_id,
+            "decision": args.decision,
+        })),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Runs a single-shot chat on the title sidecar. Used for thread-title

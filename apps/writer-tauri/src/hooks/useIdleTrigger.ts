@@ -31,18 +31,15 @@
 
 import { useEffect, useRef } from 'react'
 import { runIngest } from '@/agent/ingest/index'
-import { assembleProposalMarkdown } from '@/agent/ingest/markdown'
+import { mapIngestProposalToPendingChange } from '@/agent/ingest/toPendingChange'
+import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
-import {
-  ensureLogWikiSlug,
-  createCustomWikiPage,
-} from '@/state/wikiService'
+import { createCustomWikiPage } from '@/state/wikiService'
 import type { IngestProposal } from '@/agent/ingest/types'
-import { resolveWikilinksInMarkdown } from '@/lib/wikilinkResolve'
-import { effectiveLength } from '@/lib/markdownText'
+import { effectiveLength, stripDuplicateTitleHeading } from '@/lib/markdownText'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { extractErrorCode } from '@/chat/utils/errorMessage'
 import { notify } from '@/lib/notify'
@@ -55,30 +52,39 @@ interface RunOptions {
   force?: boolean
 }
 
-/** Split an ingest pass into "create a new page with this content"
- * vs "append this content to an existing page". The former goes
- * through createCustomWikiPage(name, body) — the page is born with
- * content already in its body, no banner card is needed. The
- * latter is just the existing target-based proposals passed
- * straight through to the queue for in-page banner review.
+/** Split an ingest pass into "create a new page" vs "append to an
+ * existing page". Both branches end with a staged change in
+ * `pendingChangesStore` — only the existing-page branch is returned
+ * for the main push loop; the new-page branch creates the empty
+ * page (title heading only) and pushes its body content as a
+ * PendingChange directly here, so the caller doesn't have to
+ * juggle two different push shapes.
  *
- * suggestNewPage / target rewrite: when the LLM creates a new
- * page, the indexUpdates entry it emitted references the new page
- * by its proposed `name` (e.g. "Books") since the real type id
- * didn't exist at LLM-call time. We collect a name → realType map
- * here and apply it to indexUpdates below, so by the time the
- * queue sees them every target is a real wiki:* type id and the
- * apply layer can resolve the title via knownDocs.
+ * Why empty body on creation:
+ *   The new page must exist in the catalog before we can stage a
+ *   change against it (the sidebar dot reads `pageSlug`, the inline
+ *   widget renders inside the page's editor). But the body content
+ *   itself is what the user is reviewing — not the page's
+ *   existence. So the page is born with just the H1 title, and its
+ *   bullets sit in the staging queue showing a blue dot in the
+ *   sidebar until the user Keeps them.
  *
- * Proposals whose page creation fails are dropped (better to lose
- * one than send the LLM's "make a Books page" content to a random
+ * Failed page creation drops the proposal silently (better to lose
+ * one than send the LLM's "make a Daniel page" content to a random
  * existing target). */
 async function materializeNewPageProposals(
   proposals: IngestProposal[],
   sourceLabel: string,
-): Promise<{ proposals: IngestProposal[]; nameToType: Map<string, string> }> {
+  sourceSlug: string,
+  groupId: string,
+): Promise<{
+  proposals: IngestProposal[]
+  nameToType: Map<string, string>
+  stagedCount: number
+}> {
   const out: IngestProposal[] = []
   const nameToType = new Map<string, string>()
+  let stagedCount = 0
   for (const p of proposals) {
     if (p.target) {
       out.push(p)
@@ -86,45 +92,17 @@ async function materializeNewPageProposals(
     }
     const name = p.suggestNewPage?.trim()
     if (!name) continue
-    // Assemble the bullets into markdown. The new page is born
-    // about this entity, so its body skips the `### {entity}`
-    // sub-heading — the page title already carries the topic, and
-    // a heading inside the body would render redundantly under it.
-    //
-    // Append a provenance footer so the page is born showing where
-    // its content came from. The user can verify the routing at a
-    // glance (e.g. "this is Alex's career — why is it on a Chris
-    // page?") and either keep the page or archive it. They can
-    // delete the footer themselves once they've confirmed.
-    //
-    // resolveWikilinks rewrites [[Other Page]] tokens to real
-    // markdown links — without this the LLM-emitted brackets land
-    // as literal text in the new page's body. Only the assembled
-    // bullet content is rewritten; sourceQuote stays verbatim
-    // because it mirrors the user's note (no LLM-side rewriting
-    // allowed there).
-    const assembled = assembleProposalMarkdown(p, { withEntityHeading: false })
-    const resolvedContent = resolveWikilinksInMarkdown(assembled)
-    // First line of the body MUST be the page title as a level-1
-    // heading. The title-mirror (installTitleMirror) walks the first
-    // non-empty block and copies its plain text into knownDocs.title,
-    // so the sidebar / palette / breadcrumb read it as the page name.
-    // Without this heading the mirror would catch the first bullet
-    // ("- 새 매니저로 합류") and rename the page to that. This is
-    // the regression the previous title-input pattern worked around;
-    // doing the same thing as a body-first heading aligns wiki and
-    // writing pages on one rule ("body first line is the title").
-    const titleHeading = `# ${p.suggestNewPage?.trim() ?? p.entity}`
-    const provenanceFooter = p.sourceQuote
-      ? `\n\n---\n*From ${sourceLabel}:*\n> ${p.sourceQuote}`
-      : ''
-    const body = `${titleHeading}\n\n${resolvedContent}${provenanceFooter}`
 
     // Karpathy-style flat wiki: every entity is its own page at
     // the same level. We deliberately don't pass a parent — the
     // sidebar shows the catalog as a flat list and the LLM finds
     // pages via the WIKI / INDEX blocks, not via tree navigation.
-    const newSlug = await createCustomWikiPage(name, body)
+    //
+    // The page is born EMPTY: its title lives in the header field
+    // (createCustomWikiPage sets it from `name`), decoupled from the
+    // body. Seeding a `# name` heading here would render the title
+    // twice once the body lands.
+    const newSlug = await createCustomWikiPage(name)
     if (!newSlug) {
       console.warn(
         '[ingest] suggestNewPage failed; dropping proposal',
@@ -137,12 +115,50 @@ async function materializeNewPageProposals(
     // rewrite indexUpdates that referenced this page by name.
     const known = useDocsStore.getState().knownDocs.find((d) => d.slug === newSlug)
     if (known) nameToType.set(name, known.type)
-    // Page is now in the catalog with its content already in the
-    // body. No queue entry — there's no mark to apply. The user
-    // sees the new page in the sidebar; if they don't like it,
-    // archiving is a one-click rejection.
+
+    // Phase G + K2: the LLM emits final markdown per the CLAUDE.md
+    // formatting rules and we stage / write it verbatim. Wikilink
+    // tokens (`[[Title]]`) survive to disk in their literal form so
+    // memory and disk stay byte-equivalent — required for the
+    // replace path's `oldMd.includes(before)` match against what the
+    // LLM saw when it read the file. sourceLabel is no longer mixed
+    // into the body here either; the LLM includes any citation it
+    // deems useful inside `markdownToAppend` itself.
+    void sourceLabel
+    // Defense-in-depth: if the model opened its content with the page's
+    // own title as an H1, drop that one redundant line (the header field
+    // already shows the title). A different leading heading is real
+    // content and stays.
+    const { body: after, removed } = stripDuplicateTitleHeading(
+      p.markdownToAppend,
+      name,
+    )
+    if (removed) {
+      console.log('[ingest] dropped duplicate title heading from new page body', { name })
+    }
+    usePendingChangesStore.getState().push({
+      id: crypto.randomUUID(),
+      source: 'ingest',
+      pageSlug: newSlug,
+      groupId,
+      createdAt: Date.now(),
+      edits: [
+        {
+          id: crypto.randomUUID(),
+          kind: 'add',
+          anchorBefore: '',
+          after,
+        },
+      ],
+      context: {
+        sourceSlug,
+        rationale: p.rationale,
+        sourceQuote: p.sourceQuote,
+      },
+    })
+    stagedCount += 1
   }
-  return { proposals: out, nameToType }
+  return { proposals: out, nameToType, stagedCount }
 }
 
 /** Read a doc's markdown via the canonical proof-server route.
@@ -168,11 +184,11 @@ function readDocLength(slug: string): number {
     if (view) return effectiveLength(view.state.doc.textContent)
   }
 
-  // Fallback: count the Y.XmlFragment's serialized text. Loses
-  // structural markdown but only the visible characters matter
-  // for the gate.
-  const fragment = handle.ydoc.getXmlFragment('prosemirror')
-  return effectiveLength(fragment.toString())
+  // Phase 5a of the Yjs-removal migration: count characters off the
+  // `handle.bodyMarkdown` cache instead of the Y.Doc fragment's flat
+  // toString. The cache is the same content the editor seeded PM
+  // with, so the visible-character count stays accurate.
+  return effectiveLength(handle.bodyMarkdown)
 }
 
 /** Run an ingest pass against a specific note slug. Returns the
@@ -308,35 +324,68 @@ async function runIngestForSlug(
     return 0
   }
 
-  // wiki:log is the only system-owned wiki page and is created
-  // lazily on first need. Without this, a logEntry would queue but
-  // never drain because the target doc wouldn't exist in the
-  // catalog for the user to navigate to.
-  if (result.logEntry) {
-    await ensureLogWikiSlug()
-  }
+  // (Pre-2.A note: wiki:log used to be ensured here so its drain
+  // queue could find the target. Phase 2.A inlines logging into
+  // `appendToSystemLog`, which ensures the page itself.)
 
-  // Materialize any `suggestNewPage` proposals into real wiki pages
-  // before enqueue, so by the time the user clicks the sidebar
-  // entry the doc is already in the catalog (and the pending
-  // proposal already points at it via target).
-  // Failures (e.g. proof-server unreachable) drop the proposal
-  // rather than silently re-routing it elsewhere.
+  // Phase C4a — staged preview shape. Each proposal becomes a
+  // PendingChange in `pendingChangesStore`; the disk is NOT touched
+  // here. The user clicks Accept on the inline widget (rendered by
+  // `inlineReviewPlugin`) to commit a change to disk; the wiring
+  // lives in `pendingChangesApplier` (Phase C4b). Reject just drops
+  // the staged change with no disk effect.
+  //
+  // The `logEntry` produced by the LLM is intentionally discarded
+  // here. wiki:log used to record every ingest pass, but the Review
+  // Panel timeline (Phase D) reads the pendingChangesStore directly
+  // — log lines would duplicate that signal. If we revive a wiki:log
+  // file later it should be derived from accepted changes, not
+  // emitted speculatively at ingest time.
+  //
+  // groupId is shared by every PendingChange this pass produces —
+  // both new-page (`materializeNewPageProposals` pushes its own) and
+  // existing-page (main loop below). The Review Panel's batch-reject
+  // surface keys off this id.
   const sourceLabel =
     known.type === 'daily' && known.date
       ? `daily/${known.date}`
       : known.title?.trim() || slug
-  const { proposals: proposalsForQueue } = await materializeNewPageProposals(
-    result.proposals,
-    sourceLabel,
-  )
+  const groupId = crypto.randomUUID()
+  const { proposals: proposalsForQueue, stagedCount: stagedNewPages } =
+    await materializeNewPageProposals(result.proposals, sourceLabel, slug, groupId)
 
-  useIngestStore.getState().enqueue({
-    proposals: proposalsForQueue,
-    logEntry: result.logEntry,
-    sourceSlug: slug,
-    sourceLabel,
-  })
+  let staged = stagedNewPages
+  for (const p of proposalsForQueue) {
+    if (!p.target) continue
+    const targetDoc = useDocsStore
+      .getState()
+      .knownDocs.find((d) => d.type === p.target && !d.archivedAt)
+    if (!targetDoc) {
+      console.warn('[ingest:apply] target type not in catalog', p.target)
+      continue
+    }
+    // Phase G: the LLM's markdownToAppend is the final shape; we no
+    // longer assemble or wrap it. mapIngestProposalToPendingChange
+    // forwards it verbatim onto the edit's `after` field.
+    if (!p.markdownToAppend.trim()) continue
+    const changeId = crypto.randomUUID()
+    const editId = crypto.randomUUID()
+    usePendingChangesStore.getState().push(
+      mapIngestProposalToPendingChange(
+        {
+          proposal: { ...p, target: p.target },
+          pageSlug: targetDoc.slug,
+          groupId,
+          sourceLabel,
+          sourceSlug: slug,
+        },
+        changeId,
+        editId,
+      ),
+    )
+    staged += 1
+  }
+  console.log(`[ingest] staged ${staged} change(s) for review`, { groupId })
   return result.proposals.length
 }
 

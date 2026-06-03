@@ -1,37 +1,24 @@
 /**
- * Seed a Y.Doc's prosemirror fragment from a markdown string.
+ * PM-native body seeding / replacement helpers.
  *
- * Used by createCustomWikiPage and ensureSystemPage to plant initial
- * body content into a freshly-created doc — the role proof-server's
- * `createDoc(name, body)` used to fill before Phase 3.B removed the
- * round-trip. Without this helper the `body` argument is silently
- * dropped, which is what surfaced as "new wiki pages are blank" and
- * "conventions page is empty (LLM ignores routing rules)".
+ * Phase 5c of the Yjs-removal migration retired the Y.Doc-based
+ * helpers (`seedMarkdownIntoYDoc`, `replaceMarkdownInYDoc`,
+ * `applyYDocBinaryAtomically`) that this module used to ship.
+ * `applyMarkdownToEditor` is now the single canonical path: parse
+ * the markdown, rehydrate against the live editor's schema, dispatch
+ * one non-undoable PM transaction that swaps the entire doc.
  *
- * Flow:
- *   markdown
- *     → PM Node (Milkdown parser, shares the editor schema)
- *     → temp Y.Doc (y-prosemirror's prosemirrorToYDoc)
- *     → state binary update
- *     → applied to the target Y.Doc under 'doc-init' origin
- *
- * The 'doc-init' origin keeps this write out of the UndoManager (
- * same convention as the empty-fragment fill in MilkdownEditor.tsx:
- * 280-292), so Cmd+Z right after opening a fresh page doesn't
- * strip the seeded content.
- *
- * The temp Y.Doc is destroyed after the update is encoded — its
- * sole purpose is to give prosemirrorToYDoc a clean target so we
- * can extract a self-contained update to merge into the real doc.
+ * Atomicity:
+ *   `view.dispatch` of a single `tr.replaceWith` is one transaction —
+ *   plugins see the post-transaction state only, never a partial.
+ *   The `addToHistory: false` meta keeps the swap out of Cmd-Z so a
+ *   stray undo after, say, a profile rebuild can't leave the doc in
+ *   a half-rewritten state.
  */
 
-import * as Y from 'yjs'
-import { prosemirrorToYDoc } from 'y-prosemirror'
 import type { Node as PMNode } from '@milkdown/kit/prose/model'
+import type { EditorView } from '@milkdown/kit/prose/view'
 import type { MarkdownParser } from '@/state/editorViewStore'
-
-const FRAGMENT_NAME = 'prosemirror'
-const ORIGIN = 'doc-init'
 
 /** Convert top-level `paragraph(only image)` blocks into the
  * dedicated `imageBlock` node. Commonmark only knows the inline
@@ -74,81 +61,57 @@ function unwrapBlockImages(doc: PMNode): PMNode {
   return doc.type.create(doc.attrs, next)
 }
 
-/** Returns true on success. False when the parser returns no node
- * (empty / whitespace-only markdown) — callers can treat that as
- * "nothing to seed" rather than an error. */
-export function seedMarkdownIntoYDoc(
-  ydoc: Y.Doc,
-  markdown: string,
-  parser: MarkdownParser,
-): boolean {
-  const trimmed = markdown.trim()
-  if (trimmed.length === 0) return false
-
-  let pmNode: ReturnType<MarkdownParser>
-  try {
-    pmNode = parser(trimmed)
-  } catch (err) {
-    console.warn('[seedMarkdown] parser failed', err)
-    return false
-  }
-  if (!pmNode) return false
-
-  const transformed = unwrapBlockImages(pmNode)
-  const seedDoc = prosemirrorToYDoc(transformed, FRAGMENT_NAME)
-  const update = Y.encodeStateAsUpdate(seedDoc)
-  try {
-    Y.applyUpdate(ydoc, update, ORIGIN)
-  } finally {
-    seedDoc.destroy()
-  }
-  return true
+/** Drop standalone `<br />` lines from a markdown blob before it
+ * reaches the parser. Commonmark + gfm parse `<br />` as inline HTML
+ * and our PM schema has no node for raw HTML inline — so they fell
+ * through to literal text after the Phase 5a Step 8 switch from the
+ * Y.Doc fragment hydrate to the markdown parser. These tags live in
+ * legacy daily-doc bodies (a structural separator pattern from an
+ * earlier seed routine) and AI Edit calls preserve them as
+ * unchanged context, so without this strip every external reload
+ * paints `<br />` into the body verbatim.
+ *
+ * Self-healing: stripping at parse time means PM never sees the
+ * tags, so the next `flushDirty` round writes a `.md` without them
+ * and the noise fades on its own. */
+export function stripNoiseMarkdownLines(markdown: string): string {
+  if (!markdown.includes('<br')) return markdown
+  return markdown
+    .split('\n')
+    .filter((line) => !/^<br\s*\/?>$/i.test(line.trim()))
+    .join('\n')
 }
 
-/** Replace the entire body of a Y.Doc's prosemirror fragment with
- * the parsed markdown. Used by the profile pipeline so a fresh
- * pipeline run (full or single-zone re-derivation) can rewrite the
- * page contents, where {@link seedMarkdownIntoYDoc} would no-op
- * because the doc already has content.
- *
- * Two-phase write: clear the existing fragment, then apply the new
- * state from a temp doc. Both phases use the same 'doc-init' origin
- * so the rewrite stays out of the user's undo stack. The two
- * transactions are sequential (Yjs nesting is fine but two flat
- * transactions are simpler to reason about); no concurrent observer
- * will see the doc in the intermediate "empty" state on the same
- * tick. */
-export function replaceMarkdownInYDoc(
-  ydoc: Y.Doc,
+export function applyMarkdownToEditor(
+  view: EditorView,
   markdown: string,
   parser: MarkdownParser,
 ): boolean {
-  const trimmed = markdown.trim()
+  const trimmed = stripNoiseMarkdownLines(markdown).trim()
   if (trimmed.length === 0) return false
 
-  let pmNode: ReturnType<MarkdownParser>
+  let parsed: ReturnType<MarkdownParser>
   try {
-    pmNode = parser(trimmed)
+    parsed = parser(trimmed)
   } catch (err) {
-    console.warn('[seedMarkdown] replace: parser failed', err)
+    console.warn('[seedMarkdown] applyMarkdownToEditor: parser failed', err)
     return false
   }
-  if (!pmNode) return false
+  if (!parsed) return false
 
-  const transformed = unwrapBlockImages(pmNode)
-  const fragment = ydoc.getXmlFragment(FRAGMENT_NAME)
-  const seedDoc = prosemirrorToYDoc(transformed, FRAGMENT_NAME)
-  const update = Y.encodeStateAsUpdate(seedDoc)
-
-  try {
-    ydoc.transact(() => {
-      if (fragment.length > 0) {
-        fragment.delete(0, fragment.length)
-      }
-    }, ORIGIN)
-    Y.applyUpdate(ydoc, update, ORIGIN)
-  } finally {
-    seedDoc.destroy()
-  }
+  // `parser` is published by the live MilkdownEditor on mount
+  // (editor.action ctx.get(parserCtx)), so the parsed node carries
+  // the same PM schema instance the EditorView uses. No round-trip
+  // through toJSON / nodeFromJSON — that step existed only because
+  // a separate headless Milkdown owned the parser and produced
+  // schema-incompatible nodes (e.g. `list_item.spread` typed as
+  // string vs boolean). With one editor owning everything, schema
+  // mismatch is structurally impossible.
+  const transformed = unwrapBlockImages(parsed)
+  view.dispatch(
+    view.state.tr
+      .replaceWith(0, view.state.doc.content.size, transformed.content)
+      .setMeta('addToHistory', false),
+  )
   return true
 }

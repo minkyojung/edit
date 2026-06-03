@@ -22,36 +22,35 @@ export interface IngestProposal {
    * because no existing page is a good home for this content. The
    * apply layer turns this into a real `wiki:custom-<id>` page. */
   suggestNewPage?: string
-  /** Topic the bullets are about — e.g. a person's name, a book
-   * title, a project. Used as the `### {entity}` sub-heading when
-   * appending to an existing `target` page; ignored when creating
-   * a `suggestNewPage` (the page title is the topic). */
-  entity: string
-  /** Bullet bodies the model wants to record under `entity`. Plain
-   * text — no leading `-`, no nested markdown structure. The host
-   * assembles the final `### {entity}\n- {b}\n...` shape at apply
-   * time. Splitting `content: string` into this atomic shape is
-   * what blocks the model from re-emitting page-level headers
-   * (e.g. "## People") that doubled up on every accept. */
-  bullets: string[]
-  /** Short reason the LLM gave for proposing this. Optional. */
+  /** Phase G: the LLM produces final markdown directly. Host writes
+   * this string into the target page (after a wikilink-syntax
+   * safety pass). Formatting rules — entity heading, bullet shape,
+   * provenance footer — live in the vault-root CLAUDE.md and the
+   * LLM is expected to follow them. Replaces the atomic
+   * entity/bullets pair from earlier versions, which forced
+   * host-side wrapping that duplicated the page title heading
+   * ("### Sera" under a "Sera" page) on every ingest. */
+  markdownToAppend: string
+  /** Short reason the LLM gave for proposing this. Optional —
+   * surfaced in the inline review widget's secondary line so the
+   * user can judge the routing at a glance. */
   rationale?: string
   /** The exact daily-line snippet this content was derived from,
-   * echoed verbatim. Provenance: lets the user (and the review
-   * card) see "where in my note did this fact come from?" — so
-   * mis-routes (e.g. Alex content sent to a Chris page because
-   * the LLM mismapped a name) are visible at a glance instead of
-   * buried inside the wiki body. Optional because some proposals
-   * legitimately stand on aggregated context, not a single line. */
+   * echoed verbatim. Provenance + dedup: the user can see "where
+   * in my note did this come from", and the host may hash it to
+   * recognise re-suggestions of the same fact even if the LLM
+   * worded the markdown differently. Optional because some
+   * proposals legitimately stand on aggregated context. */
   sourceQuote?: string
 }
 
 export interface IngestResult {
   /** Append-only edits the LLM thinks the wiki should reflect. */
   proposals: IngestProposal[]
-  /** Pre-formatted log line for wiki:log, or null if nothing was
-   * meaningful enough to log. Format follows Karpathy's convention:
-   * `## [YYYY-MM-DD] <kind> | <summary>`. */
+  /** Deprecated. The host now writes `_system/log.md` automatically
+   * (one row per applied proposal, formatted from data the host
+   * already has). Kept in the schema for backward compat with older
+   * LLM emissions; readers should ignore. */
   logEntry: string | null
   /** Raw assistant text for debugging. Useful when JSON parsing
    * fails so we can see what the model actually returned. */

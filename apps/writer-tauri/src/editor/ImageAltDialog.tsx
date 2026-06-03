@@ -117,7 +117,7 @@ export function ImageAltDialog() {
               Description
             </label>
             {srcLabel && (
-              <span className="truncate text-[11px] text-muted-foreground">
+              <span className="truncate text-[12px] text-muted-foreground">
                 {srcLabel}
               </span>
             )}

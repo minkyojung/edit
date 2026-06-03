@@ -154,30 +154,39 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max).trimEnd() + '…'
 }
 
-/** Assemble the Tier 1 wiki catalog — one line per non-archived wiki
- * page. Replaces the prior LLM-edited `wiki:index` body with a fresh,
- * deterministic snapshot.
+/** Assemble the Tier 1 wiki catalog — one row per non-archived wiki
+ * page, rendered as a markdown table. Replaces the prior LLM-edited
+ * `wiki:index` body with a fresh, deterministic snapshot.
  *
- * Line format: `- <path> [<type-id>] — <title>: <summary> | links: <N>`
+ * Table format:
+ *   | Path | Type | Title | Summary | Links |
+ *   |------|------|-------|---------|-------|
+ *   | wiki/Sarah.md | wiki:custom-7n2... | Sarah | Senior engineer... | 3 |
  *
  * The path comes first because that's what the LLM needs to feed
- * back into the `read_page` / `search_wiki` tools. The `[<type-id>]`
- * bracket immediately after is the verbatim source the ingest LLM
- * reads when constructing a proposal's `target` — without it the
- * model has no way to address an existing page (file paths and
- * titles aren't stable identifiers across renames; type ids are).
- * Title + summary follow for human-readable scanning.
+ * back into the `read_page` / `search_wiki` tools. The Type column
+ * carries the verbatim type-id the ingest LLM reads when constructing
+ * a proposal's `target` — without it the model has no way to address
+ * an existing page (file paths and titles aren't stable identifiers
+ * across renames; type ids are). Title + Summary follow for
+ * human-readable scanning; Links is the backlink count.
+ *
+ * Why a table (not a bullet list, as it used to be):
+ * the body is a list of records, and tables align columns so the
+ * user can scan dozens of pages at a glance. The LLM also still
+ * reads it fine — markdown table is a standard format. The editor
+ * renders it as a real PM table (Milkdown GFM preset).
  *
  * Source preference for each column:
- *   - path   : pathForDoc(doc) → e.g. `wiki/Sarah Kim.md`
- *   - type   : `KnownDoc.type` → e.g. `wiki:custom-7n2dvj41`
- *   - title  : `KnownDoc.title` (Bear/Obsidian first-body-line)
- *   - summary: `sidecar.aiSummary` (populated by Phase A5 ingest hook)
+ *   - Path   : pathForDoc(doc) → e.g. `wiki/Sarah Kim.md`
+ *   - Type   : `KnownDoc.type` → e.g. `wiki:custom-7n2dvj41`
+ *   - Title  : `KnownDoc.title` (Bear/Obsidian first-body-line)
+ *   - Summary: `sidecar.aiSummary` (populated by Phase A5 ingest hook)
  *              → fallback to the body's first content line after the
  *                title (see {@link bodyExcerpt})
  *              → fallback to `(empty)` placeholder so the LLM still
  *                sees that the page exists
- *   - links  : backlink count from {@link countBacklinks}
+ *   - Links  : backlink count from {@link countBacklinks}
  *
  * Pages without a resolvable path (shouldn't happen for non-archived
  * wiki entries, but defensive) are skipped silently. */
@@ -197,7 +206,10 @@ export async function buildWikiIndex(): Promise<string> {
 
   const counts = countBacklinks(catalog, (slug) => bodies[slug])
 
-  const lines: string[] = []
+  const rows: string[] = [
+    '| Path | Type | Title | Summary | Links |',
+    '|------|------|-------|---------|-------|',
+  ]
   for (let i = 0; i < wikiPages.length; i++) {
     const doc = wikiPages[i]
     const path = computePathForDoc(doc)
@@ -210,11 +222,24 @@ export async function buildWikiIndex(): Promise<string> {
       EMPTY_PLACEHOLDER
     const title = (doc.title ?? '').trim() || 'Untitled'
     const linked = counts.get(doc.slug) ?? 0
-    lines.push(
-      `- ${path} [${doc.type}] — ${title}: ${truncate(summary, SUMMARY_MAX_LEN)} | links: ${linked}`,
+    rows.push(
+      `| ${escapeMdCell(path)} | ${escapeMdCell(doc.type)} | ${escapeMdCell(title)} | ${escapeMdCell(truncate(summary, SUMMARY_MAX_LEN))} | ${linked} |`,
     )
   }
-  return lines.join('\n')
+  return rows.join('\n')
+}
+
+/** Escape a value for safe placement inside a markdown table cell.
+ * Replaces pipe characters with `\|` (which most renderers parse as
+ * a literal `|`) and collapses newlines to spaces — markdown table
+ * cells can't carry line breaks without specialised extensions, so
+ * a title or summary containing `\n` would otherwise split the row. */
+function escapeMdCell(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ')
+    .trim()
 }
 
 // ── Memory cache ──────────────────────────────────────────────────

@@ -21,6 +21,7 @@ import type {
   TextPart,
   ToolPart,
 } from '@/chat/types'
+import { isProposeEditTool } from '@/chat/parts/proposeChangeTool'
 import type { ChatEvent } from './types'
 
 /** Best-effort error text extraction from a tool_result content
@@ -40,6 +41,12 @@ export function extractErrorText(content: unknown): string | undefined {
   }
   return undefined
 }
+
+/** crypto.randomUUID() shape. The sidecar's edit tools echo the queued
+ * PendingChange's id in their tool_result text ("…(id: <uuid>)."); this
+ * pulls it back out so the part can be linked to its store entry. */
+const PENDING_ID_RE =
+  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 
 export interface StreamParser {
   /** Feed one `claude:event` payload (already runId-filtered by the
@@ -210,6 +217,17 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
                 // stamped markId when one is present.
                 const existing = (tool.output ?? {}) as { markId?: string }
                 const stampedMarkId = !isError ? existing.markId : undefined
+                // Edit tools (propose_edit / write / multi_edit) echo the
+                // queued PendingChange id in their result text. Capture it
+                // so the inline suggestion card can find the matching store
+                // entry and drive Keep / Reject.
+                let pendingId = tool.pendingId
+                if (!isError && isProposeEditTool(tool.toolName)) {
+                  const match = PENDING_ID_RE.exec(
+                    extractErrorText(b.content) ?? '',
+                  )
+                  if (match) pendingId = match[0]
+                }
                 upsertPart({
                   ...tool,
                   state: isError ? 'output-error' : 'output-available',
@@ -217,6 +235,7 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
                     ? { ok: true, markId: stampedMarkId, content: b.content }
                     : b.content,
                   errorText: isError ? extractErrorText(b.content) : undefined,
+                  pendingId,
                 })
               }
             }

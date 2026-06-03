@@ -104,6 +104,17 @@ export async function appendThreadTurn(id: string, turn: ChatTurn): Promise<void
   await appendVaultFile(path, JSON.stringify(turn) + '\n')
 }
 
+/** Append several turns as ONE write. appendVaultFile is read-modify-write
+ * (not an OS-level append), so two back-to-back appendThreadTurn calls race
+ * and lose an update; callers that must land multiple turns in a fixed order
+ * (e.g. the AskUserQuestion turn-split: committed turn + answer bubble) use
+ * this to write them atomically and in order. */
+export async function appendThreadTurns(id: string, turns: ChatTurn[]): Promise<void> {
+  if (turns.length === 0) return
+  const path = turnsPath(id)
+  await appendVaultFile(path, turns.map((t) => JSON.stringify(t) + '\n').join(''))
+}
+
 /** Rewrite a thread's turn file from a fresh array. Required by
  * removeTurn (Regenerate's "drop the last assistant turn") because
  * JSONL append-only can't selectively delete a record.

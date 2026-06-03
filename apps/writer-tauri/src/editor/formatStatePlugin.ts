@@ -12,8 +12,13 @@ import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
 import type { EditorState } from '@milkdown/kit/prose/state'
 import type { MarkType, Node as ProseMirrorNode } from '@milkdown/kit/prose/model'
+import type { EditorView } from '@milkdown/kit/prose/view'
 
-import { useFormatStateStore, type FormatBlockType } from '@/state/formatStateStore'
+import {
+  useFormatStateStore,
+  type FormatBlockType,
+  type SelectionRect,
+} from '@/state/formatStateStore'
 
 function computeBlockType(state: EditorState): FormatBlockType {
   const $from = state.selection.$from
@@ -104,6 +109,32 @@ function setEquals(a: Set<string>, b: Set<string>): boolean {
   return true
 }
 
+/** View-relative bounding box of the range [from, to]. Used by both
+ * the plugin (transaction-time) and the SelectionBubble's scroll/resize
+ * handler (DOM-time) so the bubble can follow the selection as the
+ * viewport moves. */
+export function unionCoords(view: EditorView, from: number, to: number): SelectionRect {
+  const start = view.coordsAtPos(from)
+  const end = view.coordsAtPos(to)
+  return {
+    top: Math.min(start.top, end.top),
+    left: Math.min(start.left, end.left),
+    right: Math.max(start.right, end.right),
+    bottom: Math.max(start.bottom, end.bottom),
+  }
+}
+
+function rectEquals(a: SelectionRect | null, b: SelectionRect | null): boolean {
+  if (a === null && b === null) return true
+  if (a === null || b === null) return false
+  return (
+    a.top === b.top &&
+    a.left === b.left &&
+    a.right === b.right &&
+    a.bottom === b.bottom
+  )
+}
+
 export const formatStatePlugin = $prose(() => {
   return new Plugin({
     view() {
@@ -117,16 +148,26 @@ export const formatStatePlugin = $prose(() => {
           }
           const newBlock = computeBlockType(view.state)
           const newMarks = computeActiveMarks(view.state)
+          const sel = view.state.selection
+          // IME composition (Korean / Japanese / Chinese) constantly
+          // moves the selection mid-keystroke; treating composition
+          // as "no bubble" keeps the SelectionBubble from flickering.
+          const empty = sel.empty || view.composing
+          const rect = empty ? null : unionCoords(view, sel.from, sel.to)
           const prev = useFormatStateStore.getState()
           if (
             prev.blockType === newBlock &&
-            setEquals(prev.activeMarks, newMarks)
+            setEquals(prev.activeMarks, newMarks) &&
+            prev.selectionEmpty === empty &&
+            rectEquals(prev.selectionRect, rect)
           ) {
             return
           }
           useFormatStateStore.setState({
             blockType: newBlock,
             activeMarks: newMarks,
+            selectionEmpty: empty,
+            selectionRect: rect,
           })
         },
       }

@@ -6,22 +6,26 @@ import {
   IconSelector,
   IconLogout,
   IconSparkles,
+  IconCameraPlus,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { SidebarDateMenu } from './SidebarDateMenu'
-import { NavHistoryButtons } from './NavHistoryButtons'
 import { DayView } from './views/DayView'
 import { WeekView } from './views/WeekView'
 import { MonthView } from './views/MonthView'
 import { WikiSection } from './WikiSection'
+import { ArticlesSection } from './ArticlesSection'
+import { WikiMetaRows } from './WikiMetaRows'
 import { ArchivedDocsPopover } from './ArchivedDocsPopover'
 import { IngestProposalCard } from './IngestProposalCard'
 import { useDocsStore } from '@/state/docsStore'
+import { useGitStore } from '@/state/gitStore'
 import { buildDayUrl, buildViewUrl, getActiveSlugFromHash } from '@/lib/viewUrl'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
 import { useTheme } from '@/components/theme-provider'
+import { useFont, type FontOption } from '@/components/font-provider'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,7 +44,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
 } from '@/components/ui/sidebar'
 
 /** Pull initials from an email's local part, splitting on .+_- so
@@ -102,6 +105,20 @@ const PALETTE_OPTIONS: PaletteOption[] = [
   },
 ]
 
+type FontOptionDef = {
+  value: FontOption
+  label: string
+  /** Inline font-family used for the swatch so each row previews its
+   * own typeface — Geist row in Geist, Nunito row in Nunito. */
+  preview: string
+}
+
+const FONT_OPTIONS: FontOptionDef[] = [
+  { value: 'pretendard', label: 'Pretendard', preview: "'Pretendard Variable', sans-serif" },
+  { value: 'geist', label: 'Geist', preview: "'Geist Variable', sans-serif" },
+  { value: 'nunito', label: 'Nunito Sans', preview: "'Nunito Sans Variable', sans-serif" },
+]
+
 function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
   return (
     <span
@@ -119,10 +136,15 @@ function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
 
 export function AppSidebar() {
   const { palette, setPalette } = useTheme()
+  const { font, setFont } = useFont()
   const connectOpen = useConnectDialog((s) => s.open)
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const { account, refresh, disconnect } = useClaudeAuth()
   const sidebarTab = useDocsStore((s) => s.sidebarTab)
+  const dirtyCount = useGitStore((s) => s.dirtyPaths.size)
+  const gitStatus = useGitStore((s) => s.status)
+  const commitImmediate = useGitStore((s) => s.commitImmediate)
+  const saveSnapshotDisabled = dirtyCount === 0 || gitStatus === 'committing'
 
   const handleSignOut = useCallback(async () => {
     if (account.connected) {
@@ -202,7 +224,7 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarHeader
         data-tauri-drag-region
-        className="flex flex-row items-center gap-0.5 p-0 pr-1"
+        className="flex flex-row items-center p-0 pr-3"
         style={{ height: 'var(--header-h)' }}
       >
         {/* Reserve the macOS traffic-light area as a drag region so
@@ -214,9 +236,13 @@ export function AppSidebar() {
           className="h-full shrink-0"
           style={{ width: 'var(--traffic-light-w)' }}
         />
-        <SidebarTrigger />
-        <NavHistoryButtons />
-        <SidebarDateMenu />
+        {/* Cluster wrapper matches EditorHeader's pl-3 + gap-2 so the
+            SidebarDateMenu sits 12px past the stoplight zone, the same
+            distance EditorHeader's SidebarTrigger keeps from the
+            window's left edge. */}
+        <div className="flex items-center gap-2 pl-3">
+          <SidebarDateMenu />
+        </div>
         <div data-tauri-drag-region className="flex-1 h-full" />
       </SidebarHeader>
 
@@ -226,6 +252,7 @@ export function AppSidebar() {
           {sidebarTab === 'week' && <WeekView />}
           {sidebarTab === 'month' && <MonthView />}
         </div>
+        <ArticlesSection />
         <WikiSection />
       </SidebarContent>
 
@@ -235,13 +262,16 @@ export function AppSidebar() {
             notice without crowding the doc tree above. */}
         <IngestProposalCard />
         <SidebarMenu>
+          {/* Profile + Conventions: always-present, low-frequency wiki
+              surfaces, stacked just above Archived. */}
+          <WikiMetaRows />
           <SidebarMenuItem>
             <ArchivedDocsPopover />
           </SidebarMenuItem>
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg" className="px-2 h-11">
+                <SidebarMenuButton size="lg" className="px-2 h-[46px]">
                   <Avatar className="size-7 shrink-0">
                     <AvatarImage src="" />
                     <AvatarFallback className="avatar-luma text-xs text-primary-foreground font-medium">
@@ -249,10 +279,10 @@ export function AppSidebar() {
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-sidebar-foreground truncate">
+                    <p className="text-[14px] font-semibold text-sidebar-foreground truncate">
                       {accountDisplayName(account.email) ?? 'Guest'}
                     </p>
-                    <p className="text-sm font-medium text-sidebar-foreground/50 truncate">
+                    <p className="text-[13px] font-normal text-sidebar-foreground/55 truncate">
                       {account.connected ? (account.email ?? 'Connected') : 'Not connected'}
                     </p>
                   </div>
@@ -284,6 +314,20 @@ export function AppSidebar() {
                     <DropdownMenuSeparator />
                   </>
                 )}
+                <DropdownMenuItem
+                  disabled={saveSnapshotDisabled}
+                  onSelect={() => {
+                    void commitImmediate()
+                  }}
+                >
+                  <IconCameraPlus size={16} stroke={1.5} />
+                  <span>Save snapshot</span>
+                  {dirtyCount > 0 && (
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {dirtyCount}
+                    </span>
+                  )}
+                </DropdownMenuItem>
                 <DropdownMenuItem disabled title="Coming soon">
                   <IconSettings size={16} stroke={1.5} />
                   Settings
@@ -303,6 +347,24 @@ export function AppSidebar() {
                   {PALETTE_OPTIONS.map((opt) => (
                     <DropdownMenuRadioItem key={opt.value} value={opt.value}>
                       <PaletteSwatch swatch={opt.swatch} />
+                      {opt.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+                  Font
+                </DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={font}
+                  onValueChange={(v) => setFont(v as FontOption)}
+                >
+                  {FONT_OPTIONS.map((opt) => (
+                    <DropdownMenuRadioItem
+                      key={opt.value}
+                      value={opt.value}
+                      style={{ fontFamily: opt.preview }}
+                    >
                       {opt.label}
                     </DropdownMenuRadioItem>
                   ))}

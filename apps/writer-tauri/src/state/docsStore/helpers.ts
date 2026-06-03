@@ -73,6 +73,18 @@ const SYSTEM_META_POLICY: DocPolicy = {
   isIngestSource: false,
   isAgentManaged: true,
 }
+const ARTICLE_POLICY: DocPolicy = {
+  // Read-it-later saved page. Raw external source (like daily, not
+  // synthesized), so it's user-owned (not agent-managed) and NOT an
+  // ingest source — we don't feed saved articles back into the wiki /
+  // LLM-context pass. Archivable; lives in its own sidebar section.
+  category: 'article',
+  sidebarGroup: 'article',
+  canArchive: true,
+  canBeMovedInWikiTree: false,
+  isIngestSource: false,
+  isAgentManaged: false,
+}
 
 /** Resolve a doc's policy by type. Unknown / legacy types fall
  * through to wiki-content — the v6 migration already moved the
@@ -82,6 +94,7 @@ const SYSTEM_META_POLICY: DocPolicy = {
 export function getDocPolicy(doc: Pick<KnownDoc, 'type'>): DocPolicy {
   if (doc.type === 'daily') return DAILY_POLICY
   if (doc.type === 'writing') return WRITING_POLICY
+  if (doc.type === 'article') return ARTICLE_POLICY
   if (doc.type === 'wiki:profile') return WIKI_PROFILE_POLICY
   if (doc.type.startsWith('system:')) return SYSTEM_META_POLICY
   if (doc.type.startsWith('wiki:')) return WIKI_CONTENT_POLICY

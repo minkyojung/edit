@@ -21,7 +21,11 @@ import { DOC_CHAR_CAP, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from './types'
  * a transcript here; that broke prompt-cache reuse and was
  * explicitly flagged as a temporary bridge. */
 export function buildUserPrompt(history: ChatTurn[]): string {
-  const turns = history.filter((t) => t.content.trim().length > 0)
+  // `synthetic` turns (e.g. the AskUserQuestion answer bubble) are display-
+  // only — the model already received that answer via the tool result, so
+  // they must never become the prompt (Regenerate would otherwise re-send
+  // the chosen answer text as a fresh question).
+  const turns = history.filter((t) => !t.synthetic && t.content.trim().length > 0)
   if (turns.length === 0) return ''
   return turns[turns.length - 1].content
 }
@@ -39,13 +43,15 @@ export interface SystemBlocksArgs {
   docForPrompt: string
   /** Caller-chosen system prompt body (FREE_CHAT_PROMPT by default). */
   systemBody: string
-  /** Result of assembleContext — selfProfile / conventions / index /
-   * hotPages. Each field may be empty; the helper skips empty ones. */
+  /** Result of `assembleContext({ mode: 'chat' })` — the three blocks
+   * the chat path actually injects. The wiki index + hot-page
+   * bodies that the previous shape carried are intentionally absent:
+   * the Karpathy / Claude Code pattern has the LLM fetch those via
+   * Read / Glob / Grep when (and only when) a turn warrants it. */
   ctx: {
     selfProfile: string
     conventions: string
-    index: string
-    hotPages: Array<{ title: string; body: string }>
+    claudeMd: string
   }
   /** When true (default for free chat) the document body is appended
    * past the SDK's cache boundary so it doesn't poison the cache key.
@@ -57,17 +63,18 @@ export interface SystemBlocksArgs {
 /** Compose the system prompt as a `string | string[]`.
  *
  * Anchor ordering by cache stability:
- *   prefix (stable):   selfProfile → conventions → index → hotPages → systemBody
+ *   prefix (stable):   selfProfile → conventions → claudeMd → systemBody
  *   suffix (dynamic):  document
  *
- * selfProfile sits at the very top — it's the most-stable block
- * (changes only when the user edits the profile or the ingest LLM
- * accepts a proposal targeting wiki:profile), and putting "who the
- * user is" first means every downstream piece of the prompt is read
- * through that lens. conventions/index move only when wiki pages
- * change; hotPages follow the [[link]] set which is stable across
- * consecutive turns. The document changes every keystroke so we
- * pin it after the SDK's cache boundary.
+ * `selfProfile` sits at the very top — it changes only when the user
+ * edits the profile or the ingest LLM accepts a proposal targeting
+ * `wiki:profile`. `conventions` is the user's vault-specific rules
+ * page; rarely edited but user-owned. `claudeMd` is the Karpathy /
+ * Claude Code schema document — vault layout, operations, tool
+ * usage. The three blocks are all eligible for prompt caching.
+ * `systemBody` (FREE_CHAT_PROMPT) is the shortest, most app-
+ * specific framing. The document changes every keystroke so we pin
+ * it after the SDK's cache boundary.
  *
  * The return type is `string | string[]`:
  *   - `string[]` with a {@link SYSTEM_PROMPT_DYNAMIC_BOUNDARY} sentinel
@@ -84,10 +91,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
   }
   if (ctx.conventions) prefix.push(ctx.conventions)
-  if (ctx.index) prefix.push(`--- WIKI INDEX ---\n${ctx.index}`)
-  for (const page of ctx.hotPages) {
-    prefix.push(`--- WIKI PAGE: ${page.title} ---\n${page.body}`)
-  }
+  if (ctx.claudeMd) prefix.push(ctx.claudeMd)
   prefix.push(systemBody)
 
   if (appendDocument) {

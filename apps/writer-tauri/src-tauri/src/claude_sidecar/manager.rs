@@ -108,6 +108,13 @@ impl SidecarManager {
         // Setting once is sufficient; the OnceLock is shared across closures.
         let _ = self_ref.set(Arc::downgrade(&mgr));
 
+        // Dev convenience: hot-restart the sidecars when their source changes.
+        // The Node process loads server.mjs once at spawn, so edits don't apply
+        // until a respawn — this watcher does that automatically so `tauri dev`
+        // picks up sidecar edits without a full app restart.
+        #[cfg(debug_assertions)]
+        spawn_sidecar_dev_watcher(self_ref.clone(), app.clone());
+
         match mgr.try_inject_token(app).await {
             Ok(true) => eprintln!("[sidecar manager] token injected at startup"),
             Ok(false) => {
@@ -216,6 +223,17 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             "chat/done" => "claude:done",
             "chat/error" => "claude:error",
             "chat/proposal" => "claude:proposal",
+            // Host-applies proposal (Phase E6): emitted whenever the
+            // sidecar's `propose_edit` / `propose_write` /
+            // `propose_multi_edit` MCP tools run. The host queues the
+            // proposal in `pendingChangesStore` and applies it on
+            // user Keep via the inline review widget.
+            "chat/edit-pending" => "claude:edit-pending",
+            // Plan-mode interactive gate (canUseTool): the sidecar parks an
+            // ExitPlanMode / AskUserQuestion decision and emits this so the
+            // host can render the approval / question card. The user's choice
+            // returns via the `claude_chat_decision` command (chat/decision).
+            "chat/permission" => "claude:permission",
             // Structured ingest output. The sidecar's
             // submit_ingest_result MCP tool relays its full input
             // payload via this notification; the frontend's ingest
@@ -273,6 +291,56 @@ fn build_exit(self_ref: SelfRef, mode: Mode, app: AppHandle) -> ExitHandler {
 /// without rebuilding the Rust crate. Prod: run the compiled, self-contained
 /// binary that Tauri ships next to the app's main executable, with no Node
 /// dependency on the user's machine.
+/// Dev-only: poll the sidecar source dir and respawn both sidecars when any
+/// `.mjs` changes, so edits to `server.mjs` take effect without restarting the
+/// whole app. The Node child loads the module once at spawn; only a respawn
+/// reloads it. Polling (1s) avoids pulling in a filesystem-notify dependency.
+#[cfg(debug_assertions)]
+fn spawn_sidecar_dev_watcher(self_ref: SelfRef, app: AppHandle) {
+    use std::time::{Duration, SystemTime};
+
+    let dir = dev_paths::find_workspace_root(&app).join("apps/writer-tauri/sidecar/src");
+
+    fn latest_mtime(dir: &std::path::Path) -> SystemTime {
+        let mut latest = SystemTime::UNIX_EPOCH;
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Ok(modified) = entry.metadata().and_then(|md| md.modified()) {
+                    if modified > latest {
+                        latest = modified;
+                    }
+                }
+            }
+        }
+        latest
+    }
+
+    tauri::async_runtime::spawn(async move {
+        let mut last = latest_mtime(&dir);
+        let mut ticker = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            ticker.tick().await;
+            // Manager not wired yet → wait; manager dropped → stop watching.
+            let Some(weak) = self_ref.get() else { continue };
+            let Some(mgr) = weak.upgrade() else { break };
+
+            let now = latest_mtime(&dir);
+            if now > last {
+                // Let the editor finish writing before respawning.
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                last = latest_mtime(&dir);
+                eprintln!("[sidecar watcher] sidecar source changed — respawning sidecars");
+                if let Err(e) = mgr.restart(Mode::Chat).await {
+                    eprintln!("[sidecar watcher] chat respawn failed: {e}");
+                }
+                if let Err(e) = mgr.restart(Mode::Title).await {
+                    eprintln!("[sidecar watcher] title respawn failed: {e}");
+                }
+            }
+        }
+    });
+}
+
 fn resolve_launcher(app: &AppHandle) -> Result<Launcher, SidecarError> {
     #[cfg(debug_assertions)]
     {

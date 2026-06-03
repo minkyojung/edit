@@ -100,12 +100,11 @@ export function DayView() {
     <SidebarGroup className="p-0">
       <div
         className={cn(
-          'group mx-2 flex items-center gap-0.5 rounded-xl pr-1 transition-colors',
+          'group mx-2 flex h-8 items-center gap-0.5 rounded-sm pr-1 transition-colors',
           anchoredDaily
             ? 'text-sidebar-foreground hover:bg-sidebar-accent/50'
             : 'text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
         )}
-        style={{ height: 'var(--header-h)' }}
       >
         <SidebarGroupLabel
           asChild
@@ -165,12 +164,11 @@ export function DayView() {
           <SidebarMenu className="mt-1">
             <SidebarMenuItem>
               <SidebarMenuButton
-                size="sm"
                 onClick={async () => {
                   const created = await createChildNote(anchoredDaily.slug)
                   if (created) navigate(buildDayUrl(dayAnchor, created))
                 }}
-                className="text-[12px] text-sidebar-foreground/60 hover:text-sidebar-accent-foreground"
+                className="text-sidebar-foreground/60 hover:text-sidebar-accent-foreground"
               >
                 <IconPlus />
                 <span>New note</span>
@@ -178,7 +176,7 @@ export function DayView() {
             </SidebarMenuItem>
           </SidebarMenu>
         ) : (
-          <div className="mt-1 px-2 py-1.5 text-[12px] text-sidebar-foreground/50">
+          <div className="mt-1 px-2 py-1.5 text-[13px] text-sidebar-foreground/50">
             No entry for this day
           </div>
         )}

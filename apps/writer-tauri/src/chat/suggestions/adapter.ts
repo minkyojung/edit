@@ -1,69 +1,61 @@
 // Adapter from storage-layer ToolPart → view-layer Suggestion.
 //
 // Run at render time inside PartList. Keeping the conversion in one
-// place means new inline-suggestion tools only need a new branch here;
+// place means new inline-edit tools only need a new branch here;
 // SuggestionList / SuggestionRow / SuggestionDetail stay generic.
 
 import type { MessagePart, ToolPart } from '@/chat/types'
-import { PROPOSE_CHANGE_TOOL } from '@/chat/parts/proposeChangeTool'
+import { EDIT_DOCUMENT_TOOL } from '@/chat/parts/proposeChangeTool'
 import type {
   RenderItem,
   Suggestion,
   SuggestionGroup,
-  SuggestionKind,
   SuggestionState,
 } from './types'
 
-interface ProposeChangeInput {
-  kind?: 'suggestion' | 'comment'
-  suggestionType?: 'insert' | 'delete' | 'replace'
+interface EditDocumentInput {
   quote?: string
   content?: string
-  text?: string
   rationale?: string
 }
 
-interface ProposeChangeOutput {
+interface EditDocumentOutput {
   ok?: boolean
-  markId?: string
   reason?: string
-}
-
-function deriveKind(input: ProposeChangeInput): SuggestionKind {
-  if (input.kind === 'comment') return 'comment'
-  return input.suggestionType ?? 'replace'
 }
 
 function deriveState(part: ToolPart): SuggestionState {
   if (part.state === 'input-streaming') return 'streaming'
   if (part.state === 'output-error') return 'error'
-  const output = (part.output ?? {}) as ProposeChangeOutput
+  const output = (part.output ?? {}) as EditDocumentOutput
   if (part.state === 'output-available') {
     return output.ok === false ? 'error' : 'pending'
   }
   return 'pending'
 }
 
-/** True iff this part is an inline-suggestion tool we want to render via
- * the SuggestionList path. Today only `propose_change`; add new tool ids
- * here as they ship. */
+/** True iff this part is an inline-edit tool we want to render via
+ * the SuggestionList path. Today only `edit_document`; add new tool
+ * ids here as they ship. */
 export function isSuggestionPart(part: MessagePart): part is ToolPart {
-  return part.type === 'tool' && part.toolName === PROPOSE_CHANGE_TOOL
+  return part.type === 'tool' && part.toolName === EDIT_DOCUMENT_TOOL
 }
 
 export function toSuggestion(part: ToolPart): Suggestion {
-  const input = (part.input ?? {}) as ProposeChangeInput
-  const output = (part.output ?? {}) as ProposeChangeOutput
-  const kind = deriveKind(input)
+  const input = (part.input ?? {}) as EditDocumentInput
+  const output = (part.output ?? {}) as EditDocumentOutput
   return {
     id: part.id,
     toolCallId: part.toolCallId,
-    kind,
+    // Every edit_document call is a replace under the hood (empty
+    // quote = insert, empty content = delete are still expressed as
+    // a string-replace operation). Hard-code 'replace' until a
+    // future variant needs a distinct kind.
+    kind: 'replace',
     quote: input.quote,
-    content: input.content ?? input.text,
+    content: input.content,
     rationale: input.rationale,
     state: deriveState(part),
-    markId: output.markId,
     errorText: part.errorText ?? output.reason,
     ts: part.ts,
   }

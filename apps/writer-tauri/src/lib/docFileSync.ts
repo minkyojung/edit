@@ -17,31 +17,23 @@
 // external-change detection. This module is the glue: when to write,
 // and what (serialise) to write.
 
-import * as Y from 'yjs'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
 import { hasExternalConflict } from '@/state/externalConflictStore'
-import { markStore } from '@/domain/markStoreInstance'
-import type { Mark } from '@/domain/marks'
 import {
   metaPathForDoc,
   pathForDoc,
-  ydocPathForDoc,
   type DocMetaFile,
 } from '@/lib/docPaths'
 import {
-  readVaultBinary,
   readVaultFile,
   renameVaultFile,
   vaultFileExists,
-  writeVaultBinary,
   writeVaultFile,
 } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
-import { seedMarkdownIntoYDoc } from '@/lib/seedMarkdown'
-import { deriveLabel } from '@/lib/docLabel'
 
 /** Merge `next` over the existing `.meta.json` at `metaPath` so a
  * flush preserves fields this layer doesn't track (aiSummary written
@@ -110,23 +102,27 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
   const handle = docs.handles[slug]
   if (!handle) return null
 
-  // Active-doc happy path: the live PM view + serializer give the
-  // most accurate body (markdown is regenerated from the doc the
-  // user can actually see). Inactive handles fall through to null
-  // until 4.B.1.b.iii lands a fragment-based fallback.
-  const isActive = getActiveSlugFromHash() === slug
-  if (!isActive) return null
-
-  const { view, serializer } = useEditorViewStore.getState()
-  if (!view || !serializer) return null
-
-  let md: string
-  try {
-    md = serializer(view.state.doc)
-  } catch (err) {
-    console.warn('[docFileSync] serializer failed for slug', slug, err)
+  // K-followup safety: never flush when the handle is still loading
+  // its initial body from disk. The default `bodyMarkdown` on a fresh
+  // handle is the empty string; if anything (a stray PM transaction,
+  // an applyToWikiPage call) marks the slug dirty before
+  // `ensureHandle`'s disk read resolves, the flush would write that
+  // empty string and wipe the disk file. The Daniel.md 0-byte
+  // incident traced back to exactly this race. Once `status: 'ready'`
+  // flips, bodyMarkdown carries either the hydrated disk content or
+  // a real user edit, and the flush proceeds normally.
+  const status = docs.status[slug]
+  if (status !== 'ready') {
+    console.log('[vault:flush] skip — handle still loading', slug, status)
     return null
   }
+
+  // Phase I: read from `handle.bodyMarkdown`, which dirtyTrackerPlugin
+  // keeps in sync with the live PM doc on every transaction. This
+  // removes the legacy "active doc only" gate: a slug that was
+  // dirtied moments before the user navigated away still flushes
+  // because the cache survived the editor unmount.
+  const md = handle.bodyMarkdown
 
   // `titleIntent` reflects whether the in-memory title is the user's
   // chosen value or whether `pathForDoc` had to fall back to
@@ -177,6 +173,22 @@ function buildMetaForKnownDoc(
     titleIntent,
     archivedAt: known?.archivedAt,
     archivedFromParent: known?.archivedFromParent,
+    // Phase 5b of the Yjs-removal migration: createdAt now lives on
+    // the catalog (sourced from `.meta.json` by scanVault, or set by
+    // createSlice for new docs). flushDirty writes it back via
+    // mergeSidecar, so the sidecar is the durable home.
+    createdAt: known?.createdAt,
+    // Read-it-later article metadata (present only on type 'article').
+    // Undefined for every other doc type, so mergeSidecar drops them.
+    sourceUrl: known?.sourceUrl,
+    siteName: known?.siteName,
+    faviconUrl: known?.faviconUrl,
+    savedAt: known?.savedAt,
+    readAt: known?.readAt,
+    // Full highlight set, re-emitted each flush (KnownDoc holds the
+    // authoritative array). Undefined for non-articles → mergeSidecar
+    // drops the key.
+    highlights: known?.highlights,
   }
 }
 
@@ -272,203 +284,58 @@ export function isDirty(slug: string): boolean {
 }
 
 /** Wire up the dirty tracker for a handle. Returns a disposer that
- * removes observers and clears the slug from `dirtySlugs` — closeDoc
- * should call it so a torn-down handle's leftover dirty flag doesn't
- * trigger a flush against a destroyed ydoc.
+ * clears the slug from `dirtySlugs` — closeDoc should call it so a
+ * torn-down handle's leftover dirty flag doesn't trigger a flush
+ * against a slug whose state has gone away.
  *
- * Observes both the body fragment (text edits, paste, ingest insert)
- * and the marks map (suggestion add / accept / reject); either kind
- * of change should produce a save. */
-export function installDocSync(slug: string, ydoc: Y.Doc): () => void {
-  const fragment = ydoc.getXmlFragment('prosemirror')
-  const marksMap = ydoc.getMap('marks')
-  const onChange = () => markDirty(slug)
-  fragment.observeDeep(onChange)
-  marksMap.observe(onChange)
-  // Mark dirty on install so the first flush tick mirrors this doc
-  // to disk regardless of whether the user edits it. Without this,
-  // a doc the user opens (or that was already open at boot) but
-  // never types into would never reach the vault — leaving gaps
-  // between what the sidebar shows and what's on disk. Idempotent
-  // — clearDirty after the flush completes leaves the doc clean
-  // until the next edit. The cost is one write per doc-mount event;
-  // overwrite is benign even when the file already matches.
+ * Phase 5c of the Yjs-removal migration retired the Y.Doc fragment
+ * observer this helper used to install — PM transactions feed the
+ * dirty bit directly through `dirtyTrackerPlugin` now. All this
+ * function does is mark the slug dirty once so the first flush tick
+ * mirrors a freshly-opened doc to disk regardless of whether the
+ * user edits it (covering the "boot tab the user never touches"
+ * case). The cost is one write per doc-mount event; overwrite is
+ * benign even when the file already matches. */
+export function installDocSync(slug: string): () => void {
   markDirty(slug)
   return () => {
-    fragment.unobserveDeep(onChange)
-    marksMap.unobserve(onChange)
     dirtySlugs.delete(slug)
   }
 }
 
 // ── Auto-flush timer ─────────────────────────────────────────────
 //
-// Obsidian-style periodic flush: every FLUSH_INTERVAL_MS the timer
-// checks `dirtySlugs` and writes the changed docs to the vault.
-// This module owns the timer lifecycle so the rest of the app sees
-// a simple start/stop API.
+// Periodic flush: every FLUSH_INTERVAL_MS the timer checks
+// `dirtySlugs` and writes the changed docs to the vault.
 //
-// The 2000ms interval matches what Obsidian observes in practice
-// (~2s periodic flush during continuous typing, per its plugin
-// surface). It's the "natural feel" point — short enough that
-// power loss won't lose more than a couple of seconds of typing,
-// long enough that a fast typist doesn't trigger constant disk
-// I/O.
+// Phase I tuned this down from 2000 ms to 500 ms. The previous value
+// was inherited from the Yjs era when an IndexedDB autopersist was
+// the real safety net and the .md write was just a "also save to
+// disk" backup. Yjs is gone; the .md write is now the only
+// persistence, so the interval IS the data-loss window on app crash
+// or external SIGKILL. 500 ms is short enough that a power loss
+// loses at most a sentence, long enough that a fast typist still
+// settles between writes.
 
-const FLUSH_INTERVAL_MS = 2000
+const FLUSH_INTERVAL_MS = 500
 let flushTimerId: number | null = null
 
-/** Read a doc's vault files (`.md` + `.marks.json`) from disk and
- * return them as raw data. Inverse of {@link serializeDocToFiles}
- * — at the data layer, before any Y.Doc / markStore mutation.
+/** Single-flight guard. Multiple call sites trigger flushDirty (the
+ * 500 ms timer, Editor unmount, the autoflush spinner button). Without
+ * coordination two flushes can step on each other inside the
+ * `writeVaultFile` atomic-rename window: one creates `.md.tmp`, the
+ * other tries to rename a `.md.tmp` that's already been moved away,
+ * and the OS surfaces "No such file or directory". We've seen this
+ * since the interval shortened to 500 ms in Phase I.
  *
- * Returns null when there's no `.md` for this doc — caller treats
- * that as "no on-disk copy yet, fall back to whatever the in-memory
- * source provides" (currently IDB; eventually a fresh empty doc).
- *
- * Sidecar handling:
- *   - missing `.marks.json`  → returns `{md, sidecar: {version: 1, marks: []}}`
- *     (a vault that was edited only by an external markdown-aware
- *     tool wouldn't have our sidecar; this is the graceful path)
- *   - malformed JSON         → same as missing, but logged once
- *   - unsupported version    → same; sidecar evolution will add
- *     a migrate hook here
- *
- * The function is pure read — no Y.Doc, no markStore. Wiring into
- * the doc lifecycle is the next sub-step (4.B.1.c.ii+). */
-/** Outcome of {@link applyVaultBodyToYDoc} so callers can react to
- * each reason for not applying. The 'no-handle' case is gone in
- * Step 5 — callers now pass the Y.Doc directly, so a missing handle
- * is a caller-side concern (caller chose not to call). */
-export type ApplyVaultOutcome =
-  | 'applied'         // body landed in Y.Doc
-  | 'no-vault'        // vault not selected; nothing to load from
-  | 'no-file'         // .md doesn't exist on disk
-  | 'no-parser'       // editor hasn't mounted yet → no markdown parser
-  | 'not-empty'       // Y.Doc already has content; refuse to merge
-
-/** Apply a vault doc's persisted state into the given Y.Doc.
- *
- * Two-tier load (Path C Stage 2):
- *
- *   Tier 1 — .ydoc binary. The full Yjs CRDT state including the
- *     XmlFragment (body) AND the Y.Map<Mark> (mark metadata) AND
- *     the RelativePosition anchors. Y.applyUpdate restores everything
- *     in one shot. No text-search anchoring needed — the marks land
- *     on the exact same characters they were anchored to in the
- *     prior session. This is the same mechanism IDB persistence
- *     provided before Path C Step 3b removed it; we now persist to
- *     the vault folder instead.
- *
- *   Tier 2 — .md + .marks.json fallback. Used when the .ydoc file
- *     is absent (legacy notes from before Stage 1, or external tools
- *     creating fresh .md files). Body comes from the markdown parser;
- *     marks must be re-anchored later via {@link restoreMarksFromSidecar}
- *     once the EditorView is mounted.
- *
- * Tier 1 covers the "AI rewrites the body" case automatically —
- * Yjs's CRDT tracks where each mark is relative to surrounding
- * characters, so a body mutation slides the mark with the text
- * rather than orphaning it.
- *
- * Safety: only operates on an EMPTY Y.Doc. If the fragment already
- * has real text we refuse rather than merge — Yjs CRDT would
- * otherwise concatenate.
- *
- * The write uses the 'doc-init' origin (see seedMarkdown.ts) so the
- * UndoManager skips it. We also clear the dirty flag after applying
- * since the observer fires on the fragment change and would
- * otherwise schedule a re-save of identical content. */
-export async function applyVaultBodyToYDoc(
-  ydoc: Y.Doc,
-  slug: string,
-  opts: { reload?: boolean } = {},
-): Promise<ApplyVaultOutcome> {
-  if (!getActiveVaultPath()) return 'no-vault'
-
-  const docs = useDocsStore.getState()
-  const known = docs.knownDocs.find((d) => d.slug === slug)
-  if (!known) return 'no-file'
-  const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
-
-  const fragment = ydoc.getXmlFragment('prosemirror')
-  // Initial hydrate: refuse to merge over real text. deriveLabel walks
-  // XmlText inserts, so a one-paragraph stub from MilkdownEditor's
-  // mount fill counts as "still empty" and we proceed. fragment.length
-  // alone would flip to 1 the moment that stub lands and we'd skip
-  // every vault load.
-  //
-  // Reload (vault watcher → external edit): skip the guard — the
-  // caller is explicitly asking for the on-disk body to replace what's
-  // in memory because someone modified the .md outside the app.
-  if (!opts.reload && deriveLabel(fragment).length > 0) return 'not-empty'
-
-  // Tier 1 — try .ydoc binary first. Brings body + marks +
-  // RelativePosition anchors in one Y.applyUpdate. y-prosemirror
-  // syncs the marks into PM automatically on editor mount since
-  // they're attributes on text nodes in the XmlFragment.
-  //
-  // On reload we skip this tier: the .ydoc on disk reflects the last
-  // app-side flush (i.e. the OLD body), so applying it would either
-  // be a no-op (CRDT recognises the state it already has) or — worse
-  // — overwrite the external edit with the stale state. The external
-  // .md is the only source that knows about the change, so we go
-  // straight to Tier 2.
-  const ydocPath = ydocPathForDoc(known, getDoc)
-  if (!opts.reload && ydocPath && (await vaultFileExists(ydocPath))) {
-    try {
-      const binary = await readVaultBinary(ydocPath)
-      if (fragment.length > 0) {
-        ydoc.transact(() => {
-          fragment.delete(0, fragment.length)
-        }, 'doc-init')
-      }
-      Y.applyUpdate(ydoc, binary, 'doc-init')
-      clearDirty(slug)
-      return 'applied'
-    } catch (err) {
-      // Corrupted .ydoc or schema mismatch — fall through to the
-      // markdown tier so the doc still opens with the body the
-      // user can see.
-      console.warn(
-        '[vault:load] .ydoc apply failed, falling back to .md',
-        slug,
-        err,
-      )
-    }
-  }
-
-  // Tier 2 — markdown-only path. Used when no .ydoc exists yet
-  // (externally-created .md, or first session after a vault wipe).
-  // Marks aren't restored — the .marks.json legacy path was removed
-  // in Stage 3.2. New marks the user creates will be persisted in
-  // .ydoc on the next flush.
-  const mdPath = pathForDoc(known, getDoc)
-  if (!mdPath || !(await vaultFileExists(mdPath))) return 'no-file'
-
-  let md: string
-  try {
-    md = await readVaultFile(mdPath)
-  } catch (err) {
-    console.warn('[vault:load] read md failed for', slug, err)
-    return 'no-file'
-  }
-
-  const parser = useEditorViewStore.getState().parser
-  if (!parser) return 'no-parser'
-
-  if (fragment.length > 0) {
-    ydoc.transact(() => {
-      fragment.delete(0, fragment.length)
-    }, 'doc-init')
-  }
-
-  const ok = seedMarkdownIntoYDoc(ydoc, md, parser)
-  if (!ok) return 'no-parser'
-
-  clearDirty(slug)
-  return 'applied'
-}
+ * Semantics: at most one flush running at a time. A request that
+ * arrives during an in-flight flush sets `flushQueued = true` instead
+ * of dropping silently — the in-flight pass might have started before
+ * the latest mutations were dirty, so we need to come back through
+ * once more after it finishes. Repeated requests while queued collapse
+ * to a single follow-up. */
+let flushInProgress = false
+let flushQueued = false
 
 /** Walk dirty slugs once and persist each to its vault file pair.
  * Called from the periodic flush timer. Errors are isolated per
@@ -483,7 +350,27 @@ export async function applyVaultBodyToYDoc(
  *                                    placement — e.g. 'writing')
  *   - serializeDocToFiles null     → skip (active not ready,
  *                                    transient — wait for view) */
+/** Public flush entry point with single-flight guard. See the
+ * `flushInProgress` / `flushQueued` comment above for the contract.
+ * The actual work lives in `flushDirtyOnce` below. */
 export async function flushDirty(): Promise<void> {
+  if (flushInProgress) {
+    flushQueued = true
+    return
+  }
+  flushInProgress = true
+  try {
+    await flushDirtyOnce()
+    while (flushQueued) {
+      flushQueued = false
+      await flushDirtyOnce()
+    }
+  } finally {
+    flushInProgress = false
+  }
+}
+
+async function flushDirtyOnce(): Promise<void> {
   if (!getActiveVaultPath()) return
   const docs = useDocsStore.getState()
   const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
@@ -508,8 +395,7 @@ export async function flushDirty(): Promise<void> {
     }
     const mdPath = pathForDoc(known, getDoc)
     const metaPath = metaPathForDoc(known, getDoc)
-    const ydocPath = ydocPathForDoc(known, getDoc)
-    if (!mdPath || !metaPath || !ydocPath) {
+    if (!mdPath || !metaPath) {
       clearDirty(slug)
       continue
     }
@@ -539,10 +425,11 @@ export async function flushDirty(): Promise<void> {
     }
     const result = serializeDocToFiles(slug)
     if (!result) continue
-    // Y.Doc binary snapshot — captures the full CRDT state including
-    // RelativePosition mark anchors. The handle's ydoc is the live
-    // in-memory copy.
-    const ydocBinary = Y.encodeStateAsUpdate(handle.ydoc)
+    // Yjs-removal migration Phase 2: the `.ydoc` write path is gone.
+    // `.md` is the single durable surface; the in-memory Y.Doc is
+    // the working copy for this session only. Phases 5–7 will retire
+    // the Y.Doc altogether and switch this flush over to a PM-only
+    // serializer.
     try {
       // Rename-on-change: if this slug was last written at a
       // different path (Untitled note gained a title, wiki page
@@ -553,15 +440,11 @@ export async function flushDirty(): Promise<void> {
       const oldMd = lastWrittenPath.get(slug)
       if (oldMd && oldMd !== mdPath) {
         const oldMeta = oldMd.replace(/\.md$/, '.meta.json')
-        const oldYdoc = oldMd.replace(/\.md$/, '.ydoc')
         if (await vaultFileExists(oldMd)) {
           await renameVaultFile(oldMd, mdPath)
         }
         if (await vaultFileExists(oldMeta)) {
           await renameVaultFile(oldMeta, metaPath)
-        }
-        if (await vaultFileExists(oldYdoc)) {
-          await renameVaultFile(oldYdoc, ydocPath)
         }
       }
       await writeVaultFile(mdPath, result.md)
@@ -571,7 +454,6 @@ export async function flushDirty(): Promise<void> {
       // clobber fields this layer doesn't know about.
       const mergedMeta = await mergeSidecar(metaPath, result.meta)
       await writeVaultFile(metaPath, JSON.stringify(mergedMeta, null, 2))
-      await writeVaultBinary(ydocPath, ydocBinary)
       lastWrittenPath.set(slug, mdPath)
       clearDirty(slug)
       if (known.type.startsWith('wiki:')) wikiTouched = true
@@ -613,33 +495,52 @@ export function stopAutoFlush(): void {
 // ready yet.
 //   __serializeDoc()              // current active doc
 //   __serializeDoc('wiki:custom-abc')
-//   __listMarks()                  // mark store state of active doc
 if (import.meta.env.DEV) {
   const handle = (slug?: string): SerializedDocFiles | null => {
     const target = slug ?? getActiveSlugFromHash()
     if (!target) return null
     return serializeDocToFiles(target)
   }
-  const listMarks = (slug?: string): Mark[] => {
-    const target = slug ?? getActiveSlugFromHash()
-    if (!target) return []
-    return markStore.list(target)
-  }
   ;(window as unknown as {
     __serializeDoc: typeof handle
-    __listMarks: typeof listMarks
   }).__serializeDoc = handle
-  ;(window as unknown as { __listMarks: typeof listMarks }).__listMarks = listMarks
   ;(window as unknown as { __dirtySlugs: () => string[] }).__dirtySlugs = getDirtySlugs
-  const applyHandle = async (
-    slug?: string,
-  ): Promise<ApplyVaultOutcome | 'no-handle'> => {
-    const target = slug ?? getActiveSlugFromHash()
-    if (!target) return 'no-handle'
-    const handle = useDocsStore.getState().handles[target]
-    if (!handle) return 'no-handle'
-    return applyVaultBodyToYDoc(handle.ydoc, target)
-  }
-  ;(window as unknown as { __applyVault: typeof applyHandle }).__applyVault = applyHandle
   ;(window as unknown as { __activeSlug: () => string | null }).__activeSlug = getActiveSlugFromHash
+  // Manual trigger for the active-doc body rewrite path. The Yjs-removal
+  // migration's Phase 4 swap (PM dispatch when the slug matches the
+  // active editor, Y.Doc fallback otherwise) is hard to exercise from
+  // the UI alone — no buttons drive `replaceDocBody` directly today.
+  // Run `__replaceActive('# new body')` from DevTools to confirm the
+  // active editor updates in place.
+  const replaceActive = async (markdown: string): Promise<boolean> => {
+    const slug = getActiveSlugFromHash()
+    if (!slug) return false
+    return useDocsStore.getState().replaceDocBody(slug, markdown)
+  }
+  ;(window as unknown as {
+    __replaceActive: typeof replaceActive
+  }).__replaceActive = replaceActive
+  // Diagnostics for the active-doc body rewrite path. Prints whatever
+  // `replaceDocBody` would see right now, so a confused test result
+  // can be traced back to "view missing" vs "slug mismatch" vs
+  // "parser missing" without sprinkling console.logs into the slice.
+  const diagnose = () => {
+    const slug = getActiveSlugFromHash()
+    const view = useEditorViewStore.getState().view
+    const parser = useEditorViewStore.getState().parser
+    const handle = slug ? useDocsStore.getState().handles[slug] : null
+    const out = {
+      activeSlug: slug,
+      hasView: Boolean(view),
+      hasParser: Boolean(parser),
+      hasHandle: Boolean(handle),
+      docSize: view?.state.doc.content.size ?? null,
+      bodyMarkdownLength: handle?.bodyMarkdown?.length ?? null,
+      bodyMarkdownPreview:
+        handle?.bodyMarkdown?.slice(0, 120) ?? null,
+    }
+    console.log('[__diagnose]', out)
+    return out
+  }
+  ;(window as unknown as { __diagnose: typeof diagnose }).__diagnose = diagnose
 }

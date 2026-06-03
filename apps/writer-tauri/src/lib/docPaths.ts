@@ -29,6 +29,7 @@
 // shapes without standing up the rest of the app.
 
 import type { KnownDoc } from '@/state/docsStore'
+import type { HighlightRecord } from '@/lib/highlightTypes'
 
 /**
  * Doc identity sidecar — the `<stem>.meta.json` file that scanVault
@@ -85,6 +86,27 @@ export interface DocMetaFile {
    * `'set'` by the boot reader for backward compatibility — they
    * always carried a non-fallback filename. */
   titleIntent?: 'empty' | 'set'
+  /** ISO timestamp recorded when the doc was first created. Migrated
+   * out of `Y.Map('meta')` in Phase 5b of the Yjs-removal migration —
+   * the Y.Map was the prior home for this field, but it's the only
+   * piece of meta the path-derived catalog doesn't already carry, so
+   * the sidecar is the natural permanent home. Absent on legacy
+   * sidecars; DocumentInfoDialog falls back to "—". */
+  createdAt?: string
+  /** Read-it-later article metadata. Present only on docs of type
+   * `article` (saved web pages). Persisted here because the catalog is
+   * rebuilt from disk on every boot — without the sidecar, source URL,
+   * site name, favicon, and read/unread state would be lost on
+   * restart. Mirrors how `archivedAt` survives. */
+  sourceUrl?: string
+  siteName?: string
+  faviconUrl?: string
+  savedAt?: string
+  readAt?: string
+  /** User highlights on a saved article (type 'article' only). Source of
+   * truth for highlights — the editor re-anchors each to the body on
+   * mount. Absent on every other doc type. */
+  highlights?: HighlightRecord[]
 }
 
 /** Lookup a doc by slug. Required by {@link pathForDoc} only for
@@ -114,6 +136,10 @@ export function pathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null {
     if (!dailyAncestor?.date) return null
     const filename = sanitizeFilename(doc.title?.trim() || 'Untitled')
     return `daily/${dailyAncestor.date}/${filename}.md`
+  }
+  if (doc.type === 'article') {
+    const filename = sanitizeFilename(doc.title?.trim() || 'Untitled')
+    return `articles/${filename}.md`
   }
   return null
 }

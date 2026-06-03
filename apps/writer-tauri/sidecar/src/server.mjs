@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises'
-import { normalize, resolve as resolvePath } from 'node:path'
+import { join, normalize, resolve as resolvePath } from 'node:path'
+import { tmpdir } from 'node:os'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import {
@@ -187,24 +188,12 @@ function buildSearchWikiTool(vaultPath) {
   )
 }
 
-function buildProposeChangeTool(runId, emit) {
-  return tool(
-    'propose_change',
-    'Propose a single suggestion or comment for the current document. Call this once per issue you find.',
-    {
-      kind: z.enum(['suggestion', 'comment']),
-      suggestionType: z.enum(['insert', 'delete', 'replace']).optional(),
-      quote: z.string(),
-      content: z.string().optional(),
-      text: z.string().optional(),
-      rationale: z.string().optional(),
-    },
-    async (args) => {
-      emit(notification('chat/proposal', { runId, input: args }))
-      return { content: [{ type: 'text', text: 'Proposal recorded.' }] }
-    },
-  )
-}
+// `edit_document` was the host-bridged Phase 2 / 3.C tool: the model
+// emitted (quote, content, rationale) and the host's editListener →
+// applyDirectEdit did the actual string splice. It has been replaced
+// by Claude's built-in `Edit` tool (Phase 1.1) and is now removed —
+// see the `canUseTool` hook below for the staged-edit gate that
+// supersedes the old chat:edit bridge.
 
 // Ingest result tool. Called once per ingest pass with the complete
 // JSON shape the frontend used to extract from raw assistant text.
@@ -260,15 +249,13 @@ function buildSubmitIngestResultTool(runId, emit) {
           target: z.string().optional(),
           suggestNewPage: z.string().optional(),
           suggestNewPageParent: z.string().optional(),
-          // Atomic schema (replaces free-form `content: string`): the
-          // topic the bullets are about, plus the bullet bodies. No
-          // headings, no sub-sections — the host assembles the final
-          // markdown at apply time. Removing the "anywhere markdown"
-          // slot was the only way to stop the model from re-emitting
-          // page-level headers like "## People" that doubled up on
-          // every accept.
-          entity: z.string(),
-          bullets: z.array(z.string()).min(1),
+          // Phase G: free-form markdown the host appends as-is. The
+          // LLM follows the vault-root CLAUDE.md formatting rules
+          // (no duplicate page-title heading, `[[Page]]` for wiki
+          // refs, `> "..."` for source citation, etc.) so the host
+          // no longer wraps the output. `sourceQuote` stays as the
+          // dedup + provenance handle.
+          markdownToAppend: z.string().min(1),
           rationale: z.string().optional(),
           sourceQuote: z.string().optional(),
         }),
@@ -288,7 +275,153 @@ function buildSubmitIngestResultTool(runId, emit) {
   )
 }
 
+// E6 "host-applies" pattern: instead of letting the SDK's built-in
+// Edit / Write / MultiEdit tools touch disk themselves (gated through
+// `canUseTool` and then resolved by user via the host), we register
+// custom MCP tools with matching schemas that just FORWARD the
+// proposal to the host as a `chat/edit-pending` notification and
+// return success immediately. The model believes the edit succeeded;
+// the host queues the proposal in `pendingChangesStore` and applies
+// it on user Keep. Symmetry with ingest's `submit_ingest_result`
+// (host does the writes after the LLM emits proposals).
+//
+// Why this is the right shape:
+//   * Disk write timing is fully under host control — no IPC roundtrip
+//     on Keep, no SDK gate-resolve dance, no echo-suppression hacks.
+//   * Single store (`pendingChangesStore`) is the truth for both
+//     chat AND ingest proposals.
+//   * Failures localised: anything that goes wrong happens inside the
+//     host's `appendMarkdownToWikiPage` / `applyReplaceInWikiPage`,
+//     which we can debug + retry directly.
+//
+// Each tool's description deliberately echoes the built-in Claude
+// Code semantics ("edits a file at path X by replacing old_string with
+// new_string"). The model has prior experience with those names — the
+// `propose_` prefix is the only visible difference, and the matching
+// input shape keeps the tool-call ergonomics unchanged.
+function buildProposeEditTool(runId, emit) {
+  return tool(
+    'propose_edit',
+    'PREFERRED tool for changing an existing file. Propose a surgical edit: provide the absolute file_path, the exact old_string to replace (copy it VERBATIM from the file — read_page first if unsure), and the new_string. Works exactly like the built-in Edit tool. The host locates old_string and applies the change in place, then queues it for user review. Returns immediately — do not wait for the user.',
+    {
+      file_path: z.string(),
+      old_string: z.string(),
+      new_string: z.string(),
+      replace_all: z.boolean().optional(),
+    },
+    async (input) => {
+      const pendingId = globalThis.crypto.randomUUID()
+      emit(
+        notification('chat/edit-pending', {
+          runId,
+          pendingId,
+          toolName: 'Edit',
+          input,
+        }),
+      )
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Edit queued for user review (id: ${pendingId}).`,
+          },
+        ],
+      }
+    },
+  )
+}
+
+function buildProposeWriteTool(runId, emit) {
+  return tool(
+    'propose_write',
+    'Create a BRAND-NEW file, or replace an existing file\'s ENTIRE content when the user explicitly asks for a full rewrite. Send `content` = the complete desired file content. For any partial change to an existing file — a single line, a value, appending a bullet — do NOT use this; use propose_edit instead so the change applies surgically in place. Returns immediately — do not wait for the user.',
+    {
+      file_path: z.string(),
+      content: z.string(),
+    },
+    async (input) => {
+      const pendingId = globalThis.crypto.randomUUID()
+      emit(
+        notification('chat/edit-pending', {
+          runId,
+          pendingId,
+          toolName: 'Write',
+          input,
+        }),
+      )
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Write queued for user review (id: ${pendingId}).`,
+          },
+        ],
+      }
+    },
+  )
+}
+
+function buildProposeMultiEditTool(runId, emit) {
+  return tool(
+    'propose_multi_edit',
+    'Propose multiple edits to a single file in one transaction. The host queues this proposal for user review and applies it on approval. Use the same way as the built-in MultiEdit tool: provide the file_path and an array of edits, each with old_string and new_string. Returns immediately — do not wait for the user.',
+    {
+      file_path: z.string(),
+      edits: z.array(
+        z.object({
+          old_string: z.string(),
+          new_string: z.string(),
+          replace_all: z.boolean().optional(),
+        }),
+      ),
+    },
+    async (input) => {
+      const pendingId = globalThis.crypto.randomUUID()
+      emit(
+        notification('chat/edit-pending', {
+          runId,
+          pendingId,
+          toolName: 'MultiEdit',
+          input,
+        }),
+      )
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `MultiEdit queued for user review (id: ${pendingId}).`,
+          },
+        ],
+      }
+    },
+  )
+}
+
 const SIDECAR_VERSION = '0.1.0'
+
+// Plan-mode workflow body. Replaces the SDK's default code-implementation
+// plan steps (the CLI still wraps this with its read-only preamble + the
+// ExitPlanMode footer). This is a prose/wiki vault, not a codebase, so we
+// steer the model away from diff-style output — a plan rendered as a
+// ```diff block looks like a pile of edits in the chat, which it isn't.
+const PLAN_MODE_INSTRUCTIONS = [
+  'When the plan is ready, call ExitPlanMode and put the COMPLETE plan in its',
+  '`plan` argument as markdown — that single plan is what the user reviews and',
+  'approves. Do NOT also write the plan as your normal response; keep any chat',
+  'text to a sentence at most.',
+  '',
+  "Write the plan in the user's language (Korean when the conversation is Korean).",
+  'This is a writing / wiki vault, not code: concise prose and bullets saying which',
+  'page(s) you will change, what the change is, and why. No ```diff or code blocks,',
+  'and do not paste the full file content.',
+].join('\n')
+
+// Allow-prefix for the plan-mode Write gate: in plan mode the built-in Write is
+// permitted only for paths under this dir, so the vault stays read-only while
+// planning. (It is NOT the SDK's plansDirectory — that's a `Settings` member we
+// don't set; the plan reaches the host via ExitPlanMode.input.plan, driven by
+// PLAN_MODE_INSTRUCTIONS, not a file on disk.)
+const PLAN_MODE_PLANS_DIR = join(tmpdir(), 'writer-tauri-plans')
 
 /** Dump a thrown error's full context to stderr so the Rust supervisor's
  * stderr drain (and the dev console downstream) can see what actually
@@ -330,6 +463,9 @@ export class Server {
     this.token = null
     // runId -> AbortController
     this.activeChats = new Map()
+    // decisionId -> { resolve, reject } for in-flight canUseTool gates
+    // (plan approval / clarifying questions) awaiting a host decision.
+    this.pendingDecisions = new Map()
     this.shuttingDown = false
     // Pending waiters for the next setToken call. Resolved when a new token
     // is pushed; used by the AUTH-retry path to coordinate refreshes.
@@ -359,6 +495,8 @@ export class Server {
           return this.#handleChat(id, params)
         case 'chat/cancel':
           return this.#handleCancel(params)
+        case 'chat/decision':
+          return this.#handleDecision(params)
         case 'shutdown':
           return this.#handleShutdown(id)
         default:
@@ -478,9 +616,23 @@ export class Server {
       vaultPath,
       permissionMode = 'bypassPermissions',
       effort,
+      fastMode,
       sessionId,
       resume,
+      maxTurns,
+      builtinTools,
     } = params
+
+    // Plan-mode interactive gate (canUseTool) state. `awaitingDecision` pauses
+    // the idle watchdog while a decision (plan approval / clarifying question)
+    // is parked on the user. `activeStream` is the live query, captured in the
+    // attempt loop so the gate can call setPermissionMode on plan approval.
+    let awaitingDecision = 0
+    let activeStream = null
+    // Flipped true once the user approves an ExitPlanMode plan — after which
+    // the gate stops denying the propose_* write relays so the model can
+    // execute the approved plan.
+    let planApproved = false
 
     const options = {
       permissionMode,
@@ -495,7 +647,19 @@ export class Server {
       // layer, which has higher precedence than user settings.json.
       // The cacheable system-prompt prefix (belief + role) is preserved
       // across compaction; only mid-conversation turns get summarized.
-      settings: { autoCompactEnabled: true },
+      // fastMode (faster output on supporting models) is a `Settings` member,
+      // same layer as autoCompactEnabled. Only set when requested; the host
+      // already gated on model support.
+      settings: { autoCompactEnabled: true, ...(fastMode ? { fastMode: true } : {}) },
+      // Disable the SDK's filesystem settings auto-load (CLAUDE.md,
+      // .claude/settings.json, etc.). The host injects the vault's
+      // CLAUDE.md explicitly as part of `systemPrompt` so the cache
+      // boundary stays under our control and we don't risk double-
+      // injecting the same content via two paths. Pass `[]` for
+      // full SDK isolation mode — the docs (sdk.d.ts:1637) call
+      // this out explicitly as the right move when the host has its
+      // own schema-injection pipeline.
+      settingSources: [],
     }
     if (model) options.model = model
     if (systemPrompt) options.systemPrompt = systemPrompt
@@ -510,11 +674,183 @@ export class Server {
     // resume works across app restarts.
     if (sessionId) options.sessionId = sessionId
     if (resume) options.resume = resume
+    // Cap the agent loop. Forwarded as-is to the SDK (sdk.d.ts:1412
+    // — `Maximum number of conversation turns before the query
+    // stops`). Used by the ingest path so a runaway tool-calling
+    // pass settles instead of churning forever; chat leaves it
+    // undefined for normal multi-turn behaviour.
+    if (typeof maxTurns === 'number' && maxTurns > 0) options.maxTurns = maxTurns
     // Dev only: host points us at the .pnpm-store copy of the platform-specific
     // claude binary. Prod ships the binary inside our own node_modules, so the
     // SDK auto-resolves and the env var is intentionally unset.
     if (process.env.CLAUDE_CODE_CLI_PATH) {
       options.pathToClaudeCodeExecutable = process.env.CLAUDE_CODE_CLI_PATH
+    }
+
+    // Plan mode routes through the SDK's canUseTool gate so interactive tools
+    // pause for the user. Attached ONLY for 'plan' — edit turns run under
+    // bypassPermissions, which never consults canUseTool, so this is dormant
+    // there (matching the pre-existing behaviour). Routing:
+    //   ExitPlanMode / AskUserQuestion → ask the host (chat/permission →
+    //     user → chat/decision), park until the user decides.
+    //   propose_* writes → denied while planning (read-only). On plan
+    //     approval the mode flips to bypassPermissions and this gate is no
+    //     longer consulted, so the post-approval edits run normally.
+    //   reads (built-in + read_page/search_wiki) → pass through.
+    if (permissionMode === 'plan') {
+      // The full plan lands in ExitPlanMode's `plan` argument — the single
+      // source the host renders — because PLAN_MODE_INSTRUCTIONS steers the
+      // model to put it there (prose, no diff blocks) and the SDK wraps those
+      // instructions with its own read-only + ExitPlanMode protocol.
+      // We deliberately do NOT set plansDirectory: it's a `Settings` member the
+      // SDK ignores when assigned on `Options`, and nothing reads the plan file
+      // from disk anyway — the host renders ExitPlanMode.input.plan, not a file.
+      options.planModeInstructions = PLAN_MODE_INSTRUCTIONS
+      options.canUseTool = async (toolName, input) => {
+        if (toolName === 'ExitPlanMode' || toolName === 'AskUserQuestion') {
+          awaitingDecision++
+          try {
+            const decision = await this.#requestDecision(runId, toolName, input, controller)
+            if (toolName === 'AskUserQuestion') {
+              // `answers` = per-question choices; `response` = a free-form
+              // reply the user typed instead ("Or reply directly…"). The SDK
+              // forwards either; when `response` is set the model receives
+              // "The user responded: …" rather than the structured answers.
+              const updatedInput = {
+                questions: input.questions,
+                answers: decision?.answers ?? {},
+              }
+              if (decision?.response) updatedInput.response = decision.response
+              return { behavior: 'allow', updatedInput }
+            }
+            // ExitPlanMode: approve → leave plan mode (switch to 'default')
+            // and flip planApproved so the propose_* relays are allowed below.
+            // We use 'default' rather than 'bypassPermissions' because the
+            // latter requires launching with --dangerously-skip-permissions;
+            // 'default' keeps every post-plan tool under this same gate.
+            // Reject → feed the message back so the model revises the plan.
+            if (decision?.type === 'approve') {
+              planApproved = true
+              if (activeStream) {
+                try {
+                  await activeStream.setPermissionMode('default')
+                } catch (e) {
+                  logErrorContext('setPermissionMode', runId, e, { mode: this.mode })
+                }
+              }
+              return { behavior: 'allow', updatedInput: input }
+            }
+            return {
+              behavior: 'deny',
+              message:
+                decision?.message ||
+                'The user asked you to revise the plan before proceeding.',
+            }
+          } finally {
+            awaitingDecision--
+          }
+        }
+        if (typeof toolName === 'string' && toolName.includes('propose_')) {
+          // Blocked while planning; allowed once the plan is approved so the
+          // model can execute it. Each proposal still surfaces as a Keep/Reject
+          // card on the host — approval gates the batch, not each edit.
+          if (planApproved) return { behavior: 'allow', updatedInput: input }
+          return {
+            behavior: 'deny',
+            message:
+              'Plan mode is read-only. Lay out the full plan, then call ExitPlanMode to proceed.',
+          }
+        }
+        // Built-in write tools: in plan mode the model uses Write to record its
+        // plan to the plan file (the canonical flow). Allow that — but ONLY
+        // under the plans directory — and deny writes to the vault, so the
+        // source stays read-only even though the Write tool is on the surface.
+        if (
+          toolName === 'Write' ||
+          toolName === 'Edit' ||
+          toolName === 'MultiEdit' ||
+          toolName === 'NotebookEdit'
+        ) {
+          const filePath = typeof input?.file_path === 'string' ? input.file_path : ''
+          if (filePath.startsWith(PLAN_MODE_PLANS_DIR)) {
+            return { behavior: 'allow', updatedInput: input }
+          }
+          return {
+            behavior: 'deny',
+            message:
+              'Plan mode is read-only. Put the plan in ExitPlanMode instead of editing files.',
+          }
+        }
+        return { behavior: 'allow', updatedInput: input }
+      }
+    }
+
+    // Phase 1 of the Claude-Code-style migration: when the host gives us
+    // a vaultPath, root the agent in the vault and turn on Claude Code's
+    // full built-in toolset (Read/Edit/Write/Bash/Grep/Glob/...). The
+    // model can now read and edit vault .md files directly through the
+    // tools it already knows from Claude Code — no custom edit relay
+    // required. We keep the legacy `edit_document` MCP tool registered
+    // alongside so a regression in built-in routing falls back instead
+    // of breaking chat. Once the built-in path is verified end-to-end
+    // (Phase 2) the legacy tool and applyDirectEdit host bridge come out.
+    //
+    // Notes:
+    //   * `cwd` scopes the Read/Edit tools' implicit path resolution to
+    //     the vault and is also what the SDK uses as the per-session
+    //     working directory anchor.
+    //   * `tools: { preset: 'claude_code' }` enables the same toolset
+    //     Claude Code ships with. We don't pass `allowedTools` because
+    //     the global `permissionMode = 'bypassPermissions'` already
+    //     auto-runs every tool call without prompting the user.
+    if (vaultPath) {
+      options.cwd = vaultPath
+      // Built-in tool exposure is per-caller. Chat needs the full
+      // Claude Code preset (Read / Edit / Write / Bash / Grep / Glob)
+      // so the model can edit the doc on user request, gated through
+      // `canUseTool` + the host's PendingEditsBar. Ingest is a
+      // background flow with a structured-output channel — the LLM
+      // must not write to disk directly, so the host pins it to a
+      // read-only subset (Read / Glob / Grep, typically). Output
+      // lands via the `submit_ingest_result` relay tool and the host
+      // turns proposals into disk writes after user review.
+      //
+      // `tools: ['Read', ...]` (explicit array) is the SDK's "least
+      // privilege" surface (sdk.d.ts:1211) — listed tools are the
+      // only ones the model sees, so Edit/Write are not just denied
+      // but invisible. Caller omits `builtinTools` for the chat
+      // shape and the preset stays.
+      options.tools = Array.isArray(builtinTools) && builtinTools.length > 0
+        ? builtinTools
+        : { type: 'preset', preset: 'claude_code' }
+      // Phase 3.1 of the Cursor-style staged edit migration: every
+      // built-in write-side tool (Edit / Write / MultiEdit / NotebookEdit)
+      // routes through `canUseTool` before it can run. For now we deny
+      // them all and surface the attempt so we can verify on the host
+      // that no fs.write slipped through — the next sub-phase (3.2)
+      // replaces this with a host round-trip that waits for the user
+      // to Apply/Reject. Read / Grep / Glob / Bash are not gated; the
+      // model still needs them to discover context.
+      //
+      // `permissionMode` MUST drop out of `bypassPermissions` for
+      // `canUseTool` to fire — bypass mode short-circuits the
+      // permission check entirely (sdk.d.ts L1806). 'default' is the
+      // standard mode where the SDK consults `canUseTool` (or, absent
+      // a callback, falls back to its interactive CLI prompt — which
+      // doesn't apply to us since we're driving the SDK from a long-
+      // running sidecar).
+      // Phase E6: the chat surface no longer exposes write-side
+      // built-in tools (Edit / Write / MultiEdit / NotebookEdit are
+      // omitted from `builtinTools` by the host). Disk-changing
+      // intent now flows through the host-applies `propose_*` MCP
+      // tools (registered in the relay loop below), which emit a
+      // `chat/edit-pending` notification and return immediately
+      // without parking a Promise. The host queues the proposal in
+      // `pendingChangesStore` and applies it on user Keep.
+      //
+      // permissionMode stays 'bypassPermissions' (its default) so
+      // the SDK auto-runs the remaining read-side tools without a
+      // CLI prompt. No `canUseTool` callback needed.
     }
 
     // Wire relay tools: each one runs inside this sidecar but its handler
@@ -523,12 +859,10 @@ export class Server {
     // UI work happens in the frontend.
     const enabledRelay = Array.isArray(relayTools)
       ? relayTools
-      : (this.mode === 'chat' ? ['propose_change'] : [])
+      : (this.mode === 'chat' ? [] : [])
     const relayDefs = []
     for (const name of enabledRelay) {
-      if (name === 'propose_change') {
-        relayDefs.push(buildProposeChangeTool(runId, this.emit))
-      } else if (name === 'submit_ingest_result') {
+      if (name === 'submit_ingest_result') {
         relayDefs.push(buildSubmitIngestResultTool(runId, this.emit))
       } else if (name === 'submit_profile') {
         relayDefs.push(buildSubmitProfileTool(runId, this.emit))
@@ -548,6 +882,12 @@ export class Server {
           continue
         }
         relayDefs.push(buildSearchWikiTool(vaultPath))
+      } else if (name === 'propose_edit') {
+        relayDefs.push(buildProposeEditTool(runId, this.emit))
+      } else if (name === 'propose_write') {
+        relayDefs.push(buildProposeWriteTool(runId, this.emit))
+      } else if (name === 'propose_multi_edit') {
+        relayDefs.push(buildProposeMultiEditTool(runId, this.emit))
       }
     }
     if (relayDefs.length > 0) {
@@ -559,6 +899,7 @@ export class Server {
     // fresh token and retry once. Any other error (or a second AUTH) ends
     // the chat.
     let lastResult = null
+    let lastContextUsage = null
     for (let attempt = 1; attempt <= 2; attempt++) {
       // Hand the token to the SDK via options.env so we don't mutate the
       // sidecar's own process.env (which other concurrent chats share).
@@ -572,6 +913,7 @@ export class Server {
 
       let streamError = null
       lastResult = null
+      lastContextUsage = null
       // Inactivity watchdog. The Claude Agent SDK delegates the actual HTTPS
       // request to a `claude` CLI subprocess; if the network drops mid-stream
       // (Wi-Fi off, ISP hang) the subprocess sits waiting on TCP, no events
@@ -585,28 +927,77 @@ export class Server {
       let lastEventAt = Date.now()
       const watchdog = setInterval(() => {
         if (controller.signal.aborted) return
+        // Paused while a decision (plan approval / clarifying question) is
+        // parked on the user — no events flow during the wait, and the user
+        // may take as long as they like. Keep lastEventAt fresh so the turn
+        // doesn't time out the instant the decision resolves.
+        if (awaitingDecision > 0) {
+          lastEventAt = Date.now()
+          return
+        }
         if (Date.now() - lastEventAt > IDLE_MS) {
           idleTimedOut = true
           controller.abort()
         }
       }, 5_000)
+      // STEP 3: streaming-input mode. Passing `prompt` as an async iterable
+      // (not a bare string) keeps the SDK control channel open — the only
+      // way to issue control requests like getContextUsage(). The generator
+      // yields the single user message, then parks on `inputClosed` so the
+      // query stays alive; we release it AFTER fetching the context breakdown
+      // at result time, so the subprocess tears down only once we're done.
+      // Releasing naively (returning right after the yield) closes the query
+      // before the result lands — see the spike notes in
+      // docs/llm-control-surface.md.
+      let releaseInput
+      const inputClosed = new Promise((resolve) => {
+        releaseInput = resolve
+      })
+      const makeInput = async function* () {
+        yield {
+          type: 'user',
+          message: { role: 'user', content: prompt },
+          parent_tool_use_id: null,
+        }
+        await inputClosed
+      }
       try {
-        const stream = query({ prompt, options })
-        for await (const event of stream) {
+        activeStream = query({ prompt: makeInput(), options })
+        for await (const event of activeStream) {
           if (controller.signal.aborted) break
           lastEventAt = Date.now()
           this.emit(notification('chat/event', { runId, event }))
           if (event?.type === 'result') {
             lastResult = event
+            // Fetch the per-category context breakdown while the input is
+            // still open (control requests need a live streaming session).
+            // Best-effort: on any failure the host falls back to the `usage`
+            // totals also carried on chat/done.
+            try {
+              lastContextUsage = await activeStream.getContextUsage()
+            } catch (err) {
+              logErrorContext('getContextUsage', runId, err, { mode: this.mode })
+              lastContextUsage = null
+            }
+            releaseInput() // close input → query ends
+            // Result in hand — leave the loop now. Waiting for the next
+            // iteration risks the top-of-loop abort check discarding a result
+            // that already landed (a watchdog/cancel firing in the same tick).
+            break
           }
         }
       } catch (err) {
         streamError = err
       } finally {
         clearInterval(watchdog)
+        releaseInput() // never leave the input generator parked
       }
 
-      if (controller.signal.aborted) {
+      // A result already in hand means the turn completed — prefer it over an
+      // abort that raced in at the same tick. Without the `!lastResult` guard, a
+      // watchdog/cancel firing exactly as the final result lands would surface a
+      // spurious timeout/cancel on a turn that actually finished.
+      if (controller.signal.aborted && !lastResult) {
         if (idleTimedOut) {
           this.#emitChatError(
             runId,
@@ -659,6 +1050,12 @@ export class Server {
         stopReason: lastResult?.stop_reason ?? null,
         usage: lastResult?.usage ?? null,
         totalCostUsd: lastResult?.total_cost_usd ?? null,
+        // STEP 3: full per-category breakdown from getContextUsage(), or null
+        // when the control request failed (host falls back to `usage`).
+        contextUsage: lastContextUsage,
+        // Actual fast-mode state for the turn (on / cooldown / off). `cooldown`
+        // means a rate limit forced it off despite the request.
+        fastModeState: lastResult?.fast_mode_state ?? null,
       }),
     )
     this.activeChats.delete(runId)
@@ -668,12 +1065,53 @@ export class Server {
     this.emit(notification('chat/error', { runId, code, message, retryable }))
   }
 
+  // Park a canUseTool gate: emit a `chat/permission` notification carrying the
+  // tool + input, and return a Promise that resolves when the host sends the
+  // matching `chat/decision`. Rejected if the run is cancelled while waiting
+  // (the controller.abort listener), so a pending gate never leaks.
+  #requestDecision(runId, toolName, input, controller) {
+    return new Promise((resolve, reject) => {
+      const decisionId = globalThis.crypto.randomUUID()
+      const onAbort = () => {
+        this.pendingDecisions.delete(decisionId)
+        reject(new DOMException('cancelled while awaiting user decision', 'AbortError'))
+      }
+      this.pendingDecisions.set(decisionId, {
+        resolve: (d) => {
+          controller.signal.removeEventListener('abort', onAbort)
+          resolve(d)
+        },
+        reject: (e) => {
+          controller.signal.removeEventListener('abort', onAbort)
+          reject(e)
+        },
+      })
+      controller.signal.addEventListener('abort', onAbort, { once: true })
+      this.emit(notification('chat/permission', { runId, decisionId, toolName, input }))
+    })
+  }
+
+  // Host's answer to a parked gate. Resolves the matching pending decision so
+  // canUseTool returns and the SDK continues. Unknown / already-settled ids
+  // are ignored.
+  #handleDecision(params) {
+    const decisionId = params?.decisionId
+    if (typeof decisionId !== 'string') return
+    const pending = this.pendingDecisions.get(decisionId)
+    if (!pending) return
+    this.pendingDecisions.delete(decisionId)
+    pending.resolve(params?.decision ?? {})
+  }
+
   #handleCancel(params) {
     const runId = params?.runId
     if (typeof runId !== 'string') return
     const controller = this.activeChats.get(runId)
     if (!controller) return
     controller.abort()
+    // Aborting the run also unparks any canUseTool waiters keyed to
+    // this run via the controller.signal listener installed inside
+    // canUseTool — no explicit drain needed here.
     // The runChat loop will emit CANCELLED and clear the entry.
   }
 

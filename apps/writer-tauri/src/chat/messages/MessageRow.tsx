@@ -12,17 +12,12 @@ import { MessageFooter } from '@/chat/messages/MessageFooter'
 
 export const MessageRow = React.memo(function MessageRow({
   turn,
-  slug,
   threadId,
   threadTitle,
   onRegenerate,
+  hideText = false,
 }: {
   turn: ChatTurn
-  /** Slug of the doc this chat panel is open for. Threaded down to the
-   * propose_change step click handler so it can scroll the right doc's
-   * editor to the mark. Null when no doc is active (chat panel can also
-   * mount during transitional states). */
-  slug: string | null
   /** Active thread id — needed by the file-to-wiki action so the
    * enqueued proposals carry their originating thread as `sourceSlug`.
    * Null when no thread is active (the footer hides the action). */
@@ -33,11 +28,23 @@ export const MessageRow = React.memo(function MessageRow({
   /** Provided only when this turn is the latest settled assistant turn —
    * the only one Regenerate is allowed on. */
   onRegenerate?: (turnId: string) => void
+  /** Suppress the answer text — set for a parked plan turn whose plan is
+   * shown in the approval card, so it isn't duplicated in the transcript. */
+  hideText?: boolean
 }) {
   if (turn.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-3xl bg-accent px-3 py-2 text-sm">{turn.content}</div>
+        {/* `synthetic` answer bubbles carry a multi-line "Q:/A:" summary —
+            preserve their line breaks (normal typed messages keep the
+            single-line treatment). */}
+        <div
+          className={`max-w-[85%] rounded-3xl bg-sidebar-active px-4 py-2.5 text-[15px] text-foreground${
+            turn.synthetic ? ' whitespace-pre-line' : ''
+          }`}
+        >
+          {turn.content}
+        </div>
       </div>
     )
   }
@@ -69,16 +76,18 @@ export const MessageRow = React.memo(function MessageRow({
   // - Parts-aware turns: walk the timeline so tool calls / reasoning blocks
   //   appear inline at the moment they happened.
   const body = (
-    <div className="text-sm text-foreground leading-relaxed">
+    <div className="text-[15px] text-foreground leading-relaxed">
       {showActivity && <ActivityStatus parts={turn.parts} />}
       {turn.parts && turn.parts.length > 0 ? (
-        <PartList parts={turn.parts} isStreaming={isStreaming} slug={slug} />
+        <PartList parts={turn.parts} isStreaming={isStreaming} hideText={hideText} />
       ) : (
         <>
           {hasThinking && (
             <ThinkingPanel content={turn.thinking!} streamingNoText={isStreaming && !hasText} />
           )}
-          {hasText && <StreamingMarkdown content={turn.content} isStreaming={isStreaming} />}
+          {hasText && !hideText && (
+            <StreamingMarkdown content={turn.content} isStreaming={isStreaming} />
+          )}
         </>
       )}
     </div>

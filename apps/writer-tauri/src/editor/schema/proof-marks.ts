@@ -277,6 +277,51 @@ export const proofAuthoredSchema = $markSchema('proofAuthored', (ctx) => ({
   },
 }));
 
+// Highlight mark — a PERSISTENT user highlight on a saved article.
+// Unlike the suggestion/comment marks (transient AI review state held in
+// pendingChangesStore), a highlight is durable: its source of truth is a
+// record in the article's `.meta.json` (id + quote + note + occurrence),
+// and this mark is just the re-anchored *render* of that record. So the
+// mark carries only `id` — the note text is looked up from the record.
+// Silent in markdown like the other proof marks (keeps the .md clean).
+export const proofHighlightSchema = $markSchema('proofHighlight', () => ({
+  attrs: {
+    id: { default: null },
+  },
+  inclusive: false,
+  spanning: true,
+  parseDOM: [
+    {
+      tag: 'span[data-highlight]',
+      getAttrs: (dom: HTMLElement): Attrs => ({
+        id: dom.getAttribute('data-id') || null,
+      }),
+    },
+  ],
+  // Set data-id directly from the mark. (The earlier `$markAttr` spread
+  // wrote a stray `id="[object Object]"` — `$markAttr` adds the attr name
+  // with its config object as the value, which isn't what we want here.)
+  toDOM: (mark) => [
+    'span',
+    { 'data-highlight': 'true', 'data-id': (mark.attrs.id as string) ?? '' },
+    0,
+  ],
+  parseMarkdown: {
+    match: (node) => (node as ProofNode).type === 'proofMark' && (node as ProofNode).proof === 'highlight',
+    runner: (state, node, markType) => {
+      const proofNode = node as ProofNode;
+      const attrs = proofNode.attrs || {};
+      state.openMark(markType, { id: attrs.id ?? null });
+      state.next(proofNode.children || []);
+      state.closeMark(markType);
+    },
+  },
+  toMarkdown: {
+    match: (mark) => mark.type.name === 'proofHighlight',
+    runner: skipMarkSerialize,
+  },
+}));
+
 export const proofMarkPlugins = [
   proofSuggestionAttr,
   proofSuggestionSchema,
@@ -286,4 +331,5 @@ export const proofMarkPlugins = [
   proofFlaggedSchema,
   proofAuthoredAttr,
   proofAuthoredSchema,
+  proofHighlightSchema,
 ];

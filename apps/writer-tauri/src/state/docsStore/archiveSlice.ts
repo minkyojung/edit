@@ -99,7 +99,7 @@ export const createArchiveSlice = (
           null
         : nextOpen[0] ?? null
     // Cancel chat runs for the whole cascade before tearing handles
-    // down. Late proposals must not race past a destroyed ydoc.
+    // down. Late proposals must not race past a destroyed handle.
     const chatRuns = useChatRuns.getState()
     for (const s of groupSlugs) {
       chatRuns.abortBySlug(s)
@@ -109,7 +109,7 @@ export const createArchiveSlice = (
     for (const s of groupSlugs) {
       const h = nextHandles[s]
       if (h) {
-        h.ydoc.destroy()
+        h.destroy()
       }
       delete nextHandles[s]
       delete nextStatus[s]

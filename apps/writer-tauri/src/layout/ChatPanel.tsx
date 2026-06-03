@@ -10,14 +10,16 @@
 // user is directed back to the body to act on individual highlights.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import type { EditorView } from '@milkdown/kit/prose/view'
+import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
 import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
 import { TextSelection } from '@milkdown/kit/prose/state'
-import * as Y from 'yjs'
+import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
-import { useThreads } from '@/hooks/useThreads'
+import { useConnectDialog } from '@/stores/connectDialog'
+import { type UseThreadsResult } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
-import { useActiveThread } from '@/hooks/useActiveThread'
 import { generateThreadTitle } from '@/agent/generateThreadTitle'
 import {
   CommandRenderError,
@@ -27,19 +29,23 @@ import {
   type LoadedCommand,
 } from '@/chat/commands'
 import { useChatRuns } from '@/stores/chatRuns'
-import { ThreadPicker } from '@/chat/ThreadPicker'
+import { useContextUsageStore } from '@/state/contextUsageStore'
+import { useFastModeStore } from '@/state/fastModeStore'
+import { usePendingPermissions } from '@/state/pendingPermissionsStore'
+import { usePermissionGate } from '@/chat/hooks/usePermissionGate'
+import { GatePanel } from '@/chat/GatePanel'
+import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
 import { PromptInput } from '@/chat/PromptInput'
 import {
   DEFAULT_CHAT_EFFORT,
-  DEFAULT_CHAT_MODEL,
+  DEFAULT_CHAT_MODE,
+  clampEffort,
+  normalizeModel,
   type ChatTurn,
 } from '@/chat/types'
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
-import { cleanupMark } from '@/editor/markActions'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
-import { ReviewProgressBadge } from '@/chat/ReviewProgressBadge'
-import { notify } from '@/lib/notify'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -53,17 +59,31 @@ function parseSlashInvocation(text: string): { name: string; args: string } | nu
 
 interface Props {
   editorView: EditorView | null
-  ydoc: Y.Doc | null
   slug: string | null
+  // Threads + active id are owned by RightPanel (so the picker can sit
+  // in the shared top bar) and passed down here. `slug` is still passed
+  // independently — it's informational, stamping `parentSlug` on newly-
+  // created threads — and feeds the run dispatcher.
+  threads: UseThreadsResult
+  activeId: string | null
 }
 
-export function ChatPanel({ editorView, ydoc, slug }: Props) {
+export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
+  // Read Later queue route: no editor document, so chat runs read-only with
+  // a generated article-list page context (see useChatRunner / runChat).
+  const isQueue = useLocation().pathname === '/read-later'
   const { account } = useClaudeAuth()
-  const threads = useThreads(slug)
-  const { activeId, setActiveId } = useActiveThread(slug, threads.active)
+  const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const turnsHook = useThreadTurns(activeId)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // The composer floats over the transcript (absolute) so chat content can
+  // scroll behind its rounded corners instead of being cut off in a straight
+  // line above it. We measure its live height — the input grows as you type,
+  // and the gate panel swaps in at a different height — and pad the
+  // transcript's bottom to match, so the last message always clears it.
+  const footerRef = useRef<HTMLDivElement>(null)
+  const [footerHeight, setFooterHeight] = useState(0)
   // Synchronous send-in-flight latch. Flipping `chatStatus` to 'streaming'
   // only takes effect on the *next* render, so a fast double-Enter could
   // squeeze a second handleSend in before the React state caught up. The
@@ -79,9 +99,45 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
 
   // Active thread's preferred model / effort. Threads created before these
   // fields existed return undefined; fall back to the defaults in that case.
+  // normalizeModel coerces a retired stored id (e.g. claude-opus-4-7) to a
+  // current one, and clampEffort snaps a stored `xhigh` down to `high` when
+  // the resolved model doesn't support it — so both the UI and the SDK call
+  // always see a valid pairing even for legacy threads.
   const activeThread = threads.threads.find((t) => t.id === activeId)
-  const activeThreadModel = activeThread?.model ?? DEFAULT_CHAT_MODEL
-  const activeThreadEffort = activeThread?.effort ?? DEFAULT_CHAT_EFFORT
+  const activeThreadModel = normalizeModel(activeThread?.model)
+  const activeThreadEffort = clampEffort(
+    activeThread?.effort ?? DEFAULT_CHAT_EFFORT,
+    activeThreadModel,
+  )
+  const activeThreadMode = activeThread?.mode ?? DEFAULT_CHAT_MODE
+  const activeThreadFastMode = activeThread?.fastMode ?? false
+
+  // Post-turn context-usage snapshot for the PromptInput gauge. Subscribed
+  // reactively so the gauge refreshes the moment the chat runner records a
+  // new snapshot on `claude:done`.
+  const contextSnapshot = useContextUsageStore((s) =>
+    activeId ? s.byThread[activeId] : undefined,
+  )
+  // Actual fast-mode state the SDK last reported (on / cooldown / off) — drives
+  // the FastToggle's real-state display, refreshed on each claude:done.
+  const fastModeState = useFastModeStore((s) =>
+    activeId ? s.byThread[activeId] : undefined,
+  )
+
+  // Plan-mode interactive gate: mount the global `claude:permission` listener
+  // and read the pending decision (if any) for the active thread, so the
+  // matching card can render inline in the transcript.
+  usePermissionGate()
+  const pendingPermission = usePendingPermissions((s) =>
+    activeId ? Object.values(s.byRun).find((p) => p.threadId === activeId) : undefined,
+  )
+  // Plan mode puts the plan in ExitPlanMode's `plan` arg (the chat answer stays
+  // minimal). Render it as the assistant's answer in the transcript — the card
+  // below is the decision surface only.
+  const pendingPlanText =
+    pendingPermission?.toolName === 'ExitPlanMode'
+      ? (pendingPermission.input as { plan?: string } | null)?.plan?.trim()
+      : undefined
 
   // Single hook owns the streaming buffer state, the chat-level status, and
   // the run() dispatcher. Handlers below (handleSend / handleRegenerate /
@@ -89,11 +145,13 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
   // run lifecycle.
   const runner = useChatRunner({
     editorView,
-    ydoc,
+    isQueue,
     slug,
     activeId,
     activeThreadModel,
     activeThreadEffort,
+    activeThreadMode,
+    activeThreadFastMode,
     appendTurn: turnsHook.appendTurn,
     markSessionStarted: threads.markSessionStarted,
     sessionStarted: activeThread?.sessionStarted ?? false,
@@ -105,6 +163,19 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
     if (!c) return
     const distance = c.scrollHeight - c.scrollTop - c.clientHeight
     setPinned(distance < 80)
+  }, [])
+
+  // Track the floating composer's height so the transcript's bottom padding
+  // matches it. A ResizeObserver keeps it in sync as the input grows or the
+  // gate panel swaps in.
+  useEffect(() => {
+    const el = footerRef.current
+    if (!el) return
+    const sync = () => setFooterHeight(el.offsetHeight)
+    sync()
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [])
 
   // Auto-create the first thread once threads hydrate from the doc's
@@ -128,7 +199,9 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
     })
   }, [turnsHook.turns, streaming, pinned])
 
-  const ready = !!editorView && !!ydoc && !!activeId
+  // On the queue route there's no editor view, but chat still works
+  // (read-only Q&A over the article list) — gate on the thread only.
+  const ready = !!activeId && (!!editorView || isQueue)
 
   // Track whether the editor currently has *something* selectable for slash
   // commands — either a live non-empty selection or a frozen snapshot taken
@@ -210,7 +283,14 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
   const regeneratableTurnId = (() => {
     if (chatStatus === 'streaming' || streaming) return null
     for (let i = turnsHook.turns.length - 1; i >= 0; i--) {
-      if (turnsHook.turns[i].role === 'assistant') return turnsHook.turns[i].id
+      if (turnsHook.turns[i].role === 'assistant') {
+        // Don't offer Regenerate on a continuation that follows an
+        // AskUserQuestion answer bubble: its history slice would end at the
+        // synthetic user turn, so re-running resumes past the already-answered
+        // question with mismatched semantics.
+        if (turnsHook.turns[i - 1]?.synthetic) return null
+        return turnsHook.turns[i].id
+      }
       // Stop at the first non-assistant from the end — only the trailing
       // assistant turn is regeneratable.
       return null
@@ -415,20 +495,11 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
       if (history.length === 0 || history[history.length - 1].role !== 'user') return
 
       const lastUser = history[history.length - 1]
-      const targetTurn = turns[idx]
-      // Discard the prior run's propose_change marks before the rerun
-      // stamps fresh ones — pressing Regenerate means "throw out what
-      // I just got". Without this, a re-`/proofread` would leave stale
-      // marks layered under the new ones on the same words.
-      if (targetTurn.appliedMarkIds && slug && ydoc) {
-        // Fire-and-forget cleanup — the rerun shouldn't block on the
-        // server-side reject round-trips. Errors stay in the console
-        // (cleanupMark already swallows them) so a flaky network
-        // doesn't strand the regenerate UI.
-        for (const markId of targetTurn.appliedMarkIds) {
-          void cleanupMark(slug, ydoc, markId)
-        }
-      }
+      // Pre-Phase-3.B: regenerate cleaned up the prior run's marks
+      // via `cleanupMark` so a re-`/proofread` wouldn't layer stale
+      // marks under the new ones. With propose_change gone (3.B) the
+      // turn no longer leaves marks behind, so the cleanup loop is
+      // unnecessary — just remove the assistant turn and rerun.
       turnsHook.removeTurn(assistantTurnId)
 
       if (lastUser.slashInvocation) {
@@ -486,98 +557,145 @@ export function ChatPanel({ editorView, ydoc, slug }: Props) {
   return (
     <div
       data-chat-panel
-      className="relative flex h-full flex-col border-l border-border bg-background"
+      className="relative flex h-full flex-col"
     >
       {!account.connected && (
-        <div className="absolute inset-0 z-overlay flex flex-col items-center justify-center gap-3 backdrop-blur-[2px] bg-background/60">
-          <p className="text-sm text-muted-foreground text-center px-4">
-            Connect to Claude<br />to start chatting
+        // Disconnected overlay — ContentUnavailableView pattern with an
+        // explicit Connect CTA. The button reuses the same global
+        // ConnectClaudeDialog store the sidebar Avatar menu does, so
+        // there's one dialog in the app and one OAuth flow no matter
+        // which entry point opens it.
+        <div className="absolute inset-0 z-overlay flex flex-col items-center justify-center gap-2 bg-background/70 px-6 backdrop-blur-[2px]">
+          <IconSparkles
+            size={48}
+            stroke={1.5}
+            className="text-muted-foreground/40"
+          />
+          <p className="text-[16px] font-semibold text-foreground">
+            Connect Claude
           </p>
+          <p className="max-w-xs text-center text-[14px] text-muted-foreground">
+            Sign in with your Anthropic account to start chatting.
+          </p>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => setConnectOpen(true)}
+            className="mt-2 gap-1.5"
+          >
+            <IconSparkles size={16} stroke={1.5} />
+            Connect Claude
+          </Button>
         </div>
       )}
-
-      {/* Window-chrome row — mirrors EditorHeader so the two columns
-          align at --header-h. Hosts the review-progress badge on the
-          left; reserved for model / account / right-sidebar toggle on
-          the right once those land. */}
-      <div
-        data-tauri-drag-region
-        className="flex shrink-0 items-center gap-2 border-b border-border bg-card px-3"
-        style={{ height: 'var(--header-h)' }}
-      >
-        <ReviewProgressBadge ydoc={ydoc} />
-      </div>
-
-      <div
-        className="flex shrink-0 items-stretch border-b border-border bg-background px-0.5"
-        style={{ height: 'var(--header-h)' }}
-      >
-        <ThreadPicker
-          active={threads.active}
-          archived={threads.archived}
-          activeId={activeId}
-          onSelect={setActiveId}
-          onCreate={async () => {
-            const id = await threads.createThread()
-            if (id) setActiveId(id)
-          }}
-          onArchive={(id) => {
-            threads.archiveThread(id)
-            // Active thread reconciles in useActiveThread when active list shifts.
-          }}
-          onRename={threads.renameThread}
-          onRestore={(id) => {
-            const r = threads.restoreThread(id)
-            if (r.ok) setActiveId(id)
-            return r
-          }}
-          onRestoreLimitReached={() => {
-            notify.threadLimitReached()
-          }}
-        />
-      </div>
 
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        // Aligns the transcript text with the composer's textarea text, so
+        // messages and the input share one column. Composer text sits at
+        // --surface-inset (footer) + PromptInput p-2.5 (10px) + textarea
+        // px-1.5 (6px) = --surface-inset + 1rem from the card edge, so this
+        // tracks the gap automatically.
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto px-[calc(var(--surface-inset)_+_1rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*+*]:mt-6"
+        // Top: clear the overlay header (content scrolls behind it).
+        // Bottom: clear the floating composer so the last message isn't hidden.
+        style={{ paddingTop: 'calc(var(--header-h) + 0.25rem)', paddingBottom: footerHeight + 12 }}
       >
         {renderedTurns.length === 0 && (
-          <p className="text-xs text-muted-foreground text-center py-8">
-            Ask anything about this document
-          </p>
+          // ContentUnavailableView pattern (macOS 14+/iOS 17+):
+          // tertiary icon + Title 3 headline + body description.
+          // Centered in the otherwise-empty scroll area so the panel
+          // never reads as "broken" when no turns exist yet.
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-12">
+            <IconMessageCircle
+              size={48}
+              stroke={1.5}
+              className="text-muted-foreground/40"
+            />
+            <p className="text-[16px] font-semibold text-foreground">Ask anything</p>
+            <p className="max-w-xs text-center text-[14px] text-muted-foreground">
+              Type a message or try a slash command like /proofread.
+            </p>
+          </div>
         )}
         {renderedTurns.map((turn) => (
           <MessageRow
             key={turn.id}
             turn={turn}
-            slug={slug}
             threadId={activeId}
             threadTitle={activeThread?.title ?? ''}
             onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
+            // While a plan is parked for approval, its plan lives in the
+            // approval card — hide the (redundant) answer text so the plan
+            // isn't shown twice.
+            hideText={
+              turn.status === 'streaming' &&
+              pendingPermission?.toolName === 'ExitPlanMode'
+            }
           />
         ))}
+        {pendingPlanText && (
+          <div className="px-1 text-[15px] leading-relaxed text-foreground">
+            <StreamingMarkdown content={pendingPlanText} isStreaming={false} />
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
-      <div className="relative shrink-0 px-3 pb-3 space-y-2">
+      {/* Glass fade band: the transcript dissolves into the composer instead
+          of stopping in a hard line, and content can't harshly pool below it.
+          Frosted panel colour, fully covering the composer area, masked to
+          fade to transparent just above it — so content softly disappears as
+          it scrolls under. Sits behind the composer (painted first) and over
+          the transcript. Mirrors the editor's header/footer glass bands. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute bottom-0 left-0 right-0 bg-sidebar/90"
+        style={{
+          height: footerHeight + 48,
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          maskImage: `linear-gradient(to top, black, black ${footerHeight}px, transparent)`,
+          WebkitMaskImage: `linear-gradient(to top, black, black ${footerHeight}px, transparent)`,
+        }}
+      />
+
+      <div
+        ref={footerRef}
+        className="absolute bottom-0 left-0 right-0 px-[var(--surface-inset)] pb-[var(--surface-inset)]"
+      >
         <ScrollToBottomButton
           visible={!pinned && renderedTurns.length > 0}
           onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
         />
-        <PromptInput
-          status={chatStatus}
-          disabled={!ready || !account.connected}
-          onSubmit={handleSend}
-          onStop={handleStop}
-          model={activeThreadModel}
-          onModelChange={(m) => activeId && threads.setThreadModel(activeId, m)}
-          effort={activeThreadEffort}
-          onEffortChange={(e) => activeId && threads.setThreadEffort(activeId, e)}
-          validate={validatePrompt}
-          selectionText={selectionPreview}
-          onClearSelection={handleClearSelection}
-        />
+        {pendingPermission?.toolName === 'AskUserQuestion' ||
+        pendingPermission?.toolName === 'ExitPlanMode' ? (
+          // Any parked gate (clarifying question or plan approval) takes the
+          // prompt input's place. GatePanel routes to the right inner panel by
+          // tool; ✕ stops the turn via the existing abort path.
+          <GatePanel pending={pendingPermission} onClose={handleStop} />
+        ) : (
+          <PromptInput
+            status={chatStatus}
+            disabled={!ready || !account.connected}
+            onSubmit={handleSend}
+            onStop={handleStop}
+            model={activeThreadModel}
+            onModelChange={(m) => activeId && threads.setThreadModel(activeId, m)}
+            effort={activeThreadEffort}
+            onEffortChange={(e) => activeId && threads.setThreadEffort(activeId, e)}
+            mode={activeThreadMode}
+            onModeChange={(m) => activeId && threads.setThreadMode(activeId, m)}
+            fastMode={activeThreadFastMode}
+            onFastModeChange={(v) => activeId && threads.setThreadFastMode(activeId, v)}
+            fastModeState={fastModeState}
+            contextSnapshot={contextSnapshot}
+            validate={validatePrompt}
+            selectionText={selectionPreview}
+            onClearSelection={handleClearSelection}
+          />
+        )}
       </div>
     </div>
   )

@@ -16,45 +16,131 @@
 /** Models the user can pick from in the PromptInput model selector.
  * Kept narrow + explicit so the UI can display friendly labels without
  * round-tripping through agent ids. The sidecar accepts the raw id. */
-export type ChatModel = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-7'
+export type ChatModel = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-8'
 
 export const CHAT_MODELS: readonly ChatModel[] = [
   'claude-haiku-4-5',
   'claude-sonnet-4-6',
-  'claude-opus-4-7',
+  'claude-opus-4-8',
 ] as const
 
 export const CHAT_MODEL_LABELS: Record<ChatModel, string> = {
   'claude-haiku-4-5': 'Haiku 4.5',
   'claude-sonnet-4-6': 'Sonnet 4.6',
-  'claude-opus-4-7': 'Opus 4.7',
+  'claude-opus-4-8': 'Opus 4.8',
 }
 
 export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-4-6'
 
-/** Reasoning effort the model puts into a turn. Mirrors the Claude Agent
- * SDK's first-class `effort` option (we expose its 3 most common levels;
- * `xhigh` / `max` are skipped as they're Opus-specific). */
-export type ChatEffort = 'low' | 'medium' | 'high'
+/** Coerce a persisted model id to a currently-offered one. Threads created
+ * before a model was retired carry an id no longer in CHAT_MODELS (e.g.
+ * `claude-opus-4-7`); map the known predecessor to its successor and fall
+ * back to the default for anything else, so the selector and the per-model
+ * effort list never read an unknown key. */
+export function normalizeModel(model: string | undefined): ChatModel {
+  if (model && (CHAT_MODELS as readonly string[]).includes(model)) return model as ChatModel
+  if (model === 'claude-opus-4-7') return 'claude-opus-4-8'
+  return DEFAULT_CHAT_MODEL
+}
 
-export const CHAT_EFFORTS: readonly ChatEffort[] = ['low', 'medium', 'high'] as const
+/** Fast mode = faster output without downgrading the model. The SDK marks
+ * which models support it (`supportsFastMode`); in our lineup only Opus does.
+ * Mirrors effortsForModel's client-side capability gating, so the toggle only
+ * shows where it's real. */
+export function modelSupportsFastMode(model: ChatModel): boolean {
+  return model === 'claude-opus-4-8'
+}
+
+/** Actual fast-mode state the SDK reports on the turn result (`fast_mode_state`)
+ * — the truth, not just what we requested: `on` active, `cooldown` temporarily
+ * forced off after a rate limit, `off` not enabled. */
+export type FastModeState = 'off' | 'cooldown' | 'on'
+
+/** Reasoning effort the model puts into a turn. Mirrors the Claude Agent
+ * SDK's first-class `effort` option. `xhigh` is Opus-only — the SDK falls
+ * back to `high` on other models, so we only offer it where it's real (see
+ * EFFORTS_BY_MODEL). `max` is intentionally not exposed: its token/time cost
+ * is disproportionate for a writing tool. */
+export type ChatEffort = 'low' | 'medium' | 'high' | 'xhigh'
+
+/** Every valid effort value — the enum used to validate slash-command
+ * frontmatter. The per-model subset a user can actually pick lives in
+ * EFFORTS_BY_MODEL. */
+export const CHAT_EFFORTS: readonly ChatEffort[] = ['low', 'medium', 'high', 'xhigh'] as const
+
+/** Effort levels offered per model, in ascending order. Opus exposes the
+ * extra `xhigh` gear; the others top out at `high`. The EffortButton draws
+ * one ring per entry, so this also drives how many circles the icon shows. */
+export const EFFORTS_BY_MODEL: Record<ChatModel, readonly ChatEffort[]> = {
+  'claude-haiku-4-5': ['low', 'medium', 'high'],
+  'claude-sonnet-4-6': ['low', 'medium', 'high'],
+  'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh'],
+}
+
+export function effortsForModel(model: ChatModel): readonly ChatEffort[] {
+  return EFFORTS_BY_MODEL[model]
+}
+
+/** Snap an effort to one the model supports, falling back to its highest
+ * level. Keeps a thread's stored `xhigh` from leaking into the UI / the SDK
+ * call after the user switches to a model that tops out at `high`. */
+export function clampEffort(effort: ChatEffort, model: ChatModel): ChatEffort {
+  const allowed = EFFORTS_BY_MODEL[model]
+  return allowed.includes(effort) ? effort : allowed[allowed.length - 1]
+}
 
 export const CHAT_EFFORT_LABELS: Record<ChatEffort, string> = {
   low: 'Fast response',
   medium: 'Balanced',
   high: 'Deep thinking',
-}
-
-/** Per-ring opacity tuple [inner, middle, outer] for the EffortButton's
- * concentric-circle target icon — the rings fill outward as effort
- * increases. */
-export const CHAT_EFFORT_OPACITIES: Record<ChatEffort, [number, number, number]> = {
-  low: [1, 0.2, 0.2],
-  medium: [1, 1, 0.2],
-  high: [1, 1, 1],
+  xhigh: 'Maximum thinking',
 }
 
 export const DEFAULT_CHAT_EFFORT: ChatEffort = 'medium'
+
+/** Chat interaction mode. `edit` (default) lets the model propose changes;
+ * `plan` is read-only — the model explores and writes a plan but cannot
+ * propose or apply edits (enforced by permissionMode 'plan' + dropping the
+ * propose_* relay tools and Bash for the turn). */
+export type ChatMode = 'edit' | 'plan'
+export const DEFAULT_CHAT_MODE: ChatMode = 'edit'
+
+// ── Context usage (gauge) ───────────────────────────────────────
+//
+// Snapshot of how full the model's context window is after a turn.
+// STEP 2 fills only the totals (derived from the SDK `usage` already
+// emitted on chat/done). `categories` + `autoCompactThreshold` arrive
+// in STEP 3, once the sidecar switches to streaming-input mode and can
+// call query.getContextUsage(). The gauge/popover render `categories`
+// when present and fall back to a Used/Free split otherwise.
+
+/** One row of the context breakdown (system prompt, messages, tools, …).
+ * Mirrors `getContextUsage().categories[]`. `color` is the SDK-provided
+ * swatch; absent in the STEP-2 fallback. */
+export interface ContextCategory {
+  name: string
+  tokens: number
+  color?: string
+  isDeferred?: boolean
+}
+
+export interface ContextSnapshot {
+  /** Tokens currently occupying the context window. */
+  totalTokens: number
+  /** Context window size. STEP-2 estimate (contextLimitForModel);
+   * replaced by the real getContextUsage().maxTokens in STEP 3. */
+  maxTokens: number
+  /** Model the snapshot was measured against — kept so the gauge stays
+   * in sync when the user switches models. */
+  model: string
+  /** Per-category breakdown. Absent until STEP 3. */
+  categories?: ContextCategory[]
+  /** Fraction (0..1) of the window at which auto-compaction triggers.
+   * Absent until STEP 3; the gauge uses a fixed 0.8 warning line until
+   * the real value is available. */
+  autoCompactThreshold?: number
+  updatedAt: number
+}
 
 export interface ThreadMeta {
   id: string
@@ -75,6 +161,12 @@ export interface ThreadMeta {
   /** Per-thread reasoning effort. Older threads default to
    * DEFAULT_CHAT_EFFORT when this field is absent. */
   effort?: ChatEffort
+  /** Per-thread interaction mode (edit vs plan). Absent on older threads;
+   * treat absence as DEFAULT_CHAT_MODE. */
+  mode?: ChatMode
+  /** Per-thread fast-mode preference (faster Opus output). Absent/false = off.
+   * Only meaningful where modelSupportsFastMode(model) is true. */
+  fastMode?: boolean
   /** True once the SDK has confirmed a session for this thread (set on the
    * first stream event of the first run). Subsequent runs must use `resume`
    * regardless of history shape — including Regenerate, which deletes the
@@ -130,6 +222,14 @@ export interface ChatTurn {
    * executeCommand's path — same system prompt, same relayTools, same
    * summarize hook — instead of replaying the literal text as plain chat. */
   slashInvocation?: { name: string; args: string }
+  /** Display-only turn injected by the UI, not produced by a model run.
+   * Currently set on the user-side "answer bubble" that records what the
+   * user chose for an AskUserQuestion (plan-mode clarifying question). The
+   * answer already reached the model as the tool's result (canUseTool), so
+   * this bubble must NOT feed back into prompt building — buildUserPrompt and
+   * the triggering-request lookup skip synthetic turns. It still renders and
+   * persists like any other turn. */
+  synthetic?: boolean
   /** Mark ids that propose_change produced during this assistant turn.
    * handleRegenerate reads these on the turn it's about to discard so it
    * can clear the matching marks from the editor before the rerun stamps
@@ -189,6 +289,13 @@ export interface ToolPart {
   state: ToolPartState
   output?: unknown
   errorText?: string
+  /** For host-bridged edit tools (propose_edit / propose_write /
+   * propose_multi_edit): the sidecar-minted pendingId of the
+   * PendingChange this call queued, parsed from the tool_result text.
+   * Links this message part to its `pendingChangesStore` entry so the
+   * inline suggestion card can render the diff and drive Keep / Reject.
+   * Undefined until the tool_result lands (and for non-edit tools). */
+  pendingId?: string
 }
 
 export interface StepStartPart {

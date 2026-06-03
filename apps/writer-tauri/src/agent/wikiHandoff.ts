@@ -17,7 +17,16 @@
 // otherwise). No new tool, no new prompt, no new banner UI.
 
 import { runIngestCore } from '@/agent/ingest/index'
-import { useIngestStore } from '@/state/ingestStore'
+import {
+  appendMarkdownToWikiPage,
+  appendToSystemLog,
+  buildIngestCommitBody,
+  type AppliedProposalForCommit,
+} from '@/agent/applyIngest'
+import { useDocsStore } from '@/state/docsStore'
+import { useGitStore } from '@/state/gitStore'
+import { flushDirty } from '@/lib/docFileSync'
+import { todayLocalDate } from '@/hooks/useDocMeta'
 
 export interface ChatHandoffArgs {
   /** Assistant or user message body to extract facts from. Empty /
@@ -73,25 +82,73 @@ export async function runChatToWikiHandoff(
     return { enqueued: 0, affectedTargets: [], malformed: false }
   }
 
-  useIngestStore.getState().enqueue({
-    proposals: core.proposals,
-    logEntry: core.logEntry,
-    sourceSlug: args.threadId,
-    sourceLabel: label,
-  })
+  // Phase 2.A — same direct-write path as runIngestForSlug. Chat
+  // handoff is just another ingest source; the only difference is
+  // that suggestNewPage proposals from chat aren't materialized into
+  // wiki pages here (runIngestCore doesn't run materializeNewPageProposals).
+  // For Phase 2.A we restrict chat handoff to proposals that target
+  // an EXISTING page — new-page suggestions from chat fall to the
+  // user as a toast hint rather than auto-creating a page. (We can
+  // wire materialize in later if it becomes a common ask.)
+  const applied: AppliedProposalForCommit[] = []
+  const targetSet = new Set<string>()
+  const unresolvedNewPages: string[] = []
+  for (const p of core.proposals) {
+    if (p.target) {
+      const targetDoc = useDocsStore
+        .getState()
+        .knownDocs.find((d) => d.type === p.target && !d.archivedAt)
+      if (!targetDoc) {
+        console.warn('[wikiHandoff] target type not in catalog', p.target)
+        continue
+      }
+      // Phase G: the LLM's markdownToAppend is the final shape; no
+      // host-side assembly. Empty / whitespace-only proposals are
+      // dropped because they'd add nothing to the page.
+      const md = p.markdownToAppend.trim()
+      if (!md) continue
+      const ok = await appendMarkdownToWikiPage(targetDoc.slug, md)
+      if (ok) {
+        applied.push({
+          targetTitle: targetDoc.title?.trim() || targetDoc.slug,
+          proposal: p,
+        })
+        targetSet.add(p.target)
+      }
+    } else if (p.suggestNewPage) {
+      unresolvedNewPages.push(p.suggestNewPage)
+      targetSet.add(`new:${p.suggestNewPage}`)
+    }
+  }
 
-  const targets = Array.from(
-    new Set(
-      core.proposals
-        .map((p) =>
-          p.target ?? (p.suggestNewPage ? `new:${p.suggestNewPage}` : null),
-        )
-        .filter((t): t is string => t !== null),
-    ),
-  )
+  // Phase G2 — system:log is host-managed end-to-end. The LLM's
+  // pre-formatted logEntry (deprecated) is ignored; the host emits
+  // a structured row from data it already knows (date, source label,
+  // the proposals that just landed). No drift between the LLM's
+  // formatting habits and the page's table layout — same shape as
+  // system:index, which has always been host-deterministic.
+  if (applied.length > 0) {
+    await appendToSystemLog({
+      date: todayLocalDate(),
+      kind: 'ingest',
+      source: label,
+      summary: applied
+        .map((a) => a.proposal.rationale?.trim() || a.targetTitle)
+        .join('; '),
+    })
+  }
+
+  if (applied.length > 0) {
+    await flushDirty()
+    const subject = `ai-edit: ${label} (${applied.length} page update${applied.length === 1 ? '' : 's'})`
+    const body = buildIngestCommitBody(applied, label)
+    const message = body ? `${subject}\n\n${body}` : subject
+    await useGitStore.getState().commitChangesNow(message)
+  }
+
   return {
-    enqueued: core.proposals.length,
-    affectedTargets: targets,
+    enqueued: applied.length,
+    affectedTargets: Array.from(targetSet),
     malformed: false,
   }
 }

@@ -236,6 +236,54 @@ export const notify = {
     })
   },
 
+  // ── Git ───────────────────────────────────────────────────────
+  /** Auto-commit failed. Rare — usually a `git` binary missing or
+   * a permission issue. Surfaced as a toast so the user knows the
+   * "rollback safety net" isn't working; the editor itself keeps
+   * functioning. */
+  gitCommitFailed() {
+    toast.error("Couldn't save to history", {
+      description: 'Recent changes are still on disk. See console for details.',
+    })
+  },
+  /** User clicked revert on an activity card and the rust call
+   * threw. Most common cause: the revert produced conflicts that
+   * git couldn't resolve unattended. */
+  gitRevertFailed() {
+    toast.error("Couldn't undo that change", {
+      description: 'See console for details.',
+    })
+  },
+  /** Revert went through cleanly. Surfacing it so the click feels
+   * confirmed; the editor will reflect the rollback once the
+   * vault watcher picks up the file changes. */
+  gitRevertSucceeded() {
+    toast.success('Reverted')
+  },
+  /** "Mark all reviewed" failed. Almost never happens — it's just
+   * a ref-update — but surface it so the activity feed not
+   * clearing has a visible reason. */
+  gitMarkReviewedFailed() {
+    toast.error("Couldn't update the bookmark", {
+      description: 'See console for details.',
+    })
+  },
+
+  // ── Read it later ─────────────────────────────────────────────
+  /** A URL was saved as an article doc. */
+  articleSaved(args: { title: string }) {
+    toast.success('Saved to Read Later', {
+      description: args.title,
+    })
+  },
+  /** extractPage returned nothing usable for the given URL (404,
+   * login wall, JS-only page, or empty extraction). */
+  articleSaveFailed() {
+    toast.error("Couldn't save this page", {
+      description: "We couldn't read its content. Check the URL.",
+    })
+  },
+
   // ── Bootstrap import ──────────────────────────────────────────
   /** Final summary toast for the first-run Import pipeline. Without
    * it the dialog just closes silently — user has no way to tell

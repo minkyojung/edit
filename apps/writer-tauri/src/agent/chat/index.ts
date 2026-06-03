@@ -3,12 +3,17 @@
 // SDK (`query()`), which internally handles tool execution; we
 // only consume the resulting notifications:
 //
-//   claude:event    → assistant text blocks (accumulated, emitted
-//                     as deltas)
-//   claude:proposal → propose_change payload (we apply the mark
-//                     locally)
-//   claude:done     → end of turn
-//   claude:error    → upstream failure or cancellation
+//   claude:event → assistant text blocks (accumulated, emitted
+//                  as deltas)
+//   claude:done  → end of turn
+//   claude:error → upstream failure or cancellation
+//
+// File edits used to flow through a `claude:edit` notification from
+// the host-bridged `edit_document` MCP tool, but that bridge was
+// retired alongside Phase 3.1's `canUseTool` gate — Claude now uses
+// its built-in Edit/Write tools directly. The host's role here
+// is just to commit the resulting on-disk changes at turn end
+// (via the vaultWatcher → noteActivity → dirtyPaths chain).
 //
 // V1 multi-turn handling: only the latest user message is sent;
 // session resumption (via the SDK's `resume` option) keeps prior
@@ -20,6 +25,15 @@ import { FREE_CHAT_PROMPT } from '../skills/freeChat'
 import { assembleContext } from '@/agent/contextPipeline'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useChatRuns } from '@/stores/chatRuns'
+import { useDocsStore } from '@/state/docsStore'
+import { usePendingChangesStore } from '@/state/pendingChangesStore'
+import {
+  mapChatEditToPendingChange,
+  materializeChatNewWikiPage,
+} from './toPendingChange'
+import { useContextUsageStore } from '@/state/contextUsageStore'
+import { useFastModeStore } from '@/state/fastModeStore'
+import { contextLimitForModel } from '@/lib/contextLimit'
 import {
   agentIdForModel,
   DEFAULT_MODEL,
@@ -27,10 +41,8 @@ import {
   type ChatEvent,
   type DoneEvent,
   type ErrorEvent,
-  type ProposalEvent,
   type RunChatArgs,
   type RunChatResult,
-  type ToolCallRecord,
 } from './types'
 import {
   buildUserPrompt,
@@ -39,16 +51,11 @@ import {
   truncateDocForPrompt,
 } from './systemPrompt'
 import { createStreamParser } from './streamParser'
-import { createProposalListener } from './proposalListener'
 
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const {
     view,
-    // ydoc is intentionally not destructured: the proposal listener now
-    // looks up the live ydoc via useDocsStore by slug, since the
-    // captured ydoc could be destroyed by closeDoc while a run is
-    // in flight. Keeping ydoc in RunChatArgs preserves the call-site
-    // shape so existing callers (useChatRunner) need no change.
+    pageContextMarkdown,
     slug,
     threadId,
     history,
@@ -56,36 +63,76 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     systemPrompt,
     model = DEFAULT_MODEL,
     effort: effortOverride,
-    relayTools = ['propose_change', 'read_page', 'search_wiki'],
+    relayTools = [
+      'read_page',
+      'search_wiki',
+      // Path A: operational edits restored. `propose_edit` /
+      // `propose_multi_edit` let the model state exactly what changes
+      // (old_string → new_string), so the host applies a surgical
+      // in-place edit instead of diffing a whole-body blob to *guess*
+      // what changed. That guessing (Phase F's declarative-only model)
+      // was the shared root of the misplaced-insert, stray-cursor, and
+      // empty-panel bugs — the host can't reconstruct intent the model
+      // never sent. The historical reason this was disabled — the
+      // "couldn't find old_string" failure — is mitigated by the
+      // tolerant matcher on the apply path (lib/looseMatch: exact →
+      // normalized-line, so a benign bullet/spacing drift still
+      // resolves). `propose_write` stays for brand-new pages and
+      // explicit full rewrites only; the CLAUDE.md editing rules
+      // already steer the model to Edit-first for existing files.
+      'propose_edit',
+      'propose_multi_edit',
+      'propose_write',
+    ],
     appendDocument = true,
+    permissionMode,
+    builtinTools,
+    fastMode,
     signal,
     onTextDelta,
     onThinkingDelta,
     onPart,
-    onToolApplied,
+    onSessionStart,
     sessionStarted,
   } = args
-  const agentId = agentIdForModel(model)
+  // agentIdForModel was used to stamp marks; with marks gone the
+  // value is now only kept for compatibility with any downstream
+  // metadata field that still references it. We compute it lazily
+  // so unused imports surface as lint failures if the binding
+  // disappears entirely.
+  void agentIdForModel
 
   // Effort default: Haiku is the copyeditor lane (short, latency-
   // sensitive turns) → 'low'. Sonnet/Opus are the chat lane → 'medium'.
   // Caller's explicit choice always wins.
-  const effort: 'low' | 'medium' | 'high' =
+  const effort: 'low' | 'medium' | 'high' | 'xhigh' =
     effortOverride ?? (model.includes('haiku') ? 'low' : 'medium')
 
-  const docText = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
+  // The user message that triggered this run — the last user turn in
+  // history (which includes it, per RunChatArgs.history). Attached to
+  // any pending edit this run proposes as its Review-panel "why".
+  const triggeringRequest = [...(history ?? [])]
+    .reverse()
+    .find((t) => t.role === 'user' && !t.synthetic)
+    ?.content?.trim()
+
+  // No `view` (e.g. the Read Later queue route) → use the caller-supplied
+  // page markdown as the current-page context instead of editor text.
+  const docText = view
+    ? view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
+    : (pageContextMarkdown ?? '')
   const docForPrompt = truncateDocForPrompt(docText)
   const systemBody = systemPrompt ?? FREE_CHAT_PROMPT
   const prompt = promptOverride ?? buildUserPrompt(history ?? [])
 
-  // Tier 1/2 + conventions via the assembleContext facade. Pass both
-  // the user message and the current doc body so wikilinks in either
-  // surface trigger hot-page inclusion. Failures upstream collapse to
-  // empty fields — chat never blocks on the context round-trip.
-  const ctx = await assembleContext({
-    text: prompt,
-    docBody: docForPrompt,
-  })
+  // Chat mode — Karpathy / Claude Code shape: only the always-on
+  // schema (CLAUDE.md + profile + conventions) lands in the system
+  // prompt. The wiki catalog + page bodies that the legacy shape
+  // injected up-front are intentionally absent here; the LLM uses
+  // Read / Glob / Grep to fetch them on demand when a turn actually
+  // warrants it. Failures upstream collapse to empty fields — chat
+  // never blocks on the context round-trip.
+  const ctx = await assembleContext({ mode: 'chat' })
 
   const system = composeSystemBlocks({
     docForPrompt,
@@ -105,8 +152,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   }
   const runs = useChatRuns.getState()
   runs.start(threadId, runId, controller, slug)
-
-  const toolCalls: ToolCallRecord[] = []
 
   // Live stream → MessagePart translator. Owns the timeline state
   // (partsById, blockIndexToPartId, etc.) so this file only sees
@@ -128,11 +173,28 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   const finished = new Promise<RunChatResult>((resolve, reject) => {
     let settled = false
+    // Latches the once-per-run session-start signal (first claude:event).
+    let sessionEventSeen = false
     const settleOk = (stopReason: string | null) => {
       if (settled) return
       settled = true
       cleanup()
-      resolve({ stopReason, toolCalls })
+      // Derive the edit count from the single source of truth — the
+      // PendingChanges this run pushed (keyed by runId). By settle
+      // (claude:done) every edit-pending event for the turn has been
+      // mapped and pushed; the review-comments path only edits existing
+      // docs (synchronous mapper, no async materialize), so the count is
+      // complete here. No tray/return-value tally is maintained.
+      const editCount = Object.values(
+        usePendingChangesStore.getState().byId,
+      ).filter((c) => c.context.runId === runId).length
+      resolve({ stopReason, editCount })
+      // No commit at turn end. Chat edits write NOTHING to disk during
+      // the turn — the propose_* tools only stage proposals — so there's
+      // nothing to record here. The commit happens when the user Keeps a
+      // change: pendingChangesApplier observes the accept, writes disk,
+      // and lands one `ai-edit: chat reply` commit per burst (the same
+      // group-commit coordinator ingest uses).
     }
     const settleErr = (err: unknown) => {
       if (settled) return
@@ -144,21 +206,75 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     Promise.all([
       listen<ChatEvent>('claude:event', (e) => {
         if (e.payload.runId !== runId) return
+        // First event of any kind = the SDK has confirmed/created the session
+        // for this thread (its `system` init lands before any content). Mark
+        // session-started here so a turn that dies mid-think still flips the
+        // resume flag — gating on the first content part (onPart) was too late
+        // and let a duplicate-create slip through on the retry.
+        if (!sessionEventSeen) {
+          sessionEventSeen = true
+          onSessionStart?.()
+        }
         parser.handleEvent(e.payload.event)
       }),
-      listen<ProposalEvent>(
-        'claude:proposal',
-        createProposalListener({
-          runId,
-          slug,
-          agentId,
-          toolCalls,
-          parser,
-          onToolApplied,
-        }),
-      ),
+      // Phase 3.3 staged-edit gate: the sidecar's canUseTool hook
+      // parks the SDK on every write-side built-in (Edit / Write /
+      // MultiEdit / NotebookEdit) and emits this event with a
+      // sidecar-minted `pendingId`. The PendingEditsBar renders an
+      // Apply / Reject card per event and routes the user's decision
+      // back through `claude_chat_edit_decision` so the matching
+      // canUseTool Promise resolves and the SDK either runs the
+      // tool (allow) or feeds the deny message to the model.
+      listen<{
+        runId: string
+        pendingId: string
+        toolName: string
+        input: Record<string, unknown>
+      }>('claude:edit-pending', async (e) => {
+        if (e.payload.runId !== runId) return
+        // Phase E5: unified flow. Map the sidecar payload into a
+        // PendingChange and push. The sidebar dot lights up, the
+        // inline suggestion card in the chat answer renders the diff
+        // with Keep / Reject, and the inline review widget renders the
+        // diff on the target page. There is no separate tray —
+        // `pendingChangesStore` is the single source of truth for chat
+        // edits, and every surface reads it.
+        const payload = {
+          runId: e.payload.runId,
+          pendingId: e.payload.pendingId,
+          toolName: e.payload.toolName,
+          input: e.payload.input,
+        }
+        const ctx = {
+          knownDocs: useDocsStore.getState().knownDocs,
+          vaultPath: getActiveVaultPath(),
+          threadId,
+          userRequest: triggeringRequest,
+        }
+        // First the pure mapper (existing doc). If it can't resolve a
+        // catalog slug, the one recoverable miss is a `propose_write`
+        // creating a brand-new wiki page: materialize the page (so it
+        // gets a slug) and stage its body. Anything still unmapped is a
+        // genuine miss — logged, no decision surface.
+        let mapped = mapChatEditToPendingChange(payload, ctx)
+        if (!mapped) {
+          mapped = await materializeChatNewWikiPage(payload, ctx)
+        }
+        if (mapped) {
+          usePendingChangesStore.getState().push(mapped)
+        } else {
+          console.warn(
+            '[chat] edit-pending unmappable; no decision surface',
+            { toolName: e.payload.toolName, pendingId: e.payload.pendingId },
+          )
+        }
+      }),
       listen<DoneEvent>('claude:done', (e) => {
         if (e.payload.runId !== runId) return
+        recordContextUsage(threadId, model, e.payload.usage, e.payload.contextUsage)
+        // Reflect the SDK's actual fast-mode state (on / cooldown / off) for the
+        // toggle. Absent → off (e.g. a model that doesn't support fast mode).
+        useFastModeStore.getState().set(threadId, e.payload.fastModeState ?? 'off')
         settleOk(e.payload.stopReason)
       }),
       listen<ErrorEvent>('claude:error', (e) => {
@@ -226,12 +342,31 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         systemPrompt: system,
         prompt,
         relayTools,
+        // Read-only planning turns set this to 'plan'; edit turns omit it
+        // (sidecar defaults to bypassPermissions). In plan mode the sidecar's
+        // canUseTool gate — NOT tool omission — enforces read-only: the caller
+        // still passes the full propose_* relayTools (so the model can execute
+        // once the plan is approved), and the gate denies them while planning
+        // and allows them after ExitPlanMode is approved. builtinTools drops
+        // Bash but keeps Write (confined to the plans dir by the same gate).
+        permissionMode,
+        // Phase E6: explicit least-privilege builtin set. Write-side
+        // built-ins (Edit / Write / MultiEdit / NotebookEdit) are
+        // OMITTED — the LLM uses the host-applies `propose_*` MCP
+        // tools (in `relayTools` above) for any disk-changing
+        // intent. Read-side / search / shell remain since the model
+        // needs them to discover context. Plan turns drop Bash via
+        // the caller-supplied `builtinTools`.
+        builtinTools: builtinTools ?? ['Read', 'Glob', 'Grep', 'Bash'],
         // Forwarded so sidecar's read_page / search_wiki handlers
         // can resolve vault-relative paths against the user's chosen
         // folder. Undefined when no vault selected — the sidecar
         // then skips registering filesystem tools (warns once).
         vaultPath: getActiveVaultPath() ?? undefined,
         effort,
+        // Forwarded to the SDK's settings.fastMode. The caller already gated on
+        // model support; only send `true` so non-fast runs stay clean.
+        fastMode: fastMode || undefined,
         sessionId: isResume ? undefined : threadId,
         resume: isResume ? threadId : undefined,
       },
@@ -243,3 +378,54 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   return finished
 }
+
+/** Record the post-turn context-window occupancy for the gauge.
+ *
+ * STEP 2: the total is approximated from the SDK `usage` the sidecar
+ * already emits on chat/done — the full prompt that was in context for
+ * this turn = fresh input + cached prefix (read + creation). The window
+ * size is the per-model estimate. STEP 3 replaces this with the exact
+ * breakdown from query.getContextUsage(). Best-effort: a turn with no
+ * usage (or zero tokens) leaves the prior snapshot untouched. */
+function recordContextUsage(
+  threadId: string,
+  model: string,
+  usage: DoneEvent['usage'],
+  contextUsage?: DoneEvent['contextUsage'],
+): void {
+  // STEP 3: prefer the exact per-category breakdown from getContextUsage().
+  // It carries the authoritative window size and the auto-compact trigger,
+  // so the gauge shows real category rows and aligns its warning line to the
+  // point compaction actually fires (converted from tokens to a 0..1
+  // fraction the gauge/popover compare against).
+  if (contextUsage && contextUsage.maxTokens > 0) {
+    useContextUsageStore.getState().set(threadId, {
+      totalTokens: contextUsage.totalTokens,
+      maxTokens: contextUsage.maxTokens,
+      model: contextUsage.model ?? model,
+      categories: contextUsage.categories,
+      autoCompactThreshold:
+        contextUsage.autoCompactThreshold != null
+          ? contextUsage.autoCompactThreshold / contextUsage.maxTokens
+          : undefined,
+      updatedAt: Date.now(),
+    })
+    return
+  }
+  // Fallback (no contextUsage): approximate the total from `usage` and the
+  // per-model window estimate. A turn with no usage leaves the prior
+  // snapshot untouched.
+  if (!usage) return
+  const total =
+    (usage.input_tokens ?? 0) +
+    (usage.cache_read_input_tokens ?? 0) +
+    (usage.cache_creation_input_tokens ?? 0)
+  if (total <= 0) return
+  useContextUsageStore.getState().set(threadId, {
+    totalTokens: total,
+    maxTokens: contextLimitForModel(model),
+    model,
+    updatedAt: Date.now(),
+  })
+}
+

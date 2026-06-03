@@ -5,23 +5,18 @@ import {
   editorViewOptionsCtx,
   editorViewCtx,
   defaultValueCtx,
+  parserCtx,
+  serializerCtx,
 } from '@milkdown/kit/core'
 import { commonmark } from '@milkdown/kit/preset/commonmark'
 import { gfm } from '@milkdown/kit/preset/gfm'
 import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { listItemBlockComponent } from '@milkdown/kit/component/list-item-block'
-import { collab, collabServiceCtx } from '@milkdown/plugin-collab'
-import * as Y from 'yjs'
-import { UndoManager } from 'yjs'
-import { prosemirrorToYDoc, ySyncPluginKey } from 'y-prosemirror'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
-import { createMarkDecoPlugin } from './markDecoPlugin'
-import { createMarkCleanupPlugin } from './markCleanupPlugin'
-import { createMarkClickPlugin } from './markClickPlugin'
-import { createMarkHoverPlugin } from './markHoverPlugin'
+import { createDirtyTrackerPlugin } from './dirtyTrackerPlugin'
+import { createInlineReviewPlugin } from './inlineReviewPlugin'
 import { createDocVersionPlugin } from './docVersionPlugin'
-import { createSelectionPlugin, type SelectionInfo } from './selectionPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
 import { formatStatePlugin } from './formatStatePlugin'
 import { dropCursor } from '@milkdown/kit/prose/dropcursor'
@@ -35,6 +30,7 @@ import { mediaDropPastePlugin } from './mediaDropPastePlugin'
 import { inlineCodeSafeKeymap } from './inlineCodeSafe'
 import { createLinkClickPlugin } from './linkClickPlugin'
 import { createLinkHoverPlugin } from './linkHoverPlugin'
+import { createCustomCaretPlugin } from './customCaretPlugin'
 import { createPasteSanitizerPlugin } from './pasteSanitizerPlugin'
 import { createSlashTriggerPlugin } from './slashTriggerPlugin'
 import { configureListItemBlock } from './listItemConfig'
@@ -50,13 +46,29 @@ import {
   createWikilinkBrokenPlugin,
   wikilinkBrokenKey,
 } from './wikilinkBrokenPlugin'
+import { history } from '@milkdown/kit/plugin/history'
+import {
+  createAiEditGutterPlugin,
+  aiEditGutterKey,
+} from './aiEditGutterPlugin'
 import { createPlaceholderPlugin } from './placeholderPlugin'
 import { useDocsStore } from '@/state/docsStore'
+import { useEditorViewStore } from '@/state/editorViewStore'
+import { useGitStore, isAiEditCommit } from '@/state/gitStore'
+import { pathForDoc } from '@/lib/docPaths'
+import { flushDirty } from '@/lib/docFileSync'
+import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
+import {
+  resolveWikilinksInMarkdown,
+  condenseWikilinksInMarkdown,
+} from '@/lib/wikilinkResolve'
 import { WikilinkPalette } from './WikilinkPalette'
 import { useWikilinkTitleSync } from './wikilinkSyncPlugin'
+import { useHighlightMarks } from './useHighlightMarks'
 import { normalizeDailyBody } from '@/lib/docTitle'
-import { MarkToolbar } from './MarkToolbar'
 import { LinkHoverBar } from './LinkHoverBar'
+import { SelectionMenu } from './SelectionMenu'
+import { createHighlightClickPlugin } from './highlightClickPlugin'
 import { SlashMenu } from './SlashMenu'
 // Proof schemas come from proof-sdk via a thin adapter so client and
 // server share one canonical definition. The previous local copy
@@ -74,7 +86,6 @@ import { SlashMenu } from './SlashMenu'
 import { proofSchemaPlugins } from './proofMarks'
 import { dailyGuardPlugin } from './dailyGuardPlugin'
 import { usePendingScroll } from '@/state/pendingScrollStore'
-import { scrollToMark } from '@/editor/scrollToMark'
 import { EditorFooter } from '@/components/EditorFooter'
 import { notify } from '@/lib/notify'
 
@@ -97,7 +108,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
   const onChangeRef = useRef(onMarkdownChange)
   onChangeRef.current = onMarkdownChange
 
-  const [selection, setSelection] = useState<SelectionInfo | null>(null)
   // Local view state — EditorFooter (and the UnlinkedNotes trigger
   // nested inside it) needs to walk the PM doc for wikilink
   // references and writing stats, so it needs the live view. The
@@ -120,6 +130,10 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
   // truth.
   useWikilinkTitleSync(pmView, handle?.slug ?? null)
 
+  // Paint saved-article highlights (records → proofHighlight marks),
+  // re-anchored on mount and whenever the record set changes.
+  useHighlightMarks(pmView, handle?.slug ?? null)
+
   // Refresh broken-wikilink decorations whenever the docs registry
   // changes — adding or removing a doc moves the boundary between
   // valid and broken links. The plugin handles docChanged on its
@@ -133,38 +147,85 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
     return unsubscribe
   }, [pmView])
 
+  // Drive the AI-edit gutter from gitStore. Two responsibilities:
+  //   1. Make sure every active ai-edit commit's detail is in cache
+  //      (the gutter plugin can't draw a marker without diff line
+  //      numbers). Prefetched once per sha; ensureCommitDetail
+  //      de-dupes concurrent calls.
+  //   2. Send a `rebuild` meta whenever the inputs the plugin reads
+  //      from gitStore change (activity list, commitDetails cache,
+  //      dismissedShas). docChanged transactions rebuild on their
+  //      own — this covers the "git pushed new data" channel.
+  useEffect(() => {
+    if (!pmView) return
+    function refresh() {
+      const view = pmView
+      if (!view) return
+      const store = useGitStore.getState()
+      for (const c of store.activity) {
+        if (!isAiEditCommit(c)) continue
+        if (store.dismissedShas.has(c.sha)) continue
+        if (store.commitDetails[c.sha]) continue
+        if (store.loadingShas.has(c.sha)) continue
+        void store.ensureCommitDetail(c.sha)
+      }
+      view.dispatch(view.state.tr.setMeta(aiEditGutterKey, 'rebuild'))
+    }
+    refresh()
+    const unsubGit = useGitStore.subscribe((state, prev) => {
+      if (
+        state.activity === prev.activity &&
+        state.commitDetails === prev.commitDetails &&
+        state.dismissedShas === prev.dismissedShas
+      ) {
+        return
+      }
+      refresh()
+    })
+    const unsubDocs = useDocsStore.subscribe((state, prev) => {
+      // Title / archive changes can shift the active file path, which
+      // changes which commits the plugin should match.
+      if (state.knownDocs === prev.knownDocs) return
+      refresh()
+    })
+    // Phase F: pending-edit gutter markers retired. The chat-edit
+    // flow now stages proposals in `pendingChangesStore` and renders
+    // them via the inline review widget on the page, which carries
+    // the diff + Keep/Reject inline. A separate gutter bar would be
+    // duplicate signal for the same change. Committed-side markers
+    // (`unsubGit`) stay — those still surface "where the AI just
+    // committed" once the inline widget resolves.
+    return () => {
+      unsubGit()
+      unsubDocs()
+    }
+  }, [pmView])
+
   // Daily-doc body normalization: strip the legacy "# YYYY-MM-DD"
   // heading that older builds seeded into the body markdown. Daily
   // docs render their date label outside the editor, so the body
-  // must not duplicate it. Idempotent via meta.titleNormalizedV2 —
-  // see lib/docTitle.ts. Non-daily docs run no normalization.
+  // must not duplicate it. Idempotent — `cleanupDailyDateHeading`
+  // bails at the first non-matching block, so a clean body costs
+  // one node-type check on each mount. Non-daily docs run no
+  // normalization.
   //
-  // Gated on contentReady AND meta.type being populated. The title
-  // structure lives in the Y.Doc that vault load (or fresh creation)
-  // populated; normalization runs after both signals are in.
+  // Gated on contentReady so the legacy headings landed in PM
+  // before we look for them. The catalog (`knownDoc.type` / `.date`)
+  // is the source of truth for whether this is a daily, replacing
+  // the Y.Map gate that Phase 5c retired.
   useEffect(() => {
     if (!handle || !pmView) return
     if (!isDaily) return
-    const { ydoc, contentReady } = handle
+    if (!knownDoc?.date) return
     const view = pmView
-    const metaMap = ydoc.getMap('meta')
-    const opts = { date: knownDoc?.date }
-    let ran = false
-    let hydrated = false
-    const tryRun = () => {
-      if (ran) return
-      if (!hydrated) return
-      if (!metaMap.get('type')) return
-      ran = true
-      normalizeDailyBody(ydoc, view, opts)
-    }
-    void contentReady.then(() => {
-      hydrated = true
-      tryRun()
+    const opts = { date: knownDoc.date }
+    let cancelled = false
+    void handle.contentReady.then(() => {
+      if (cancelled) return
+      normalizeDailyBody(view, opts)
     })
-    metaMap.observe(tryRun)
     return () => {
-      metaMap.unobserve(tryRun)
+      cancelled = true
     }
   }, [handle, pmView, isDaily, knownDoc?.date])
 
@@ -181,17 +242,16 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
     if (!rootRef.current || !handle) return
 
     let mounted = true
-    const { ydoc } = handle
 
     Editor.make()
       .config((ctx) => {
         ctx.set(rootCtx, rootRef.current!)
         ctx.set(editorViewOptionsCtx, { attributes: { class: 'milkdown-editor-root' } })
-        // Explicit empty default so the editor's pre-collab doc state is
-        // documented rather than implicit. Collab's bindDoc replaces this
-        // once handle.contentReady resolves; the ctx exists to keep the
-        // pre-bind window deterministic if Milkdown's internal default
-        // ever changes between versions.
+        // Explicit empty default. Phase 5a of the Yjs-removal
+        // migration seeds the real body via a PM dispatch inside the
+        // post-create `.then` instead of through `defaultValueCtx`,
+        // because the markdown isn't loaded until `contentReady`
+        // resolves and `defaultValueCtx` is consumed synchronously.
         ctx.set(defaultValueCtx, '')
       })
       .config(configureListItemBlock)
@@ -208,14 +268,21 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       // Obsidian convention. Registered after commonmark for the same
       // priority reason as listKeymap.
       .use(headingKeymap)
-      // No `.use(history)` here on purpose. The collab plugin already
-      // wires y-prosemirror's yUndoPlugin (UndoManager-backed) and
-      // Mod-Z / Mod-Shift-Z keybindings; adding milkdown's PM-only
-      // history plugin on top doubled the undo stacks and only the
-      // PM half saw mark mutations, which broke "accept → Cmd+Z →
-      // re-accept" by leaving Y.Map gone after the undo.
+      // PM history owns Cmd-Z / Cmd-Shift-Z after the Yjs-removal
+      // migration. The `history` bundle from @milkdown/kit ships five
+      // pieces — config, provider plugin, keymap, undoCommand,
+      // redoCommand — all required together. Registering only the
+      // keymap (without the commands it dispatches to) leaves Cmd-Z
+      // captured but unhandled, which manifests as "Cmd-Z silently
+      // does nothing". The y-prosemirror yUndoPlugin (set up by the
+      // now-removed collab plugin) used to claim the chord; with
+      // collab gone, this bundle is the only handler. Behaviour is
+      // closer to user intent now, since the PM stack tracks only
+      // local transactions (external edits hydrated via
+      // `reloadFromVault` dispatch with `addToHistory: false`, so
+      // they don't pollute Cmd-Z).
+      .use(history)
       .use(clipboard)
-      .use(collab)
       // Daily docs: filter out leading h1s so the body never grows a
       // date heading that duplicates the external date label. Non-daily
       // docs have no structural body invariant — whatever the user
@@ -230,12 +297,18 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       // available before code_block_ext references them in its `marks: '...'`
       // content spec.
       .use(proofSchemaPlugins)
-      .use(createMarkDecoPlugin(ydoc))
-      .use(createMarkCleanupPlugin(ydoc))
-      .use(createMarkClickPlugin())
-      .use(createMarkHoverPlugin(ydoc))
       .use(createDocVersionPlugin())
-      .use(createSelectionPlugin(setSelection))
+      // Flush-trigger: marks this slug dirty whenever PM's doc
+      // changes, so the auto-flush tick picks it up and writes the
+      // freshest markdown to disk. Replaces the Y.Doc fragment
+      // observer that the collab plugin used to power — see
+      // ./dirtyTrackerPlugin.ts for the migration context.
+      .use(createDirtyTrackerPlugin(handle.slug))
+      // Subscribes to pendingChangesStore and surfaces this doc's
+      // staged AI changes as PM decorations. C1 stage: infra only
+      // (returns empty DecorationSet). C2 populates the inline diff
+      // styling, C3 adds the Accept / Reject widget buttons.
+      .use(createInlineReviewPlugin(handle.slug))
       .use(createFrozenSelectionPlugin())
       .use(formatStatePlugin)
       .use(inlineCodeSafeKeymap)
@@ -245,13 +318,42 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .use(imageInlineNodeView)
       .use(cardDropAdvanceCursor)
       .use($prose(() => dropCursor({ color: false, width: 2, class: 'pm-drop-cursor' })))
+      .use(createCustomCaretPlugin())
       .use(mediaDropPastePlugin)
       .use(createPasteSanitizerPlugin())
       .use(createLinkClickPlugin())
       .use(createLinkHoverPlugin())
       .use(createSlashTriggerPlugin())
       .use(createWikilinkClickPlugin())
+      .use(createHighlightClickPlugin())
       .use(createWikilinkBrokenPlugin())
+      // AI-edit gutter — coloured bar to the left of any block touched
+      // by an unreviewed ai-edit commit in the active doc. Pure
+      // visualisation of git activity; state lives in gitStore and is
+      // pushed into the plugin via `rebuild` meta from the subscribe
+      // effect below. See aiEditGutterPlugin.ts.
+      .use(
+        createAiEditGutterPlugin({
+          getActiveRelPath: () => {
+            if (!handle) return null
+            const docs = useDocsStore.getState().knownDocs
+            const doc = docs.find((d) => d.slug === handle.slug)
+            if (!doc) return null
+            return pathForDoc(doc, (s) => docs.find((d) => d.slug === s))
+          },
+          getActiveShas: () => {
+            const { activity, dismissedShas } = useGitStore.getState()
+            const out: string[] = []
+            for (const c of activity) {
+              if (!isAiEditCommit(c)) continue
+              if (dismissedShas.has(c.sha)) continue
+              out.push(c.sha)
+            }
+            return out
+          },
+          getCommitDetail: (sha) => useGitStore.getState().commitDetails[sha],
+        }),
+      )
       .use(
         createPlaceholderPlugin({
           // Daily docs render their title outside the editor (a
@@ -283,110 +385,62 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         }
         editorRef.current = editor
 
-        // Wait for IndexedDB to finish hydrating the ydoc before binding
-        // the collab service. y-prosemirror's sync plugin runs an initial
-        // PM↔Y reconcile the moment it sees a ydoc; if we bind while the
-        // fragment is empty (pre-hydrate) and content fills in after,
-        // PM ends up with a doc where the hydrated paragraphs sit
-        // alongside new client items the initial reconcile created — the
-        // 1→2→4→8 doubling regression. Binding after contentReady means
-        // PM sees the fully-populated fragment from frame one and the
-        // initial reconcile is a no-op. contentReady spans IDB hydrate
-        // AND vault load (Path C) so binding waits for vault-sourced
-        // body + marks to land, not just the in-browser cache.
+        // Wait for the body to land on the handle before painting it
+        // into PM. contentReady resolves once both the Y.Doc fragment
+        // (legacy path) AND `handle.bodyMarkdown` (Phase 5a) are
+        // populated by `buildHandle`.
         await handle.contentReady
         if (!mounted) return
 
-        // All post-create setup runs in one ctx acquisition: seed an
-        // empty fragment, bind collab + UndoManager, expose the view to
-        // React, drain any scroll-to-mark request that arrived before
-        // this slug's editor mounted. The ordering here is meaningful —
-        // seed MUST precede bindDoc, and bindDoc must precede setPmView
-        // so React subscribers always see a fully-wired view.
         editor.action((ctx) => {
           const view = ctx.get(editorViewCtx)
 
-          // If hydration left the fragment empty (brand-new note),
-          // pre-seed it with the schema's minimal fill (one empty
-          // paragraph) before binding. y-prosemirror's sync plugin
-          // compares PM's filled doc against the fragment on first bind;
-          // an empty fragment vs PM's schema-required <paragraph/>
-          // triggers a PM→Y commit that puts an extra paragraph node
-          // into the fragment for good. After the user types into PM's
-          // paragraph, the fragment ends up with two paragraph items —
-          // the leading empty one is the visible regression. Seeding the
-          // same shape PM would have filled means the diff check is a
-          // no-op and no spurious commit fires.
-          const xmlFragment = ydoc.getXmlFragment('prosemirror')
-          if (xmlFragment.length === 0) {
-            const fill = view.state.schema.topNodeType.createAndFill()
-            if (fill) {
-              const seedDoc = prosemirrorToYDoc(fill, 'prosemirror')
-              const update = Y.encodeStateAsUpdate(seedDoc)
-              Y.applyUpdate(ydoc, update, 'doc-init')
-              seedDoc.destroy()
-            }
-          }
-
-          // Build a Y.UndoManager that tracks BOTH the prosemirror
-          // XmlFragment (the doc itself) AND the marks Y.Map. Wiring
-          // both into the same undo stack means accept/reject's
-          // mutation on `marks` is reversed atomically with the PM
-          // transaction it accompanied — Cmd+Z after accept correctly
-          // restores the suggestion (PM mark + Y.Map metadata both
-          // come back), so a follow-up re-accept finds the content
-          // exactly where it was.
+          // Publish the LIVE editor's parser + serializer to the
+          // app-wide store. This is the single source of markdown
+          // conversion — same schema instance the EditorView itself
+          // uses, so `applyMarkdownToEditor` can dispatch the parsed
+          // node directly without a JSON round-trip. The previous
+          // arrangement (a headless ghost Milkdown owning parser /
+          // serializer for the app lifetime) created TWO PM schemas
+          // that drifted apart on `list_item.spread` and broke any
+          // reload that fed a bullet-list page back into PM. One
+          // editor, one schema — no drift possible.
           //
-          // trackedOrigins:
-          //   ySyncPluginKey  — y-prosemirror's PM-driven Yjs txns
-          //   mark-action     — acceptMark / rejectMark wraps (dispatch +
-          //                     marksMap mutation, see markActions.ts)
-          //   mark-cleanup    — markCleanupPlugin's microtask follow-up
-          //                     when the user deletes marked text
-          //                     manually. Tracking it means Backspace +
-          //                     Cmd+Z restores BOTH the text and the
-          //                     Y.Map metadata atomically; without it,
-          //                     the text comes back but the mark's
-          //                     stored content stays gone — same dual-
-          //                     source bug we just closed for accept.
-          //                     Yjs's captureTimeout merges the cleanup
-          //                     microtask with the original PM delete
-          //                     into one undo step, so Cmd+Z is one
-          //                     keystroke either way.
-          //
-          // Anything outside these origins stays out of the undo stack
-          // so a programmatic write can't be undone into existence.
-          const collabService = ctx.get(collabServiceCtx)
-          const marksMap = ydoc.getMap('marks')
-          const undoManager = new UndoManager([xmlFragment, marksMap], {
-            trackedOrigins: new Set([
-              ySyncPluginKey,
-              'mark-action',
-              'mark-cleanup',
-            ]),
-            captureTimeout: 500,
-          })
-          collabService.setOptions({ yUndoOpts: { undoManager } })
-          // No awareness (multi-cursor / presence) since Phase 3.C
-          // removed the WebSocket provider — local-only editor.
-          collabService.bindDoc(ydoc).connect()
+          // Phase L1: wrap both with wikilink form translators so PM
+          // sees `[Title](note:slug)` (which it already understands
+          // as a link mark) while disk + bodyMarkdown carry the
+          // canonical `[[Title]]` shape. The wrappers preserve
+          // identity on input that doesn't contain wikilinks (the
+          // regex is no-op for plain markdown) so unrelated content
+          // is untouched.
+          const rawParser = ctx.get(parserCtx)
+          const rawSerializer = ctx.get(serializerCtx)
+          const parser = (md: string) =>
+            rawParser(resolveWikilinksInMarkdown(md))
+          const serializer = (doc: Parameters<typeof rawSerializer>[0]) =>
+            condenseWikilinksInMarkdown(rawSerializer(doc))
+          useEditorViewStore.getState().setParser(parser)
+          useEditorViewStore.getState().setSerializer(serializer)
 
-          // Parser / serializer come from the headless Milkdown built
-          // at app boot (lib/headlessMilkdown.ts) — populated globally
-          // in editorViewStore before any doc opens. Per-doc editor
-          // instances no longer publish them, removing the race that
-          // left vault load waiting on parser-not-set.
+          // Mount-time hydrate. Reads `handle.bodyMarkdown` only —
+          // the cache populated by `buildHandle` / `reloadFromVault`
+          // / `seedDocBody` / `replaceDocBody`. Brand-new docs
+          // (empty bodyMarkdown) fall through to Milkdown's
+          // schema-fill (one empty paragraph). `applyMarkdownToEditor`
+          // centralises the noise-line strip (`<br />`) and the
+          // `addToHistory: false` meta so the mount hydrate and the
+          // reloadFromVault dispatch share one path.
+          applyMarkdownToEditor(view, handle.bodyMarkdown, parser)
+
           setPmView(view)
           onViewReady?.(view)
 
-          // Drain a pending "scroll to this mark" target queued by the
-          // chat panel before this slug's editor was mounted. rAF defers
-          // one paint so decoration plugins finish their first build
-          // pass and the target mark has stable coords.
-          const pendingMarkId = usePendingScroll.getState().drain(handle.slug)
-          if (pendingMarkId) {
-            requestAnimationFrame(() => scrollToMark(view, pendingMarkId))
-          }
+          // Drain any pending mark-scroll target so the queue doesn't
+          // grow indefinitely. The actual scroll-to-mark capability
+          // went away with the mark plugins (Phase 3.B); the chat
+          // panel no longer enqueues new entries, but the drain stays
+          // here as a guardrail.
+          usePendingScroll.getState().drain(handle.slug)
         })
       })
       .catch((err) => {
@@ -403,37 +457,99 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
 
     return () => {
       mounted = false
+      // Phase I: poke the flush before tearing the editor down. The
+      // in-memory mirror (`handle.bodyMarkdown`) is already current
+      // because dirtyTrackerPlugin updates it per-transaction, so
+      // even if this `flushDirty` runs asynchronously after the
+      // unmount returns it still finds the latest content via the
+      // handle (no PM needed). Fire-and-forget on purpose — React
+      // cleanup can't be async, and a failed write retries on the
+      // next interval tick anyway.
+      void flushDirty()
       if (editorRef.current) {
-        editorRef.current.action((ctx) => {
-          ctx.get(collabServiceCtx).disconnect()
-        })
         editorRef.current.destroy()
         editorRef.current = null
       }
-      setSelection(null)
       setPmView(null)
       onViewReady?.(null)
-      // Parser / serializer are owned by the headless Milkdown
-      // (lib/headlessMilkdown.ts) for the app's lifetime — don't
-      // null them on per-doc unmount.
+      // Clear parser / serializer on unmount. The next MilkdownEditor
+      // mount publishes a fresh pair from its own ctx. Any reader
+      // that lands in the gap (very narrow — between editor destroy
+      // and the next mount's post-create `.then`) sees `null` and
+      // skips the dispatch; that's the same gate every consumer
+      // already has (`if (view && parser)`).
+      useEditorViewStore.getState().setParser(null)
+      useEditorViewStore.getState().setSerializer(null)
     }
   }, [handle])
 
   return (
     <div className="relative flex h-full w-full flex-col">
+      {/* Header gradient-blur glass band — mirrors EditorFooter's
+          pattern. Lives here (a sibling of the scroll content) rather
+          than inside EditorHeader so backdrop-filter can sample the
+          scroll content's pixels — WebKit can't sample across the
+          scroll container's composited layer boundary. The actual
+          header chrome (tabs/buttons) still renders in AppShell with
+          z-sticky and paints on top of this band. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute top-0 left-0 right-0 bg-background/90"
+        style={{
+          height: 'calc(var(--header-h) + 2rem)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          maskImage:
+            'linear-gradient(to bottom, black 0, black calc(var(--header-h) * 0.7), transparent)',
+          WebkitMaskImage:
+            'linear-gradient(to bottom, black 0, black calc(var(--header-h) * 0.7), transparent)',
+        }}
+      />
       <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="mx-auto max-w-2xl px-8 pt-12 pb-12">
+        {/* pt accounts for the EditorHeader overlay (var(--header-h)).
+            pb leaves room for the EditorFooter overlay (var(--footer-h))
+            plus the 1.5rem fade band so the last paragraph isn't already
+            inside the dissolve when scrolled to bottom. */}
+        <div
+          className="mx-auto max-w-2xl px-8"
+          style={{
+            paddingTop: 'calc(var(--header-h) + 1.5rem)',
+            paddingBottom: 'calc(var(--footer-h) + 3rem)',
+          }}
+        >
           {header}
           <div ref={rootRef} />
         </div>
       </div>
-      <EditorFooter
-        view={pmView}
-        parentSlug={handle?.slug ?? null}
-        status={status}
-      />
-      {handle && <MarkToolbar slug={handle.slug} selection={selection} onDismiss={() => setSelection(null)} />}
+      {/* Footer is a gradient-blur glass band: top edge transparent
+          (no blur), bottom fully blurred. The mask isolates the
+          backdrop-filter to a faded layer so text reads cleanly on
+          top while content scrolling below feathers out. */}
+      <div
+        className="absolute bottom-0 left-0 right-0 z-sticky"
+        style={{ height: 'var(--footer-h)' }}
+      >
+        <div
+          aria-hidden
+          className="pointer-events-none absolute bottom-0 left-0 right-0 bg-background/90"
+          style={{
+            height: 'calc(var(--footer-h) + 2rem)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            maskImage:
+              'linear-gradient(to top, black 0, black calc(var(--footer-h) * 0.7), transparent)',
+            WebkitMaskImage:
+              'linear-gradient(to top, black 0, black calc(var(--footer-h) * 0.7), transparent)',
+          }}
+        />
+        <EditorFooter
+          view={pmView}
+          parentSlug={handle?.slug ?? null}
+          status={status}
+        />
+      </div>
       <LinkHoverBar />
+      <SelectionMenu />
       <SlashMenu />
       <WikilinkPalette
         parentSlug={handle?.slug ?? null}
@@ -442,4 +558,22 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
     </div>
   )
 }
+
+/** Snapshot of every still-pending Edit-shaped staged edit, normalised
+ * into the anchor shape the gutter plugin consumes. The gutter only
+ * needs the vault-relative path + the old_string anchor; it filters
+ * out anything pointing at a different doc internally.
+ *
+ * We strip the vault prefix here (instead of inside the plugin) so
+ * the plugin stays oblivious to vault layout — same pattern as the
+ * chat panel's preview card. `Write` / `MultiEdit` / `NotebookEdit`
+ * are skipped: their inputs don't carry an `old_string` anchor we
+ * can map to a single block, and the chat panel card already
+ * surfaces them. */
+
+/** Strip the active vault root off an absolute file_path. Falls back
+ * to recognised top-level folders so paths resolved through symlinks
+ * still match. Mirrors PendingEditsBar's heuristic — kept inline
+ * here instead of extracting a util because both sites use it once
+ * and the variants don't share enough to make a util worthwhile. */
 

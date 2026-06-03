@@ -101,7 +101,7 @@ export function ThreadPicker({
             className="min-w-0 flex-1 justify-start self-center px-2"
             aria-label="Switch chat"
           >
-            <IconMessageCircleFilled size={16} stroke={1.5} className="shrink-0 opacity-70" />
+            <IconMessageCircleFilled size={16} stroke={1.5} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate text-left">
               {activeThread?.title || 'New chat'}
             </span>
@@ -220,7 +220,7 @@ function ActiveRow({ meta, isActive, onSelect, onArchive, onRename }: ActiveRowP
       }}
       className={cn(!isActive && 'text-muted-foreground')}
     >
-      <IconMessageCircleFilled size={16} stroke={1.5} className="shrink-0 opacity-70" />
+      <IconMessageCircleFilled size={16} stroke={1.5} className="shrink-0" />
 
       {editing ? (
         <input

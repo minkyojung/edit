@@ -20,8 +20,7 @@ export interface IngestToolInput {
      * is now flat; nesting under a parent isn't a concept the model
      * needs to reason about. */
     suggestNewPageParent?: string
-    entity: string
-    bullets: string[]
+    markdownToAppend: string
     rationale?: string
     sourceQuote?: string
   }>
@@ -55,22 +54,14 @@ export function sanitizeIngestResult(input: IngestToolInput): ParsedIngest {
     const suggestNewPage = p.suggestNewPage?.trim() || undefined
     if (!target && !suggestNewPage) continue
     // p.suggestNewPageParent intentionally ignored — see file header.
-    // Zod guarantees entity is a non-empty string and bullets is a
-    // non-empty array, but the model can still ship whitespace-only
-    // values inside those slots. Trim + filter here so the apply
-    // layer never sees an entity that's just spaces or a bullet
-    // that would render as a blank `-`. A proposal that ends up
-    // with zero usable bullets is dropped — same policy the old
-    // shape applied to empty `content`.
-    const entity = p.entity.trim()
-    const bullets = p.bullets
-      .map((b) => b.trim())
-      .filter((b) => b.length > 0)
-    if (!entity || bullets.length === 0) continue
+    // Zod guarantees markdownToAppend is a non-empty string, but the
+    // model can still ship whitespace-only content. Trim + drop so
+    // the apply layer never tries to write an empty append.
+    const markdownToAppend = p.markdownToAppend.trim()
+    if (!markdownToAppend) continue
     proposals.push({
       ...(target ? { target } : { suggestNewPage: suggestNewPage! }),
-      entity,
-      bullets,
+      markdownToAppend,
       rationale: p.rationale,
       sourceQuote: p.sourceQuote?.trim() || undefined,
     })

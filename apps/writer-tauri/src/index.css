@@ -3,6 +3,14 @@
 @plugin "@tailwindcss/typography";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/nunito-sans";
+/* Pretendard — single font covering Latin + Korean + punctuation with
+   ONE consistent set of vertical metrics. Geist/Nunito are Latin-only, so
+   Korean (and some web-article punctuation) fell back to a system CJK font
+   with larger metrics → the line box (and the native caret) jumped between
+   scripts. Pretendard removes the fallback, so the caret stays uniform.
+   Dynamic-subset build loads only the glyph ranges actually used. */
+@import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 
 @custom-variant dark (&:is(.dark *));
 @custom-variant hover (&:hover);
@@ -25,15 +33,41 @@
 
   body {
     -webkit-font-smoothing: antialiased;
+    /* Window-frame tone follows the content canvas (--background), not
+       the sidebar. That makes the floating sidebar read as a card
+       *over* the canvas — the outer gaps around the sidebar are the
+       same tone as the editor surface, so the card appears lifted
+       rather than embedded in a separate strip. */
     background-color: var(--background);
     color: var(--foreground);
     @apply bg-background text-foreground;
   }
+  /* In fullscreen macOS hides the traffic-light buttons, so the 80px
+     reservation on the left of EditorHeader / SidebarHeader stops
+     serving a purpose. useWindowChrome toggles this attribute. */
+  body[data-fullscreen="true"] {
+    --traffic-light-w: 0px;
+  }
   * {
     @apply border-border outline-ring/50;
   }
+  /* Use the CSS variable directly (not the Tailwind `font-sans`
+     utility) so changing `--font-sans` on <html> via FontProvider
+     cascades through the whole document. */
   html {
-    @apply font-sans;
+    font-family: var(--font-sans);
+  }
+  /* Explicit per-choice overrides. The :root default is Pretendard
+     (Korean-safe); FontProvider always adds a `font-<choice>` class, so
+     each Latin-only option opts back out here. */
+  html.font-geist {
+    --font-sans: 'Geist Variable', sans-serif;
+  }
+  html.font-nunito {
+    --font-sans: 'Nunito Sans Variable', sans-serif;
+  }
+  html.font-pretendard {
+    --font-sans: 'Pretendard Variable', sans-serif;
   }
 }
 
@@ -44,6 +78,12 @@
   .ProseMirror {
     font-family: var(--font-sans);
     font-size: var(--prose-base);
+    /* Body line spacing from the design token. The text caret is drawn by
+       customCaretPlugin (the native caret is hidden), so line-height is now
+       purely a reading-rhythm choice and no longer affects caret height —
+       the earlier integer-px hack for "caret uniformity" was a misdiagnosis
+       (native WebKit sizes the caret to the line box by design; we replaced
+       the native caret instead). Headings / pre override below. */
     line-height: var(--prose-lh-body);
     color: var(--foreground);
     outline: none;
@@ -59,6 +99,29 @@
 
   .ProseMirror p {
     margin-bottom: var(--prose-gap-block);
+  }
+
+  /* Custom caret (customCaretPlugin.ts). The native macOS-WebKit caret is the
+     full line-box height by design; we hide it and draw our own at the text
+     height so it hugs the glyphs and stays uniform line-to-line. The class is
+     toggled on only while our caret is shown — during selection / blur / IME
+     composition it comes off so the native caret returns. */
+  .ProseMirror.pm-native-caret-hidden {
+    caret-color: transparent;
+  }
+  .pm-custom-caret {
+    position: fixed;
+    width: 1.5px;
+    background: var(--foreground);
+    border-radius: 1px;
+    pointer-events: none;
+    z-index: 30;
+    will-change: left, top, height;
+    animation: pm-caret-blink 1.06s steps(1, end) infinite;
+  }
+  @keyframes pm-caret-blink {
+    0%, 50% { opacity: 1; }
+    50.01%, 100% { opacity: 0; }
   }
 
   /* Drop cursor (prosemirror-dropcursor). Color comes from the
@@ -134,7 +197,11 @@
     font-family: var(--font-mono, ui-monospace, monospace);
     font-size: 0.9em;
     background: var(--muted);
-    padding: 0.125rem 0.3rem;
+    /* Inline marks decorate with PAINT ONLY (background / colour) — never
+       box-model (vertical padding / border / box-shadow), which enlarges
+       the inline box and so the WebKit caret next to it. Horizontal
+       padding is fine (width only). Trade: no vertical chip breathing. */
+    padding: 0 0.3rem;
     border-radius: 0.25rem;
   }
 
@@ -160,6 +227,36 @@
     margin: var(--prose-gap-heading) 0;
   }
 
+  /* GFM tables — system pages (log / index) render their records as
+     markdown tables so columns align for the user. The Milkdown GFM
+     preset parses the table; these rules give it readable defaults
+     without redesigning the whole table editing UX (Phase 2 will add
+     sort / filter on top via a custom NodeView). overflow-x lets
+     wide tables scroll horizontally in the narrow right panel. */
+  .ProseMirror .tableWrapper {
+    overflow-x: auto;
+    margin-bottom: var(--prose-gap-block);
+  }
+  .ProseMirror table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.92em;
+  }
+  .ProseMirror th,
+  .ProseMirror td {
+    border: 1px solid var(--border);
+    padding: 0.35em 0.6em;
+    text-align: left;
+    vertical-align: top;
+  }
+  .ProseMirror th {
+    background-color: color-mix(in oklch, var(--muted) 60%, transparent);
+    font-weight: 600;
+  }
+  .ProseMirror tr:nth-child(even) td {
+    background-color: color-mix(in oklch, var(--muted) 20%, transparent);
+  }
+
   .ProseMirror a {
     color: var(--info);
     text-decoration: underline;
@@ -174,7 +271,10 @@
   .ProseMirror a[href^="note:"] {
     color: var(--info);
     background-color: color-mix(in oklch, var(--info) 12%, transparent);
-    padding: 0.05em 0.3em;
+    /* Paint-only (see inline code): background + horizontal padding only.
+       No vertical padding / box-shadow, so the pill never enlarges the
+       inline box and the caret stays uniform across every line. */
+    padding: 0 0.3em;
     border-radius: 0.25em;
     text-decoration: none;
     cursor: pointer;
@@ -211,6 +311,279 @@
     background-color: transparent;
   }
 
+  /* AI-edit gutter — coloured 3px bar painted to the left of any
+     top-level block touched by an unreviewed ai-edit commit. The
+     decoration is `Decoration.node`, so the class lands on the
+     block's own element; position:relative + ::before paints the
+     bar in the margin without affecting layout.
+       add     — green (insertion)
+       replace — amber (mixed add+remove)
+       remove  — red   (pure deletion)
+     `left` matches the editor's left padding so the bar sits in the
+     visible gutter rather than overlapping body text. */
+  .ProseMirror .ai-edit-gutter {
+    position: relative;
+  }
+  .ProseMirror .ai-edit-gutter::before {
+    content: '';
+    position: absolute;
+    left: -1rem;
+    top: 0.15em;
+    bottom: 0.15em;
+    width: 3px;
+    border-radius: 2px;
+    background-color: var(--ai-edit-gutter-color, var(--muted-foreground));
+    pointer-events: none;
+  }
+  .ProseMirror .ai-edit-gutter--add {
+    --ai-edit-gutter-color: oklch(0.72 0.18 145);
+  }
+  .ProseMirror .ai-edit-gutter--replace {
+    --ai-edit-gutter-color: oklch(0.78 0.16 80);
+  }
+  .ProseMirror .ai-edit-gutter--remove {
+    --ai-edit-gutter-color: oklch(0.68 0.20 25);
+  }
+
+  /* Pending AI change preview — `inlineReviewPlugin` mounts these
+     decorations on the active editor view. Two coordinated parts
+     for each edit:
+       1. `.pending-mark--remove` — `Decoration.inline` painting the
+          existing text that would be removed (replace / delete).
+       2. `.pending-add-widget--{inline|block}` — `Decoration.widget`
+          carrying the added content in green, inline or block
+          depending on the shape of `after`.
+     Plus a single `.pending-unplaced-banner` at the top of the doc
+     when any pending edit can't be pinned to a position. */
+
+  /* Inline mark for removed text. Applied to the actual text in the
+     doc — that range gets a red tint + strikethrough, but the text
+     itself isn't mutated (PM Decoration.inline only adds CSS). A
+     Reject leaves zero residue; a Keep does the real edit via the
+     disk-write path. */
+  .ProseMirror .pending-mark--remove {
+    background-color: color-mix(in oklch, oklch(0.68 0.20 25) 14%, transparent);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in oklch, oklch(0.68 0.20 25) 60%, transparent);
+    border-radius: 2px;
+    padding: 0 0.05em;
+  }
+
+  /* Mark-native pending (the live editor's `materialize` mode). Block-
+     shaped pending content lives in the doc as real nodes carrying a
+     `proofSuggestion` mark, rendered by Milkdown's NodeViews so it
+     matches committed body exactly. The mark span only tints the text:
+       - insert → green (added, not yet on disk — see stripPendingFromDoc)
+       - delete → red + strikethrough (slated for removal on Keep)
+     Mirrors the .pending-add-widget__content / .pending-mark--remove
+     colours so the two rendering paths look identical. */
+  .ProseMirror span[data-proof='suggestion'][data-kind='insert'] {
+    background-color: color-mix(in oklch, oklch(0.72 0.18 145) 14%, transparent);
+    border-radius: 2px;
+  }
+  .ProseMirror span[data-proof='suggestion'][data-kind='delete'] {
+    background-color: color-mix(in oklch, oklch(0.68 0.20 25) 14%, transparent);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in oklch, oklch(0.68 0.20 25) 60%, transparent);
+    border-radius: 2px;
+  }
+  /* User highlight on a saved article — a warm amber wash behind the text.
+     No cursor override (natural text I-beam — selecting / clicking is
+     handled by a plugin, not a button) and no box-shadow ring (it read as
+     a boxy block). Background only, so no layout / caret impact. */
+  .ProseMirror span[data-highlight] {
+    background-color: color-mix(in oklch, oklch(0.85 0.16 85) 32%, transparent);
+    border-radius: 2px;
+    transition: background-color 120ms ease;
+  }
+  /* Hover: deepen the wash as an interaction affordance, so the reader can
+     tell the highlight is clickable (a click selects it + opens the menu).
+     Background only and the I-beam cursor is kept, so the text stays
+     directly editable and the line box / caret are untouched. */
+  .ProseMirror span[data-highlight]:hover {
+    background-color: color-mix(in oklch, oklch(0.85 0.16 85) 46%, transparent);
+  }
+
+  /* Widget for added content. Inline span flows next to the cursor
+     for paragraph-shaped `after` (small phrase / single sentence);
+     block div for content that carries headings, lists, multiple
+     paragraphs. */
+  .ProseMirror .pending-add-widget {
+    /* Suppress macOS / WKWebView selection backdrop over the
+       widget DOM — same fix the card NodeViews use. Without this
+       the widget's tint stacks with the OS accent paint when the
+       cursor sits adjacent. */
+  }
+  .ProseMirror .pending-add-widget ::selection,
+  .ProseMirror .pending-add-widget::selection {
+    background: transparent;
+  }
+  .ProseMirror .pending-add-widget--inline {
+    /* Plain `inline` (not inline-flex) so the added text sits in the
+       same line box as the surrounding text — an inline-flex wrapper
+       established a taller line box, making the green box taller than
+       the red strike and inflating the caret next to it. The chip's
+       spacing rides on its own `margin-left` (below), so dropping the
+       flex `gap` is safe. */
+    display: inline;
+    vertical-align: baseline;
+    margin: 0 0.15em;
+  }
+  /* Keep the chip from stretching the text line — center it on the
+     line box instead of letting its button height set the line. */
+  .ProseMirror .pending-add-widget--inline .pending-edit__actions {
+    vertical-align: middle;
+  }
+  .ProseMirror .pending-add-widget--block {
+    display: block;
+    margin: 0.15em 0;
+  }
+  .ProseMirror .pending-add-widget__content {
+    background-color: color-mix(in oklch, oklch(0.72 0.18 145) 14%, transparent);
+    border-radius: 2px;
+    padding: 0 0.25em;
+  }
+  /* Block-flavour content lets the inner ProseMirror render headings
+     / lists / blockquotes with natural typography while still
+     carrying the green tint via the tone class (see below). The
+     content wrapper here only provides spacing. */
+  .ProseMirror .pending-add-widget--block .pending-add-widget__content {
+    background-color: transparent;
+    padding: 0;
+  }
+
+  /* Top-of-doc banner shown when one or more pending changes can't
+     be pinned to a position in this page. The widget directs the
+     user to the Review panel so the change can still be decided —
+     we never silently lose pending data, never place it at a
+     misleading position. */
+  .ProseMirror .pending-unplaced-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    margin: 0 0 0.75em 0;
+    padding: 0.4em 0.6em;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background-color: var(--muted);
+    font-size: 12px;
+  }
+  .pending-unplaced-banner__text {
+    color: var(--muted-foreground);
+  }
+  .pending-unplaced-banner__link {
+    appearance: none;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--info, oklch(0.72 0.15 230));
+    font-weight: 500;
+    font-family: inherit;
+    font-size: inherit;
+    padding: 0;
+  }
+  .pending-unplaced-banner__link:hover {
+    text-decoration: underline;
+  }
+
+  /* Reject / Keep chip. Reused by the Review panel's PendingDetail
+     so both surfaces look identical. Default flow = block, right-
+     aligned (panel + inline-widget block flavour use this). The
+     inline widget overrides below to flow next to text instead. */
+  .pending-edit__actions {
+    display: flex;
+    gap: 2px;
+    width: fit-content;
+    margin-left: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px;
+    background-color: var(--muted);
+    align-items: center;
+  }
+  /* Inline widget: chip flows next to the added text instead of
+     floating right on its own line. */
+  .ProseMirror .pending-add-widget--inline .pending-edit__actions {
+    display: inline-flex;
+    margin-left: 0.35em;
+    width: auto;
+  }
+  .pending-edit__action {
+    appearance: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+    background-color: transparent;
+    color: var(--muted-foreground);
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .pending-edit__action--keep {
+    color: var(--info, oklch(0.72 0.15 230));
+  }
+  .pending-edit__action--keep:hover {
+    background-color: color-mix(in oklch, var(--info, oklch(0.72 0.15 230)) 15%, transparent);
+  }
+  .pending-edit__action--reject:hover {
+    background-color: color-mix(in oklch, var(--muted-foreground) 12%, transparent);
+    color: var(--foreground);
+  }
+  .pending-edit__action[disabled] {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  /* Prose-mode tone blocks (DiffHunkProse / proseDom). The block is
+     a `.ProseMirror` host carrying a tone modifier; rules below
+     paint the inner content with a faint bg tint and reset
+     paragraph margins so the highlight hugs the editor's natural
+     line height. Headings / lists / blockquotes get the same tint
+     since they're block elements rendered by the editor's
+     serializer.
+     Selector matches the bare `.pending-edit-tone` class so it
+     applies in both surfaces — the inline widget (inside the live
+     editor's `.ProseMirror`) AND the Review panel (rendered in its
+     own React tree, no `.ProseMirror` ancestor). */
+  .pending-edit-tone :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, pre) {
+    margin-top: 0;
+    margin-bottom: 0;
+    padding: 0 0.3em;
+    border-radius: 2px;
+  }
+  .pending-edit-tone--add :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, pre) {
+    background-color: color-mix(in oklch, oklch(0.72 0.18 145) 14%, transparent);
+  }
+  .pending-edit-tone--remove :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, pre) {
+    background-color: color-mix(in oklch, oklch(0.68 0.20 25) 12%, transparent);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in oklch, oklch(0.68 0.20 25) 60%, transparent);
+  }
+  /* List rendering — restore default bullet / number markers inside
+     the preview tone block. The editor body wraps its lists in a
+     custom NodeView that draws its own markers (and so `.ProseMirror
+     ul/ol { list-style: none; padding-left: 0 }` is set above to
+     prevent duplicate markers). But preview surfaces (Review panel
+     diff, inline-widget block content) render via plain DOMSerializer
+     with no NodeView — without overriding the list-style:none
+     inherited from `.ProseMirror`, list items render with no marker
+     at all. Restoring disc / decimal makes the preview match what
+     the user sees on the live page once Keep lands. */
+  .pending-edit-tone ul {
+    list-style: disc;
+    padding-left: 1.5em;
+  }
+  .pending-edit-tone ol {
+    list-style: decimal;
+    padding-left: 1.5em;
+  }
+  .pending-edit-tone li {
+    display: list-item;
+  }
+
   /* Empty-body placeholder — the placeholderPlugin tags the first
      block with data-placeholder=<hint> when the doc is effectively
      empty (one block, no text or just a ZWS). ::before paints the
@@ -223,6 +596,15 @@
     pointer-events: none;
     position: absolute;
     opacity: 0.6;
+  }
+  /* Hide the placeholder when the inline review plugin is showing
+     any pending widget or unplaced-banner overlay — the page isn't
+     visually empty, so the "Start writing…" hint contradicts what
+     the user sees. The class is set by inlineReviewPlugin's
+     `props.attributes` and only persists while pending entries
+     exist for this page. */
+  .ProseMirror.pm-has-pending [data-placeholder]::before {
+    content: none;
   }
 
   .ProseMirror:focus,
@@ -277,6 +659,18 @@
   .ProseMirror .video-card video {
     -webkit-user-select: none;
     user-select: none;
+  }
+  /* Image presentation: never overflow the column (max-width), keep the
+     aspect ratio (height auto), center, and soften the corners. Small
+     images (e.g. downloaded thumbnails) stay at natural size — centered
+     rather than upscaled, so they read crisp — while large images shrink
+     to fit. Applies to all editor images, saved articles included. */
+  .ProseMirror .image-card img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin-inline: auto;
+    border-radius: 8px;
   }
   .ProseMirror .image-card.ProseMirror-selectednode,
   .ProseMirror .video-card.ProseMirror-selectednode,
@@ -553,6 +947,20 @@
     --tw-prose-invert-td-borders: var(--border);
   }
 
+  /* Graphite is a deliberately cool (hue-258) palette, so its
+     --muted-foreground carries a faint blue that bleeds into the chat
+     markdown's bullets/counters. Neutralise just those decorations to
+     a true gray, keeping the same lightness (0.62). Scoped to
+     .palette-graphite so plain dark mode is untouched; the invert
+     tokens are the ones that apply because graphite also sets .dark
+     (the chat prose runs in prose-invert there). */
+  .palette-graphite .prose {
+    --tw-prose-bullets: oklch(0.62 0 0);
+    --tw-prose-counters: oklch(0.62 0 0);
+    --tw-prose-invert-bullets: oklch(0.62 0 0);
+    --tw-prose-invert-counters: oklch(0.62 0 0);
+  }
+
   .mark-focused {
     outline: 2px solid rgba(59, 130, 246, 0.6);
     outline-offset: 1px;
@@ -806,13 +1214,43 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --radius: 0.25rem;
+  /* Base radius for the Tailwind v4 radius scale. All `rounded-*`
+     utilities derive from this (see @theme inline below), so a single
+     bump propagates app-wide. Sized to sit one step inside the Tahoe
+     ~26pt window corner — concentric, not competing. */
+  --radius: 0.625rem;
+  /* Window/surface geometry. Two independent knobs (corner curve and
+     edge gaps) read by the layout via arbitrary-value classes, so the
+     chain stays in one place instead of drifting across three files.
+     NOTE: html root is 14px, so rem utilities render at 0.875x their
+     16px nominal size. These gaps use px so they stay absolute, like
+     the window corner they answer to.
+
+     --window-radius: the macOS Tahoe toolbar-window corner (about 26px,
+       back-derived: the known-good card was rounded-3xl, about 19px,
+       sitting a 7px gap inside the window). Reference only; nothing
+       renders it. It bounds the curve below.
+     --surface-radius: the card and editor corner curve. A DESIGN value,
+       NOT gap-derived, so the curve stays put when the gap changes. Keep
+       it at or above (--window-radius minus --window-inset); otherwise a
+       squarer corner pokes into the window rounding. Floor here is
+       26 minus 8 = 18px and we use 22px, so we are safe.
+     --window-inset: gap from the window edge (right-panel card pr- and
+       SidebarInset my- and ml-).
+     --surface-inset: gap from the card to the floating composer (footer
+       padding). The transcript text column derives from it too. */
+  --window-radius: 26px;
+  --surface-radius: 22px;
+  --window-inset: 8px;
+  --surface-inset: 8px;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-active: oklch(0.925 0 0);
+  --sidebar-active-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
   --proof-ai: oklch(0.78 0.10 270 / 0.18);
@@ -867,6 +1305,8 @@
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-active: oklch(0.17 0 0);
+  --sidebar-active-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
   --proof-ai: oklch(0.68 0.12 270 / 0.30);
@@ -902,12 +1342,14 @@
   --border: oklch(1 0 0 / 8%);
   --input: oklch(1 0 0 / 12%);
   --ring: oklch(0.45 0 0);
-  --sidebar: oklch(0.185 0 0);
+  --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.93 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.93 0 0);
   --sidebar-accent: oklch(1 0 0 / 10%);
   --sidebar-accent-foreground: oklch(0.93 0 0);
+  --sidebar-active: oklch(0.165 0 0);
+  --sidebar-active-foreground: oklch(0.93 0 0);
   --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.45 0 0);
   --sidebar-trigger: oklch(0.50 0 0);
@@ -933,12 +1375,14 @@
   --border: oklch(1 0 0 / 8%);
   --input: oklch(1 0 0 / 12%);
   --ring: oklch(0.47 0.01 258);
-  --sidebar: oklch(0.225 0.007 258);
+  --sidebar: oklch(0.245 0.007 258);
   --sidebar-foreground: oklch(0.93 0.003 258);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.93 0.003 258);
   --sidebar-accent: oklch(1 0 0 / 10%);
   --sidebar-accent-foreground: oklch(0.93 0.003 258);
+  --sidebar-active: oklch(0.205 0.007 258);
+  --sidebar-active-foreground: oklch(0.93 0.003 258);
   --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.47 0.01 258);
   --sidebar-trigger: oklch(0.51 0.005 258);
@@ -964,12 +1408,14 @@
   --border: oklch(0.91 0.025 95 / 10%);
   --input: oklch(0.91 0.025 95 / 14%);
   --ring: oklch(0.45 0.04 100);
-  --sidebar: oklch(0.165 0.015 100);
+  --sidebar: oklch(0.185 0.015 100);
   --sidebar-foreground: oklch(0.91 0.025 95);
   --sidebar-primary: oklch(0.72 0.14 92);
   --sidebar-primary-foreground: oklch(0.165 0.015 100);
   --sidebar-accent: oklch(0.91 0.025 95 / 10%);
   --sidebar-accent-foreground: oklch(0.91 0.025 95);
+  --sidebar-active: oklch(0.155 0.015 100);
+  --sidebar-active-foreground: oklch(0.91 0.025 95);
   --sidebar-border: oklch(0.91 0.025 95 / 8%);
   --sidebar-ring: oklch(0.45 0.04 100);
   --sidebar-trigger: oklch(0.55 0.03 100);
@@ -995,12 +1441,14 @@
   --border: oklch(0.23 0.008 258 / 10%);
   --input: oklch(0.23 0.008 258 / 13%);
   --ring: oklch(0.55 0.01 258);
-  --sidebar: oklch(0.93 0.005 258);
+  --sidebar: oklch(0.91 0.005 258);
   --sidebar-foreground: oklch(0.23 0.008 258);
   --sidebar-primary: oklch(0.23 0.008 258);
   --sidebar-primary-foreground: oklch(0.97 0.004 258);
   --sidebar-accent: oklch(0.23 0.008 258 / 6%);
   --sidebar-accent-foreground: oklch(0.23 0.008 258);
+  --sidebar-active: oklch(0.855 0.005 258);
+  --sidebar-active-foreground: oklch(0.23 0.008 258);
   --sidebar-border: oklch(0.23 0.008 258 / 10%);
   --sidebar-ring: oklch(0.55 0.01 258);
   --sidebar-trigger: oklch(0.45 0.008 258);
@@ -1026,12 +1474,14 @@
   --border: oklch(0 0 0 / 12%);
   --input: oklch(0 0 0 / 15%);
   --ring: oklch(0.55 0 0);
-  --sidebar: oklch(0.855 0 0);
+  --sidebar: oklch(0.835 0 0);
   --sidebar-foreground: oklch(0.21 0 0);
   --sidebar-primary: oklch(0.21 0 0);
   --sidebar-primary-foreground: oklch(0.93 0 0);
   --sidebar-accent: oklch(0 0 0 / 7%);
   --sidebar-accent-foreground: oklch(0.21 0 0);
+  --sidebar-active: oklch(0.77 0 0);
+  --sidebar-active-foreground: oklch(0.21 0 0);
   --sidebar-border: oklch(0 0 0 / 12%);
   --sidebar-ring: oklch(0.55 0 0);
   --sidebar-trigger: oklch(0.45 0 0);
@@ -1081,27 +1531,43 @@
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-active: var(--sidebar-active);
+  --color-sidebar-active-foreground: var(--sidebar-active-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-trigger: var(--sidebar-trigger);
   --font-heading: var(--font-sans);
-  --font-sans: 'Geist Variable', sans-serif;
+  /* Default to Pretendard (Latin + Korean, unified metrics). Latin-only
+     choices (Geist / Nunito) opt back in via their html.font-* class. */
+  --font-sans: 'Pretendard Variable', sans-serif;
 
   /* z-index scale. shadcn primitives bake z-50 into their styles for both
      popovers and modals (they coexist via portal structure, not stacking
      order), so popover and modal map to the same numeric value here —
-     names diverge only to capture intent at the call site. */
-  --z-sticky: 10;
-  --z-overlay: 30;
-  --z-popover: 50;
-  --z-modal: 50;
+     names diverge only to capture intent at the call site.
+     Tailwind v4 generates utilities from the --z-index-* namespace, not
+     --z-*; an earlier `--z-sticky` form silently never emitted a z-sticky
+     class, so all our header chrome was rendering at z:auto and getting
+     painted under siblings that came later in the DOM. */
+  --z-index-sticky: 10;
+  --z-index-overlay: 30;
+  --z-index-popover: 50;
+  --z-index-modal: 50;
 
   /* Column header rhythm. Every top-of-column band — sidebar header,
      editor header, chat panel tabs — uses --header-h so the three
-     start at the same Y. --traffic-light-w reserves the macOS
-     stoplight zone on whichever surface owns the window's left edge
-     (sidebar when open, editor when sidebar is collapsed). */
-  --header-h: 2.25rem;
+     start at the same Y. Derived from --traffic-light-center-y (set
+     at runtime by useWindowChrome via the get_traffic_light_y Rust
+     command). The header is exactly 2× the stoplight center, so an
+     items-center'd row in it lands its icons on the same line as the
+     macOS close button. Fallback 26px gives a 52px header that matches
+     the NSWindowToolbarStyle.unified band — used before measurement
+     completes and on non-macOS platforms. --traffic-light-w reserves
+     the macOS stoplight zone on whichever surface owns the window's
+     left edge (sidebar when open, editor when sidebar is collapsed). */
+  --traffic-light-center-y: 26px;
+  --header-h: calc(var(--traffic-light-center-y) * 2);
+  --footer-h: 2.25rem;
   --traffic-light-w: 5rem;
 
   /* Editor prose scale. Body holds at 16px so writing surfaces stay
@@ -1120,4 +1586,133 @@
   --prose-lh-heading: 1.25;
   --prose-gap-block: 14px;
   --prose-gap-heading: 28px;
+
+  /* ── Tahoe Design Tokens (Layer 1: Numeric) ──────────────────────────
+     Raw scale values aligned to macOS Tahoe's 4pt grid and SF Pro
+     type ladder. Layer 2 below aliases these into semantic tokens so
+     components reference intent ("text-body", "button-h-base") rather
+     than numbers. */
+
+  /* Spacing — 4pt grid. Tailwind utilities (p-1, m-2, gap-3 ...) already
+     consume these implicitly via Tailwind v4; the named tokens exist so
+     component-level CSS can reference them by intent. */
+  --space-1: 0.25rem;   /* 4 */
+  --space-2: 0.5rem;    /* 8 */
+  --space-3: 0.75rem;   /* 12 */
+  --space-4: 1rem;      /* 16 */
+  --space-5: 1.25rem;   /* 20 */
+  --space-6: 1.5rem;    /* 24 */
+  --space-8: 2rem;      /* 32 */
+  --space-10: 2.5rem;   /* 40 */
+  --space-12: 3rem;     /* 48 */
+
+  /* Font size — Apple HIG type ladder bumped +1px for the webview
+     environment. Native macOS 13pt body looks fine because of system
+     subpixel + grid fitting, but WKWebView lacks those optimizations
+     so the same 13px CSS reads visibly smaller. Linear / Notion /
+     Cursor all land on 14px body for the same reason. Token names
+     keep the HIG semantic (Body / Callout / Footnote) — only the
+     raw values shift up by 1. */
+  --font-size-10: 11px;  /* Caption  */
+  --font-size-11: 12px;  /* Footnote */
+  --font-size-12: 13px;  /* Callout  */
+  --font-size-13: 14px;  /* Body / Headline */
+  --font-size-15: 16px;  /* Title 3 */
+  --font-size-17: 18px;  /* Title 2 */
+  --font-size-22: 24px;  /* Title 1 */
+
+  /* Font weight */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Line height */
+  --line-height-tight: 1.25;
+  --line-height-snug: 1.35;
+  --line-height-normal: 1.45;
+  --line-height-loose: 1.7;
+
+  /* Letter spacing. Korean is unaffected by tracking, but mixed-script
+     UI labels and headings benefit from a touch of tightening at the
+     larger sizes. Caption stays neutral to preserve legibility. */
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
+
+  /* Control height — macOS standard ladder. sm=icon button, md=chip,
+     base=default button, lg=toolbar / capsule, xl=prominent action. */
+  --control-h-sm: 1.5rem;       /* 24 */
+  --control-h-md: 1.75rem;      /* 28 */
+  --control-h-base: 2rem;       /* 32 */
+  --control-h-lg: 2.5rem;       /* 40 */
+  --control-h-xl: 2.75rem;      /* 44 */
+
+  /* Motion. Tahoe's signature spring damping for material transitions
+     plus a more linear standard easing for color-only fades. Durations
+     are intentionally short — macOS motion never feels sluggish. */
+  --ease-tahoe: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+
+  /* Shadow tiers — elevation layered from subtle to floating. Window-
+     level shadow is owned by the native NSWindow, not CSS. We also
+     alias Tailwind's default shadow utilities (sm/md/lg/xl/2xl) to
+     these tokens so every shadow-X class in the app picks up the
+     softer macOS-toned shadow scale without per-component edits. */
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-2: 0 4px 12px rgb(0 0 0 / 0.10);
+  --shadow-3: 0 8px 24px rgb(0 0 0 / 0.14);
+  --shadow-sm: var(--shadow-1);
+  --shadow-md: var(--shadow-2);
+  --shadow-lg: var(--shadow-2);
+  --shadow-xl: var(--shadow-3);
+  --shadow-2xl: var(--shadow-3);
+
+  /* ── Tahoe Design Tokens (Layer 2: Semantic) ─────────────────────────
+     Intent-named aliases. Components should prefer these over Layer 1
+     so a future scale tweak (e.g. bump --font-size-13 to 14) propagates
+     without touching call sites. */
+
+  /* Text scale — Apple HIG names (Caption, Footnote, ... LargeTitle). */
+  --text-caption: var(--font-size-10);
+  --text-footnote: var(--font-size-11);
+  --text-callout: var(--font-size-12);
+  --text-body: var(--font-size-13);
+  --text-headline: var(--font-size-13);  /* same size as body, semibold */
+  --text-title-3: var(--font-size-15);
+  --text-title-2: var(--font-size-17);
+  --text-title-1: var(--font-size-22);
+
+  /* Component heights. Header rhythm continues to use --header-h above
+     (now 2.5rem) so the cross-column alignment tokens stay one source
+     of truth. */
+  --toolbar-h: var(--control-h-lg);             /* 40 — header row */
+  --sidebar-row-h: var(--control-h-base);       /* 32 — sidebar tree row */
+  --button-h-sm: var(--control-h-md);           /* 28 — small action */
+  --button-h-base: var(--control-h-base);       /* 32 — default action */
+  --capsule-h: var(--control-h-base);           /* 32 — tinted capsule */
+
+  /* Padding / gap semantic — intent-named so the call site reads
+     declaratively (e.g. "padding-card" instead of p-4). */
+  --gap-inline: var(--space-2);                 /* 8 — inline item gap */
+  --gap-row: var(--space-3);                    /* 12 — between rows */
+  --gap-section: var(--space-6);                /* 24 — between sections */
+  --padding-card: var(--space-4);               /* 16 */
+  --padding-row-x: var(--space-3);              /* 12 — horizontal row */
+  --padding-row-y: var(--space-2);              /* 8 — vertical row */
+
+  /* Motion semantic — pair the duration with the right easing per
+     intent. hover = quick color fade, state = squishy material change,
+     layout = slower morph for size/position. */
+  --motion-hover: var(--duration-fast) var(--ease-standard);
+  --motion-state: var(--duration-base) var(--ease-tahoe);
+  --motion-layout: var(--duration-slow) var(--ease-tahoe);
+
+  /* Elevation semantic. */
+  --elevation-sticky: var(--shadow-1);
+  --elevation-card: var(--shadow-2);
+  --elevation-popover: var(--shadow-3);
 }

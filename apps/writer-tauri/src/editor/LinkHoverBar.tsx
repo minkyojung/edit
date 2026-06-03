@@ -128,7 +128,7 @@ export function LinkHoverBar() {
           variant="ghost"
           size="sm"
           onClick={handleOpen}
-          className="h-7 gap-1.5 px-2 text-[12px] font-medium"
+          className="h-7 gap-1.5 px-2 text-[13px] font-medium"
           title={active.href}
         >
           <IconExternalLink size={13} stroke={2} />

@@ -39,7 +39,20 @@ import { isOurRecentWrite } from './vault'
 import { isDirty } from './docFileSync'
 import { buildKnownDocForExternalPath } from './scanVault'
 import { useExternalConflictStore } from '@/state/externalConflictStore'
+import { useGitStore } from '@/state/gitStore'
 import { notify } from './notify'
+
+/** Vault subpaths whose changes count as user-visible activity. Mirrors
+ * the same prefixes gitStore uses to decide which commits to surface
+ * in the Review panel. Any external edit (sidecar built-in Edit tool,
+ * Obsidian, Claude Code CLI, manual fs.write) that lands under one of
+ * these dirs gets routed through `noteActivity` so chat-turn or boot-
+ * safety commits can pick it up. */
+const ACTIVITY_PREFIXES = ['daily/', 'wiki/', 'writing/'] as const
+
+function isActivityPath(rel: string): boolean {
+  return ACTIVITY_PREFIXES.some((p) => rel.startsWith(p))
+}
 
 let activeUnwatch: (() => void) | null = null
 
@@ -238,6 +251,14 @@ function dispatchEvent(event: { type: unknown }, paths: string[]): void {
  *      re-reads the body and applies it to the live Y.Doc.
  */
 function handleExternalReload(rel: string): void {
+  // Tell gitStore an external write happened so the next chat-turn
+  // commit (or the boot safety net) picks it up. We run this *before*
+  // the slug / handle gates so even a write to a doc that isn't
+  // currently open still flows into git. `noteActivity` is idempotent
+  // (Set.add), so duplicate calls from our own write path don't hurt.
+  if (isActivityPath(rel)) {
+    useGitStore.getState().noteActivity(rel)
+  }
   const state = useDocsStore.getState()
   const slug = findSlugByVaultPath(state.knownDocs, rel)
   if (!slug) return
@@ -292,6 +313,12 @@ function handleExternalReload(rel: string): void {
  *      the doc appears under its placement group.
  */
 function handleExternalAdd(rel: string): void {
+  // Track the new file for the next commit so a sidecar-created wiki
+  // page (or one made by an external tool like Obsidian) flows into
+  // git history. Same idempotent path as handleExternalReload.
+  if (isActivityPath(rel)) {
+    useGitStore.getState().noteActivity(rel)
+  }
   const state = useDocsStore.getState()
   if (findSlugByVaultPath(state.knownDocs, rel)) return
   void buildKnownDocForExternalPath(rel, state.knownDocs)
@@ -326,6 +353,13 @@ function handleExternalAdd(rel: string): void {
  * guessing them with a confirm dialog would feel paternalistic.
  */
 function handleExternalRemove(rel: string): void {
+  // A deletion is still an activity — `git add -A` in the next commit
+  // will turn the missing file into a `D` change. We note it so the
+  // commit happens at all (otherwise dirtyPaths stays empty and the
+  // chat-turn commit gate skips).
+  if (isActivityPath(rel)) {
+    useGitStore.getState().noteActivity(rel)
+  }
   const state = useDocsStore.getState()
   const slug = findSlugByVaultPath(state.knownDocs, rel)
   if (!slug) return

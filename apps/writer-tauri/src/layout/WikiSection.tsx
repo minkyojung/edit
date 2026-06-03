@@ -1,9 +1,4 @@
-// Wiki pages section for the sidebar — two groups, both flat:
-//
-//   System  → agent meta surface (conventions / log / index).
-//             Read-only from the user's perspective; the LLM
-//             writes / maintains these pages on dedicated prompt
-//             channels (not via the wiki catalog).
+// Wiki pages section for the sidebar — a single flat group:
 //
 //   Wiki    → user-accumulated content pages (`wiki:custom-*`).
 //             Karpathy-style flat list: every entity is its own
@@ -11,7 +6,13 @@
 //             nesting. Created via the group-level `+` button.
 //             Categories like "People" / "Books" are NOT pages
 //             here — entities sit side by side and the user finds
-//             them through the list, the index page, or search.
+//             them through the list or search.
+//
+// The machine-only meta pages (`system:log` / `system:index`) are no
+// longer surfaced here — they're LLM context artifacts, not human
+// navigation targets. Profile (`wiki:profile`) and Conventions
+// (`system:conventions`) moved to fixed footer rows (see Sidebar.tsx):
+// always-present, low-frequency surfaces that sit beside Archived.
 //
 // The previous tree-based UI (DocTreeNode + drag/drop + context-
 // menu Move to…) was replaced when ingest dropped its
@@ -22,9 +23,9 @@
 
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { PendingDot } from './PendingDot'
 import {
   IconArchive,
-  IconFileDescription,
   IconPlus,
   IconRefresh,
   IconLoader2,
@@ -69,29 +70,24 @@ export function WikiSection() {
     navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
   }
 
-  const systemDocs = useMemo(
+  // Flat list of all live wiki content pages. Order = catalog
+  // insertion order (zustand persist preserves array order); no sort
+  // applied so the most recent creations land at the bottom and the
+  // user's older pages stay where they were.
+  //
+  // Profile is excluded — it now lives as a fixed footer row alongside
+  // Conventions / Archived (low-frequency, always-present surfaces),
+  // not in the browsable wiki list.
+  const wikiDocs = useMemo(
     () =>
       knownDocs.filter(
-        (d) => !d.archivedAt && getDocPolicy(d).sidebarGroup === 'system',
+        (d) =>
+          !d.archivedAt &&
+          getDocPolicy(d).sidebarGroup === 'wiki' &&
+          d.type !== 'wiki:profile',
       ),
     [knownDocs],
   )
-  // Flat list of all live wiki pages. Order = catalog insertion
-  // order (zustand persist preserves array order); no sort applied
-  // so the most recent creations land at the bottom and the user's
-  // older pages stay where they were.
-  //
-  // Profile is pinned to the top of the wiki group regardless of
-  // insertion order — it's the canonical "about me" page, surfaced
-  // first for discoverability (Tana / Notion convention).
-  const { profileDoc, otherWikiDocs } = useMemo(() => {
-    const wiki = knownDocs.filter(
-      (d) => !d.archivedAt && getDocPolicy(d).sidebarGroup === 'wiki',
-    )
-    const profile = wiki.find((d) => d.type === 'wiki:profile') ?? null
-    const others = wiki.filter((d) => d.type !== 'wiki:profile')
-    return { profileDoc: profile, otherWikiDocs: others }
-  }, [knownDocs])
 
   const [syncing, setSyncing] = useState(false)
   const handleSyncClick = async () => {
@@ -131,24 +127,6 @@ export function WikiSection() {
 
   return (
     <>
-      {systemDocs.length > 0 && (
-        <SidebarGroup>
-          <SidebarGroupLabel>System</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {systemDocs.map((doc) => (
-                <SidebarMenuItem key={doc.slug} data-slug={doc.slug}>
-                  <SystemRow
-                    doc={doc}
-                    isActive={doc.slug === activeSlug}
-                    onSelect={() => onSelectDoc(doc.slug)}
-                  />
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      )}
       <SidebarGroup>
         <SidebarGroupLabel>Wiki</SidebarGroupLabel>
         {/* Sync sits left of the `+` so the safer action gets the
@@ -168,22 +146,7 @@ export function WikiSection() {
         </SidebarGroupAction>
         <SidebarGroupContent>
           <SidebarMenu>
-            {profileDoc && (
-              <SidebarMenuItem
-                key={profileDoc.slug}
-                data-slug={profileDoc.slug}
-              >
-                {/* Profile uses SystemRow shape — no archive context
-                    menu, since canArchive=false at the policy level
-                    anyway. Pinned at the top of the wiki group. */}
-                <SystemRow
-                  doc={profileDoc}
-                  isActive={profileDoc.slug === activeSlug}
-                  onSelect={() => onSelectDoc(profileDoc.slug)}
-                />
-              </SidebarMenuItem>
-            )}
-            {otherWikiDocs.map((doc) => (
+            {wikiDocs.map((doc) => (
               <SidebarMenuItem key={doc.slug} data-slug={doc.slug}>
                 <WikiRow
                   doc={doc}
@@ -197,25 +160,6 @@ export function WikiSection() {
         </SidebarGroupContent>
       </SidebarGroup>
     </>
-  )
-}
-
-function SystemRow({
-  doc,
-  isActive,
-  onSelect,
-}: {
-  doc: KnownDoc
-  isActive: boolean
-  onSelect: () => void
-}) {
-  const label = useDocLabel(doc.slug)
-  const fallback = doc.type.replace(/^(?:wiki|system):/, '')
-  return (
-    <SidebarMenuButton onClick={onSelect} isActive={isActive}>
-      <IconFileDescription />
-      <span>{label || fallback}</span>
-    </SidebarMenuButton>
   )
 }
 
@@ -236,7 +180,7 @@ function WikiRow({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <SidebarMenuButton onClick={onSelect} isActive={isActive}>
-          <IconFileDescription />
+          <PendingDot slug={doc.slug} />
           <span>{label || fallback}</span>
         </SidebarMenuButton>
       </ContextMenuTrigger>

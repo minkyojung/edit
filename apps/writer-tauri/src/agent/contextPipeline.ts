@@ -1,110 +1,98 @@
-// Context engineering pipeline facade — one call site that pulls
-// Tier 1 (catalog) + Tier 2 (hot pages) + conventions, plus the
-// names of Tier 3 tools the consumer should enable on this run.
+// Context engineering pipeline facade — one call site that assembles
+// the LLM-facing context bundle for both chat and ingest consumers.
 //
-// Every consumer that calls the LLM with wiki context (chat,
-// ingest, lint) routes through assembleContext. The benefit is
-// twofold:
+// As of the Karpathy / Claude Code alignment, chat and ingest share
+// the same prefix shape:
 //
-//   1. Single place to evolve "what does the LLM see?". Want to
-//      add a recent-activity block, drop conventions for a token-
-//      tight run, swap Tier 2 ranking? One file changes.
+//   prefix (caching-friendly):
+//     - CLAUDE.md         (vault schema, user-editable)
+//     - SELF PROFILE      (wiki:profile body)
+//     - CONVENTIONS       (wiki:conventions body)
 //
-//   2. Symmetric consumer code. chat / ingest / lint all assemble
-//      the same shape, then format it for their own prompt. No
-//      one re-implements catalog fetching or hot-page selection.
+//   suffix (consumer-specific):
+//     - chat embeds the current document past the SDK cache boundary
+//     - ingest embeds the new daily blocks as the user message
 //
-// The bundle returns raw strings + structured page bodies, NOT a
-// pre-formatted prompt block. Each consumer decides how to layer
-// the pieces into its system prompt (e.g. ingest pins log entries
-// at the end for cache stability; lint puts the daily under review
-// as the user message; chat threads conventions and index together
-// as cacheable prefix). Centralising the prompt format too would
-// couple unrelated concerns — we keep that local to each consumer.
+// The wiki index + page bodies that the previous ingest shape
+// dumped into the system prompt are intentionally absent: ingest
+// is now an agent loop that uses Read / Glob / Grep to navigate the
+// vault on demand (Anthropic's "Claude Code" pattern, validated
+// across SWE-bench / agentic benchmarks). That fixes the same
+// "unrelated context pulls in random wiki pages" failure mode chat
+// already fixed and lets the two flows share a cache prefix.
 
-import { getWikiIndex } from '@/state/wikiIndex'
-import { readConventions, readSelfProfile } from '@/state/wikiService'
-import { selectHotPages, type WikiPageBody } from './contextSelector'
+import { readClaudeMd, readConventions, readSelfProfile } from '@/state/wikiService'
 
-/** Names of Tier 3 tools available when the sidecar has a vault path.
- * Consumers add these to their relayTools list to opt into LLM-driven
- * page fetch / search. Sidecar (server.mjs) is the source of truth
- * for what's actually registered — these strings just have to match. */
+/** Names of Tier 3 MCP tools the chat path opts into when the
+ * sidecar has a vault path. Ingest does NOT include these in
+ * `relayTools` — it relies on the SDK's built-in Read / Glob / Grep
+ * preset (sidecar enables it via `tools: { preset: 'claude_code' }`)
+ * plus its own `submit_ingest_result` output tool. Listing the chat
+ * tools here keeps the chat call site unchanged. */
 const DEFAULT_TOOLS = ['read_page', 'search_wiki'] as const
 export type Tier3ToolName = (typeof DEFAULT_TOOLS)[number]
 
+export type AssembleContextMode = 'chat' | 'ingest'
+
 export interface ContextBundle {
-  /** Tier 1 — one-line summary of every wiki page. Cheap to ship in
-   * every prompt; the LLM scans this to know what targets exist. */
-  index: string
-  /** Tier 2 — pages mentioned in the source via `[[...]]`, with full
-   * bodies. The LLM gets these without having to fetch them. */
-  hotPages: WikiPageBody[]
-  /** User-editable schema document (`wiki:conventions`). The LLM
-   * prepends these to the system prompt so the user can shape how
-   * the wiki grows without touching code. Empty string when the
-   * page doesn't exist yet or is genuinely blank. */
+  /** Vault-root `CLAUDE.md` body. Karpathy / Claude Code schema
+   * document — vault layout, three-tier rules, operations, tool
+   * usage guidance, citation conventions. Shipped in both modes. */
+  claudeMd: string
+  /** User-editable schema document (`wiki:conventions`). Small,
+   * cache-friendly, central to how the LLM understands the user's
+   * preferences. */
   conventions: string
-  /** User self-profile (`wiki:profile`) body. Prepended to the
-   * system prompt before everything else so chat / ingest always
-   * see "who the user is" first. Empty string when bootstrap was
-   * skipped or the page hasn't been created yet — consumers handle
-   * the empty case by simply omitting the block. */
+  /** User self-profile (`wiki:profile`) body. Grounds "who the user
+   * is" before every downstream block. Empty when the page doesn't
+   * exist yet. */
   selfProfile: string
-  /** Tier 3 tool names the consumer should pass to `relayTools` on
-   * the `claude_chat_start` invoke. Empty array when the caller
+  /** Tier 3 tool names the chat consumer should pass to
+   * `relayTools`. Empty in ingest mode and when the chat caller
    * opts out via `enableTools: false`. */
   tools: Tier3ToolName[]
-  /** Rough character count of the user-facing payload (index +
-   * hot pages + conventions). Useful for diagnostics and for the
-   * consumer to decide whether to drop a section if it's about
-   * to bust the prompt budget. */
+  /** Rough character count of the user-facing payload — diagnostics
+   * only. */
   budgetUsed: number
 }
 
 export interface AssembleContextOptions {
-  /** Pre-read body of the doc the LLM is acting on. Lint passes
-   * the daily being reviewed; ingest passes the daily being
-   * ingested. Wikilinks in this body surface their target pages
-   * as Tier 2 hot context. Mutually exclusive with `text` in
-   * practice; if both arrive they're concatenated for extraction. */
-  docBody?: string
-  /** User chat query. Same wikilink-extraction rules apply. */
-  text?: string
-  /** Total character budget for Tier 2 hot pages. Caller decides
-   * based on remaining headroom after the rest of its prompt is
-   * formatted. Defaults to the selector's internal 30K-char limit. */
-  budgetChars?: number
+  /** Which consumer is calling. Both modes now return the same
+   * shape (CLAUDE.md + profile + conventions); the only behavioural
+   * difference is the default `tools` array. */
+  mode?: AssembleContextMode
   /** When `false`, returns an empty `tools` array — for callers
-   * that explicitly don't want LLM-driven fetch (very rare; today
-   * no consumer sets this). Default `true`. */
+   * that explicitly don't want LLM-driven fetch. Default `true`. */
   enableTools?: boolean
 }
 
 /** Assemble the LLM-facing context bundle. Concurrent reads under
- * the hood — index cache, hot-page selector, conventions read all
- * fire in parallel since they touch independent state. */
+ * the hood — independent state, so we fire them in parallel. */
 export async function assembleContext(
   opts: AssembleContextOptions = {},
 ): Promise<ContextBundle> {
-  const [index, hotPages, conventions, selfProfile] = await Promise.all([
-    getWikiIndex(),
-    selectHotPages(
-      { dailyBody: opts.docBody, queryText: opts.text },
-      { budgetChars: opts.budgetChars },
-    ),
+  const mode: AssembleContextMode = opts.mode ?? 'ingest'
+
+  const [claudeMd, conventions, selfProfile] = await Promise.all([
+    readClaudeMd(),
     readConventions(),
     readSelfProfile(),
   ])
 
+  // Tier-3 MCP tools are chat-specific. Ingest uses the SDK's
+  // built-in Read / Glob / Grep preset + its own structured-output
+  // tool, so the array stays empty here regardless of `enableTools`.
   const tools: Tier3ToolName[] =
-    opts.enableTools === false ? [] : [...DEFAULT_TOOLS]
+    mode === 'chat' && opts.enableTools !== false ? [...DEFAULT_TOOLS] : []
 
   const budgetUsed =
-    index.length +
-    hotPages.reduce((sum, p) => sum + p.body.length, 0) +
-    conventions.length +
-    selfProfile.length
+    claudeMd.length + conventions.length + selfProfile.length
 
-  return { index, hotPages, conventions, selfProfile, tools, budgetUsed }
+  return {
+    claudeMd,
+    conventions,
+    selfProfile,
+    tools,
+    budgetUsed,
+  }
 }

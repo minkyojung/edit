@@ -22,12 +22,13 @@
  */
 
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
+import type { HighlightRecord } from '@/lib/highlightTypes'
 
-/** Slim metadata mirrored into localStorage so the sidebar can list
- * docs (especially closed dailies whose ydoc isn't loaded). The
- * source of truth still lives in each doc's ydoc.getMap('meta');
- * this is a cache, refreshed whenever a doc is created or its meta
- * changes while open. */
+/** Slim metadata read straight from the on-disk `.meta.json` sidecar
+ * (via scanVault at boot) and persisted back through the flush loop's
+ * `buildMetaForKnownDoc`. Phase 5c of the Yjs-removal migration
+ * retired the in-memory Y.Map('meta') that used to be the source of
+ * truth — fields here ARE the source now. */
 export interface KnownDoc {
   slug: string
   /** `system:*` = agent-owned meta surface (conventions / log / index)
@@ -38,20 +39,18 @@ export interface KnownDoc {
    * pre-2026-05-13 single `wiki:*` bucket so sidebar grouping, prompt
    * channels, and write-protection guards line up with Karpathy's
    * schema-vs-wiki separation. */
-  type: 'daily' | 'writing' | `system:${string}` | `wiki:${string}`
+  type: 'daily' | 'writing' | 'article' | `system:${string}` | `wiki:${string}`
   /** YYYY-MM-DD when type === 'daily'. */
   date?: string
   /** Parent doc's slug for tree-nested writing notes. Undefined for
    * roots (daily entries and any independent writing docs). */
   parentId?: string
-  /** Cached mirror of the doc's Y.Text('title') for writing-type
-   * entries. Lets the sidebar / palette / breadcrumb show the right
-   * label even when the doc's collab handle hasn't been opened yet
-   * (lazy-load strategy). Source of truth is still the Y.Text;
-   * this is a snapshot kept in sync via a per-handle observer (set
-   * up in ensureHandle) and bumped immediately at create time so
-   * brand-new docs aren't briefly "Untitled". Daily entries don't
-   * use this — their label derives from `date`. */
+  /** Display title for writing-type entries. Phase 5c of the
+   * Yjs-removal migration retired the Y.Text('title') mirror this
+   * field used to track — `title` is now the authoritative title,
+   * set by `renameDoc` and persisted as the filename via the
+   * rename-on-change machinery in `docFileSync.flushDirty`. Daily
+   * entries don't use this — their label derives from `date`. */
   title?: string
   /** Archive timestamp (ms since epoch). Set when the user archives
    * the doc; cleared when restored. Archived docs stay in knownDocs
@@ -65,6 +64,28 @@ export interface KnownDoc {
    * the doc back where it was. While archived, `parentId` is left
    * undefined so the doc doesn't pollute the live tree index. */
   archivedFromParent?: string
+  /** ISO timestamp recorded when the doc was first created. Phase 5b
+   * of the Yjs-removal migration lifted this off `Y.Map('meta')` and
+   * onto the catalog / `.meta.json` sidecar — see DocMetaFile in
+   * `apps/writer-tauri/src/lib/docPaths.ts`. Absent on legacy docs
+   * whose Y.Map had no createdAt either; DocumentInfoDialog renders
+   * `—` in that case. */
+  createdAt?: string
+  /** Read-it-later source metadata. Set only on `type === 'article'`
+   * docs (saved web pages). Populated by `createArticle` from the
+   * defuddle extraction and persisted via the `.meta.json` sidecar
+   * (DocMetaFile) so they survive restart. `readAt` is set when the
+   * user marks the article read; absent = unread. */
+  sourceUrl?: string
+  siteName?: string
+  faviconUrl?: string
+  description?: string
+  savedAt?: string
+  readAt?: string
+  /** User highlights on this article (type 'article' only). Source of
+   * truth, persisted via `.meta.json`; the editor re-anchors each one to
+   * the body on mount. */
+  highlights?: HighlightRecord[]
 }
 
 /** Coarse classification used by the DOC_POLICIES table below. Every
@@ -80,6 +101,7 @@ export type DocCategory =
   | 'wiki-content'  // agent-created, user-editable wiki page (wiki:custom-*)
   | 'wiki-profile'  // user self-profile — editable + ingest-updatable, non-archivable
   | 'system-meta'   // agent-managed config / metadata (system:conventions/log/index)
+  | 'article'       // user-saved read-later page (external raw source)
 
 /** Capability matrix for one doc category. Every caller that used
  * to ask "can this doc be archived / moved / ingested" reads from
@@ -90,7 +112,7 @@ export interface DocPolicy {
   /** Which sidebar region this doc belongs in. The Day / Week / Month
    * views render `date` and `none` (latter never appears); the
    * Wiki section splits `wiki` (content) and `system` (meta). */
-  sidebarGroup: 'date' | 'wiki' | 'system' | 'none'
+  sidebarGroup: 'date' | 'wiki' | 'system' | 'article' | 'none'
   /** User can soft-delete via archive UI. Karpathy write-ownership
    * invariant: only docs the user authored or owns can be wiped. */
   canArchive: boolean
@@ -244,6 +266,9 @@ export interface DocsState {
    * and refuse empty strings; the caller's UI should validate
    * before calling, but this is a hard backstop. */
   renameDoc: (slug: string, newTitle: string) => boolean
+  /** Toggle a read-it-later article's read/unread state (sets/clears
+   * `readAt` and flushes the sidecar). No-op for non-article docs. */
+  setArticleRead: (slug: string, read: boolean) => void
   /** Switch the sidebar date view. */
   setSidebarTab: (tab: 'day' | 'week' | 'month') => void
   /** Set the Month view's anchor month (YYYY-MM). */

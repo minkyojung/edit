@@ -25,8 +25,22 @@ import { useEffect, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocsStore } from '@/state/docsStore'
 import { useThreadsStore } from '@/state/threadsStore'
+import { useGitStore } from '@/state/gitStore'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { pickVault } from '@/lib/vaultPicker'
+import {
+  gitInit,
+  gitHeadTimestamp,
+  gitEnsureGitignoreEntries,
+} from '@/lib/git'
+import { cleanupYdocV2 } from '@/lib/cleanupYdocV2'
+import { seedClaudeMd } from '@/lib/seedClaudeMd'
+
+/** Daily safety net: if HEAD is older than this, BootGate fires a
+ * silent "daily snapshot" commit on app open so a passive user who
+ * never clicks the manual button still has at most one day's worth
+ * of work in a single uncommitted blob. */
+const DAILY_SNAPSHOT_MS = 24 * 60 * 60 * 1000
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
@@ -56,6 +70,65 @@ export function BootGate({ children }: Props) {
       if (!getActiveVaultPath()) {
         await pickVault()
       }
+      // Initialise git in the vault folder. Idempotent: the rust
+      // side fast-paths when `.git/` already exists. We swallow
+      // errors here because the editor itself shouldn't be blocked
+      // on history setup — a missing `git` binary degrades to
+      // "no rollback safety net" rather than "can't open the app".
+      try {
+        await gitInit()
+      } catch (err) {
+        console.warn('[boot] git init failed (history disabled)', err)
+      }
+      // One-shot migration: pre-existing vaults predate the
+      // `threads/` ignore rule in `DEFAULT_GITIGNORE`, so chat-session
+      // JSON ended up tracked and bloating every commit. Sync the
+      // .gitignore + untrack any matches that snuck in. Idempotent
+      // after the first run — subsequent boots see the entry and
+      // return false.
+      try {
+        await gitEnsureGitignoreEntries([
+          'threads/',
+          // Migration sentinel files dropped at vault root by the
+          // Yjs-removal one-shots. Plain filenames (not dot-prefixed)
+          // because Tauri's `fs:scope` glob silently excludes dot-
+          // files; ignoring them here keeps the user's vault git
+          // history clean. `writer-migration-v2.done` and
+          // `writer-meta-migration-v1.done` are kept in the list so
+          // vaults that already wear those markers don't suddenly
+          // surface them as untracked files when the migration
+          // scripts themselves are gone.
+          'writer-migration-v2.done',
+          'writer-meta-migration-v1.done',
+          'writer-cleanup-ydoc.done',
+        ])
+      } catch (err) {
+        console.warn('[boot] gitignore migration failed', err)
+      }
+      // Phase 7 of the Yjs-removal migration: delete the leftover
+      // `.ydoc` binaries now that nothing reads them. Runs BEFORE
+      // bootstrap so the scan-vault catalog never sees a stray
+      // `.ydoc` that Finder / git would otherwise show as untracked
+      // noise. Sentinel-gated; existing vaults pay the walk cost
+      // exactly once. Phase 2's `.md` back-fill ran in an earlier
+      // build, so any content that was unique to `.ydoc` has
+      // already been recovered.
+      try {
+        await cleanupYdocV2()
+      } catch (err) {
+        console.warn('[boot] ydoc cleanup failed', err)
+      }
+      // Seed `CLAUDE.md` at the vault root if the file is missing —
+      // the Karpathy / Claude Code schema document the agent reads
+      // every chat to know how this vault is laid out and how it
+      // should behave. Idempotent by file existence (no sentinel
+      // needed); a user who edits the file owns it from there on
+      // and the seed never overwrites their edits.
+      try {
+        await seedClaudeMd()
+      } catch (err) {
+        console.warn('[boot] CLAUDE.md seed failed', err)
+      }
       bootstrap()
       // Load chat thread metas + turns from `threads/`. Fires in
       // parallel with bootstrap because the two read disjoint paths
@@ -63,6 +136,26 @@ export function BootGate({ children }: Props) {
       // `threads/`). hydrate is idempotent so StrictMode's double-
       // mount is safe.
       void useThreadsStore.getState().hydrate()
+      // Prime the activity feed so the badge has the right count
+      // the first time the user looks at it.
+      void useGitStore.getState().refreshActivity()
+
+      // Daily safety net. When HEAD is older than 24 h, fire a silent
+      // "daily snapshot" commit so a passive user — one who never
+      // clicks "Save snapshot" manually — still gets at most one day
+      // of work in a single uncommitted blob. No-op when HEAD is
+      // missing (fresh vault), recent (<24 h), or there's nothing
+      // dirty to commit (gitCommit returns null in that case).
+      void (async () => {
+        const headTs = await gitHeadTimestamp()
+        if (headTs === null) return
+        const ageMs = Date.now() - headTs * 1000
+        if (ageMs < DAILY_SNAPSHOT_MS) return
+        const today = new Date().toISOString().slice(0, 10)
+        await useGitStore
+          .getState()
+          .commitChangesNow(`daily snapshot — ${today}`)
+      })()
     }
     void init()
   }, [bootstrap])
