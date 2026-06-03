@@ -73,12 +73,14 @@ export function RightPanel({ editorView, slug }: Props) {
             'linear-gradient(to bottom, black, black calc(var(--header-h) * 0.7), transparent)',
         }}
       />
-      {/* Same rule as the editor / sidebar headers: height var(--header-h) +
-          items-center centers the buttons → 10px above/below. With px-2.5 (also
-          10px) the buttons get an equal 10px margin on all four sides. The card
-          top now lines up with the editor area (AppShell dropped the extra
-          vertical inset), so these buttons land on the editor header's exact
-          baseline — no translate hack. */}
+      {/* The card floats --window-inset below the window (AppShell's py- inset),
+          so a full var(--header-h) bar would sit that much lower than the editor
+          header. We keep the card margin and instead trim the bar height by
+          2 * --window-inset: the top edge stays pinned to the card top while the
+          centered buttons rise by --window-inset, landing on the editor header's
+          exact baseline — no translate hack. The bar is transparent, so the
+          resulting (smaller) vertical breathing room around the buttons isn't
+          visible; only the alignment is. */}
       <div className="absolute inset-x-0 top-0 z-sticky">
         <RightPanelHeader
           threads={threads}
@@ -114,8 +116,8 @@ function RightPanelHeader({
 
   return (
     <div
-      className="flex items-center gap-0.5 bg-transparent px-2.5"
-      style={{ height: 'var(--header-h)' }}
+      className="flex items-center gap-0.5 bg-transparent px-1.5"
+      style={{ height: 'calc(var(--header-h) - 2 * var(--window-inset))' }}
     >
       <ThreadPicker
         active={threads.active}
