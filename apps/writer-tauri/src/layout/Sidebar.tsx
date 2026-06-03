@@ -271,22 +271,17 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg" className="px-2 h-[46px]">
-                  <Avatar className="size-7 shrink-0">
+                <SidebarMenuButton size="lg" className="px-2 h-9 rounded-xl hover:bg-transparent">
+                  <Avatar className="size-4 shrink-0 opacity-80 group-hover/menu-button:opacity-100">
                     <AvatarImage src="" />
-                    <AvatarFallback className="avatar-luma text-xs text-primary-foreground font-medium">
+                    <AvatarFallback className="avatar-luma text-[9px] text-primary-foreground font-medium">
                       {accountInitials(account.email)}
                     </AvatarFallback>
                   </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[14px] font-semibold text-sidebar-foreground truncate">
-                      {accountDisplayName(account.email) ?? 'Guest'}
-                    </p>
-                    <p className="text-[13px] font-normal text-sidebar-foreground/55 truncate">
-                      {account.connected ? (account.email ?? 'Connected') : 'Not connected'}
-                    </p>
-                  </div>
-                  <IconSelector size={14} stroke={1.5} className="ml-auto text-sidebar-foreground/60" />
+                  <p className="flex-1 min-w-0 text-sm font-medium text-sidebar-foreground/70 truncate group-hover/menu-button:text-sidebar-foreground">
+                    {accountDisplayName(account.email) ?? 'Guest'}
+                  </p>
+                  <IconSelector size={14} stroke={1.5} className="ml-auto text-sidebar-foreground/60 group-hover/menu-button:text-sidebar-foreground" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-52">

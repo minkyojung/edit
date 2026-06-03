@@ -119,7 +119,7 @@ export function ArchivedDocsPopover() {
             aria-label="Empty archive"
             title="Empty archive"
             className={cn(
-              'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors',
+              'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground',
               'outline-none hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring/40',
               'disabled:pointer-events-none disabled:opacity-40',
             )}
@@ -198,7 +198,7 @@ interface RowProps {
 
 function ArchivedRow({ doc, onRestore, onDelete }: RowProps) {
   return (
-    <li className="group relative flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-accent">
+    <li className="group relative flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm hover:bg-accent">
       <span className="min-w-0 flex-1 truncate text-foreground">
         {doc.title || 'Untitled'}
       </span>
@@ -215,7 +215,7 @@ function ArchivedRow({ doc, onRestore, onDelete }: RowProps) {
           aria-label="Restore"
           title="Restore"
           className={cn(
-            'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors',
+            'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground',
             'outline-none hover:bg-foreground/10 hover:text-foreground',
             'focus-visible:ring-2 focus-visible:ring-ring/40',
           )}
@@ -228,7 +228,7 @@ function ArchivedRow({ doc, onRestore, onDelete }: RowProps) {
           aria-label="Delete forever"
           title="Delete forever"
           className={cn(
-            'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors',
+            'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground',
             'outline-none hover:bg-destructive/10 hover:text-destructive',
             'focus-visible:ring-2 focus-visible:ring-ring/40',
           )}

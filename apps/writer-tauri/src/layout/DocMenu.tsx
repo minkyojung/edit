@@ -56,7 +56,7 @@ export function DocMenu({ editorView }: Props) {
                 disabled={disabled}
                 aria-label="Document actions"
                 className={cn(
-                  'cursor-pointer text-muted-foreground transition-colors hover:text-foreground',
+                  'cursor-pointer text-muted-foreground hover:text-foreground',
                   TAHOE_CHROME,
                 )}
               >

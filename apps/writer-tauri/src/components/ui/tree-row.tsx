@@ -55,7 +55,6 @@ function TreeRow({ active, className, ...props }: TreeRowProps) {
       className={cn(
         'group/tree-row relative flex h-8 w-full items-center rounded-xl',
         'text-sm font-medium text-sidebar-foreground/60',
-        'transition-colors duration-150',
         // Two-step surface tone: hover gets a softer wash (/50) so an
         // active row hovered alongside an inactive one still reads as
         // the stronger surface. data-active wins specificity in cn's
