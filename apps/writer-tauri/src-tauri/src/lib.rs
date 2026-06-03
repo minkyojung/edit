@@ -1,5 +1,6 @@
 mod anthropic;
 pub mod claude_sidecar;
+mod events;
 mod fetch_url;
 mod git;
 mod oauth;
@@ -156,6 +157,9 @@ pub fn run() {
             git::git_is_dirty,
             git::git_show,
             git::git_ensure_gitignore_entries,
+            events::commands::events_insert,
+            events::commands::events_query,
+            events::commands::events_search,
             app_quit,
             get_traffic_light_y,
         ])

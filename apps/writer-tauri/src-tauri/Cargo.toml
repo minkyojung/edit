@@ -29,6 +29,7 @@ machine-uid = "0.5"
 futures-util = "0.3"
 tokio = { version = "1", features = ["sync", "macros", "process", "io-util", "time", "rt"] }
 thiserror = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
