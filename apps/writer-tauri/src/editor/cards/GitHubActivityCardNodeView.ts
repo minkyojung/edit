@@ -30,7 +30,7 @@ class GitHubActivityCardNodeView extends BaseCardNodeView {
     this.date = (node.attrs.date as string) ?? ''
     this.container = document.createElement('div')
     this.container.className =
-      'github-activity-card rounded-lg border bg-muted/30 px-3 py-2 text-sm'
+      'github-activity-card-body rounded-lg border bg-muted/30 px-3 py-2 text-sm'
     this.mountBody(this.container)
 
     // Re-render whenever events.db may have changed.

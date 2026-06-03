@@ -625,7 +625,8 @@
      at a normal line height instead of pressed against the media. */
   .ProseMirror .image-card,
   .ProseMirror .video-card,
-  .ProseMirror .audio-card {
+  .ProseMirror .audio-card,
+  .ProseMirror .github-activity-card {
     position: relative;
     margin-top: var(--prose-gap-block);
     margin-bottom: var(--prose-gap-block);
