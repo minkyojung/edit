@@ -167,6 +167,7 @@ pub fn run() {
             github::get_github_account,
             github::get_github_token,
             github::disconnect_github,
+            github::github_sync,
             app_quit,
             get_traffic_light_y,
         ])

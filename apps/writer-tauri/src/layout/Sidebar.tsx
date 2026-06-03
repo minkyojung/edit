@@ -28,6 +28,7 @@ import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useGitHubAuth } from '@/hooks/useGitHubAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
 import { useConnectGitHubDialog } from '@/stores/connectGitHubDialog'
+import { syncGitHubActivity } from '@/lib/githubSync'
 import { useTheme } from '@/components/theme-provider'
 import { useFont, type FontOption } from '@/components/font-provider'
 import {
@@ -415,7 +416,10 @@ export function AppSidebar() {
       <ConnectGitHubDialog
         open={githubConnectOpen}
         onOpenChange={setGithubConnectOpen}
-        onConnected={refreshGithub}
+        onConnected={() => {
+          void refreshGithub()
+          void syncGitHubActivity()
+        }}
       />
     </Sidebar>
   )

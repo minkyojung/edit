@@ -14,8 +14,10 @@
 // GitHub OAuth-app user tokens don't expire by default, so there's no
 // refresh dance — just store the access token.
 
+use crate::events::{db, Entry};
 use crate::secure_storage;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
@@ -265,4 +267,294 @@ fn clear_pending(app: &AppHandle) -> Result<(), String> {
     let mut slot = pending.0.lock().map_err(|e| e.to_string())?;
     *slot = None;
     Ok(())
+}
+
+// ----- connector: fetch activity into events.db -----
+
+const SOURCE: &str = "github";
+
+/// Pull recent GitHub activity into events.db. Frontend-scheduled (the
+/// rust side doesn't know the active vault) and passes the ingest
+/// timestamp so all rows in one sync share a batch time. Returns the
+/// number of events upserted.
+///
+/// Failure modes are deliberately soft: not connected → Ok(0); GitHub
+/// unreachable → Err (the frontend logs and retries next tick). Nothing
+/// here touches the markdown vault.
+#[tauri::command]
+pub async fn github_sync(
+    app: AppHandle,
+    vault_path: String,
+    ingested_at: String,
+) -> Result<usize, String> {
+    let Some(stored) = load_token(&app)? else {
+        return Ok(0); // not connected — nothing to do
+    };
+
+    let client = reqwest::Client::new();
+
+    // Commits are the core signal — fail the sync if they can't be fetched.
+    let mut entries = fetch_commits(&client, &stored, &ingested_at).await?;
+    // PRs are best-effort: a search hiccup shouldn't drop the commits.
+    match fetch_prs(&client, &stored, &ingested_at).await {
+        Ok(prs) => entries.extend(prs),
+        Err(e) => eprintln!("[github] pr fetch failed: {e}"),
+    }
+
+    let watermark = entries.first().map(|e| e.id.clone());
+    let count = entries.len();
+
+    let mut conn = db::open(&vault_path)?;
+    if !entries.is_empty() {
+        db::upsert_events(&mut conn, &entries)?;
+    }
+    db::write_connector_state(
+        &conn,
+        SOURCE,
+        &db::ConnectorState {
+            watermark,
+            etag: None,
+            updated_at: Some(ingested_at),
+        },
+    )?;
+    Ok(count)
+}
+
+/// Authenticated GET returning parsed JSON. Errors carry status + body so
+/// failures are diagnosable from the frontend console.
+async fn github_get(
+    client: &reqwest::Client,
+    url: &str,
+    query: &[(&str, &str)],
+    token: &str,
+) -> Result<serde_json::Value, String> {
+    let resp = client
+        .get(url)
+        .query(query)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", USER_AGENT)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .map_err(|e| format!("github request failed: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("github {status}: {text}"));
+    }
+    resp.json()
+        .await
+        .map_err(|e| format!("github parse failed: {e}"))
+}
+
+/// Recent commits authored by the user. The events API only carries push
+/// head/before SHAs (no messages), so we use search/commits which returns
+/// sha + message + author date + repo directly.
+async fn fetch_commits(
+    client: &reqwest::Client,
+    stored: &StoredToken,
+    ingested_at: &str,
+) -> Result<Vec<Entry>, String> {
+    let q = format!("author:{}", stored.login);
+    let data = github_get(
+        client,
+        "https://api.github.com/search/commits",
+        &[
+            ("q", q.as_str()),
+            ("sort", "committer-date"),
+            ("order", "desc"),
+            ("per_page", "50"),
+        ],
+        &stored.access_token,
+    )
+    .await?;
+    Ok(map_commits(&data, ingested_at))
+}
+
+fn map_commits(data: &serde_json::Value, ingested_at: &str) -> Vec<Entry> {
+    let mut out = Vec::new();
+    let Some(items) = data.get("items").and_then(|i| i.as_array()) else {
+        return out;
+    };
+    for it in items {
+        let sha = it.get("sha").and_then(|s| s.as_str()).unwrap_or("");
+        let commit = it.get("commit");
+        let message = commit
+            .and_then(|c| c.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("");
+        let date = commit
+            .and_then(|c| c.get("author"))
+            .and_then(|a| a.get("date"))
+            .and_then(|d| d.as_str())
+            .unwrap_or("");
+        let repo = it
+            .get("repository")
+            .and_then(|r| r.get("full_name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("");
+        if sha.is_empty() || date.is_empty() {
+            continue;
+        }
+        out.push(Entry {
+            id: format!("github:commit:{sha}"),
+            ts: date.to_string(),
+            ingested_at: ingested_at.to_string(),
+            source: SOURCE.to_string(),
+            kind: "commit".to_string(),
+            summary: message.lines().next().unwrap_or("").to_string(),
+            entities: vec![repo.to_string()],
+            refs: vec![],
+            payload: json!({ "repo": repo, "sha": sha, "commit": commit }),
+        });
+    }
+    out
+}
+
+/// PRs authored by the user. search/issues (type:pr) carries title,
+/// node_id, created_at and pull_request.merged_at — enough to emit an
+/// "opened" entry always and a "merged" entry when merged.
+async fn fetch_prs(
+    client: &reqwest::Client,
+    stored: &StoredToken,
+    ingested_at: &str,
+) -> Result<Vec<Entry>, String> {
+    let q = format!("author:{} type:pr", stored.login);
+    let data = github_get(
+        client,
+        "https://api.github.com/search/issues",
+        &[
+            ("q", q.as_str()),
+            ("sort", "updated"),
+            ("order", "desc"),
+            ("per_page", "30"),
+        ],
+        &stored.access_token,
+    )
+    .await?;
+    Ok(map_prs(&data, ingested_at))
+}
+
+fn map_prs(data: &serde_json::Value, ingested_at: &str) -> Vec<Entry> {
+    let mut out = Vec::new();
+    let Some(items) = data.get("items").and_then(|i| i.as_array()) else {
+        return out;
+    };
+    for it in items {
+        let node_id = it.get("node_id").and_then(|n| n.as_str()).unwrap_or("");
+        if node_id.is_empty() {
+            continue;
+        }
+        let title = it.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        let created_at = it.get("created_at").and_then(|c| c.as_str()).unwrap_or("");
+        let repo = it
+            .get("repository_url")
+            .and_then(|u| u.as_str())
+            .and_then(|u| u.rsplit_once("/repos/").map(|(_, r)| r))
+            .unwrap_or("");
+        let merged_at = it
+            .get("pull_request")
+            .and_then(|p| p.get("merged_at"))
+            .and_then(|m| m.as_str());
+
+        // Always emit the "opened" point.
+        if !created_at.is_empty() {
+            out.push(Entry {
+                id: format!("github:pr_opened:{node_id}"),
+                ts: created_at.to_string(),
+                ingested_at: ingested_at.to_string(),
+                source: SOURCE.to_string(),
+                kind: "pr_opened".to_string(),
+                summary: title.to_string(),
+                entities: vec![repo.to_string()],
+                refs: vec![],
+                payload: json!({ "repo": repo, "pullRequest": it }),
+            });
+        }
+        // And a "merged" point when the PR was merged.
+        if let Some(merged) = merged_at {
+            out.push(Entry {
+                id: format!("github:pr_merged:{node_id}"),
+                ts: merged.to_string(),
+                ingested_at: ingested_at.to_string(),
+                source: SOURCE.to_string(),
+                kind: "pr_merged".to_string(),
+                summary: title.to_string(),
+                entities: vec![repo.to_string()],
+                refs: vec![],
+                payload: json!({ "repo": repo, "pullRequest": it }),
+            });
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_commits_extracts_sha_message_date_repo() {
+        let data = json!({
+            "items": [
+                {
+                    "sha": "aaa111",
+                    "repository": { "full_name": "me/repo" },
+                    "commit": {
+                        "message": "fix: bug\n\nbody line",
+                        "author": { "date": "2026-06-03T10:00:00Z" }
+                    }
+                },
+                { "sha": "", "commit": {} } // malformed → skipped
+            ]
+        });
+        let entries = map_commits(&data, "2026-06-03T22:00:00Z");
+        assert_eq!(entries.len(), 1);
+        let c = &entries[0];
+        assert_eq!(c.id, "github:commit:aaa111");
+        assert_eq!(c.kind, "commit");
+        assert_eq!(c.summary, "fix: bug"); // first line only
+        assert_eq!(c.ts, "2026-06-03T10:00:00Z");
+        assert_eq!(c.entities, vec!["me/repo".to_string()]);
+    }
+
+    #[test]
+    fn map_prs_emits_opened_always_and_merged_when_merged() {
+        let data = json!({
+            "items": [
+                {
+                    "node_id": "PR_merged", "title": "Add X",
+                    "created_at": "2026-06-02T09:00:00Z",
+                    "repository_url": "https://api.github.com/repos/me/repo",
+                    "pull_request": { "merged_at": "2026-06-03T10:00:00Z" }
+                },
+                {
+                    "node_id": "PR_open", "title": "Open one",
+                    "created_at": "2026-06-01T08:00:00Z",
+                    "repository_url": "https://api.github.com/repos/me/repo",
+                    "pull_request": { "merged_at": null }
+                }
+            ]
+        });
+        let entries = map_prs(&data, "2026-06-03T22:00:00Z");
+        // merged PR → opened + merged (2); open PR → opened only (1)
+        assert_eq!(entries.len(), 3);
+
+        let opened = entries
+            .iter()
+            .find(|e| e.id == "github:pr_opened:PR_merged")
+            .unwrap();
+        assert_eq!(opened.kind, "pr_opened");
+        assert_eq!(opened.ts, "2026-06-02T09:00:00Z");
+        assert_eq!(opened.entities, vec!["me/repo".to_string()]);
+
+        let merged = entries
+            .iter()
+            .find(|e| e.id == "github:pr_merged:PR_merged")
+            .unwrap();
+        assert_eq!(merged.ts, "2026-06-03T10:00:00Z");
+
+        assert!(entries.iter().any(|e| e.id == "github:pr_opened:PR_open"));
+        assert!(!entries.iter().any(|e| e.id == "github:pr_merged:PR_open"));
+    }
 }

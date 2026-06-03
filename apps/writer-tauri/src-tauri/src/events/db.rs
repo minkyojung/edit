@@ -11,7 +11,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{params, params_from_iter, Connection, Row};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 
 use crate::events::{Entry, EventFilter};
 
@@ -168,6 +168,50 @@ pub fn search_events(conn: &Connection, query: &str, limit: u32) -> Result<Vec<E
     collect(rows)
 }
 
+/// Per-connector sync bookmark (one row per source). Lets a connector
+/// resume where it left off (watermark) and skip unchanged fetches (etag).
+#[derive(Debug, Clone, Default)]
+pub struct ConnectorState {
+    pub watermark: Option<String>,
+    pub etag: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+pub fn read_connector_state(
+    conn: &Connection,
+    source: &str,
+) -> Result<Option<ConnectorState>, String> {
+    conn.query_row(
+        "SELECT watermark, etag, updated_at FROM connector_state WHERE source = ?1",
+        [source],
+        |row| {
+            Ok(ConnectorState {
+                watermark: row.get(0)?,
+                etag: row.get(1)?,
+                updated_at: row.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| format!("read connector_state: {e}"))
+}
+
+pub fn write_connector_state(
+    conn: &Connection,
+    source: &str,
+    state: &ConnectorState,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO connector_state (source, watermark, etag, updated_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(source) DO UPDATE SET
+           watermark=excluded.watermark, etag=excluded.etag, updated_at=excluded.updated_at",
+        params![source, state.watermark, state.etag, state.updated_at],
+    )
+    .map_err(|e| format!("write connector_state: {e}"))?;
+    Ok(())
+}
+
 fn collect<I>(rows: I) -> Result<Vec<Entry>, String>
 where
     I: Iterator<Item = rusqlite::Result<Entry>>,
@@ -273,6 +317,49 @@ mod tests {
         // FTS must follow the update: old term gone, new term present.
         assert_eq!(search_events(&conn, "prevent", 10).unwrap().len(), 0);
         assert_eq!(search_events(&conn, "better", 10).unwrap().len(), 1);
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn connector_state_roundtrip_and_upsert() {
+        let dir = temp_vault("connector_state");
+        let vault = dir.to_str().unwrap();
+        let conn = open(vault).unwrap();
+
+        // Absent at first.
+        assert!(read_connector_state(&conn, "github").unwrap().is_none());
+
+        write_connector_state(
+            &conn,
+            "github",
+            &ConnectorState {
+                watermark: Some("evt_1".into()),
+                etag: Some("\"abc\"".into()),
+                updated_at: Some("2026-06-03T22:00:00Z".into()),
+            },
+        )
+        .unwrap();
+
+        let got = read_connector_state(&conn, "github").unwrap().unwrap();
+        assert_eq!(got.watermark.as_deref(), Some("evt_1"));
+        assert_eq!(got.etag.as_deref(), Some("\"abc\""));
+
+        // Upsert overwrites the same source row, not duplicates it.
+        write_connector_state(
+            &conn,
+            "github",
+            &ConnectorState {
+                watermark: Some("evt_9".into()),
+                etag: None,
+                updated_at: Some("2026-06-03T22:30:00Z".into()),
+            },
+        )
+        .unwrap();
+        let got2 = read_connector_state(&conn, "github").unwrap().unwrap();
+        assert_eq!(got2.watermark.as_deref(), Some("evt_9"));
+        assert_eq!(got2.etag, None);
 
         drop(conn);
         let _ = std::fs::remove_dir_all(&dir);

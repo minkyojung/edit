@@ -48,6 +48,7 @@ import '@/lib/caretDebug'
 import { startAutoFlush } from '@/lib/docFileSync'
 import { startVaultWatcher } from '@/lib/vaultWatcher'
 import { startPendingChangesApplier } from '@/state/pendingChangesApplier'
+import { startGitHubSync } from '@/lib/githubSync'
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
@@ -65,6 +66,11 @@ void startVaultWatcher()
 // inline Keep button changes the file on disk — the store just
 // flips status and the widget vanishes. Idempotent.
 startPendingChangesApplier()
+
+// Begin the periodic GitHub activity sync. Idempotent; gated on an
+// active vault + a connected token inside, so it no-ops until both
+// exist. Launch-time and connect-time immediate syncs fire separately.
+startGitHubSync()
 
 // Module-scope so the configs array reference is stable across
 // renders — required by useLazyMaterialize's caller contract

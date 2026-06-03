@@ -35,6 +35,7 @@ import {
 } from '@/lib/git'
 import { cleanupYdocV2 } from '@/lib/cleanupYdocV2'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
+import { syncGitHubActivity } from '@/lib/githubSync'
 
 /** Daily safety net: if HEAD is older than this, BootGate fires a
  * silent "daily snapshot" commit on app open so a passive user who
@@ -139,6 +140,10 @@ export function BootGate({ children }: Props) {
       // Prime the activity feed so the badge has the right count
       // the first time the user looks at it.
       void useGitStore.getState().refreshActivity()
+
+      // Pull GitHub activity once on launch (the 30-min timer is too
+      // slow for first paint). No-ops when not connected / no vault.
+      void syncGitHubActivity()
 
       // Daily safety net. When HEAD is older than 24 h, fire a silent
       // "daily snapshot" commit so a passive user — one who never
