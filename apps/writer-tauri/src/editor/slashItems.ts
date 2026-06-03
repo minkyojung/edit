@@ -19,6 +19,7 @@ import {
   IconMinus,
   IconPhoto,
   IconQuote,
+  IconBrandGithub,
 } from '@tabler/icons-react'
 import type { ComponentType } from 'react'
 import { setBlockType, wrapIn } from '@milkdown/kit/prose/commands'
@@ -28,8 +29,11 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog'
 
 import { wrapInTaskList } from './taskList'
 import { insertBlockAtSelection } from './insertBlock'
+import { insertGitHubAnchor } from './insertGitHubAnchor'
 import { copyImageIntoVault } from '@/lib/vaultImages'
 import { flushDirty } from '@/lib/docFileSync'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
+import { useDocsStore } from '@/state/docsStore'
 
 export interface SlashItem {
   /** Stable id for keying / debugging. */
@@ -73,6 +77,17 @@ function wrapQuote(view: EditorView): void {
 function setCodeBlock(view: EditorView): void {
   const t = view.state.schema.nodes.code_block
   if (t) setBlockType(t)(view.state, view.dispatch)
+}
+
+/** Date for a manually-inserted GitHub card: the active daily note's
+ * date, or today when the active doc isn't a daily. */
+function resolveGitHubDate(): string {
+  const slug = getActiveSlugFromHash()
+  const doc = slug
+    ? useDocsStore.getState().knownDocs.find((d) => d.slug === slug)
+    : undefined
+  if (doc?.type === 'daily' && doc.date) return doc.date
+  return new Date().toISOString().slice(0, 10)
 }
 
 function insertDivider(view: EditorView): void {
@@ -213,5 +228,12 @@ export const SLASH_ITEMS: SlashItem[] = [
     run: (view) => {
       void insertImage(view)
     },
+  },
+  {
+    id: 'github',
+    label: 'GitHub activity',
+    keywords: ['github', 'commits', 'pr', 'activity'],
+    icon: IconBrandGithub,
+    run: (view) => insertGitHubAnchor(view, resolveGitHubDate()),
   },
 ]

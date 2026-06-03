@@ -25,6 +25,9 @@ import { cardDropAdvanceCursor } from './cardDropAdvanceCursor'
 import { audioNodeView } from './cards/AudioCardNodeView'
 import { imageNodeView } from './cards/ImageCardNodeView'
 import { videoNodeView } from './cards/VideoCardNodeView'
+import { githubActivityNodeView } from './cards/GitHubActivityCardNodeView'
+import { hasGitHubAnchor } from './insertGitHubAnchor'
+import { eventsQueryByDate } from '@/lib/eventsDb'
 import { imageInlineNodeView } from './imageInlineNodeView'
 import { mediaDropPastePlugin } from './mediaDropPastePlugin'
 import { inlineCodeSafeKeymap } from './inlineCodeSafe'
@@ -229,6 +232,40 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
     }
   }, [handle, pmView, isDaily, knownDoc?.date])
 
+  // Auto-insert the GitHub-activity anchor on a daily that has events for
+  // its date. Only the anchor (`<div data-github-activity="DATE">`) is
+  // written — the card body renders live from events.db. Idempotent: one
+  // card per day, skipped if already present. addToHistory:false keeps it
+  // out of undo. Known v1 limit: deleting the card re-adds it on reopen.
+  useEffect(() => {
+    if (!handle || !pmView) return
+    if (!isDaily) return
+    if (!knownDoc?.date) return
+    const view = pmView
+    const date = knownDoc.date
+    let cancelled = false
+    void handle.contentReady.then(async () => {
+      if (cancelled) return
+      let entries
+      try {
+        entries = await eventsQueryByDate(date)
+      } catch {
+        return
+      }
+      if (cancelled || entries.length === 0) return
+      if (hasGitHubAnchor(view, date)) return
+      const type = view.state.schema.nodes.githubActivity
+      if (!type) return
+      // Top of body so the day's activity sits above the writing.
+      const tr = view.state.tr.insert(0, type.create({ date }))
+      tr.setMeta('addToHistory', false)
+      view.dispatch(tr)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [handle, pmView, isDaily, knownDoc?.date])
+
   // Bridge between the wikilink-palette plugin (lives inside the
   // Milkdown editor instance) and the React palette popup. The
   // plugin emits state via a window-scoped CustomEvent, the React
@@ -315,6 +352,7 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .use(imageNodeView)
       .use(videoNodeView)
       .use(audioNodeView)
+      .use(githubActivityNodeView)
       .use(imageInlineNodeView)
       .use(cardDropAdvanceCursor)
       .use($prose(() => dropCursor({ color: false, width: 2, class: 'pm-drop-cursor' })))

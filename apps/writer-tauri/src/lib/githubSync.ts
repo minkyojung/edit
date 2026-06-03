@@ -6,6 +6,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { getActiveVaultPath } from '@/state/settingsStore'
+import { useEventsStore } from '@/state/eventsStore'
 
 const SYNC_INTERVAL_MS = 30 * 60 * 1000 // 30 min
 let timerId: number | null = null
@@ -21,10 +22,12 @@ export async function syncGitHubActivity(): Promise<void> {
   if (inFlight) return
   inFlight = true
   try {
-    await invoke<number>('github_sync', {
+    const upserted = await invoke<number>('github_sync', {
       vaultPath: vault,
       ingestedAt: new Date().toISOString(),
     })
+    // Nudge any open activity cards to re-query events.db.
+    if (upserted > 0) useEventsStore.getState().bump()
   } catch (e) {
     console.warn('[githubSync] sync failed', e)
   } finally {

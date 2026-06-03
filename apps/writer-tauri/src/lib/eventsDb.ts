@@ -56,6 +56,20 @@ export async function eventsQuery(filter: EventFilter = {}): Promise<Entry[]> {
   return invoke<Entry[]>('events_query', { vaultPath: vault, filter })
 }
 
+/** Events whose `ts` falls on the given local day (YYYY-MM-DD), newest
+ * first. Used by the daily GitHub-activity card.
+ *
+ * Matches by string range on the ISO `ts`. GitHub commit dates carry a
+ * local offset (e.g. `…T15:39:54+09:00`), so the date prefix lines up
+ * with a same-timezone daily note. Mixed-offset sources could land a
+ * boundary event on the neighbouring day — acceptable for v1. */
+export async function eventsQueryByDate(date: string): Promise<Entry[]> {
+  return eventsQuery({
+    fromTs: `${date}T00:00:00`,
+    toTs: `${date}T23:59:59.999999`,
+  })
+}
+
 /** Full-text search over event summaries, newest first. Empty array when
  * there's no active vault. */
 export async function eventsSearch(
