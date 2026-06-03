@@ -29,6 +29,17 @@ import { ArtifactBlock } from '@/viz/ArtifactBlock'
 const VIZ_LANGS = new Set(['mermaid', 'artifact'])
 const SYNC_DEBOUNCE_MS = 300
 
+// Lucide-style 14px stroke icons for the floating toolbar (vanilla DOM, so we
+// inline the SVG markup rather than use the React icon components).
+const svgIcon = (paths: string) =>
+  `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`
+const ICON_UP = svgIcon('<path d="m18 15-6-6-6 6"/>')
+const ICON_DOWN = svgIcon('<path d="m6 9 6 6 6-6"/>')
+const ICON_EDIT = svgIcon('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/>')
+const ICON_DELETE = svgIcon(
+  '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+)
+
 class CodeBlockVizNodeView implements NodeView {
   dom: HTMLElement
   contentDOM?: HTMLElement
@@ -132,17 +143,20 @@ class CodeBlockVizNodeView implements NodeView {
   }
 
   private buildToolbar() {
+    // Floating pill: solid surface + border + shadow, with a divider between
+    // the move group and the edit/delete group.
     const bar = document.createElement('div')
     bar.className =
-      'absolute right-1 top-1 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100'
+      'absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5 rounded-full border bg-popover px-1 py-0.5 text-muted-foreground shadow-md opacity-0 transition-opacity group-hover:opacity-100'
 
-    const mkButton = (label: string, title: string, onPress: () => void) => {
+    const mkIconButton = (icon: string, title: string, onPress: () => void) => {
       const btn = document.createElement('button')
       btn.type = 'button'
-      btn.textContent = label
       btn.title = title
+      btn.setAttribute('aria-label', title)
+      btn.innerHTML = icon
       btn.className =
-        'rounded bg-background/80 px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted'
+        'flex h-6 w-6 items-center justify-center rounded-full hover:bg-muted hover:text-foreground'
       btn.addEventListener('mousedown', (e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -150,15 +164,21 @@ class CodeBlockVizNodeView implements NodeView {
       })
       return btn
     }
+    const divider = () => {
+      const d = document.createElement('div')
+      d.className = 'mx-0.5 h-4 w-px bg-border'
+      return d
+    }
 
     bar.append(
-      mkButton('↑', '위로 이동', () => this.moveBlock(-1)),
-      mkButton('↓', '아래로 이동', () => this.moveBlock(1)),
-      mkButton('편집', '소스 편집', () => {
+      mkIconButton(ICON_UP, '위로 이동', () => this.moveBlock(-1)),
+      mkIconButton(ICON_DOWN, '아래로 이동', () => this.moveBlock(1)),
+      divider(),
+      mkIconButton(ICON_EDIT, '소스 편집', () => {
         this.editing = true
         this.syncMode()
       }),
-      mkButton('삭제', '블록 삭제', () => this.deleteSelf()),
+      mkIconButton(ICON_DELETE, '삭제', () => this.deleteSelf()),
     )
     this.toolbar = bar
   }

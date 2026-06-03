@@ -114,7 +114,9 @@ export function ArtifactBlock({
 
   return (
     <div
-      className="group relative my-2 overflow-hidden rounded-md border bg-background"
+      className={`group relative my-2 overflow-hidden rounded-md${
+        embedded ? '' : ' border bg-background'
+      }`}
       style={{ contentVisibility: 'auto' }}
     >
       <iframe
