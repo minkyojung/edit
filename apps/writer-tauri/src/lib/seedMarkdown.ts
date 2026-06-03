@@ -61,6 +61,35 @@ function unwrapBlockImages(doc: PMNode): PMNode {
   return doc.type.create(doc.attrs, next)
 }
 
+/** Lift `code_block(language="github-activity")` into the dedicated
+ * `githubActivity` node. The card is stored as a fenced code block
+ * (```github-activity\n<date>\n```) so it round-trips reliably through
+ * CommonMark, but a fence parses as a generic `code_block`; this transform
+ * recognises that structural shape and swaps it for the real anchor node,
+ * exactly like `unwrapBlockImages` does for standalone images. Without it
+ * the day's activity would show as an editable code block instead of the
+ * live card. */
+function liftGithubActivityBlocks(doc: PMNode): PMNode {
+  const ghType = doc.type.schema.nodes.githubActivity
+  if (!ghType) return doc
+  const next: PMNode[] = []
+  let changed = false
+  for (let i = 0; i < doc.childCount; i++) {
+    const child = doc.child(i)
+    if (
+      child.type.name === 'code_block' &&
+      String(child.attrs.language ?? '').toLowerCase() === 'github-activity'
+    ) {
+      next.push(ghType.create({ date: child.textContent.trim() }))
+      changed = true
+    } else {
+      next.push(child)
+    }
+  }
+  if (!changed) return doc
+  return doc.type.create(doc.attrs, next)
+}
+
 /** Drop standalone `<br />` lines from a markdown blob before it
  * reaches the parser. Commonmark + gfm parse `<br />` as inline HTML
  * and our PM schema has no node for raw HTML inline — so they fell
@@ -75,10 +104,21 @@ function unwrapBlockImages(doc: PMNode): PMNode {
  * tags, so the next `flushDirty` round writes a `.md` without them
  * and the noise fades on its own. */
 export function stripNoiseMarkdownLines(markdown: string): string {
-  if (!markdown.includes('<br')) return markdown
+  // Legacy `<div data-github-activity>` anchors: an earlier version stored
+  // the card as raw HTML, which never re-parsed and piled up as text on
+  // every reload. Strip them so they self-heal — the card now stores as a
+  // ```github-activity fence instead.
+  if (!markdown.includes('<br') && !markdown.includes('data-github-activity'))
+    return markdown
   return markdown
     .split('\n')
-    .filter((line) => !/^<br\s*\/?>$/i.test(line.trim()))
+    .filter((line) => {
+      const t = line.trim()
+      return (
+        !/^<br\s*\/?>$/i.test(t) &&
+        !/^<div[^>]*data-github-activity[^>]*>\s*<\/div>$/i.test(t)
+      )
+    })
     .join('\n')
 }
 
@@ -107,7 +147,7 @@ export function applyMarkdownToEditor(
   // schema-incompatible nodes (e.g. `list_item.spread` typed as
   // string vs boolean). With one editor owning everything, schema
   // mismatch is structurally impossible.
-  const transformed = unwrapBlockImages(parsed)
+  const transformed = liftGithubActivityBlocks(unwrapBlockImages(parsed))
   view.dispatch(
     view.state.tr
       .replaceWith(0, view.state.doc.content.size, transformed.content)

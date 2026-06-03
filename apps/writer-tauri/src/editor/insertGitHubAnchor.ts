@@ -5,15 +5,52 @@
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { insertBlockAtSelection } from './insertBlock'
 
-/** True if the doc already contains a githubActivity anchor for `date`. */
-export function hasGitHubAnchor(view: EditorView, date: string): boolean {
-  let found = false
-  view.state.doc.descendants((node) => {
+/** Document positions of every githubActivity anchor for `date`. */
+function anchorPositions(view: EditorView, date: string): number[] {
+  const positions: number[] = []
+  view.state.doc.descendants((node, pos) => {
     if (node.type.name === 'githubActivity' && node.attrs.date === date) {
-      found = true
+      positions.push(pos)
     }
   })
-  return found
+  return positions
+}
+
+/** True if the doc already contains a githubActivity anchor for `date`. */
+export function hasGitHubAnchor(view: EditorView, date: string): boolean {
+  return anchorPositions(view, date).length > 0
+}
+
+/** Converge on exactly one anchor for `date`: insert if missing, delete the
+ * extras if duplicated. Idempotent and self-healing — the daily auto-insert
+ * can race with hydration (checking before the saved fence is parsed in),
+ * so rather than guard the race we just make the end state deterministic.
+ * Anchors are app-managed (not user content), so trimming dupes is safe. */
+export function ensureSingleGitHubAnchor(view: EditorView, date: string): void {
+  const type = view.state.schema.nodes.githubActivity
+  if (!type) return
+  const positions = anchorPositions(view, date)
+  if (positions.length === 1) return
+
+  if (positions.length === 0) {
+    // Top of body so the day's activity sits above the writing.
+    const tr = view.state.tr.insert(0, type.create({ date }))
+    tr.setMeta('addToHistory', false)
+    view.dispatch(tr)
+    return
+  }
+
+  // Keep the first, drop the rest. Delete high→low so earlier positions
+  // stay valid as the doc shrinks.
+  let tr = view.state.tr
+  for (const pos of positions.slice(1).sort((a, b) => b - a)) {
+    const node = tr.doc.nodeAt(pos)
+    if (node?.type.name === 'githubActivity') {
+      tr = tr.delete(pos, pos + node.nodeSize)
+    }
+  }
+  tr.setMeta('addToHistory', false)
+  view.dispatch(tr)
 }
 
 /** Insert a GitHub-activity anchor for `date` at the cursor, unless one

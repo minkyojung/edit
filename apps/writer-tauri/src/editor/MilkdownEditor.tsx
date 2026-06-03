@@ -26,7 +26,7 @@ import { audioNodeView } from './cards/AudioCardNodeView'
 import { imageNodeView } from './cards/ImageCardNodeView'
 import { videoNodeView } from './cards/VideoCardNodeView'
 import { githubActivityNodeView } from './cards/GitHubActivityCardNodeView'
-import { hasGitHubAnchor } from './insertGitHubAnchor'
+import { ensureSingleGitHubAnchor } from './insertGitHubAnchor'
 import { eventsQueryByDate } from '@/lib/eventsDb'
 import { imageInlineNodeView } from './imageInlineNodeView'
 import { mediaDropPastePlugin } from './mediaDropPastePlugin'
@@ -253,13 +253,9 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
         return
       }
       if (cancelled || entries.length === 0) return
-      if (hasGitHubAnchor(view, date)) return
-      const type = view.state.schema.nodes.githubActivity
-      if (!type) return
-      // Top of body so the day's activity sits above the writing.
-      const tr = view.state.tr.insert(0, type.create({ date }))
-      tr.setMeta('addToHistory', false)
-      view.dispatch(tr)
+      // Converge on exactly one anchor (self-heals dupes from a
+      // hydration race or an earlier buggy version).
+      ensureSingleGitHubAnchor(view, date)
     })
     return () => {
       cancelled = true

@@ -1,32 +1,31 @@
 // Block-level "GitHub activity" anchor. The markdown file stores only a
-// tiny stable marker — `<div data-github-activity="2026-06-03"></div>` —
-// and GitHubActivityCardNodeView renders the live card by reading
-// events.db for that date. The volatile commit/PR data is never written
-// to disk, so the note stays clean and corrections reflect automatically.
+// tiny stable marker; GitHubActivityCardNodeView renders the live card by
+// reading events.db for that date. The volatile commit/PR data is never
+// written to disk, so the note stays clean and corrections reflect
+// automatically.
 //
-// Round-trip strategy mirrors audio-block.ts: CommonMark has no native
-// node for this, but remark parses raw HTML blocks as mdast `html` nodes
-// with the full tag in `.value`, which we match on parse and re-emit on
-// serialize. A plain `<div>` is invisible-but-harmless in Obsidian.
+// Storage = a fenced code block:
+//
+//     ```github-activity
+//     2026-06-03
+//     ```
+//
+// This is the canonical "anchor that renders live" pattern (Obsidian
+// Dataview / Mermaid; matches this codebase's CodeBlockVizNodeView). Code
+// fences round-trip reliably through CommonMark — unlike the raw `<div>`
+// HTML we tried first, which silently failed to re-parse and accumulated
+// duplicate text on every reload.
+//
+// parseMarkdown deliberately claims nothing: a fence first parses as a
+// `code_block` (code_block-ext owns every `code` mdast node), then
+// seedMarkdown's post-parse transform lifts `code_block(language=
+// github-activity)` into this node — exactly how imageBlock is lifted
+// from `paragraph(image)`. So the round-trip is: node → fence (toMarkdown)
+// → code_block (parse) → node (transform).
 
 import { $nodeSchema } from '@milkdown/kit/utils'
 
 const ATTR = 'data-github-activity'
-
-/** Escape characters that would break out of a double-quoted attribute. */
-function escapeAttr(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-}
-
-/** Pull the date out of a raw `<div data-github-activity="...">` tag. */
-function readDate(tag: string): string {
-  const m = /data-github-activity\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag)
-  return m ? (m[1] ?? m[2] ?? '') : ''
-}
 
 export const githubActivityBlockSchema = $nodeSchema('githubActivity', () => ({
   group: 'block',
@@ -37,6 +36,8 @@ export const githubActivityBlockSchema = $nodeSchema('githubActivity', () => ({
   attrs: {
     date: { default: '', validate: 'string' },
   },
+  // parseDOM/toDOM only matter for clipboard HTML; the markdown round-trip
+  // goes through the code fence (toMarkdown) + post-parse transform.
   parseDOM: [
     {
       tag: `div[${ATTR}]`,
@@ -48,22 +49,15 @@ export const githubActivityBlockSchema = $nodeSchema('githubActivity', () => ({
   ],
   toDOM: (node) => ['div', { [ATTR]: String(node.attrs.date ?? '') }],
   parseMarkdown: {
-    match: (node) =>
-      node.type === 'html' &&
-      typeof node.value === 'string' &&
-      /^\s*<div[^>]*data-github-activity/i.test(node.value),
-    runner: (state, node, type) => {
-      const value = String((node as { value?: unknown }).value ?? '')
-      state.addNode(type, { date: readDate(value) })
-    },
+    match: () => false,
+    runner: () => {},
   },
   toMarkdown: {
     match: (node) => node.type.name === 'githubActivity',
     runner: (state, node) => {
       const date = String(node.attrs.date ?? '')
-      state.addNode('html', undefined, undefined, {
-        value: `<div data-github-activity="${escapeAttr(date)}"></div>`,
-      })
+      // Emit a fenced code block: ```github-activity\n<date>\n```
+      state.addNode('code', undefined, date, { lang: 'github-activity' })
     },
   },
 }))
