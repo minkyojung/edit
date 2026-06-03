@@ -244,7 +244,7 @@ export function SelectionMenu() {
       }}
       className={cn(
         FLOATING_MENU_SHELL,
-        'flex flex-col gap-1',
+        'flex flex-col gap-3',
         noteMode ? 'w-72' : 'w-max',
       )}
     >
@@ -263,56 +263,57 @@ export function SelectionMenu() {
           <IconCode size={14} stroke={2.25} />
         </Button>
         <LinkButton view={view} active={activeMarks.has('link')} />
+        {/* Remove lives at the right end of the format row (not a prominent
+            red row below) — a quiet icon that only appears when the selection
+            is on an existing highlight. */}
+        {isArticle && noteMode && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            // preventDefault keeps the note input focused so this doesn't
+            // blur-commit the note before onClick.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={remove}
+            aria-label="Remove highlight"
+            className={cn(fmtBtn, 'ml-auto text-muted-foreground hover:bg-destructive/10 hover:text-destructive')}
+          >
+            <IconTrash size={14} stroke={2} />
+          </Button>
+        )}
       </div>
 
       {/* Comment / highlight management (saved articles only). */}
-      {isArticle && (
-        <>
-          <div className="mx-1 h-px bg-border" />
-          {noteMode && record ? (
-            <>
-              <HighlightNoteField
-                key={activeId!}
-                slug={activeSlug!}
-                id={activeId!}
-                quote={record.quote}
-                initialNote={record.note ?? ''}
-                hadNote={!!record.note}
-                title={docTitle}
-                onClose={dismiss}
-              />
-              <button
-                type="button"
-                // preventDefault keeps the note input focused so this doesn't
-                // blur-commit the note before onClick.
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={remove}
-                className={cn(
-                  'flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-destructive transition-colors',
-                  'hover:bg-destructive/10',
-                )}
-              >
-                <IconTrash size={15} stroke={1.9} className="shrink-0" />
-                <span className="flex-1">Remove highlight</span>
-              </button>
-            </>
+      {isArticle &&
+        (noteMode && record ? (
+            <HighlightNoteField
+              key={activeId!}
+              slug={activeSlug!}
+              id={activeId!}
+              quote={record.quote}
+              initialNote={record.note ?? ''}
+              hadNote={!!record.note}
+              title={docTitle}
+              // Autofocus the note only when the highlight was just created
+              // (create flow sets noteForId) — clicking an existing highlight
+              // to view it should NOT grab the caret; click the field to edit.
+              autoFocus={!!noteForId}
+              onClose={dismiss}
+            />
           ) : (
             <button
               type="button"
               onClick={createHighlight}
               className={cn(
-                // rounded-lg (8px) = outer rounded-xl (12px) − p-1 (4px), so
-                // the row's hover fill nests concentrically in the menu.
-                'flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors',
+                // rounded-md (6px) = outer rounded-2xl (16px) − p-2.5 (10px),
+                // so the row's hover fill nests concentrically in the menu.
+                'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
                 fmtIdle,
               )}
             >
               <IconHighlight size={15} stroke={1.9} className="shrink-0" />
               <span className="flex-1">Comment</span>
             </button>
-          )}
-        </>
-      )}
+          ))}
     </div>
   )
 }

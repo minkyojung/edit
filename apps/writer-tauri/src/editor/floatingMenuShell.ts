@@ -3,4 +3,4 @@
 // floating menu matches it. Compose with cn() plus per-menu layout
 // (width, flex direction).
 export const FLOATING_MENU_SHELL =
-  'rounded-xl bg-popover/85 p-1 shadow-xl shadow-black/30 ring-1 ring-border backdrop-blur-xl'
+  'rounded-2xl bg-popover p-2.5 shadow-2xl shadow-black/45 ring-1 ring-border'

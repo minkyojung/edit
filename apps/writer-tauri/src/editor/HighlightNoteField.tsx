@@ -19,6 +19,7 @@ export function HighlightNoteField({
   initialNote,
   hadNote,
   title,
+  autoFocus = false,
   onClose,
 }: {
   slug: string
@@ -30,6 +31,10 @@ export function HighlightNoteField({
   hadNote: boolean
   /** Article title, for the daily-note line. */
   title: string
+  /** Grab the caret on mount. True only for a just-created highlight; when
+   * viewing an existing one we leave focus alone so the caret doesn't jump
+   * into the field unasked — the user clicks the input to edit. */
+  autoFocus?: boolean
   onClose: () => void
 }) {
   const [note, setNote] = useState(initialNote)
@@ -37,9 +42,10 @@ export function HighlightNoteField({
   const committedRef = useRef(false)
 
   useEffect(() => {
+    if (!autoFocus) return
     const raf = requestAnimationFrame(() => inputRef.current?.focus())
     return () => cancelAnimationFrame(raf)
-  }, [])
+  }, [autoFocus])
 
   // Commit-once: Enter / blur save, Escape skips. A single guard makes every
   // terminal path run exactly once.
@@ -56,9 +62,17 @@ export function HighlightNoteField({
   }
 
   return (
-    <div className="flex flex-col gap-1">
-      <div className="truncate px-1.5 pt-0.5 text-xs text-muted-foreground">
-        “{quote}”
+    <div className="flex flex-col gap-3">
+      {/* The highlighted body text, shown as a quote block with a left accent
+          bar in the highlight's own amber — so it reads as "the passage you
+          highlighted" rather than a faint caption. Up to two lines, then clamp.
+          `ml-1.5` matches the note input's px-1.5 so the accent bar lines up
+          with the other rows instead of jutting out to the left. */}
+      <div
+        className="line-clamp-2 ml-1.5 border-l-[3px] pl-2.5 text-sm leading-snug text-foreground"
+        style={{ borderColor: 'oklch(0.85 0.16 85)' }}
+      >
+        {quote}
       </div>
       <input
         ref={inputRef}
@@ -75,7 +89,7 @@ export function HighlightNoteField({
         }}
         onBlur={() => commit(true)}
         placeholder="Add a note…"
-        className="w-full rounded-lg bg-transparent px-1.5 py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+        className="w-full rounded-md bg-transparent px-1.5 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground"
       />
     </div>
   )
