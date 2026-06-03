@@ -185,15 +185,26 @@ export const useGitStore = create<GitState>((set, get) => {
   // commitChangesNow and commitImmediate funnel through here so
   // status transitions and activity refresh stay in lock-step.
   async function runCommit(message: string): Promise<void> {
-    set({
-      dirtyPaths: new Set(),
-      status: 'committing',
-    })
+    // Snapshot the paths this commit covers, but DON'T clear them
+    // up-front. gitCommit can fail (git/disk error), and an optimistic
+    // clear with no rollback would strip the dirty set while the changes
+    // are still uncommitted on disk — leaving the user with no way to
+    // retry, since the Sidebar "Save snapshot" button is gated on
+    // dirtyPaths.size. Clear only on success, and only the paths we
+    // committed, so edits that landed during the await survive.
+    const committing = get().dirtyPaths
+    set({ status: 'committing' })
 
     try {
       const sha = await gitCommit(message)
       if (sha !== null) set({ headSha: sha })
-      set({ status: 'idle', lastError: null })
+      set((s) => ({
+        dirtyPaths: new Set(
+          [...s.dirtyPaths].filter((p) => !committing.has(p)),
+        ),
+        status: 'idle',
+        lastError: null,
+      }))
       void get().refreshActivity()
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -274,8 +285,16 @@ export const useGitStore = create<GitState>((set, get) => {
         const pendingPaths = get().dirtyPaths
         if (pendingPaths.size > 0) {
           const message = autoCommitMessage(pendingPaths)
-          set({ dirtyPaths: new Set() })
+          // Don't clear up-front — if this pre-revert commit throws, the
+          // catch below would otherwise lose the dirty set with the
+          // changes still uncommitted on disk. Clear the committed paths
+          // only after the commit lands.
           await gitCommit(message)
+          set((s) => ({
+            dirtyPaths: new Set(
+              [...s.dirtyPaths].filter((p) => !pendingPaths.has(p)),
+            ),
+          }))
         }
 
         const newHead = await gitRevert(sha)
