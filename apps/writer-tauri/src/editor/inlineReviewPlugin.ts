@@ -830,12 +830,19 @@ export function createInlineReviewPlugin(slug: string) {
           // have landed when view() first runs. Retry across a few
           // frames until the parser is ready, then stop; a no-op stays
           // a no-op.
+          // Track the pending frame so destroy() can cancel it — without
+          // this, a queued tryReconcile can fire after the view is torn
+          // down (parser not ready within 30 frames, or a fast doc switch
+          // right after mount) and dispatch on a destroyed view, which
+          // ProseMirror rejects ("updateState on a destroyed view").
           let attempts = 0
+          let rafId = 0
           const tryReconcile = () => {
+            rafId = 0
             if (runReconcile()) return
-            if (attempts++ < 30) requestAnimationFrame(tryReconcile)
+            if (attempts++ < 30) rafId = requestAnimationFrame(tryReconcile)
           }
-          requestAnimationFrame(tryReconcile)
+          rafId = requestAnimationFrame(tryReconcile)
 
           let lastSerialised = serialisePending(
             collectPendingForSlug(slug),
@@ -854,6 +861,7 @@ export function createInlineReviewPlugin(slug: string) {
           })
           return {
             destroy() {
+              if (rafId) cancelAnimationFrame(rafId)
               unsubscribe()
             },
           }
