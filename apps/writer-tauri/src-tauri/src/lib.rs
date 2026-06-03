@@ -3,6 +3,7 @@ pub mod claude_sidecar;
 mod events;
 mod fetch_url;
 mod git;
+mod github;
 mod oauth;
 mod secure_storage;
 
@@ -134,6 +135,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(oauth::PendingOAuth::default())
+        .manage(github::PendingGitHubAuth::default())
         .invoke_handler(tauri::generate_handler![
             oauth::start_claude_oauth,
             oauth::complete_claude_oauth,
@@ -160,6 +162,11 @@ pub fn run() {
             events::commands::events_insert,
             events::commands::events_query,
             events::commands::events_search,
+            github::start_github_device_flow,
+            github::poll_github_device_flow,
+            github::get_github_account,
+            github::get_github_token,
+            github::disconnect_github,
             app_quit,
             get_traffic_light_y,
         ])

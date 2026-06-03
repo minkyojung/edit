@@ -7,6 +7,7 @@ import {
   IconLogout,
   IconSparkles,
   IconCameraPlus,
+  IconBrandGithub,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { SidebarDateMenu } from './SidebarDateMenu'
@@ -22,8 +23,11 @@ import { useDocsStore } from '@/state/docsStore'
 import { useGitStore } from '@/state/gitStore'
 import { buildDayUrl, buildViewUrl, getActiveSlugFromHash } from '@/lib/viewUrl'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
+import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
+import { useGitHubAuth } from '@/hooks/useGitHubAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
+import { useConnectGitHubDialog } from '@/stores/connectGitHubDialog'
 import { useTheme } from '@/components/theme-provider'
 import { useFont, type FontOption } from '@/components/font-provider'
 import {
@@ -140,6 +144,13 @@ export function AppSidebar() {
   const connectOpen = useConnectDialog((s) => s.open)
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const { account, refresh, disconnect } = useClaudeAuth()
+  const githubConnectOpen = useConnectGitHubDialog((s) => s.open)
+  const setGithubConnectOpen = useConnectGitHubDialog((s) => s.setOpen)
+  const {
+    account: githubAccount,
+    refresh: refreshGithub,
+    disconnect: disconnectGithub,
+  } = useGitHubAuth()
   const sidebarTab = useDocsStore((s) => s.sidebarTab)
   const dirtyCount = useGitStore((s) => s.dirtyPaths.size)
   const gitStatus = useGitStore((s) => s.status)
@@ -309,6 +320,32 @@ export function AppSidebar() {
                     <DropdownMenuSeparator />
                   </>
                 )}
+                {!githubAccount.connected && (
+                  <>
+                    <DropdownMenuItem onClick={() => setGithubConnectOpen(true)}>
+                      <IconBrandGithub size={16} stroke={1.5} />
+                      Connect GitHub
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                {githubAccount.connected && (
+                  <>
+                    <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+                      GitHub
+                    </DropdownMenuLabel>
+                    <DropdownMenuItem disabled className="opacity-100">
+                      <IconBrandGithub size={16} stroke={1.5} />
+                      <span className="truncate">
+                        {githubAccount.login ?? 'Connected'}
+                      </span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={disconnectGithub}>
+                      Disconnect GitHub
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 <DropdownMenuItem
                   disabled={saveSnapshotDisabled}
                   onSelect={() => {
@@ -375,6 +412,11 @@ export function AppSidebar() {
         </SidebarMenu>
       </SidebarFooter>
       <ConnectClaudeDialog open={connectOpen} onOpenChange={setConnectOpen} onConnected={refresh} />
+      <ConnectGitHubDialog
+        open={githubConnectOpen}
+        onOpenChange={setGithubConnectOpen}
+        onConnected={refreshGithub}
+      />
     </Sidebar>
   )
 }
