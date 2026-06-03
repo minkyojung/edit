@@ -101,9 +101,25 @@ export function createCustomCaretPlugin() {
           raf = window.requestAnimationFrame(place)
         }
 
-        // coordsAtPos is viewport-relative, so any scroll/resize moves it.
+        // The editor can be resized WITHOUT a window resize — dragging the
+        // chat-panel divider changes the editor width, which rewraps the text
+        // and moves every caret position. A ResizeObserver on the editor
+        // element catches that and ordinary window resizes alike; the caret is
+        // repositioned on the next tick. (Replaces a window 'resize' listener,
+        // which never fires on a panel drag.)
+        const resizeObserver = new ResizeObserver(schedule)
+        resizeObserver.observe(view.dom)
+
+        // A web font finishing load reflows the text and shifts every caret
+        // position, but fires no transaction — so the caret would sit stale.
+        // Pretendard loads glyph subsets on demand, so we listen to the
+        // recurring `loadingdone` (fires after each batch) rather than the
+        // one-shot `document.fonts.ready` CodeMirror uses, to catch later
+        // subsets too. Reposition on the next tick.
+        document.fonts.addEventListener('loadingdone', schedule)
+
+        // coordsAtPos is viewport-relative, so scrolling also moves it.
         window.addEventListener('scroll', schedule, true)
-        window.addEventListener('resize', schedule)
         view.dom.addEventListener('focus', schedule)
         view.dom.addEventListener('blur', schedule)
         view.dom.addEventListener('compositionstart', schedule)
@@ -117,8 +133,9 @@ export function createCustomCaretPlugin() {
           },
           destroy() {
             if (raf) cancelAnimationFrame(raf)
+            resizeObserver.disconnect()
+            document.fonts.removeEventListener('loadingdone', schedule)
             window.removeEventListener('scroll', schedule, true)
-            window.removeEventListener('resize', schedule)
             view.dom.removeEventListener('focus', schedule)
             view.dom.removeEventListener('blur', schedule)
             view.dom.removeEventListener('compositionstart', schedule)
