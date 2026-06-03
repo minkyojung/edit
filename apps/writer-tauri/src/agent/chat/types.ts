@@ -35,20 +35,6 @@ export function agentIdForModel(model: string): string {
   return `ai:${model}`
 }
 
-/** One tool invocation observed during a chat turn. Kept generic
- * since Claude Agent SDK's built-in tools (Read / Edit / Write /
- * Grep / Glob / Bash / ...) plus our MCP relays (read_page,
- * search_wiki, submit_ingest_result, submit_profile) all flow
- * through the same toolCalls timeline. `result` is whatever the
- * tool's `tool_result` content block carried back — usually a
- * short status string, occasionally an object. */
-export interface ToolCallRecord {
-  id: string
-  name: string
-  input: unknown
-  result: unknown
-}
-
 export interface RunChatArgs {
   /** The editor view whose text is the chat's "current page" context.
    * Null on surfaces with no document — e.g. the Read Later queue route,
@@ -114,7 +100,6 @@ export interface RunChatArgs {
    * parts and updated parts come through the same signature. The caller
    * upserts by `part.id` to maintain its own ordered list. */
   onPart?: (part: MessagePart) => void
-  onToolApplied?: (call: ToolCallRecord) => void
   /** Fired once, on the FIRST claude:event of any kind for this run — the
    * SDK's session-init signal, which lands before any content part. The caller
    * marks the thread's session as started here (not on the first content part)
@@ -134,7 +119,10 @@ export interface RunChatArgs {
 
 export interface RunChatResult {
   stopReason: string | null
-  toolCalls: ToolCallRecord[]
+  /** Number of edits this run staged, derived at settle from the single
+   * source of truth — the PendingChanges pushed under this run's id.
+   * Consumed by the review-comments summarize hook. */
+  editCount: number
 }
 
 /** Snapshot of the most recent SDK rate_limit_event seen during a run.

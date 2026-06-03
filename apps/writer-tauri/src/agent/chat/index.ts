@@ -43,7 +43,6 @@ import {
   type ErrorEvent,
   type RunChatArgs,
   type RunChatResult,
-  type ToolCallRecord,
 } from './types'
 import {
   buildUserPrompt,
@@ -154,8 +153,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const runs = useChatRuns.getState()
   runs.start(threadId, runId, controller, slug)
 
-  const toolCalls: ToolCallRecord[] = []
-
   // Live stream → MessagePart translator. Owns the timeline state
   // (partsById, blockIndexToPartId, etc.) so this file only sees
   // the entry points it actually drives.
@@ -182,7 +179,16 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       if (settled) return
       settled = true
       cleanup()
-      resolve({ stopReason, toolCalls })
+      // Derive the edit count from the single source of truth — the
+      // PendingChanges this run pushed (keyed by runId). By settle
+      // (claude:done) every edit-pending event for the turn has been
+      // mapped and pushed; the review-comments path only edits existing
+      // docs (synchronous mapper, no async materialize), so the count is
+      // complete here. No tray/return-value tally is maintained.
+      const editCount = Object.values(
+        usePendingChangesStore.getState().byId,
+      ).filter((c) => c.context.runId === runId).length
+      resolve({ stopReason, editCount })
       // No commit at turn end. Chat edits write NOTHING to disk during
       // the turn — the propose_* tools only stage proposals — so there's
       // nothing to record here. The commit happens when the user Keeps a

@@ -176,13 +176,10 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       // (fired on the first claude:event, the SDK's session-init signal),
       // not on the first content part — see that callback below.
 
-      // Counters used by `summarize` (review-comments). Now derived from
-      // the final toolCalls list returned by runChat — Phase 3.1.5
-      // dropped the host-bridged `edit_document` relay + its per-call
-      // onToolApplied callback, so the runner no longer learns about
-      // individual edits as they happen. The summarize hook only runs
-      // once at settle anyway, so post-hoc filtering is equivalent
-      // and keeps the streaming path simpler.
+      // Counters used by `summarize` (review-comments). Assigned once at
+      // settle from runChat's `editCount` (derived from pendingChangesStore
+      // by runId). The summarize hook only runs once at settle, so a single
+      // post-hoc read is equivalent and keeps the streaming path simple.
       let proposedCount = 0
       let appliedCount = 0
 
@@ -355,16 +352,13 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
             flusher.schedule()
           },
         })
-        // Post-hoc edit count for the review-comments summarize hook.
-        // Anthropic's built-in Edit/Write tools land in toolCalls with
-        // their tool names verbatim; we count each as one proposal and
-        // assume success unless the tool_result was an error string.
-        const editTools = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
-        for (const call of result.toolCalls) {
-          if (!editTools.has(call.name)) continue
-          proposedCount += 1
-          appliedCount += 1
-        }
+        // Edit count for the review-comments summarize hook. Sourced from
+        // runChat's `editCount` — the number of PendingChanges this run
+        // staged (keyed by runId in pendingChangesStore, the single source
+        // of truth for chat edits). The old built-in-toolCalls tally is
+        // gone: edits no longer round-trip through the run result.
+        proposedCount = result.editCount
+        appliedCount = result.editCount
         commit('done', result.stopReason)
         setStatus('idle')
       } catch (e) {
