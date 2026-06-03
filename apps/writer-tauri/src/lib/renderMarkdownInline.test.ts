@@ -73,6 +73,25 @@ describe('renderMarkdownToFragment — inline elements', () => {
     expect(html).toContain('>docs</a>')
   })
 
+  it('strips unsafe link schemes (javascript:) — renders inert, no href', () => {
+    const html = renderHtml('Click [me](javascript:alert(1))')
+    expect(html).toContain('class="md-link"')
+    expect(html).toContain('>me</a>')
+    // No live href / rel on a dangerous-scheme link.
+    expect(html).not.toContain('href=')
+    expect(html).not.toContain('javascript:')
+  })
+
+  it('strips data: scheme links', () => {
+    const html = renderHtml('[x](data:text/html,<script>alert(1)</script>)')
+    expect(html).not.toContain('href=')
+  })
+
+  it('keeps mailto: links', () => {
+    const html = renderHtml('[mail](mailto:a@b.com)')
+    expect(html).toContain('href="mailto:a@b.com"')
+  })
+
   it('renders **bold** as <strong>', () => {
     const html = renderHtml('This is **important**.')
     expect(html).toContain('<strong>important</strong>')

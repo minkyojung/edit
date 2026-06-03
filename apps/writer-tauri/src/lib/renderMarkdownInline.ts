@@ -209,11 +209,31 @@ function makeLinkAnchor(label: string, url: string): HTMLAnchorElement {
     a.className = 'md-wikilink'
   } else {
     a.className = 'md-link'
-    a.href = url
-    a.rel = 'noreferrer noopener'
+    // This renderer is fed untrusted markdown (LLM output, extracted
+    // article bodies), so guard the href scheme before assigning it.
+    // An unsafe scheme (javascript:/data:/vbscript:…) renders as inert
+    // link-styled text rather than a live, clickable payload.
+    if (isSafeHref(url)) {
+      a.href = url
+      a.rel = 'noreferrer noopener'
+    }
   }
   a.textContent = label
   return a
+}
+
+/** True when `url` is safe to use as an anchor href. A URL with an
+ * explicit scheme must be http(s) or mailto; scheme-less URLs (relative,
+ * anchor, protocol-relative) are allowed. Control chars are stripped
+ * first because browsers ignore ASCII tab/newline when resolving the
+ * scheme, so `java\nscript:` would otherwise slip past yet still run. */
+function isSafeHref(url: string): boolean {
+  // The control-char strip is intentional: browsers remove these from a
+  // URL before resolving its scheme, so we must too (see jsdoc above).
+  // eslint-disable-next-line no-control-regex
+  const normalized = url.replace(/[\u0000-\u0020]/g, '')
+  const scheme = normalized.match(/^([a-z][a-z0-9+.-]*):/i)
+  return !scheme || /^(https?|mailto)$/i.test(scheme[1])
 }
 
 function stripBackslashEscapes(text: string): string {
