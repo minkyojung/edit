@@ -1,10 +1,12 @@
 import type React from 'react'
+import { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { BundledLanguage } from 'shiki'
 import { remarkWikilink } from './remarkWikilink'
 import { WikiLink } from './WikiLink'
 import { CodeBlock } from '@/components/ai-elements/code-block'
+import { MermaidBlock } from '@/viz/MermaidBlock'
 
 // Why react-markdown directly (no streamdown, no sanitize):
 //
@@ -83,7 +85,11 @@ function normaliseLanguage(raw: string | undefined): BundledLanguage {
  * rendered children; using the node is the simplest way to recover
  * the raw code string (the React children tree is harder to walk
  * because it's already been turned into React elements). */
-function extractCodeText(node: unknown): { code: string; lang: BundledLanguage } {
+function extractCodeText(node: unknown): {
+  code: string
+  lang: BundledLanguage
+  rawLang: string
+} {
   // hast `pre` element should have a single `code` child.
   const preNode = node as {
     children?: Array<{
@@ -94,7 +100,7 @@ function extractCodeText(node: unknown): { code: string; lang: BundledLanguage }
     }>
   }
   const codeNode = preNode?.children?.find((c) => c?.tagName === 'code')
-  if (!codeNode) return { code: '', lang: 'text' as BundledLanguage }
+  if (!codeNode) return { code: '', lang: 'text' as BundledLanguage, rawLang: '' }
   const classNames = Array.isArray(codeNode.properties?.className)
     ? codeNode.properties.className
     : typeof codeNode.properties?.className === 'string'
@@ -107,25 +113,22 @@ function extractCodeText(node: unknown): { code: string; lang: BundledLanguage }
       ?.filter((c) => c?.type === 'text')
       .map((c) => c.value ?? '')
       .join('') ?? ''
-  return { code: text, lang: normaliseLanguage(lang) }
+  return { code: text, lang: normaliseLanguage(lang), rawLang: lang.toLowerCase() }
 }
 
-const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
+type MarkdownComponents = NonNullable<
+  React.ComponentProps<typeof ReactMarkdown>['components']
+>
+
+// Components that don't depend on streaming state. The `pre` handler is built
+// per-render in the component below because it needs `isStreaming`.
+const STATIC_COMPONENTS: MarkdownComponents = {
   p: ({ children }) => <p className="leading-snug">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
   code: ({ children }) => (
     <code className="bg-muted text-foreground text-xs rounded px-1 py-0.5 font-mono">{children}</code>
   ),
-  // Fenced code blocks. react-markdown nests <code> inside <pre>;
-  // overriding <pre> hands us the wrapper to swap in the in-house
-  // CodeBlock component (Shiki-backed syntax highlighting, themed
-  // via --shiki-* tokens already configured in index.css).
-  pre: (props) => {
-    const { node } = props as { node?: unknown }
-    const { code, lang } = extractCodeText(node)
-    return <CodeBlock code={code} language={lang} />
-  },
   a: (props) => {
     // react-markdown passes the raw mdast node as `node` on the
     // component props; strip it before spreading onto the DOM so we
@@ -165,16 +168,31 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
 
 export function StreamingMarkdown({
   content,
-  // isStreaming is kept on the prop API for symmetry with the prior
-  // streamdown-based version; react-markdown doesn't need the hint
-  // (each content change re-renders from scratch). Future streaming
-  // UX (e.g. word-by-word fade) can read this flag again without
-  // changing every caller.
-  isStreaming: _isStreaming,
+  isStreaming,
 }: {
   content: string
   isStreaming: boolean
 }) {
+  // Fenced code blocks. react-markdown nests <code> inside <pre>; overriding
+  // <pre> hands us the wrapper. A `mermaid` fence routes to MermaidBlock (which
+  // waits for the fence to settle before rendering); everything else goes to
+  // CodeBlock (Shiki, themed via --shiki-* tokens). Rebuilt only when the
+  // streaming flag flips so MermaidBlock knows when the source is complete.
+  const components = useMemo<MarkdownComponents>(
+    () => ({
+      ...STATIC_COMPONENTS,
+      pre: (props) => {
+        const { node } = props as { node?: unknown }
+        const { code, lang, rawLang } = extractCodeText(node)
+        if (rawLang === 'mermaid') {
+          return <MermaidBlock code={code} isStreaming={isStreaming} />
+        }
+        return <CodeBlock code={code} language={lang} />
+      },
+    }),
+    [isStreaming],
+  )
+
   return (
     // `prose` taps the @tailwindcss/typography plugin (configured in
     // index.css to use our design tokens). It handles h1–h6, ul/ol/li,
@@ -186,7 +204,7 @@ export function StreamingMarkdown({
     <div className="prose dark:prose-invert max-w-none text-[15px] leading-snug [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
       <ReactMarkdown
         remarkPlugins={REMARK_PLUGINS}
-        components={markdownComponents}
+        components={components}
       >
         {content}
       </ReactMarkdown>
