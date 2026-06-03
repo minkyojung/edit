@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { BundledLanguage } from 'shiki'
 import { CodeBlock } from '@/components/ai-elements/code-block'
-import { useTheme } from '@/components/theme-provider'
 import { buildArtifactSrcdoc, buildArtifactThemeCss } from './artifactDocument'
+import { usePaletteSignal } from './usePaletteSignal'
+import { insertVizIntoDoc } from './insertIntoDoc'
 
 // Height clamp. Below MIN avoids a zero-collapse on empty content; above MAX
 // stops a runaway artifact from swallowing the whole transcript (it gets an
@@ -24,11 +25,15 @@ const RENDER_WATCHDOG_MS = 1500
 export function ArtifactBlock({
   code,
   isStreaming,
+  embedded = false,
 }: {
   code: string
   isStreaming: boolean
+  // When rendered inside the editor NodeView, the NodeView owns the
+  // edit affordance, so suppress this component's own "소스" toggle.
+  embedded?: boolean
 }) {
-  const { palette } = useTheme()
+  const themeSignal = usePaletteSignal()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Stable per instance — used to match height messages from OUR frame even
   // when several artifacts share the one window message bus.
@@ -45,9 +50,9 @@ export function ArtifactBlock({
   const srcDoc = useMemo(() => {
     if (isStreaming) return null
     // buildArtifactThemeCss reads the active palette's tokens from the DOM, so
-    // `palette` is a real (if indirect) dependency — listed to re-theme on switch.
+    // themeSignal is a real (if indirect) dependency — listed to re-theme on switch.
     return buildArtifactSrcdoc({ html: code, nonce, themeCss: buildArtifactThemeCss() })
-  }, [code, isStreaming, palette, nonce])
+  }, [code, isStreaming, themeSignal, nonce])
 
   const showingIframe = srcDoc !== null && !showSource && !failed
 
@@ -122,13 +127,24 @@ export function ArtifactBlock({
         className="block w-full border-0"
         style={{ height: `${height || INITIAL_HEIGHT}px` }}
       />
-      <button
-        type="button"
-        onClick={() => setShowSource(true)}
-        className="absolute right-1 top-1 rounded bg-background/80 px-1.5 py-0.5 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
-      >
-        소스
-      </button>
+      {!embedded && (
+        <div className="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            type="button"
+            onClick={() => void insertVizIntoDoc('artifact', code)}
+            className="rounded bg-background/80 px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+          >
+            본문에 삽입
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowSource(true)}
+            className="rounded bg-background/80 px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+          >
+            소스
+          </button>
+        </div>
+      )}
     </div>
   )
 }

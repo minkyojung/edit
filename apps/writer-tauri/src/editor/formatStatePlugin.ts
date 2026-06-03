@@ -9,7 +9,7 @@
 // toggling).
 
 import { $prose } from '@milkdown/kit/utils'
-import { Plugin } from '@milkdown/kit/prose/state'
+import { NodeSelection, Plugin } from '@milkdown/kit/prose/state'
 import type { EditorState } from '@milkdown/kit/prose/state'
 import type { MarkType, Node as ProseMirrorNode } from '@milkdown/kit/prose/model'
 import type { EditorView } from '@milkdown/kit/prose/view'
@@ -152,7 +152,10 @@ export const formatStatePlugin = $prose(() => {
           // IME composition (Korean / Japanese / Chinese) constantly
           // moves the selection mid-keystroke; treating composition
           // as "no bubble" keeps the SelectionBubble from flickering.
-          const empty = sel.empty || view.composing
+          // A NodeSelection (a whole block selected — image/video card or a
+          // mermaid/artifact viz block) is also "no bubble": inline mark
+          // formatting doesn't apply to a node, so the toolbar must not pop.
+          const empty = sel.empty || view.composing || sel instanceof NodeSelection
           const rect = empty ? null : unionCoords(view, sel.from, sel.to)
           const prev = useFormatStateStore.getState()
           if (

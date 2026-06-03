@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { BundledLanguage } from 'shiki'
 import { CodeBlock } from '@/components/ai-elements/code-block'
-import { useTheme } from '@/components/theme-provider'
 import { resolveFontFamily, resolveTokens } from './resolveTokens'
+import { usePaletteSignal } from './usePaletteSignal'
+import { insertVizIntoDoc } from './insertIntoDoc'
 
 // Mermaid is heavy (it pulls d3 / dagre / cytoscape). Load it lazily on first
 // use and cache the module promise so later blocks reuse the same chunk.
@@ -59,11 +60,15 @@ function buildThemeVariables(): Record<string, string> {
 export function MermaidBlock({
   code,
   isStreaming,
+  embedded = false,
 }: {
   code: string
   isStreaming: boolean
+  // When rendered inside the editor NodeView the diagram already lives in the
+  // doc, so suppress the chat-only "본문에 삽입" affordance.
+  embedded?: boolean
 }) {
-  const { palette } = useTheme()
+  const themeSignal = usePaletteSignal()
   const [svg, setSvg] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
 
@@ -71,7 +76,7 @@ export function MermaidBlock({
     // Only render a completed fence. While the assistant is still streaming
     // tokens the source is half-written and would fail to parse on every
     // keystroke; show the raw source until the block settles. Re-running on
-    // `palette` change re-themes the (static) SVG for light/dark switches.
+    // the theme signal re-themes the (static) SVG for light/dark switches.
     if (isStreaming) return
 
     let cancelled = false
@@ -105,18 +110,29 @@ export function MermaidBlock({
     return () => {
       cancelled = true
     }
-  }, [code, palette, isStreaming])
+  }, [code, themeSignal, isStreaming])
 
   if (isStreaming || failed || svg === null) {
     return <CodeBlock code={code} language={'text' as BundledLanguage} />
   }
 
   return (
-    <div
-      className="my-2 flex justify-center overflow-x-auto rounded-md border bg-background p-3 [&_svg]:h-auto [&_svg]:max-w-full"
-      // mermaid `securityLevel: 'strict'` runs the output through DOMPurify;
-      // the app CSP also blocks inline script execution. Safe to inject.
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <div className="group relative my-2">
+      <div
+        className="flex justify-center overflow-x-auto rounded-md border bg-background p-3 [&_svg]:h-auto [&_svg]:max-w-full"
+        // mermaid `securityLevel: 'strict'` runs the output through DOMPurify;
+        // the app CSP also blocks inline script execution. Safe to inject.
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+      {!embedded && (
+        <button
+          type="button"
+          onClick={() => void insertVizIntoDoc('mermaid', code)}
+          className="absolute right-1 top-1 rounded bg-background/80 px-1.5 py-0.5 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
+        >
+          본문에 삽입
+        </button>
+      )}
+    </div>
   )
 }

@@ -24,6 +24,7 @@ import { $prose } from '@milkdown/kit/utils'
 import { cardDropAdvanceCursor } from './cardDropAdvanceCursor'
 import { audioNodeView } from './cards/AudioCardNodeView'
 import { imageNodeView } from './cards/ImageCardNodeView'
+import { codeBlockVizNodeView } from './cards/CodeBlockVizNodeView'
 import { videoNodeView } from './cards/VideoCardNodeView'
 import { githubActivityNodeView } from './cards/GitHubActivityCardNodeView'
 import { ensureSingleGitHubAnchor } from './insertGitHubAnchor'
@@ -350,6 +351,10 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .use(audioNodeView)
       .use(githubActivityNodeView)
       .use(imageInlineNodeView)
+      // Renders ```mermaid / ```artifact code blocks as live visualizations
+      // (reuses chat's MermaidBlock / ArtifactBlock); other code blocks fall
+      // back to the default editable <pre><code>. See CodeBlockVizNodeView.
+      .use(codeBlockVizNodeView)
       .use(cardDropAdvanceCursor)
       .use($prose(() => dropCursor({ color: false, width: 2, class: 'pm-drop-cursor' })))
       .use(createCustomCaretPlugin())
