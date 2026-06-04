@@ -496,6 +496,96 @@ pub async fn git_push(vault_path: &str, token: &str, branch: &str) -> Result<(),
     Ok(())
 }
 
+/// Clone `url` into `dest`, authenticating with `token` via the inline
+/// credential helper. Used by the restore slice: a fresh/empty vault on a new
+/// device pulls its entire history down. Unlike the other helpers this does
+/// NOT go through {@link git_command} — there's no `.git` to pin yet, so we run
+/// a plain `git clone` with the credential helper and the token-by-env, the
+/// same secret handling as {@link git_push} (token never on argv → never in
+/// `ps`). `dest` must be empty or non-existent (the caller guarantees this so
+/// we never clobber local notes). `GIT_TERMINAL_PROMPT=0` turns an auth failure
+/// into an error instead of an interactive hang.
+pub async fn git_clone(url: &str, dest: &str, token: &str) -> Result<(), String> {
+    let mut args = credential_helper_args();
+    args.extend(["clone", url, dest].iter().map(|s| s.to_string()));
+
+    let mut cmd = Command::new("git");
+    for a in &args {
+        cmd.arg(a);
+    }
+    cmd.env("GH_TOKEN", token);
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("git clone spawn failed: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let code = output.status.code().unwrap_or(-1);
+        return Err(format!("git clone exit {code}: {}", stderr.trim()));
+    }
+    Ok(())
+}
+
+/// Fetch `origin` into the vault's remote-tracking refs (`origin/<branch>`),
+/// authenticating with `token`. Does NOT touch the working tree — it only
+/// updates what git knows about the remote, so callers can compare local vs
+/// remote (ahead/behind) or fast-forward afterwards.
+pub async fn git_fetch(vault_path: &str, token: &str) -> Result<(), String> {
+    let mut args = credential_helper_args();
+    args.extend(["fetch", "origin"].iter().map(|s| s.to_string()));
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_git_with_env(
+        vault_path,
+        &arg_refs,
+        &[("GH_TOKEN", token), ("GIT_TERMINAL_PROMPT", "0")],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Receive remote changes by **fast-forward only**. Fetches `origin`, then —
+/// only if the local branch is strictly behind (an ancestor of the remote) —
+/// fast-forwards the working tree to `origin/<branch>`.
+///
+/// Returns `Ok(true)` when it advanced (or was already up to date), `Ok(false)`
+/// when the branches have **diverged** (both sides have unique commits → a
+/// fast-forward isn't possible). A diverged return is the signal for the
+/// conflict slice ("keep both"), NOT an error.
+///
+/// Why `--ff-only` (never a real merge): it refuses rather than create a merge
+/// commit or write `<<<<<<<` conflict markers into the user's notes. The
+/// working tree is therefore never left half-merged — either it advances
+/// cleanly or it doesn't move at all.
+///
+/// Divergence is detected with `merge-base --is-ancestor` (exit code, not
+/// string matching) so it's robust across git locales. A missing remote ref
+/// also yields `false` (nothing to fast-forward onto).
+pub async fn git_pull_ff(vault_path: &str, token: &str, branch: &str) -> Result<bool, String> {
+    git_fetch(vault_path, token).await?;
+    let remote_ref = format!("origin/{branch}");
+
+    // Is local HEAD an ancestor of the remote tip? exit 0 = yes (ff is safe),
+    // exit 1 = no (diverged, or remote ref absent). Other codes → treat as
+    // "can't ff" too; the underlying problem surfaces on the next real op.
+    let is_ancestor = git_command(vault_path)
+        .args(["merge-base", "--is-ancestor", "HEAD", &remote_ref])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .map_err(|e| format!("merge-base failed: {e}"))?;
+    if !is_ancestor.success() {
+        return Ok(false);
+    }
+
+    run_git(vault_path, &["merge", "--ff-only", &remote_ref]).await?;
+    Ok(true)
+}
+
 /// Return commits from `<ref_name>..HEAD`, newest first. Each entry
 /// includes the touched files so the frontend can render per-file
 /// breakdowns without a second round trip.
