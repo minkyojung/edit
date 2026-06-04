@@ -450,12 +450,24 @@ pub async fn github_sync(
 
     let client = reqwest::Client::new();
 
-    // Commits are the core signal — fail the sync if they can't be fetched.
-    let mut entries = fetch_commits(&client, &stored, &ingested_at, since.as_deref()).await?;
-    // PRs are best-effort: a search hiccup shouldn't drop the commits.
+    // Commits are the core signal. A spent rate limit isn't a failure — skip
+    // this tick quietly and let the next poll retry once the quota refills.
+    let mut entries = match fetch_commits(&client, &stored, &ingested_at, since.as_deref()).await {
+        Ok(v) => v,
+        Err(GithubError::RateLimited { reset }) => {
+            eprintln!("[github] rate limit reached — skipping sync (resets at {reset:?})");
+            return Ok(0);
+        }
+        Err(GithubError::Other(e)) => return Err(e),
+    };
+    // PRs are best-effort: a search hiccup (or a rate limit hit mid-sync) drops
+    // PRs but keeps the commits already fetched.
     match fetch_prs(&client, &stored, &ingested_at, since.as_deref()).await {
         Ok(prs) => entries.extend(prs),
-        Err(e) => eprintln!("[github] pr fetch failed: {e}"),
+        Err(GithubError::RateLimited { reset }) => {
+            eprintln!("[github] rate limit reached during PR fetch (resets at {reset:?})")
+        }
+        Err(GithubError::Other(e)) => eprintln!("[github] pr fetch failed: {e}"),
     }
 
     let watermark = next_watermark(prev_watermark, &entries);
@@ -476,14 +488,31 @@ pub async fn github_sync(
     Ok(count)
 }
 
-/// Authenticated GET returning parsed JSON. Errors carry status + body so
-/// failures are diagnosable from the frontend console.
+/// Connector request failures, split so the sync loop can treat a spent rate
+/// limit (transient — retry next tick) differently from a real error.
+enum GithubError {
+    /// Primary rate limit exhausted (403/429 with `X-RateLimit-Remaining: 0`).
+    /// `reset` is the Unix-seconds time the quota refills, when GitHub sent it.
+    RateLimited { reset: Option<i64> },
+    /// Anything else (network, auth, parse, other non-2xx) — diagnostic string.
+    Other(String),
+}
+
+/// Read a numeric response header, when present and parseable. Used for the
+/// `X-RateLimit-*` counters (read BEFORE the body is consumed).
+fn header_i64(resp: &reqwest::Response, name: &str) -> Option<i64> {
+    resp.headers().get(name)?.to_str().ok()?.trim().parse().ok()
+}
+
+/// Authenticated GET returning parsed JSON. Detects a spent rate limit
+/// (403/429 + `X-RateLimit-Remaining: 0`) and reports it as a distinct error so
+/// the connector can back off quietly instead of surfacing an opaque failure.
 async fn github_get(
     client: &reqwest::Client,
     url: &str,
     query: &[(&str, &str)],
     token: &str,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, GithubError> {
     let resp = client
         .get(url)
         .query(query)
@@ -492,15 +521,25 @@ async fn github_get(
         .header("Authorization", format!("Bearer {token}"))
         .send()
         .await
-        .map_err(|e| format!("github request failed: {e}"))?;
+        .map_err(|e| GithubError::Other(format!("github request failed: {e}")))?;
+
     let status = resp.status();
     if !status.is_success() {
+        // 403/429 with the remaining counter at 0 is the primary rate limit —
+        // transient, so flag it for a quiet retry rather than a hard error.
+        // Headers are read before the body consumes `resp`.
+        let remaining = header_i64(&resp, "x-ratelimit-remaining");
+        if (status.as_u16() == 403 || status.as_u16() == 429) && remaining == Some(0) {
+            return Err(GithubError::RateLimited {
+                reset: header_i64(&resp, "x-ratelimit-reset"),
+            });
+        }
         let text = resp.text().await.unwrap_or_default();
-        return Err(format!("github {status}: {text}"));
+        return Err(GithubError::Other(format!("github {status}: {text}")));
     }
     resp.json()
         .await
-        .map_err(|e| format!("github parse failed: {e}"))
+        .map_err(|e| GithubError::Other(format!("github parse failed: {e}")))
 }
 
 /// Recent commits authored by the user. The events API only carries push
@@ -511,7 +550,7 @@ async fn fetch_commits(
     stored: &StoredToken,
     ingested_at: &str,
     since: Option<&str>,
-) -> Result<Vec<Entry>, String> {
+) -> Result<Vec<Entry>, GithubError> {
     let q = match since {
         Some(date) => format!("author:{} committer-date:>={date}", stored.login),
         None => format!("author:{}", stored.login),
@@ -579,7 +618,7 @@ async fn fetch_prs(
     stored: &StoredToken,
     ingested_at: &str,
     since: Option<&str>,
-) -> Result<Vec<Entry>, String> {
+) -> Result<Vec<Entry>, GithubError> {
     let q = match since {
         Some(date) => format!("author:{} type:pr updated:>={date}", stored.login),
         None => format!("author:{} type:pr", stored.login),
