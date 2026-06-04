@@ -10,12 +10,8 @@
 import { useEffect, useState } from 'react'
 import { eventsQueryByDate, type Entry } from '@/lib/eventsDb'
 import { useEventsStore } from '@/state/eventsStore'
-import { VegaBlock } from './VegaBlock'
-import { githubDailySpec } from './specs/githubDailySpec'
-
-function isMergeCommit(summary: string): boolean {
-  return /^Merge (pull request|branch|remote)/i.test(summary)
-}
+import { DataViz } from './DataViz'
+import { entriesToDailyColumnSpec, isMergeCommit } from './githubColumnSpec'
 
 export function GitHubActivityBlock({ date }: { date: string }) {
   // version bumps after every sync → re-query for live updates.
@@ -49,10 +45,11 @@ export function GitHubActivityBlock({ date }: { date: string }) {
   if (merged.length) parts.push(`${merged.length} PR merged`)
   if (opened.length) parts.push(`${opened.length} PR opened`)
 
-  // One row per event, bucketed by local hour; Vega aggregates the count.
-  const rows = entries
-    .map((e) => ({ hour: new Date(e.ts).getHours(), kind: e.kind }))
-    .filter((r) => !Number.isNaN(r.hour))
+  // Bucket the day's events into the shared engine's column spec (the same
+  // <DataViz> the ```chart fence uses). Live updates ride the events store
+  // subscription above, not the renderer.
+  const spec = entriesToDailyColumnSpec(entries)
+  const hasChart = spec.kind === 'column' && spec.series.length > 0
 
   return (
     <div className="github-activity-card-body rounded-lg border bg-muted/20 px-3 py-2.5">
@@ -63,8 +60,10 @@ export function GitHubActivityBlock({ date }: { date: string }) {
           {parts.length ? parts.join(' · ') : 'No activity'}
         </span>
       </div>
-      {entries.length > 0 && (
-        <VegaBlock spec={githubDailySpec} data={rows} />
+      {hasChart && (
+        <div className="mt-2">
+          <DataViz spec={spec} />
+        </div>
       )}
     </div>
   )
