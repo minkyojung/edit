@@ -120,7 +120,7 @@ export function VegaBlock({
   if (failed) {
     return (
       <div className="mt-1 text-[11px] text-muted-foreground/60">
-        차트를 그리지 못했습니다
+        Could not render the chart
       </div>
     )
   }

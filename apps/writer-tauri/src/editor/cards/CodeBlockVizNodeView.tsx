@@ -11,7 +11,7 @@
 // in a textarea whose changes are written back via a PM transaction (which
 // dirtyTrackerPlugin observes → flush → disk).
 //
-// Interaction model: a hover toolbar gives ↑ / ↓ / 편집 / 삭제. Reordering is
+// Interaction model: a hover toolbar gives ↑ / ↓ / edit / delete. Reordering is
 // via the ↑/↓ buttons (swap with the neighbouring block) rather than mouse
 // drag — the same choice Obsidian's core makes (move-line, not block-drag),
 // and the only approach that works regardless of an artifact's iframe (which
@@ -26,6 +26,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { MermaidBlock } from '@/viz/MermaidBlock'
 import { ArtifactBlock } from '@/viz/ArtifactBlock'
 import { GitHubActivityBlock } from '@/viz/GitHubActivityBlock'
+import { syncGitHubActivity } from '@/lib/githubSync'
+import { toast } from 'sonner'
 
 const VIZ_LANGS = new Set(['mermaid', 'artifact', 'github-activity'])
 const SYNC_DEBOUNCE_MS = 300
@@ -40,6 +42,9 @@ const ICON_EDIT = svgIcon('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 
 const ICON_DELETE = svgIcon(
   '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/>',
 )
+const ICON_REFRESH = svgIcon(
+  '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/>',
+)
 
 class CodeBlockVizNodeView implements NodeView {
   dom: HTMLElement
@@ -47,6 +52,9 @@ class CodeBlockVizNodeView implements NodeView {
 
   private lang: string
   private readonly isViz: boolean
+  // github-activity is a live data card, not editable source — its toolbar
+  // shows Refresh (re-sync) instead of Edit source.
+  private readonly isGithub: boolean
 
   // Visualization-mode fields (unused for plain code blocks).
   private root: Root | null = null
@@ -57,6 +65,7 @@ class CodeBlockVizNodeView implements NodeView {
   private editing = false
   private currentCode: string
   private syncTimer: number | null = null
+  private refreshing = false
 
   constructor(
     node: PMNode,
@@ -65,6 +74,7 @@ class CodeBlockVizNodeView implements NodeView {
   ) {
     this.lang = String(node.attrs.language || '').toLowerCase()
     this.isViz = VIZ_LANGS.has(this.lang)
+    this.isGithub = this.lang === 'github-activity'
     this.currentCode = node.textContent
 
     if (!this.isViz) {
@@ -96,7 +106,9 @@ class CodeBlockVizNodeView implements NodeView {
 
     // A freshly-typed empty ```mermaid block has nowhere to type without a
     // contentDOM, so start such blocks in edit mode.
-    this.editing = this.currentCode.trim().length === 0
+    // github cards have no editable source (just a date), so never start —
+    // or enter — edit mode; other empty viz blocks open in edit mode.
+    this.editing = !this.isGithub && this.currentCode.trim().length === 0
     this.syncMode()
   }
 
@@ -129,7 +141,7 @@ class CodeBlockVizNodeView implements NodeView {
     bar.className = 'flex justify-end border-t px-2 py-1'
     const done = document.createElement('button')
     done.type = 'button'
-    done.textContent = '완료'
+    done.textContent = 'Done'
     done.className =
       'rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted'
     done.addEventListener('mousedown', (e) => {
@@ -172,16 +184,39 @@ class CodeBlockVizNodeView implements NodeView {
     }
 
     bar.append(
-      mkIconButton(ICON_UP, '위로 이동', () => this.moveBlock(-1)),
-      mkIconButton(ICON_DOWN, '아래로 이동', () => this.moveBlock(1)),
+      mkIconButton(ICON_UP, 'Move up', () => this.moveBlock(-1)),
+      mkIconButton(ICON_DOWN, 'Move down', () => this.moveBlock(1)),
       divider(),
-      mkIconButton(ICON_EDIT, '소스 편집', () => {
-        this.editing = true
-        this.syncMode()
-      }),
-      mkIconButton(ICON_DELETE, '삭제', () => this.deleteSelf()),
+      // github: a date has no "source" to edit — offer a manual re-sync
+      // (pull latest activity now) instead; the card re-renders on the bump.
+      this.isGithub
+        ? mkIconButton(ICON_REFRESH, 'Refresh', () => {
+            void this.refreshGithub()
+          })
+        : mkIconButton(ICON_EDIT, 'Edit source', () => {
+            this.editing = true
+            this.syncMode()
+          }),
+      mkIconButton(ICON_DELETE, 'Delete', () => this.deleteSelf()),
     )
     this.toolbar = bar
+  }
+
+  // Manual re-sync for the github card: spin the icon + a loading toast so
+  // the click has visible feedback (the toolbar can fade out on mouse-leave,
+  // so the toast — not just the spinner — carries the result). The card
+  // re-renders via the eventsStore bump inside syncGitHubActivity.
+  private async refreshGithub(): Promise<void> {
+    if (this.refreshing) return
+    this.refreshing = true
+    const icon = this.toolbar?.querySelector('[aria-label="Refresh"] svg')
+    icon?.classList.add('animate-spin')
+    const id = toast.loading('Refreshing GitHub…')
+    const ok = await syncGitHubActivity()
+    icon?.classList.remove('animate-spin')
+    this.refreshing = false
+    if (ok) toast.success('Refreshed', { id })
+    else toast.error('Refresh failed', { id })
   }
 
   // Click selects the whole block so Backspace/Delete removes it, like cards.

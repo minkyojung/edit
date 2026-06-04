@@ -1,4 +1,4 @@
-// Built-in Vega-Lite spec for the daily GitHub-activity card — the "틀".
+// Built-in Vega-Lite spec for the daily GitHub-activity card — the "frame".
 // It is colour-agnostic and data-agnostic: VegaBlock injects the active
 // palette (config.range/axis) and the day's rows ({ hour, kind }) at
 // render time, so the same spec stays fixed while the data updates live
@@ -22,7 +22,7 @@ export const githubDailySpec = {
       axis: {
         title: null,
         values: [0, 6, 12, 18],
-        labelExpr: "datum.value + '시'",
+        labelExpr: "datum.value + 'h'",
         labelAngle: 0,
         grid: false,
       },

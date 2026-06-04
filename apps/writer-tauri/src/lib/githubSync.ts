@@ -15,11 +15,15 @@ let inFlight = false
 /** Run one sync now. No-ops without an active vault (so it's safe before
  * onboarding), guards against overlapping runs, and swallows errors —
  * GitHub being down just means the next tick retries. Rust returns Ok(0)
- * when not connected, so this is also safe to call unconditionally. */
-export async function syncGitHubActivity(): Promise<void> {
+ * when not connected, so this is also safe to call unconditionally.
+ *
+ * Returns true on a completed sync, false if it was skipped (no vault /
+ * already running) or failed — the manual refresh button uses this for
+ * toast feedback; the fire-and-forget callers ignore it. */
+export async function syncGitHubActivity(): Promise<boolean> {
   const vault = getActiveVaultPath()
-  if (!vault) return
-  if (inFlight) return
+  if (!vault) return false
+  if (inFlight) return false
   inFlight = true
   try {
     const upserted = await invoke<number>('github_sync', {
@@ -28,8 +32,10 @@ export async function syncGitHubActivity(): Promise<void> {
     })
     // Nudge any open activity cards to re-query events.db.
     if (upserted > 0) useEventsStore.getState().bump()
+    return true
   } catch (e) {
     console.warn('[githubSync] sync failed', e)
+    return false
   } finally {
     inFlight = false
   }
