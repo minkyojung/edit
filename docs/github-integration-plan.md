@@ -1,7 +1,7 @@
 # GitHub 연동 기능 개발 계획
 
-> 작성일: 2026-05-31 · 진행 현황 업데이트: 2026-06-04
-> 상태: **Phase 1(인증) ✅ + Track A(데이터 커넥터) 🟡 동작(증분 동기화 ✅, ETag만 남음) — Track B(vault 백업) 🟡 뼈대 완료(새 repo push 1회), 자동화·복원·충돌 남음**
+> 작성일: 2026-05-31 · 진행 현황 업데이트: 2026-06-04 (코드 감사 반영)
+> 상태: **Phase 1(인증) ✅ + Track A(데이터 커넥터) 🟡 동작(증분 동기화 ✅, ETag만 남음) — Track B(vault 백업) 🟡 새 repo push ✅ + 수동 백업 허브(검토 패널 Back up, 마지막 푸시 기준) ✅, 복원(clone/pull)·충돌 남음**
 > 한 줄 요약: "GitHub"은 두 갈래(활동 가져오기 / 노트 백업) — 공통 토대인 인증을 먼저 만들고, 수직 슬라이스로 한 갈래씩.
 
 ---
@@ -25,10 +25,12 @@
 | 원격 git 명령 (remote_set/push) | 3 | 🟡 | `git.rs` (git_remote_set/git_push, credential-helper). fetch/clone/merge 없음 |
 | repo 관리 API (생성) | 3 | 🟡 | `github.rs` (create_repo). 목록/검사 없음 |
 | syncStore + `.manila/manifest.json` 표식 | 3 | ✅ | `vault_sync.rs` (manifest+vaultId), `src/state/syncStore.ts` |
-| 백업 엔진 (새 repo push 1회) | 3 | 🟡 | `vault_sync.rs` (vault_backup_init). 자동 push/pull/재시도 없음 |
-| 충돌 데이터 계층 (ours/theirs) | 3 | ❌ | 없음 |
+| 백업 엔진 — 슬라이스 1 (새 repo push 1회) | 3 | ✅ | `vault_sync.rs` (vault_backup_init) |
+| 백업 엔진 — 슬라이스 2 (수동 백업 허브) | 3 | ✅ | 자동 push는 만들었다가 **수동으로 전환**(커밋 `e1d9e1a8`). 검토 패널이 "마지막 푸시(`@{u}`) 이후 변경"을 보여주고 **Back up** 버튼으로 push. `vault_push`/`pushVault`, AI 배지. autoPush.ts는 삭제. |
+| 백업 엔진 — 슬라이스 3 (다른 기기 clone/pull 복원) | 3 | ❌ | git_fetch/git_clone 없음 |
+| 충돌 데이터 계층 (ours/theirs, conflict_sides) | 3 | ❌ | 없음 |
 
-**계획에 없던 추가 구현:** 활동 Vega-Lite 컬럼 차트(`githubColumnSpec.ts`/`githubDailySpec.ts`), 이벤트 FTS 검색(`events/db.rs`), 이벤트 필터(`EventFilter`), 수동 동기화 버튼(BootGate + 사이드바).
+**계획에 없던 추가 구현:** 활동 컬럼 차트(`githubColumnSpec.ts`/`githubDailySpec.ts`, **자체 SVG 엔진 DataViz** — Vega-Lite는 제거됨), 이벤트 FTS 검색(`events/db.rs`+`events/commands.rs`), 이벤트 필터(`EventFilter`), 수동 동기화 버튼(사이드바). + 시각화 합성 엔진 통일 편집(커밋 `6835d57c`, [visualization-feature-plan.md](./visualization-feature-plan.md) 참고).
 
 ---
 
@@ -126,8 +128,8 @@ A·B 둘 다 GitHub 토큰이 필요하다. **한 번 만들어 공유한다.**
 
 ### 만드는 순서 (수직 슬라이스, 가장 흔하고 안전한 것부터)
 1. ✅ **걸어다니는 뼈대**: 로그인 → 새 repo 자동 생성 → 노트 1회 push → GitHub에서 눈으로 확인. (완료 — `vault_sync.rs` vault_backup_init, 토큰은 credential-helper로 ps/디스크 미노출, 실측 검증)
-2. ❌ **자동화**: 커밋(=Keep) 날 때마다 자동 push, 오프라인이면 재시도 큐.
-3. ❌ **다른 기기**: 로그인 → 내 vault repo면 clone/pull로 복원.
+2. ✅ **수동 백업 허브**: 자동 push로 시작했다가 **수동으로 전환**(커밋 `e1d9e1a8`). 검토 패널이 "마지막 푸시(`@{u}`) 이후 변경"을 목록으로 보여주고 **Back up** 버튼이 `vault_push`로 올림 → 목록 비워짐. 기준점이 git-native ref(`@{u}`)라 예전 last-reviewed 책갈피 버그류 소멸. 커밋은 그대로 자동(로컬 보존)이라 데이터 안전. (자동 push 트리거는 제거, push 배관은 재사용.)
+3. ❌ **다른 기기**: 로그인 → 내 vault repo면 clone/pull로 복원. (git_fetch/git_clone 필요)
 4. ❌ **충돌**: 두 기기서 같은 페이지 동시 수정 처리.
 
 ### 충돌 UX 원칙 (디자이너 관점)
@@ -154,9 +156,20 @@ A·B 둘 다 GitHub 토큰이 필요하다. **한 번 만들어 공유한다.**
 Phase 0  지금 브랜치 main 착지/동결           ← 페인트 말리기 (선행 필수)
 Phase 1  GitHub 인증 (OAuth repo 스코프 + 키체인 + 클라이언트)  ✅ (클라이언트 rate-limit만 남음)
 Phase 2  Track A: 데이터 커넥터 (events.db 수직 슬라이스)  🟡 동작, 증분 ✅ / ETag만 남음
-Phase 3  Track B: vault 백업/동기화                      🟡 1번 완료
-          1 새 repo push (뼈대) ✅ → 2 자동 push ❌ → 3 다른 기기 clone ❌ → 4 충돌 ❌
+Phase 3  Track B: vault 백업/동기화                      🟡 슬라이스 2까지
+          1 새 repo push (뼈대) ✅ → 2 수동 백업 허브 ✅ → 3 다른 기기 clone ❌ → 4 충돌 ❌
 ```
+
+---
+
+## 8. 다음 할 일 (우선순위)
+
+1. **ETag 304 스파이크** (Track A 마무리) — 검색 API가 ETag/If-None-Match를 지원하는지 실측. 되면 변화 없을 때 rate-limit 0. (`github.rs` github_get/github_sync, `connector_state.etag` 컬럼은 이미 있음)
+2. **GitHub 클라이언트 rate-limit 처리** (Phase 1 마무리) — `github_get`에 X-RateLimit-* 파싱 + 한도 임박 시 백오프. 조용한 실패 방지.
+3. **Track B 슬라이스 3 — 다른 기기 복원** — `git.rs`에 `git_fetch`/`git_clone` 추가 + repo 검사(`list_repos`/빈repo·내vault 판별) + connect 플로우(§4 표). 멀티기기 수요 생기면.
+4. **Track B 슬라이스 4 — 충돌** — `conflict_sides(path)`(git 감지, ours/theirs 데이터로) + 페이지 단위 "둘 다 보관" UX. 슬라이스 3 이후.
+
+> 결정 대기(§7): 동기화 수단(GitHub repo vs iCloud/libsql)은 슬라이스 3 착수 전 재확인.
 
 ---
 
