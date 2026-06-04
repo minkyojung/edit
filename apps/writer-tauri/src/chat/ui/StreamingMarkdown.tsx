@@ -8,6 +8,7 @@ import { WikiLink } from './WikiLink'
 import { CodeBlock } from '@/components/ai-elements/code-block'
 import { MermaidBlock } from '@/viz/MermaidBlock'
 import { ArtifactBlock } from '@/viz/ArtifactBlock'
+import { ChartBlock } from '@/viz/ChartBlock'
 
 // Why react-markdown directly (no streamdown, no sanitize):
 //
@@ -191,6 +192,9 @@ export function StreamingMarkdown({
         }
         if (rawLang === 'artifact') {
           return <ArtifactBlock code={code} isStreaming={isStreaming} />
+        }
+        if (rawLang === 'chart') {
+          return <ChartBlock code={code} isStreaming={isStreaming} />
         }
         return <CodeBlock code={code} language={lang} />
       },
