@@ -27,8 +27,6 @@ import { imageNodeView } from './cards/ImageCardNodeView'
 import { codeBlockVizNodeView } from './cards/CodeBlockVizNodeView'
 import { videoNodeView } from './cards/VideoCardNodeView'
 import { githubActivityNodeView } from './cards/GitHubActivityCardNodeView'
-import { ensureSingleGitHubAnchor } from './insertGitHubAnchor'
-import { eventsQueryByDate } from '@/lib/eventsDb'
 import { imageInlineNodeView } from './imageInlineNodeView'
 import { mediaDropPastePlugin } from './mediaDropPastePlugin'
 import { inlineCodeSafeKeymap } from './inlineCodeSafe'
@@ -227,36 +225,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
     void handle.contentReady.then(() => {
       if (cancelled) return
       normalizeDailyBody(view, opts)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [handle, pmView, isDaily, knownDoc?.date])
-
-  // Auto-insert the GitHub-activity anchor on a daily that has events for
-  // its date. Only the anchor (`<div data-github-activity="DATE">`) is
-  // written — the card body renders live from events.db. Idempotent: one
-  // card per day, skipped if already present. addToHistory:false keeps it
-  // out of undo. Known v1 limit: deleting the card re-adds it on reopen.
-  useEffect(() => {
-    if (!handle || !pmView) return
-    if (!isDaily) return
-    if (!knownDoc?.date) return
-    const view = pmView
-    const date = knownDoc.date
-    let cancelled = false
-    void handle.contentReady.then(async () => {
-      if (cancelled) return
-      let entries
-      try {
-        entries = await eventsQueryByDate(date)
-      } catch {
-        return
-      }
-      if (cancelled || entries.length === 0) return
-      // Converge on exactly one anchor (self-heals dupes from a
-      // hydration race or an earlier buggy version).
-      ensureSingleGitHubAnchor(view, date)
     })
     return () => {
       cancelled = true

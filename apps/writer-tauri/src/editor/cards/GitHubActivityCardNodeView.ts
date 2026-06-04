@@ -1,12 +1,20 @@
 // GitHub-activity card — the concrete BaseCardNodeView for the
 // `githubActivity` anchor node. The node carries only a `date`; this view
-// reads events.db for that day and renders a live summary (commit/PR
-// counts + a short list). It re-renders when the events store bumps
-// (after a sync), so the card follows the data without reopening the note.
+// reads events.db for that day and renders a LIVE Vega-Lite chart:
 //
-// Nothing here is written back to markdown — the file holds just the
-// `<div data-github-activity="DATE">` anchor (see schema/github-activity-block.ts).
+//   GitHub · 2026-06-03 · 8 commits · 1 PR merged   ← readable header / fallback
+//   ▭▭▭ hour-of-day stacked bar (commit/PR) ▭▭▭     ← VegaBlock (live)
+//
+// The chart's shape is a fixed spec (viz/specs/githubDailySpec); only the
+// data changes — events.db rows are re-fed on every sync (eventsStore bump).
+// This is the "fixed frame, live data" model (Vega keeps spec + data
+// separate), and the first reuse of the viz family inside a data card.
+//
+// Nothing here is written to markdown — the file holds only the
+// ```github-activity fence (see schema/github-activity-block.ts).
 
+import { createElement } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
 import type { Node as PMNode } from '@milkdown/kit/prose/model'
@@ -14,13 +22,26 @@ import type { EditorView } from '@milkdown/kit/prose/view'
 import { BaseCardNodeView } from './BaseCardNodeView'
 import { eventsQueryByDate, type Entry } from '@/lib/eventsDb'
 import { useEventsStore } from '@/state/eventsStore'
+import { VegaBlock } from '@/viz/VegaBlock'
+import { githubDailySpec } from '@/viz/specs/githubDailySpec'
 
-const MAX_ROWS = 8
+function el(tag: string, className: string, text?: string): HTMLElement {
+  const node = document.createElement(tag)
+  node.className = className
+  if (text != null) node.textContent = text
+  return node
+}
+
+function isMergeCommit(summary: string): boolean {
+  return /^Merge (pull request|branch|remote)/i.test(summary)
+}
 
 class GitHubActivityCardNodeView extends BaseCardNodeView {
   private readonly container: HTMLElement
+  private readonly header: HTMLElement
+  private readonly chartHost: HTMLElement
+  private root: Root | null
   private date: string
-  /** Bumped per reload so a slow query for a stale date is discarded. */
   private seq = 0
   private unsub: (() => void) | null = null
 
@@ -28,12 +49,16 @@ class GitHubActivityCardNodeView extends BaseCardNodeView {
     super('github-activity', 'githubActivity', view, getPos)
 
     this.date = (node.attrs.date as string) ?? ''
-    this.container = document.createElement('div')
-    this.container.className =
-      'github-activity-card-body rounded-lg border bg-muted/30 px-3 py-2 text-sm'
+    this.container = el(
+      'div',
+      'github-activity-card-body rounded-lg border bg-muted/20 px-3 py-2.5',
+    )
+    this.header = el('div', 'flex flex-wrap items-baseline gap-x-2 text-xs')
+    this.chartHost = el('div', 'w-full')
+    this.container.append(this.header, this.chartHost)
+    this.root = createRoot(this.chartHost)
     this.mountBody(this.container)
 
-    // Re-render whenever events.db may have changed.
     this.unsub = useEventsStore.subscribe(() => {
       void this.reload()
     })
@@ -55,74 +80,66 @@ class GitHubActivityCardNodeView extends BaseCardNodeView {
 
   private async reload(): Promise<void> {
     const seq = ++this.seq
-    const date = this.date
     let entries: Entry[] = []
     try {
-      entries = await eventsQueryByDate(date)
+      entries = await eventsQueryByDate(this.date)
     } catch (err) {
       console.warn('[github-activity-card] query failed', err)
     }
-    // A newer reload (or a date change) started while we awaited — drop this.
     if (seq !== this.seq) return
-    this.render(date, entries)
+    this.renderHeader(entries)
+    this.renderChart(entries)
   }
 
-  private render(date: string, entries: Entry[]): void {
-    const commits = entries.filter((e) => e.kind === 'commit')
-    const opened = entries.filter((e) => e.kind === 'pr_opened')
+  private renderHeader(entries: Entry[]): void {
+    const commits = entries.filter(
+      (e) => e.kind === 'commit' && !isMergeCommit(e.summary),
+    )
     const merged = entries.filter((e) => e.kind === 'pr_merged')
+    const opened = entries.filter((e) => e.kind === 'pr_opened')
 
-    this.container.replaceChildren()
+    const parts: string[] = []
+    if (commits.length)
+      parts.push(`${commits.length} commit${commits.length > 1 ? 's' : ''}`)
+    if (merged.length) parts.push(`${merged.length} PR merged`)
+    if (opened.length) parts.push(`${opened.length} PR opened`)
 
-    const header = document.createElement('div')
-    header.className = 'flex items-center gap-2 font-medium'
-    header.textContent = `GitHub · ${date}`
-    this.container.appendChild(header)
+    this.header.replaceChildren(
+      el('span', 'font-medium text-foreground', 'GitHub'),
+      el('span', 'text-muted-foreground/50', this.date),
+      el(
+        'span',
+        'text-muted-foreground',
+        parts.length ? parts.join(' · ') : 'No activity',
+      ),
+    )
+  }
 
-    const counts = document.createElement('div')
-    counts.className = 'mt-0.5 text-xs text-muted-foreground'
+  private renderChart(entries: Entry[]): void {
+    if (!this.root) return
     if (entries.length === 0) {
-      counts.textContent = 'No activity'
-    } else {
-      counts.textContent =
-        `${commits.length} commit${commits.length === 1 ? '' : 's'}` +
-        ` · ${opened.length} opened · ${merged.length} merged`
+      this.root.render(null)
+      return
     }
-    this.container.appendChild(counts)
-
-    if (entries.length === 0) return
-
-    const list = document.createElement('ul')
-    list.className = 'mt-1.5 space-y-0.5'
-    // commits first, then PRs; cap the visible rows.
-    const rows = [...commits, ...opened, ...merged].slice(0, MAX_ROWS)
-    for (const e of rows) {
-      const li = document.createElement('li')
-      li.className = 'flex gap-1.5 text-xs'
-      const tag = document.createElement('span')
-      tag.className = 'shrink-0 text-muted-foreground'
-      tag.textContent =
-        e.kind === 'commit' ? '·' : e.kind === 'pr_merged' ? 'merged' : 'PR'
-      const text = document.createElement('span')
-      text.className = 'truncate'
-      text.textContent = e.summary
-      li.append(tag, text)
-      list.appendChild(li)
-    }
-    this.container.appendChild(list)
-
-    const hidden = entries.length - rows.length
-    if (hidden > 0) {
-      const more = document.createElement('div')
-      more.className = 'mt-1 text-xs text-muted-foreground'
-      more.textContent = `+${hidden} more`
-      this.container.appendChild(more)
-    }
+    // Rows for the spec: one per event, bucketed by local hour. Vega
+    // aggregates the count; `kind` drives the stacked colour.
+    const rows = entries
+      .map((e) => ({ hour: new Date(e.ts).getHours(), kind: e.kind }))
+      .filter((r) => !Number.isNaN(r.hour))
+    this.root.render(
+      createElement(VegaBlock, { spec: githubDailySpec, data: rows }),
+    )
   }
 
   override destroy(): void {
     this.unsub?.()
     this.unsub = null
+    const root = this.root
+    this.root = null
+    if (root) {
+      // Defer so we don't unmount synchronously inside a PM update tick.
+      queueMicrotask(() => root.unmount())
+    }
     super.destroy()
   }
 }
