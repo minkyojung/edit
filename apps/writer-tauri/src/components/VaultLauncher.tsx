@@ -77,28 +77,28 @@ export function VaultLauncher({ onReady }: Props) {
         </h1>
         <p className="mb-6 text-center text-sm text-muted-foreground">
           {mode === 'home'
-            ? '보관함을 열거나 백업에서 복원하세요.'
-            : '복원할 저장소를 고르세요.'}
+            ? 'Open a vault, or restore one from a backup.'
+            : 'Choose a repo to restore.'}
         </p>
 
         <div className="rounded-xl border bg-card p-2">
           {mode === 'home' ? (
             <>
               <LauncherRow
-                title="폴더 열기 / 새로 시작"
-                desc="이 컴퓨터의 폴더를 보관함으로 사용합니다."
-                action={<Button onClick={() => void handleLocal()}>열기</Button>}
+                title="Open folder / start fresh"
+                desc="Use a folder on this computer as your vault."
+                action={<Button onClick={() => void handleLocal()}>Open</Button>}
               />
               <LauncherRow
-                title="GitHub에서 복원"
-                desc="다른 기기에서 백업한 노트를 가져옵니다."
+                title="Restore from GitHub"
+                desc="Pull notes backed up from another device."
                 action={
                   <Button
                     variant="secondary"
                     onClick={handleRestoreClick}
                     disabled={loadingRepos}
                   >
-                    {loadingRepos ? <Spinner /> : '복원'}
+                    {loadingRepos ? <Spinner /> : 'Restore'}
                   </Button>
                 }
               />
@@ -110,11 +110,11 @@ export function VaultLauncher({ onReady }: Props) {
                 onClick={() => setMode('home')}
                 className="mb-1 px-2 text-xs text-muted-foreground hover:text-foreground"
               >
-                ← 뒤로
+                ← Back
               </button>
               {repos.length === 0 ? (
                 <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  백업된 저장소가 없어요.
+                  No backed-up vaults found.
                 </p>
               ) : (
                 <div className="max-h-72 overflow-y-auto">
