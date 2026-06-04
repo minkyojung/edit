@@ -25,7 +25,7 @@ import type { EditorView, NodeView } from '@milkdown/kit/prose/view'
 import { createRoot, type Root } from 'react-dom/client'
 import { MermaidBlock } from '@/viz/MermaidBlock'
 import { ArtifactBlock } from '@/viz/ArtifactBlock'
-import { ChartBlock } from '@/viz/ChartBlock'
+import { VizBlock } from '@/viz/VizBlock'
 import { GitHubActivityBlock } from '@/viz/GitHubActivityBlock'
 import { syncGitHubActivity } from '@/lib/githubSync'
 import { toast } from 'sonner'
@@ -46,6 +46,8 @@ const ICON_DELETE = svgIcon(
 const ICON_REFRESH = svgIcon(
   '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/>',
 )
+// `< >` — view/edit the block's raw source (the JSON spec).
+const ICON_CODE = svgIcon('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>')
 
 class CodeBlockVizNodeView implements NodeView {
   dom: HTMLElement
@@ -56,6 +58,9 @@ class CodeBlockVizNodeView implements NodeView {
   // github-activity is a live data card, not editable source — its toolbar
   // shows Refresh (re-sync) instead of Edit source.
   private readonly isGithub: boolean
+  // chart edits go through AI (select the block as chat context), not a raw
+  // source textarea.
+  private readonly isChart: boolean
 
   // Visualization-mode fields (unused for plain code blocks).
   private root: Root | null = null
@@ -76,6 +81,7 @@ class CodeBlockVizNodeView implements NodeView {
     this.lang = String(node.attrs.language || '').toLowerCase()
     this.isViz = VIZ_LANGS.has(this.lang)
     this.isGithub = this.lang === 'github-activity'
+    this.isChart = this.lang === 'chart'
     this.currentCode = node.textContent
 
     if (!this.isViz) {
@@ -92,7 +98,10 @@ class CodeBlockVizNodeView implements NodeView {
     }
 
     this.dom = document.createElement('div')
-    this.dom.className = 'viz-block group relative my-2'
+    // `select-none`: the rendered viz is a figure, not text — dragging over it
+    // shouldn't paint an ugly text-selection highlight. (The edit textarea is a
+    // form control, so it stays editable regardless.)
+    this.dom.className = 'viz-block group relative my-2 select-none'
     this.dom.setAttribute('contenteditable', 'false')
     this.dom.setAttribute('data-viz-lang', this.lang)
     // Click selects the whole block (NodeSelection) so Backspace / the delete
@@ -184,20 +193,27 @@ class CodeBlockVizNodeView implements NodeView {
       return d
     }
 
+    const openSource = () => {
+      this.editing = true
+      this.syncMode()
+    }
+    // github: a date has no "source" to edit — offer a manual re-sync instead.
+    // chart: AI edit (✎) PLUS a raw-source view/edit (< >) so the JSON spec is
+    // never hidden. mermaid/artifact: source edit only.
+    const actions: HTMLElement[] = this.isGithub
+      ? [mkIconButton(ICON_REFRESH, 'Refresh', () => void this.refreshGithub())]
+      : this.isChart
+        ? [
+            mkIconButton(ICON_EDIT, 'Edit with AI', () => this.requestAiEdit()),
+            mkIconButton(ICON_CODE, 'View source', openSource),
+          ]
+        : [mkIconButton(ICON_EDIT, 'Edit source', openSource)]
+
     bar.append(
       mkIconButton(ICON_UP, 'Move up', () => this.moveBlock(-1)),
       mkIconButton(ICON_DOWN, 'Move down', () => this.moveBlock(1)),
       divider(),
-      // github: a date has no "source" to edit — offer a manual re-sync
-      // (pull latest activity now) instead; the card re-renders on the bump.
-      this.isGithub
-        ? mkIconButton(ICON_REFRESH, 'Refresh', () => {
-            void this.refreshGithub()
-          })
-        : mkIconButton(ICON_EDIT, 'Edit source', () => {
-            this.editing = true
-            this.syncMode()
-          }),
+      ...actions,
       mkIconButton(ICON_DELETE, 'Delete', () => this.deleteSelf()),
     )
     this.toolbar = bar
@@ -227,6 +243,26 @@ class CodeBlockVizNodeView implements NodeView {
     if (pos == null) return
     const { state } = this.view
     this.view.dispatch(state.tr.setSelection(NodeSelection.create(state.doc, pos)))
+  }
+
+  // "Edit with AI": arm the chat to treat the next message as an edit
+  // instruction for THIS block, addressed by its stable id. The chat generates
+  // the change through the schema-forced path and applies it in place by id — no
+  // free-form / HTML edit. Selecting the block also highlights what's being
+  // edited.
+  private requestAiEdit = (): void => {
+    const pos = this.getPos()
+    if (pos == null) return
+    const { state } = this.view
+    const node = state.doc.nodeAt(pos)
+    const vizId = node?.attrs.vizId as string | undefined
+    if (!vizId) {
+      toast.error('This visualization has no id yet — try again in a moment.')
+      return
+    }
+    this.view.dispatch(state.tr.setSelection(NodeSelection.create(state.doc, pos)))
+    this.view.focus()
+    window.dispatchEvent(new CustomEvent('writer:viz-edit', { detail: { vizId } }))
   }
 
   // Swap this block with its previous (-1) / next (+1) sibling. No-op at the
@@ -275,7 +311,7 @@ class CodeBlockVizNodeView implements NodeView {
       return
     }
     if (this.lang === 'chart') {
-      this.root.render(<ChartBlock code={code} isStreaming={false} embedded />)
+      this.root.render(<VizBlock code={code} isStreaming={false} embedded />)
       return
     }
     this.root.render(

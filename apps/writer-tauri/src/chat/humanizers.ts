@@ -151,6 +151,13 @@ function humanizeSearchWiki(input: unknown, output?: unknown): HumanizedToolCall
   return { label: `Searched wiki: "${truncate(i.query, 40)}"${suffix}` }
 }
 
+/** `edit_visualization` — sidecar relay tool that updates a chart already in the
+ * document by id. The host applies the new spec in place; the label just signals
+ * the activity (the change itself shows in the document body). */
+function humanizeEditVisualization(): HumanizedToolCall {
+  return { label: 'Updating the visualization' }
+}
+
 const humanizers: Record<string, Humanizer> = {
   [EDIT_DOCUMENT_TOOL]: humanizeEditDocument,
   Read: humanizeRead,
@@ -163,6 +170,7 @@ const humanizers: Record<string, Humanizer> = {
   WebFetch: humanizeWebFetch,
   read_page: humanizeReadPage,
   search_wiki: humanizeSearchWiki,
+  edit_visualization: humanizeEditVisualization,
 }
 
 /** Strip the SDK's MCP relay prefix off a tool name. Tools the sidecar

@@ -229,6 +229,11 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             // proposal in `pendingChangesStore` and applies it on
             // user Keep via the inline review widget.
             "chat/edit-pending" => "claude:edit-pending",
+            // edit_visualization MCP tool: the sidecar relays the new chart
+            // spec (chartId + VizNode tree) via this notification; the chat
+            // runner re-validates it and applies it to the target block by id
+            // in the live editor (immediate, Cmd+Z to undo).
+            "chat/viz-apply" => "claude:viz-apply",
             // Plan-mode interactive gate (canUseTool): the sidecar parks an
             // ExitPlanMode / AskUserQuestion decision and emits this so the
             // host can render the approval / question card. The user's choice

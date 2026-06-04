@@ -216,8 +216,8 @@ function ColumnChart({
   )
 }
 
-/** Render a validated ChartSpec. Source-agnostic — used by the ```chart fence
- * (via ChartBlock) and by product features that pass a spec directly. */
+/** Render a validated ChartSpec. Source-agnostic — used as the chart-leaf
+ * renderer by VizRenderer and by product features that pass a spec directly. */
 export function DataViz({ spec }: { spec: ChartSpec }) {
   switch (spec.kind) {
     case 'donut':

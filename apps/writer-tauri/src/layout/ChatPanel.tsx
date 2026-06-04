@@ -14,6 +14,7 @@ import { useLocation } from 'react-router-dom'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
 import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
+import { getVizSourceById } from '@/editor/vizBlockOps'
 import { TextSelection } from '@milkdown/kit/prose/state'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
@@ -247,6 +248,22 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     }
   }, [editorView])
 
+  // "Edit with AI" from a viz block's toolbar arms a one-shot: it carries the
+  // block's stable id, and the NEXT chat message becomes an edit instruction for
+  // THAT block. The send (handleSend) hands the run a `vizEditTarget` so the
+  // SAME chat agent edits it via the edit_visualization tool — not a separate
+  // pipeline. Holds the target vizId (or null when disarmed); cleared after it
+  // fires or the selection is detached.
+  const editingVizRef = useRef<string | null>(null)
+  useEffect(() => {
+    const arm = (e: Event) => {
+      const id = (e as CustomEvent<{ vizId?: string }>).detail?.vizId
+      if (id) editingVizRef.current = id
+    }
+    window.addEventListener('writer:viz-edit', arm)
+    return () => window.removeEventListener('writer:viz-edit', arm)
+  }, [])
+
   // X-button on the chip detaches the selection from the run. Clears both
   // the frozen snapshot and any live PM selection so the chip disappears
   // immediately whether the editor has focus or not. Collapsing live
@@ -254,6 +271,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   // jump, just collapse-in-place.
   const handleClearSelection = useCallback(() => {
     if (!editorView) return
+    editingVizRef.current = null
     clearFrozenRange(editorView)
     const sel = editorView.state.selection
     if (!sel.empty) {
@@ -441,6 +459,19 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
         return
       }
 
+      // "Edit with AI" was armed from a viz toolbar → this message is an edit
+      // instruction for that block. We stay in the SAME chat session: hand the
+      // agent the target block's id + current spec, and the run enables the
+      // edit_visualization tool, which applies the change in place. No separate
+      // pipeline, no synthetic transcript.
+      let vizEditTarget: { id: string; source: string } | undefined
+      if (editingVizRef.current && editorView) {
+        const id = editingVizRef.current
+        const source = getVizSourceById(editorView.state, id)
+        if (source != null) vizEditTarget = { id, source }
+      }
+      editingVizRef.current = null
+
       const userTurn: ChatTurn = {
         id: crypto.randomUUID(),
         role: 'user',
@@ -465,7 +496,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
       // The user's turn is finished text — push to Yjs once and let it sync.
       turnsHook.appendTurn(userTurn)
 
-      await runner.run(threadId, [...turnsHook.turns, userTurn])
+      await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, vizEditTarget)
     } finally {
       sendInFlightRef.current = false
     }

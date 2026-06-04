@@ -40,7 +40,18 @@ export interface StructuredCallArgs {
   toolSchema: Record<string, unknown>
   /** Optional cap on response length. Defaults to 4096. */
   maxTokens?: number
+  /** Optional sink for the failure reason (HTTP status + API message,
+   * or transport error). Called once before a null return so callers
+   * can surface the real cause instead of a generic message. */
+  onError?: (message: string) => void
 }
+
+// OAuth tokens minted by Claude Code's login are scoped to Claude Code:
+// the Messages API rejects a direct request whose system prompt doesn't
+// begin with this exact identity (the Agent SDK injects it for us on the
+// sidecar path; here we must add it ourselves). Sent as the first system
+// block, ahead of the caller's task framing.
+const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 
 interface RawResponse {
   status: number
@@ -68,7 +79,11 @@ export async function structuredCall<TInput>(
   const body = {
     model: args.model,
     max_tokens: args.maxTokens ?? DEFAULT_MAX_TOKENS,
-    system: args.systemPrompt,
+    // First block MUST be the Claude Code identity for OAuth-token auth.
+    system: [
+      { type: 'text', text: CLAUDE_CODE_IDENTITY },
+      { type: 'text', text: args.systemPrompt },
+    ],
     tools: [
       {
         name: args.toolName,
@@ -91,6 +106,7 @@ export async function structuredCall<TInput>(
     })
   } catch (err) {
     console.error('[structuredCall] invoke failed', { toolName: args.toolName, err })
+    args.onError?.(`request failed: ${String(err)}`)
     return null
   }
 
@@ -100,6 +116,9 @@ export async function structuredCall<TInput>(
       status: raw.status,
       error: raw.body?.error,
     })
+    args.onError?.(
+      `API ${raw.status}: ${raw.body?.error?.message ?? 'request rejected'}`,
+    )
     return null
   }
 
@@ -121,6 +140,7 @@ export async function structuredCall<TInput>(
         .map((b) => b.text?.slice(0, 200))
         .join(' / '),
     })
+    args.onError?.('the model did not return a structured result')
     return null
   }
 

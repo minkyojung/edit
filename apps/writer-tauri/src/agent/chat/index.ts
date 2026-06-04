@@ -21,7 +21,10 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { toast } from 'sonner'
 import { FREE_CHAT_PROMPT } from '../skills/freeChat'
+import { parseVizSpec } from '@/viz/vizSpec'
+import { replaceVizById } from '@/editor/vizBlockOps'
 import { assembleContext } from '@/agent/contextPipeline'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useChatRuns } from '@/stores/chatRuns'
@@ -85,6 +88,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       'propose_write',
     ],
     appendDocument = true,
+    vizEditTarget,
     permissionMode,
     builtinTools,
     fastMode,
@@ -139,7 +143,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     systemBody,
     ctx,
     appendDocument,
+    vizEditTarget,
   })
+  // A viz-edit run gets the edit_visualization relay tool on top of whatever
+  // the caller asked for. Skipped in plan mode (read-only — the gate would
+  // deny it anyway).
+  const effectiveRelayTools =
+    vizEditTarget && permissionMode !== 'plan'
+      ? [...relayTools, 'edit_visualization']
+      : relayTools
   const runId = crypto.randomUUID()
 
   // Internal controller is the single source of abort — it bridges the
@@ -269,6 +281,29 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           )
         }
       }),
+      // edit_visualization tool fired (see sidecar buildEditVisualizationTool).
+      // Apply the new spec to the target block by id, on the view this run was
+      // started against. Re-validate first — the tool schema guides the model
+      // but isn't enforced server-side, so a malformed tree is rejected (toast)
+      // rather than written. Immediate apply (no Keep/Reject); Cmd+Z undoes.
+      listen<{ runId: string; chartId: string; root: unknown }>(
+        'claude:viz-apply',
+        (e) => {
+          if (e.payload.runId !== runId) return
+          if (!view) {
+            toast.error('열린 문서가 없어 차트를 수정하지 못했어요')
+            return
+          }
+          const node = parseVizSpec(JSON.stringify(e.payload.root))
+          if (!node) {
+            toast.error('차트 수정 결과가 올바르지 않아 적용하지 못했어요')
+            return
+          }
+          const ok = replaceVizById(view, e.payload.chartId, JSON.stringify(node, null, 2))
+          if (ok) toast.success('차트를 수정했어요')
+          else toast.error('수정할 차트를 찾지 못했어요 (id 불일치)')
+        },
+      ),
       listen<DoneEvent>('claude:done', (e) => {
         if (e.payload.runId !== runId) return
         recordContextUsage(threadId, model, e.payload.usage, e.payload.contextUsage)
@@ -341,7 +376,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         model,
         systemPrompt: system,
         prompt,
-        relayTools,
+        relayTools: effectiveRelayTools,
         // Read-only planning turns set this to 'plan'; edit turns omit it
         // (sidecar defaults to bypassPermissions). In plan mode the sidecar's
         // canUseTool gate — NOT tool omission — enforces read-only: the caller

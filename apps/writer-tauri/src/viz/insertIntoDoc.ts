@@ -4,11 +4,13 @@ import { getActiveSlugFromHash } from '@/lib/viewUrl'
 
 // Insert a chat-rendered visualization into the currently open document as a
 // fenced code block. The editor's CodeBlockVizNodeView then renders it inline;
-// on disk it's plain markdown (```mermaid / ```artifact), so it round-trips.
-// appendMarkdownToWikiPage routes through the PM-transaction + dirty-flush
-// pipeline (no Yjs), updating the live editor when the doc is active.
+// on disk it's plain markdown (```mermaid / ```artifact / ```chart), so it
+// round-trips. A ```chart block also gets a stable vizId stamped by vizIdPlugin
+// on insert, so it's immediately editable via chat. appendMarkdownToWikiPage
+// routes through the PM-transaction + dirty-flush pipeline (no Yjs), updating
+// the live editor when the doc is active.
 export async function insertVizIntoDoc(
-  lang: 'mermaid' | 'artifact',
+  lang: 'mermaid' | 'artifact' | 'chart',
   code: string,
 ): Promise<void> {
   const slug = getActiveSlugFromHash()

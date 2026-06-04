@@ -13,7 +13,7 @@
 // view doc extraction) and feeds the results in.
 
 import type { ChatTurn } from '@/chat/types'
-import { DOC_CHAR_CAP, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from './types'
+import { DOC_CHAR_CAP, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type VizEditTarget } from './types'
 
 /** Derive the user prompt for the current SDK call from the thread
  * history. SDK session resume keeps prior turns server-side — we
@@ -58,6 +58,10 @@ export interface SystemBlocksArgs {
    * Slash commands that already embed `{{document}}` in their body
    * pass false to avoid the document showing up twice. */
   appendDocument: boolean
+  /** When set, a high-salience block naming the visualization being edited
+   * (id + current spec) is pinned past the cache boundary, instructing the
+   * model to apply changes via the edit_visualization tool. */
+  vizEditTarget?: VizEditTarget
 }
 
 /** Compose the system prompt as a `string | string[]`.
@@ -85,7 +89,7 @@ export interface SystemBlocksArgs {
  *   - bare `string` when the prefix is just `systemBody` — keeps the
  *     SDK call simple and matches the pre-multi-block shape. */
 export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
-  const { docForPrompt, systemBody, ctx, appendDocument } = args
+  const { docForPrompt, systemBody, ctx, appendDocument, vizEditTarget } = args
   const prefix: string[] = []
   if (ctx.selfProfile) {
     prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
@@ -94,8 +98,23 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   if (ctx.claudeMd) prefix.push(ctx.claudeMd)
   prefix.push(systemBody)
 
-  if (appendDocument) {
-    return [...prefix, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, `--- DOCUMENT ---\n${docForPrompt}`]
+  // Dynamic suffix — pinned past the SDK cache boundary because it changes
+  // per turn. The viz-edit block comes before the document so it reads as the
+  // immediate task.
+  const dynamic: string[] = []
+  if (vizEditTarget) {
+    dynamic.push(
+      `--- VISUALIZATION TO EDIT ---\n` +
+        `The user is editing the visualization already in the document with id "${vizEditTarget.id}". ` +
+        `Apply the user's request by calling the edit_visualization tool with chartId "${vizEditTarget.id}" ` +
+        `and the FULL updated tree as root. Do NOT write a \`\`\`chart fence or any HTML for this edit, ` +
+        `and preserve data you weren't asked to change.\n\nCurrent spec:\n${vizEditTarget.source}`,
+    )
+  }
+  if (appendDocument) dynamic.push(`--- DOCUMENT ---\n${docForPrompt}`)
+
+  if (dynamic.length > 0) {
+    return [...prefix, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, ...dynamic]
   }
   // prefix always contains systemBody; >1 means at least one context
   // section actually fired.

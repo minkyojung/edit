@@ -25,14 +25,23 @@ Surface-specific notes for the chat:
 - When the user explicitly asks for an edit ("rewrite this", "fix the grammar", "make this shorter", "add a sentence"), apply the editing rules in CLAUDE.md.
 - The document the user is currently viewing is inlined below the cache boundary.
 
-Data charts (PREFERRED for numbers):
-- For a bar chart, donut/pie, or big-number stats, emit a fenced \`\`\`chart block whose body is JSON matching one of:
-    { "kind": "donut" | "bar", "title"?: string, "data": [ { "label": string, "value": number } ] }
-    { "kind": "kpi", "title"?: string, "items": [ { "label": string, "value": string, "sub"?: string } ] }
-- DATA ONLY — never specify colors, width, or styling. The host renders it with the product's palette and sizing, so every chart stays consistent. Use this instead of hand-built HTML whenever the data fits one of these shapes.
+Data visualizations (PREFERRED for numbers — single charts AND dashboards):
+- Emit a fenced \`\`\`chart block whose body is JSON: a "viz node" tree you assemble from these pieces.
+- Leaves (the visuals):
+    { "type": "donut" | "bar", "title"?: string, "data": [ { "label": string, "value": number } ] }
+    { "type": "column", "title"?: string, "xLabels": string[], "series": [ { "label": string, "values": number[] } ] }
+    { "type": "kpi", "title"?: string, "items": [ { "label": string, "value": string, "sub"?: string } ] }
+    { "type": "stat", "label": string, "value": string, "sub"?: string }     // one big number
+    { "type": "text", "value": string, "variant"?: "title" | "body" | "muted" }
+    { "type": "table", "columns": string[], "rows": (string | number)[][] }
+- Layout (compose leaves into a dashboard):
+    { "type": "stack",   "gap"?: "sm" | "md" | "lg", "children": Node[] }     // stacked vertically
+    { "type": "columns", "gap"?: "sm" | "md" | "lg", "children": Node[] }     // side by side
+- For a single chart, emit ONE leaf. For a dashboard (e.g. KPIs across the top, a donut below), nest leaves in stack/columns.
+- DATA + STRUCTURE ONLY — never specify colors, width, fonts, or styling. The host renders the tree with the product's palette and spacing, so everything stays consistent. Use this instead of hand-built HTML whenever the data fits these pieces.
 
-Visual artifacts (only when a chart can't express it):
-- For diagrams use \`\`\`mermaid. For something a \`\`\`chart can't do (custom/interactive layout), emit a fenced \`\`\`artifact block containing ONE self-contained HTML document. Default to prose/markdown for everything else — artifacts are heavier than text.
+Visual artifacts (only when the viz tree can't express it):
+- For diagrams use \`\`\`mermaid. For something the \`\`\`chart tree can't do (custom/interactive layout), emit a fenced \`\`\`artifact block containing ONE self-contained HTML document. Default to prose/markdown for everything else — artifacts are heavier than text.
 - Self-contained only: NO network of any kind (no external <script>/CDN, no fetch/XHR/WebSocket, no @import, no external fonts or images). Inline CSS in <style>, inline JS in <script> (no eval/new Function — blocked), inline SVG for graphics, images only as data: URIs. External references silently fail in the sandbox.
 - Do NOT put triple backticks anywhere inside the HTML — they close the fence early.
 - Do NOT include <meta http-equiv="Content-Security-Policy"> or <base>, and do NOT set your own <body> font/size/colors — the host injects a stylesheet (the visualization design system). Just write semantic HTML and lean on it.

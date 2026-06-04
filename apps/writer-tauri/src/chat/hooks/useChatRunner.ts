@@ -5,6 +5,7 @@ import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import { modelSupportsFastMode } from '@/chat/types'
 import type { ChatEffort, ChatMode, ChatModel, ChatTurn } from '@/chat/types'
+import type { VizEditTarget } from '@/agent/chat/types'
 import type { PromptStatus } from '@/chat/PromptInput'
 import { classifyRunError } from '@/chat/utils/errorMessage'
 import { createStreamingBuffer } from '@/chat/utils/streamingBuffer'
@@ -71,7 +72,12 @@ interface UseChatRunnerDeps {
 export interface ChatRunner {
   status: PromptStatus
   streaming: { threadId: string; turn: ChatTurn } | null
-  run: (threadId: string, history: ChatTurn[], overrides?: RunOverrides) => Promise<void>
+  run: (
+    threadId: string,
+    history: ChatTurn[],
+    overrides?: RunOverrides,
+    vizEditTarget?: VizEditTarget,
+  ) => Promise<void>
 }
 
 /** Drives a single assistant turn end-to-end: seed streaming buffer, run
@@ -108,7 +114,12 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
   // is removed, so a truly-destroyed ydoc never receives a late mark.
 
   const run = useCallback(
-    async (threadId: string, history: ChatTurn[], overrides?: RunOverrides) => {
+    async (
+      threadId: string,
+      history: ChatTurn[],
+      overrides?: RunOverrides,
+      vizEditTarget?: VizEditTarget,
+    ) => {
       const startedAt = Date.now()
       // Discard any answer summary left over from a prior run (e.g. one whose
       // tool result never arrived because the turn was aborted) so this run's
@@ -301,6 +312,9 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           prompt: overrides?.prompt,
           systemPrompt: overrides?.systemPrompt,
           appendDocument: overrides ? false : undefined,
+          // Editing a specific viz block: runChat adds the edit_visualization
+          // relay tool + injects the target's id/spec into the system prompt.
+          vizEditTarget,
           // Plan turns keep the propose_* relays available so the model can
           // execute once the plan is approved. The gate (sidecar canUseTool)
           // denies them while planning and allows them after ExitPlanMode is

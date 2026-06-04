@@ -35,6 +35,16 @@ export function agentIdForModel(model: string): string {
   return `ai:${model}`
 }
 
+/** A visualization the user armed for editing (via the ✎ toolbar, or by
+ * selecting a viz block). When present on a run, the agent is given the
+ * edit_visualization relay tool and told the target's id + current spec, so
+ * "make it a bar chart" edits THAT block in place — same session, no separate
+ * pipeline. `source` is the block's current spec JSON. */
+export interface VizEditTarget {
+  id: string
+  source: string
+}
+
 export interface RunChatArgs {
   /** The editor view whose text is the chat's "current page" context.
    * Null on surfaces with no document — e.g. the Read Later queue route,
@@ -90,6 +100,10 @@ export interface RunChatArgs {
    * embed `{{document}}` in their body should pass false to avoid the
    * document showing up twice. */
   appendDocument?: boolean
+  /** When set, this run is editing a specific visualization: the agent gets
+   * the edit_visualization relay tool and the target's id + current spec are
+   * injected into the system prompt. Omit for normal turns. */
+  vizEditTarget?: VizEditTarget
   signal?: AbortSignal
   /** Convenience callback fired for raw text deltas. New callers should
    * prefer `onPart` and derive content from the parts timeline. */

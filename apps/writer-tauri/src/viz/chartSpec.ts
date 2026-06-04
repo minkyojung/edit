@@ -78,18 +78,11 @@ function parseSeries(raw: unknown): ChartSeries[] | null {
   return out
 }
 
-/** Parse + validate a ```chart fence body into a ChartSpec. Returns null on any
- * malformed / incomplete input (e.g. a half-streamed fence) so callers can fall
- * back to showing the source — never throws. */
-export function parseChartSpec(jsonText: string): ChartSpec | null {
-  let raw: unknown
-  try {
-    raw = JSON.parse(jsonText)
-  } catch {
-    return null
-  }
-  if (!isObject(raw)) return null
-
+/** Validate an already-parsed object as a ChartSpec. Shared by parseChartSpec
+ * (the ```chart fence path) and the viz composition parser, which validates
+ * chart leaves through this same single source of truth. Returns null on any
+ * malformed / incomplete input — never throws. */
+export function parseChartObject(raw: Record<string, unknown>): ChartSpec | null {
   const title = typeof raw.title === 'string' ? raw.title : undefined
 
   switch (raw.kind) {
@@ -120,4 +113,18 @@ export function parseChartSpec(jsonText: string): ChartSpec | null {
     default:
       return null
   }
+}
+
+/** Parse + validate a ```chart fence body into a ChartSpec. Returns null on any
+ * malformed / incomplete input (e.g. a half-streamed fence) so callers can fall
+ * back to showing the source — never throws. */
+export function parseChartSpec(jsonText: string): ChartSpec | null {
+  let raw: unknown
+  try {
+    raw = JSON.parse(jsonText)
+  } catch {
+    return null
+  }
+  if (!isObject(raw)) return null
+  return parseChartObject(raw)
 }
