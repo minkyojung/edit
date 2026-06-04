@@ -1215,6 +1215,16 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
+  /* Visualization categorical palette (AI artifacts + mermaid). Equal chroma
+     and lightness with the hue rotated in even steps → distinct series that
+     still read as one tonal family. Hues are anchored on the app's semantic
+     colors (info 260 / success 160 / warning 60). Light recipe: L 0.58. */
+  --viz-cat-1: oklch(0.58 0.15 260);
+  --viz-cat-2: oklch(0.58 0.15 320);
+  --viz-cat-3: oklch(0.58 0.15 160);
+  --viz-cat-4: oklch(0.58 0.15 60);
+  --viz-cat-5: oklch(0.58 0.15 20);
+  --viz-cat-6: oklch(0.58 0.15 200);
   /* Base radius for the Tailwind v4 radius scale. All `rounded-*`
      utilities derive from this (see @theme inline below), so a single
      bump propagates app-wide. Sized to sit one step inside the Tahoe
@@ -1300,6 +1310,14 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
+  /* Viz categorical palette — dark recipe lifts L to 0.72 (same C·H) so the
+     series stay vivid against dark surfaces. See :root for rationale. */
+  --viz-cat-1: oklch(0.72 0.15 260);
+  --viz-cat-2: oklch(0.72 0.15 320);
+  --viz-cat-3: oklch(0.72 0.15 160);
+  --viz-cat-4: oklch(0.72 0.15 60);
+  --viz-cat-5: oklch(0.72 0.15 20);
+  --viz-cat-6: oklch(0.72 0.15 200);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);

@@ -85,10 +85,20 @@ describe('buildArtifactSrcdoc — height reporter', () => {
   })
 })
 
+describe('buildArtifactSrcdoc — design system base styles', () => {
+  it('injects the sizing vars and named primitives', () => {
+    const out = build('<div class="viz-card">x</div>')
+    expect(out).toContain('--viz-maxw:')
+    expect(out).toContain('.viz-card{')
+    expect(out).toContain('.viz-kpi-value{')
+    expect(out).toContain('.viz-grid{')
+  })
+})
+
 describe('buildArtifactThemeCss', () => {
   afterEach(() => vi.restoreAllMocks())
 
-  it('emits a :root block of resolved rgb() tokens plus the font stack', () => {
+  it('emits a :root block of resolved rgb() tokens (incl. the data palette) plus the font stack', () => {
     // jsdom cannot resolve var()/oklch, so stub the browser color/font readout.
     vi.spyOn(window, 'getComputedStyle').mockReturnValue({
       color: 'rgb(1, 2, 3)',
@@ -98,6 +108,7 @@ describe('buildArtifactThemeCss', () => {
     const css = buildArtifactThemeCss()
     expect(css.startsWith(':root{')).toBe(true)
     expect(css).toContain('--foreground:rgb(1, 2, 3);')
+    expect(css).toContain('--viz-cat-1:rgb(1, 2, 3);')
     expect(css).toContain('--art-font-sans:Pretendard, sans-serif;')
   })
 })

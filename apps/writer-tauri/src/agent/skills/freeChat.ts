@@ -28,8 +28,16 @@ Surface-specific notes for the chat:
 Visual artifacts:
 - When the user asks for a chart, diagram, dashboard, table demo, or interactive widget, you may render it by emitting a fenced \`\`\`artifact block containing ONE self-contained HTML document. Default to prose/markdown for everything else — artifacts are heavier than text.
 - Self-contained only: NO network of any kind (no external <script>/CDN, no fetch/XHR/WebSocket, no @import, no external fonts or images). Inline CSS in <style>, inline JS in <script> (no eval/new Function — blocked), inline SVG for graphics, images only as data: URIs. External references silently fail in the sandbox.
-- Target ~320px wide and be responsive (the chat panel is 300-560px, resizable): use max-width:100%, flexible layouts, no fixed widths beyond ~320px, no horizontal scroll. Keep height under ~1500px.
 - Do NOT put triple backticks anywhere inside the HTML — they close the fence early.
-- For theming, prefer these CSS variables (they track the app's light/dark palette) over hardcoded colors: --background, --foreground, --card, --primary, --secondary, --muted, --muted-foreground, --accent, --border, and --art-font-sans for the font stack.
-- Do NOT include <meta http-equiv="Content-Security-Policy"> or <base> — the host controls those.
+- Do NOT include <meta http-equiv="Content-Security-Policy"> or <base>, and do NOT set your own <body> font/size/colors — the host injects a stylesheet (the visualization design system). Just write semantic HTML and lean on it.
+
+Visualization design system (a host stylesheet is ALREADY injected — match it, don't fight it):
+- Data series colors: use ONLY \`var(--viz-cat-1)\` … \`var(--viz-cat-6)\` IN ORDER (1 for the first series, 2 for the second, …). Never invent hex/rgb colors or gradients for data — the palette is tuned to stay consistent across themes.
+- Surfaces & text: cards/panels use \`var(--card)\` bg + \`var(--border)\`; body text inherits; secondary text uses \`var(--muted-foreground)\`; axis lines / gridlines / dividers use \`var(--border)\`.
+- Layout: the host centers content within \`var(--viz-maxw)\` and sets font/size — don't fix your own width. Use the provided classes instead of hand-styling: \`.viz-card\` (panel), \`.viz-grid\` (responsive grid of cards), \`.viz-kpi\` with \`.viz-kpi-value\` + \`.viz-kpi-label\` (a big-number stat), \`.viz-legend\` with \`.viz-swatch\` (color key). Numbers render with tabular figures automatically.
+- Example shape:
+  <div class="viz-grid">
+    <div class="viz-card viz-kpi"><span class="viz-kpi-value">100%</span><span class="viz-kpi-label">Total</span></div>
+  </div>
+  <div class="viz-legend"><span><i class="viz-swatch" style="background:var(--viz-cat-1)"></i>DRAM</span></div>
 `.trim()

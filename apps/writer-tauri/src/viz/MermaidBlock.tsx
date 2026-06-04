@@ -31,6 +31,12 @@ function buildThemeVariables(): Record<string, string> {
     '--border',
     '--secondary',
     '--accent',
+    '--viz-cat-1',
+    '--viz-cat-2',
+    '--viz-cat-3',
+    '--viz-cat-4',
+    '--viz-cat-5',
+    '--viz-cat-6',
   ])
   const vars: Record<string, string> = {}
   const set = (slot: string, value: string | undefined) => {
@@ -50,6 +56,21 @@ function buildThemeVariables(): Record<string, string> {
   set('clusterBorder', t['--border'])
   set('titleColor', t['--foreground'])
   set('edgeLabelBackground', t['--background'])
+  // Categorical palette → mermaid's pie slots (pie1..) and the generic
+  // colour scale (cScale0..) so pie charts and multi-series diagrams use the
+  // same family as the HTML artifacts.
+  const cats = [
+    t['--viz-cat-1'],
+    t['--viz-cat-2'],
+    t['--viz-cat-3'],
+    t['--viz-cat-4'],
+    t['--viz-cat-5'],
+    t['--viz-cat-6'],
+  ]
+  cats.forEach((c, i) => {
+    set(`pie${i + 1}`, c)
+    set(`cScale${i}`, c)
+  })
   vars.fontFamily = resolveFontFamily()
   return vars
 }

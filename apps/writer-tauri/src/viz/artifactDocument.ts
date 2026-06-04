@@ -54,6 +54,13 @@ const ARTIFACT_TOKENS = [
   '--accent-foreground',
   '--border',
   '--ring',
+  // Categorical data palette — equal-chroma, hue-rotated (see index.css).
+  '--viz-cat-1',
+  '--viz-cat-2',
+  '--viz-cat-3',
+  '--viz-cat-4',
+  '--viz-cat-5',
+  '--viz-cat-6',
 ] as const
 
 /** Build a `:root{}` block of the active palette's tokens (resolved to rgb())
@@ -65,6 +72,47 @@ export function buildArtifactThemeCss(): string {
   decls.push(`--art-font-sans:${resolveFontFamily()};`)
   return `:root{${decls.join('')}}`
 }
+
+// Base stylesheet injected into every artifact — the visualization design
+// system. It styles raw elements (headings, body, tables) to the app's tone,
+// defines sizing variables, and provides named primitives (.viz-card / .viz-kpi
+// / .viz-grid / .viz-legend) so AI HTML stays consistent with little effort.
+// References the theme tokens injected just before it (themeCss); fallbacks
+// keep it sane if a token is missing.
+const ARTIFACT_BASE_CSS = [
+  '*{box-sizing:border-box}',
+  'html,body{margin:0;padding:0}',
+  ':root{--viz-maxw:640px;--viz-gap:12px;--viz-radius:12px;--viz-pad:16px}',
+  'body{font-family:var(--art-font-sans,system-ui,sans-serif);' +
+    'color:var(--foreground,#111);background:transparent;font-size:14px;' +
+    'line-height:1.5;padding:8px;-webkit-font-smoothing:antialiased}',
+  // Keep content within a consistent column, centred.
+  'body>*{max-width:var(--viz-maxw);margin-inline:auto}',
+  // Typography
+  'h1,h2,h3{margin:0 0 .5em;line-height:1.25;font-weight:650;letter-spacing:-0.01em}',
+  'h1{font-size:1.5rem}h2{font-size:1.25rem}h3{font-size:1.05rem}',
+  'p{margin:0 0 .75em}',
+  'a{color:var(--viz-cat-1,#4f7cff)}',
+  '.viz-muted,small{color:var(--muted-foreground,#666)}',
+  // Media
+  'img,svg,canvas{max-width:100%;height:auto}',
+  // Tables
+  'table{width:100%;border-collapse:collapse;font-size:.9em}',
+  'th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border,#e5e5e5)}',
+  'th{color:var(--muted-foreground,#666);font-weight:600}',
+  'td{font-variant-numeric:tabular-nums}',
+  // Primitives
+  '.viz-card{background:var(--card,#fff);border:1px solid var(--border,#e5e5e5);' +
+    'border-radius:var(--viz-radius);padding:var(--viz-pad)}',
+  '.viz-grid{display:grid;gap:var(--viz-gap);' +
+    'grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}',
+  '.viz-kpi{display:flex;flex-direction:column;gap:2px}',
+  '.viz-kpi-value{font-size:1.6rem;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}',
+  '.viz-kpi-label{font-size:.8rem;color:var(--muted-foreground,#666)}',
+  '.viz-legend{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:.85em}',
+  '.viz-legend>*{display:flex;align-items:center;gap:6px}',
+  '.viz-swatch{width:10px;height:10px;border-radius:3px;flex:none}',
+].join('')
 
 /** Flatten AI HTML to a body fragment: if it returned a whole document we strip
  * the structural wrappers but KEEP their contents (so head <style>/<script>
@@ -116,14 +164,9 @@ export function buildArtifactSrcdoc(opts: {
     `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">` +
     '<base target="_blank">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">' +
-    '<style>' +
-    '*{box-sizing:border-box}html,body{margin:0;padding:0}' +
-    opts.themeCss +
-    'body{font-family:var(--art-font-sans,system-ui,sans-serif);' +
-    'color:var(--foreground,#111);background:transparent;' +
-    'font-size:14px;line-height:1.45;padding:8px}' +
-    'img,svg,canvas{max-width:100%;height:auto}' +
-    '</style>' +
+    // themeCss (the :root tokens) MUST come before the base sheet, which
+    // consumes those vars (--viz-cat-*, --card, --border, …).
+    `<style>${opts.themeCss}${ARTIFACT_BASE_CSS}</style>` +
     '</head><body>' +
     fragment +
     heightReporterScript(opts.nonce) +
