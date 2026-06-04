@@ -25,7 +25,7 @@ interface AppShellProps {
 // editor flexes, this stays put on window resize.
 const PANEL_MIN_W = 300
 const PANEL_MAX_W = 560
-const PANEL_DEFAULT_W = 360
+const PANEL_DEFAULT_W = 440
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n))
 
 export function AppShell({ children, bottomLeft, collabHandle, collabStatus, editorView }: AppShellProps) {
