@@ -26,7 +26,6 @@ import { audioNodeView } from './cards/AudioCardNodeView'
 import { imageNodeView } from './cards/ImageCardNodeView'
 import { codeBlockVizNodeView } from './cards/CodeBlockVizNodeView'
 import { videoNodeView } from './cards/VideoCardNodeView'
-import { githubActivityNodeView } from './cards/GitHubActivityCardNodeView'
 import { imageInlineNodeView } from './imageInlineNodeView'
 import { mediaDropPastePlugin } from './mediaDropPastePlugin'
 import { inlineCodeSafeKeymap } from './inlineCodeSafe'
@@ -317,7 +316,6 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       .use(imageNodeView)
       .use(videoNodeView)
       .use(audioNodeView)
-      .use(githubActivityNodeView)
       .use(imageInlineNodeView)
       // Renders ```mermaid / ```artifact code blocks as live visualizations
       // (reuses chat's MermaidBlock / ArtifactBlock); other code blocks fall

@@ -25,8 +25,9 @@ import type { EditorView, NodeView } from '@milkdown/kit/prose/view'
 import { createRoot, type Root } from 'react-dom/client'
 import { MermaidBlock } from '@/viz/MermaidBlock'
 import { ArtifactBlock } from '@/viz/ArtifactBlock'
+import { GitHubActivityBlock } from '@/viz/GitHubActivityBlock'
 
-const VIZ_LANGS = new Set(['mermaid', 'artifact'])
+const VIZ_LANGS = new Set(['mermaid', 'artifact', 'github-activity'])
 const SYNC_DEBOUNCE_MS = 300
 
 // Lucide-style 14px stroke icons for the floating toolbar (vanilla DOM, so we
@@ -231,6 +232,12 @@ class CodeBlockVizNodeView implements NodeView {
   private renderPreview() {
     if (!this.root) return
     const code = this.currentCode
+    // github-activity is the live-data case: the fence carries only a date,
+    // the block reads events.db itself. mermaid/artifact render static source.
+    if (this.lang === 'github-activity') {
+      this.root.render(<GitHubActivityBlock date={code.trim()} />)
+      return
+    }
     this.root.render(
       this.lang === 'artifact' ? (
         <ArtifactBlock code={code} isStreaming={false} embedded />

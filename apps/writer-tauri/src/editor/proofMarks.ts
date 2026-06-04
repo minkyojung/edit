@@ -23,7 +23,6 @@ import { frontmatterSchema as rawFrontmatter } from './schema/frontmatter'
 import { imageBlockSchema as rawImageBlock } from './schema/image-block'
 import { videoBlockSchema as rawVideoBlock } from './schema/video-block'
 import { audioBlockSchema as rawAudioBlock } from './schema/audio-block'
-import { githubActivityBlockSchema as rawGithubActivity } from './schema/github-activity-block'
 
 export const proofMarkPlugins: MilkdownPlugin[] = (
   rawProofMarkPlugins as unknown as MilkdownPlugin[]
@@ -60,13 +59,6 @@ export const audioBlockSchema: MilkdownPlugin[] = [
   rawAudioBlock as unknown as MilkdownPlugin,
 ].flat()
 
-/** Block-level GitHub-activity anchor. Stores only a date marker in the
- * markdown; the card body is rendered live from events.db. Same wrap
- * idiom as the other block schemas. */
-export const githubActivityBlockSchema: MilkdownPlugin[] = [
-  rawGithubActivity as unknown as MilkdownPlugin,
-].flat()
-
 /**
  * Combined schema bundle — register this single export in MilkdownEditor
  * to keep the schema surface in one place. Order matters: marks register
@@ -80,5 +72,4 @@ export const proofSchemaPlugins: MilkdownPlugin[] = [
   ...imageBlockSchema,
   ...videoBlockSchema,
   ...audioBlockSchema,
-  ...githubActivityBlockSchema,
 ]
