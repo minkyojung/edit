@@ -6,6 +6,7 @@ mod git;
 mod github;
 mod oauth;
 mod secure_storage;
+mod vault_sync;
 
 use tauri::{Emitter, Manager};
 
@@ -168,6 +169,7 @@ pub fn run() {
             github::get_github_token,
             github::disconnect_github,
             github::github_sync,
+            vault_sync::vault_backup_init,
             app_quit,
             get_traffic_light_y,
         ])

@@ -102,6 +102,12 @@ export function BootGate({ children }: Props) {
           'writer-migration-v2.done',
           'writer-meta-migration-v1.done',
           'writer-cleanup-ydoc.done',
+          // GitHub-activity cache — derived/binary, must not ride along in
+          // the vault backup. Untracks it from vaults where it already
+          // landed (e.g. before this rule existed).
+          'events.db',
+          'events.db-wal',
+          'events.db-shm',
         ])
       } catch (err) {
         console.warn('[boot] gitignore migration failed', err)

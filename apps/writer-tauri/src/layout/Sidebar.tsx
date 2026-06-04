@@ -8,6 +8,7 @@ import {
   IconSparkles,
   IconCameraPlus,
   IconBrandGithub,
+  IconCloudUpload,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { SidebarDateMenu } from './SidebarDateMenu'
@@ -29,6 +30,7 @@ import { useGitHubAuth } from '@/hooks/useGitHubAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
 import { useConnectGitHubDialog } from '@/stores/connectGitHubDialog'
 import { syncGitHubActivity } from '@/lib/githubSync'
+import { backupToGitHub } from '@/lib/vaultBackup'
 import { useTheme } from '@/components/theme-provider'
 import { useFont, type FontOption } from '@/components/font-provider'
 import {
@@ -340,6 +342,10 @@ export function AppSidebar() {
                       <span className="truncate">
                         {githubAccount.login ?? 'Connected'}
                       </span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => void backupToGitHub()}>
+                      <IconCloudUpload size={16} stroke={1.5} />
+                      Back up to GitHub
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={disconnectGithub}>
                       Disconnect GitHub

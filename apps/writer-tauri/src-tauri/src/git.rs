@@ -43,6 +43,13 @@ const DEFAULT_GITIGNORE: &str = "# Manila vault gitignore — managed by the app
 # because it carries durable metadata (aiSummary, archivedAt, …).\n\
 *.ydoc\n\
 \n\
+# GitHub-activity cache (SQLite). Derived from GitHub on demand, binary,\n\
+# and the WAL churns constantly — tracking it bloats history and risks\n\
+# corruption across devices. The connector rebuilds it when missing.\n\
+events.db\n\
+events.db-wal\n\
+events.db-shm\n\
+\n\
 # Chat thread state — per-session JSON the app stores so the Chat\n\
 # panel can resume mid-thread. Pure ephemeral state; users don't read\n\
 # it and committing it would flood every chat-driven git turn with\n\
@@ -148,9 +155,24 @@ fn git_command(vault_path: &str) -> Command {
 /// non-zero — caller decides whether that's fatal or expected
 /// (e.g. `git commit` with nothing staged is a normal no-op).
 async fn run_git(vault_path: &str, args: &[&str]) -> Result<String, String> {
+    run_git_with_env(vault_path, args, &[]).await
+}
+
+/// Like {@link run_git} but also sets process environment variables on the
+/// spawned git. Used by `git_push` to hand the auth token to git's inline
+/// credential helper via `GH_TOKEN` — keeping the secret out of argv so it
+/// never shows up in `ps`.
+async fn run_git_with_env(
+    vault_path: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<String, String> {
     let mut cmd = git_command(vault_path);
     for a in args {
         cmd.arg(a);
+    }
+    for (k, v) in envs {
+        cmd.env(k, v);
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -416,6 +438,62 @@ pub async fn git_commit(vault_path: String, message: String) -> Result<Option<St
 
     let sha = run_git(&vault_path, &["rev-parse", "HEAD"]).await?;
     Ok(Some(sha.trim().to_string()))
+}
+
+/// Build the `-c credential.helper=…` args that feed git the auth token at
+/// push time WITHOUT placing the token on the command line. The first
+/// (empty) helper disables any inherited helper — e.g. the macOS keychain
+/// — so only ours answers; the second is an inline shell helper that
+/// echoes the token read from the `GH_TOKEN` environment variable. Only
+/// the variable *name* lives here, never the token, so it can't leak via
+/// `ps`. `git_push` supplies the actual value through the process env.
+fn credential_helper_args() -> Vec<String> {
+    vec![
+        "-c".into(),
+        "credential.helper=".into(),
+        "-c".into(),
+        "credential.helper=!f() { echo username=x-access-token; echo \"password=$GH_TOKEN\"; }; f"
+            .into(),
+    ]
+}
+
+/// Point `origin` at `url` — adding the remote, or updating it when it
+/// already exists (idempotent across re-runs). The URL carries no token;
+/// auth is injected per-push by {@link git_push}.
+pub async fn git_remote_set(vault_path: &str, url: &str) -> Result<(), String> {
+    if run_git(vault_path, &["remote", "add", "origin", url])
+        .await
+        .is_err()
+    {
+        run_git(vault_path, &["remote", "set-url", "origin", url]).await?;
+    }
+    Ok(())
+}
+
+/// Current branch name (e.g. `main` or `master`). Lets the backup push the
+/// vault's ACTUAL branch instead of assuming one — older vaults were
+/// `git init`'d before the `-b main` default and live on `master`.
+pub async fn git_current_branch(vault_path: &str) -> Result<String, String> {
+    let out = run_git(vault_path, &["rev-parse", "--abbrev-ref", "HEAD"]).await?;
+    Ok(out.trim().to_string())
+}
+
+/// Push `branch` to `origin`, authenticating with `token` via the inline
+/// credential helper. The token travels only through the `GH_TOKEN`
+/// environment variable (never argv), so it appears in neither `ps` nor
+/// `.git/config`. `GIT_TERMINAL_PROMPT=0` turns an auth failure into an
+/// error instead of a hang on an interactive prompt.
+pub async fn git_push(vault_path: &str, token: &str, branch: &str) -> Result<(), String> {
+    let mut args = credential_helper_args();
+    args.extend(["push", "-u", "origin", branch].iter().map(|s| s.to_string()));
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_git_with_env(
+        vault_path,
+        &arg_refs,
+        &[("GH_TOKEN", token), ("GIT_TERMINAL_PROMPT", "0")],
+    )
+    .await?;
+    Ok(())
 }
 
 /// Return commits from `<ref_name>..HEAD`, newest first. Each entry
@@ -795,4 +873,33 @@ fn parse_signed_range(part: &str, sign: char) -> Option<u32> {
     let body = part.strip_prefix(sign)?;
     let start_str = body.split(',').next()?;
     start_str.parse::<u32>().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credential_helper_disables_inherited_then_adds_inline() {
+        let args = credential_helper_args();
+        assert_eq!(args.len(), 4);
+        assert_eq!(args[0], "-c");
+        // Empty value clears any inherited helper (e.g. osxkeychain).
+        assert_eq!(args[1], "credential.helper=");
+        assert_eq!(args[2], "-c");
+        // The inline helper reads the token from the env var by NAME.
+        assert!(args[3].contains("$GH_TOKEN"));
+        assert!(args[3].contains("username=x-access-token"));
+    }
+
+    #[test]
+    fn credential_helper_args_carry_no_secret() {
+        // The token is supplied by git_push via the process env, never on
+        // the command line. These args reference only the variable name,
+        // so nothing here can leak a real token through `ps`.
+        for a in credential_helper_args() {
+            assert!(!a.contains("ghp_"));
+            assert!(!a.contains("gho_"));
+        }
+    }
 }

@@ -25,9 +25,11 @@ use tauri::{AppHandle, Manager};
 // enabled). Safe to embed — it's not a secret. Device Flow uses no
 // client secret.
 const CLIENT_ID: &str = "Ov23liRSodZShOp6eiRC";
-// read:user is enough to read the login + public activity for the first
-// slice. Widening to `repo` (private activity) is a later re-auth.
-const SCOPE: &str = "read:user";
+// `repo` covers both reads (login + activity) and writes (create repo +
+// push the vault backup). Existing users connected under the older
+// `read:user` scope must reconnect once to obtain a write-capable token;
+// the device flow overwrites the stored token on success.
+const SCOPE: &str = "repo";
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const API_USER_URL: &str = "https://api.github.com/user";
@@ -45,9 +47,9 @@ pub struct PendingDevice {
 
 /// Token + login persisted to secure storage.
 #[derive(Serialize, Deserialize)]
-struct StoredToken {
-    access_token: String,
-    login: String,
+pub(crate) struct StoredToken {
+    pub(crate) access_token: String,
+    pub(crate) login: String,
 }
 
 // ----- start -----
@@ -231,7 +233,7 @@ pub struct GitHubAccount {
     pub login: Option<String>,
 }
 
-fn load_token(app: &AppHandle) -> Result<Option<StoredToken>, String> {
+pub(crate) fn load_token(app: &AppHandle) -> Result<Option<StoredToken>, String> {
     let bytes = match secure_storage::load(app, STORAGE_NAME)? {
         Some(b) => b,
         None => return Ok(None),
@@ -267,6 +269,54 @@ fn clear_pending(app: &AppHandle) -> Result<(), String> {
     let mut slot = pending.0.lock().map_err(|e| e.to_string())?;
     *slot = None;
     Ok(())
+}
+
+// ----- repo management (used by vault_sync) -----
+
+/// A repo as returned by the create-repo API. Only the fields the
+/// vault-backup flow needs; serde ignores the rest.
+#[derive(Deserialize)]
+pub(crate) struct RepoInfo {
+    pub(crate) full_name: String,
+    pub(crate) clone_url: String,
+}
+
+/// Create a new repo under the authenticated user. `auto_init: false`
+/// keeps it empty so the first vault push isn't rejected for a
+/// non-fast-forward. Maps the common GitHub failures to plain messages.
+pub(crate) async fn create_repo(
+    token: &str,
+    name: &str,
+    private: bool,
+) -> Result<RepoInfo, String> {
+    let resp = reqwest::Client::new()
+        .post("https://api.github.com/user/repos")
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", USER_AGENT)
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({ "name": name, "private": private, "auto_init": false }))
+        .send()
+        .await
+        .map_err(|e| format!("create repo request failed: {e}"))?;
+
+    let status = resp.status();
+    if status.is_success() {
+        return resp
+            .json::<RepoInfo>()
+            .await
+            .map_err(|e| format!("create repo parse failed: {e}"));
+    }
+
+    let body = resp.text().await.unwrap_or_default();
+    let msg = match status.as_u16() {
+        403 | 404 => {
+            "GitHub denied repo creation — reconnect GitHub to grant backup (repo) access."
+                .to_string()
+        }
+        422 => format!("A repo named \"{name}\" already exists on your account."),
+        _ => format!("github create repo {status}: {}", body.trim()),
+    };
+    Err(msg)
 }
 
 // ----- connector: fetch activity into events.db -----
