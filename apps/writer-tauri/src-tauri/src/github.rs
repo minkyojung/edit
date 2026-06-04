@@ -273,6 +273,42 @@ fn clear_pending(app: &AppHandle) -> Result<(), String> {
 
 const SOURCE: &str = "github";
 
+/// Extract the `YYYY-MM-DD` day from a stored watermark timestamp, used to
+/// scope the next search to "that day onward". Returns None when the
+/// watermark is absent or not date-shaped — notably the legacy watermark
+/// (an event id like `github:commit:<sha>`), so an old events.db
+/// self-heals: None → full backfill → `next_watermark` rewrites it as a
+/// real timestamp.
+fn since_date(watermark: Option<&str>) -> Option<String> {
+    let w = watermark?;
+    let b = w.as_bytes();
+    let date_shaped = b.len() >= 10
+        && b[0].is_ascii_digit()
+        && b[1].is_ascii_digit()
+        && b[2].is_ascii_digit()
+        && b[3].is_ascii_digit()
+        && b[4] == b'-'
+        && b[5].is_ascii_digit()
+        && b[6].is_ascii_digit()
+        && b[7] == b'-'
+        && b[8].is_ascii_digit()
+        && b[9].is_ascii_digit();
+    date_shaped.then(|| w[..10].to_string())
+}
+
+/// New watermark = the latest `ts` ingested so far. ISO-8601 UTC strings
+/// sort lexicographically in time order, so a plain max works. Keeps
+/// `prev` when the batch is empty or entirely older, so a no-op sync never
+/// moves the bookmark backward.
+fn next_watermark(prev: Option<String>, batch: &[Entry]) -> Option<String> {
+    let batch_max = batch.iter().map(|e| e.ts.clone()).max();
+    match (prev, batch_max) {
+        (Some(p), Some(b)) => Some(if b > p { b } else { p }),
+        (Some(p), None) => Some(p),
+        (None, b) => b,
+    }
+}
+
 /// Pull recent GitHub activity into events.db. Frontend-scheduled (the
 /// rust side doesn't know the active vault) and passes the ingest
 /// timestamp so all rows in one sync share a batch time. Returns the
@@ -291,20 +327,25 @@ pub async fn github_sync(
         return Ok(0); // not connected — nothing to do
     };
 
+    // Read the last sync bookmark up front so the fetch can be scoped to
+    // "new since then" instead of re-pulling the full page every tick.
+    let mut conn = db::open(&vault_path)?;
+    let prev_watermark = db::read_connector_state(&conn, SOURCE)?.and_then(|s| s.watermark);
+    let since = since_date(prev_watermark.as_deref());
+
     let client = reqwest::Client::new();
 
     // Commits are the core signal — fail the sync if they can't be fetched.
-    let mut entries = fetch_commits(&client, &stored, &ingested_at).await?;
+    let mut entries = fetch_commits(&client, &stored, &ingested_at, since.as_deref()).await?;
     // PRs are best-effort: a search hiccup shouldn't drop the commits.
-    match fetch_prs(&client, &stored, &ingested_at).await {
+    match fetch_prs(&client, &stored, &ingested_at, since.as_deref()).await {
         Ok(prs) => entries.extend(prs),
         Err(e) => eprintln!("[github] pr fetch failed: {e}"),
     }
 
-    let watermark = entries.first().map(|e| e.id.clone());
+    let watermark = next_watermark(prev_watermark, &entries);
     let count = entries.len();
 
-    let mut conn = db::open(&vault_path)?;
     if !entries.is_empty() {
         db::upsert_events(&mut conn, &entries)?;
     }
@@ -354,8 +395,12 @@ async fn fetch_commits(
     client: &reqwest::Client,
     stored: &StoredToken,
     ingested_at: &str,
+    since: Option<&str>,
 ) -> Result<Vec<Entry>, String> {
-    let q = format!("author:{}", stored.login);
+    let q = match since {
+        Some(date) => format!("author:{} committer-date:>={date}", stored.login),
+        None => format!("author:{}", stored.login),
+    };
     let data = github_get(
         client,
         "https://api.github.com/search/commits",
@@ -418,8 +463,12 @@ async fn fetch_prs(
     client: &reqwest::Client,
     stored: &StoredToken,
     ingested_at: &str,
+    since: Option<&str>,
 ) -> Result<Vec<Entry>, String> {
-    let q = format!("author:{} type:pr", stored.login);
+    let q = match since {
+        Some(date) => format!("author:{} type:pr updated:>={date}", stored.login),
+        None => format!("author:{} type:pr", stored.login),
+    };
     let data = github_get(
         client,
         "https://api.github.com/search/issues",
@@ -556,5 +605,74 @@ mod tests {
 
         assert!(entries.iter().any(|e| e.id == "github:pr_opened:PR_open"));
         assert!(!entries.iter().any(|e| e.id == "github:pr_merged:PR_open"));
+    }
+
+    fn entry_ts(ts: &str) -> Entry {
+        Entry {
+            id: format!("github:commit:{ts}"),
+            ts: ts.to_string(),
+            ingested_at: "2026-06-04T00:00:00Z".to_string(),
+            source: SOURCE.to_string(),
+            kind: "commit".to_string(),
+            summary: String::new(),
+            entities: vec![],
+            refs: vec![],
+            payload: json!({}),
+        }
+    }
+
+    #[test]
+    fn since_date_extracts_day_from_iso() {
+        assert_eq!(
+            since_date(Some("2026-06-04T10:00:00Z")).as_deref(),
+            Some("2026-06-04")
+        );
+    }
+
+    #[test]
+    fn since_date_rejects_legacy_id_and_garbage() {
+        // Legacy watermark stored an event id, not a timestamp → full backfill.
+        assert_eq!(since_date(Some("github:commit:abc123")), None);
+        assert_eq!(since_date(None), None);
+        assert_eq!(since_date(Some("short")), None);
+        assert_eq!(since_date(Some("2026/06/04xx")), None);
+    }
+
+    #[test]
+    fn next_watermark_keeps_prev_when_batch_empty() {
+        assert_eq!(
+            next_watermark(Some("2026-06-04T10:00:00Z".to_string()), &[]).as_deref(),
+            Some("2026-06-04T10:00:00Z")
+        );
+    }
+
+    #[test]
+    fn next_watermark_takes_latest_of_prev_and_batch() {
+        let batch = vec![
+            entry_ts("2026-06-04T09:00:00Z"),
+            entry_ts("2026-06-04T12:00:00Z"),
+        ];
+        assert_eq!(
+            next_watermark(Some("2026-06-04T10:00:00Z".to_string()), &batch).as_deref(),
+            Some("2026-06-04T12:00:00Z")
+        );
+    }
+
+    #[test]
+    fn next_watermark_ignores_older_batch() {
+        let batch = vec![entry_ts("2026-06-01T00:00:00Z")];
+        assert_eq!(
+            next_watermark(Some("2026-06-04T10:00:00Z".to_string()), &batch).as_deref(),
+            Some("2026-06-04T10:00:00Z")
+        );
+    }
+
+    #[test]
+    fn next_watermark_from_none_uses_batch() {
+        let batch = vec![entry_ts("2026-06-04T09:00:00Z")];
+        assert_eq!(
+            next_watermark(None, &batch).as_deref(),
+            Some("2026-06-04T09:00:00Z")
+        );
     }
 }

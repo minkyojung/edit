@@ -1,8 +1,33 @@
 # GitHub 연동 기능 개발 계획
 
-> 작성일: 2026-05-31
-> 상태: 설계 확정, 구현 전 (다음 브랜치로 핸드오프)
+> 작성일: 2026-05-31 · 진행 현황 업데이트: 2026-06-04
+> 상태: **Phase 1(인증) ✅ + Phase 2/Track A(데이터 커넥터) 🟡 동작 — Phase 3/Track B(vault 백업/동기화) ❌ 미착수**
 > 한 줄 요약: "GitHub"은 두 갈래(활동 가져오기 / 노트 백업) — 공통 토대인 인증을 먼저 만들고, 수직 슬라이스로 한 갈래씩.
+
+---
+
+## 진행 현황 (2026-06-04)
+
+`data-structure-github-sync` 브랜치 기준 실제 구현 상태. (✅ 완료 / 🟡 부분 / ❌ 없음)
+
+| 항목 | Phase | 상태 | 위치 |
+|---|---|---|---|
+| OAuth Device Flow 로그인 | 1 | ✅ | `src-tauri/src/github.rs` (start/poll_github_device_flow) |
+| 토큰 키체인 보관 (AES-256-GCM) | 1 | ✅ | `secure_storage.rs`, `github.rs` (StoredToken) |
+| 인증 상태 hook (useClaudeAuth 미러) | 1 | ✅ | `src/hooks/useGitHubAuth.ts` |
+| 공용 GitHub 클라이언트 래퍼 | 1 | 🟡 | `github.rs` (github_get) — rate-limit 처리 없음, github.rs 내부 전용 |
+| events.db 스키마 (events+state+FTS) | 2 | ✅ | `src-tauri/src/events/db.rs` (init_schema) |
+| GitHub 커넥터 폴링 (커밋·PR) | 2 | 🟡 | `github.rs` (github_sync) — `/users/me/events` 대신 search API 사용 |
+| events.db UPSERT (id 중복제거) | 2 | ✅ | `github.rs`, `events/db.rs` (upsert_events) |
+| 데일리 노트 활동 카드 렌더 | 2 | ✅ | `src/viz/GitHubActivityBlock.tsx` (CodeBlockViz 변형) |
+| 증분 동기화 (watermark+ETag) | 2 | 🟡 | watermark 저장만 하고 다음 폴링에 미사용, ETag 미구현 (`githubSync.ts` 30분 주기) |
+| 원격 git 명령 (push/fetch/clone/merge) | 3 | ❌ | `git.rs`에 로컬 명령만, 원격 0개 |
+| repo 관리 API (목록/생성/검사) | 3 | ❌ | 없음 |
+| syncStore + `.manila/manifest.json` 표식 | 3 | ❌ | 없음 |
+| 동기화 엔진 (push/pull/재시도/충돌) | 3 | ❌ | 없음 |
+| 충돌 데이터 계층 (ours/theirs) | 3 | ❌ | 없음 |
+
+**계획에 없던 추가 구현:** 활동 Vega-Lite 컬럼 차트(`githubColumnSpec.ts`/`githubDailySpec.ts`), 이벤트 FTS 검색(`events/db.rs`), 이벤트 필터(`EventFilter`), 수동 동기화 버튼(BootGate + 사이드바).
 
 ---
 
@@ -34,7 +59,7 @@ GitHub과 관련된 두 기능을 한 문서에서 다룬다. 둘은 **방향·�
 
 ---
 
-## 2. 공통 토대 (Phase 1) — GitHub 인증
+## 2. 공통 토대 (Phase 1) — GitHub 인증 ✅ (클라이언트 래퍼만 🟡)
 
 A·B 둘 다 GitHub 토큰이 필요하다. **한 번 만들어 공유한다.**
 
@@ -54,7 +79,7 @@ A·B 둘 다 GitHub 토큰이 필요하다. **한 번 만들어 공유한다.**
 
 ---
 
-## 3. Track A — 데이터 커넥터 (인증 다음 1순위)
+## 3. Track A — 데이터 커넥터 (인증 다음 1순위) 🟡 동작 (증분 동기화 미완)
 
 상세 스펙은 [raw-data-timeline-memory-plan.md](./raw-data-timeline-memory-plan.md) §9–10에 이미 있음. 여기선 순서만.
 
@@ -72,7 +97,7 @@ A·B 둘 다 GitHub 토큰이 필요하다. **한 번 만들어 공유한다.**
 
 ---
 
-## 4. Track B — vault 백업/동기화 (A 다음, 또는 멀티기기 필요해질 때)
+## 4. Track B — vault 백업/동기화 (A 다음, 또는 멀티기기 필요해질 때) ❌ 미착수
 
 > 상태: 문서상 future 항목 (`mvp-scope.md` "자동 git 백업"/"Multi-device sync"). 동기화 수단도 재검토 대상(GitHub repo vs iCloud/libsql — raw-data §143). **GitHub repo로 간다고 가정한 설계.**
 
@@ -126,9 +151,9 @@ A·B 둘 다 GitHub 토큰이 필요하다. **한 번 만들어 공유한다.**
 
 ```
 Phase 0  지금 브랜치 main 착지/동결           ← 페인트 말리기 (선행 필수)
-Phase 1  GitHub 인증 (OAuth + 키체인 + 클라이언트)  ← A·B 공통 토대
-Phase 2  Track A: 데이터 커넥터 (events.db 수직 슬라이스)  ← 스펙 완비, 본 줄기
-Phase 3  Track B: vault 백업/동기화
+Phase 1  GitHub 인증 (OAuth + 키체인 + 클라이언트)  ✅ (클라이언트 rate-limit만 남음)
+Phase 2  Track A: 데이터 커넥터 (events.db 수직 슬라이스)  🟡 동작, 증분 동기화 미완
+Phase 3  Track B: vault 백업/동기화                      ❌ 미착수
           1 새 repo push (뼈대) → 2 자동 push → 3 다른 기기 clone → 4 충돌
 ```
 
