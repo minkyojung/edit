@@ -4,8 +4,8 @@
 // date; this component queries events.db for that day and re-queries when
 // the events store bumps (after a sync), so the chart follows the data.
 //
-// The chart shape is the fixed githubDailySpec; only the data changes —
-// the "fixed frame, live data" model.
+// The chart shape is fixed (a daily column ChartSpec); only the data changes —
+// the "fixed frame, live data" model. Rendered by the shared DataViz engine.
 
 import { useEffect, useState } from 'react'
 import { eventsQueryByDate, type Entry } from '@/lib/eventsDb'
