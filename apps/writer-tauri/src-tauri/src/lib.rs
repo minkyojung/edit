@@ -169,8 +169,11 @@ pub fn run() {
             github::get_github_token,
             github::disconnect_github,
             github::github_sync,
+            github::github_list_repos,
             vault_sync::vault_backup_init,
             vault_sync::vault_push,
+            vault_sync::vault_restore,
+            vault_sync::vault_pull,
             app_quit,
             get_traffic_light_y,
         ])

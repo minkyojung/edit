@@ -5,8 +5,8 @@
 //! push with a credential helper) and the GitHub API + token in
 //! `github.rs`. This module ties them together and owns the vault-identity
 //! marker (`.manila/manifest.json`) so a repo can be recognised as "this
-//! vault" later (restore / conflict slices). It deliberately does NOT do
-//! auto-push, clone/restore, or conflict handling yet.
+//! vault" on restore. It deliberately does NOT do conflict handling yet —
+//! receive (`vault_pull`) is fast-forward only and bails on divergence.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -55,6 +55,15 @@ fn new_vault_id() -> String {
     let mut bytes = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Read the manifest if present (read-only, lenient). Returns None when the
+/// file is missing or unparseable — used by restore to check "is this cloned
+/// repo actually one of our vaults?" without minting anything.
+fn read_manifest(vault_path: &str) -> Option<VaultManifest> {
+    let path = Path::new(vault_path).join(MANIFEST_DIR).join(MANIFEST_FILE);
+    let bytes = std::fs::read(&path).ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 /// Read the vault manifest, creating it (with a fresh `vault_id`) on first
@@ -151,6 +160,82 @@ pub async fn vault_push(app: AppHandle, vault_path: String) -> Result<(), String
     };
     let branch = git::git_current_branch(&vault_path).await?;
     git::git_push(&vault_path, &stored.access_token, &branch).await
+}
+
+/// True when `path` exists and contains ANY entry. Strict on purpose: even a
+/// stray file means "not empty", matching `git clone`'s own requirement so the
+/// guard and the clone agree. Used by restore to refuse cloning into a folder
+/// that already holds notes — restore must never clobber.
+fn dir_has_content(path: &Path) -> Result<bool, String> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let mut entries = std::fs::read_dir(path).map_err(|e| format!("read dir: {e}"))?;
+    Ok(entries.next().is_some())
+}
+
+/// Restore a vault from an existing GitHub repo by cloning it into
+/// `vault_path` (new device / fresh install).
+///
+/// SAFETY — never clobbers: refuses when the target is already a repo (`.git`
+/// present) or isn't empty. Cloning into an empty/new folder is the only path,
+/// so local notes can't be overwritten (that's the conflict slice's job, not
+/// restore's). After cloning, verifies the repo carries our identity marker so
+/// we don't silently adopt an unrelated repo as the vault.
+#[tauri::command]
+pub async fn vault_restore(
+    app: AppHandle,
+    vault_path: String,
+    repo_full_name: String,
+    clone_url: String,
+) -> Result<SyncState, String> {
+    let Some(stored) = github::load_token(&app)? else {
+        return Err("Connect GitHub before restoring.".to_string());
+    };
+
+    let path = Path::new(&vault_path);
+    if path.join(".git").exists() {
+        return Err("This folder is already a repository — sync instead of restoring.".to_string());
+    }
+    if dir_has_content(path)? {
+        return Err(
+            "Restore needs an empty folder so it can't overwrite notes — pick a new/empty folder."
+                .to_string(),
+        );
+    }
+
+    // Pull the whole history down (token via credential helper, never argv).
+    git::git_clone(&clone_url, &vault_path, &stored.access_token).await?;
+
+    // Identity check: a real vault carries `.manila/manifest.json`. Without it
+    // this is some unrelated repo — surface that rather than adopting it.
+    let manifest = read_manifest(&vault_path).ok_or_else(|| {
+        "That repository isn't a notes backup from this app (no vault marker).".to_string()
+    })?;
+
+    let branch = git::git_current_branch(&vault_path).await?;
+
+    Ok(SyncState {
+        repo_full_name,
+        remote_url: clone_url,
+        branch,
+        vault_id: manifest.vault_id,
+        status: "connected".to_string(),
+    })
+}
+
+/// Receive remote changes into the connected vault — fast-forward ONLY.
+/// Returns `Ok(true)` when it advanced or was already current, `Ok(false)` when
+/// local and remote have diverged (two devices edited → the conflict slice
+/// handles that) or GitHub isn't connected. Never writes a merge commit or
+/// conflict markers, so the notes are never left half-merged.
+#[tauri::command]
+pub async fn vault_pull(app: AppHandle, vault_path: String) -> Result<bool, String> {
+    let Some(stored) = github::load_token(&app)? else {
+        return Ok(false); // not connected — nothing to receive
+    };
+    let branch = git::git_current_branch(&vault_path).await?;
+    git::git_pull_ff(&vault_path, &stored.access_token, &branch).await
 }
 
 #[cfg(test)]

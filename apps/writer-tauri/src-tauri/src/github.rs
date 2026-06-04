@@ -273,12 +273,22 @@ fn clear_pending(app: &AppHandle) -> Result<(), String> {
 
 // ----- repo management (used by vault_sync) -----
 
-/// A repo as returned by the create-repo API. Only the fields the
+/// A repo as returned by the create-repo / list-repos API. Only the fields the
 /// vault-backup flow needs; serde ignores the rest.
 #[derive(Deserialize)]
 pub(crate) struct RepoInfo {
     pub(crate) full_name: String,
     pub(crate) clone_url: String,
+}
+
+/// Frontend-facing repo summary for the restore picker. RepoInfo is the
+/// GitHub-shaped (snake_case) deserialize target; this is the camelCase
+/// serialize shape the JS side reads.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoSummary {
+    pub full_name: String,
+    pub clone_url: String,
 }
 
 /// Create a new repo under the authenticated user. `auto_init: false`
@@ -317,6 +327,51 @@ pub(crate) async fn create_repo(
         _ => format!("github create repo {status}: {}", body.trim()),
     };
     Err(msg)
+}
+
+/// List the authenticated user's OWN repos, most-recently-updated first, for
+/// the restore picker. Owner-affiliation only — a vault backup is the user's,
+/// not a repo they merely collaborate on.
+pub(crate) async fn list_repos(token: &str) -> Result<Vec<RepoInfo>, String> {
+    let resp = reqwest::Client::new()
+        .get("https://api.github.com/user/repos")
+        .query(&[
+            ("per_page", "100"),
+            ("sort", "updated"),
+            ("affiliation", "owner"),
+        ])
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", USER_AGENT)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .map_err(|e| format!("list repos request failed: {e}"))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("github list repos {status}: {}", body.trim()));
+    }
+    resp.json::<Vec<RepoInfo>>()
+        .await
+        .map_err(|e| format!("list repos parse failed: {e}"))
+}
+
+/// Frontend-facing: the user's repos for the restore picker. Empty list when
+/// not connected (the UI then prompts to connect first).
+#[tauri::command]
+pub async fn github_list_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
+    let Some(stored) = load_token(&app)? else {
+        return Ok(Vec::new());
+    };
+    let repos = list_repos(&stored.access_token).await?;
+    Ok(repos
+        .into_iter()
+        .map(|r| RepoSummary {
+            full_name: r.full_name,
+            clone_url: r.clone_url,
+        })
+        .collect())
 }
 
 // ----- connector: fetch activity into events.db -----
