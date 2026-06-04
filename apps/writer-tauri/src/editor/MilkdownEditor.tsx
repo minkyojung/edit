@@ -17,6 +17,7 @@ import type { CollabHandle, CollabStatus } from '../hooks/useCollabDoc'
 import { createDirtyTrackerPlugin } from './dirtyTrackerPlugin'
 import { createInlineReviewPlugin } from './inlineReviewPlugin'
 import { createDocVersionPlugin } from './docVersionPlugin'
+import { vizIdPlugin } from './vizIdPlugin'
 import { createFrozenSelectionPlugin } from './frozenSelectionPlugin'
 import { formatStatePlugin } from './formatStatePlugin'
 import { dropCursor } from '@milkdown/kit/prose/dropcursor'
@@ -298,6 +299,9 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
       // available before code_block_ext references them in its `marks: '...'`
       // content spec.
       .use(proofSchemaPlugins)
+      // Stamp viz code blocks (chart/mermaid/artifact/github) with a stable
+      // id (in fence meta) so AI/chat can address & replace a specific block.
+      .use(vizIdPlugin)
       .use(createDocVersionPlugin())
       // Flush-trigger: marks this slug dirty whenever PM's doc
       // changes, so the auto-flush tick picks it up and writes the

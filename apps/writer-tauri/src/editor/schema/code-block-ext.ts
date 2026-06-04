@@ -7,6 +7,7 @@
 
 import { $nodeSchema, $nodeAttr } from '@milkdown/kit/utils';
 import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
+import { buildFenceMeta, decodeVizIdFromMeta } from './fenceMeta';
 
 // Types for encoded proof marks
 interface EncodedMark {
@@ -130,6 +131,11 @@ export const codeBlockSchemaExt = $nodeSchema('code_block', (ctx) => {
       language: {
         default: '',
       },
+      // Stable id for viz blocks (carried in fence meta as `v:<id>`). Empty for
+      // ordinary code blocks. See vizIdPlugin for assignment.
+      vizId: {
+        default: '',
+      },
     },
     parseDOM: [
       {
@@ -161,8 +167,9 @@ export const codeBlockSchemaExt = $nodeSchema('code_block', (ctx) => {
 
         // Decode any proof marks from meta
         const proofMarks = decodeMarksFromMeta(meta);
+        const vizId = decodeVizIdFromMeta(meta);
 
-        state.openNode(type, { language });
+        state.openNode(type, { language, vizId });
 
         if (value) {
           if (proofMarks.length === 0) {
@@ -242,7 +249,7 @@ export const codeBlockSchemaExt = $nodeSchema('code_block', (ctx) => {
 
         state.addNode('code', undefined, node.textContent, {
           lang: node.attrs.language || undefined,
-          meta: encodedMarks || null,
+          meta: buildFenceMeta((node.attrs.vizId as string) || '', encodedMarks),
         });
       },
     },
