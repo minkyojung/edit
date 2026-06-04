@@ -15,9 +15,23 @@ export interface KpiItem {
   sub?: string
 }
 
+/** A named data series for multi-series charts (column). values[i] aligns with
+ * xLabels[i]; a short/missing value is treated as 0 by the renderer. */
+export interface ChartSeries {
+  label: string
+  values: number[]
+}
+
 export type ChartSpec =
   | { kind: 'donut'; title?: string; data: ChartDatum[] }
   | { kind: 'bar'; title?: string; data: ChartDatum[] }
+  | {
+      kind: 'column'
+      title?: string
+      xLabels: string[]
+      series: ChartSeries[]
+      stacked?: boolean
+    }
   | { kind: 'kpi'; title?: string; items: KpiItem[] }
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -52,6 +66,18 @@ function parseKpiItems(raw: unknown): KpiItem[] | null {
   return out
 }
 
+function parseSeries(raw: unknown): ChartSeries[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null
+  const out: ChartSeries[] = []
+  for (const item of raw) {
+    if (!isObject(item)) return null
+    if (typeof item.label !== 'string') return null
+    if (!Array.isArray(item.values) || !item.values.every(isFiniteNumber)) return null
+    out.push({ label: item.label, values: item.values })
+  }
+  return out
+}
+
 /** Parse + validate a ```chart fence body into a ChartSpec. Returns null on any
  * malformed / incomplete input (e.g. a half-streamed fence) so callers can fall
  * back to showing the source — never throws. */
@@ -71,6 +97,21 @@ export function parseChartSpec(jsonText: string): ChartSpec | null {
     case 'bar': {
       const data = parseData(raw.data)
       return data ? { kind: raw.kind, title, data } : null
+    }
+    case 'column': {
+      const series = parseSeries(raw.series)
+      const xLabels =
+        Array.isArray(raw.xLabels) && raw.xLabels.every((x) => typeof x === 'string')
+          ? (raw.xLabels as string[])
+          : null
+      if (!series || !xLabels || xLabels.length === 0) return null
+      return {
+        kind: 'column',
+        title,
+        xLabels,
+        series,
+        stacked: raw.stacked === true,
+      }
     }
     case 'kpi': {
       const items = parseKpiItems(raw.items)

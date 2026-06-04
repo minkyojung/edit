@@ -4,7 +4,7 @@
 // no iframe, no token resolution, no security surface. The spec carries data
 // only; color/sizing live here, so every chart looks like one family.
 
-import type { ChartDatum, ChartSpec, KpiItem } from './chartSpec'
+import type { ChartDatum, ChartSeries, ChartSpec, KpiItem } from './chartSpec'
 
 // Categorical color for series index i (wraps after 6).
 const cat = (i: number) => `var(--viz-cat-${(i % 6) + 1})`
@@ -143,6 +143,79 @@ function KpiGrid({ title, items }: { title?: string; items: KpiItem[] }) {
   )
 }
 
+// Legend for multi-series charts: one swatch+label per series.
+function SeriesLegend({ series }: { series: ChartSeries[] }) {
+  return (
+    <ul className="mb-2 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-xs">
+      {series.map((s, i) => (
+        <li key={`${s.label}-${i}`} className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: cat(i) }} />
+          <span className="text-muted-foreground">{s.label}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+const COLUMN_HEIGHT = 120
+
+// Multi-series columns are always stacked (the common case — e.g. event counts
+// by kind per hour). The `stacked` spec flag is reserved; grouped bars would
+// need side-by-side sub-bars and aren't needed yet.
+function ColumnChart({
+  title,
+  xLabels,
+  series,
+}: {
+  title?: string
+  xLabels: string[]
+  series: ChartSeries[]
+}) {
+  const valueAt = (s: ChartSeries, xi: number) => Math.max(0, Number(s.values[xi]) || 0)
+  // y-scale denominator: the tallest stack across all x positions.
+  const max =
+    Math.max(
+      ...xLabels.map((_, xi) => series.reduce((sum, s) => sum + valueAt(s, xi), 0)),
+      0,
+    ) || 1
+  // Sparse x labels (~6 max) so a 24-hour axis doesn't crowd.
+  const step = Math.max(1, Math.ceil(xLabels.length / 6))
+
+  return (
+    <figure className="m-0">
+      {title && <Title>{title}</Title>}
+      {series.length > 1 && <SeriesLegend series={series} />}
+      <div className="flex items-end gap-[2px]" style={{ height: COLUMN_HEIGHT }}>
+        {xLabels.map((label, xi) => (
+          <div
+            key={`${label}-${xi}`}
+            className="flex flex-1 flex-col-reverse overflow-hidden rounded-t-sm"
+            title={label}
+          >
+            {series.map((s, si) => {
+              const h = (valueAt(s, xi) / max) * COLUMN_HEIGHT
+              if (h <= 0) return null
+              return (
+                <div key={`${s.label}-${si}`} style={{ height: h, background: cat(si) }} />
+              )
+            })}
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 flex gap-[2px]">
+        {xLabels.map((label, xi) => (
+          <span
+            key={`${label}-${xi}`}
+            className="flex-1 text-center text-[10px] tabular-nums text-muted-foreground"
+          >
+            {xi % step === 0 ? label : ''}
+          </span>
+        ))}
+      </div>
+    </figure>
+  )
+}
+
 /** Render a validated ChartSpec. Source-agnostic — used by the ```chart fence
  * (via ChartBlock) and by product features that pass a spec directly. */
 export function DataViz({ spec }: { spec: ChartSpec }) {
@@ -151,6 +224,8 @@ export function DataViz({ spec }: { spec: ChartSpec }) {
       return <DonutChart title={spec.title} data={spec.data} />
     case 'bar':
       return <BarChart title={spec.title} data={spec.data} />
+    case 'column':
+      return <ColumnChart title={spec.title} xLabels={spec.xLabels} series={spec.series} />
     case 'kpi':
       return <KpiGrid title={spec.title} items={spec.items} />
   }

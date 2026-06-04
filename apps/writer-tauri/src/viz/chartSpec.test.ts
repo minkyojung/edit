@@ -32,6 +32,42 @@ describe('parseChartSpec', () => {
     })
   })
 
+  it('parses a multi-series column spec', () => {
+    const spec = parseChartSpec(
+      JSON.stringify({
+        kind: 'column',
+        xLabels: ['0h', '6h', '12h'],
+        series: [
+          { label: 'commit', values: [1, 2, 3] },
+          { label: 'PR', values: [0, 1, 0] },
+        ],
+        stacked: true,
+      }),
+    )
+    expect(spec?.kind).toBe('column')
+    expect(spec).toMatchObject({ xLabels: ['0h', '6h', '12h'], stacked: true })
+  })
+
+  it('returns null when a column series has a non-numeric value', () => {
+    expect(
+      parseChartSpec(
+        JSON.stringify({
+          kind: 'column',
+          xLabels: ['a'],
+          series: [{ label: 's', values: [1, 'x'] }],
+        }),
+      ),
+    ).toBeNull()
+  })
+
+  it('returns null when a column has no xLabels', () => {
+    expect(
+      parseChartSpec(
+        JSON.stringify({ kind: 'column', xLabels: [], series: [{ label: 's', values: [1] }] }),
+      ),
+    ).toBeNull()
+  })
+
   it('returns null on invalid JSON (e.g. a half-streamed fence)', () => {
     expect(parseChartSpec('{ "kind": "donut", "data": [')).toBeNull()
   })
