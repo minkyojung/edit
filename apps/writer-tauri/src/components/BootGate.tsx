@@ -27,7 +27,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { useThreadsStore } from '@/state/threadsStore'
 import { useGitStore } from '@/state/gitStore'
 import { getActiveVaultPath } from '@/state/settingsStore'
-import { pickVault } from '@/lib/vaultPicker'
+import { VaultLauncher } from '@/components/VaultLauncher'
 import {
   gitInit,
   gitHeadTimestamp,
@@ -54,24 +54,24 @@ export function BootGate({ children }: Props) {
   const bootstrapping = useDocsStore((s) => s.bootstrapping)
   const bootstrap = useDocsStore((s) => s.bootstrap)
   const [showLoader, setShowLoader] = useState(false)
+  // Vault selection is now a first-run launcher (VaultLauncher), not a silent
+  // OS dialog — so the user can choose "restore from GitHub" BEFORE the boot
+  // sequence fills an empty folder (the only point restore can run). The boot
+  // effect below waits until a vault is in place.
+  const [hasVault, setHasVault] = useState(() => !!getActiveVaultPath())
 
   // Fire bootstrap once on mount. The store's bootstrap is idempotent
   // (it short-circuits when the catalog already has today's daily),
   // but React's Strict Mode would still double-call this useEffect —
   // hence the idempotency on the store side, not a guard here.
   //
-  // Path C precondition: a vault must be selected before bootstrap so
-  // every doc the bootstrap touches (today's daily + system pages) can
-  // immediately reach disk. We block on the OS picker until the user
-  // chooses a folder; cancelling falls through to bootstrap-without-
-  // vault, which silent-skips every disk write. That's a degraded but
-  // recoverable state — user can re-run picker from DevTools, or quit
-  // and relaunch to get the prompt again.
+  // A vault must be selected before bootstrap so every doc it touches
+  // (today's daily + system pages) can reach disk. VaultLauncher owns that
+  // choice now — a local folder, or restore-from-GitHub (which MUST run before
+  // anything fills the folder). This effect waits until a vault is in place.
   useEffect(() => {
+    if (!hasVault) return
     const init = async () => {
-      if (!getActiveVaultPath()) {
-        await pickVault()
-      }
       // Initialise git in the vault folder. Idempotent: the rust
       // side fast-paths when `.git/` already exists. We swallow
       // errors here because the editor itself shouldn't be blocked
@@ -177,7 +177,7 @@ export function BootGate({ children }: Props) {
       })()
     }
     void init()
-  }, [bootstrap])
+  }, [hasVault, bootstrap])
 
   // Delay the visual loader by 400 ms so a fast bootstrap doesn't
   // produce a spinner flash.
@@ -186,6 +186,13 @@ export function BootGate({ children }: Props) {
     const t = window.setTimeout(() => setShowLoader(true), LOADER_DELAY_MS)
     return () => window.clearTimeout(t)
   }, [bootstrapping])
+
+  // No vault yet → first-run launcher (pick a folder, or restore from GitHub).
+  // Sits ahead of git init / bootstrap so restore can clone into an empty
+  // folder before anything fills it.
+  if (!hasVault) {
+    return <VaultLauncher onReady={() => setHasVault(true)} />
+  }
 
   if (!bootstrapping) return <>{children}</>
 
