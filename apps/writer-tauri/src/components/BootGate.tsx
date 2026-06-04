@@ -36,6 +36,7 @@ import {
 import { cleanupYdocV2 } from '@/lib/cleanupYdocV2'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
 import { syncGitHubActivity } from '@/lib/githubSync'
+import { pullVault } from '@/lib/vaultRestore'
 
 /** Daily safety net: if HEAD is older than this, BootGate fires a
  * silent "daily snapshot" commit on app open so a passive user who
@@ -81,6 +82,13 @@ export function BootGate({ children }: Props) {
       } catch (err) {
         console.warn('[boot] git init failed (history disabled)', err)
       }
+      // Receive remote changes (multi-device) BEFORE bootstrap creates today's
+      // daily — so a daily pushed from another device arrives first and
+      // bootstrap sees it rather than minting a duplicate. Fast-forward only:
+      // no-ops when not backed up, and bails (no merge commit) on divergence —
+      // the conflict slice will handle that case. Awaited so the order holds;
+      // pullVault never throws (it catches internally).
+      await pullVault()
       // One-shot migration: pre-existing vaults predate the
       // `threads/` ignore rule in `DEFAULT_GITIGNORE`, so chat-session
       // JSON ended up tracked and bloating every commit. Sync the
