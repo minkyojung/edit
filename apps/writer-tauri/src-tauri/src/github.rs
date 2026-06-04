@@ -279,10 +279,9 @@ const SOURCE: &str = "github";
 /// (an event id like `github:commit:<sha>`), so an old events.db
 /// self-heals: None → full backfill → `next_watermark` rewrites it as a
 /// real timestamp.
-fn since_date(watermark: Option<&str>) -> Option<String> {
-    let w = watermark?;
-    let b = w.as_bytes();
-    let date_shaped = b.len() >= 10
+fn is_date_shaped(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() >= 10
         && b[0].is_ascii_digit()
         && b[1].is_ascii_digit()
         && b[2].is_ascii_digit()
@@ -292,18 +291,29 @@ fn since_date(watermark: Option<&str>) -> Option<String> {
         && b[6].is_ascii_digit()
         && b[7] == b'-'
         && b[8].is_ascii_digit()
-        && b[9].is_ascii_digit();
-    date_shaped.then(|| w[..10].to_string())
+        && b[9].is_ascii_digit()
+}
+
+fn since_date(watermark: Option<&str>) -> Option<String> {
+    let w = watermark?;
+    is_date_shaped(w).then(|| w[..10].to_string())
 }
 
 /// New watermark = the latest `ts` ingested so far. ISO-8601 UTC strings
 /// sort lexicographically in time order, so a plain max works. Keeps
 /// `prev` when the batch is empty or entirely older, so a no-op sync never
 /// moves the bookmark backward.
+///
+/// `prev` only counts when it's a real timestamp: a legacy id-shaped
+/// watermark (`github:commit:<sha>`) sorts ABOVE any `2026-…` timestamp
+/// lexicographically, so trusting it would pin the bookmark forever. We
+/// discard a non-date `prev` so a fresh timestamp wins and the store
+/// self-heals.
 fn next_watermark(prev: Option<String>, batch: &[Entry]) -> Option<String> {
+    let prev_valid = prev.filter(|p| is_date_shaped(p));
     let batch_max = batch.iter().map(|e| e.ts.clone()).max();
-    match (prev, batch_max) {
-        (Some(p), Some(b)) => Some(if b > p { b } else { p }),
+    match (prev_valid, batch_max) {
+        (Some(p), Some(b)) => Some(p.max(b)),
         (Some(p), None) => Some(p),
         (None, b) => b,
     }
@@ -672,6 +682,18 @@ mod tests {
         let batch = vec![entry_ts("2026-06-04T09:00:00Z")];
         assert_eq!(
             next_watermark(None, &batch).as_deref(),
+            Some("2026-06-04T09:00:00Z")
+        );
+    }
+
+    #[test]
+    fn next_watermark_discards_legacy_id_prev() {
+        // Legacy watermark is an event id; it sorts lexicographically above
+        // any "2026-…" ts, so it must NOT win — else the bookmark never
+        // heals into a timestamp. A fresh ts replaces it.
+        let batch = vec![entry_ts("2026-06-04T09:00:00Z")];
+        assert_eq!(
+            next_watermark(Some("github:commit:abc123".to_string()), &batch).as_deref(),
             Some("2026-06-04T09:00:00Z")
         );
     }
