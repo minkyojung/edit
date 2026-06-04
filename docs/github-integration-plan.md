@@ -1,7 +1,7 @@
 # GitHub 연동 기능 개발 계획
 
 > 작성일: 2026-05-31 · 진행 현황 업데이트: 2026-06-04 (코드 감사 반영)
-> 상태: **Phase 1(인증) ✅ + Track A(데이터 커넥터) 🟡 동작(증분 동기화 ✅, ETag만 남음) — Track B(vault 백업) 🟡 새 repo push ✅ + 수동 백업 허브 ✅ + 복원/받기(clone·pull·첫실행 런처) ✅ 코드완료·실측대기, 충돌만 남음**
+> 상태: **Phase 1(인증) ✅ + Track A(데이터 커넥터) ✅ 마감(증분 ✅ + rate-limit ✅; ETag는 search API 미지원 확인→스킵) — Track B(vault 백업) 🟡 새 repo push ✅ + 수동 백업 허브 ✅ + 복원/받기(clone·pull·첫실행 런처) ✅ 코드완료·실측대기, 충돌만 남음**
 > 한 줄 요약: "GitHub"은 두 갈래(활동 가져오기 / 노트 백업) — 공통 토대인 인증을 먼저 만들고, 수직 슬라이스로 한 갈래씩.
 
 ---
@@ -15,13 +15,13 @@
 | OAuth Device Flow 로그인 | 1 | ✅ | `src-tauri/src/github.rs` (start/poll_github_device_flow) |
 | 토큰 키체인 보관 (AES-256-GCM) | 1 | ✅ | `secure_storage.rs`, `github.rs` (StoredToken) |
 | 인증 상태 hook (useClaudeAuth 미러) | 1 | ✅ | `src/hooks/useGitHubAuth.ts` |
-| 공용 GitHub 클라이언트 래퍼 | 1 | 🟡 | `github.rs` (github_get) — rate-limit 처리 없음, github.rs 내부 전용 |
+| 공용 GitHub 클라이언트 래퍼 | 1 | ✅ | `github.rs` (github_get) — 한도 소진(403/429+remaining 0) 감지→`GithubError::RateLimited`, github_sync는 조용히 스킵+다음 폴링 재시도. github.rs 내부 전용 |
 | events.db 스키마 (events+state+FTS) | 2 | ✅ | `src-tauri/src/events/db.rs` (init_schema) |
 | GitHub 커넥터 폴링 (커밋·PR) | 2 | 🟡 | `github.rs` (github_sync) — `/users/me/events` 대신 search API 사용 |
 | events.db UPSERT (id 중복제거) | 2 | ✅ | `github.rs`, `events/db.rs` (upsert_events) |
 | 데일리 노트 활동 카드 렌더 | 2 | ✅ | `src/viz/GitHubActivityBlock.tsx` (CodeBlockViz 변형) |
 | 증분 동기화 (watermark) | 2 | ✅ | `github.rs` (since_date/next_watermark) — 날짜 범위로 새 것만, 레거시 자가치유. 실측 109→10건 |
-| 증분 동기화 (ETag 304) | 2 | ❌ | 미구현. 검색 API ETag 지원 불확실 → 스파이크 필요 |
+| 증분 동기화 (ETag 304) | 2 | ⛔ N/A | **스파이크 실측 결과 search API 미지원**(`search/commits`·`search/issues` → ETag 헤더 없음 + `cache-control: no-cache`; 대조군 `/users`는 둘 다 있음). 커넥터는 search 사용(events payload slim) → ETag 불가. 스킵 확정 |
 | 원격 git 명령 (remote_set/push/clone/fetch/pull_ff) | 3 | ✅ | `git.rs` — credential-helper. pull_ff=fast-forward만(갈라지면 중단, 마커 안 씀). 충돌 merge는 R4 |
 | repo 관리 API (생성·목록) | 3 | 🟡 | `github.rs` (create_repo, list_repos/github_list_repos). 내vault 판별은 clone 후 manifest로 |
 | syncStore + `.manila/manifest.json` 표식 | 3 | ✅ | `vault_sync.rs` (manifest+vaultId), `src/state/syncStore.ts` |
@@ -154,8 +154,8 @@ A·B 둘 다 GitHub 토큰이 필요하다. **한 번 만들어 공유한다.**
 
 ```
 Phase 0  지금 브랜치 main 착지/동결           ← 페인트 말리기 (선행 필수)
-Phase 1  GitHub 인증 (OAuth repo 스코프 + 키체인 + 클라이언트)  ✅ (클라이언트 rate-limit만 남음)
-Phase 2  Track A: 데이터 커넥터 (events.db 수직 슬라이스)  🟡 동작, 증분 ✅ / ETag만 남음
+Phase 1  GitHub 인증 (OAuth repo 스코프 + 키체인 + 클라이언트)  ✅
+Phase 2  Track A: 데이터 커넥터 (events.db 수직 슬라이스)  ✅ 마감 (증분 ✅ + rate-limit ✅, ETag N/A)
 Phase 3  Track B: vault 백업/동기화                      🟡 슬라이스 3까지(코드)
           1 새 repo push (뼈대) ✅ → 2 수동 백업 허브 ✅ → 3 다른 기기 복원 ✅(실측대기) → 4 충돌 ❌
 ```
@@ -164,8 +164,8 @@ Phase 3  Track B: vault 백업/동기화                      🟡 슬라이스 
 
 ## 8. 다음 할 일 (우선순위)
 
-1. **ETag 304 스파이크** (Track A 마무리) — 검색 API가 ETag/If-None-Match를 지원하는지 실측. 되면 변화 없을 때 rate-limit 0. (`github.rs` github_get/github_sync, `connector_state.etag` 컬럼은 이미 있음)
-2. **GitHub 클라이언트 rate-limit 처리** (Phase 1 마무리) — `github_get`에 X-RateLimit-* 파싱 + 한도 임박 시 백오프. 조용한 실패 방지.
+1. ~~ETag 304~~ ⛔ **N/A 확정** — 실측 결과 search API 미지원(ETag 없음·`no-cache`). 스킵.
+2. ~~rate-limit 처리~~ ✅ **완료**(커밋 `6114050a`) — 한도 소진 감지→우아한 스킵. → **Track A 마감.**
 3. ~~슬라이스 3 복원~~ ✅ 코드완료 — **실측 필요**: 빈 폴더에서 새 기기처럼 로그인→복원 picker→clone→원본 일치 확인. 그리고 .DS_Store만 있는 폴더 엣지(클론 거부) 확인.
 4. **Track B 슬라이스 4 — 충돌** — `conflict_sides(path)`(git 감지, ours/theirs 데이터로) + "둘 다 보관" + **충돌 정보를 AI 세션 컨텍스트로 노출**(차트 통일 편집 레일 재사용) → 채팅에서 해결. 전용 UI 없음. 멀티기기 본격 사용 시.
 
