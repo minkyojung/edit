@@ -24,11 +24,9 @@ import { create } from 'zustand'
 import {
   gitCommit,
   gitLogSinceRef,
-  gitAdvanceRef,
   gitRevert,
   gitCurrentHead,
   gitShow,
-  LAST_REVIEWED_REF,
   type CommitInfo,
   type CommitDetail,
 } from '@/lib/git'
@@ -100,10 +98,6 @@ interface GitState {
    * headSha. Called after every commit / revert and by the review
    * panel when the user opens it. */
   refreshActivity: () => Promise<void>
-
-  /** Advance `refs/heads/last-reviewed` to HEAD. Empties the
-   * activity feed; subsequent commits start filling it again. */
-  markAllReviewed: () => Promise<void>
 
   /** Create a revert commit for `sha`. The vault watcher picks up
    * the file changes and reloads the affected pages, so the
@@ -246,7 +240,11 @@ export const useGitStore = create<GitState>((set, get) => {
     refreshActivity: async () => {
       try {
         const [commits, head] = await Promise.all([
-          gitLogSinceRef(LAST_REVIEWED_REF),
+          // `@{u}` = the branch's upstream (last pushed point). The feed
+          // is "changes since the last backup"; pushing advances `@{u}`
+          // and clears it. No upstream yet (before first backup) →
+          // git_log_since_ref returns empty.
+          gitLogSinceRef('@{u}'),
           gitCurrentHead(),
         ])
         // Filter to commits the user cares about. System-only commits
@@ -255,16 +253,6 @@ export const useGitStore = create<GitState>((set, get) => {
         set({ activity: commits.filter(isUserVisibleCommit), headSha: head })
       } catch (err) {
         console.warn('[git] refreshActivity failed', err)
-      }
-    },
-
-    markAllReviewed: async () => {
-      try {
-        await gitAdvanceRef(LAST_REVIEWED_REF, 'HEAD')
-        set({ activity: [] })
-      } catch (err) {
-        console.error('[git] markAllReviewed failed', err)
-        notify.gitMarkReviewedFailed()
       }
     },
 

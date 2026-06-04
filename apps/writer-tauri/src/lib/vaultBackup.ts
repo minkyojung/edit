@@ -42,10 +42,11 @@ export async function backupToGitHub(): Promise<void> {
       remoteUrl: state.remoteUrl,
       branch: state.branch,
       vaultId: state.vaultId,
-      // The backup just pushed everything up to HEAD, so the bookmark
-      // starts there — auto-push then only fires on future commits.
       lastPushedSha: useGitStore.getState().headSha,
     })
+    // Everything up to HEAD is now pushed → the review feed (origin..HEAD)
+    // clears.
+    void useGitStore.getState().refreshActivity()
     toast.success(`Backed up to ${state.repoFullName}`, {
       id,
       action: {
@@ -69,5 +70,45 @@ export async function backupToGitHub(): Promise<void> {
     } else {
       toast.error(`Backup failed: ${msg}`, { id })
     }
+  }
+}
+
+let pushInFlight = false
+
+/** Push the already-bound backup repo: upload commits made since the last
+ * push. Used by the review panel's "Back up" button (fully manual — there
+ * is no auto-push). No-ops when no backup is set up yet (use
+ * backupToGitHub for the first one). On success the review feed
+ * (origin..HEAD) clears; on failure it surfaces a toast and, for a scope
+ * problem, a reconnect prompt. */
+export async function pushVault(): Promise<void> {
+  const vault = getActiveVaultPath()
+  if (!vault) return
+  const sync = useSyncStore.getState()
+  if (!sync.repoFullName) return // not backed up yet
+  if (pushInFlight || sync.status === 'pushing') return
+
+  pushInFlight = true
+  useSyncStore.getState().setPushing()
+  try {
+    await invoke('vault_push', { vaultPath: vault })
+    await useGitStore.getState().refreshActivity()
+    useSyncStore.getState().setPushed(useGitStore.getState().headSha)
+  } catch (e) {
+    const msg = String(e)
+    if (/reconnect|denied|scope|repo\) access/i.test(msg)) {
+      useSyncStore.getState().setError(msg)
+      toast.error('Reconnect GitHub to back up.', {
+        action: {
+          label: 'Reconnect',
+          onClick: () => useConnectGitHubDialog.getState().setOpen(true),
+        },
+      })
+    } else {
+      useSyncStore.getState().setPending(msg)
+      toast.error(`Backup failed: ${msg}`)
+    }
+  } finally {
+    pushInFlight = false
   }
 }

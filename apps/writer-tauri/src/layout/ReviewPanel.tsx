@@ -1,54 +1,53 @@
-// Right-side panel surface for reviewing AI changes.
+// Right-side panel: the vault's "Changes & backup" hub.
 //
-// Two sections, top to bottom:
+// Shows every applied (committed) change to user content — both AI edits
+// (`ai-edit:` commits, tagged with an "AI" badge) and the user's own
+// snapshots — since the last review. Expand a card for the per-file diff,
+// undo if needed. The footer carries the backup status (auto-push state)
+// plus "Save snapshot" and "Mark all reviewed". Proposing/deciding an AI
+// change still happens at edit time in the inline Keep/Reject widget; this
+// panel is the after-the-fact record.
 //
-//   1. **Pending review** — entries from `pendingChangesStore`:
-//      pending plus recently-decided (10 min retention). One row per
-//      change. M2 ships the list view; M3 will make rows expand to
-//      a side-by-side diff with Apply / Reject actions.
+// (Snapshot + backup also live in the profile dropdown so they're
+// reachable when the right column is showing chat, not this panel.)
 //
-//   2. **Recent changes** — git activity from `gitStore`. Same
-//      expandable card pattern this panel always used. Commits land
-//      here AFTER the user accepts a pending change (the applier
-//      writes disk → group-commit → gitStore.activity).
-//
-// The split reflects the natural lifecycle: a change is "proposed"
-// (pending), then "decided" (briefly visible in both sections), then
-// "committed" (only in section 2 after the decided retention
-// window expires).
-//
-// File-selection rule for git cards: wiki/ → writing/ → daily/.
-// An LLM ingest commit usually touches both the daily (where the
-// user wrote) and the wiki page (where the LLM filed). The card is
-// "about" the destination — the wiki page — so we prefer that for
-// the title and the "Added" diff.
+// File-selection rule for cards: wiki/ → writing/ → daily/. An LLM ingest
+// commit usually touches both the daily (where the user wrote) and the
+// wiki page (where the LLM filed). The card is "about" the destination —
+// the wiki page — so we prefer that for the title and the diff.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import {
   IconArrowBackUp,
   IconChevronDown,
   IconChevronRight,
-  IconChevronUp,
+  IconCloud,
+  IconCloudUpload,
   IconHistory,
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useGitStore } from '@/state/gitStore'
-import {
-  usePendingChangesStore,
-  type PendingChange,
-} from '@/state/pendingChangesStore'
-import { useDocsStore } from '@/state/docsStore'
-import { pathForDoc } from '@/lib/docPaths'
-import { computePendingDiffLines } from '@/lib/pendingDiff'
+import { useGitStore, isAiEditCommit } from '@/state/gitStore'
+import { useSyncStore, type SyncStatus } from '@/state/syncStore'
+import { backupToGitHub, pushVault } from '@/lib/vaultBackup'
 import type { CommitInfo, FileDiff } from '@/lib/git'
 import { DiffBlock } from '@/components/DiffBlock'
 import { cn } from '@/lib/utils'
 
 export function ReviewPanel() {
+  // All applied changes to user content (AI + the user's own snapshots).
+  // gitStore.activity is already filtered to user-visible commits; we show
+  // it as-is and tag AI ones with a badge (see CommitCard).
+  // Changes since the last backup (origin..HEAD) — both AI edits and the
+  // user's own snapshots. gitStore.activity now tracks "unpushed"; AI ones
+  // get a badge (see CommitCard). Pushing clears this.
   const activity = useGitStore((s) => s.activity)
-  const markAllReviewed = useGitStore((s) => s.markAllReviewed)
-  const pendingEntries = usePendingReviewEntries()
+  const commitImmediate = useGitStore((s) => s.commitImmediate)
+  const dirtyCount = useGitStore((s) => s.dirtyPaths.size)
+  const isCommitting = useGitStore((s) => s.status === 'committing')
+
+  const syncStatus = useSyncStore((s) => s.status)
+  const repoFullName = useSyncStore((s) => s.repoFullName)
 
   // Refresh on mount so the panel reflects the latest state even if
   // the user opened it after a long gap.
@@ -56,14 +55,14 @@ export function ReviewPanel() {
     void useGitStore.getState().refreshActivity()
   }, [])
 
-  const hasActivity = activity.length > 0
-  const hasPending = pendingEntries.length > 0
-  const isEmpty = !hasActivity && !hasPending
+  const unpushed = activity.length
+  const hasActivity = unpushed > 0
+  const canSnapshot = dirtyCount > 0 && !isCommitting
 
   return (
     <div className="flex h-full flex-col">
       <ScrollArea className="min-h-0 flex-1">
-        {isEmpty ? (
+        {!hasActivity ? (
           // ContentUnavailableView pattern (macOS 14+/iOS 17+):
           // tertiary icon + Title 3 headline + body description. Matches
           // the ChatPanel empty state so the right column reads as one
@@ -75,82 +74,142 @@ export function ReviewPanel() {
               className="text-muted-foreground/40"
             />
             <p className="text-[16px] font-semibold text-foreground">
-              You&apos;re caught up
+              {repoFullName ? 'All backed up' : 'No changes yet'}
             </p>
             <p className="max-w-xs text-center text-[14px] text-muted-foreground">
-              Nothing new since your last review.
+              {repoFullName
+                ? 'Every change is saved to GitHub.'
+                : 'Edits will show here, ready to back up.'}
             </p>
           </div>
         ) : (
           // Top padding clears the overlay header (content scrolls behind it).
           <div className="flex flex-col pt-[var(--header-h)]">
-            {hasPending && (
-              <PendingSection entries={pendingEntries} />
-            )}
-            {hasActivity && (
-              <HistorySection commits={activity} />
-            )}
+            <HistorySection commits={activity} />
           </div>
         )}
       </ScrollArea>
 
-      <div className="shrink-0 bg-transparent px-4 py-3 shadow-[inset_0_1px_0_var(--border)]">
-        <Button
-          variant="default"
-          size="sm"
-          className="w-full"
-          disabled={!hasActivity}
-          onClick={() => {
-            void markAllReviewed()
-          }}
-        >
-          Mark all reviewed
-        </Button>
+      <div className="shrink-0 flex flex-col gap-2 bg-transparent px-4 py-3 shadow-[inset_0_1px_0_var(--border)]">
+        <BackupStatus status={syncStatus} repoFullName={repoFullName} unpushed={unpushed} />
+        <div className="flex gap-2">
+          {/* Save snapshot commits dirty edits → they appear above as
+              "to back up"; Back up then pushes them to GitHub. */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            disabled={!canSnapshot}
+            onClick={() => {
+              void commitImmediate()
+            }}
+          >
+            Save snapshot{dirtyCount > 0 ? ` (${dirtyCount})` : ''}
+          </Button>
+          <BackUpButton
+            repoFullName={repoFullName}
+            status={syncStatus}
+            unpushed={unpushed}
+          />
+        </div>
       </div>
     </div>
   )
 }
 
-// ── Pending review section ──────────────────────────────────────
-
-/** Subscribe to `pendingChangesStore` and return the entries the
- * panel should render. Sort order: pending first (newest first),
- * then recently-decided (also newest first). The decided window is
- * already capped by `pruneDecided` (10 min retention) — anything
- * older has been swept by the time we read.
- *
- * Returns a stable identity per render only when the underlying
- * byId / decided window hasn't shifted, so React's diff keeps the
- * row DOM if the user is in the middle of interacting. */
-function usePendingReviewEntries(): PendingChange[] {
-  const byId = usePendingChangesStore((s) => s.byId)
-  return useMemo(() => {
-    const all = Object.values(byId)
-    const pending = all
-      .filter((c) => c.status === 'pending')
-      .sort((a, b) => b.createdAt - a.createdAt)
-    const decided = all
-      .filter((c) => c.status !== 'pending')
-      .sort((a, b) => (b.decidedAt ?? 0) - (a.decidedAt ?? 0))
-    return [...pending, ...decided]
-  }, [byId])
+/** The footer's primary action. Before the first backup it sets one up;
+ * after, it pushes the unpushed changes (and doubles as retry on failure).
+ * Push is fully manual — there is no auto-push. */
+function BackUpButton({
+  repoFullName,
+  status,
+  unpushed,
+}: {
+  repoFullName: string | null
+  status: SyncStatus
+  unpushed: number
+}) {
+  const busy = status === 'pushing' || status === 'backing-up'
+  if (!repoFullName) {
+    return (
+      <Button
+        variant="default"
+        size="sm"
+        className="flex-1"
+        disabled={busy}
+        onClick={() => void backupToGitHub()}
+      >
+        Back up to GitHub
+      </Button>
+    )
+  }
+  return (
+    <Button
+      variant="default"
+      size="sm"
+      className="flex-1"
+      disabled={busy || unpushed === 0}
+      onClick={() => void pushVault()}
+    >
+      {busy ? 'Backing up…' : `Back up${unpushed > 0 ? ` · ${unpushed}` : ''}`}
+    </Button>
+  )
 }
 
-function PendingSection({ entries }: { entries: PendingChange[] }) {
+/** Text-only backup status line above the footer buttons. */
+function BackupStatus({
+  status,
+  repoFullName,
+  unpushed,
+}: {
+  status: SyncStatus
+  repoFullName: string | null
+  unpushed: number
+}) {
+  if (!repoFullName) {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <IconCloudUpload size={14} />
+        Not backed up yet
+      </span>
+    )
+  }
+  const { label, tone } = backupLabel(status, unpushed)
   return (
-    <section className="flex flex-col">
-      {entries.map((entry) => (
-        <PendingRow key={entry.id} entry={entry} />
-      ))}
-    </section>
+    <span className={cn('flex items-center gap-1.5 text-xs', tone)}>
+      <IconCloud size={14} />
+      {label}
+    </span>
   )
+}
+
+function backupLabel(
+  status: SyncStatus,
+  unpushed: number,
+): { label: string; tone: string } {
+  switch (status) {
+    case 'pushing':
+    case 'backing-up':
+      return { label: 'Backing up…', tone: 'text-muted-foreground' }
+    case 'error':
+      return { label: 'Backup needs attention', tone: 'text-destructive' }
+    case 'pending':
+      return { label: "Offline — couldn't back up", tone: 'text-muted-foreground' }
+    default:
+      return unpushed > 0
+        ? {
+            label: `${unpushed} change${unpushed === 1 ? '' : 's'} to back up`,
+            tone: 'text-muted-foreground',
+          }
+        : { label: 'Backed up', tone: 'text-muted-foreground' }
+  }
 }
 
 function HistorySection({ commits }: { commits: CommitInfo[] }) {
   return (
     <section className="flex flex-col">
       <h3 className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        Recent changes
+        Changes
       </h3>
       <div className="flex flex-col">
         {commits.map((commit) => (
@@ -159,244 +218,6 @@ function HistorySection({ commits }: { commits: CommitInfo[] }) {
       </div>
     </section>
   )
-}
-
-/** One pending-change row. Header sits above an expandable detail
- * pane (diff + context + actions). File-icon at the left is tinted
- * by status so the colour cue rides on the same icon that names the
- * file — no separate status dot needed. Chevron at the right rotates
- * to indicate expand/collapse; clicking anywhere on the header
- * toggles the detail. Default is expanded so the panel reads
- * top-to-bottom on first open; users with many rows collapse the
- * ones they're not actively deciding. */
-function PendingRow({ entry }: { entry: PendingChange }) {
-  const filename = usePageFilename(entry.pageSlug)
-  const time = relativeTime(Math.floor(entry.createdAt / 1000))
-  const stat = useMemo(() => diffStat(entry), [entry])
-  // Default expanded for every status. Decided rows stay open
-  // (Cursor-style frozen card): the snapshot-backed contextualised
-  // view keeps showing the change in its place on the page even
-  // after Keep, so the card reads as a faithful "this is what
-  // happened" record. The user can still collapse manually via the
-  // chevron.
-  const [expanded, setExpanded] = useState(true)
-
-  // No border on the card — the row is delineated by spacing and
-  // hover instead. Outer wrapper owns the hover bg so the whole
-  // card area (header + expanded body) lights up together; the
-  // inner button only handles click + focus, with no bg of its own
-  // so the two paints don't stack.
-  return (
-    <div className="rounded-none transition-colors hover:bg-muted/40">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        aria-expanded={expanded}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left focus-visible:outline-none"
-      >
-        <PendingDot status={entry.status} />
-        <span className="truncate font-mono text-[12px] text-foreground">
-          {filename}
-        </span>
-        <DiffStatChars added={stat.added} removed={stat.removed} />
-        {entry.status !== 'pending' && (
-          <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-            {entry.status === 'accepted' ? 'Kept' : 'Rejected'}
-          </span>
-        )}
-        <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
-          {time}
-        </span>
-        {expanded ? (
-          <IconChevronUp size={12} className="shrink-0 text-muted-foreground" />
-        ) : (
-          <IconChevronDown size={12} className="shrink-0 text-muted-foreground" />
-        )}
-      </button>
-      {expanded && <PendingDetail entry={entry} />}
-    </div>
-  )
-}
-
-/** Small status-coloured dot to the left of the filename. Three
- * states, three colours; centred inside an `h-5` wrapper so its
- * optical centre lines up with the row's `text-sm` line (without
- * the wrapper the dot reads as floating ~1px high against the
- * filename's glyph centre). */
-function PendingDot({ status }: { status: PendingChange['status'] }) {
-  const cls =
-    status === 'pending'
-      ? 'bg-info'
-      : status === 'accepted'
-        ? 'bg-green-500'
-        : 'bg-muted-foreground/40'
-  return (
-    <span aria-hidden className="flex h-5 shrink-0 items-center">
-      <span className={cn('h-1.5 w-1.5 rounded-full', cls)} />
-    </span>
-  )
-}
-
-// ── Expanded detail ─────────────────────────────────────────────
-
-/** Body of one pending-change card. Renders the change as a git-style
- * `+`/`-` diff — the same `DiffBlock` the committed-change cards use,
- * so both review surfaces look the same. This replaced an embedded
- * live-Milkdown preview whose snapshot / parser / overlay seams kept
- * breaking; a plain diff has no editor to go wrong.
- *
- * Outer card chrome (border, hover bg) lives on `PendingRow`; this
- * child provides inner padding for the diff + the supporting metadata
- * (From / Why / source quote) + the Reject / Keep action row. */
-function PendingDetail({ entry }: { entry: PendingChange }) {
-  const sourceLabel = useSourceLabel(entry)
-  const accept = usePendingChangesStore((s) => s.accept)
-  const reject = usePendingChangesStore((s) => s.reject)
-
-  const diffLines = useMemo(() => computePendingDiffLines(entry), [entry])
-  const isPending = entry.status === 'pending'
-
-  return (
-    <div className="flex flex-col gap-3 px-3 pt-1 pb-3">
-      {diffLines.length > 0 && <DiffBlock lines={diffLines} />}
-
-      {(sourceLabel || entry.context.rationale || entry.context.sourceQuote) && (
-        <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-          {sourceLabel && (
-            <div>
-              <span className="font-medium">From: </span>
-              {sourceLabel}
-            </div>
-          )}
-          {entry.context.rationale && (
-            <div>
-              {/* Chat: the rationale IS the user's request → "Requested".
-                  Ingest: the LLM's own reason → "Why". */}
-              <span className="font-medium">
-                {entry.source === 'chat' ? 'Requested: ' : 'Why: '}
-              </span>
-              {entry.context.rationale}
-            </div>
-          )}
-          {entry.context.sourceQuote && (
-            <blockquote className="border-l-2 border-border pl-2 italic">
-              &ldquo;{entry.context.sourceQuote}&rdquo;
-            </blockquote>
-          )}
-        </div>
-      )}
-
-      {/* Decision row — React-controlled, so it clears the instant the
-          entry is decided (the header's KEPT / REJECTED badge carries
-          the status from then on). */}
-      {isPending && (
-        <div className="pending-edit__actions">
-          <button
-            type="button"
-            className="pending-edit__action pending-edit__action--reject"
-            onClick={() => reject(entry.id)}
-          >
-            Reject
-          </button>
-          <button
-            type="button"
-            className="pending-edit__action pending-edit__action--keep"
-            onClick={() => accept(entry.id)}
-          >
-            Keep
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Resolve a friendly source label for the detail view:
- *   - chat: "chat thread "{title}"" if we can find it
- *   - ingest: "daily/2026-05-27" or the source page's title
- * Falls back to the source kind alone when neither store has
- * enough to build a richer label. */
-function useSourceLabel(entry: PendingChange): string | null {
-  return useDocsStore((s) => {
-    if (entry.source === 'ingest') {
-      const sourceSlug = entry.context.sourceSlug
-      if (!sourceSlug) return 'ingest'
-      const doc = s.knownDocs.find((d) => d.slug === sourceSlug)
-      if (!doc) return `ingest from ${sourceSlug.slice(0, 8)}`
-      if (doc.type === 'daily' && doc.date) return `daily/${doc.date}`
-      const title = doc.title?.trim()
-      return title ? `ingest from ${title}` : `ingest from ${doc.type}`
-    }
-    // chat — threadId is the canonical handle. We don't read
-    // threadsStore here to keep the selector cheap; the label
-    // falls back to a generic "chat" if no other context is
-    // available. M5+ may augment this with a thread-title lookup.
-    return 'chat'
-  })
-}
-
-/** Character-count diff stat for a pending row. Replaces the
- * source-type chip — same idea as the github-style `+N -M` summary,
- * just measured in characters so it scales sensibly for prose. We
- * skip the zero side so a pure-add change reads as a clean `+33`
- * without a `-0` companion. */
-function DiffStatChars({
-  added,
-  removed,
-}: {
-  added: number
-  removed: number
-}) {
-  if (added === 0 && removed === 0) return null
-  return (
-    <span className="shrink-0 font-mono text-[11px]">
-      {added > 0 && (
-        <span className="text-green-600 dark:text-green-400">+{added}</span>
-      )}
-      {removed > 0 && (
-        <span className={cn('text-destructive', added > 0 && 'ml-1')}>
-          -{removed}
-        </span>
-      )}
-    </span>
-  )
-}
-
-/** Char counts for the row's `+N -M` summary, derived from the SAME
- * diff lines the card body renders. Counting the actual delta (not the
- * raw before/after strings) keeps the header honest: an "append a line"
- * edit — `before` = anchor, `after` = anchor + new line — now reads
- * `+<added>` with no phantom `-<anchor length>` the raw-length version
- * used to show. */
-function diffStat(entry: PendingChange): { added: number; removed: number } {
-  let added = 0
-  let removed = 0
-  for (const line of computePendingDiffLines(entry)) {
-    if (line.kind === 'add') added += line.text.length
-    else removed += line.text.length
-  }
-  return { added, removed }
-}
-
-/** Resolve the doc's vault-relative filename (e.g. `wiki/Mark.md`,
- * `daily/2026-05-27.md`). Routes through `pathForDoc` so the path
- * exactly matches what the applier writes to disk — same string the
- * user would see in their vault folder. Returns a slug-suffix
- * fallback when the doc isn't in the catalog (usually means the
- * page got archived after the change was queued; we still want the
- * row to identify it legibly). */
-function usePageFilename(slug: string): string {
-  return useDocsStore((s) => {
-    const doc = s.knownDocs.find((d) => d.slug === slug)
-    if (!doc) return `${slug.slice(0, 8)}.md`
-    const getDoc = (id: string) => s.knownDocs.find((d) => d.slug === id)
-    const path = pathForDoc(doc, getDoc)
-    if (path) return path
-    // pathForDoc returns null for orphaned writing docs and dailies
-    // without a date — fall back to a synthesised name so the row
-    // still identifies itself.
-    return `${doc.title?.trim() || doc.type || slug.slice(0, 8)}.md`
-  })
 }
 
 // ── Card ────────────────────────────────────────────────────────
@@ -431,6 +252,11 @@ function CommitCard({ commit }: { commit: CommitInfo }) {
             <IconChevronRight size={12} className="shrink-0 text-muted-foreground" />
           )}
           <span className="truncate font-medium">{primary.title}</span>
+          {isAiEditCommit(commit) && (
+            <span className="shrink-0 rounded bg-info/15 px-1 text-[10px] font-semibold uppercase tracking-wide text-info">
+              AI
+            </span>
+          )}
           <DiffStat added={added} removed={removed} />
         </div>
         <div className="flex items-center justify-between gap-2 pl-[18px] text-xs text-muted-foreground">

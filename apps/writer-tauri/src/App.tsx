@@ -49,7 +49,6 @@ import { startAutoFlush } from '@/lib/docFileSync'
 import { startVaultWatcher } from '@/lib/vaultWatcher'
 import { startPendingChangesApplier } from '@/state/pendingChangesApplier'
 import { startGitHubSync } from '@/lib/githubSync'
-import { startAutoPush } from '@/lib/autoPush'
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
@@ -72,12 +71,6 @@ startPendingChangesApplier()
 // active vault + a connected token inside, so it no-ops until both
 // exist. Launch-time and connect-time immediate syncs fire separately.
 startGitHubSync()
-
-// Begin auto-push: mirror committed vault changes to the backup repo.
-// Idempotent; no-ops until a backup has been set up (syncStore.repoFullName).
-// Boot catch-up is automatic — the first activity refresh moves headSha off
-// null, which the subscription pushes.
-startAutoPush()
 
 // Module-scope so the configs array reference is stable across
 // renders — required by useLazyMaterialize's caller contract
