@@ -170,6 +170,7 @@ pub fn run() {
             github::disconnect_github,
             github::github_sync,
             vault_sync::vault_backup_init,
+            vault_sync::vault_push,
             app_quit,
             get_traffic_light_y,
         ])

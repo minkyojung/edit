@@ -139,6 +139,20 @@ pub async fn vault_backup_init(app: AppHandle, vault_path: String) -> Result<Syn
     })
 }
 
+/// Push the vault's current branch to its existing `origin`, authenticating
+/// with the stored token. Used by auto-push after each commit, so it does
+/// the minimum: no repo creation, no manifest. No-op (Ok) when GitHub isn't
+/// connected; assumes `origin` was wired by a prior `vault_backup_init`
+/// (a missing origin surfaces as the underlying git error).
+#[tauri::command]
+pub async fn vault_push(app: AppHandle, vault_path: String) -> Result<(), String> {
+    let Some(stored) = github::load_token(&app)? else {
+        return Ok(()); // not connected — nothing to push
+    };
+    let branch = git::git_current_branch(&vault_path).await?;
+    git::git_push(&vault_path, &stored.access_token, &branch).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

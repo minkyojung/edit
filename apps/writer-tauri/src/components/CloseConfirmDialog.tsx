@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { useChatActivity } from '@/stores/chatActivity'
 import { flushDirty, stopAutoFlush } from '@/lib/docFileSync'
 import { stopGitHubSync } from '@/lib/githubSync'
+import { stopAutoPush } from '@/lib/autoPush'
 
 export function CloseConfirmDialog() {
   const [open, setOpen] = useState(false)
@@ -49,6 +50,7 @@ export function CloseConfirmDialog() {
         // during the brief window before the process exits.
         stopAutoFlush()
         stopGitHubSync()
+        stopAutoPush()
         invoke('app_quit').catch(() => {})
       }
     }).then((fn) => {
@@ -66,6 +68,7 @@ export function CloseConfirmDialog() {
     await flushDirty()
     stopAutoFlush()
     stopGitHubSync()
+    stopAutoPush()
     invoke('app_quit').catch(() => {})
   }
 

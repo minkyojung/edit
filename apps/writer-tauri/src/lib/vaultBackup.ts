@@ -8,6 +8,7 @@ import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { toast } from 'sonner'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useSyncStore } from '@/state/syncStore'
+import { useGitStore } from '@/state/gitStore'
 import { useConnectGitHubDialog } from '@/stores/connectGitHubDialog'
 
 interface SyncStateResult {
@@ -41,6 +42,9 @@ export async function backupToGitHub(): Promise<void> {
       remoteUrl: state.remoteUrl,
       branch: state.branch,
       vaultId: state.vaultId,
+      // The backup just pushed everything up to HEAD, so the bookmark
+      // starts there — auto-push then only fires on future commits.
+      lastPushedSha: useGitStore.getState().headSha,
     })
     toast.success(`Backed up to ${state.repoFullName}`, {
       id,
