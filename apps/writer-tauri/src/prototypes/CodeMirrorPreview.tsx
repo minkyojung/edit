@@ -14,6 +14,7 @@ import { cmPrototypeTheme } from './cmTheme'
 import { livePreview } from './livePreview'
 import { mermaidCards } from './mermaidCards'
 import { mediaCards } from './mediaCards'
+import { slashMenu } from './slashCommands'
 import { SAMPLE } from './sample'
 
 export default function CodeMirrorPreview() {
@@ -40,6 +41,7 @@ export default function CodeMirrorPreview() {
           ]),
           EditorView.lineWrapping,
           markdown({ extensions: [GFM], addKeymap: false }),
+          slashMenu,
           livePreview,
           mermaidCards,
           mediaCards,
