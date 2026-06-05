@@ -27,6 +27,7 @@ import { parseVizSpec } from '@/viz/vizSpec'
 import { replaceVizById } from '@/editor/vizBlockOps'
 import { assembleContext } from '@/agent/contextPipeline'
 import { getActiveVaultPath } from '@/state/settingsStore'
+import { todayLocalDate } from '@/hooks/useDocMeta'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -144,6 +145,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     ctx,
     appendDocument,
     vizEditTarget,
+    today: todayLocalDate(),
   })
   // A viz-edit run gets the edit_visualization relay tool on top of whatever
   // the caller asked for. Skipped in plan mode (read-only — the gate would

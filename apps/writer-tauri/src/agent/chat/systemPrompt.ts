@@ -62,6 +62,11 @@ export interface SystemBlocksArgs {
    * (id + current spec) is pinned past the cache boundary, instructing the
    * model to apply changes via the edit_visualization tool. */
   vizEditTarget?: VizEditTarget
+  /** Today's date as local `YYYY-MM-DD` (from `todayLocalDate()`). Injected
+   * past the cache boundary so the model can resolve "today" / "today's
+   * daily note" without guessing — and so the daily-changing value never
+   * busts the cacheable prefix. */
+  today?: string
 }
 
 /** Compose the system prompt as a `string | string[]`.
@@ -89,7 +94,8 @@ export interface SystemBlocksArgs {
  *   - bare `string` when the prefix is just `systemBody` — keeps the
  *     SDK call simple and matches the pre-multi-block shape. */
 export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
-  const { docForPrompt, systemBody, ctx, appendDocument, vizEditTarget } = args
+  const { docForPrompt, systemBody, ctx, appendDocument, vizEditTarget, today } =
+    args
   const prefix: string[] = []
   if (ctx.selfProfile) {
     prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
@@ -102,6 +108,12 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   // per turn. The viz-edit block comes before the document so it reads as the
   // immediate task.
   const dynamic: string[] = []
+  if (today) {
+    dynamic.push(
+      `--- TODAY ---\nToday's date is ${today} (the user's local timezone). ` +
+        `When the user says "today" / "the daily note", resolve it against this date.`,
+    )
+  }
   if (vizEditTarget) {
     dynamic.push(
       `--- VISUALIZATION TO EDIT ---\n` +
