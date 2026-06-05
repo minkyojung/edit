@@ -33,6 +33,8 @@ import {
   gitHeadTimestamp,
   gitEnsureGitignoreEntries,
 } from '@/lib/git'
+import { remove } from '@tauri-apps/plugin-fs'
+import { join } from '@tauri-apps/api/path'
 import { cleanupYdocV2 } from '@/lib/cleanupYdocV2'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
 import { syncGitHubActivity } from '@/lib/githubSync'
@@ -119,6 +121,19 @@ export function BootGate({ children }: Props) {
         ])
       } catch (err) {
         console.warn('[boot] gitignore migration failed', err)
+      }
+      // Clean-boundary follow-up: the activity cache now lives in per-device
+      // app-data, so delete the leftover in-vault `events.db*` (+ WAL/SHM) one
+      // time. Best-effort — a missing file just means an already-clean vault.
+      try {
+        const vaultRoot = getActiveVaultPath()
+        if (vaultRoot) {
+          for (const f of ['events.db', 'events.db-wal', 'events.db-shm']) {
+            await remove(await join(vaultRoot, f)).catch(() => {})
+          }
+        }
+      } catch (err) {
+        console.warn('[boot] legacy events.db cleanup failed', err)
       }
       // Phase 7 of the Yjs-removal migration: delete the leftover
       // `.ydoc` binaries now that nothing reads them. Runs BEFORE
