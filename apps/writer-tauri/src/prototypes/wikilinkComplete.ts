@@ -15,13 +15,20 @@ import type { EditorView } from '@codemirror/view'
 import { inCodeBlock } from './slashCommands'
 
 // Stand-in for docsStore.knownDocs titles.
-const NOTE_TITLES = [
+export const NOTE_TITLES = [
   'Daily Standup',
   'Project Brasilia',
   'Meeting Notes',
   'Roadmap',
   'Design Spec',
 ]
+
+/** Does a note with this title exist? (Real app: docsStore.knownDocs lookup.)
+ * Drives broken-link styling. */
+export function isKnownNote(title: string): boolean {
+  const t = title.trim().toLowerCase()
+  return NOTE_TITLES.some((n) => n.toLowerCase() === t)
+}
 
 function insertWikilink(title: string) {
   return (view: EditorView, _c: unknown, from: number, to: number) => {

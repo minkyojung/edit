@@ -73,6 +73,14 @@ export const cmPrototypeTheme = EditorView.theme({
     padding: '0 0.3em',
     borderRadius: '0.25em',
   },
+  '.cm-wikilink-broken': {
+    color: 'var(--destructive, crimson)',
+    background: 'color-mix(in oklch, crimson 12%, transparent)',
+    padding: '0 0.3em',
+    borderRadius: '0.25em',
+    textDecoration: 'underline dashed',
+    textDecorationColor: 'var(--destructive, crimson)',
+  },
 
   // Blockquote (line decoration)
   '.cm-blockquote': {

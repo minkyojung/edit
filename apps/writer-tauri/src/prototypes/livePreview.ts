@@ -17,6 +17,7 @@ import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
 import { BulletWidget, CheckboxWidget, ImageWidget, TableWidget } from './widgets'
+import { isKnownNote } from './wikilinkComplete'
 
 const HIDE = Decoration.replace({})
 
@@ -215,7 +216,7 @@ export function buildDecorations(
       const innerFrom = start + 2
       const innerTo = start + 2 + m[1].length
       const end = innerTo + 2
-      mark(innerFrom, innerTo, 'cm-wikilink')
+      mark(innerFrom, innerTo, isKnownNote(m[1]) ? 'cm-wikilink' : 'cm-wikilink-broken')
       if (!spansActiveLine(state, start, end, active)) {
         hide(start, innerFrom)
         hide(innerTo, end)

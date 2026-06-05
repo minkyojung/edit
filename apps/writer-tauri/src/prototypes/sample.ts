@@ -44,7 +44,8 @@ A base64 data-URI image:
 
 ### Wikilinks
 
-Link to another note like [[Daily Standup]] or [[Project Brasilia]].
+Link to another note like [[Daily Standup]] or [[Project Brasilia]], and a
+broken one [[Nonexistent Note]] (styled red/dashed).
 
 ### Table
 
