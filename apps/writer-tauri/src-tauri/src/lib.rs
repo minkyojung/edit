@@ -1,4 +1,5 @@
 mod anthropic;
+mod appdata;
 pub mod claude_sidecar;
 mod events;
 mod fetch_url;
@@ -178,6 +179,11 @@ pub fn run() {
             get_traffic_light_y,
         ])
         .setup(|app| {
+            // Resolve the per-device app-data base once, up front: git history
+            // and the events.db cache live here (outside the synced vault) so
+            // the vault stays a clean, sync-safe folder of user files.
+            appdata::init(app.path().app_data_dir()?);
+
             // Replace the default macOS Quit menu item with one we control.
             // The default item calls NSApplication.terminate: directly, which
             // bypasses Tauri's ExitRequested event — so prevent_exit() never

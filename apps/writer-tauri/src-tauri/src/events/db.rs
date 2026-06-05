@@ -1,9 +1,9 @@
 // Pure SQLite logic for the events store — no Tauri types so it can be
-// unit-tested directly. `events.db` lives at the vault root (sibling to
-// `wiki/`, `daily/`, `.git/`), one file per vault.
+// unit-tested directly. `events.db` lives in the per-device app-data dir
+// (NOT the vault) so the synced vault stays a clean folder of user files; the
+// path is resolved by `appdata::events_db_path()` and passed in here.
 //
-// Connections are opened per call (SQLite open is sub-millisecond), the
-// same stateless shape as `git.rs` taking a vault path on every command.
+// Connections are opened per call (SQLite open is sub-millisecond).
 // `init_schema` is idempotent (`IF NOT EXISTS`) so reopening is free and
 // never disturbs existing rows.
 
@@ -15,12 +15,12 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 
 use crate::events::{Entry, EventFilter};
 
-/// Open (creating if absent) `<vault>/events.db`, set WAL + a busy
+/// Open (creating if absent) the events DB at `db_path`, set WAL + a busy
 /// timeout so concurrent reads/writes wait rather than error, and ensure
-/// the schema exists.
-pub fn open(vault_path: &str) -> Result<Connection, String> {
-    let db_path = Path::new(vault_path).join("events.db");
-    let conn = Connection::open(&db_path).map_err(|e| format!("open events.db: {e}"))?;
+/// the schema exists. `db_path` is the full file path (see
+/// `appdata::events_db_path()`), in the per-device app-data dir.
+pub fn open(db_path: &Path) -> Result<Connection, String> {
+    let conn = Connection::open(db_path).map_err(|e| format!("open events.db: {e}"))?;
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| format!("set WAL: {e}"))?;
     conn.busy_timeout(Duration::from_millis(5000))
@@ -274,9 +274,9 @@ mod tests {
     #[test]
     fn roundtrip_query_and_search() {
         let dir = temp_vault("roundtrip");
-        let vault = dir.to_str().unwrap();
+        let db_path = dir.join("events.db");
 
-        let mut conn = open(vault).unwrap();
+        let mut conn = open(&db_path).unwrap();
         assert_eq!(upsert_events(&mut conn, &[sample()]).unwrap(), 1);
 
         let all = query_events(&conn, &EventFilter::default()).unwrap();
@@ -300,9 +300,9 @@ mod tests {
     #[test]
     fn upsert_is_idempotent_and_reindexes_fts() {
         let dir = temp_vault("idempotent");
-        let vault = dir.to_str().unwrap();
+        let db_path = dir.join("events.db");
 
-        let mut conn = open(vault).unwrap();
+        let mut conn = open(&db_path).unwrap();
         upsert_events(&mut conn, &[sample()]).unwrap();
 
         // Same id, changed summary — must overwrite, not duplicate.
@@ -325,8 +325,8 @@ mod tests {
     #[test]
     fn connector_state_roundtrip_and_upsert() {
         let dir = temp_vault("connector_state");
-        let vault = dir.to_str().unwrap();
-        let conn = open(vault).unwrap();
+        let db_path = dir.join("events.db");
+        let conn = open(&db_path).unwrap();
 
         // Absent at first.
         assert!(read_connector_state(&conn, "github").unwrap().is_none());
@@ -368,9 +368,9 @@ mod tests {
     #[test]
     fn query_filters_by_source_and_kind() {
         let dir = temp_vault("filters");
-        let vault = dir.to_str().unwrap();
+        let db_path = dir.join("events.db");
 
-        let mut conn = open(vault).unwrap();
+        let mut conn = open(&db_path).unwrap();
         let mut pr = sample();
         pr.id = "github:pr:8842".into();
         pr.kind = "pr_merged".into();

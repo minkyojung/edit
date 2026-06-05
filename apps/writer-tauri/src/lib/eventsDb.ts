@@ -1,12 +1,12 @@
 // Thin invoke wrappers for the rust events commands in
-// `src-tauri/src/events/`. Like `lib/git.ts`, the active vault path is
-// resolved once here so call sites stay free of the boilerplate.
+// `src-tauri/src/events/`.
 //
 // `events.db` is the common-envelope store for external structured data
-// (GitHub commits/PRs first). It lives at the vault root, fully separate
-// from the markdown vault — prose stays in `.md`, crisp numbers land here.
-// All wrappers no-op gracefully (return 0 / []) when there's no active
-// vault, so they're safe to call before onboarding completes.
+// (GitHub commits/PRs first). It lives in the per-device app-data dir (NOT
+// the vault), so the synced vault stays a clean folder of user files and rust
+// resolves the path itself — these wrappers no longer pass a vault path.
+// They still no-op (return 0 / []) before a vault is picked, so they're safe
+// to call during onboarding.
 
 import { invoke } from '@tauri-apps/api/core'
 import { getActiveVaultPath } from '@/state/settingsStore'
@@ -45,7 +45,7 @@ export interface EventFilter {
 export async function eventsInsert(entries: Entry[]): Promise<number> {
   const vault = getActiveVaultPath()
   if (!vault) return 0
-  return invoke<number>('events_insert', { vaultPath: vault, entries })
+  return invoke<number>('events_insert', { entries })
 }
 
 /** Query events with optional filters, newest first. Empty array when
@@ -53,7 +53,7 @@ export async function eventsInsert(entries: Entry[]): Promise<number> {
 export async function eventsQuery(filter: EventFilter = {}): Promise<Entry[]> {
   const vault = getActiveVaultPath()
   if (!vault) return []
-  return invoke<Entry[]>('events_query', { vaultPath: vault, filter })
+  return invoke<Entry[]>('events_query', { filter })
 }
 
 /** Events whose `ts` falls on the given local day (YYYY-MM-DD), newest
@@ -78,5 +78,5 @@ export async function eventsSearch(
 ): Promise<Entry[]> {
   const vault = getActiveVaultPath()
   if (!vault) return []
-  return invoke<Entry[]>('events_search', { vaultPath: vault, query, limit })
+  return invoke<Entry[]>('events_search', { query, limit })
 }

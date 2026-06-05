@@ -20,8 +20,11 @@
 //! onboarding note.
 
 use serde::Serialize;
+use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
+
+use crate::appdata;
 
 /// Bookmark ref name used for the "last reviewed" pointer. The
 /// frontend's ActivityView shows commits in `<this-ref>..HEAD` and
@@ -130,21 +133,23 @@ pub struct DiffLine {
     pub line_num: u32,
 }
 
-/// Build a `Command` anchored at `vault_path` AND pinned to
-/// `vault_path/.git` via `--git-dir` + `--work-tree`. The explicit
-/// pins are what stop git's working-tree discovery from walking up
-/// to ancestor directories — without them a stray `.git/` in `$HOME`
-/// (common after an accidental `git init ~`) would silently swallow
-/// every command and we'd be operating on the wrong repo.
+/// Build a `Command` whose **work-tree is the vault** but whose **git data dir
+/// lives OUTSIDE the vault**, in the per-device app-data folder
+/// (`appdata::vault_git_dir`). Keeping `.git` out of the vault is what lets the
+/// vault sync cleanly via iCloud/Syncthing without corrupting the repo.
 ///
-/// Every git invocation in this module goes through this helper so
-/// the anchoring rule lives in exactly one place.
+/// Both `--git-dir` and `--work-tree` are passed explicitly on EVERY command,
+/// so (a) git never creates a `.git` file/folder in the vault, and (b) git's
+/// working-tree discovery can't walk up to a stray ancestor `.git/`.
+///
+/// Every git invocation in this module goes through this helper so the
+/// location rule lives in exactly one place.
 fn git_command(vault_path: &str) -> Command {
     let trimmed = vault_path.trim_end_matches('/');
-    let git_dir = format!("{trimmed}/.git");
+    let git_dir = appdata::vault_git_dir(vault_path).join(".git");
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(vault_path);
-    cmd.arg(format!("--git-dir={git_dir}"));
+    cmd.arg(format!("--git-dir={}", git_dir.display()));
     cmd.arg(format!("--work-tree={trimmed}"));
     cmd.stdin(Stdio::null());
     cmd
@@ -190,7 +195,65 @@ async fn run_git_with_env(
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Initialise a git repo inside `vault_path` if one isn't already
+/// Move directory `src` to `dst`, falling back to a recursive copy + remove
+/// when a plain rename can't cross filesystems (e.g. the vault lives on an
+/// external/network drive while app-data is on the internal disk).
+fn move_dir(src: &Path, dst: &Path) -> Result<(), String> {
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for move: {e}"))?;
+    }
+    if std::fs::rename(src, dst).is_ok() {
+        return Ok(());
+    }
+    // Cross-device (EXDEV) or similar — copy then remove the original.
+    copy_dir_recursive(src, dst)?;
+    std::fs::remove_dir_all(src).map_err(|e| format!("remove after copy: {e}"))?;
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("create {}: {e}", dst.display()))?;
+    for entry in std::fs::read_dir(src).map_err(|e| format!("read {}: {e}", src.display()))? {
+        let entry = entry.map_err(|e| format!("read entry: {e}"))?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if entry
+            .file_type()
+            .map_err(|e| format!("file_type: {e}"))?
+            .is_dir()
+        {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to).map_err(|e| format!("copy {}: {e}", from.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Move any in-vault `.git` OUT to the external app-data git-dir and pin its
+/// work-tree back at the vault. Used for (a) legacy vaults whose `.git` is
+/// still inside, and (b) freshly cloned vaults (clone always writes
+/// `<dest>/.git`). Idempotent: a no-op when the vault has no in-tree `.git`.
+pub async fn relocate_git_dir(vault_path: &str) -> Result<(), String> {
+    let in_tree = Path::new(vault_path).join(".git");
+    if !in_tree.exists() {
+        return Ok(());
+    }
+    let external = appdata::vault_git_dir(vault_path).join(".git");
+    if external.exists() {
+        // External already set up — don't clobber it (shouldn't normally
+        // co-exist with an in-tree .git).
+        return Ok(());
+    }
+    move_dir(&in_tree, &external)?;
+    // Pin the moved repo's work-tree back to the vault. (Every command also
+    // passes --work-tree explicitly, so this is belt-and-suspenders for any
+    // external `git` CLI use against this repo.)
+    run_git(vault_path, &["config", "core.worktree", vault_path]).await?;
+    Ok(())
+}
+
+/// Initialise a git repo for `vault_path` if one isn't already
 /// there. Seeds `.gitignore` and produces an initial commit so
 /// subsequent revert / log operations have a base.
 ///
@@ -199,15 +262,15 @@ async fn run_git_with_env(
 /// the vault picker, so a no-op fast path matters.
 #[tauri::command]
 pub async fn git_init(vault_path: String) -> Result<(), String> {
-    // Already a repo? We check the filesystem directly rather than
-    // shelling out to `git rev-parse --git-dir` because that command
-    // walks ancestor directories looking for ANY `.git` — and a
-    // stray `.git/` in `$HOME` (common after an accidental
-    // `git init ~`) would make us treat the user's whole home as
-    // the vault repo. Direct path check is unambiguous: a repo lives
-    // in `<vault>/.git` or it doesn't.
-    let git_dir = std::path::Path::new(&vault_path).join(".git");
-    if git_dir.exists() {
+    // Migrate a legacy in-vault `.git` (or a just-cloned one) OUT to the
+    // per-device app-data git-dir so the vault stays sync-clean. Idempotent
+    // no-op when there's no in-tree `.git`.
+    relocate_git_dir(&vault_path).await?;
+
+    // Already initialised? The repo now lives OUTSIDE the vault, so check the
+    // external git-dir. Fast no-op — called on every boot.
+    let external = appdata::vault_git_dir(&vault_path).join(".git");
+    if external.exists() {
         return Ok(());
     }
 
@@ -227,29 +290,15 @@ pub async fn git_init(vault_path: String) -> Result<(), String> {
         return Err("git --version exited non-zero (broken install?)".to_string());
     }
 
-    // From this point on we're creating the repo inside `vault_path`.
-    // Use a plain (no `-C`, no `--git-dir`) `git init` so the new
-    // repo lands exactly where we expect. After this call `.git/`
-    // exists and subsequent `run_git` calls (which pass --git-dir
-    // explicitly) operate on it directly.
-    //
-    // `-b main` requires git 2.28+; shipped with every supported
-    // macOS for several years.
-    let init_status = Command::new("git")
-        .arg("init")
-        .arg("-b")
-        .arg("main")
-        .arg(&vault_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| format!("git init spawn failed: {e}"))?;
-    if !init_status.status.success() {
-        let stderr = String::from_utf8_lossy(&init_status.stderr).into_owned();
-        return Err(format!("git init failed: {}", stderr.trim()));
+    // Create the repo at the EXTERNAL git-dir with the vault as its work-tree
+    // — the dotfiles-repo pattern (`git --git-dir=X --work-tree=W init` leaves
+    // NO `.git` in W). git_command already supplies --git-dir/--work-tree, so
+    // run_git inits at the right place. `-b main` requires git 2.28+.
+    if let Some(parent) = external.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create git-dir parent failed: {e}"))?;
     }
+    run_git(&vault_path, &["init", "-b", "main"]).await?;
 
     // Identity: prefer the user's global config. If absent, fall
     // back to a sentinel identity so the initial commit doesn't

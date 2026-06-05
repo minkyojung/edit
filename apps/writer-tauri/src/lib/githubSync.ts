@@ -1,7 +1,7 @@
-// Periodic GitHub activity sync. The poll loop lives in the frontend
-// because the rust backend doesn't know the active vault path — the
-// timer calls the rust `github_sync` command with the vault + ingest
-// time, and rust does the token/HTTP/events.db work. Mirrors the
+// Periodic GitHub activity sync. The poll loop lives in the frontend so it
+// can gate on an active vault (don't sync before onboarding); the timer calls
+// the rust `github_sync` command with just the ingest time, and rust does the
+// token/HTTP work + writes the per-device app-data `events.db`. Mirrors the
 // idempotent-timer shape of docFileSync's startAutoFlush.
 
 import { invoke } from '@tauri-apps/api/core'
@@ -27,7 +27,6 @@ export async function syncGitHubActivity(): Promise<boolean> {
   inFlight = true
   try {
     const upserted = await invoke<number>('github_sync', {
-      vaultPath: vault,
       ingestedAt: new Date().toISOString(),
     })
     // Nudge any open activity cards to re-query events.db.

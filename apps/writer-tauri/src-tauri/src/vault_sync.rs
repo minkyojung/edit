@@ -194,7 +194,9 @@ pub async fn vault_restore(
     };
 
     let path = Path::new(&vault_path);
-    if path.join(".git").exists() {
+    // The repo lives OUTSIDE the vault now, so "already a repository" means the
+    // external app-data git-dir for this path already exists.
+    if crate::appdata::vault_git_dir(&vault_path).join(".git").exists() {
         return Err("This folder is already a repository — sync instead of restoring.".to_string());
     }
     if dir_has_content(path)? {
@@ -206,6 +208,9 @@ pub async fn vault_restore(
 
     // Pull the whole history down (token via credential helper, never argv).
     git::git_clone(&clone_url, &vault_path, &stored.access_token).await?;
+    // Clone writes `<vault>/.git`; move it OUT to app-data so the restored
+    // vault has the same sync-clean layout as a locally-created one.
+    git::relocate_git_dir(&vault_path).await?;
 
     // Identity check: a real vault carries `.manila/manifest.json`. Without it
     // this is some unrelated repo — surface that rather than adopting it.

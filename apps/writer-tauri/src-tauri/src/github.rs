@@ -435,7 +435,6 @@ fn next_watermark(prev: Option<String>, batch: &[Entry]) -> Option<String> {
 #[tauri::command]
 pub async fn github_sync(
     app: AppHandle,
-    vault_path: String,
     ingested_at: String,
 ) -> Result<usize, String> {
     let Some(stored) = load_token(&app)? else {
@@ -444,7 +443,7 @@ pub async fn github_sync(
 
     // Read the last sync bookmark up front so the fetch can be scoped to
     // "new since then" instead of re-pulling the full page every tick.
-    let mut conn = db::open(&vault_path)?;
+    let mut conn = db::open(&crate::appdata::events_db_path())?;
     let prev_watermark = db::read_connector_state(&conn, SOURCE)?.and_then(|s| s.watermark);
     let since = since_date(prev_watermark.as_deref());
 
