@@ -7,6 +7,7 @@ import { useEffect, useRef } from 'react'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { autocompletion } from '@codemirror/autocomplete'
 import { indentUnit } from '@codemirror/language'
 import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
@@ -14,7 +15,8 @@ import { cmPrototypeTheme } from './cmTheme'
 import { livePreview } from './livePreview'
 import { mermaidCards } from './mermaidCards'
 import { mediaCards } from './mediaCards'
-import { slashMenu } from './slashCommands'
+import { slashSource } from './slashCommands'
+import { wikilinkSource } from './wikilinkComplete'
 import { SAMPLE } from './sample'
 
 export default function CodeMirrorPreview() {
@@ -41,7 +43,9 @@ export default function CodeMirrorPreview() {
           ]),
           EditorView.lineWrapping,
           markdown({ extensions: [GFM], addKeymap: false }),
-          slashMenu,
+          // One autocomplete config, two sources (each returns null when not
+          // applicable): `/` slash menu + `[[` wikilink palette.
+          autocompletion({ override: [slashSource, wikilinkSource], icons: true }),
           livePreview,
           mermaidCards,
           mediaCards,

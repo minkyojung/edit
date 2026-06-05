@@ -6,7 +6,6 @@
 // keyword-filtered item list, (c) each item's text edit.
 
 import {
-  autocompletion,
   type Completion,
   type CompletionContext,
   type CompletionResult,
@@ -14,7 +13,7 @@ import {
 import { syntaxTree } from '@codemirror/language'
 import type { SyntaxNode } from '@lezer/common'
 import type { EditorView } from '@codemirror/view'
-import type { EditorState, Extension } from '@codemirror/state'
+import type { EditorState } from '@codemirror/state'
 
 interface SlashItem {
   id: string
@@ -68,7 +67,7 @@ export function filterSlashItems(query: string): SlashItem[] {
   )
 }
 
-function inCodeBlock(state: EditorState, pos: number): boolean {
+export function inCodeBlock(state: EditorState, pos: number): boolean {
   let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, -1)
   while (n) {
     if (n.name === 'FencedCode' || n.name === 'CodeText' || n.name === 'CodeBlock') return true
@@ -99,9 +98,3 @@ export function slashSource(context: CompletionContext): CompletionResult | null
     options: items.map((it) => ({ label: it.label, type: it.type, apply: it.apply })),
   }
 }
-
-export const slashMenu: Extension = autocompletion({
-  override: [slashSource],
-  icons: true,
-  defaultKeymap: true, // ↑/↓/Enter/Esc/Tab, focus stays in the editor
-})
