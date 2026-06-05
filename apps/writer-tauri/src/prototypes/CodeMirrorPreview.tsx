@@ -21,6 +21,7 @@ import { wikilinkClick } from './wikilinkNav'
 import { linkClick } from './linkNav'
 import { formatKeymap } from './formatCommands'
 import { highlights, highlightClick } from './highlights'
+import { mediaDropPaste } from './mediaDrop'
 import { SAMPLE } from './sample'
 
 // Stand-in for an article's .meta.json highlight records.
@@ -74,6 +75,9 @@ export default function CodeMirrorPreview() {
           linkClick((url) => toast(`→ open URL: ${url}`)),
           highlights(SAMPLE_HIGHLIGHTS),
           highlightClick((_id, note) => toast(note ? `📝 ${note}` : 'highlight')),
+          // Prototype stub: object-URL instead of a real vault copy, so dropped
+          // images/video actually render.
+          mediaDropPaste((file) => Promise.resolve(URL.createObjectURL(file))),
           livePreview,
           mermaidCards,
           mediaCards,
