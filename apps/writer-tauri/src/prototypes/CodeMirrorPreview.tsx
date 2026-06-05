@@ -23,6 +23,7 @@ import { formatKeymap } from './formatCommands'
 import { highlights, highlightClick } from './highlights'
 import { mediaDropPaste } from './mediaDrop'
 import { imeComposition } from './imeComposition'
+import { imeListContinue } from './imeListContinue'
 import { initialStatus, bumpRevision, markSaved, onDocChange, type DocStatus } from './saveStatus'
 import { SAMPLE } from './sample'
 import { useDocsStore } from '@/state/docsStore'
@@ -130,6 +131,11 @@ export default function CodeMirrorPreview() {
           extensions: [
             history(),
             imeComposition, // track composition; decoration fields freeze while composing
+            // Safari/WKWebView drops the composition-confirming Enter, so the
+            // markdown list/quote continuation never runs. Recover it from the
+            // browser's own insertParagraph/insertLineBreak beforeinput signal
+            // (language-agnostic — see imeListContinue.ts).
+            imeListContinue(),
             // CM draws its OWN caret (a DOM .cm-cursor) instead of the native
             // one — the native caret renders as a horizontal bar next to our
             // replace/atomic decorations during IME composition (the Korean
