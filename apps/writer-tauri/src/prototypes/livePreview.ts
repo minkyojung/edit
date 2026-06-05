@@ -46,6 +46,17 @@ function spansActiveLine(state: EditorState, from: number, to: number, active: S
   return false
 }
 
+/** Range-level reveal (Obsidian-style): true when the cursor/selection is
+ * STRICTLY inside [from, to] — touching the outer edge does NOT count, so a
+ * construct renders the instant the caret leaves it (even mid-line). This is
+ * the per-construct rule for inline marks (vs spansActiveLine for blocks). */
+function selectionOverlaps(state: EditorState, from: number, to: number): boolean {
+  for (const r of state.selection.ranges) {
+    if (r.from < to && r.to > from) return true
+  }
+  return false
+}
+
 /** Build decorations over `ranges`. Exported (and view-free) so it can be
  * unit-tested headlessly with just an EditorState. */
 export function buildDecorations(
@@ -88,9 +99,17 @@ export function buildDecorations(
         const { name } = node
         const nf = node.from
         const nt = node.to
+        // Block constructs use line-level reveal; inline marks use per-construct
+        // (range) reveal — see selectionOverlaps. `inlineRevealed` checks the
+        // PARENT construct's range so both opening + closing markers reveal
+        // together whenever the caret is anywhere inside the construct.
         const revealed = spansActiveLine(state, nf, nt, active)
+        const parent = node.node.parent
+        const inlineRevealed = parent
+          ? selectionOverlaps(state, parent.from, parent.to)
+          : selectionOverlaps(state, nf, nt)
 
-        // Headings
+        // Headings (block-level reveal)
         if (/^ATXHeading[1-6]$/.test(name)) {
           lineClass(nf, `cm-h${name.slice(-1)}`)
           return
@@ -104,39 +123,40 @@ export function buildDecorations(
           return
         }
 
-        // Emphasis
+        // Emphasis (inline — per-construct reveal)
         if (name === 'StrongEmphasis') return void mark(nf, nt, 'cm-strong')
         if (name === 'Emphasis') return void mark(nf, nt, 'cm-em')
         if (name === 'Strikethrough') return void mark(nf, nt, 'cm-strike')
         if (name === 'EmphasisMark' || name === 'StrikethroughMark') {
-          if (!revealed) hide(nf, nt)
+          if (!inlineRevealed) hide(nf, nt)
           return
         }
 
         // Inline code
         if (name === 'InlineCode') return void mark(nf, nt, 'cm-inline-code')
         if (name === 'CodeMark') {
-          if (!revealed) hide(nf, nt)
+          if (!inlineRevealed) hide(nf, nt)
           return
         }
 
         // Links
         if (name === 'Link') return void mark(nf, nt, 'cm-link')
         if (name === 'URL' || name === 'LinkMark') {
-          if (!revealed) hide(nf, nt)
+          if (!inlineRevealed) hide(nf, nt)
           return
         }
 
-        // Image — replace whole node with an <img>; don't descend.
+        // Image — replace whole node with an <img>; don't descend. Reveal raw
+        // only when the caret is inside the image markdown itself.
         if (name === 'Image') {
-          if (!revealed) {
+          if (!selectionOverlaps(state, nf, nt)) {
             const m = /!\[([^\]]*)\]\(([^)\s]+)/.exec(sliceOf(nf, nt))
             if (m) widget(nf, nt, Decoration.replace({ widget: new ImageWidget(m[2], m[1]) }))
           }
           return false
         }
 
-        // Blockquote
+        // Blockquote (block-level reveal)
         if (name === 'Blockquote') {
           eachLineClass(nf, nt, 'cm-blockquote')
           return
@@ -149,19 +169,17 @@ export function buildDecorations(
           return
         }
 
-        // Lists
+        // Lists — bullet/checkbox ALWAYS render (a bullet never reverts to `-`,
+        // matching Obsidian); ordered numbers stay as text.
         if (name === 'ListMark') {
           const item = node.node.parent
           const list = item?.parent
-          const ordered = list?.name === 'OrderedList'
-          if (ordered) {
+          if (list?.name === 'OrderedList') {
             mark(nf, nt, 'cm-list-num')
             return
           }
-          if (revealed) return
-          // Task items render a checkbox instead of a bullet → hide the dash.
           if (item?.getChild('Task')) {
-            hide(nf, sliceOf(nt, nt + 1) === ' ' ? nt + 1 : nt)
+            hide(nf, sliceOf(nt, nt + 1) === ' ' ? nt + 1 : nt) // task → checkbox shows the marker
           } else {
             const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
             widget(nf, nt + trailing, Decoration.replace({ widget: new BulletWidget() }))
@@ -169,11 +187,9 @@ export function buildDecorations(
           return
         }
         if (name === 'TaskMarker') {
-          if (!revealed) {
-            const checked = /[xX]/.test(sliceOf(nf, nt))
-            const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
-            widget(nf, nt + trailing, Decoration.replace({ widget: new CheckboxWidget(checked) }))
-          }
+          const checked = /[xX]/.test(sliceOf(nf, nt))
+          const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
+          widget(nf, nt + trailing, Decoration.replace({ widget: new CheckboxWidget(checked) }))
           return
         }
 
@@ -218,7 +234,8 @@ export function buildDecorations(
       const innerTo = start + 2 + m[1].length
       const end = innerTo + 2
       mark(innerFrom, innerTo, isKnownNote(m[1]) ? 'cm-wikilink' : 'cm-wikilink-broken')
-      if (!spansActiveLine(state, start, end, active)) {
+      // Per-construct reveal: only show `[[ ]]` when the caret is inside it.
+      if (!selectionOverlaps(state, start, end)) {
         hide(start, innerFrom)
         hide(innerTo, end)
       }

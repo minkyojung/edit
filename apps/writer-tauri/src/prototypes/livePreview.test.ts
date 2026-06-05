@@ -47,13 +47,29 @@ describe('live preview decoration engine (headless)', () => {
     expect(specs.some((s) => s.class === 'cm-strong'), 'bold mark').toBe(true)
   })
 
-  it('reveal rule: active lines produce fewer hides than inactive', () => {
-    const inactive = buildDecorations(state, full, new Set())
-    const allLines = new Set<number>()
-    for (let n = 1; n <= state.doc.lines; n++) allLines.add(n)
-    const active = buildDecorations(state, full, allLines)
-    // Every line active → nothing hidden/widgetized, so far fewer decos.
-    expect(active.decos.length).toBeLessThan(inactive.decos.length)
-    expect(active.atomic.length).toBe(0)
+  it('reveal is PER-CONSTRUCT (range-level), not per-line', () => {
+    // Two bolds on one line. Caret inside the first must reveal ONLY the
+    // first's `**` — the second stays hidden (the whole point vs line-level).
+    const doc = '**a** **b**'
+    const range = [{ from: 0, to: doc.length }]
+    // A hide is a Decoration.replace({}) — no class, no widget.
+    const hideCount = (d: ReturnType<typeof buildDecorations>) =>
+      d.decos.filter((r) => !r.value.spec.class && !r.value.spec.widget).length
+
+    const caretOutside = stateAt(doc, doc.length) // outside both
+    const caretInFirst = stateAt(doc, 2) // inside first bold
+
+    expect(hideCount(buildDecorations(caretOutside, range, new Set()))).toBe(4) // both `**` pairs hidden
+    expect(hideCount(buildDecorations(caretInFirst, range, new Set()))).toBe(2) // only the 2nd bold hidden
   })
 })
+
+function stateAt(doc: string, pos: number): EditorState {
+  const state = EditorState.create({
+    doc,
+    selection: { anchor: pos },
+    extensions: [markdown({ extensions: [GFM] })],
+  })
+  ensureSyntaxTree(state, doc.length, 5000)
+  return state
+}
