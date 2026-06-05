@@ -3,9 +3,9 @@
 // editor. Reachable at #/dev/cm-prototype (App.tsx, DEV-gated + lazy).
 // Throwaway quality — see docs/codemirror-migration-poc-plan.md.
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { EditorState } from '@codemirror/state'
-import { EditorView, keymap, dropCursor } from '@codemirror/view'
+import { EditorView, keymap, dropCursor, placeholder } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { autocompletion } from '@codemirror/autocomplete'
 import { indentUnit } from '@codemirror/language'
@@ -22,6 +22,7 @@ import { linkClick } from './linkNav'
 import { formatKeymap } from './formatCommands'
 import { highlights, highlightClick } from './highlights'
 import { mediaDropPaste } from './mediaDrop'
+import { initialStatus, bumpRevision, markSaved, onDocChange, type DocStatus } from './saveStatus'
 import { SAMPLE } from './sample'
 
 // Stand-in for an article's .meta.json highlight records.
@@ -45,10 +46,12 @@ function toast(message: string): void {
 
 export default function CodeMirrorPreview() {
   const hostRef = useRef<HTMLDivElement>(null)
+  const [status, setStatus] = useState<DocStatus>(initialStatus)
 
   useEffect(() => {
     const parent = hostRef.current
     if (!parent) return
+    let saveTimer: number | undefined
     const view = new EditorView({
       parent,
       state: EditorState.create({
@@ -79,6 +82,14 @@ export default function CodeMirrorPreview() {
           // Prototype stub: object-URL instead of a real vault copy, so dropped
           // images/video actually render.
           mediaDropPaste((file) => Promise.resolve(URL.createObjectURL(file))),
+          placeholder('Start writing…'),
+          // Save-detection + revision: docChanged → dirty/rev++, then a
+          // debounced "saved" (stands in for disk auto-flush).
+          onDocChange(() => {
+            setStatus(bumpRevision)
+            if (saveTimer) clearTimeout(saveTimer)
+            saveTimer = window.setTimeout(() => setStatus(markSaved), 800)
+          }),
           livePreview,
           mermaidCards,
           mediaCards,
@@ -86,7 +97,10 @@ export default function CodeMirrorPreview() {
         ],
       }),
     })
-    return () => view.destroy()
+    return () => {
+      if (saveTimer) clearTimeout(saveTimer)
+      view.destroy()
+    }
   }, [])
 
   return (
@@ -105,9 +119,14 @@ export default function CodeMirrorPreview() {
           fontSize: 13,
           color: 'var(--muted-foreground)',
           borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          justifyContent: 'space-between',
         }}
       >
-        CodeMirror Live Preview spike — #/dev/cm-prototype (DEV only)
+        <span>CodeMirror Live Preview spike — #/dev/cm-prototype (DEV only)</span>
+        <span style={{ color: status.dirty ? 'var(--info)' : 'var(--muted-foreground)' }}>
+          {status.dirty ? '● unsaved' : '✓ saved'} · rev {status.rev}
+        </span>
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>
