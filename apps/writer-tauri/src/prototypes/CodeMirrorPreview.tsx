@@ -18,6 +18,7 @@ import { mediaCards } from './mediaCards'
 import { slashSource } from './slashCommands'
 import { wikilinkSource } from './wikilinkComplete'
 import { wikilinkClick } from './wikilinkNav'
+import { linkClick } from './linkNav'
 import { formatKeymap } from './formatCommands'
 import { SAMPLE } from './sample'
 
@@ -63,6 +64,7 @@ export default function CodeMirrorPreview() {
           // applicable): `/` slash menu + `[[` wikilink palette.
           autocompletion({ override: [slashSource, wikilinkSource], icons: true }),
           wikilinkClick((title) => toast(`→ open note: ${title}`)),
+          linkClick((url) => toast(`→ open URL: ${url}`)),
           livePreview,
           mermaidCards,
           mediaCards,
