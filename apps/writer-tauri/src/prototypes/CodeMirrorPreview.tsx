@@ -20,7 +20,14 @@ import { wikilinkSource } from './wikilinkComplete'
 import { wikilinkClick } from './wikilinkNav'
 import { linkClick } from './linkNav'
 import { formatKeymap } from './formatCommands'
+import { highlights, highlightClick } from './highlights'
 import { SAMPLE } from './sample'
+
+// Stand-in for an article's .meta.json highlight records.
+const SAMPLE_HIGHLIGHTS = [
+  { id: 'hl1', quote: 'comfortable reading measure', occurrence: 0, note: 'nice phrasing' },
+  { id: 'hl2', quote: 'reveal themselves', occurrence: 0 },
+]
 
 // Prototype stand-in for "navigate to note" — a transient toast. The real app
 // would route to the doc here.
@@ -65,6 +72,8 @@ export default function CodeMirrorPreview() {
           autocompletion({ override: [slashSource, wikilinkSource], icons: true }),
           wikilinkClick((title) => toast(`→ open note: ${title}`)),
           linkClick((url) => toast(`→ open URL: ${url}`)),
+          highlights(SAMPLE_HIGHLIGHTS),
+          highlightClick((_id, note) => toast(note ? `📝 ${note}` : 'highlight')),
           livePreview,
           mermaidCards,
           mediaCards,
