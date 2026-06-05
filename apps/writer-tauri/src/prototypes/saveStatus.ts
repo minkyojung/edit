@@ -23,10 +23,12 @@ export function markSaved(s: DocStatus): DocStatus {
   return { dirty: false, rev: s.rev }
 }
 
-/** Fire `cb` whenever the document content changes (CM's docChanged). The real
- * app routes this to flushDirty + the revision broadcaster. */
-export function onDocChange(cb: () => void): Extension {
+/** Fire `cb(view)` whenever the document content changes (CM's docChanged).
+ * The real app routes this to flushDirty + the revision broadcaster. The view
+ * is passed so the caller can read the new markdown (doc.toString()) directly —
+ * no serializer needed, since the CM doc IS the markdown. */
+export function onDocChange(cb: (view: EditorView) => void): Extension {
   return EditorView.updateListener.of((u) => {
-    if (u.docChanged) cb()
+    if (u.docChanged) cb(u.view)
   })
 }

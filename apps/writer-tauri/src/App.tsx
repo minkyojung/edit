@@ -103,15 +103,18 @@ export function App() {
           <HashRouter>
             <Routes>
               {import.meta.env.DEV && (
-                // DEV-only WYSIWYG spike. Mounted ABOVE BootGate so it
-                // bypasses vault bootstrap + AppShell chrome and renders
-                // the CodeMirror editor full-screen in isolation.
+                // DEV-only WYSIWYG spike. Wrapped in BootGate so the vault is
+                // bootstrapped (docsStore populated) for the real-data E-step,
+                // but OUTSIDE AppShell so it still renders full-screen in
+                // isolation.
                 <Route
                   path="/dev/cm-prototype"
                   element={
-                    <Suspense fallback={null}>
-                      <CodeMirrorPreview />
-                    </Suspense>
+                    <BootGate>
+                      <Suspense fallback={null}>
+                        <CodeMirrorPreview />
+                      </Suspense>
+                    </BootGate>
                   }
                 />
               )}
