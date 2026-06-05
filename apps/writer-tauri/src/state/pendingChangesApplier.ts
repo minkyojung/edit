@@ -33,6 +33,7 @@ import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { flushDirty } from '@/lib/docFileSync'
 import { pathForDoc } from '@/lib/docPaths'
 import { todayLocalDate } from '@/hooks/useDocMeta'
+import { notify } from '@/lib/notify'
 
 // HMR safety: vite's `import.meta.hot.dispose` fires right before
 // the module is replaced. That's the only hook that runs against
@@ -304,6 +305,15 @@ export function startPendingChangesApplier(): void {
           // entries.
           if (ok && c.source === 'chat') {
             void logAcceptedChange(c)
+          }
+          if (!ok) {
+            // The edit couldn't be placed — almost always because the note
+            // changed between proposal and Keep, so the literal `before`
+            // text no longer matches (see applyReplaceInWikiPage). Tell the
+            // user instead of letting the widget vanish silently: the store
+            // already flipped status → accepted, so without this the
+            // suggestion just disappears with no trace.
+            notify.markCantApply()
           }
           // Commit at accept time for BOTH sources — Keep is when the
           // disk actually changes. The coordinator debounces a burst of
