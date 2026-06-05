@@ -17,7 +17,21 @@ import { mermaidCards } from './mermaidCards'
 import { mediaCards } from './mediaCards'
 import { slashSource } from './slashCommands'
 import { wikilinkSource } from './wikilinkComplete'
+import { wikilinkClick } from './wikilinkNav'
 import { SAMPLE } from './sample'
+
+// Prototype stand-in for "navigate to note" — a transient toast. The real app
+// would route to the doc here.
+function toast(message: string): void {
+  const el = document.createElement('div')
+  el.textContent = message
+  el.style.cssText =
+    'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);' +
+    'background:var(--foreground);color:var(--background);padding:8px 14px;' +
+    'border-radius:8px;font-size:13px;z-index:9999;opacity:0.95;'
+  document.body.appendChild(el)
+  setTimeout(() => el.remove(), 1500)
+}
 
 export default function CodeMirrorPreview() {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -46,6 +60,7 @@ export default function CodeMirrorPreview() {
           // One autocomplete config, two sources (each returns null when not
           // applicable): `/` slash menu + `[[` wikilink palette.
           autocompletion({ override: [slashSource, wikilinkSource], icons: true }),
+          wikilinkClick((title) => toast(`→ open note: ${title}`)),
           livePreview,
           mermaidCards,
           mediaCards,
