@@ -18,6 +18,7 @@ import { mediaCards } from './mediaCards'
 import { slashSource } from './slashCommands'
 import { wikilinkSource } from './wikilinkComplete'
 import { wikilinkClick } from './wikilinkNav'
+import { formatKeymap } from './formatCommands'
 import { SAMPLE } from './sample'
 
 // Prototype stand-in for "navigate to note" — a transient toast. The real app
@@ -45,6 +46,7 @@ export default function CodeMirrorPreview() {
         doc: SAMPLE,
         extensions: [
           history(),
+          formatKeymap, // Cmd+B/I/E/Shift+X format toggles, Cmd+K link
           indentUnit.of('  '), // 2-space list nesting
           // Editing behavior (#1): markdown markup commands take precedence
           // over the generic defaults, then Tab indent, then the rest.
