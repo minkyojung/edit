@@ -22,7 +22,10 @@ export const cmPrototypeTheme = EditorView.theme({
     maxWidth: '680px',
     margin: '0 auto',
     padding: '48px 24px 120px',
-    caretColor: 'var(--foreground)',
+    // Hide the NATIVE caret — drawSelection() renders our own .cm-cursor. Leaving
+    // this as a color would show both (a double caret) since the user theme wins
+    // over drawSelection's base theme.
+    caretColor: 'transparent',
   },
   '.cm-line': { padding: '0' },
   '.cm-cursor': { borderLeftColor: 'var(--foreground)' },

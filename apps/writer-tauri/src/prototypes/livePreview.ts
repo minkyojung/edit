@@ -46,13 +46,19 @@ function spansActiveLine(state: EditorState, from: number, to: number, active: S
   return false
 }
 
-/** Range-level reveal (Obsidian-style): true when the cursor/selection is
- * STRICTLY inside [from, to] — touching the outer edge does NOT count, so a
- * construct renders the instant the caret leaves it (even mid-line). This is
- * the per-construct rule for inline marks (vs spansActiveLine for blocks). */
-function selectionOverlaps(state: EditorState, from: number, to: number): boolean {
+// ── The reveal predicate (uniform, Obsidian/Ixora-style) ────────────────
+// A construct shows its rendered form ⟺ it is COMPLETE and the caret is NOT
+// editing it. "editing" = the selection touches the construct's edit region
+// (INCLUSIVE — touching an edge counts), so a just-typed marker (caret at its
+// end) stays raw, and the construct renders once the caret moves off it.
+//   - wrapping marks (bold/italic/code/link): edit region = the whole construct
+//   - prefix markers (list/heading/quote):    edit region = the marker token
+// (Blocks heading/quote/hr/table additionally use line-level reveal below.)
+
+/** Selection touches [from, to] (inclusive). */
+function editing(state: EditorState, from: number, to: number): boolean {
   for (const r of state.selection.ranges) {
-    if (r.from < to && r.to > from) return true
+    if (r.from <= to && from <= r.to) return true
   }
   return false
 }
@@ -100,14 +106,14 @@ export function buildDecorations(
         const nf = node.from
         const nt = node.to
         // Block constructs use line-level reveal; inline marks use per-construct
-        // (range) reveal — see selectionOverlaps. `inlineRevealed` checks the
-        // PARENT construct's range so both opening + closing markers reveal
-        // together whenever the caret is anywhere inside the construct.
+        // (range) reveal via `editing`. `inlineRevealed` checks the PARENT
+        // construct's range so both opening + closing markers reveal together
+        // whenever the caret is anywhere inside the construct.
         const revealed = spansActiveLine(state, nf, nt, active)
         const parent = node.node.parent
         const inlineRevealed = parent
-          ? selectionOverlaps(state, parent.from, parent.to)
-          : selectionOverlaps(state, nf, nt)
+          ? editing(state, parent.from, parent.to)
+          : editing(state, nf, nt)
 
         // Headings (block-level reveal)
         if (/^ATXHeading[1-6]$/.test(name)) {
@@ -149,7 +155,7 @@ export function buildDecorations(
         // Image — replace whole node with an <img>; don't descend. Reveal raw
         // only when the caret is inside the image markdown itself.
         if (name === 'Image') {
-          if (!selectionOverlaps(state, nf, nt)) {
+          if (!editing(state, nf, nt)) {
             const m = /!\[([^\]]*)\]\(([^)\s]+)/.exec(sliceOf(nf, nt))
             if (m) widget(nf, nt, Decoration.replace({ widget: new ImageWidget(m[2], m[1]) }))
           }
@@ -169,8 +175,10 @@ export function buildDecorations(
           return
         }
 
-        // Lists — bullet/checkbox ALWAYS render (a bullet never reverts to `-`,
-        // matching Obsidian); ordered numbers stay as text.
+        // Lists. A marker only turns into a glyph once it's COMPLETE and the
+        // caret isn't on the marker itself — so typing `-` (before the space)
+        // or editing the marker shows raw, but editing the item's CONTENT
+        // keeps the bullet (matches Obsidian). Ordered numbers stay as text.
         if (name === 'ListMark') {
           const item = node.node.parent
           const list = item?.parent
@@ -178,15 +186,27 @@ export function buildDecorations(
             mark(nf, nt, 'cm-list-num')
             return
           }
-          if (item?.getChild('Task')) {
-            hide(nf, sliceOf(nt, nt + 1) === ' ' ? nt + 1 : nt) // task → checkbox shows the marker
-          } else {
-            const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
-            widget(nf, nt + trailing, Decoration.replace({ widget: new BulletWidget() }))
+          const task = item?.getChild('Task')
+          if (task) {
+            // Task: hide the dash (the checkbox shows the marker) unless the
+            // caret is on the `- [ ]` prefix.
+            if (!editing(state, nf, task.to)) {
+              hide(nf, sliceOf(nt, nt + 1) === ' ' ? nt + 1 : nt)
+            }
+            return
           }
+          // Complete (`- ` with the space) + caret off the dash token → bullet.
+          // Edit region is the dash itself, so the caret at content-start (just
+          // past the space) still renders the bullet.
+          if (sliceOf(nt, nt + 1) !== ' ') return // incomplete `-` → leave raw
+          if (editing(state, nf, nt)) return // caret on the marker → raw
+          widget(nf, nt + 1, Decoration.replace({ widget: new BulletWidget() }))
           return
         }
         if (name === 'TaskMarker') {
+          const task = node.node.parent
+          const region = task ?? { from: nf, to: nt }
+          if (editing(state, region.from, region.to)) return // caret on marker → raw
           const checked = /[xX]/.test(sliceOf(nf, nt))
           const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
           widget(nf, nt + trailing, Decoration.replace({ widget: new CheckboxWidget(checked) }))
@@ -235,7 +255,7 @@ export function buildDecorations(
       const end = innerTo + 2
       mark(innerFrom, innerTo, isKnownNote(m[1]) ? 'cm-wikilink' : 'cm-wikilink-broken')
       // Per-construct reveal: only show `[[ ]]` when the caret is inside it.
-      if (!selectionOverlaps(state, start, end)) {
+      if (!editing(state, start, end)) {
         hide(start, innerFrom)
         hide(innerTo, end)
       }

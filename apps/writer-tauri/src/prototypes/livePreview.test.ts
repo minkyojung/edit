@@ -10,7 +10,7 @@ import { ensureSyntaxTree } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import { buildDecorations } from './livePreview'
-import { ImageWidget, TableWidget } from './widgets'
+import { ImageWidget, TableWidget, BulletWidget } from './widgets'
 import { SAMPLE } from './sample'
 
 function stateFor(doc: string): EditorState {
@@ -50,17 +50,35 @@ describe('live preview decoration engine (headless)', () => {
   it('reveal is PER-CONSTRUCT (range-level), not per-line', () => {
     // Two bolds on one line. Caret inside the first must reveal ONLY the
     // first's `**` — the second stays hidden (the whole point vs line-level).
-    const doc = '**a** **b**'
+    const doc = '**a** **b** x' // trailing ` x` gives a caret spot outside both
     const range = [{ from: 0, to: doc.length }]
     // A hide is a Decoration.replace({}) — no class, no widget.
     const hideCount = (d: ReturnType<typeof buildDecorations>) =>
       d.decos.filter((r) => !r.value.spec.class && !r.value.spec.widget).length
 
-    const caretOutside = stateAt(doc, doc.length) // outside both
+    const caretOutside = stateAt(doc, doc.length) // after "x" — outside both
     const caretInFirst = stateAt(doc, 2) // inside first bold
 
     expect(hideCount(buildDecorations(caretOutside, range, new Set()))).toBe(4) // both `**` pairs hidden
     expect(hideCount(buildDecorations(caretInFirst, range, new Set()))).toBe(2) // only the 2nd bold hidden
+  })
+
+  it('list marker renders a bullet only once COMPLETE and caret is off it', () => {
+    const bulletWidget = (d: ReturnType<typeof buildDecorations>) =>
+      d.decos.some((r) => r.value.spec.widget instanceof BulletWidget)
+
+    // Bare `-` (no space) → not a list marker yet → no bullet.
+    expect(bulletWidget(buildDecorations(stateAt('-', 1), [{ from: 0, to: 1 }], new Set()))).toBe(false)
+
+    // `- item` with caret ON the marker → raw (no bullet).
+    expect(
+      bulletWidget(buildDecorations(stateAt('- item', 1), [{ from: 0, to: 6 }], new Set())),
+    ).toBe(false)
+
+    // `- item` with caret in the content → bullet renders.
+    expect(
+      bulletWidget(buildDecorations(stateAt('- item', 4), [{ from: 0, to: 6 }], new Set())),
+    ).toBe(true)
   })
 })
 

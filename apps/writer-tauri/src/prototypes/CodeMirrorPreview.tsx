@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { EditorState } from '@codemirror/state'
-import { EditorView, keymap, dropCursor, placeholder } from '@codemirror/view'
+import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { autocompletion } from '@codemirror/autocomplete'
 import { indentUnit } from '@codemirror/language'
@@ -130,6 +130,11 @@ export default function CodeMirrorPreview() {
           extensions: [
             history(),
             imeComposition, // track composition; decoration fields freeze while composing
+            // CM draws its OWN caret (a DOM .cm-cursor) instead of the native
+            // one — the native caret renders as a horizontal bar next to our
+            // replace/atomic decorations during IME composition (the Korean
+            // "가로 커서" artifact). Obsidian/basicSetup use this for the same reason.
+            drawSelection(),
             dropCursor(), // caret indicator showing where a drag will drop
             formatKeymap, // Cmd+B/I/E/Shift+X format toggles, Cmd+K link
             indentUnit.of('  '), // 2-space list nesting
