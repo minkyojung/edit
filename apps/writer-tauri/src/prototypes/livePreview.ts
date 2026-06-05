@@ -189,27 +189,37 @@ export function buildDecorations(
           const task = item?.getChild('Task')
           if (task) {
             // Task: hide the dash (the checkbox shows the marker) unless the
-            // caret is on the `- [ ]` prefix.
-            if (!editing(state, nf, task.to)) {
+            // caret is on the `- [ ]` PREFIX. Reveal region ends at the task
+            // marker, NOT the whole item — so editing the task TEXT keeps the
+            // checkbox rendered (Obsidian behavior).
+            const marker = task.getChild('TaskMarker')
+            const prefixEnd = marker?.to ?? task.to
+            if (!editing(state, nf, prefixEnd)) {
               hide(nf, sliceOf(nt, nt + 1) === ' ' ? nt + 1 : nt)
             }
             return
           }
-          // Complete (`- ` with the space) + caret off the dash token → bullet.
-          // Edit region is the dash itself, so the caret at content-start (just
-          // past the space) still renders the bullet.
-          if (sliceOf(nt, nt + 1) !== ' ') return // incomplete `-` → leave raw
+          // Bullet. Reveal region is the dash token itself (the canonical
+          // Ixora `isCursorInRange(ListMark)` rule): caret ON the marker shows
+          // raw, caret anywhere else renders the bullet. The inclusive `editing`
+          // already keeps a just-typed `-` raw (caret sits at the marker's end),
+          // and Lezer only emits a ListMark for `-`<EOL> or `- ` — so no
+          // separate completeness check is needed.
           if (editing(state, nf, nt)) return // caret on the marker → raw
-          widget(nf, nt + 1, Decoration.replace({ widget: new BulletWidget() }))
+          const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
+          widget(nf, nt + trailing, Decoration.replace({ widget: new BulletWidget() }))
           return
         }
         if (name === 'TaskMarker') {
-          const task = node.node.parent
-          const region = task ?? { from: nf, to: nt }
-          if (editing(state, region.from, region.to)) return // caret on marker → raw
+          // Reveal region = the `- [ ]` prefix (dash → marker end), NOT the
+          // whole task item — editing the task text keeps the checkbox.
+          const dash = node.node.parent?.parent?.getChild('ListMark')
+          const from = dash?.from ?? nf
+          if (editing(state, from, nt)) return // caret on the prefix → raw
           const checked = /[xX]/.test(sliceOf(nf, nt))
           const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
-          widget(nf, nt + trailing, Decoration.replace({ widget: new CheckboxWidget(checked) }))
+          // `nf + 1` = the status char between the brackets, the click target.
+          widget(nf, nt + trailing, Decoration.replace({ widget: new CheckboxWidget(checked, nf + 1) }))
           return
         }
 

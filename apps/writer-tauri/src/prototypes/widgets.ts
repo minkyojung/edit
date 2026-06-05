@@ -2,7 +2,7 @@
 // list bullet, and GFM table. Throwaway quality — toDOM only, no interaction
 // beyond what's needed to look right.
 
-import { WidgetType } from '@codemirror/view'
+import { WidgetType, type EditorView } from '@codemirror/view'
 
 export class ImageWidget extends WidgetType {
   constructor(
@@ -28,19 +28,33 @@ export class ImageWidget extends WidgetType {
 }
 
 export class CheckboxWidget extends WidgetType {
-  constructor(readonly checked: boolean) {
+  // `pos` is the offset of the status char between the brackets (`[ ]` → the
+  // space/`x`), so a click can flip just that one character.
+  constructor(
+    readonly checked: boolean,
+    readonly pos: number,
+  ) {
     super()
   }
   eq(o: CheckboxWidget) {
-    return o.checked === this.checked
+    return o.checked === this.checked && o.pos === this.pos
   }
-  toDOM() {
+  toDOM(view: EditorView) {
     const box = document.createElement('input')
     box.type = 'checkbox'
     box.className = 'cm-checkbox'
     box.checked = this.checked
-    box.disabled = true
+    // Toggle the source `[ ]`↔`[x]` on click (Ixora's interactive-checkbox
+    // pattern). The widget is atomic, so the click never lands a caret inside.
+    box.addEventListener('click', () => {
+      view.dispatch({
+        changes: { from: this.pos, to: this.pos + 1, insert: this.checked ? ' ' : 'x' },
+      })
+    })
     return box
+  }
+  ignoreEvent() {
+    return false
   }
 }
 

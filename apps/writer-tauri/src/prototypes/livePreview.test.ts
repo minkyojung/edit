@@ -10,7 +10,7 @@ import { ensureSyntaxTree } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import { buildDecorations } from './livePreview'
-import { ImageWidget, TableWidget, BulletWidget } from './widgets'
+import { ImageWidget, TableWidget, BulletWidget, CheckboxWidget } from './widgets'
 import { SAMPLE } from './sample'
 
 function stateFor(doc: string): EditorState {
@@ -63,11 +63,12 @@ describe('live preview decoration engine (headless)', () => {
     expect(hideCount(buildDecorations(caretInFirst, range, new Set()))).toBe(2) // only the 2nd bold hidden
   })
 
-  it('list marker renders a bullet only once COMPLETE and caret is off it', () => {
+  it('bullet reveal is gated ONLY by caret-on-marker (canonical isCursorInRange)', () => {
     const bulletWidget = (d: ReturnType<typeof buildDecorations>) =>
       d.decos.some((r) => r.value.spec.widget instanceof BulletWidget)
 
-    // Bare `-` (no space) → not a list marker yet → no bullet.
+    // Just-typed `-` with the caret right after it → caret sits on the marker
+    // token (inclusive overlap) → raw, no bullet. No completeness check needed.
     expect(bulletWidget(buildDecorations(stateAt('-', 1), [{ from: 0, to: 1 }], new Set()))).toBe(false)
 
     // `- item` with caret ON the marker → raw (no bullet).
@@ -75,10 +76,22 @@ describe('live preview decoration engine (headless)', () => {
       bulletWidget(buildDecorations(stateAt('- item', 1), [{ from: 0, to: 6 }], new Set())),
     ).toBe(false)
 
-    // `- item` with caret in the content → bullet renders.
+    // `- item` with caret in the content (off the marker) → bullet renders.
     expect(
       bulletWidget(buildDecorations(stateAt('- item', 4), [{ from: 0, to: 6 }], new Set())),
     ).toBe(true)
+  })
+
+  it('checkbox reveal region is the `- [ ]` prefix, not the whole task item', () => {
+    const doc = '- [ ] buy milk'
+    const range = [{ from: 0, to: doc.length }]
+    const checkbox = (d: ReturnType<typeof buildDecorations>) =>
+      d.decos.some((r) => r.value.spec.widget instanceof CheckboxWidget)
+
+    // Caret in the task TEXT (off the prefix) → checkbox stays rendered.
+    expect(checkbox(buildDecorations(stateAt(doc, 9), range, new Set()))).toBe(true)
+    // Caret ON the marker `[ ]` → raw, no checkbox.
+    expect(checkbox(buildDecorations(stateAt(doc, 3), range, new Set()))).toBe(false)
   })
 })
 
