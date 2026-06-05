@@ -33,7 +33,7 @@ import {
   gitHeadTimestamp,
   gitEnsureGitignoreEntries,
 } from '@/lib/git'
-import { remove } from '@tauri-apps/plugin-fs'
+import { exists, remove } from '@tauri-apps/plugin-fs'
 import { join } from '@tauri-apps/api/path'
 import { cleanupYdocV2 } from '@/lib/cleanupYdocV2'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
@@ -61,6 +61,35 @@ export function BootGate({ children }: Props) {
   // sequence fills an empty folder (the only point restore can run). The boot
   // effect below waits until a vault is in place.
   const [hasVault, setHasVault] = useState(() => !!getActiveVaultPath())
+  // Whether the stored vault path has been verified to still exist on disk.
+  // A path can be remembered across sessions but the folder later moved,
+  // deleted, parked on an unmounted drive, or not-yet-synced (iCloud). We
+  // must NOT boot into a missing folder: scanVault would throw and bootstrap
+  // has no catch, so the app hangs on the loader forever with no way out.
+  const [vaultChecked, setVaultChecked] = useState(false)
+
+  // Verify the stored vault still exists before booting into it. If it's
+  // gone, fall back to the launcher (re-pick / restore) instead of hanging.
+  useEffect(() => {
+    let cancelled = false
+    const verify = async () => {
+      const path = getActiveVaultPath()
+      if (path) {
+        try {
+          if (!(await exists(path)) && !cancelled) setHasVault(false)
+        } catch {
+          // Treat an unreadable path the same as missing — route to the
+          // launcher rather than letting the boot sequence stumble into it.
+          if (!cancelled) setHasVault(false)
+        }
+      }
+      if (!cancelled) setVaultChecked(true)
+    }
+    void verify()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Fire bootstrap once on mount. The store's bootstrap is idempotent
   // (it short-circuits when the catalog already has today's daily),
@@ -72,7 +101,9 @@ export function BootGate({ children }: Props) {
   // choice now — a local folder, or restore-from-GitHub (which MUST run before
   // anything fills the folder). This effect waits until a vault is in place.
   useEffect(() => {
-    if (!hasVault) return
+    // Wait until the vault path is both present AND verified to exist on
+    // disk — never start the boot sequence against a missing folder.
+    if (!hasVault || !vaultChecked) return
     const init = async () => {
       // Initialise git in the vault folder. Idempotent: the rust
       // side fast-paths when `.git/` already exists. We swallow
@@ -192,7 +223,7 @@ export function BootGate({ children }: Props) {
       })()
     }
     void init()
-  }, [hasVault, bootstrap])
+  }, [hasVault, vaultChecked, bootstrap])
 
   // Delay the visual loader by 400 ms so a fast bootstrap doesn't
   // produce a spinner flash.
@@ -202,16 +233,7 @@ export function BootGate({ children }: Props) {
     return () => window.clearTimeout(t)
   }, [bootstrapping])
 
-  // No vault yet → first-run launcher (pick a folder, or restore from GitHub).
-  // Sits ahead of git init / bootstrap so restore can clone into an empty
-  // folder before anything fills it.
-  if (!hasVault) {
-    return <VaultLauncher onReady={() => setHasVault(true)} />
-  }
-
-  if (!bootstrapping) return <>{children}</>
-
-  return (
+  const loadingView = (
     <div className="flex h-full w-full items-center justify-center bg-background">
       {showLoader && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -221,4 +243,19 @@ export function BootGate({ children }: Props) {
       )}
     </div>
   )
+
+  // Still verifying the stored vault exists — hold the loader rather than
+  // flashing the launcher or booting into a folder that may be missing.
+  if (!vaultChecked) return loadingView
+
+  // No vault yet (or the stored one is gone) → first-run launcher (pick a
+  // folder, or restore from GitHub). Sits ahead of git init / bootstrap so
+  // restore can clone into an empty folder before anything fills it.
+  if (!hasVault) {
+    return <VaultLauncher onReady={() => setHasVault(true)} />
+  }
+
+  if (!bootstrapping) return <>{children}</>
+
+  return loadingView
 }
