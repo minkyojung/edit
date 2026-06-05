@@ -26,6 +26,9 @@ export const cmPrototypeTheme = EditorView.theme({
   },
   '.cm-line': { padding: '0' },
   '.cm-cursor': { borderLeftColor: 'var(--foreground)' },
+  // Drop-position indicator during drag. CM's default is solid black →
+  // invisible on a dark palette; tint it so you can gauge where it'll land.
+  '.cm-dropCursor': { borderLeftColor: 'var(--info)', borderLeftWidth: '2px' },
   '.cm-selectionBackground, ::selection': {
     backgroundColor: 'color-mix(in oklch, var(--info) 22%, transparent)',
   },

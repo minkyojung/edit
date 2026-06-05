@@ -5,7 +5,7 @@
 
 import { useEffect, useRef } from 'react'
 import { EditorState } from '@codemirror/state'
-import { EditorView, keymap } from '@codemirror/view'
+import { EditorView, keymap, dropCursor } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { autocompletion } from '@codemirror/autocomplete'
 import { indentUnit } from '@codemirror/language'
@@ -55,6 +55,7 @@ export default function CodeMirrorPreview() {
         doc: SAMPLE,
         extensions: [
           history(),
+          dropCursor(), // caret indicator showing where a drag will drop
           formatKeymap, // Cmd+B/I/E/Shift+X format toggles, Cmd+K link
           indentUnit.of('  '), // 2-space list nesting
           // Editing behavior (#1): markdown markup commands take precedence
