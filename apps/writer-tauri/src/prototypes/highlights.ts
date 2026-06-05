@@ -8,6 +8,7 @@
 
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 import { StateEffect, StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
+import { isComposing, compositionEnded } from './imeComposition'
 
 export interface HighlightRecord {
   id: string
@@ -79,7 +80,10 @@ function build(state: EditorState): DecorationSet {
 export const highlightField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update(value, tr) {
-    if (tr.docChanged || tr.effects.some((e) => e.is(setHighlights))) return build(tr.state)
+    if (isComposing(tr.state)) return value
+    if (tr.docChanged || tr.effects.some((e) => e.is(setHighlights)) || compositionEnded(tr)) {
+      return build(tr.state)
+    }
     return value
   },
   provide: (f) => EditorView.decorations.from(f),

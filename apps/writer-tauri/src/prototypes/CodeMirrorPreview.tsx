@@ -22,6 +22,7 @@ import { linkClick } from './linkNav'
 import { formatKeymap } from './formatCommands'
 import { highlights, highlightClick } from './highlights'
 import { mediaDropPaste } from './mediaDrop'
+import { imeComposition } from './imeComposition'
 import { initialStatus, bumpRevision, markSaved, onDocChange, type DocStatus } from './saveStatus'
 import { SAMPLE } from './sample'
 import { useDocsStore } from '@/state/docsStore'
@@ -128,6 +129,7 @@ export default function CodeMirrorPreview() {
           doc: initial,
           extensions: [
             history(),
+            imeComposition, // track composition; decoration fields freeze while composing
             dropCursor(), // caret indicator showing where a drag will drop
             formatKeymap, // Cmd+B/I/E/Shift+X format toggles, Cmd+K link
             indentUnit.of('  '), // 2-space list nesting

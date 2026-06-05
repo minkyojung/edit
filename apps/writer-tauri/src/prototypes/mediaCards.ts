@@ -14,6 +14,7 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
 import { createMediaControls } from '@/editor/cards/MediaControls'
 import { activeLines } from './livePreview'
+import { isComposing, compositionEnded } from './imeComposition'
 
 type MediaKind = 'video' | 'audio'
 
@@ -107,7 +108,10 @@ function build(state: EditorState): DecorationSet {
 
 export const mediaField = StateField.define<DecorationSet>({
   create: (state) => build(state),
-  update: (value, tr) => (tr.docChanged || tr.selection ? build(tr.state) : value),
+  update: (value, tr) => {
+    if (isComposing(tr.state)) return value
+    return tr.docChanged || tr.selection || compositionEnded(tr) ? build(tr.state) : value
+  },
   provide: (f) => [
     EditorView.decorations.from(f),
     EditorView.atomicRanges.of((view) => view.state.field(f)),

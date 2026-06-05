@@ -18,6 +18,7 @@ import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
 import { BulletWidget, CheckboxWidget, ImageWidget, TableWidget } from './widgets'
 import { isKnownNote } from './wikilinkComplete'
+import { isComposing, compositionEnded } from './imeComposition'
 
 const HIDE = Decoration.replace({})
 
@@ -248,7 +249,12 @@ function compute(state: EditorState): LpState {
 // spike scale.
 const lpField = StateField.define<LpState>({
   create: (state) => compute(state),
-  update: (value, tr) => (tr.docChanged || tr.selection ? compute(tr.state) : value),
+  update: (value, tr) => {
+    // IME: freeze decorations while composing so the composing DOM stays put.
+    if (isComposing(tr.state)) return value
+    if (tr.docChanged || tr.selection || compositionEnded(tr)) return compute(tr.state)
+    return value
+  },
   provide: (f) => [
     EditorView.decorations.from(f, (v) => v.deco),
     EditorView.atomicRanges.of((view) => view.state.field(f).atomic),
