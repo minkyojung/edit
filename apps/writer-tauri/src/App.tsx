@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from 'react-error-boundary'
 import type { EditorView } from '@milkdown/kit/prose/view'
@@ -50,6 +50,9 @@ import { startVaultWatcher } from '@/lib/vaultWatcher'
 import { startPendingChangesApplier } from '@/state/pendingChangesApplier'
 import { startGitHubSync } from '@/lib/githubSync'
 
+// DEV-only CodeMirror WYSIWYG spike (lazy so it stays out of prod bundles).
+const CodeMirrorPreview = lazy(() => import('@/prototypes/CodeMirrorPreview'))
+
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
 // that might also start it.
@@ -98,9 +101,29 @@ export function App() {
       <FontProvider defaultFont="pretendard" storageKey="writer-font">
         <TooltipProvider delayDuration={200}>
           <HashRouter>
-            <BootGate>
-              <AppContent />
-            </BootGate>
+            <Routes>
+              {import.meta.env.DEV && (
+                // DEV-only WYSIWYG spike. Mounted ABOVE BootGate so it
+                // bypasses vault bootstrap + AppShell chrome and renders
+                // the CodeMirror editor full-screen in isolation.
+                <Route
+                  path="/dev/cm-prototype"
+                  element={
+                    <Suspense fallback={null}>
+                      <CodeMirrorPreview />
+                    </Suspense>
+                  }
+                />
+              )}
+              <Route
+                path="*"
+                element={
+                  <BootGate>
+                    <AppContent />
+                  </BootGate>
+                }
+              />
+            </Routes>
             <AppToaster />
           </HashRouter>
         </TooltipProvider>

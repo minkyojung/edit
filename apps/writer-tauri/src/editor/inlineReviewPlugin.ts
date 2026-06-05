@@ -671,9 +671,8 @@ interface StoreUpdateMeta {
   pending: PendingChange[]
 }
 
-export function createInlineReviewPlugin(slug: string) {
-  return $prose(
-    () =>
+export function inlineReviewPluginSpec(slug: string): Plugin<PluginState> {
+  return (
       new Plugin<PluginState>({
         key: inlineReviewKey,
         state: {
@@ -866,8 +865,12 @@ export function createInlineReviewPlugin(slug: string) {
             },
           }
         },
-      }),
+      })
   )
+}
+
+export function createInlineReviewPlugin(slug: string) {
+  return $prose(() => inlineReviewPluginSpec(slug))
 }
 
 function collectPendingForSlug(slug: string): PendingChange[] {
