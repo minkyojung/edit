@@ -167,6 +167,14 @@ interface PendingChangesState {
    * but the apply path skips the disk write. */
   reject: (id: string) => void
 
+  /** An accepted change whose apply FAILED — the note changed between
+   * proposal and Keep, so the literal `before` text no longer matches.
+   * Revert it to `pending` so its widget reappears and the user can fix
+   * the note and Keep again, instead of the suggestion vanishing on a
+   * failed apply. Called by the applier on the `!ok` branch. No-op
+   * unless the change is currently `accepted`. */
+  reopen: (id: string) => void
+
   /** Reject every still-pending change in a group. Used by the
    * page-level "AI made this page — reject everything" affordance
    * (Phase C banner) and by the Review Panel's bulk action. */
@@ -269,6 +277,19 @@ export const usePendingChangesStore = create<PendingChangesState>()(
             byId: {
               ...s.byId,
               [id]: { ...existing, status: 'rejected', decidedAt: Date.now() },
+            },
+          }
+        })
+      },
+
+      reopen: (id) => {
+        set((s) => {
+          const existing = s.byId[id]
+          if (!existing || existing.status !== 'accepted') return s
+          return {
+            byId: {
+              ...s.byId,
+              [id]: { ...existing, status: 'pending', decidedAt: null },
             },
           }
         })

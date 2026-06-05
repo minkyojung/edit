@@ -310,10 +310,15 @@ export function startPendingChangesApplier(): void {
             // The edit couldn't be placed — almost always because the note
             // changed between proposal and Keep, so the literal `before`
             // text no longer matches (see applyReplaceInWikiPage). Tell the
-            // user instead of letting the widget vanish silently: the store
-            // already flipped status → accepted, so without this the
-            // suggestion just disappears with no trace.
+            // user instead of letting the widget vanish silently.
             notify.markCantApply()
+            // Keep the suggestion alive: revert accepted → pending so its
+            // widget reappears and the user can fix the note and Keep
+            // again. Also drop it from handledIds — otherwise the re-accept
+            // would be skipped by the dedupe guard above and the retry
+            // would silently no-op.
+            handledIds.delete(c.id)
+            usePendingChangesStore.getState().reopen(c.id)
           }
           // Commit at accept time for BOTH sources — Keep is when the
           // disk actually changes. The coordinator debounces a burst of
