@@ -67,6 +67,24 @@ async function mergeSidecar(
   }
 }
 
+/** True when the file at `relPath` exists and its contents exactly
+ * equal `content`. Used by the flush to skip no-op writes (a doc that
+ * was opened — and thus marked dirty — but whose serialized output
+ * matches disk). Returns false on a missing file or any read error so
+ * the caller writes; this guard only ever *suppresses* a redundant
+ * write, never a needed one. */
+async function fileContentEquals(
+  relPath: string,
+  content: string,
+): Promise<boolean> {
+  try {
+    if (!(await vaultFileExists(relPath))) return false
+    return (await readVaultFile(relPath)) === content
+  } catch {
+    return false
+  }
+}
+
 /** Result shape of {@link serializeDocToFiles} — the artefacts a
  * flush tick writes to disk for one doc:
  *   - `md`   — clean markdown body, written to `<stem>.md`
@@ -447,13 +465,26 @@ async function flushDirtyOnce(): Promise<void> {
           await renameVaultFile(oldMeta, metaPath)
         }
       }
-      await writeVaultFile(mdPath, result.md)
+      // Skip the write when the serialized output is byte-identical to
+      // what's already on disk. Opening a doc marks it dirty
+      // (installDocSync) even when the user never edits it; without this
+      // guard the flush rewrites untouched docs, which surfaces them as
+      // phantom changes in the review panel / git. Reading the file back
+      // is cheap — flush only runs for the small dirty set, and a slug
+      // clears its dirty bit after one flush. Defensive on read errors:
+      // fall through to writing so a transient read never strands an edit.
+      if (!(await fileContentEquals(mdPath, result.md))) {
+        await writeVaultFile(mdPath, result.md)
+      }
       // Sidecar carries identity (version + slug) plus opt-in context
       // metadata other code paths populate (aiSummary, aiImportance,
       // and any future fields). Read-modify-write so a flush doesn't
       // clobber fields this layer doesn't know about.
       const mergedMeta = await mergeSidecar(metaPath, result.meta)
-      await writeVaultFile(metaPath, JSON.stringify(mergedMeta, null, 2))
+      const metaJson = JSON.stringify(mergedMeta, null, 2)
+      if (!(await fileContentEquals(metaPath, metaJson))) {
+        await writeVaultFile(metaPath, metaJson)
+      }
       lastWrittenPath.set(slug, mdPath)
       clearDirty(slug)
       if (known.type.startsWith('wiki:')) wikiTouched = true

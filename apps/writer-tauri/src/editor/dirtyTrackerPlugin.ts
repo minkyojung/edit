@@ -37,6 +37,7 @@ import { $prose } from '@milkdown/kit/utils'
 import { Plugin } from '@milkdown/kit/prose/state'
 import { markSlugDirty } from '@/lib/docFileSync'
 import { stripPendingFromDoc } from '@/lib/stripPendingFromDoc'
+import { stripTrailingEmptyParagraphs } from '@/lib/stripTrailingEmptyParagraphs'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { useDocsStore } from '@/state/docsStore'
 
@@ -74,7 +75,14 @@ export function createDirtyTrackerPlugin(slug: string) {
               // until Keep. This is the single serialization choke point
               // (see stripPendingFromDoc). No-op when no pending marks
               // exist — returns the same doc reference.
-              const md = serializer(stripPendingFromDoc(view.state.doc))
+              //
+              // Also trim the editor's auto-kept trailing empty paragraph
+              // so the round-trip is idempotent: without this, "text"
+              // serializes back as "text\n " noise, which (via the flush)
+              // turns a viewed-but-unedited doc into a phantom change.
+              const md = serializer(
+                stripTrailingEmptyParagraphs(stripPendingFromDoc(view.state.doc)),
+              )
               const handle = useDocsStore.getState().handles[slug]
               if (handle) handle.bodyMarkdown = md
             } catch (err) {
