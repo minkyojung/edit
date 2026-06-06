@@ -19,6 +19,7 @@ import { StateField, type EditorState, type Extension, type Range } from '@codem
 import { CheckboxWidget, ImageWidget, OrderedMarkerWidget, TableWidget } from './widgets'
 import { isKnownNote } from './wikilinkComplete'
 import { isComposing, compositionEnded } from './imeComposition'
+import { isCursorInRange, caretInRange, activeLines, spansActiveLine } from './reveal'
 
 const HIDE = Decoration.replace({})
 
@@ -69,52 +70,6 @@ interface Built {
   atomic: Range<Decoration>[]
 }
 
-/** Line numbers touched by any selection range — markers on these lines
- * stay raw (the reveal rule). */
-export function activeLines(state: EditorState): Set<number> {
-  const set = new Set<number>()
-  for (const r of state.selection.ranges) {
-    const a = state.doc.lineAt(r.from).number
-    const b = state.doc.lineAt(r.to).number
-    for (let n = a; n <= b; n++) set.add(n)
-  }
-  return set
-}
-
-function spansActiveLine(state: EditorState, from: number, to: number, active: Set<number>): boolean {
-  const a = state.doc.lineAt(from).number
-  const b = state.doc.lineAt(Math.min(to, state.doc.length)).number
-  for (let n = a; n <= b; n++) if (active.has(n)) return true
-  return false
-}
-
-// ── The reveal predicate (uniform, Obsidian/Ixora-style) ────────────────
-// A construct shows its rendered form ⟺ it is COMPLETE and the caret is NOT
-// editing it. "editing" = the selection touches the construct's edit region
-// (INCLUSIVE — touching an edge counts), so a just-typed marker (caret at its
-// end) stays raw, and the construct renders once the caret moves off it.
-//   - wrapping marks (bold/italic/code/link): edit region = the whole construct
-//   - prefix markers (list/heading/quote):    edit region = the marker token
-// (Blocks heading/quote/hr/table additionally use line-level reveal below.)
-
-/** Selection touches [from, to] (inclusive). */
-function editing(state: EditorState, from: number, to: number): boolean {
-  for (const r of state.selection.ranges) {
-    if (r.from <= to && from <= r.to) return true
-  }
-  return false
-}
-
-/** A COLLAPSED caret sits within [from, to] (inclusive). Unlike `editing`, a
- * non-empty selection that merely SPANS the range does NOT count — so Select-All
- * or a drag keeps structural list markers rendered (and `user-select:none` keeps
- * them out of the highlight), matching Obsidian. */
-function caretIn(state: EditorState, from: number, to: number): boolean {
-  for (const r of state.selection.ranges) {
-    if (r.empty && r.from >= from && r.from <= to) return true
-  }
-  return false
-}
 
 /** Build decorations over `ranges`. Exported (and view-free) so it can be
  * unit-tested headlessly with just an EditorState. */
@@ -165,8 +120,8 @@ export function buildDecorations(
         const revealed = spansActiveLine(state, nf, nt, active)
         const parent = node.node.parent
         const inlineRevealed = parent
-          ? editing(state, parent.from, parent.to)
-          : editing(state, nf, nt)
+          ? isCursorInRange(state, parent.from, parent.to)
+          : isCursorInRange(state, nf, nt)
 
         // Headings (block-level reveal)
         if (/^ATXHeading[1-6]$/.test(name)) {
@@ -208,7 +163,7 @@ export function buildDecorations(
         // Image — replace whole node with an <img>; don't descend. Reveal raw
         // only when the caret is inside the image markdown itself.
         if (name === 'Image') {
-          if (!editing(state, nf, nt)) {
+          if (!isCursorInRange(state, nf, nt)) {
             const m = /!\[([^\]]*)\]\(([^)\s]+)/.exec(sliceOf(nf, nt))
             if (m) widget(nf, nt, Decoration.replace({ widget: new ImageWidget(m[2], m[1]) }))
           }
@@ -241,7 +196,7 @@ export function buildDecorations(
             // gutter (right-aligned by CSS so `1.`/`10.` line up), content in the
             // reserved column. Caret on the marker → raw; a span selection keeps
             // it (same rule as bullets/tasks).
-            if (caretIn(state, nf, nt)) return
+            if (caretInRange(state, nf, nt)) return
             const ln = state.doc.lineAt(nf)
             hide(ln.from, nf) // leading indent only; the widget replaces the `1. `
             // Slot sized to the number's digit count so it left-aligns with a
@@ -261,7 +216,7 @@ export function buildDecorations(
             // TaskMarker handler drops the checkbox into the gutter.
             const marker = task.getChild('TaskMarker')
             const prefixEnd = marker?.to ?? task.to
-            if (caretIn(state, nf, prefixEnd)) return
+            if (caretInRange(state, nf, prefixEnd)) return
             const ln = state.doc.lineAt(nf)
             hide(ln.from, nf)
             decos.push(listLine(listLevel(item), 'cm-list-task', TASK_SLOT).range(ln.from))
@@ -277,7 +232,7 @@ export function buildDecorations(
           // caret moves off). A non-empty SELECTION (drag / Select-All) does NOT
           // reveal — the hidden `- ` and the pseudo-element stay out of the
           // highlight, so only the text is selected (Obsidian).
-          if (caretIn(state, nf, nt)) return
+          if (caretInRange(state, nf, nt)) return
           const ln = state.doc.lineAt(nf)
           hide(ln.from, nf) // leading indent (no-op at top level); CSS reproduces it
           const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
@@ -297,7 +252,7 @@ export function buildDecorations(
           // bullet rule). Editing the task text keeps the checkbox.
           const dash = task?.parent?.getChild('ListMark')
           const from = dash?.from ?? nf
-          if (caretIn(state, from, nt)) return // caret on the prefix → raw
+          if (caretInRange(state, from, nt)) return // caret on the prefix → raw
           const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
           // `nf + 1` = the status char between the brackets, the click target.
           widget(nf, nt + trailing, Decoration.replace({ widget: new CheckboxWidget(checked, nf + 1) }))
@@ -346,7 +301,7 @@ export function buildDecorations(
       const end = innerTo + 2
       mark(innerFrom, innerTo, isKnownNote(m[1]) ? 'cm-wikilink' : 'cm-wikilink-broken')
       // Per-construct reveal: only show `[[ ]]` when the caret is inside it.
-      if (!editing(state, start, end)) {
+      if (!isCursorInRange(state, start, end)) {
         hide(start, innerFrom)
         hide(innerTo, end)
       }

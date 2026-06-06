@@ -13,7 +13,7 @@ import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
 import { createMediaControls } from '@/editor/cards/MediaControls'
-import { activeLines } from './livePreview'
+import { activeLines } from './reveal'
 import { isComposing, compositionEnded } from './imeComposition'
 
 type MediaKind = 'video' | 'audio'
