@@ -141,6 +141,14 @@ export const cmPrototypeTheme = EditorView.theme({
     insetInlineStart: 'var(--cm-list-marker-left)',
     userSelect: 'none',
   },
+  // Ordered-list number: left-aligned at the gutter origin (so `1.`/`10.` start
+  // at the same x; each number's own content shifts right by its width — the
+  // line's slot is sized per digit count). Non-interactive → clicks fall through.
+  '.cm-list-num': {
+    whiteSpace: 'nowrap',
+    color: 'var(--muted-foreground)',
+    pointerEvents: 'none',
+  },
 
   // Image widget
   '.cm-img': {

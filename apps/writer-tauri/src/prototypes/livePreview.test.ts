@@ -10,7 +10,7 @@ import { ensureSyntaxTree } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import { buildDecorations } from './livePreview'
-import { ImageWidget, TableWidget, CheckboxWidget } from './widgets'
+import { ImageWidget, TableWidget, CheckboxWidget, OrderedMarkerWidget } from './widgets'
 import { SAMPLE } from './sample'
 
 function stateFor(doc: string): EditorState {
@@ -108,6 +108,24 @@ describe('live preview decoration engine (headless)', () => {
     expect(hasListLine(buildDecorations(stateAt(doc, 3), range, new Set()))).toBe(false)
   })
 
+  it('ordered items render the number as an out-of-flow gutter widget', () => {
+    const doc = '1. first'
+    const range = [{ from: 0, to: doc.length }]
+    const numWidget = (d: ReturnType<typeof buildDecorations>) =>
+      d.decos.find((r) => r.value.spec.widget instanceof OrderedMarkerWidget)?.value.spec.widget as
+        | OrderedMarkerWidget
+        | undefined
+
+    // Caret in the content → number widget with the source label + structural line.
+    const built = buildDecorations(stateAt(doc, 5), range, new Set())
+    expect(numWidget(built)?.label).toBe('1.')
+    expect(built.decos.some((r) => (r.value.spec.class as string | undefined)?.includes('cm-list-line'))).toBe(
+      true,
+    )
+    // Caret ON the marker → raw, no number widget.
+    expect(numWidget(buildDecorations(stateAt(doc, 1), range, new Set()))).toBeUndefined()
+  })
+
   it('completed tasks get a strikethrough mark over the task text; open tasks do not', () => {
     const strike = (d: ReturnType<typeof buildDecorations>) =>
       d.decos.some((r) => r.value.spec.class === 'cm-task-checked')
@@ -125,15 +143,14 @@ describe('live preview decoration engine (headless)', () => {
         .filter((r) => (r.value.spec.class as string | undefined)?.includes('cm-list-line'))
         .map((r) => r.value.spec.attributes?.style as string)
 
-    // Top-level bullet, caret off the marker → level-0 fixed gutter.
-    expect(listLineStyles(buildDecorations(stateAt('- item', 4), [{ from: 0, to: 6 }], new Set()))).toContain(
-      '--cm-list-pad:1.6em;--cm-list-marker-left:0em',
-    )
-    // Nested bullet (`  - b` under `- a`) → level 1: pad += one STEP.
+    // Top-level bullet, caret off the marker → level-0 gutter (marker at 0em,
+    // content column = 0 + bullet slot).
+    const top = listLineStyles(buildDecorations(stateAt('- item', 4), [{ from: 0, to: 6 }], new Set()))
+    expect(top.some((s) => s.includes('--cm-list-marker-left:0em') && s.includes('0.9em'))).toBe(true)
+    // Nested bullet (`  - b` under `- a`) → level 1: marker offset by one STEP.
     const nested = '- a\n  - b'
-    expect(
-      listLineStyles(buildDecorations(stateAt(nested, 8), [{ from: 0, to: nested.length }], new Set())),
-    ).toContain('--cm-list-pad:3.2em;--cm-list-marker-left:1.6em')
+    const deep = listLineStyles(buildDecorations(stateAt(nested, 8), [{ from: 0, to: nested.length }], new Set()))
+    expect(deep.some((s) => s.includes('--cm-list-marker-left:1.6em'))).toBe(true)
     // Caret ON the marker → raw source, NO structural line decoration.
     expect(listLineStyles(buildDecorations(stateAt('- item', 1), [{ from: 0, to: 6 }], new Set()))).toHaveLength(
       0,

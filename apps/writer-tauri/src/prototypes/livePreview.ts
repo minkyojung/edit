@@ -16,7 +16,7 @@
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
-import { CheckboxWidget, ImageWidget, TableWidget } from './widgets'
+import { CheckboxWidget, ImageWidget, OrderedMarkerWidget, TableWidget } from './widgets'
 import { isKnownNote } from './wikilinkComplete'
 import { isComposing, compositionEnded } from './imeComposition'
 
@@ -24,26 +24,29 @@ const HIDE = Decoration.replace({})
 
 // List-item line decoration (Obsidian-style structural hanging indent).
 // The marker lives OUT of the text flow (absolutely positioned in a reserved
-// gutter — see widgets + cmTheme), so the line reserves a FIXED content column
-// via `padding-inline-start`. Because the padding applies to EVERY visual row,
-// wrapped rows align exactly under the first row's content — with no `ch`
-// measurement and no `text-indent` (avoids the rectangular-selection bug,
-// discuss.codemirror#2881). Indent is glyph-independent fixed em, so it can't
-// drift per font. `SLOT` = marker gutter width; `STEP` = per-nesting-level step.
-// Two CSS vars are exposed: `--cm-list-pad` (content column) and
+// gutter — see widgets + cmTheme), so the line reserves a content column via
+// `padding-inline-start`. The padding applies to EVERY visual row, so wrapped
+// rows align exactly under the first row's content — with no `ch` measurement
+// of the marker glyph and no `text-indent` (avoids the rectangular-selection
+// bug, discuss.codemirror#2881). The `slot` (marker gutter width) is sized PER
+// MARKER TYPE so the marker→text gap is a tight ~0.5em for each, instead of one
+// wide slot: bullet/checkbox use fixed em; ordered numbers size by digit count
+// (left-aligned, so `1.`/`10.` start at the same x and content shifts). `STEP`
+// is the per-nesting-level step. Exposes `--cm-list-pad` (content column) and
 // `--cm-list-marker-left` (gutter offset the absolute marker reads).
-const LIST_SLOT = 1.6 // em — holds •, a checkbox, or "1."/"99."
 const LIST_STEP = 1.6 // em — per nesting level
+const BULLET_SLOT = '0.9em' // • (~0.4em) + ~0.5em gap
+const TASK_SLOT = '1.5em' // checkbox (~1em) + ~0.5em gap
 const listLineCache = new Map<string, Decoration>()
-function listLine(level: number, markerClass = ''): Decoration {
-  const key = `${level}:${markerClass}`
+function listLine(level: number, markerClass: string, slot: string): Decoration {
+  const key = `${level}:${markerClass}:${slot}`
   let d = listLineCache.get(key)
   if (!d) {
     const left = level * LIST_STEP
     d = Decoration.line({
       class: ('cm-list-line ' + markerClass).trim(),
       attributes: {
-        style: `--cm-list-pad:${left + LIST_SLOT}em;--cm-list-marker-left:${left}em`,
+        style: `--cm-list-pad:calc(${left}em + ${slot});--cm-list-marker-left:${left}em`,
       },
     })
     listLineCache.set(key, d)
@@ -234,7 +237,18 @@ export function buildDecorations(
           const item = node.node.parent
           const list = item?.parent
           if (list?.name === 'OrderedList') {
-            mark(nf, nt, 'cm-list-num')
+            // Ordered — structural: the number is rendered out-of-flow in the
+            // gutter (right-aligned by CSS so `1.`/`10.` line up), content in the
+            // reserved column. Caret on the marker → raw; a span selection keeps
+            // it (same rule as bullets/tasks).
+            if (caretIn(state, nf, nt)) return
+            const ln = state.doc.lineAt(nf)
+            hide(ln.from, nf) // leading indent only; the widget replaces the `1. `
+            // Slot sized to the number's digit count so it left-aligns with a
+            // tight ~0.5ch gap; wider numbers shift their own content right.
+            decos.push(listLine(listLevel(item), 'cm-list-ordered', `${nt - nf + 0.5}ch`).range(ln.from))
+            const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
+            widget(nf, nt + trailing, Decoration.replace({ widget: new OrderedMarkerWidget(sliceOf(nf, nt)) }))
             return
           }
           const task = item?.getChild('Task')
@@ -250,7 +264,7 @@ export function buildDecorations(
             if (caretIn(state, nf, prefixEnd)) return
             const ln = state.doc.lineAt(nf)
             hide(ln.from, nf)
-            decos.push(listLine(listLevel(item), 'cm-list-task').range(ln.from))
+            decos.push(listLine(listLevel(item), 'cm-list-task', TASK_SLOT).range(ln.from))
             hide(nf, sliceOf(nt, nt + 1) === ' ' ? nt + 1 : nt)
             return
           }
@@ -268,7 +282,7 @@ export function buildDecorations(
           hide(ln.from, nf) // leading indent (no-op at top level); CSS reproduces it
           const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
           hide(nf, nt + trailing) // the `- ` itself; bullet glyph comes from CSS
-          decos.push(listLine(listLevel(item), 'cm-list-bullet').range(ln.from))
+          decos.push(listLine(listLevel(item), 'cm-list-bullet', BULLET_SLOT).range(ln.from))
           return
         }
         if (name === 'TaskMarker') {
