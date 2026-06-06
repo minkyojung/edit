@@ -10,7 +10,7 @@ import { ensureSyntaxTree } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import { buildDecorations } from './livePreview'
-import { ImageWidget, TableWidget, BulletWidget, CheckboxWidget } from './widgets'
+import { ImageWidget, TableWidget, CheckboxWidget } from './widgets'
 import { SAMPLE } from './sample'
 
 function stateFor(doc: string): EditorState {
@@ -63,23 +63,21 @@ describe('live preview decoration engine (headless)', () => {
     expect(hideCount(buildDecorations(caretInFirst, range, new Set()))).toBe(2) // only the 2nd bold hidden
   })
 
-  it('bullet reveal is gated ONLY by caret-on-marker (canonical isCursorInRange)', () => {
-    const bulletWidget = (d: ReturnType<typeof buildDecorations>) =>
-      d.decos.some((r) => r.value.spec.widget instanceof BulletWidget)
+  it('bullet reveal: collapsed caret reveals, but a span selection does not', () => {
+    // The bullet is drawn by `.cm-list-bullet::before`, so "rendered" == the
+    // line carries the cm-list-bullet decoration (and the `- ` is hidden).
+    const hasBullet = (d: ReturnType<typeof buildDecorations>) =>
+      d.decos.some((r) => (r.value.spec.class as string | undefined)?.includes('cm-list-bullet'))
 
-    // Just-typed `-` with the caret right after it → caret sits on the marker
-    // token (inclusive overlap) → raw, no bullet. No completeness check needed.
-    expect(bulletWidget(buildDecorations(stateAt('-', 1), [{ from: 0, to: 1 }], new Set()))).toBe(false)
-
-    // `- item` with caret ON the marker → raw (no bullet).
-    expect(
-      bulletWidget(buildDecorations(stateAt('- item', 1), [{ from: 0, to: 6 }], new Set())),
-    ).toBe(false)
-
-    // `- item` with caret in the content (off the marker) → bullet renders.
-    expect(
-      bulletWidget(buildDecorations(stateAt('- item', 4), [{ from: 0, to: 6 }], new Set())),
-    ).toBe(true)
+    // Just-typed `-`, caret on the marker → raw (no structural bullet).
+    expect(hasBullet(buildDecorations(stateAt('-', 1), [{ from: 0, to: 1 }], new Set()))).toBe(false)
+    // `- item`, caret ON the marker → raw.
+    expect(hasBullet(buildDecorations(stateAt('- item', 1), [{ from: 0, to: 6 }], new Set()))).toBe(false)
+    // `- item`, caret in the content (off the marker) → bullet rendered.
+    expect(hasBullet(buildDecorations(stateAt('- item', 4), [{ from: 0, to: 6 }], new Set()))).toBe(true)
+    // A non-empty SELECTION spanning the marker does NOT reveal (Obsidian):
+    // Select-All keeps the bullet rendered so only the text highlights.
+    expect(hasBullet(buildDecorations(stateSel('- item', 0, 6), [{ from: 0, to: 6 }], new Set()))).toBe(true)
   })
 
   it('checkbox reveal region is the `- [ ]` prefix, not the whole task item', () => {
@@ -93,12 +91,46 @@ describe('live preview decoration engine (headless)', () => {
     // Caret ON the marker `[ ]` → raw, no checkbox.
     expect(checkbox(buildDecorations(stateAt(doc, 3), range, new Set()))).toBe(false)
   })
+
+  it('bullet lines get a structural hanging-indent decoration (fixed em gutter)', () => {
+    // Collect the styles of every cm-list-line line decoration.
+    const listLineStyles = (d: ReturnType<typeof buildDecorations>) =>
+      d.decos
+        .filter((r) => (r.value.spec.class as string | undefined)?.includes('cm-list-line'))
+        .map((r) => r.value.spec.attributes?.style as string)
+
+    // Top-level bullet, caret off the marker → level-0 fixed gutter.
+    expect(listLineStyles(buildDecorations(stateAt('- item', 4), [{ from: 0, to: 6 }], new Set()))).toContain(
+      '--cm-list-pad:1.6em;--cm-list-marker-left:0em',
+    )
+    // Nested bullet (`  - b` under `- a`) → level 1: pad += one STEP.
+    const nested = '- a\n  - b'
+    expect(
+      listLineStyles(buildDecorations(stateAt(nested, 8), [{ from: 0, to: nested.length }], new Set())),
+    ).toContain('--cm-list-pad:3.2em;--cm-list-marker-left:1.6em')
+    // Caret ON the marker → raw source, NO structural line decoration.
+    expect(listLineStyles(buildDecorations(stateAt('- item', 1), [{ from: 0, to: 6 }], new Set()))).toHaveLength(
+      0,
+    )
+  })
 })
 
 function stateAt(doc: string, pos: number): EditorState {
   const state = EditorState.create({
     doc,
     selection: { anchor: pos },
+    extensions: [markdown({ extensions: [GFM] })],
+  })
+  ensureSyntaxTree(state, doc.length, 5000)
+  return state
+}
+
+// A non-empty selection (anchor ≠ head) — for testing that span selections
+// don't trigger the caret-only reveal.
+function stateSel(doc: string, anchor: number, head: number): EditorState {
+  const state = EditorState.create({
+    doc,
+    selection: { anchor, head },
     extensions: [markdown({ extensions: [GFM] })],
   })
   ensureSyntaxTree(state, doc.length, 5000)

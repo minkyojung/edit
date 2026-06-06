@@ -117,8 +117,23 @@ export const cmPrototypeTheme = EditorView.theme({
     background: 'var(--muted)',
   },
 
-  // Bullet widget
-  '.cm-bullet': { color: 'var(--muted-foreground)' },
+  // List items — structural hanging indent (Obsidian-style). The line reserves
+  // a fixed content column via padding; wrapped rows inherit it and so align
+  // under the first row's content. `--cm-list-pad`/`--cm-list-marker-left` are
+  // set per-line by the livePreview `listLine(level, marker)` decoration.
+  '.cm-list-line': {
+    position: 'relative',
+    paddingInlineStart: 'var(--cm-list-pad)',
+  },
+  // Bullet drawn as a pseudo-element in the gutter — NOT a DOM widget, so it
+  // never becomes a line tile (keeps the empty-item caret normal height) and is
+  // inherently non-selectable + out of flow. The source `- ` is hidden.
+  '.cm-list-bullet::before': {
+    content: '"•"',
+    position: 'absolute',
+    insetInlineStart: 'var(--cm-list-marker-left)',
+    color: 'var(--muted-foreground)',
+  },
 
   // Image widget
   '.cm-img': {

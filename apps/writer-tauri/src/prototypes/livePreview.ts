@@ -16,11 +16,50 @@
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
-import { BulletWidget, CheckboxWidget, ImageWidget, TableWidget } from './widgets'
+import { CheckboxWidget, ImageWidget, TableWidget } from './widgets'
 import { isKnownNote } from './wikilinkComplete'
 import { isComposing, compositionEnded } from './imeComposition'
 
 const HIDE = Decoration.replace({})
+
+// List-item line decoration (Obsidian-style structural hanging indent).
+// The marker lives OUT of the text flow (absolutely positioned in a reserved
+// gutter — see widgets + cmTheme), so the line reserves a FIXED content column
+// via `padding-inline-start`. Because the padding applies to EVERY visual row,
+// wrapped rows align exactly under the first row's content — with no `ch`
+// measurement and no `text-indent` (avoids the rectangular-selection bug,
+// discuss.codemirror#2881). Indent is glyph-independent fixed em, so it can't
+// drift per font. `SLOT` = marker gutter width; `STEP` = per-nesting-level step.
+// Two CSS vars are exposed: `--cm-list-pad` (content column) and
+// `--cm-list-marker-left` (gutter offset the absolute marker reads).
+const LIST_SLOT = 1.6 // em — holds •, a checkbox, or "1."/"99."
+const LIST_STEP = 1.6 // em — per nesting level
+const listLineCache = new Map<string, Decoration>()
+function listLine(level: number, markerClass = ''): Decoration {
+  const key = `${level}:${markerClass}`
+  let d = listLineCache.get(key)
+  if (!d) {
+    const left = level * LIST_STEP
+    d = Decoration.line({
+      class: ('cm-list-line ' + markerClass).trim(),
+      attributes: {
+        style: `--cm-list-pad:${left + LIST_SLOT}em;--cm-list-marker-left:${left}em`,
+      },
+    })
+    listLineCache.set(key, d)
+  }
+  return d
+}
+
+/** Nesting depth of a list ITEM node (0 = top level), counted from the
+ * Bullet/Ordered list ancestors in the syntax tree. */
+function listLevel(item: import('@lezer/common').SyntaxNode | null): number {
+  let level = -1
+  for (let p = item?.parent ?? null; p; p = p.parent) {
+    if (p.name === 'BulletList' || p.name === 'OrderedList') level++
+  }
+  return Math.max(0, level)
+}
 
 interface Built {
   decos: Range<Decoration>[]
@@ -59,6 +98,17 @@ function spansActiveLine(state: EditorState, from: number, to: number, active: S
 function editing(state: EditorState, from: number, to: number): boolean {
   for (const r of state.selection.ranges) {
     if (r.from <= to && from <= r.to) return true
+  }
+  return false
+}
+
+/** A COLLAPSED caret sits within [from, to] (inclusive). Unlike `editing`, a
+ * non-empty selection that merely SPANS the range does NOT count — so Select-All
+ * or a drag keeps structural list markers rendered (and `user-select:none` keeps
+ * them out of the highlight), matching Obsidian. */
+function caretIn(state: EditorState, from: number, to: number): boolean {
+  for (const r of state.selection.ranges) {
+    if (r.empty && r.from >= from && r.from <= to) return true
   }
   return false
 }
@@ -175,10 +225,11 @@ export function buildDecorations(
           return
         }
 
-        // Lists. A marker only turns into a glyph once it's COMPLETE and the
-        // caret isn't on the marker itself — so typing `-` (before the space)
-        // or editing the marker shows raw, but editing the item's CONTENT
-        // keeps the bullet (matches Obsidian). Ordered numbers stay as text.
+        // Lists. The marker is rendered structurally — out of the text flow,
+        // in a fixed gutter — so wrapped rows align under the content and the
+        // marker can't be drag-selected (Obsidian behavior). Caret ON the
+        // marker → raw source (the reveal rule). Ordered/task branches keep
+        // their prior rendering for now (Stages 3/2 restructure them).
         if (name === 'ListMark') {
           const item = node.node.parent
           const list = item?.parent
@@ -199,15 +250,21 @@ export function buildDecorations(
             }
             return
           }
-          // Bullet. Reveal region is the dash token itself (the canonical
-          // Ixora `isCursorInRange(ListMark)` rule): caret ON the marker shows
-          // raw, caret anywhere else renders the bullet. The inclusive `editing`
-          // already keeps a just-typed `-` raw (caret sits at the marker's end),
-          // and Lezer only emits a ListMark for `-`<EOL> or `- ` — so no
-          // separate completeness check is needed.
-          if (editing(state, nf, nt)) return // caret on the marker → raw
+          // Bullet — structural, drawn by `.cm-list-bullet::before` (Obsidian's
+          // approach). We HIDE the `- ` rather than swap a widget: a pseudo-
+          // element isn't a DOM tile, so an EMPTY item's line stays a normal
+          // (text-less) line and the caret keeps its normal height — a widget
+          // would leave the line with no in-flow text and inflate the caret.
+          // A COLLAPSED caret ON the marker → raw (typing `-` shows raw until the
+          // caret moves off). A non-empty SELECTION (drag / Select-All) does NOT
+          // reveal — the hidden `- ` and the pseudo-element stay out of the
+          // highlight, so only the text is selected (Obsidian).
+          if (caretIn(state, nf, nt)) return
+          const ln = state.doc.lineAt(nf)
+          hide(ln.from, nf) // leading indent (no-op at top level); CSS reproduces it
           const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
-          widget(nf, nt + trailing, Decoration.replace({ widget: new BulletWidget() }))
+          hide(nf, nt + trailing) // the `- ` itself; bullet glyph comes from CSS
+          decos.push(listLine(listLevel(item), 'cm-list-bullet').range(ln.from))
           return
         }
         if (name === 'TaskMarker') {

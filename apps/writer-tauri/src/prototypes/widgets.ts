@@ -58,18 +58,6 @@ export class CheckboxWidget extends WidgetType {
   }
 }
 
-export class BulletWidget extends WidgetType {
-  eq() {
-    return true
-  }
-  toDOM() {
-    const s = document.createElement('span')
-    s.className = 'cm-bullet'
-    s.textContent = '• '
-    return s
-  }
-}
-
 export class TableWidget extends WidgetType {
   constructor(readonly source: string) {
     super()
