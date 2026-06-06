@@ -151,14 +151,37 @@ export const cmPrototypeTheme = EditorView.theme({
     verticalAlign: 'bottom',
   },
 
-  // Checkbox widget (positioned in the gutter by .cm-list-marker). Fixed ~1em
-  // box; `top` vertically centers it against the first text row (line-height 1.7).
+  // Checkbox widget (positioned in the gutter by .cm-list-marker). Custom look
+  // via appearance:none — transparent box with a strongly-rounded (near-circle,
+  // not circle) border; checked = blue fill + white check drawn with ::after.
   '.cm-checkbox': {
+    appearance: 'none',
+    WebkitAppearance: 'none',
+    boxSizing: 'border-box',
     width: '1em',
     height: '1em',
     top: '0.3em',
-    accentColor: 'var(--primary)',
+    margin: '0',
+    border: '1.5px solid var(--muted-foreground)',
+    borderRadius: '0.4em',
+    background: 'transparent',
     cursor: 'pointer',
+  },
+  '.cm-checkbox:checked': {
+    background: 'var(--info)',
+    borderColor: 'var(--info)',
+  },
+  // White check mark (rotated border), centered in the box.
+  '.cm-checkbox:checked::after': {
+    content: '""',
+    position: 'absolute',
+    left: '0.32em',
+    top: '0.14em',
+    width: '0.2em',
+    height: '0.42em',
+    border: 'solid #fff',
+    borderWidth: '0 2px 2px 0',
+    transform: 'rotate(45deg)',
   },
   // Completed task: strike + dim the item text (Ixora's cm-task-checked).
   '.cm-task-checked': {
