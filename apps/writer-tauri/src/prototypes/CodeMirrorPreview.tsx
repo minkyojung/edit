@@ -31,14 +31,18 @@ import { getActiveVaultPath } from '@/state/settingsStore'
 import { markSlugDirty, flushDirty } from '@/lib/docFileSync'
 
 // E-step: a single dedicated sandbox note this prototype reads/writes — it
-// NEVER touches real user notes. Get-or-create under today's daily, return its
-// slug + current markdown. null when no vault (→ in-memory SAMPLE fallback).
+// NEVER touches real user notes. ONLY runs when the user explicitly opts in via
+// the "Connect vault" button (never on mount), so merely opening this dev route
+// makes ZERO vault writes. Get-or-create under today's daily, return its slug +
+// current markdown. null when no vault.
 const SANDBOX_TITLE = '⟨CM Prototype Sandbox⟩'
 
 async function getSandboxDoc(): Promise<{ slug: string; markdown: string } | null> {
   if (!getActiveVaultPath()) return null
   const store = useDocsStore.getState()
-  let slug = store.knownDocs.find((d) => d.title === SANDBOX_TITLE)?.slug ?? null
+  // Match only a writing-type doc so a same-titled daily/wiki/article can't be
+  // resolved (and overwritten) by accident.
+  let slug = store.knownDocs.find((d) => d.type === 'writing' && d.title === SANDBOX_TITLE)?.slug ?? null
   if (!slug) {
     const daily = await store.openDaily()
     if (!daily) return null
@@ -74,7 +78,11 @@ function toast(message: string): void {
 export default function CodeMirrorPreview() {
   const hostRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<DocStatus>(initialStatus)
-  const [source, setSource] = useState<string>('loading…')
+  const [source, setSource] = useState<string>('in-memory (SAMPLE)')
+  // Opt-in: stays false on mount, so opening this dev route makes ZERO vault
+  // writes. The "Connect vault" button flips it to run the real sandbox
+  // round-trip (and rebuild the view via the effect dep).
+  const [connected, setConnected] = useState(false)
 
   useEffect(() => {
     const parent = hostRef.current
@@ -84,18 +92,19 @@ export default function CodeMirrorPreview() {
     let cancelled = false
 
     void (async () => {
-      // E-step: load real markdown from the sandbox note (read). Falls back to
-      // the in-memory SAMPLE (no save) when no vault is open.
-      const sandbox = await getSandboxDoc()
+      // Default: in-memory SAMPLE, NO vault side effects. Only when the user has
+      // opted in (`connected`) do we touch the dedicated sandbox note.
+      const sandbox = connected ? await getSandboxDoc() : null
       if (cancelled) return
       const slug = sandbox?.slug ?? null
       let initial = sandbox?.markdown ?? ''
       if (slug && initial.trim() === '') {
-        // First run: seed SAMPLE into the (empty) sandbox via the normal
-        // save path, so the demo is rich AND persisted.
+        // First connect: seed SAMPLE into the (empty) sandbox so the demo is
+        // rich AND persisted. Guard with `cancelled` so a torn-down mount can't
+        // still write.
         initial = SAMPLE
         const h = useDocsStore.getState().handles[slug]
-        if (h) {
+        if (h && !cancelled) {
           h.bodyMarkdown = SAMPLE
           markSlugDirty(slug)
           void flushDirty()
@@ -103,18 +112,18 @@ export default function CodeMirrorPreview() {
       } else if (!slug) {
         initial = SAMPLE
       }
-      setSource(slug ? `vault: ${slug}` : 'in-memory (no vault)')
+      setSource(slug ? `vault: ${slug}` : 'in-memory (SAMPLE) — not saved')
 
-      // On edit: the CM doc IS the markdown → write it straight to the
-      // sandbox handle + flush to disk. No serializer. Only ever the sandbox.
+      // On edit: the CM doc IS the markdown. In-memory mode (no slug) just bumps
+      // the revision; connected mode writes straight to the sandbox handle +
+      // debounced flush. No serializer. Only ever the sandbox.
       const save = (v: EditorView) => {
         setStatus(bumpRevision)
-        if (slug) {
-          const h = useDocsStore.getState().handles[slug]
-          if (h) {
-            h.bodyMarkdown = v.state.doc.toString()
-            markSlugDirty(slug)
-          }
+        if (!slug) return // in-memory: nothing to persist
+        const h = useDocsStore.getState().handles[slug]
+        if (h) {
+          h.bodyMarkdown = v.state.doc.toString()
+          markSlugDirty(slug)
         }
         if (saveTimer) clearTimeout(saveTimer)
         saveTimer = window.setTimeout(() => {
@@ -182,7 +191,7 @@ export default function CodeMirrorPreview() {
       if (saveTimer) clearTimeout(saveTimer)
       view?.destroy()
     }
-  }, [])
+  }, [connected])
 
   return (
     <div
@@ -205,8 +214,28 @@ export default function CodeMirrorPreview() {
         }}
       >
         <span>CM Live Preview — {source}</span>
-        <span style={{ color: status.dirty ? 'var(--info)' : 'var(--muted-foreground)' }}>
-          {status.dirty ? '● unsaved' : '✓ saved'} · rev {status.rev}
+        <span style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          {!connected && (
+            <button
+              type="button"
+              onClick={() => setConnected(true)}
+              style={{
+                font: 'inherit',
+                color: 'var(--info)',
+                background: 'transparent',
+                border: '1px solid var(--border)',
+                borderRadius: 6,
+                padding: '2px 8px',
+                cursor: 'pointer',
+              }}
+              title="Round-trips through the dedicated sandbox note only. Off by default so opening this route never writes to the vault."
+            >
+              Connect vault (save test)
+            </button>
+          )}
+          <span style={{ color: status.dirty ? 'var(--info)' : 'var(--muted-foreground)' }}>
+            {status.dirty ? '● unsaved' : '✓ saved'} · rev {status.rev}
+          </span>
         </span>
       </div>
       <div className="cm-prototype" ref={hostRef} />
