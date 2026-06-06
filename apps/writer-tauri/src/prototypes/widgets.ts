@@ -42,19 +42,26 @@ export class CheckboxWidget extends WidgetType {
   toDOM(view: EditorView) {
     const box = document.createElement('input')
     box.type = 'checkbox'
-    box.className = 'cm-checkbox'
+    // `cm-list-marker` positions it out-of-flow in the reserved gutter (like the
+    // bullet); its fixed ~1em box keeps an empty task's caret from inflating.
+    box.className = 'cm-list-marker cm-checkbox'
     box.checked = this.checked
-    // Toggle the source `[ ]`↔`[x]` on click (Ixora's interactive-checkbox
-    // pattern). The widget is atomic, so the click never lands a caret inside.
-    box.addEventListener('click', () => {
+    // Toggle the source `[ ]`↔`[x]`. Use `mousedown` + preventDefault: that
+    // suppresses the browser's native focus+toggle so the dispatch is the SINGLE
+    // source of truth (no double-flip), and — paired with `ignoreEvent()→true` —
+    // the editor never starts a text selection on the click.
+    box.addEventListener('mousedown', (e) => {
+      e.preventDefault()
       view.dispatch({
         changes: { from: this.pos, to: this.pos + 1, insert: this.checked ? ' ' : 'x' },
       })
     })
     return box
   }
+  // TRUE = the editor IGNORES events inside this widget (CM default), so a click
+  // toggles via our listener without the editor placing/extending a selection.
   ignoreEvent() {
-    return false
+    return true
   }
 }
 

@@ -92,6 +92,32 @@ describe('live preview decoration engine (headless)', () => {
     expect(checkbox(buildDecorations(stateAt(doc, 3), range, new Set()))).toBe(false)
   })
 
+  it('task lines get the structural list decoration; span selection keeps the checkbox', () => {
+    const doc = '- [ ] buy milk'
+    const range = [{ from: 0, to: doc.length }]
+    const hasListLine = (d: ReturnType<typeof buildDecorations>) =>
+      d.decos.some((r) => (r.value.spec.class as string | undefined)?.includes('cm-list-line'))
+    const hasCheckbox = (d: ReturnType<typeof buildDecorations>) =>
+      d.decos.some((r) => r.value.spec.widget instanceof CheckboxWidget)
+
+    // Caret in the text → structural line decoration applied (gutter + indent).
+    expect(hasListLine(buildDecorations(stateAt(doc, 9), range, new Set()))).toBe(true)
+    // A span selection over the whole line → checkbox stays (caret-only reveal).
+    expect(hasCheckbox(buildDecorations(stateSel(doc, 0, doc.length), range, new Set()))).toBe(true)
+    // Caret ON the `[ ]` marker → raw, no structural line decoration.
+    expect(hasListLine(buildDecorations(stateAt(doc, 3), range, new Set()))).toBe(false)
+  })
+
+  it('completed tasks get a strikethrough mark over the task text; open tasks do not', () => {
+    const strike = (d: ReturnType<typeof buildDecorations>) =>
+      d.decos.some((r) => r.value.spec.class === 'cm-task-checked')
+
+    const done = '- [x] done'
+    expect(strike(buildDecorations(stateAt(done, 8), [{ from: 0, to: done.length }], new Set()))).toBe(true)
+    const open = '- [ ] todo'
+    expect(strike(buildDecorations(stateAt(open, 8), [{ from: 0, to: open.length }], new Set()))).toBe(false)
+  })
+
   it('bullet lines get a structural hanging-indent decoration (fixed em gutter)', () => {
     // Collect the styles of every cm-list-line line decoration.
     const listLineStyles = (d: ReturnType<typeof buildDecorations>) =>

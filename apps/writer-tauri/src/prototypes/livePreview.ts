@@ -239,15 +239,19 @@ export function buildDecorations(
           }
           const task = item?.getChild('Task')
           if (task) {
-            // Task: hide the dash (the checkbox shows the marker) unless the
-            // caret is on the `- [ ]` PREFIX. Reveal region ends at the task
-            // marker, NOT the whole item — so editing the task TEXT keeps the
-            // checkbox rendered (Obsidian behavior).
+            // Task — structural, same gutter rules as bullets. Reveal region is
+            // the `- [ ]` PREFIX (dash → marker end): a COLLAPSED caret there →
+            // raw; a span selection does NOT reveal (Select-All keeps it). Editing
+            // the task TEXT keeps the checkbox. Otherwise: hide the leading indent
+            // (CSS reproduces it) + the `- `, and reserve the content column; the
+            // TaskMarker handler drops the checkbox into the gutter.
             const marker = task.getChild('TaskMarker')
             const prefixEnd = marker?.to ?? task.to
-            if (!editing(state, nf, prefixEnd)) {
-              hide(nf, sliceOf(nt, nt + 1) === ' ' ? nt + 1 : nt)
-            }
+            if (caretIn(state, nf, prefixEnd)) return
+            const ln = state.doc.lineAt(nf)
+            hide(ln.from, nf)
+            decos.push(listLine(listLevel(item), 'cm-list-task').range(ln.from))
+            hide(nf, sliceOf(nt, nt + 1) === ' ' ? nt + 1 : nt)
             return
           }
           // Bullet — structural, drawn by `.cm-list-bullet::before` (Obsidian's
@@ -268,12 +272,18 @@ export function buildDecorations(
           return
         }
         if (name === 'TaskMarker') {
-          // Reveal region = the `- [ ]` prefix (dash → marker end), NOT the
-          // whole task item — editing the task text keeps the checkbox.
-          const dash = node.node.parent?.parent?.getChild('ListMark')
-          const from = dash?.from ?? nf
-          if (editing(state, from, nt)) return // caret on the prefix → raw
+          const task = node.node.parent
           const checked = /[xX]/.test(sliceOf(nf, nt))
+          // Completed-task styling persists regardless of reveal (Obsidian):
+          // strike the whole task text. The mark spans the Task node; where the
+          // `[x]` is replaced by the checkbox it just applies to the visible text.
+          if (checked && task) mark(task.from, task.to, 'cm-task-checked')
+          // Reveal region = the `- [ ]` prefix (dash → marker end). A COLLAPSED
+          // caret there → raw; a span selection keeps the checkbox (matches the
+          // bullet rule). Editing the task text keeps the checkbox.
+          const dash = task?.parent?.getChild('ListMark')
+          const from = dash?.from ?? nf
+          if (caretIn(state, from, nt)) return // caret on the prefix → raw
           const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
           // `nf + 1` = the status char between the brackets, the click target.
           widget(nf, nt + trailing, Decoration.replace({ widget: new CheckboxWidget(checked, nf + 1) }))

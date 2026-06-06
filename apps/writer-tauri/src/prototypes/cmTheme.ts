@@ -134,6 +134,13 @@ export const cmPrototypeTheme = EditorView.theme({
     insetInlineStart: 'var(--cm-list-marker-left)',
     color: 'var(--muted-foreground)',
   },
+  // Widget markers (checkbox / ordered number) sit out-of-flow in the gutter —
+  // zero inline width keeps the content column exact and the marker undraggable.
+  '.cm-list-marker': {
+    position: 'absolute',
+    insetInlineStart: 'var(--cm-list-marker-left)',
+    userSelect: 'none',
+  },
 
   // Image widget
   '.cm-img': {
@@ -144,13 +151,19 @@ export const cmPrototypeTheme = EditorView.theme({
     verticalAlign: 'bottom',
   },
 
-  // Checkbox widget
+  // Checkbox widget (positioned in the gutter by .cm-list-marker). Fixed ~1em
+  // box; `top` vertically centers it against the first text row (line-height 1.7).
   '.cm-checkbox': {
     width: '1em',
     height: '1em',
-    marginRight: '0.4em',
-    verticalAlign: '-0.1em',
+    top: '0.3em',
     accentColor: 'var(--primary)',
+    cursor: 'pointer',
+  },
+  // Completed task: strike + dim the item text (Ixora's cm-task-checked).
+  '.cm-task-checked': {
+    textDecoration: 'line-through',
+    color: 'var(--muted-foreground)',
   },
 
   // Table widget
