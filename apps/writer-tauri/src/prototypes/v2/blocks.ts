@@ -52,15 +52,25 @@ function build(state: EditorState): DecorationSet {
   const out: Range<Decoration>[] = []
   syntaxTree(state).iterate({
     enter: (node) => {
-      // Image — inline replace widget. A COLLAPSED caret inside → raw (edit); a
-      // selection spanning it → rendered with a border (click-to-select).
+      // Image. Two modes:
+      //  • editing (a collapsed caret inside) → KEEP the raw `![...](...)` source
+      //    visible AND show the image preview as a block right below it (Obsidian-
+      //    style: code on top, picture under), so you can edit the link and see
+      //    the result. (Not "remove image, show code".)
+      //  • otherwise → replace the source with the image; a selection spanning it
+      //    adds the selected border (click-to-select).
       if (node.name === 'Image') {
-        if (caretInside(state, node.from, node.to)) return false
         const m = /!\[([^\]]*)\]\(([^)\s]+)/.exec(state.doc.sliceString(node.from, node.to))
-        if (m) {
-          const sel = blockSelected(state, node.from, node.to)
-          out.push(Decoration.replace({ widget: new ImageWidget(m[2], m[1], sel) }).range(node.from, node.to))
+        if (!m) return false
+        if (caretInside(state, node.from, node.to)) {
+          const lineEnd = state.doc.lineAt(node.to).to
+          out.push(
+            Decoration.widget({ widget: new ImageWidget(m[2], m[1], false), block: true, side: 1 }).range(lineEnd),
+          )
+          return false
         }
+        const sel = blockSelected(state, node.from, node.to)
+        out.push(Decoration.replace({ widget: new ImageWidget(m[2], m[1], sel) }).range(node.from, node.to))
         return false
       }
       // GFM table — BLOCK replace widget (whole block → a real <table>). Caret
