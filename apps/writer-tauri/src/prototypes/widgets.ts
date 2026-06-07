@@ -8,19 +8,35 @@ export class ImageWidget extends WidgetType {
   constructor(
     readonly src: string,
     readonly alt: string,
+    readonly selected = false, // block-selected (clicked) → draws a border
   ) {
     super()
   }
   eq(o: ImageWidget) {
-    return o.src === this.src && o.alt === this.alt
+    return o.src === this.src && o.alt === this.alt && o.selected === this.selected
   }
   toDOM() {
     const img = document.createElement('img')
-    img.className = 'cm-img'
+    img.className = `cm-img${this.selected ? ' cm-block-selected' : ''}`
     img.src = this.src
     img.alt = this.alt
     img.loading = 'lazy'
     return img
+  }
+  // Reuse the existing <img> when only `selected` (or even src) changes — toggle
+  // the class / re-set src in place. Setting src to the same string is a no-op,
+  // so selecting/deselecting never reloads the image.
+  updateDOM(dom: HTMLElement) {
+    const img = dom as HTMLImageElement
+    img.src = this.src
+    img.alt = this.alt
+    img.classList.toggle('cm-block-selected', this.selected)
+    return true
+  }
+  // FALSE → the editor does NOT ignore events from this widget, so a click on the
+  // <img> reaches our domEventHandlers (default is to ignore widget events).
+  ignoreEvent() {
+    return false
   }
   get estimatedHeight() {
     return 240

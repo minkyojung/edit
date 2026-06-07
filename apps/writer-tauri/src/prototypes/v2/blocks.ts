@@ -19,7 +19,14 @@
 
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
-import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
+import {
+  EditorSelection,
+  StateField,
+  type EditorState,
+  type Extension,
+  type Range,
+  type Transaction,
+} from '@codemirror/state'
 import { ImageWidget, TableWidget } from '../widgets'
 import { MediaWidget, detectMedia } from '../mediaCards'
 
@@ -28,15 +35,32 @@ function cursorInRange(state: EditorState, from: number, to: number): boolean {
   return false
 }
 
+/** A COLLAPSED caret sits inside [from, to] → reveal raw for editing. */
+function caretInside(state: EditorState, from: number, to: number): boolean {
+  const s = state.selection.main
+  return s.empty && s.from >= from && s.from <= to
+}
+
+/** A non-empty selection fully spans [from, to] → the block is "selected"
+ * (e.g. via click-to-select) → render the widget with a border. */
+function blockSelected(state: EditorState, from: number, to: number): boolean {
+  const s = state.selection.main
+  return !s.empty && s.from <= from && s.to >= to
+}
+
 function build(state: EditorState): DecorationSet {
   const out: Range<Decoration>[] = []
   syntaxTree(state).iterate({
     enter: (node) => {
-      // Image — inline replace widget. Caret inside → show raw for editing.
+      // Image — inline replace widget. A COLLAPSED caret inside → raw (edit); a
+      // selection spanning it → rendered with a border (click-to-select).
       if (node.name === 'Image') {
-        if (cursorInRange(state, node.from, node.to)) return false
+        if (caretInside(state, node.from, node.to)) return false
         const m = /!\[([^\]]*)\]\(([^)\s]+)/.exec(state.doc.sliceString(node.from, node.to))
-        if (m) out.push(Decoration.replace({ widget: new ImageWidget(m[2], m[1]) }).range(node.from, node.to))
+        if (m) {
+          const sel = blockSelected(state, node.from, node.to)
+          out.push(Decoration.replace({ widget: new ImageWidget(m[2], m[1], sel) }).range(node.from, node.to))
+        }
         return false
       }
       // GFM table — BLOCK replace widget (whole block → a real <table>). Caret
@@ -100,10 +124,33 @@ const blocksField = StateField.define<DecorationSet>({
   update: (value, tr) => {
     const mapped = value.map(tr.changes)
     if (tr.docChanged) return touchesBlocks(tr, mapped) ? build(tr.state) : mapped
-    if (tr.selection) return build(tr.state) // reveal; no position shift → no reload
+    if (tr.selection) return build(tr.state) // reveal / selected; no shift → no reload
     return mapped
   },
   provide: (f) => EditorView.decorations.from(f),
 })
 
-export const blocksV2: Extension = blocksField
+// Click a rendered block card → select the WHOLE widget as a unit (the source
+// range), so it shows a border instead of dropping a caret inside. (CM has no
+// built-in "click atomic range to select" — Marijn's recommendation is exactly
+// this: find the range at the click and select it.) The selection then drives the
+// `blockSelected` border via the field above. Editing the raw is still reachable
+// by arrowing a caret into the card.
+const blockClick = EditorView.domEventHandlers({
+  mousedown(event, view) {
+    const el = (event.target as HTMLElement | null)?.closest?.('.cm-img')
+    if (!el) return false
+    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
+    if (pos == null) return false
+    const hits: { from: number; to: number }[] = []
+    view.state.field(blocksField).between(0, view.state.doc.length, (from, to) => {
+      if (from <= pos && pos <= to) hits.push({ from, to })
+    })
+    if (hits.length === 0) return false
+    event.preventDefault()
+    view.dispatch({ selection: EditorSelection.range(hits[0].from, hits[0].to) })
+    return true
+  },
+})
+
+export const blocksV2: Extension = [blocksField, blockClick]

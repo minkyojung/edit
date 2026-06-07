@@ -127,6 +127,12 @@ export const cmPrototypeTheme = EditorView.theme({
     borderRadius: '8px',
     verticalAlign: 'bottom',
   },
+  // Block "selected" border (click-to-select). `outline` so it doesn't shift the
+  // layout (no reflow), like a node selection.
+  '.cm-block-selected': {
+    outline: '2px solid var(--info)',
+    outlineOffset: '2px',
+  },
   // Table widget
   '.cm-md-table': {
     borderCollapse: 'collapse',

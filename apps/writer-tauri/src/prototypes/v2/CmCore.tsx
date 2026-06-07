@@ -168,7 +168,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — + media cards (video/audio, map-based)
+        CM Core (clean rewrite) — + click-to-select border (image first)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>
