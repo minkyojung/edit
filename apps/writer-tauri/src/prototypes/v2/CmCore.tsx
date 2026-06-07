@@ -18,18 +18,21 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from '../cmTheme'
+import { livePreviewV2 } from './livePreview'
 
-const SAMPLE = `# Clean start
+const SAMPLE = `# Heading one
+## Heading two
 
-Type here. This is plain markdown — there are NO live-preview decorations yet,
-so markers like # and ** stay visible. That is expected at step 0.
+STEP 1 styles **headings** and **emphasis**. Try **bold**, *italic*,
+~~strikethrough~~, and \`inline code\`. Markers (the # and ** etc.) are STILL
+visible on purpose — hiding them when the caret is off ("reveal") is step 2.
 
-The only thing to check: does typing feel right, does the caret sit correctly,
-and is 한글 입력(IME 조합) smooth — no jumping, no duplication, no jitter?
+Check: do the styles apply, and is 한글 입력(IME) still smooth even when typing
+**한글 굵게** inside an emphasized span?
 
-- a list item is just raw text at this step
-- another line, long enough to wrap so we can see soft-wrap behaves on this bare
-  foundation before we add any list layout
+- a list item is still raw text at this step
+- another line, long enough to wrap so we can confirm soft-wrap is unaffected by
+  the inline marks
 `
 
 export default function CmCore() {
@@ -55,6 +58,7 @@ export default function CmCore() {
           // yet (no decorations at step 0). addKeymap:false so list/quote Enter
           // continuation isn't wired until we choose to.
           markdown({ extensions: [GFM], addKeymap: false }),
+          livePreviewV2, // STEP 1: heading + emphasis styling (markers still visible)
           cmPrototypeTheme,
         ],
       }),
@@ -80,7 +84,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — STEP 0: bare editor, no decorations
+        CM Core (clean rewrite) — STEP 1: heading + emphasis styling (markers visible)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>
