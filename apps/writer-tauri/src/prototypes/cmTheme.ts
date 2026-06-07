@@ -117,37 +117,76 @@ export const cmPrototypeTheme = EditorView.theme({
     background: 'var(--muted)',
   },
 
-  // List items — structural hanging indent (Obsidian-style). The line reserves
-  // a fixed content column via padding; wrapped rows inherit it and so align
-  // under the first row's content. `--cm-list-pad`/`--cm-list-marker-left` are
-  // set per-line by the livePreview `listLine(level, marker)` decoration.
+  // List items — canonical CM6 "hanging indent" (see livePreview.ts). The line
+  // reserves the content column with `padding-inline-start` (= level*STEP + indent
+  // + gutter, set per-line) and pulls ONLY the first visual row back by one gutter
+  // with `text-indent: -1.5em`. text-indent applies to the first row only, so
+  // wrapped rows stay at the padding edge and align under the CONTENT for free.
+  // The marker fills that pulled-back gutter: its glyph is an inline-block ::before
+  // sized to exactly one gutter (the ::before carries its own non-zero font-size,
+  // so its `em` width is real even though the host span is `font-size:0`). Each
+  // marker span resets `text-indent:0` so the line's hang doesn't leak into the
+  // glyph. Markers stay IN-FLOW (source text node survives → IME anchor).
   '.cm-list-line': {
-    position: 'relative',
     paddingInlineStart: 'var(--cm-list-pad)',
+    textIndent: '-1.5em', // pull first row into the gutter (= -LIST_GUTTER)
   },
-  // Bullet drawn as a pseudo-element in the gutter — NOT a DOM widget, so it
-  // never becomes a line tile (keeps the empty-item caret normal height) and is
-  // inherently non-selectable + out of flow. The source `- ` is hidden.
-  '.cm-list-bullet::before': {
-    content: '"•"',
-    position: 'absolute',
-    insetInlineStart: 'var(--cm-list-marker-left)',
-    color: 'var(--muted-foreground)',
+  '.cm-list-bullet': {
+    fontSize: '0', // collapse the source dash; the glyph is ::before
+    color: 'transparent',
+    textIndent: '0', // don't inherit the line's hanging indent
   },
-  // Widget markers (checkbox / ordered number) sit out-of-flow in the gutter —
-  // zero inline width keeps the content column exact and the marker undraggable.
-  '.cm-list-marker': {
-    position: 'absolute',
-    insetInlineStart: 'var(--cm-list-marker-left)',
-    userSelect: 'none',
+  '.cm-list-checkbox': {
+    fontSize: '0',
+    color: 'transparent',
+    textIndent: '0',
+    cursor: 'pointer',
   },
-  // Ordered-list number: left-aligned at the gutter origin (so `1.`/`10.` start
-  // at the same x; each number's own content shifts right by its width — the
-  // line's slot is sized per digit count). Non-interactive → clicks fall through.
+  // Ordered number stays VISIBLE; a fixed-width gutter box, right-aligned so "1."
+  // and "10." line up against the content column (with a small reading gap).
   '.cm-list-num': {
+    display: 'inline-block',
+    boxSizing: 'border-box',
+    width: '1.5em', // = LIST_GUTTER (font-size is normal here, so `em` is real)
+    paddingInlineEnd: '0.35em', // gap between the number and the content
+    textIndent: '0',
+    textAlign: 'right',
     whiteSpace: 'nowrap',
     color: 'var(--muted-foreground)',
+  },
+  // Task `- ` dash: collapsed to ~0 width (NO box); the checkbox is the gutter.
+  '.cm-list-taskdash': { fontSize: '0', color: 'transparent' },
+  // Bullet glyph: inline-block sized to one gutter so the content lands at the
+  // column; the • is centered for a balanced gap on both sides.
+  '.cm-list-bullet::before': {
+    content: '"•"',
+    display: 'inline-block',
+    width: '1.5em', // = LIST_GUTTER
+    fontSize: 'var(--prose-base, 16px)',
+    textAlign: 'center',
+    color: 'var(--muted-foreground)',
     pointerEvents: 'none',
+  },
+  // Checkbox box (1em square) + a 0.5em gap = one gutter, so content aligns.
+  '.cm-list-checkbox::before': {
+    content: '""',
+    display: 'inline-block',
+    boxSizing: 'border-box',
+    width: '1em',
+    height: '1em',
+    marginInlineEnd: '0.5em', // box(1em) + gap(0.5em) = LIST_GUTTER(1.5em)
+    fontSize: 'var(--prose-base, 16px)',
+    lineHeight: '1em',
+    textAlign: 'center',
+    verticalAlign: '-0.15em',
+    border: '1.5px solid var(--muted-foreground)',
+    borderRadius: '0.4em',
+    color: '#fff',
+  },
+  '.cm-list-checkbox-checked::before': {
+    content: '"✓"',
+    background: 'var(--info)',
+    borderColor: 'var(--info)',
   },
 
   // Image widget
@@ -157,39 +196,6 @@ export const cmPrototypeTheme = EditorView.theme({
     height: 'auto',
     borderRadius: '8px',
     verticalAlign: 'bottom',
-  },
-
-  // Checkbox widget (positioned in the gutter by .cm-list-marker). Custom look
-  // via appearance:none — transparent box with a strongly-rounded (near-circle,
-  // not circle) border; checked = blue fill + white check drawn with ::after.
-  '.cm-checkbox': {
-    appearance: 'none',
-    WebkitAppearance: 'none',
-    boxSizing: 'border-box',
-    width: '1em',
-    height: '1em',
-    top: '0.3em',
-    margin: '0',
-    border: '1.5px solid var(--muted-foreground)',
-    borderRadius: '0.4em',
-    background: 'transparent',
-    cursor: 'pointer',
-  },
-  '.cm-checkbox:checked': {
-    background: 'var(--info)',
-    borderColor: 'var(--info)',
-  },
-  // White check mark (rotated border), centered in the box.
-  '.cm-checkbox:checked::after': {
-    content: '""',
-    position: 'absolute',
-    left: '0.32em',
-    top: '0.14em',
-    width: '0.2em',
-    height: '0.42em',
-    border: 'solid #fff',
-    borderWidth: '0 2px 2px 0',
-    transform: 'rotate(45deg)',
   },
   // Completed task: strike + dim the item text (Ixora's cm-task-checked).
   '.cm-task-checked': {

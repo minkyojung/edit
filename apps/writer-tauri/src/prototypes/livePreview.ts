@@ -16,39 +16,37 @@
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
-import { CheckboxWidget, ImageWidget, OrderedMarkerWidget, TableWidget } from './widgets'
+import { ImageWidget, TableWidget } from './widgets'
 import { isKnownNote } from './wikilinkComplete'
 import { isComposing, compositionEnded } from './imeComposition'
 import { isCursorInRange, caretInRange, activeLines, spansActiveLine } from './reveal'
 
 const HIDE = Decoration.replace({})
 
-// List-item line decoration (Obsidian-style structural hanging indent).
-// The marker lives OUT of the text flow (absolutely positioned in a reserved
-// gutter — see widgets + cmTheme), so the line reserves a content column via
-// `padding-inline-start`. The padding applies to EVERY visual row, so wrapped
-// rows align exactly under the first row's content — with no `ch` measurement
-// of the marker glyph and no `text-indent` (avoids the rectangular-selection
-// bug, discuss.codemirror#2881). The `slot` (marker gutter width) is sized PER
-// MARKER TYPE so the marker→text gap is a tight ~0.5em for each, instead of one
-// wide slot: bullet/checkbox use fixed em; ordered numbers size by digit count
-// (left-aligned, so `1.`/`10.` start at the same x and content shifts). `STEP`
-// is the per-nesting-level step. Exposes `--cm-list-pad` (content column) and
-// `--cm-list-marker-left` (gutter offset the absolute marker reads).
-const LIST_STEP = 1.6 // em — per nesting level
-const BULLET_SLOT = '0.9em' // • (~0.4em) + ~0.5em gap
-const TASK_SLOT = '1.5em' // checkbox (~1em) + ~0.5em gap
+// List-item layout — canonical CM6 "hanging indent" (CSS in cmTheme.ts). The line
+// reserves the content column with `padding-inline-start` (= level*STEP + indent +
+// gutter) and pulls ONLY the first visual row back by one gutter via a NEGATIVE
+// `text-indent`. Because text-indent applies to the first row only, wrapped rows
+// stay at the padding edge and align under the content automatically. Each marker
+// fills that one-gutter (LIST_GUTTER) space and resets `text-indent:0` so the
+// line's hang doesn't leak into the glyph. Markers stay IN-FLOW (the source text
+// node survives, collapsed via CSS → IME composition anchor); the bullet/checkbox
+// glyph is a ::before, the number is the visible source text.
+const LIST_STEP = 1.6 // em — added per nesting level
+const LIST_GUTTER = 1.5 // em — marker-column width. MUST equal the marker width +
+// negative margin in cmTheme.ts (the marker hangs left by exactly this much).
+const LIST_INDENT = 0.5 // em — base indent of the whole list from body text
 const listLineCache = new Map<string, Decoration>()
-function listLine(level: number, markerClass: string, slot: string): Decoration {
-  const key = `${level}:${markerClass}:${slot}`
+function listLine(level: number): Decoration {
+  const key = `${level}`
   let d = listLineCache.get(key)
   if (!d) {
-    const left = level * LIST_STEP
+    // Content column = nesting + base indent + one gutter. Wrapped rows and the
+    // item content both sit here; the marker hangs one gutter left (CSS margin).
+    const pad = level * LIST_STEP + LIST_INDENT + LIST_GUTTER
     d = Decoration.line({
-      class: ('cm-list-line ' + markerClass).trim(),
-      attributes: {
-        style: `--cm-list-pad:calc(${left}em + ${slot});--cm-list-marker-left:${left}em`,
-      },
+      class: 'cm-list-line',
+      attributes: { style: `--cm-list-pad:${pad}em` },
     })
     listLineCache.set(key, d)
   }
@@ -183,79 +181,58 @@ export function buildDecorations(
           return
         }
 
-        // Lists. The marker is rendered structurally — out of the text flow,
-        // in a fixed gutter — so wrapped rows align under the content and the
-        // marker can't be drag-selected (Obsidian behavior). Caret ON the
-        // marker → raw source (the reveal rule). Ordered/task branches keep
-        // their prior rendering for now (Stages 3/2 restructure them).
+        // Lists. The marker renders structurally as an IN-FLOW widget in a fixed
+        // gutter (the in-flow DOM node is the IME composition anchor). Reveal is
+        // MARK-LEVEL (Obsidian): a COLLAPSED caret ON THE MARKER token (bullet/
+        // number) or the `- [ ]` prefix (task) shows raw; editing the item's
+        // CONTENT keeps the marker rendered. A span selection does NOT reveal.
+        // Lists. The marker SOURCE text is kept (collapsed via CSS → IME anchor);
+        // the visible marker is a gutter glyph (bullet/checkbox) or the visible
+        // number. Reveal is MARK-LEVEL: a COLLAPSED caret on the marker token /
+        // `- [ ]` prefix shows raw; editing CONTENT keeps it rendered.
         if (name === 'ListMark') {
           const item = node.node.parent
           const list = item?.parent
+          const ln = state.doc.lineAt(nf)
+          const level = listLevel(item)
+          const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
           if (list?.name === 'OrderedList') {
-            // Ordered — structural: the number is rendered out-of-flow in the
-            // gutter (right-aligned by CSS so `1.`/`10.` line up), content in the
-            // reserved column. Caret on the marker → raw; a span selection keeps
-            // it (same rule as bullets/tasks).
-            if (caretInRange(state, nf, nt)) return
-            const ln = state.doc.lineAt(nf)
-            hide(ln.from, nf) // leading indent only; the widget replaces the `1. `
-            // Slot sized to the number's digit count so it left-aligns with a
-            // tight ~0.5ch gap; wider numbers shift their own content right.
-            decos.push(listLine(listLevel(item), 'cm-list-ordered', `${nt - nf + 0.5}ch`).range(ln.from))
-            const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
-            widget(nf, nt + trailing, Decoration.replace({ widget: new OrderedMarkerWidget(sliceOf(nf, nt)) }))
+            if (caretInRange(state, nf, nt)) return // caret on the number → raw
+            hide(ln.from, nf) // leading indent (no-op at top level)
+            decos.push(listLine(level).range(ln.from))
+            mark(nf, nt + trailing, 'cm-list-num') // visible number in the fixed gutter box
             return
           }
           const task = item?.getChild('Task')
           if (task) {
-            // Task — structural, same gutter rules as bullets. Reveal region is
-            // the `- [ ]` PREFIX (dash → marker end): a COLLAPSED caret there →
-            // raw; a span selection does NOT reveal (Select-All keeps it). Editing
-            // the task TEXT keeps the checkbox. Otherwise: hide the leading indent
-            // (CSS reproduces it) + the `- `, and reserve the content column; the
-            // TaskMarker handler drops the checkbox into the gutter.
             const marker = task.getChild('TaskMarker')
             const prefixEnd = marker?.to ?? task.to
-            if (caretInRange(state, nf, prefixEnd)) return
-            const ln = state.doc.lineAt(nf)
+            if (caretInRange(state, nf, prefixEnd)) return // caret on `- [ ]` prefix → raw
             hide(ln.from, nf)
-            decos.push(listLine(listLevel(item), 'cm-list-task', TASK_SLOT).range(ln.from))
-            hide(nf, sliceOf(nt, nt + 1) === ' ' ? nt + 1 : nt)
+            decos.push(listLine(level).range(ln.from))
+            mark(nf, nt + trailing, 'cm-list-taskdash') // collapse `- ` (no box); checkbox is the gutter
             return
           }
-          // Bullet — structural, drawn by `.cm-list-bullet::before` (Obsidian's
-          // approach). We HIDE the `- ` rather than swap a widget: a pseudo-
-          // element isn't a DOM tile, so an EMPTY item's line stays a normal
-          // (text-less) line and the caret keeps its normal height — a widget
-          // would leave the line with no in-flow text and inflate the caret.
-          // A COLLAPSED caret ON the marker → raw (typing `-` shows raw until the
-          // caret moves off). A non-empty SELECTION (drag / Select-All) does NOT
-          // reveal — the hidden `- ` and the pseudo-element stay out of the
-          // highlight, so only the text is selected (Obsidian).
-          if (caretInRange(state, nf, nt)) return
-          const ln = state.doc.lineAt(nf)
-          hide(ln.from, nf) // leading indent (no-op at top level); CSS reproduces it
-          const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
-          hide(nf, nt + trailing) // the `- ` itself; bullet glyph comes from CSS
-          decos.push(listLine(listLevel(item), 'cm-list-bullet', BULLET_SLOT).range(ln.from))
+          // Bullet
+          if (caretInRange(state, nf, nt)) return // caret on the dash → raw
+          hide(ln.from, nf) // leading indent (no-op at top level)
+          decos.push(listLine(level).range(ln.from))
+          mark(nf, nt + trailing, 'cm-list-bullet') // • drawn in the fixed gutter box
           return
         }
         if (name === 'TaskMarker') {
           const task = node.node.parent
           const checked = /[xX]/.test(sliceOf(nf, nt))
-          // Completed-task styling persists regardless of reveal (Obsidian):
-          // strike the whole task text. The mark spans the Task node; where the
-          // `[x]` is replaced by the checkbox it just applies to the visible text.
+          // Completed task: strike the whole task text (persists while editing).
           if (checked && task) mark(task.from, task.to, 'cm-task-checked')
-          // Reveal region = the `- [ ]` prefix (dash → marker end). A COLLAPSED
-          // caret there → raw; a span selection keeps the checkbox (matches the
-          // bullet rule). Editing the task text keeps the checkbox.
           const dash = task?.parent?.getChild('ListMark')
           const from = dash?.from ?? nf
-          if (caretInRange(state, from, nt)) return // caret on the prefix → raw
+          if (caretInRange(state, from, nt)) return // caret on the `- [ ]` prefix → raw
+          // MARK `[ ]` + trailing space into the fixed-width gutter box (text node
+          // survives → IME; CSS collapses it and draws the box via ::before; the
+          // box height keeps the caret normal). Click → taskCheckboxClick.
           const trailing = sliceOf(nt, nt + 1) === ' ' ? 1 : 0
-          // `nf + 1` = the status char between the brackets, the click target.
-          widget(nf, nt + trailing, Decoration.replace({ widget: new CheckboxWidget(checked, nf + 1) }))
+          mark(nf, nt + trailing, checked ? 'cm-list-checkbox cm-list-checkbox-checked' : 'cm-list-checkbox')
           return
         }
 
@@ -333,7 +310,14 @@ function compute(state: EditorState): LpState {
 const lpField = StateField.define<LpState>({
   create: (state) => compute(state),
   update: (value, tr) => {
-    // IME: freeze decorations while composing so the composing DOM stays put.
+    // IME: while composing, return the SAME decoration set (reference-identical),
+    // NOT a recomputed or even re-mapped one. Handing CM a new DecorationSet
+    // during composition makes it re-render the composition-adjacent DOM, which
+    // WebKit treats as aborting the composition (duplicated/misplaced input —
+    // CM6 progress blog; changelog 6.39.16). CM maps field decorations through
+    // tr.changes itself at render time, so positions stay aligned. Rebuild once
+    // when composition ends (compositionEnded). Matches mediaCards/highlights/
+    // mermaidCards.
     if (isComposing(tr.state)) return value
     if (tr.docChanged || tr.selection || compositionEnded(tr)) return compute(tr.state)
     return value
@@ -345,3 +329,22 @@ const lpField = StateField.define<LpState>({
 })
 
 export const livePreview: Extension = lpField
+
+// The task checkbox is now a `mark` (not a widget), so there's no widget DOM to
+// attach a click handler to. Toggle at the editor level: a click whose target is
+// the `.cm-list-checkbox` span (its ::before box is what's visible) flips the
+// status char `[ ]`↔`[x]`. `preventDefault` keeps the click from starting a
+// selection; posAtDOM gives the `[` offset, +1 = the status char.
+export const taskCheckboxClick: Extension = EditorView.domEventHandlers({
+  mousedown(e, view) {
+    const target = e.target as HTMLElement | null
+    const box = target?.closest?.('.cm-list-checkbox') as HTMLElement | null
+    if (!box) return false
+    const ch = view.posAtDOM(box) + 1
+    const cur = view.state.doc.sliceString(ch, ch + 1)
+    if (cur !== ' ' && !/[xX]/.test(cur)) return false
+    e.preventDefault()
+    view.dispatch({ changes: { from: ch, to: ch + 1, insert: /[xX]/.test(cur) ? ' ' : 'x' } })
+    return true
+  },
+})

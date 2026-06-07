@@ -12,7 +12,7 @@ import { indentUnit } from '@codemirror/language'
 import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from './cmTheme'
-import { livePreview } from './livePreview'
+import { livePreview, taskCheckboxClick } from './livePreview'
 import { mermaidCards } from './mermaidCards'
 import { mediaCards } from './mediaCards'
 import { slashSource } from './slashCommands'
@@ -24,6 +24,7 @@ import { highlights, highlightClick } from './highlights'
 import { mediaDropPaste } from './mediaDrop'
 import { imeComposition } from './imeComposition'
 import { imeListContinue } from './imeListContinue'
+import { r1Probe } from './r1Probe'
 import { initialStatus, bumpRevision, markSaved, onDocChange, type DocStatus } from './saveStatus'
 import { SAMPLE } from './sample'
 import { useDocsStore } from '@/state/docsStore'
@@ -138,6 +139,7 @@ export default function CodeMirrorPreview() {
         state: EditorState.create({
           doc: initial,
           extensions: [
+            r1Probe, // TEMP: logs when the caret jumps left on input (R1 diagnosis)
             history(),
             imeComposition, // track composition; decoration fields freeze while composing
             // Safari/WKWebView drops the composition-confirming Enter, so the
@@ -178,6 +180,7 @@ export default function CodeMirrorPreview() {
             // Save real edits to the sandbox note (debounced flush to disk).
             onDocChange(save),
             livePreview,
+            taskCheckboxClick,
             mermaidCards,
             mediaCards,
             cmPrototypeTheme,
