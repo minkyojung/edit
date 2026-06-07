@@ -52,6 +52,8 @@ import { startGitHubSync } from '@/lib/githubSync'
 
 // DEV-only CodeMirror WYSIWYG spike (lazy so it stays out of prod bundles).
 const CodeMirrorPreview = lazy(() => import('@/prototypes/CodeMirrorPreview'))
+// DEV-only clean rewrite of the CM core (built minimally from the docs).
+const CmCore = lazy(() => import('@/prototypes/v2/CmCore'))
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
@@ -103,20 +105,32 @@ export function App() {
           <HashRouter>
             <Routes>
               {import.meta.env.DEV && (
-                // DEV-only WYSIWYG spike. Wrapped in BootGate so the vault is
+                // DEV-only WYSIWYG spikes. Wrapped in BootGate so the vault is
                 // bootstrapped (docsStore populated) for the real-data E-step,
-                // but OUTSIDE AppShell so it still renders full-screen in
+                // but OUTSIDE AppShell so they still render full-screen in
                 // isolation.
-                <Route
-                  path="/dev/cm-prototype"
-                  element={
-                    <BootGate>
-                      <Suspense fallback={null}>
-                        <CodeMirrorPreview />
-                      </Suspense>
-                    </BootGate>
-                  }
-                />
+                <>
+                  <Route
+                    path="/dev/cm-prototype"
+                    element={
+                      <BootGate>
+                        <Suspense fallback={null}>
+                          <CodeMirrorPreview />
+                        </Suspense>
+                      </BootGate>
+                    }
+                  />
+                  <Route
+                    path="/dev/cm2"
+                    element={
+                      <BootGate>
+                        <Suspense fallback={null}>
+                          <CmCore />
+                        </Suspense>
+                      </BootGate>
+                    }
+                  />
+                </>
               )}
               <Route
                 path="*"
