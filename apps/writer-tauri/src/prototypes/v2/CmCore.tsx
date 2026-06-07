@@ -17,10 +17,26 @@ import { EditorView, keymap, drawSelection } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
 import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@codemirror/lang-markdown'
+import { autocompletion } from '@codemirror/autocomplete'
 import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from '../cmTheme'
 import { livePreviewV2 } from './livePreview'
 import { imeListContinue } from '../imeListContinue'
+import { wikilinkSource } from '../wikilinkComplete'
+import { wikilinkClick } from '../wikilinkNav'
+import { linkClick } from '../linkNav'
+
+// Transient toast — the spike's stand-in for "navigate to note" / "open URL".
+function toast(message: string): void {
+  const el = document.createElement('div')
+  el.textContent = message
+  el.style.cssText =
+    'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);' +
+    'background:var(--foreground);color:var(--background);padding:8px 14px;' +
+    'border-radius:8px;font-size:13px;z-index:9999;opacity:0.95;'
+  document.body.appendChild(el)
+  setTimeout(() => el.remove(), 1500)
+}
 
 const SAMPLE = `# Heading one
 ## Heading two
@@ -40,6 +56,11 @@ Try it here:
 
 Does it FEEL like a list to edit, the way the old editor did — even without the •?
 (Headings/bold reveal still work; 한글 IME too.)
+
+LINKS & WIKILINKS (new): a [normal link](https://example.com) shows just the text;
+move the caret onto it to reveal the raw markdown, Cmd/Ctrl-click to open. Wikilinks
+like [[Project Brasilia]] (known) and [[Nonexistent Note]] (unknown → red) hide the
+\`[[ ]]\` when the caret is off; click to navigate. Type \`[[\` for autocomplete.
 `
 
 export default function CmCore() {
@@ -80,7 +101,12 @@ export default function CmCore() {
           // yet (no decorations at step 0). addKeymap:false so list/quote Enter
           // continuation isn't wired until we choose to.
           markdown({ extensions: [GFM], addKeymap: false }),
-          livePreviewV2, // heading + emphasis reveal (lists are RAW text here)
+          // `[[` → note-title autocomplete (CM's own autocomplete, same source as
+          // the old prototype). Wikilink/link clicks open via a toast stand-in.
+          autocompletion({ override: [wikilinkSource], icons: true }),
+          wikilinkClick((title) => toast(`→ open note: ${title}`)),
+          linkClick((url) => toast(`→ open URL: ${url}`)),
+          livePreviewV2, // heading/emphasis/link/wikilink reveal (lists RAW)
           cmPrototypeTheme,
         ],
       }),
@@ -106,7 +132,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — list EDITING keymap (markers raw)
+        CM Core (clean rewrite) — + links & wikilinks (lists: editing only, markers raw)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>

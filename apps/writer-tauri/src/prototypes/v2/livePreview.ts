@@ -14,6 +14,7 @@
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { type EditorState, type Range } from '@codemirror/state'
+import { isKnownNote } from '../wikilinkComplete'
 
 const HIDE = Decoration.replace({})
 
@@ -65,7 +66,15 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
         if (name === 'Emphasis') return void mark(nf, nt, 'cm-em')
         if (name === 'Strikethrough') return void mark(nf, nt, 'cm-strike')
         if (name === 'InlineCode') return void mark(nf, nt, 'cm-inline-code')
-        if (name === 'EmphasisMark' || name === 'StrikethroughMark' || name === 'CodeMark') {
+        // Link `[text](url)` — style the whole node; hide the `[`/`](url)` markers.
+        if (name === 'Link') return void mark(nf, nt, 'cm-link')
+        if (
+          name === 'EmphasisMark' ||
+          name === 'StrikethroughMark' ||
+          name === 'CodeMark' ||
+          name === 'LinkMark' ||
+          name === 'URL'
+        ) {
           const p = node.node.parent
           const reveal = p ? cursorInRange(state, p.from, p.to) : cursorInRange(state, nf, nt)
           if (!reveal) hide(nf, nt)
@@ -73,6 +82,24 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
         }
       },
     })
+
+    // Wikilinks `[[Title]]` — not in the markdown grammar, so a regex overlay over
+    // the same range. Mark the inner title (broken-styled if the note is unknown)
+    // and hide `[[`/`]]` unless the caret is inside the whole `[[...]]`.
+    const text = state.doc.sliceString(from, to)
+    const re = /\[\[([^\]\n]+)\]\]/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text))) {
+      const start = from + m.index
+      const innerFrom = start + 2
+      const innerTo = innerFrom + m[1].length
+      const end = innerTo + 2
+      mark(innerFrom, innerTo, isKnownNote(m[1]) ? 'cm-wikilink' : 'cm-wikilink-broken')
+      if (!cursorInRange(state, start, end)) {
+        hide(start, innerFrom)
+        hide(innerTo, end)
+      }
+    }
   }
   return out
 }
