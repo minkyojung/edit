@@ -23,7 +23,7 @@ function readAttr(tag: string, name: string): string {
   return m ? (m[2] ?? m[3] ?? '') : ''
 }
 
-function detectMedia(text: string): { kind: MediaKind; src: string; title: string } | null {
+export function detectMedia(text: string): { kind: MediaKind; src: string; title: string } | null {
   const m = /^<(video|audio)\b/i.exec(text.trim())
   if (!m) return null
   const kind = m[1].toLowerCase() as MediaKind

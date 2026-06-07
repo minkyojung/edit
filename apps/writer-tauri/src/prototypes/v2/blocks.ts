@@ -9,7 +9,8 @@
 //      an <img> that means a reload, i.e. the height flashes and everything below
 //      jumps (the "earthquake"). Mapping avoids that.
 //
-// Constructs: image (inline replace widget) + GFM table (BLOCK replace widget).
+// Constructs: image (inline replace widget), GFM table + media (`<video>`/
+// `<audio>`) BLOCK replace widgets.
 // We rebuild (re-scan the tree) ONLY when an edit could change a widget — it
 // overlaps an existing one, or lands on a line containing `![`. Otherwise we keep
 // the mapped set. Selection-only changes rebuild for the cursor-reveal (no
@@ -20,6 +21,7 @@ import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
 import { ImageWidget, TableWidget } from '../widgets'
+import { MediaWidget, detectMedia } from '../mediaCards'
 
 function cursorInRange(state: EditorState, from: number, to: number): boolean {
   for (const r of state.selection.ranges) if (r.from <= to && from <= r.to) return true
@@ -46,6 +48,25 @@ function build(state: EditorState): DecorationSet {
         const to = state.doc.lineAt(Math.min(node.to, state.doc.length)).to
         out.push(
           Decoration.replace({ widget: new TableWidget(state.doc.sliceString(from, to)), block: true }).range(from, to),
+        )
+        return false
+      }
+      // Media — `<video>`/`<audio>` parse as a Paragraph holding HTMLTag children;
+      // match the paragraph whose text is a media tag → BLOCK widget (reuses the
+      // app's createMediaControls). Caret inside → raw. Map preserves the live
+      // <video> element (and its playback position) across edits above it. Other
+      // paragraphs return undefined so iteration descends to inline Images.
+      if (node.name === 'Paragraph') {
+        const media = detectMedia(state.doc.sliceString(node.from, node.to))
+        if (!media) return undefined
+        if (cursorInRange(state, node.from, node.to)) return false
+        const from = state.doc.lineAt(node.from).from
+        const to = state.doc.lineAt(Math.min(node.to, state.doc.length)).to
+        out.push(
+          Decoration.replace({
+            widget: new MediaWidget(media.kind, media.src, media.title),
+            block: true,
+          }).range(from, to),
         )
         return false
       }
