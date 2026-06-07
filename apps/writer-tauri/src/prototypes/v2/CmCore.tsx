@@ -14,32 +14,32 @@
 import { useEffect, useRef } from 'react'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap, drawSelection } from '@codemirror/view'
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { markdown } from '@codemirror/lang-markdown'
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { indentUnit } from '@codemirror/language'
+import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from '../cmTheme'
 import { livePreviewV2 } from './livePreview'
+import { imeListContinue } from '../imeListContinue'
 
 const SAMPLE = `# Heading one
 ## Heading two
 
-STEP 2 adds REVEAL: markers (#, **, *, ~~, backticks) hide when the caret is off
-the construct and show raw when it's on. Try **bold**, *italic*, ~~strike~~, and
-\`inline code\` — move the caret onto each and watch the markers appear/disappear.
+LIST EDITING (markers stay RAW — no bullets drawn). The point of this step is the
+*behavior*, via CM's own markdown commands:
+- type \`- \` then text, press ENTER → a new \`- \` continues automatically
+- press ENTER on an empty item → it exits the list
+- BACKSPACE at an item's start → removes the marker / dedents
+- TAB / SHIFT-TAB → indent / outdent (nesting)
 
-Check: ① markers hide/show as the caret moves, ② arrow-keying across a hidden
-marker feels OK (no atomic yet), and ③ 한글 입력(IME) inside **한글 굵게** is
-still smooth (no freeze yet).
+Try it here:
 
-STEP 3a indents list lines (markers still raw):
+- first item (press Enter at the end of this line)
+- second item
+1. ordered one (Enter continues as 2.)
 
-- a bullet whose text is long enough to wrap, so we can confirm the second
-  visual row lines up under the content rather than under the dash
-- another bullet
-  - a nested bullet (one more gutter of indent)
-1. an ordered item
-2. another ordered item
-- [ ] a task item is still raw \`- [ ]\` text at this step
+Does it FEEL like a list to edit, the way the old editor did — even without the •?
+(Headings/bold reveal still work; 한글 IME too.)
 `
 
 export default function CmCore() {
@@ -53,9 +53,24 @@ export default function CmCore() {
       state: EditorState.create({
         doc: SAMPLE,
         extensions: [
-          // Minimal editing core (CM docs "getting started").
+          // Minimal editing core (CM docs "getting started") + the markdown LIST
+          // editing keymap (CM's own commands): Enter continues a list/quote item
+          // (and exits on an empty one), Backspace at item start removes the
+          // marker / dedents, Tab indents. This is the "behaves like a list" layer
+          // — markers stay raw; rendering is a separate concern.
           history(),
-          keymap.of([...defaultKeymap, ...historyKeymap]),
+          // Safari/WKWebView drops the Enter that confirms an IME composition, so
+          // a Korean list item + Enter wouldn't continue the list. Recover it from
+          // the browser's own beforeinput (insertParagraph/insertLineBreak) signal.
+          imeListContinue(),
+          indentUnit.of('  '), // 2-space nesting
+          keymap.of([
+            { key: 'Enter', run: insertNewlineContinueMarkup },
+            { key: 'Backspace', run: deleteMarkupBackward },
+            indentWithTab,
+            ...defaultKeymap,
+            ...historyKeymap,
+          ]),
           // CM draws its OWN caret/selection. Needed so the native caret doesn't
           // show as a stray horizontal bar during IME composition (the Korean
           // "가로 커서" artifact). The theme hides the native caret.
@@ -65,7 +80,7 @@ export default function CmCore() {
           // yet (no decorations at step 0). addKeymap:false so list/quote Enter
           // continuation isn't wired until we choose to.
           markdown({ extensions: [GFM], addKeymap: false }),
-          livePreviewV2, // STEP 3a: + list layout (hanging indent; markers raw)
+          livePreviewV2, // heading + emphasis reveal (lists are RAW text here)
           cmPrototypeTheme,
         ],
       }),
@@ -91,7 +106,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — STEP 3a: list layout (hanging indent, markers raw)
+        CM Core (clean rewrite) — list EDITING keymap (markers raw)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>
