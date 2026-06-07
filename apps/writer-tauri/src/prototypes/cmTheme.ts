@@ -117,7 +117,14 @@ export const cmPrototypeTheme = EditorView.theme({
     background: 'var(--muted)',
   },
 
-  // List items — STRIPPED to a clean slate (raw markdown text, no decorations).
+  // List items (v2 step 3a) — uniform hanging indent. Per-line
+  // `padding-inline-start` (= level*1.5 + 1.5em, set via --cm-list-pad) reserves
+  // the content column; `text-indent: -1.5em` pulls only the first row back by
+  // one gutter, so soft-wrapped rows align under the content. Markers stay raw.
+  '.cm-list-line': {
+    paddingInlineStart: 'var(--cm-list-pad)',
+    textIndent: '-1.5em',
+  },
 
   // Image widget
   '.cm-img': {

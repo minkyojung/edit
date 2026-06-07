@@ -31,8 +31,15 @@ Check: ① markers hide/show as the caret moves, ② arrow-keying across a hidde
 marker feels OK (no atomic yet), and ③ 한글 입력(IME) inside **한글 굵게** is
 still smooth (no freeze yet).
 
-- a list item is still raw text at this step
-- another line, long enough to wrap so we can confirm soft-wrap is unaffected
+STEP 3a indents list lines (markers still raw):
+
+- a bullet whose text is long enough to wrap, so we can confirm the second
+  visual row lines up under the content rather than under the dash
+- another bullet
+  - a nested bullet (one more gutter of indent)
+1. an ordered item
+2. another ordered item
+- [ ] a task item is still raw \`- [ ]\` text at this step
 `
 
 export default function CmCore() {
@@ -58,7 +65,7 @@ export default function CmCore() {
           // yet (no decorations at step 0). addKeymap:false so list/quote Enter
           // continuation isn't wired until we choose to.
           markdown({ extensions: [GFM], addKeymap: false }),
-          livePreviewV2, // STEP 2: + reveal (hide markers when caret is off)
+          livePreviewV2, // STEP 3a: + list layout (hanging indent; markers raw)
           cmPrototypeTheme,
         ],
       }),
@@ -84,7 +91,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — STEP 2: reveal (markers hide when caret is off)
+        CM Core (clean rewrite) — STEP 3a: list layout (hanging indent, markers raw)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>

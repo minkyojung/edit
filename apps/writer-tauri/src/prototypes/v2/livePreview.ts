@@ -26,6 +26,34 @@ function cursorInRange(state: EditorState, from: number, to: number): boolean {
   return false
 }
 
+// STEP 3a — list LAYOUT only. One uniform line decoration per list line: reserve
+// the content column with `padding-inline-start` (= level*STEP + GUTTER) and pull
+// the first row back by one gutter with a negative `text-indent` (CSS in
+// cmTheme). Markers stay RAW here — glyphs (•/number/checkbox) come in 3b/3c.
+const LIST_GUTTER = 1.5 // em — content column / marker-column width
+const LIST_STEP = 1.5 // em — added per nesting level
+const listLineCache = new Map<number, Decoration>()
+function listLine(level: number): Decoration {
+  let d = listLineCache.get(level)
+  if (!d) {
+    d = Decoration.line({
+      class: 'cm-list-line',
+      attributes: { style: `--cm-list-pad:${level * LIST_STEP + LIST_GUTTER}em` },
+    })
+    listLineCache.set(level, d)
+  }
+  return d
+}
+
+/** Nesting depth of a list ITEM (0 = top level), from Bullet/Ordered ancestors. */
+function listLevel(item: import('@lezer/common').SyntaxNode | null): number {
+  let level = -1
+  for (let p = item?.parent ?? null; p; p = p.parent) {
+    if (p.name === 'BulletList' || p.name === 'OrderedList') level++
+  }
+  return Math.max(0, level)
+}
+
 function buildDecos(state: EditorState, ranges: readonly { from: number; to: number }[]): Range<Decoration>[] {
   const out: Range<Decoration>[] = []
   const tree = syntaxTree(state)
@@ -69,6 +97,12 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
           const p = node.node.parent
           const reveal = p ? cursorInRange(state, p.from, p.to) : cursorInRange(state, nf, nt)
           if (!reveal) hide(nf, nt)
+          return
+        }
+
+        // Lists — STEP 3a: layout only. One line decoration; marker stays raw.
+        if (name === 'ListMark') {
+          out.push(listLine(listLevel(node.node.parent)).range(state.doc.lineAt(nf).from))
           return
         }
       },
