@@ -21,6 +21,7 @@ import { autocompletion } from '@codemirror/autocomplete'
 import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from '../cmTheme'
 import { livePreviewV2 } from './livePreview'
+import { blocksV2 } from './blocks'
 import { imeListContinue } from '../imeListContinue'
 import { wikilinkSource } from '../wikilinkComplete'
 import { wikilinkClick } from '../wikilinkNav'
@@ -72,6 +73,14 @@ so no "earthquake"). Move the caret onto each to edit the raw markdown.
 \`\`\`ts
 const greet = (name: string) => \`hello, \${name}\`
 \`\`\`
+
+IMAGE (widget): the "earthquake" test. Type on the lines ABOVE the image — it
+should NOT reload/flash (it's mapped, not rebuilt). Caret onto the image markdown
+reveals the raw \`![...](...)\`.
+
+![A scenic placeholder](https://picsum.photos/480/240)
+
+Some text below the image.
 `
 
 export default function CmCore() {
@@ -117,7 +126,8 @@ export default function CmCore() {
           autocompletion({ override: [wikilinkSource], icons: true }),
           wikilinkClick((title) => toast(`→ open note: ${title}`)),
           linkClick((url) => toast(`→ open URL: ${url}`)),
-          livePreviewV2, // heading/emphasis/link/wikilink reveal (lists RAW)
+          livePreviewV2, // heading/emphasis/link/wikilink/quote/hr/code (inline+line)
+          blocksV2, // image (widget) — StateField + map so editing above doesn't reload it
           cmPrototypeTheme,
         ],
       }),
@@ -143,7 +153,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — + blockquote / rule / code fence (line decos)
+        CM Core (clean rewrite) — + image widget (map-based, earthquake test)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>
