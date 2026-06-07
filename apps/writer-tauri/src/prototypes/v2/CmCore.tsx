@@ -81,6 +81,14 @@ reveals the raw \`![...](...)\`.
 ![A scenic placeholder](https://picsum.photos/480/240)
 
 Some text below the image.
+
+TABLE (block widget): renders as a real table; put the caret inside to edit the
+raw markdown, move out to re-render. Typing above it must not reload it.
+
+| Feature | PM | CM |
+| --- | --- | --- |
+| Anchor stability | 100% | 100% |
+| Anchor LOC | 724 | 130 |
 `
 
 export default function CmCore() {
@@ -127,7 +135,7 @@ export default function CmCore() {
           wikilinkClick((title) => toast(`→ open note: ${title}`)),
           linkClick((url) => toast(`→ open URL: ${url}`)),
           livePreviewV2, // heading/emphasis/link/wikilink/quote/hr/code (inline+line)
-          blocksV2, // image (widget) — StateField + map so editing above doesn't reload it
+          blocksV2, // image + table widgets — StateField + map (no reload on edits above)
           cmPrototypeTheme,
         ],
       }),
@@ -153,7 +161,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — + image widget (map-based, earthquake test)
+        CM Core (clean rewrite) — + table (block widget, map-based)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>
