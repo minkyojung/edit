@@ -157,6 +157,12 @@ const blockClick = EditorView.domEventHandlers({
       if (from <= pos && pos <= to) hits.push({ from, to })
     })
     if (hits.length === 0) return false
+    // If the block is ALREADY selected, let CM handle this mousedown — its
+    // built-in pointer logic distinguishes a click (→ caret, edit) from a drag
+    // (→ moves the selection; the draggable widget routes through the built-in
+    // drag/drop). First click on an unselected block just selects it (border).
+    const s = view.state.selection.main
+    if (!s.empty && s.from === hits[0].from && s.to === hits[0].to) return false
     event.preventDefault()
     view.dispatch({ selection: EditorSelection.range(hits[0].from, hits[0].to) })
     return true

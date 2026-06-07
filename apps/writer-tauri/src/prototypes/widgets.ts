@@ -21,6 +21,7 @@ export class ImageWidget extends WidgetType {
     img.src = this.src
     img.alt = this.alt
     img.loading = 'lazy'
+    img.draggable = true // + ignoreEvent()=false → CM's built-in drag MOVES the source
     return img
   }
   // Reuse the existing <img> when only `selected` (or even src) changes — toggle

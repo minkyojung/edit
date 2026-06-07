@@ -13,7 +13,7 @@
 
 import { useEffect, useRef } from 'react'
 import { EditorState } from '@codemirror/state'
-import { EditorView, keymap, drawSelection } from '@codemirror/view'
+import { EditorView, keymap, drawSelection, dropCursor } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
 import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@codemirror/lang-markdown'
@@ -131,6 +131,7 @@ export default function CmCore() {
           // show as a stray horizontal bar during IME composition (the Korean
           // "가로 커서" artifact). The theme hides the native caret.
           drawSelection(),
+          dropCursor(), // drop-position indicator for dragging block widgets
           EditorView.lineWrapping,
           // Parse markdown for the syntax tree only — we render nothing from it
           // yet (no decorations at step 0). addKeymap:false so list/quote Enter
@@ -168,7 +169,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — + click-to-select border (image first)
+        CM Core (clean rewrite) — + drag-to-move image (select → drag)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>
