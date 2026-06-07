@@ -36,6 +36,11 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
   const hide = (from: number, to: number) => {
     if (to > from) out.push(HIDE.range(from, to))
   }
+  const eachLineClass = (from: number, to: number, cls: string) => {
+    let n = state.doc.lineAt(from).number
+    const end = state.doc.lineAt(Math.min(to, state.doc.length)).number
+    for (; n <= end; n++) out.push(Decoration.line({ class: cls }).range(state.doc.line(n).from))
+  }
   for (const { from, to } of ranges) {
     tree.iterate({
       from,
@@ -78,6 +83,39 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
           const p = node.node.parent
           const reveal = p ? cursorInRange(state, p.from, p.to) : cursorInRange(state, nf, nt)
           if (!reveal) hide(nf, nt)
+          return
+        }
+
+        // Blockquote — line class on each line; `>` hidden unless the caret is on
+        // that line (line-level reveal, like headings). All line decorations →
+        // no widgets → no "earthquake".
+        if (name === 'Blockquote') {
+          eachLineClass(nf, nt, 'cm-blockquote')
+          return
+        }
+        if (name === 'QuoteMark') {
+          const line = state.doc.lineAt(nf)
+          if (!cursorInRange(state, line.from, line.to)) {
+            const trailing = state.doc.sliceString(nt, nt + 1) === ' ' ? 1 : 0
+            hide(nf, nt + trailing)
+          }
+          return
+        }
+
+        // Horizontal rule — render as a ruled line (cm-hr hides the text + draws a
+        // border) unless the caret is on the line, then show raw `---`.
+        if (name === 'HorizontalRule') {
+          const line = state.doc.lineAt(nf)
+          if (!cursorInRange(state, line.from, line.to)) {
+            out.push(Decoration.line({ class: 'cm-hr' }).range(line.from))
+          }
+          return
+        }
+
+        // Fenced code — style every line (fences stay visible; mono looks fine).
+        // No reveal toggle.
+        if (name === 'FencedCode') {
+          eachLineClass(nf, nt, 'cm-code-block')
           return
         }
       },

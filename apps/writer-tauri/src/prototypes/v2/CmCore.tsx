@@ -57,10 +57,21 @@ Try it here:
 Does it FEEL like a list to edit, the way the old editor did — even without the •?
 (Headings/bold reveal still work; 한글 IME too.)
 
-LINKS & WIKILINKS (new): a [normal link](https://example.com) shows just the text;
+LINKS & WIKILINKS: a [normal link](https://example.com) shows just the text;
 move the caret onto it to reveal the raw markdown, Cmd/Ctrl-click to open. Wikilinks
 like [[Project Brasilia]] (known) and [[Nonexistent Note]] (unknown → red) hide the
 \`[[ ]]\` when the caret is off; click to navigate. Type \`[[\` for autocomplete.
+
+BLOCK TEXT (new): blockquote, rule, code fence — all line decorations (no widgets,
+so no "earthquake"). Move the caret onto each to edit the raw markdown.
+
+> A blockquote sits behind a soft left border, muted and italic.
+
+---
+
+\`\`\`ts
+const greet = (name: string) => \`hello, \${name}\`
+\`\`\`
 `
 
 export default function CmCore() {
@@ -132,7 +143,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — + links & wikilinks (lists: editing only, markers raw)
+        CM Core (clean rewrite) — + blockquote / rule / code fence (line decos)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>
