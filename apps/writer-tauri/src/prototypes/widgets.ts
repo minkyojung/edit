@@ -1,7 +1,6 @@
-// Replacing widgets for the CM Live Preview spike: ordered-list number, image,
-// and GFM table. (Bullet + task checkbox are rendered as `mark`+CSS, not widgets,
-// so the source text survives for IME composition — see livePreview.ts.)
-// Throwaway quality — toDOM only.
+// Replacing widgets for the CM Live Preview spike: image and GFM table.
+// Throwaway quality — toDOM only. (Lists render as raw markdown text — no marker
+// widgets.)
 
 import { WidgetType } from '@codemirror/view'
 

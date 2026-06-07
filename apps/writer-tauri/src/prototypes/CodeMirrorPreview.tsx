@@ -12,7 +12,7 @@ import { indentUnit } from '@codemirror/language'
 import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from './cmTheme'
-import { livePreview, taskCheckboxClick } from './livePreview'
+import { livePreview } from './livePreview'
 import { mermaidCards } from './mermaidCards'
 import { mediaCards } from './mediaCards'
 import { slashSource } from './slashCommands'
@@ -180,7 +180,6 @@ export default function CodeMirrorPreview() {
             // Save real edits to the sandbox note (debounced flush to disk).
             onDocChange(save),
             livePreview,
-            taskCheckboxClick,
             mermaidCards,
             mediaCards,
             cmPrototypeTheme,

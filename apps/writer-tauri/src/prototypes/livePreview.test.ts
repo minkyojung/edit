@@ -63,75 +63,14 @@ describe('live preview decoration engine (headless)', () => {
     expect(hideCount(buildDecorations(caretInFirst, range, new Set()))).toBe(2) // only the 2nd bold hidden
   })
 
-  // Lists use MARK-LEVEL reveal: a collapsed caret ON the marker token (bullet/
-  // number) or the `- [ ]` prefix (task) shows raw; editing the item CONTENT
-  // keeps the marker rendered; a span selection does NOT reveal. (The marker is
-  // an in-flow widget, which is what keeps IME composition safe.)
-  it('bullet: raw when caret on the marker, rendered when editing content', () => {
-    const hasBullet = (d: ReturnType<typeof buildDecorations>) =>
-      d.decos.some((r) => (r.value.spec.class as string | undefined)?.includes('cm-list-bullet'))
-
-    // caret ON the dash → raw (no bullet)
-    expect(hasBullet(buildDecorations(stateAt('- item', 1), [{ from: 0, to: 6 }], new Set()))).toBe(false)
-    // caret in the content (off the marker) → bullet rendered
-    expect(hasBullet(buildDecorations(stateAt('- item', 4), [{ from: 0, to: 6 }], new Set()))).toBe(true)
-    // span selection does NOT reveal → bullet stays rendered
-    expect(hasBullet(buildDecorations(stateSel('- item', 0, 6), [{ from: 0, to: 6 }], new Set()))).toBe(true)
-  })
-
-  it('task: checkbox raw on the `- [ ]` prefix, rendered when editing content', () => {
-    const doc = '- [ ] buy milk'
-    const range = [{ from: 0, to: doc.length }]
-    const checkbox = (d: ReturnType<typeof buildDecorations>) =>
-      d.decos.some((r) => (r.value.spec.class as string | undefined)?.includes('cm-list-checkbox'))
-
-    // caret in the content (off the prefix) → checkbox rendered
-    expect(checkbox(buildDecorations(stateAt(doc, 9), range, new Set()))).toBe(true)
-    // caret ON the marker `[ ]` → raw
-    expect(checkbox(buildDecorations(stateAt(doc, 3), range, new Set()))).toBe(false)
-    // span selection → rendered (not revealed)
-    expect(checkbox(buildDecorations(stateSel(doc, 0, doc.length), range, new Set()))).toBe(true)
-  })
-
-  it('ordered: number styled via mark in content, raw on the marker', () => {
-    const doc = '1. first'
-    const range = [{ from: 0, to: doc.length }]
-    const numMark = (d: ReturnType<typeof buildDecorations>) =>
-      d.decos.some((r) => r.value.spec.class === 'cm-list-num')
-
-    // caret in the content → number mark applied (number stays as visible text)
-    expect(numMark(buildDecorations(stateAt(doc, 5), range, new Set()))).toBe(true)
-    // caret on the number → raw, no mark
-    expect(numMark(buildDecorations(stateAt(doc, 1), range, new Set()))).toBe(false)
-  })
-
-  it('completed tasks get a strikethrough mark; open tasks do not', () => {
-    const strike = (d: ReturnType<typeof buildDecorations>) =>
-      d.decos.some((r) => r.value.spec.class === 'cm-task-checked')
-
-    expect(strike(buildDecorations(stateAt('- [x] done', 8), [{ from: 0, to: 10 }], new Set()))).toBe(true)
-    expect(strike(buildDecorations(stateAt('- [ ] todo', 8), [{ from: 0, to: 10 }], new Set()))).toBe(false)
-  })
-
-  it('bullet lines get a structural hanging-indent decoration (fixed em gutter)', () => {
-    const listLineStyles = (d: ReturnType<typeof buildDecorations>) =>
-      d.decos
-        .filter((r) => (r.value.spec.class as string | undefined)?.includes('cm-list-line'))
-        .map((r) => r.value.spec.attributes?.style as string)
-
-    // Top-level bullet, caret in content → content column = indent(0.5) +
-    // gutter(1.5) = 2em; the first row hangs one gutter left via CSS text-indent.
-    const top = listLineStyles(buildDecorations(stateAt('- item', 4), [{ from: 0, to: 6 }], new Set()))
-    expect(top.some((s) => s.includes('--cm-list-pad:2em'))).toBe(true)
-    // Nested (`  - b` under `- a`), caret in the nested content → level 1 column
-    // offset by one STEP: 1.6 + 0.5 + 1.5 = 3.6em.
-    const nested = '- a\n  - b'
-    const deep = listLineStyles(buildDecorations(stateAt(nested, 8), [{ from: 0, to: nested.length }], new Set()))
-    expect(deep.some((s) => s.includes('--cm-list-pad:3.6em'))).toBe(true)
-    // Caret ON the marker → raw source, NO structural line decoration.
-    expect(listLineStyles(buildDecorations(stateAt('- item', 1), [{ from: 0, to: 6 }], new Set()))).toHaveLength(
-      0,
-    )
+  // Lists are STRIPPED to a clean slate — no list-specific decorations at all
+  // (raw markdown text). Bullet/ordered/task all produce nothing list-specific.
+  it('lists produce no list decorations (stripped)', () => {
+    const listClass = (d: ReturnType<typeof buildDecorations>) =>
+      d.decos.some((r) => (r.value.spec.class as string | undefined)?.includes('cm-list'))
+    expect(listClass(buildDecorations(stateAt('- item', 4), [{ from: 0, to: 6 }], new Set()))).toBe(false)
+    expect(listClass(buildDecorations(stateAt('1. first', 5), [{ from: 0, to: 8 }], new Set()))).toBe(false)
+    expect(listClass(buildDecorations(stateAt('- [ ] todo', 8), [{ from: 0, to: 10 }], new Set()))).toBe(false)
   })
 })
 
@@ -139,18 +78,6 @@ function stateAt(doc: string, pos: number): EditorState {
   const state = EditorState.create({
     doc,
     selection: { anchor: pos },
-    extensions: [markdown({ extensions: [GFM] })],
-  })
-  ensureSyntaxTree(state, doc.length, 5000)
-  return state
-}
-
-// A non-empty selection (anchor ≠ head) — for testing that span selections
-// don't trigger the caret-only reveal.
-function stateSel(doc: string, anchor: number, head: number): EditorState {
-  const state = EditorState.create({
-    doc,
-    selection: { anchor, head },
     extensions: [markdown({ extensions: [GFM] })],
   })
   ensureSyntaxTree(state, doc.length, 5000)
