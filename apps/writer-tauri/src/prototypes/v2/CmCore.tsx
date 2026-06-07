@@ -23,16 +23,16 @@ import { livePreviewV2 } from './livePreview'
 const SAMPLE = `# Heading one
 ## Heading two
 
-STEP 1 styles **headings** and **emphasis**. Try **bold**, *italic*,
-~~strikethrough~~, and \`inline code\`. Markers (the # and ** etc.) are STILL
-visible on purpose — hiding them when the caret is off ("reveal") is step 2.
+STEP 2 adds REVEAL: markers (#, **, *, ~~, backticks) hide when the caret is off
+the construct and show raw when it's on. Try **bold**, *italic*, ~~strike~~, and
+\`inline code\` — move the caret onto each and watch the markers appear/disappear.
 
-Check: do the styles apply, and is 한글 입력(IME) still smooth even when typing
-**한글 굵게** inside an emphasized span?
+Check: ① markers hide/show as the caret moves, ② arrow-keying across a hidden
+marker feels OK (no atomic yet), and ③ 한글 입력(IME) inside **한글 굵게** is
+still smooth (no freeze yet).
 
 - a list item is still raw text at this step
-- another line, long enough to wrap so we can confirm soft-wrap is unaffected by
-  the inline marks
+- another line, long enough to wrap so we can confirm soft-wrap is unaffected
 `
 
 export default function CmCore() {
@@ -58,7 +58,7 @@ export default function CmCore() {
           // yet (no decorations at step 0). addKeymap:false so list/quote Enter
           // continuation isn't wired until we choose to.
           markdown({ extensions: [GFM], addKeymap: false }),
-          livePreviewV2, // STEP 1: heading + emphasis styling (markers still visible)
+          livePreviewV2, // STEP 2: + reveal (hide markers when caret is off)
           cmPrototypeTheme,
         ],
       }),
@@ -84,7 +84,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — STEP 1: heading + emphasis styling (markers visible)
+        CM Core (clean rewrite) — STEP 2: reveal (markers hide when caret is off)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>
