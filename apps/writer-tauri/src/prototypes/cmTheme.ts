@@ -218,17 +218,45 @@ export const cmPrototypeTheme = EditorView.theme({
     width: '100%',
     display: 'block',
   },
-  // Table widget
+  // Table widget — the wrapper is the positioning context for the hover "+" rails.
+  '.cm-table-wrap': {
+    position: 'relative',
+    margin: 'var(--prose-gap-block, 14px) 0',
+  },
+  // Add-column (right edge) / add-row (bottom edge) rails — revealed on hover.
+  '.cm-table-addcol, .cm-table-addrow': {
+    position: 'absolute',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: 'var(--muted-foreground)',
+    background: 'color-mix(in oklch, var(--muted) 55%, transparent)',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    lineHeight: '1',
+    opacity: '0',
+    transition: 'opacity 120ms',
+  },
+  '.cm-table-addcol': { top: '0', bottom: '0', right: '-18px', width: '14px' },
+  '.cm-table-addrow': { left: '0', right: '0', bottom: '-18px', height: '14px' },
+  '.cm-table-wrap:hover .cm-table-addcol, .cm-table-wrap:hover .cm-table-addrow': {
+    opacity: '1',
+  },
   '.cm-md-table': {
     borderCollapse: 'collapse',
     width: '100%',
     fontSize: '0.92em',
-    margin: 'var(--prose-gap-block, 14px) 0',
   },
   '.cm-md-table th, .cm-md-table td': {
     border: '1px solid var(--border)',
     padding: '0.35em 0.6em',
     textAlign: 'left',
+    // Keep empty cells (e.g. a just-added row/column) visibly sized instead of
+    // collapsing to a sliver. `height` acts as a min-height on table cells.
+    minWidth: '3em',
+    height: '2.2em',
   },
   '.cm-md-table th': {
     background: 'color-mix(in oklch, var(--muted) 60%, transparent)',

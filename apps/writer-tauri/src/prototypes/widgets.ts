@@ -2,7 +2,8 @@
 // Throwaway quality — toDOM only. (Lists render as raw markdown text — no marker
 // widgets.)
 
-import { WidgetType } from '@codemirror/view'
+import { WidgetType, type EditorView } from '@codemirror/view'
+import { addRow, addColumn } from './tableEdit'
 
 export class ImageWidget extends WidgetType {
   constructor(
@@ -92,7 +93,7 @@ export class TableWidget extends WidgetType {
   eq(o: TableWidget) {
     return o.source === this.source
   }
-  toDOM() {
+  toDOM(view: EditorView) {
     const rows = this.source
       .split('\n')
       .map((l) => l.trim())
@@ -139,7 +140,36 @@ export class TableWidget extends WidgetType {
       const tr = body.insertRow()
       cellsOf(line).forEach((c, i) => setCell(tr.insertCell(), c, i))
     }
-    return table
+
+    // P4 — add row / column. Wrap the table so the hover "+" rails can sit on its
+    // right and bottom edges. Each button rewrites the table SOURCE (the doc text
+    // is the source of truth) and dispatches it; the decoration re-renders. The
+    // widget's current doc range is [from, from+source.length] — `from` via
+    // posAtDOM on the wrapper (resolved at click time, so it survives edits above).
+    // stopPropagation keeps the click from reaching the cell-reveal handler.
+    const wrap = document.createElement('div')
+    wrap.className = 'cm-table-wrap'
+    wrap.appendChild(table)
+    const rewrite = (fn: (src: string) => string) => (e: MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const from = view.posAtDOM(wrap)
+      view.dispatch({ changes: { from, to: from + this.source.length, insert: fn(this.source) } })
+    }
+    const railBtn = (cls: string, label: string, fn: (src: string) => string): HTMLButtonElement => {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = cls
+      b.textContent = '+'
+      b.setAttribute('aria-label', label)
+      b.addEventListener('mousedown', rewrite(fn))
+      return b
+    }
+    wrap.append(
+      railBtn('cm-table-addcol', 'Add column', addColumn),
+      railBtn('cm-table-addrow', 'Add row', addRow),
+    )
+    return wrap
   }
   // FALSE → clicks on the rendered table reach the editor's domEventHandlers. A
   // block widget is otherwise unreachable (the caret can't land in it and arrow
