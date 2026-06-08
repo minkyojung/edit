@@ -93,14 +93,34 @@ function build(state: EditorState): DecorationSet {
       if (node.name === 'Paragraph') {
         const media = detectMedia(state.doc.sliceString(node.from, node.to))
         if (!media) return undefined
-        if (cursorInRange(state, node.from, node.to)) return false
-        const from = state.doc.lineAt(node.from).from
-        const to = state.doc.lineAt(Math.min(node.to, state.doc.length)).to
+        // Editing (cursor OR a selection touching the line) → KEEP the raw
+        // `<video>`/`<audio>` source visible AND show the player as a block right
+        // below it (Obsidian-style: code on top, media under). `cursorInRange`
+        // (not `caretInside`) is deliberate: a COLLAPSED-only test would drop the
+        // reveal the instant you drag to select the source — the text would turn
+        // back into the player mid-drag and you'd grab the player instead. Keeping
+        // it revealed for any touching selection lets you cleanly select & drag the
+        // source text to move the block, exactly like Obsidian.
+        if (cursorInRange(state, node.from, node.to)) {
+          const lineEnd = state.doc.lineAt(node.to).to
+          out.push(
+            Decoration.widget({
+              widget: new MediaWidget(media.kind, media.src, media.title),
+              block: true,
+              side: 1,
+            }).range(lineEnd),
+          )
+          return false
+        }
+        // INLINE replace (NOT block) — exactly like the image. A `block: true`
+        // replace turns the whole line into a non-text block that the caret SKIPS
+        // over on arrow-down (no text position to land on), so the source could
+        // never be revealed by moving the caret. An inline replace keeps the line
+        // caret-addressable, so arrowing onto it reveals the source (above).
         out.push(
           Decoration.replace({
             widget: new MediaWidget(media.kind, media.src, media.title),
-            block: true,
-          }).range(from, to),
+          }).range(node.from, node.to),
         )
         return false
       }

@@ -84,9 +84,10 @@ export class MediaWidget extends WidgetType {
     fig.appendChild(edit)
     return fig
   }
-  // Ignore ALL widget-internal events so the native controls operate freely and
-  // never move CM's selection (no accidental reveal-on-play). The edit button's
-  // own listener + view.dispatch is not affected by this.
+  // Ignore EVERY widget-internal event so the native controls operate freely and
+  // never move CM's selection (no reveal-on-play). To MOVE the block you reveal
+  // the raw `<video>`/`<audio>` line (`</>` or a caret) and drag/cut that TEXT —
+  // a normal text move, so no drag handle is needed here.
   ignoreEvent() {
     return true
   }

@@ -214,6 +214,9 @@ export const cmPrototypeTheme = EditorView.theme({
     maxWidth: '100%',
     verticalAlign: 'bottom',
     margin: 'var(--prose-gap-block, 14px) 0',
+    // The player is a non-text widget — never let a text drag highlight/grab it
+    // (Obsidian keeps the embed clean while you select just the source line).
+    userSelect: 'none',
   },
   '.cm-media-card video': {
     maxWidth: '100%',
