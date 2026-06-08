@@ -11,8 +11,7 @@
 
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
-import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
-import { createMediaControls } from '@/editor/cards/MediaControls'
+import { EditorSelection, StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
 import { activeLines } from './reveal'
 import { isComposing, compositionEnded } from './imeComposition'
 
@@ -32,8 +31,6 @@ export function detectMedia(text: string): { kind: MediaKind; src: string; title
   return { kind, src, title: readAttr(text, 'title') }
 }
 
-type ControlsHost = HTMLElement & { _destroyControls?: () => void }
-
 export class MediaWidget extends WidgetType {
   constructor(
     readonly kind: MediaKind,
@@ -47,33 +44,51 @@ export class MediaWidget extends WidgetType {
   eq(other: MediaWidget) {
     return other.kind === this.kind && other.src === this.src && other.title === this.title
   }
-  toDOM() {
-    const fig = document.createElement('figure') as ControlsHost
+  // SPIKE: native webview controls instead of the custom `createMediaControls`
+  // bar. toDOM gets the `view` so the edit-source button can dispatch a selection.
+  toDOM(view: EditorView) {
+    const fig = document.createElement('figure')
     fig.className = 'cm-media-card'
     fig.dataset.card = this.kind
 
     const media = document.createElement(this.kind) as HTMLMediaElement
     media.src = this.src
     if (this.title) media.title = this.title
-    media.controls = false // custom controls below
+    // NATIVE controls — the OS webview (WKWebView on macOS) renders its own
+    // Safari/QuickTime-style player chrome. The reason the PM editor couldn't use
+    // these (shadow-DOM scrubber/volume events misread as a card drag) is gone in
+    // CM: CM has no `mightDrag` trap and gates purely on `ignoreEvent()` below,
+    // which returns true so none of the controls' events reach the editor.
+    media.controls = true
     media.setAttribute('preload', this.kind === 'video' ? 'auto' : 'metadata')
-    media.setAttribute('data-block', 'true')
     fig.appendChild(media)
 
-    const controls = createMediaControls(media, { className: `${this.kind}-controls` })
-    fig.appendChild(controls.el)
-    fig._destroyControls = controls.destroy
+    // Because `ignoreEvent()` is true, clicking the card no longer reveals the
+    // raw `<video src=...>` markup (that click never reaches CM now). So give an
+    // explicit affordance: a button that drops a caret on the media line → the
+    // field swaps the widget for raw source (`cursorInRange`). Arrowing a caret
+    // in from an adjacent line still works too (keyboard is unaffected by
+    // `ignoreEvent`). The button uses its OWN listener + `view.dispatch`.
+    const edit = document.createElement('button')
+    edit.type = 'button'
+    edit.className = 'cm-media-edit'
+    edit.textContent = '</>'
+    edit.setAttribute('aria-label', 'Edit source')
+    edit.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      const pos = view.posAtDOM(fig)
+      const line = view.state.doc.lineAt(pos)
+      view.dispatch({ selection: EditorSelection.cursor(line.from) })
+      view.focus()
+    })
+    fig.appendChild(edit)
     return fig
   }
-  destroy(dom: HTMLElement) {
-    const host = dom as ControlsHost
-    host._destroyControls?.()
-    host._destroyControls = undefined
-  }
-  // Controls need clicks; the controls' own handlers stopPropagation so CM
-  // selection isn't disturbed.
+  // Ignore ALL widget-internal events so the native controls operate freely and
+  // never move CM's selection (no accidental reveal-on-play). The edit button's
+  // own listener + view.dispatch is not affected by this.
   ignoreEvent() {
-    return false
+    return true
   }
 }
 

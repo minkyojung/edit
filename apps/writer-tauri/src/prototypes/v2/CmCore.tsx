@@ -92,8 +92,10 @@ raw markdown, move out to re-render. Typing above it must not reload it.
 | Anchor stability | 100% | 100% |
 | Anchor LOC | 724 | 130 |
 
-MEDIA (block widget, reuses the app's controls): play it, then type on the lines
-ABOVE — playback must NOT reset (map preserves the live element).
+MEDIA (block widget, SPIKE: NATIVE webview controls): play/seek/volume use the OS
+(WKWebView) player chrome — pressing them must NOT flip the card to raw source.
+The "</>" button beside it (or arrowing a caret in) reveals the raw markup to edit.
+Then type on the lines ABOVE — playback must NOT reset (map preserves the element).
 
 <video src="https://www.w3schools.com/html/mov_bbb.mp4" controls></video>
 
@@ -171,7 +173,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — list step 5a (task checkbox display, no click yet)
+        CM Core (clean rewrite) — media spike (native webview controls + edit-source reveal)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>

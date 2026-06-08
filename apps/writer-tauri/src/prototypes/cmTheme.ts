@@ -197,6 +197,37 @@ export const cmPrototypeTheme = EditorView.theme({
     outline: '2px solid var(--info)',
     outlineOffset: '2px',
   },
+  // Media card (SPIKE: native webview controls). Flex so the edit-source button
+  // sits BESIDE the media (not overlaying the native control bar — which matters
+  // for audio, whose whole height is the bar).
+  '.cm-media-card': {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '6px',
+    margin: 'var(--prose-gap-block, 14px) 0',
+  },
+  '.cm-media-card video': {
+    flex: '1',
+    minWidth: '0',
+    maxWidth: '100%',
+    borderRadius: '8px',
+    display: 'block',
+  },
+  '.cm-media-card audio': {
+    flex: '1',
+    minWidth: '0',
+  },
+  '.cm-media-edit': {
+    flex: '0 0 auto',
+    padding: '2px 6px',
+    fontSize: '11px',
+    fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+    color: 'var(--muted-foreground)',
+    background: 'transparent',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    cursor: 'pointer',
+  },
   // Table widget
   '.cm-md-table': {
     borderCollapse: 'collapse',
