@@ -27,6 +27,23 @@ export const cmPrototypeTheme = EditorView.theme({
     // over drawSelection's base theme.
     caretColor: 'transparent',
   },
+  // ── Nested cell-editor reset ────────────────────────────────────────────────
+  // An in-place table cell hosts its OWN nested editor. CM theme selectors are
+  // descendant-scoped (`.theme .cm-content`), so this PAGE theme's rules leak into
+  // every nested cell. Most leaks are desirable (the cell reuses our mark/link
+  // styling), but the PAGE-LAYOUT props are not — a cell is not a page. Neutralize
+  // exactly those here, in ONE place, scoped under `.cm-celledit` so the rule is
+  // more specific than the leaking `.cm-content` rule and reliably wins. If the page
+  // theme later adds page-layout props, reset them here too.
+  '.cm-celledit .cm-content': {
+    maxWidth: 'none', // ← page: 680px
+    margin: '0', // ← page: 0 auto
+    padding: '0.3em 0.55em', // ← page: 48px 24px 120px
+    minHeight: '1.4em',
+  },
+  '.cm-celledit .cm-scroller': {
+    lineHeight: '1.5', // ← page: 1.7
+  },
   '.cm-line': { padding: '0' },
   '.cm-cursor': { borderLeftColor: 'var(--foreground)' },
   // Drop-position indicator during drag. CM's default is solid black →
@@ -222,9 +239,17 @@ export const cmPrototypeTheme = EditorView.theme({
     display: 'block',
   },
   // Table widget — the wrapper is the positioning context for the hover "+" rails.
+  // Vertical spacing as PADDING (not margin): CM6 measures a block widget's height
+  // from its bounding box, which excludes margins — margin left the heightmap ~28px
+  // short per table, so clicks / vertical arrows below the table mapped to the wrong
+  // line. Padding is inside the box and the heightmap counts it.
   '.cm-table-wrap': {
+    padding: 'var(--prose-gap-block, 14px) 0',
+  },
+  // Hugs the table (no padding) and is the positioning context for the hover rails,
+  // so they anchor to the table edge, not the padded wrap.
+  '.cm-table-frame': {
     position: 'relative',
-    margin: 'var(--prose-gap-block, 14px) 0',
   },
   // Add-column (right edge) / add-row (bottom edge) rails — revealed on hover.
   '.cm-table-addcol, .cm-table-addrow': {
@@ -291,6 +316,9 @@ export const cmPrototypeTheme = EditorView.theme({
     background: 'color-mix(in oklch, var(--muted) 60%, transparent)',
     fontWeight: '600',
   },
+  // In-place cells host a NESTED editor — drop the cell's own padding (the nested
+  // .cm-content supplies it) and let the editor fill the cell from the top.
+  '.cm-celledit th, .cm-celledit td': { padding: '0', verticalAlign: 'top' },
   // In-place editable cell body (#/dev/celledit): fills the cell, no harsh native
   // focus ring — a subtle tint marks the active cell instead.
   '.cm-cell-body': {

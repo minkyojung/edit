@@ -1,16 +1,22 @@
 // In-place editable GFM table — a CM6 block widget rendering a real <table> whose
-// cells are `contenteditable` (Obsidian-1.5 style). Edited directly, NO raw-markdown
-// reveal. Shared by the spike (#/dev/celledit) and the cm2 editor.
+// each cell is its OWN nested CodeMirror EditorView (Approach B). Shared by the
+// spike (#/dev/celledit) and the cm2 editor.
 //
-// Why it works (verified in @codemirror/view): CM's DOMObserver `readMutation`
-// returns null for mutations inside a widget tile, so the browser owns the cell's
-// editing + IME natively. We sync on `blur` by serializing the table DOM into ONE
-// transaction (native CM undo). `ignoreEvent()=true` keeps CM out of the cell's
-// events. Cells show RAW markdown text (e.g. `**bold**`) — inline rendering inside
-// an editable cell is a separate, deferred concern.
+// Why a nested editor per cell: inline rendering (bold/links via livePreviewInline),
+// multi-line content, and CJK IME all come from the same CM machinery the main
+// editor uses — verified clean in the #/dev/nestedcell spike. CM's DOMObserver
+// ignores widget-internal mutations and `ignoreEvent()=true` keeps the parent out
+// of cell events, so each cell view owns its editing. We sync to the parent doc on
+// cell blur by serializing every cell's nested doc into ONE transaction (native
+// undo). In-cell line breaks (`\n`) round-trip to GFM `<br>`.
 
-import { EditorView, WidgetType } from '@codemirror/view'
+import { EditorState, Prec } from '@codemirror/state'
+import { EditorView, WidgetType, keymap, drawSelection } from '@codemirror/view'
+import { history, defaultKeymap, historyKeymap } from '@codemirror/commands'
+import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
+import { GFM } from '@lezer/markdown'
+import { livePreviewInline } from './livePreview'
 import { addRow, addColumn, deleteRow, deleteColumn } from '../tableEdit'
 
 const isDelim = (line: string): boolean => /^[\s|:-]+$/.test(line) && line.includes('-')
@@ -20,13 +26,63 @@ const cellsOf = (line: string): string[] =>
     .split('|')
     .map((c) => c.trim())
 
-/** Re-serialize a rendered table's DOM back to GFM source, reusing the original
- * delimiter line. Reads each cell's editable BODY only — never the cell's full
- * textContent, which would include the "×" delete handles rendered inside it. */
+type WithView = HTMLElement & { _cellView?: EditorView }
+
+// A cell's GFM source ↔ the nested editor's plain doc. `<br>` is how a table cell
+// stores a line break (a real newline would end the row), so map both ways.
+const cellToDoc = (text: string): string => text.replace(/<br\s*\/?>/gi, '\n')
+const docToCell = (doc: string): string => doc.replace(/\n/g, '<br>').trim()
+
+// Self-contained theme for a tiny in-cell editor — does NOT reuse the prose page
+// theme (whose 48px/120px page padding made cells huge). Just compact layout + the
+// inline-mark styles the cell actually renders.
+const cellTheme = EditorView.theme({
+  '&': { fontSize: 'inherit', color: 'var(--foreground)' },
+  '&.cm-focused': { outline: 'none' },
+  '.cm-content': {
+    padding: '0.3em 0.55em',
+    caretColor: 'transparent',
+    fontFamily: 'var(--font-sans)',
+  },
+  '.cm-scroller': { lineHeight: '1.5', fontFamily: 'var(--font-sans)' },
+  '.cm-cursor': { borderLeftColor: 'var(--foreground)' },
+  '.cm-selectionBackground, ::selection': {
+    backgroundColor: 'color-mix(in oklch, var(--info) 22%, transparent)',
+  },
+  '.cm-strong': { fontWeight: '700' },
+  '.cm-em': { fontStyle: 'italic' },
+  '.cm-strike': { textDecoration: 'line-through' },
+  '.cm-inline-code': {
+    fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+    fontSize: '0.9em',
+    background: 'var(--muted)',
+    padding: '0 0.3em',
+    borderRadius: '0.25rem',
+  },
+  '.cm-link': { color: 'var(--info)', textDecoration: 'underline', textUnderlineOffset: '2px' },
+  '.cm-wikilink': {
+    color: 'var(--info)',
+    textDecoration: 'underline',
+    textUnderlineOffset: '2px',
+    cursor: 'pointer',
+  },
+  '.cm-wikilink-broken': {
+    color: 'var(--destructive, crimson)',
+    textDecoration: 'underline dashed',
+    textUnderlineOffset: '2px',
+  },
+  '.cm-wikilink-bracket': { color: 'var(--muted-foreground)' },
+})
+
+/** Re-serialize a rendered table to GFM source, reading each cell's NESTED editor
+ * doc (not DOM text, which would be the rendered/marker-hidden version). */
 export function serialize(root: HTMLElement, delim: string): string {
   const table = (root.querySelector('table') ?? root) as HTMLTableElement
   const line = (cells: string[]) => `| ${cells.join(' | ')} |`
-  const text = (c: HTMLTableCellElement) => (c.querySelector('.cm-cell-body') ?? c).textContent?.trim() ?? ''
+  const text = (c: HTMLTableCellElement) => {
+    const v = (c as WithView)._cellView
+    return docToCell(v ? v.state.doc.toString() : (c.textContent ?? ''))
+  }
   const header = [...(table.tHead?.rows[0]?.cells ?? [])].map(text)
   const bodyRows = [...(table.tBodies[0]?.rows ?? [])].map((tr) => [...tr.cells].map(text))
   return [line(header), delim, ...bodyRows.map(line)].join('\n')
@@ -46,11 +102,8 @@ export class EditableTableWidget extends WidgetType {
     const table = document.createElement('table')
     table.className = 'cm-md-table cm-celledit'
 
-    // The table's CURRENT document range, from the live syntax tree — NOT from
-    // `this.source.length`. When `updateDOM` keeps the DOM across a commit, the
-    // cell's listeners still close over the OLD widget (stale length), so a captured
-    // length would mis-target the replace and leave a stray `|` that re-parses into
-    // an extra cell (cells multiplying "one by one").
+    // The table's CURRENT document range, from the live syntax tree (NOT a captured
+    // source length — see the in-place commit notes: updateDOM keeps stale closures).
     const rangeFromDoc = (): { from: number; to: number } => {
       const from = view.posAtDOM(table)
       let node = syntaxTree(view.state).resolveInner(from, 1)
@@ -60,96 +113,79 @@ export class EditableTableWidget extends WidgetType {
         : from + this.source.length
       return { from, to }
     }
-    // Commit on blur (composition already finished) → one transaction.
     const commit = () => {
       const next = serialize(table, this.delim)
       const { from, to } = rangeFromDoc()
       if (view.state.doc.sliceString(from, to) === next) return
       view.dispatch({ changes: { from, to, insert: next } })
     }
-    // Structural op (add/delete row/column): apply a kernel fn to the CURRENT table
-    // source (serialized DOM, so unsaved cell edits are kept) and replace the live
-    // range. Refocus the editor so Cmd-Z reaches CM history (ignoreEvent=true drops
-    // the undo keypress while focus is inside the widget).
     const structOp = (fn: (src: string) => string) => (e: MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
       const next = fn(serialize(table, this.delim))
       const { from, to } = rangeFromDoc()
-      if (view.state.doc.sliceString(from, to) === next) return
-      view.dispatch({ changes: { from, to, insert: next } })
-      view.focus()
+      if (view.state.doc.sliceString(from, to) !== next) {
+        view.dispatch({ changes: { from, to, insert: next } })
+      }
+      view.focus() // so Cmd-Z reaches CM history (cells ignoreEvent the keypress)
     }
 
-    // Keyboard nav between cells = focus movement. `grid[row][col]` holds each cell's
-    // editable BODY div. focusCell selects the body's contents (spreadsheet-style).
-    const grid: HTMLElement[][] = []
-    const focusCell = (el: HTMLElement) => {
-      el.focus()
-      const range = document.createRange()
-      range.selectNodeContents(el)
-      const sel = window.getSelection()
-      sel?.removeAllRanges()
-      sel?.addRange(range)
+    // Cell views, row-major, for Tab/Shift-Tab nav and teardown.
+    const grid: EditorView[][] = []
+    const cellViews: EditorView[] = []
+    const focusCell = (v: EditorView) => {
+      v.focus()
+      v.dispatch({ selection: { anchor: 0, head: v.state.doc.length } }) // select-all
     }
-    const nav = (el: HTMLElement, dir: 'next' | 'prev' | 'down') => {
-      let r = -1
-      let c = -1
-      for (let i = 0; i < grid.length && r < 0; i++) {
-        const j = grid[i].indexOf(el)
-        if (j >= 0) {
-          r = i
-          c = j
-        }
-      }
-      if (r < 0) return
-      if (dir === 'down') {
-        const below = grid[r + 1]?.[c]
-        if (below) focusCell(below)
-        return
-      }
+    const nav = (v: EditorView, dir: 'next' | 'prev') => {
       const flat = grid.flat()
-      const target = flat[flat.indexOf(el) + (dir === 'next' ? 1 : -1)]
+      const target = flat[flat.indexOf(v) + (dir === 'next' ? 1 : -1)]
       if (target) focusCell(target)
     }
+    // Tab/Shift-Tab move between cells; Escape commits + leaves. Arrows/Enter use the
+    // cell editor's own defaults (char/line motion, Enter = newline) for now; cross-
+    // cell arrow nav + Enter-adds-row is a later step.
+    const cellKeymap = Prec.highest(
+      keymap.of([
+        { key: 'Tab', run: (v) => (nav(v, 'next'), true) },
+        { key: 'Shift-Tab', run: (v) => (nav(v, 'prev'), true) },
+        { key: 'Escape', run: (v) => ((v.contentDOM as HTMLElement).blur(), true) },
+      ]),
+    )
 
-    // Cell text lives in a dedicated contenteditable body div — separate from the
-    // cell so the "×" delete handle can sit in the cell without being part of the
-    // editable text (serialize reads `.cm-cell-body` only). Returns the body.
-    const wireCell = (cell: HTMLTableCellElement, text: string): HTMLElement => {
-      const el = document.createElement('div')
-      el.className = 'cm-cell-body'
-      el.contentEditable = 'true'
-      el.spellcheck = false
-      el.textContent = text
-      el.addEventListener('blur', commit)
-      el.addEventListener('keydown', (e) => {
-        if (e.key === 'Tab') {
-          e.preventDefault()
-          nav(el, e.shiftKey ? 'prev' : 'next')
-        } else if (e.key === 'Enter') {
-          e.preventDefault() // never insert a newline into a cell
-          nav(el, 'down')
-        } else if (e.key === 'Escape') {
-          e.preventDefault()
-          el.blur()
-        }
+    const wireCell = (cell: HTMLTableCellElement, text: string): EditorView => {
+      const cv = new EditorView({
+        parent: cell,
+        state: EditorState.create({
+          doc: cellToDoc(text),
+          extensions: [
+            history(),
+            cellKeymap,
+            keymap.of([...defaultKeymap, ...historyKeymap]),
+            drawSelection(),
+            EditorView.lineWrapping,
+            markdown({ extensions: [GFM], addKeymap: false }),
+            livePreviewInline,
+            cellTheme,
+            EditorView.domEventHandlers({ blur: () => commit() }),
+          ],
+        }),
       })
-      cell.appendChild(el)
-      return el
+      ;(cell as WithView)._cellView = cv
+      cellViews.push(cv)
+      return cv
     }
     const delHandle = (cls: string, label: string, fn: (src: string) => string): HTMLButtonElement => {
       const b = document.createElement('button')
       b.type = 'button'
       b.className = cls
       b.textContent = '×'
-      b.contentEditable = 'false'
       b.setAttribute('aria-label', label)
       b.addEventListener('mousedown', structOp(fn))
       return b
     }
 
-    // Per-column alignment from the delimiter (`:--` left, `:-:` center, `--:` right).
+    // Per-column alignment from the delimiter.
     const aligns = cellsOf(this.delim).map((c) => {
       const l = c.startsWith(':')
       const r = c.endsWith(':')
@@ -161,7 +197,7 @@ export class EditableTableWidget extends WidgetType {
     let dataIndex = -1
     for (const line of rows) {
       if (isDelim(line)) continue
-      const rowCells: HTMLElement[] = []
+      const rowCells: EditorView[] = []
       if (!headerDone) {
         const tr = table.createTHead().insertRow()
         cellsOf(line).forEach((c, i) => {
@@ -186,11 +222,17 @@ export class EditableTableWidget extends WidgetType {
       grid.push(rowCells)
     }
 
-    // Wrap so the hover "+" rails sit on the right (add column) / bottom (add row)
-    // edges. Rails live OUTSIDE the cells, so their glyphs never pollute cell text.
-    const wrap = document.createElement('div')
+    // `wrap` owns the vertical SPACING as PADDING (not margin) so CM6's heightmap —
+    // which measures a block widget by its bounding box, excluding margins — sees
+    // the full height; with margin the map was ~28px short per table and clicks /
+    // vertical arrows below the table mapped to the wrong line. `frame` (no padding,
+    // position:relative) hugs the table so the hover rails anchor to the table edge,
+    // not to the padded wrap.
+    const wrap = document.createElement('div') as HTMLElement & { _cellViews?: EditorView[] }
     wrap.className = 'cm-table-wrap'
-    wrap.appendChild(table)
+    const frame = document.createElement('div')
+    frame.className = 'cm-table-frame'
+    frame.appendChild(table)
     const rail = (cls: string, label: string, fn: (src: string) => string) => {
       const b = document.createElement('button')
       b.type = 'button'
@@ -198,17 +240,22 @@ export class EditableTableWidget extends WidgetType {
       b.textContent = '+'
       b.setAttribute('aria-label', label)
       b.addEventListener('mousedown', structOp(fn))
-      wrap.appendChild(b)
+      frame.appendChild(b)
     }
     rail('cm-table-addcol', 'Add column', addColumn)
     rail('cm-table-addrow', 'Add row', addRow)
+    wrap.appendChild(frame)
+    wrap._cellViews = cellViews
     return wrap
   }
-  // If the existing DOM already serializes to our (new) source, this update was
-  // caused by our OWN commit of the user's typing → keep the DOM so focus/IME
-  // survive. Otherwise (e.g. an undo changed the source underneath) let CM rebuild.
+  // Own-commit re-render → keep DOM (focus/IME of nested cell views survive);
+  // otherwise (undo / external edit) let CM rebuild.
   updateDOM(dom: HTMLElement) {
     return serialize(dom, this.delim) === this.source
+  }
+  // CM does NOT auto-destroy nested views — release every cell view on teardown.
+  destroy(dom: HTMLElement) {
+    ;(dom as HTMLElement & { _cellViews?: EditorView[] })._cellViews?.forEach((v) => v.destroy())
   }
   ignoreEvent() {
     return true

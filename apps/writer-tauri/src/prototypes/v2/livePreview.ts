@@ -54,6 +54,11 @@ function buildDecos(
   state: EditorState,
   ranges: readonly { from: number; to: number }[],
   inlineOnly = false,
+  // Cell mode: when defined, reveal is decided by FOCUS, not the active line —
+  // a single-line cell's caret is always "on its line", so active-line reveal would
+  // never render. true = focused → show raw; false = blurred → render. undefined =
+  // main editor's active-line behavior.
+  revealAll?: boolean,
 ): Range<Decoration>[] {
   const out: Range<Decoration>[] = []
   const tree = syntaxTree(state)
@@ -133,13 +138,12 @@ function buildDecos(
             const p = node.node.parent
             if (p?.name === 'Link' && isWikiLink(state, p.from, p.to)) return
           }
-          // ACTIVE-LINE reveal (not per-construct). Show the WHOLE line raw when the
-          // selection touches it — exactly like headings/quotes below, and like
-          // Obsidian. This is the fundamental IME fix: the line the caret (and thus
-          // an IME composition) is on never carries a replace decoration, so CJK
-          // composition can never be disturbed. Other lines hide markers as before.
+          // Cell mode (revealAll defined) → reveal by focus. Else ACTIVE-LINE reveal:
+          // show the WHOLE line raw when the selection touches it (the IME-safe rule —
+          // the composing line never carries a replace decoration).
           const line = state.doc.lineAt(nf)
-          if (!cursorInRange(state, line.from, line.to)) hide(nf, nt)
+          const reveal = revealAll ?? cursorInRange(state, line.from, line.to)
+          if (!reveal) hide(nf, nt)
           return
         }
 
@@ -263,7 +267,7 @@ function buildDecos(
       // Obsidian model: the TITLE is always the link (blue underline / red broken).
       mark(innerFrom, innerTo, isKnownNote(m[1]) ? 'cm-wikilink' : 'cm-wikilink-broken')
       const line = state.doc.lineAt(start)
-      if (cursorInRange(state, line.from, line.to)) {
+      if (revealAll ?? cursorInRange(state, line.from, line.to)) {
         // editing → SHOW the `[[`/`]]` brackets, just muted (a class, not a replace,
         // so the composing caret's line never carries a replace → IME-safe).
         mark(start, innerFrom, 'cm-wikilink-bracket')
@@ -286,11 +290,14 @@ function previewPlugin(inlineOnly: boolean) {
         this.deco = this.build(view)
       }
       build(view: EditorView): DecorationSet {
-        return Decoration.set(buildDecos(view.state, view.visibleRanges, inlineOnly), true)
+        // Cell mode reveals by focus (a single-line cell is always "on its line").
+        const revealAll = inlineOnly ? view.hasFocus : undefined
+        return Decoration.set(buildDecos(view.state, view.visibleRanges, inlineOnly, revealAll), true)
       }
       update(u: ViewUpdate) {
-        // Reveal depends on the selection now, so rebuild on selection changes too.
-        if (u.docChanged || u.viewportChanged || u.selectionSet) this.deco = this.build(u.view)
+        // Reveal depends on selection (main) or focus (cell), so rebuild on both.
+        if (u.docChanged || u.viewportChanged || u.selectionSet || (inlineOnly && u.focusChanged))
+          this.deco = this.build(u.view)
       }
     },
     { decorations: (v) => v.deco },
