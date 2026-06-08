@@ -18,6 +18,11 @@ import { isKnownNote } from '../wikilinkComplete'
 
 const HIDE = Decoration.replace({})
 
+// Width (em) of the list marker column. The hanging-indent padding (JS, here) and
+// the `.cm-list-marker` inline-block width (CSS, cmTheme) MUST match this value so
+// the marker fills its column and body text lands exactly at the column edge.
+const LIST_INDENT = 1.8
+
 /** Any selection range touches [from, to] (inclusive — an edge counts, so a
  * just-typed marker stays raw until the caret moves off). */
 function cursorInRange(state: EditorState, from: number, to: number): boolean {
@@ -126,45 +131,59 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
         // reveal toggle never reflows (no caret lag). Task markers are step 5.
         if (name === 'ListMark') {
           const item = node.node.parent
+          // Hanging indent — give EVERY list line a fixed marker column (LIST_INDENT
+          // em). The marker (`.cm-list-marker`) is an inline-block of exactly that
+          // width, so bullets, numbers and tasks all start their body text at the
+          // SAME x, and a wrapped line continues under that text instead of falling
+          // back under the marker. `padding-left` reserves the column(s); a matching
+          // negative `text-indent` pulls the first line's marker back into the first
+          // column. Nested lists add one column per level.
+          let depth = 0
+          for (let p = item?.parent; p; p = p.parent) {
+            if (p.name === 'BulletList' || p.name === 'OrderedList') depth++
+          }
+          const level = Math.max(0, depth - 1)
+          const line = state.doc.lineAt(nf)
+          out.push(
+            Decoration.line({
+              attributes: {
+                style: `padding-left:${(level + 1) * LIST_INDENT}em;text-indent:-${LIST_INDENT}em`,
+              },
+            }).range(line.from),
+          )
+
           // Task `- [ ] ` → draw a checkbox over the `- [ ]` prefix. Detect by the
-          // text after the dash (regex), NOT the lezer `Task` node — which only forms
-          // once the item has content, so the checkbox would pop in a keystroke late;
-          // the regex makes it instant, like bullets.
-          //
-          // OVERLAY, not replace (same trick as the bullet): mark `- [ ]` as a
-          // visibility:hidden span — its box (width + caret height) stays exactly the
-          // same — and draw the checkbox with a position:absolute ::after, which is
-          // out of flow. Because the geometry never changes when the reveal toggles,
-          // there is ZERO reflow, so the checkbox appears with no paint lag. A replace
-          // widget would instead delete the 5 source chars and shrink the line →
-          // reflow that lands one frame after the caret moved ("raw lingers a frame").
-          // Reveal: a caret anywhere on the `- [ ]` prefix shows the raw source.
+          // text after the dash (regex), NOT the lezer `Task` node (which only forms
+          // once the item has content → a keystroke late). OVERLAY, not replace: the
+          // marker box is the fixed-width `.cm-list-marker`, and the checkbox is a
+          // position:absolute ::after on `.cm-task-marker` (out of flow → no reflow,
+          // no paint lag). The fixed column also pins the box and body regardless of
+          // `[ ]` vs `[x]` width, so the old per-char monospace hack is gone.
           if (item?.parent?.name === 'BulletList') {
             const tm = /^ \[([ xX])\]/.exec(state.doc.sliceString(nt, nt + 4))
             if (tm) {
               const markerTo = nt + 4 // after `]`
               const checked = /[xX]/.test(tm[1])
-              // The ONLY thing whose width drifts between `[ ]` and `[x]` is the inner
-              // status char (a space vs an `x`). So render JUST that one char monospace
-              // (always — revealed AND hidden): in mono a space and an `x` share the
-              // same advance, so the marker width is constant → the box and the task-
-              // text start never shift when ticked, with no reveal reflow. Confining
-              // mono to one char keeps the spacing normal (whole-marker mono ballooned
-              // the indent).
-              mark(nt + 2, nt + 3, 'cm-task-cell')
-              if (!cursorInRange(state, nf, markerTo)) {
-                // not revealed → hide the source and draw the checkbox over it
-                mark(nf, markerTo, checked ? 'cm-task-marker cm-task-marker-checked' : 'cm-task-marker')
-              }
-              // Completed task → strike + mute the body text (kept even while editing,
-              // like Obsidian). Body = after the marker to the end of the item line.
-              if (checked) mark(markerTo, state.doc.lineAt(nf).to, 'cm-task-done')
+              const revealed = cursorInRange(state, nf, markerTo) // caret on `- [ ]` → raw
+              mark(
+                nf,
+                markerTo,
+                revealed
+                  ? 'cm-list-marker'
+                  : `cm-list-marker cm-task-marker${checked ? ' cm-task-marker-checked' : ''}`,
+              )
+              // Completed task → strike + mute the body (kept while editing, like Obsidian).
+              if (checked) mark(markerTo, line.to, 'cm-task-done')
               return
             }
           }
           if (state.doc.sliceString(nt, nt + 1) !== ' ') return // `- `/`1. ` only
-          if (cursorInRange(state, nf, nt)) return // caret on the marker → raw
-          mark(nf, nt, item?.parent?.name === 'OrderedList' ? 'cm-list-num' : 'cm-list-bullet')
+          const isNum = item?.parent?.name === 'OrderedList'
+          // Number is its own glyph (just tinted) → always shown. Bullet hides its
+          // dash and draws a •, unless the caret is on it (then raw). Either way the
+          // `.cm-list-marker` column stays, so the body never shifts on reveal.
+          if (isNum) return void mark(nf, nt, 'cm-list-marker cm-list-num')
+          mark(nf, nt, cursorInRange(state, nf, nt) ? 'cm-list-marker' : 'cm-list-marker cm-list-bullet')
           return
         }
       },

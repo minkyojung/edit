@@ -117,51 +117,51 @@ export const cmPrototypeTheme = EditorView.theme({
     background: 'var(--muted)',
   },
 
-  // List bullet (v2 step 1) — Ixora's trick: hide the source dash with
-  // `visibility:hidden` (keeps its box → same width, full caret height) and draw
-  // a • over it with an absolutely-positioned ::after. Because the geometry is
-  // identical to the raw dash, toggling this on/off never reflows (no caret lag).
-  '.cm-list-bullet': {
+  // Shared marker column (v2 step 6 — list indent unification). Every list marker
+  // (bullet / number / task) is an inline-block of one fixed width, so all body
+  // text starts at the same x and wrapped lines hang under it (the line's
+  // padding-left/text-indent reserve the column). WIDTH MUST MATCH `LIST_INDENT`
+  // in livePreview.ts. text-align:right keeps the glyph next to the body (the
+  // empty space falls on the indent side).
+  '.cm-list-marker': {
+    display: 'inline-block',
+    boxSizing: 'border-box',
+    width: '1.8em',
+    textAlign: 'right',
     position: 'relative',
+  },
+  // List bullet (v2 step 1) — Ixora's trick: hide the source dash with
+  // `visibility:hidden` (keeps its box → full caret height) and draw a • over it
+  // with an absolutely-positioned ::after. Geometry never changes on reveal → no
+  // reflow. The • sits at the right of the marker column, beside the body.
+  '.cm-list-bullet': {
     visibility: 'hidden',
   },
   '.cm-list-bullet::after': {
     content: '"•"',
     visibility: 'visible',
     position: 'absolute',
-    inset: '0',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
+    right: '0.32em',
+    top: '50%',
+    transform: 'translateY(-50%)',
     color: 'var(--muted-foreground)',
   },
   // Ordered number (v2 step 3) — the digits ARE the glyph, so just tint them
-  // (no hiding). Same text raw or styled → no geometry change on reveal.
+  // (right-aligned in the column, next to the body).
   '.cm-list-num': {
     color: 'var(--muted-foreground)',
-  },
-  // Task marker (v2 step 5). Only the inner status char (the space / `x` between
-  // the brackets) is rendered monospace, ALWAYS (revealed + hidden): in mono a
-  // space and an `x` share one advance, so `[ ]` and `[x]` have identical width →
-  // the box and the task-text start never shift when ticked, with no reveal
-  // reflow. Confined to one char so the marker spacing stays normal (monospacing
-  // the whole `- [ ]` ballooned the indent).
-  '.cm-task-cell': {
-    fontFamily: 'var(--font-mono, ui-monospace, monospace)',
   },
   // Completed task body — struck through and muted (v2 step 5c).
   '.cm-task-done': {
     textDecoration: 'line-through',
     color: 'var(--muted-foreground)',
   },
-  // OVERLAY trick (same as the bullet): keep the `- [ ]` source but visibility:
-  // hidden (its box stays → no reflow on reveal) and draw the box with an
-  // absolutely-positioned ::after (out of flow → never reflows → no paint lag).
-  // The hidden marker width becomes a hanging indent; the box sits at its right
-  // edge, just before the task text (stable now that the width is constant).
+  // Task checkbox (v2 step 5) — OVERLAY: keep the `- [ ]` source but
+  // visibility:hidden and draw the box with a position:absolute ::after (out of
+  // flow → no reflow, no paint lag). The fixed `.cm-list-marker` column pins the
+  // box at the right edge regardless of `[ ]` vs `[x]` width.
   '.cm-task-marker': {
     visibility: 'hidden',
-    position: 'relative',
   },
   '.cm-task-marker::after': {
     content: '""',
@@ -196,12 +196,6 @@ export const cmPrototypeTheme = EditorView.theme({
     height: 'auto',
     borderRadius: '8px',
     verticalAlign: 'bottom',
-  },
-  // Block "selected" border (click-to-select). `outline` so it doesn't shift the
-  // layout (no reflow), like a node selection.
-  '.cm-block-selected': {
-    outline: '2px solid var(--info)',
-    outlineOffset: '2px',
   },
   // Media card (SPIKE: native webview controls). Inline-block (like `.cm-img`) so
   // the inline replace renders in flow AND the caret can land on the line, but

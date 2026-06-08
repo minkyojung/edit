@@ -8,36 +8,33 @@ export class ImageWidget extends WidgetType {
   constructor(
     readonly src: string,
     readonly alt: string,
-    readonly selected = false, // block-selected (clicked) → draws a border
   ) {
     super()
   }
   eq(o: ImageWidget) {
-    return o.src === this.src && o.alt === this.alt && o.selected === this.selected
+    return o.src === this.src && o.alt === this.alt
   }
   toDOM() {
     const img = document.createElement('img')
-    img.className = `cm-img${this.selected ? ' cm-block-selected' : ''}`
+    img.className = 'cm-img'
     img.src = this.src
     img.alt = this.alt
     img.loading = 'lazy'
-    img.draggable = true // + ignoreEvent()=false → CM's built-in drag MOVES the source
     return img
   }
-  // Reuse the existing <img> when only `selected` (or even src) changes — toggle
-  // the class / re-set src in place. Setting src to the same string is a no-op,
-  // so selecting/deselecting never reloads the image.
+  // Reuse the existing <img> when src changes — re-set in place. Setting src to the
+  // same string is a no-op, so unrelated edits never reload the image.
   updateDOM(dom: HTMLElement) {
     const img = dom as HTMLImageElement
     img.src = this.src
     img.alt = this.alt
-    img.classList.toggle('cm-block-selected', this.selected)
     return true
   }
-  // FALSE → the editor does NOT ignore events from this widget, so a click on the
-  // <img> reaches our domEventHandlers (default is to ignore widget events).
+  // TRUE → the editor ignores events from this widget (same as the media card):
+  // clicking does nothing, no selection/border. To move the image, reveal the raw
+  // `![...]()` source (arrow a caret onto it) and drag that text — like Obsidian.
   ignoreEvent() {
-    return false
+    return true
   }
   get estimatedHeight() {
     return 240
