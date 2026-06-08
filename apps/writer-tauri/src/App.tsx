@@ -54,6 +54,8 @@ import { startGitHubSync } from '@/lib/githubSync'
 const CodeMirrorPreview = lazy(() => import('@/prototypes/CodeMirrorPreview'))
 // DEV-only clean rewrite of the CM core (built minimally from the docs).
 const CmCore = lazy(() => import('@/prototypes/v2/CmCore'))
+// DEV-only spike: Obsidian-style in-place contenteditable table cells.
+const TableCellSpike = lazy(() => import('@/prototypes/v2/TableCellSpike'))
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
@@ -126,6 +128,16 @@ export function App() {
                       <BootGate>
                         <Suspense fallback={null}>
                           <CmCore />
+                        </Suspense>
+                      </BootGate>
+                    }
+                  />
+                  <Route
+                    path="/dev/celledit"
+                    element={
+                      <BootGate>
+                        <Suspense fallback={null}>
+                          <TableCellSpike />
                         </Suspense>
                       </BootGate>
                     }
