@@ -74,9 +74,22 @@ export function listEnter(view: EditorView): boolean {
  *     non-list, non-quote line we use a plain newline instead.
  *  3. plain newline.
  */
+// Shared dedupe signal for the two Enter paths (keymap on keydown, imeListContinue
+// on beforeinput). Whenever smartEnter actually handles an Enter it stamps the
+// time; the beforeinput path skips if smartEnter ran just now (same Enter the
+// keymap already took). One source of truth → no dual-timer boundary race where an
+// Enter fires twice or zero times.
+let lastEnterHandledAt = -1
+export function enterHandledRecently(ms = 50): boolean {
+  return lastEnterHandledAt >= 0 && performance.now() - lastEnterHandledAt < ms
+}
+
 export function smartEnter(view: EditorView): boolean {
-  if (listEnter(view)) return true
-  const line = view.state.doc.lineAt(view.state.selection.main.head)
-  if (/^\s*>/.test(line.text)) return insertNewlineContinueMarkup(view)
-  return insertNewlineAndIndent(view)
+  let handled = listEnter(view)
+  if (!handled) {
+    const line = view.state.doc.lineAt(view.state.selection.main.head)
+    handled = /^\s*>/.test(line.text) ? insertNewlineContinueMarkup(view) : insertNewlineAndIndent(view)
+  }
+  if (handled) lastEnterHandledAt = performance.now()
+  return handled
 }

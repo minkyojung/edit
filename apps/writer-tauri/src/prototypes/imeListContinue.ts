@@ -16,41 +16,27 @@
 // composition events), so this never mis-fires for CJK — every language behaves
 // correctly without per-language branching.
 //
-// Guard against double newlines: a NORMAL (non-composition) Enter is already
-// handled by the keymap AND also emits this beforeinput. So we only take over
-// inside the post-compositionend window where CM drops the key; otherwise we
-// stand back and let the keymap do its job.
+// Guard against double / dropped newlines: a NORMAL (non-composition) Enter is
+// handled by the keymap (keydown). We must NOT also run here. Earlier this used a
+// separate 100ms "near compositionend" timer that had to MATCH CM's own internal
+// drop window — two independent clocks that disagreed at the boundary, so an Enter
+// could fire twice or zero times. Instead we dedupe on the SINGLE source of truth:
+// `enterHandledRecently()` — did smartEnter actually run just now (via the keymap)?
+// If yes, the keymap already took this Enter → stand down. If no (CM dropped the
+// composition-confirming keydown), this beforeinput is the only path → run it.
 
 import { EditorView } from '@codemirror/view'
 import { Prec, type Extension } from '@codemirror/state'
-import { smartEnter } from './listEnter'
+import { smartEnter, enterHandledRecently } from './listEnter'
 
 const NEWLINE_INTENT = new Set(['insertParagraph', 'insertLineBreak'])
 
-// Window (ms) after compositionend during which CM drops the Enter. Mirrors
-// CM's own 100ms Safari guard.
-const COMPOSE_WINDOW_MS = 100
-
 export function imeListContinue(): Extension {
-  let lastCompositionEnd = 0
   return Prec.highest(
     EditorView.domEventHandlers({
-      compositionend() {
-        lastCompositionEnd = performance.now()
-        return false
-      },
       beforeinput(event, view) {
         if (!NEWLINE_INTENT.has(event.inputType)) return false
-        // Only when this newline is the composition-confirming Enter that CM
-        // just dropped — otherwise the keymap already handled it.
-        const nearComposition =
-          view.composing || performance.now() - lastCompositionEnd < COMPOSE_WINDOW_MS
-        if (!nearComposition) return false
-        // Stop the browser's bare line break and run the SAME chain the Enter
-        // keymap would (CodeMirrorPreview.tsx): continue the list/quote if
-        // applicable, else fall back to the normal newline. Running only the
-        // first command and prevent-defaulting swallowed Enter in plain text /
-        // empty-item-exit cases (the "have to press Enter twice" regression).
+        if (enterHandledRecently()) return false // the keymap already took this Enter
         event.preventDefault()
         return smartEnter(view)
       },
