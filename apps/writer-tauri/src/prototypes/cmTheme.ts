@@ -117,7 +117,24 @@ export const cmPrototypeTheme = EditorView.theme({
     background: 'var(--muted)',
   },
 
-  // List items — STRIPPED to a clean slate (raw markdown text, no decorations).
+  // List bullet (v2 step 1) — Ixora's trick: hide the source dash with
+  // `visibility:hidden` (keeps its box → same width, full caret height) and draw
+  // a • over it with an absolutely-positioned ::after. Because the geometry is
+  // identical to the raw dash, toggling this on/off never reflows (no caret lag).
+  '.cm-list-bullet': {
+    position: 'relative',
+    visibility: 'hidden',
+  },
+  '.cm-list-bullet::after': {
+    content: '"•"',
+    visibility: 'visible',
+    position: 'absolute',
+    inset: '0',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: 'var(--muted-foreground)',
+  },
 
   // Image widget
   '.cm-img': {

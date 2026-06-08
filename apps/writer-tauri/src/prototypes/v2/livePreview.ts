@@ -118,6 +118,19 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
           eachLineClass(nf, nt, 'cm-code-block')
           return
         }
+
+        // List bullet (STEP 1) — `- `/`* `/`+ ` → • drawn over the dash with CSS
+        // (the mark sets visibility:hidden + an absolute ::after '•'). Same width
+        // as the dash, so NOTHING reflows. Rendered only when the marker is
+        // followed by a space (a real item). Ordered/task markers + reveal come in
+        // later steps; for now the bullet is ALWAYS shown (no caret toggle).
+        if (name === 'ListMark') {
+          const item = node.node.parent
+          if (item?.parent?.name === 'OrderedList' || item?.getChild('Task')) return // bullet only
+          if (state.doc.sliceString(nt, nt + 1) !== ' ') return // `- ` only
+          mark(nf, nt, 'cm-list-bullet')
+          return
+        }
       },
     })
 
