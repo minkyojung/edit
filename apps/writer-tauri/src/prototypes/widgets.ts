@@ -41,6 +41,50 @@ export class ImageWidget extends WidgetType {
   }
 }
 
+// Minimal inline-markdown → DOM for table cells: `code`, **bold**, *italic*,
+// ~~strike~~, [text](url). A single left-to-right pass over a small pattern set
+// (bold before italic so `**x**` wins). Built as real DOM nodes (never innerHTML)
+// so cell content can't inject markup. Not a full CommonMark parser (no nesting) —
+// enough for table cells, and revealing the raw source is always the fallback.
+export function renderInline(text: string): Node[] {
+  const out: Node[] = []
+  const re = /`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|~~([^~]+)~~|\[([^\]]+)\]\(([^)\s]+)\)/g
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(document.createTextNode(text.slice(last, m.index)))
+    if (m[1] !== undefined) {
+      const el = document.createElement('code')
+      el.className = 'cm-inline-code'
+      el.textContent = m[1]
+      out.push(el)
+    } else if (m[2] !== undefined) {
+      const el = document.createElement('strong')
+      el.textContent = m[2]
+      out.push(el)
+    } else if (m[3] !== undefined) {
+      const el = document.createElement('em')
+      el.textContent = m[3]
+      out.push(el)
+    } else if (m[4] !== undefined) {
+      const el = document.createElement('del')
+      el.textContent = m[4]
+      out.push(el)
+    } else {
+      // [text](url) → styled like a link but NOT a navigable <a> (clicking an
+      // <a href> would navigate the Tauri webview away from the app); reveal the
+      // raw source to edit/open.
+      const el = document.createElement('span')
+      el.className = 'cm-link'
+      el.textContent = m[5]
+      out.push(el)
+    }
+    last = re.lastIndex
+  }
+  if (last < text.length) out.push(document.createTextNode(text.slice(last)))
+  return out
+}
+
 export class TableWidget extends WidgetType {
   constructor(readonly source: string) {
     super()
@@ -73,7 +117,7 @@ export class TableWidget extends WidgetType {
         })
       : []
     const setCell = (cell: HTMLTableCellElement, text: string, i: number) => {
-      cell.textContent = text
+      cell.append(...renderInline(text))
       if (aligns[i]) cell.style.textAlign = aligns[i]
     }
     let headerDone = false
