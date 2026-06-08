@@ -23,6 +23,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
 import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from '../cmTheme'
+import { addRow, addColumn } from '../tableEdit'
 
 const isDelim = (line: string): boolean => /^[\s|:-]+$/.test(line) && line.includes('-')
 const cellsOf = (line: string): string[] =>
@@ -67,14 +68,29 @@ class EditableTableWidget extends WidgetType {
     // cell's listeners still close over the OLD widget (stale source length), so a
     // captured length would mis-target the replace and leave a stray `|` that
     // re-parses into an extra cell (cells multiplying "one by one").
-    const commit = () => {
-      const next = serialize(table, this.delim)
+    // The table's CURRENT document range, from the live syntax tree (see commit).
+    const rangeFromDoc = (): { from: number; to: number } => {
       const from = view.posAtDOM(table)
       let node = syntaxTree(view.state).resolveInner(from, 1)
       while (node && node.name !== 'Table') node = node.parent as typeof node
       const to = node
         ? view.state.doc.lineAt(Math.min(node.to, view.state.doc.length)).to
         : from + this.source.length
+      return { from, to }
+    }
+    const commit = () => {
+      const next = serialize(table, this.delim)
+      const { from, to } = rangeFromDoc()
+      if (view.state.doc.sliceString(from, to) === next) return
+      view.dispatch({ changes: { from, to, insert: next } })
+    }
+    // Structural op (add row/column): apply a kernel fn to the CURRENT table source
+    // (serialized DOM, so unsaved cell edits are kept) and replace the live range.
+    const structOp = (fn: (src: string) => string) => (e: MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const next = fn(serialize(table, this.delim))
+      const { from, to } = rangeFromDoc()
       if (view.state.doc.sliceString(from, to) === next) return
       view.dispatch({ changes: { from, to, insert: next } })
     }
@@ -166,7 +182,25 @@ class EditableTableWidget extends WidgetType {
       }
       grid.push(rowCells)
     }
-    return table
+
+    // Wrap so the hover "+" rails (reusing the cm2 table CSS) can sit on the right
+    // (add column) and bottom (add row) edges. Rails live OUTSIDE the cells, so
+    // their glyphs never pollute a cell's serialized text.
+    const wrap = document.createElement('div')
+    wrap.className = 'cm-table-wrap'
+    wrap.appendChild(table)
+    const rail = (cls: string, label: string, fn: (src: string) => string) => {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = cls
+      b.textContent = '+'
+      b.setAttribute('aria-label', label)
+      b.addEventListener('mousedown', structOp(fn))
+      wrap.appendChild(b)
+    }
+    rail('cm-table-addcol', 'Add column', addColumn)
+    rail('cm-table-addrow', 'Add row', addRow)
+    return wrap
   }
   // If the existing DOM already serializes to our (new) source, this update was
   // caused by our OWN commit of the user's typing → keep the DOM so focus/IME
