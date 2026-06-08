@@ -23,7 +23,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
 import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from '../cmTheme'
-import { addRow, addColumn } from '../tableEdit'
+import { addRow, addColumn, deleteRow, deleteColumn } from '../tableEdit'
 
 const isDelim = (line: string): boolean => /^[\s|:-]+$/.test(line) && line.includes('-')
 const cellsOf = (line: string): string[] =>
@@ -38,10 +38,11 @@ const cellsOf = (line: string): string[] =>
 function serialize(root: HTMLElement, delim: string): string {
   const table = (root.querySelector('table') ?? root) as HTMLTableElement
   const line = (cells: string[]) => `| ${cells.join(' | ')} |`
-  const header = [...(table.tHead?.rows[0]?.cells ?? [])].map((c) => c.textContent?.trim() ?? '')
-  const bodyRows = [...(table.tBodies[0]?.rows ?? [])].map((tr) =>
-    [...tr.cells].map((c) => c.textContent?.trim() ?? ''),
-  )
+  // Read the cell's editable BODY only — never the cell's full textContent, which
+  // would include the "×" delete handles rendered inside the cell.
+  const text = (c: HTMLTableCellElement) => (c.querySelector('.cm-cell-body') ?? c).textContent?.trim() ?? ''
+  const header = [...(table.tHead?.rows[0]?.cells ?? [])].map(text)
+  const bodyRows = [...(table.tBodies[0]?.rows ?? [])].map((tr) => [...tr.cells].map(text))
   return [line(header), delim, ...bodyRows.map(line)].join('\n')
 }
 
@@ -93,25 +94,28 @@ class EditableTableWidget extends WidgetType {
       const { from, to } = rangeFromDoc()
       if (view.state.doc.sliceString(from, to) === next) return
       view.dispatch({ changes: { from, to, insert: next } })
+      // Refocus the EDITOR (not a cell) so Cmd-Z reaches CM's history. While focus
+      // sits inside the widget, ignoreEvent()=true makes CM drop the undo keypress.
+      view.focus()
     }
 
     // Keyboard navigation between cells (in-place makes this just focus movement).
-    // `grid[visualRow][col]` — header is row 0, body rows follow (delimiter is not
-    // rendered). focusCell selects the cell's contents (spreadsheet-style).
-    const grid: HTMLTableCellElement[][] = []
-    const focusCell = (cell: HTMLTableCellElement) => {
-      cell.focus()
+    // `grid[visualRow][col]` holds each cell's editable BODY div (header is row 0,
+    // body rows follow). focusCell selects the body's contents (spreadsheet-style).
+    const grid: HTMLElement[][] = []
+    const focusCell = (el: HTMLElement) => {
+      el.focus()
       const range = document.createRange()
-      range.selectNodeContents(cell)
+      range.selectNodeContents(el)
       const sel = window.getSelection()
       sel?.removeAllRanges()
       sel?.addRange(range)
     }
-    const nav = (cell: HTMLTableCellElement, dir: 'next' | 'prev' | 'down') => {
+    const nav = (el: HTMLElement, dir: 'next' | 'prev' | 'down') => {
       let r = -1
       let c = -1
       for (let i = 0; i < grid.length && r < 0; i++) {
-        const j = grid[i].indexOf(cell)
+        const j = grid[i].indexOf(el)
         if (j >= 0) {
           r = i
           c = j
@@ -124,27 +128,44 @@ class EditableTableWidget extends WidgetType {
         return
       }
       const flat = grid.flat()
-      const target = flat[flat.indexOf(cell) + (dir === 'next' ? 1 : -1)]
+      const target = flat[flat.indexOf(el) + (dir === 'next' ? 1 : -1)]
       if (target) focusCell(target)
     }
 
-    const wireCell = (cell: HTMLTableCellElement, text: string) => {
-      cell.textContent = text
-      cell.contentEditable = 'true'
-      cell.spellcheck = false
-      cell.addEventListener('blur', commit)
-      cell.addEventListener('keydown', (e) => {
+    // The cell's TEXT lives in a dedicated contenteditable body div — separate from
+    // the cell so the "×" delete handle can sit in the cell without being part of
+    // the editable text (serialize reads `.cm-cell-body` only). Returns the body.
+    const wireCell = (cell: HTMLTableCellElement, text: string): HTMLElement => {
+      const el = document.createElement('div')
+      el.className = 'cm-cell-body'
+      el.contentEditable = 'true'
+      el.spellcheck = false
+      el.textContent = text
+      el.addEventListener('blur', commit)
+      el.addEventListener('keydown', (e) => {
         if (e.key === 'Tab') {
           e.preventDefault()
-          nav(cell, e.shiftKey ? 'prev' : 'next')
+          nav(el, e.shiftKey ? 'prev' : 'next')
         } else if (e.key === 'Enter') {
           e.preventDefault() // never insert a newline into a cell
-          nav(cell, 'down')
+          nav(el, 'down')
         } else if (e.key === 'Escape') {
           e.preventDefault()
-          cell.blur()
+          el.blur()
         }
       })
+      cell.appendChild(el)
+      return el
+    }
+    const delHandle = (cls: string, label: string, fn: (src: string) => string): HTMLButtonElement => {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = cls
+      b.textContent = '×'
+      b.contentEditable = 'false'
+      b.setAttribute('aria-label', label)
+      b.addEventListener('mousedown', structOp(fn))
+      return b
     }
 
     // Per-column alignment from the delimiter (`:--` left, `:-:` center, `--:`
@@ -157,27 +178,29 @@ class EditableTableWidget extends WidgetType {
 
     let headerDone = false
     let body: HTMLTableSectionElement | null = null
+    let dataIndex = -1
     for (const line of rows) {
       if (isDelim(line)) continue
-      const rowCells: HTMLTableCellElement[] = []
+      const rowCells: HTMLElement[] = []
       if (!headerDone) {
         const tr = table.createTHead().insertRow()
         cellsOf(line).forEach((c, i) => {
           const th = document.createElement('th')
-          wireCell(th, c)
           if (aligns[i]) th.style.textAlign = aligns[i]
+          rowCells.push(wireCell(th, c))
+          th.appendChild(delHandle('cm-table-delcol', 'Delete column', (s) => deleteColumn(s, i)))
           tr.appendChild(th)
-          rowCells.push(th)
         })
         headerDone = true
       } else {
         if (!body) body = table.createTBody()
         const tr = body.insertRow()
+        const di = ++dataIndex
         cellsOf(line).forEach((c, i) => {
           const td = tr.insertCell()
-          wireCell(td, c)
           if (aligns[i]) td.style.textAlign = aligns[i]
-          rowCells.push(td)
+          rowCells.push(wireCell(td, c))
+          if (i === 0) td.appendChild(delHandle('cm-table-delrow', 'Delete row', (s) => deleteRow(s, di)))
         })
       }
       grid.push(rowCells)

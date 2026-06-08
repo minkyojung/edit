@@ -291,4 +291,14 @@ export const cmPrototypeTheme = EditorView.theme({
     background: 'color-mix(in oklch, var(--muted) 60%, transparent)',
     fontWeight: '600',
   },
+  // In-place editable cell body (#/dev/celledit): fills the cell, no harsh native
+  // focus ring — a subtle tint marks the active cell instead.
+  '.cm-cell-body': {
+    outline: 'none',
+    minHeight: '1.2em',
+  },
+  '.cm-cell-body:focus': {
+    background: 'color-mix(in oklch, var(--info) 12%, transparent)',
+    borderRadius: '3px',
+  },
 })
