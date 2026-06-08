@@ -119,17 +119,17 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
           return
         }
 
-        // List bullet — `- `/`* `/`+ ` → • drawn over the dash with CSS (the mark
-        // sets visibility:hidden + an absolute ::after '•'). Same box as the dash,
-        // so NOTHING reflows. STEP 2 reveal: a caret on the marker shows the raw
-        // `-` (no mark); because visibility:hidden and a visible `-` occupy the
-        // identical box, toggling the mark can't move the caret (no lag).
+        // List markers — ONE branch, shared gate + reveal; only the class differs
+        // by kind. Bullet `-` is hidden and a • is drawn over it (visibility:hidden
+        // + ::after). The ordered number is its own glyph, so it's just styled
+        // (color) — no hiding. Both occupy the same box as the raw marker, so the
+        // reveal toggle never reflows (no caret lag). Task markers are step 5.
         if (name === 'ListMark') {
           const item = node.node.parent
-          if (item?.parent?.name === 'OrderedList' || item?.getChild('Task')) return // bullet only
-          if (state.doc.sliceString(nt, nt + 1) !== ' ') return // `- ` only
-          if (cursorInRange(state, nf, nt)) return // caret on the marker → raw `-`
-          mark(nf, nt, 'cm-list-bullet')
+          if (item?.getChild('Task')) return // task → step 5
+          if (state.doc.sliceString(nt, nt + 1) !== ' ') return // `- `/`1. ` only
+          if (cursorInRange(state, nf, nt)) return // caret on the marker → raw
+          mark(nf, nt, item?.parent?.name === 'OrderedList' ? 'cm-list-num' : 'cm-list-bullet')
           return
         }
       },

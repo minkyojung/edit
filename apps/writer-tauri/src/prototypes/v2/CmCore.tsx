@@ -169,7 +169,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — list bullet step 2 (reveal: caret on → raw -)
+        CM Core (clean rewrite) — list step 3 (+ ordered numbers)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>

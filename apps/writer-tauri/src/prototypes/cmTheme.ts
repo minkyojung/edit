@@ -135,6 +135,11 @@ export const cmPrototypeTheme = EditorView.theme({
     justifyContent: 'center',
     color: 'var(--muted-foreground)',
   },
+  // Ordered number (v2 step 3) — the digits ARE the glyph, so just tint them
+  // (no hiding). Same text raw or styled → no geometry change on reveal.
+  '.cm-list-num': {
+    color: 'var(--muted-foreground)',
+  },
 
   // Image widget
   '.cm-img': {
