@@ -58,42 +58,113 @@ class EditableTableWidget extends WidgetType {
     const table = document.createElement('table')
     table.className = 'cm-md-table cm-celledit'
 
-    // Commit: serialize the DOM → if it differs from our source, dispatch ONE
+    // Commit: serialize the DOM → if it differs from the doc, dispatch ONE
     // transaction replacing the table's range. Runs on blur (composition done) so
-    // the re-render can't interrupt an active IME. `from` via posAtDOM at call time.
+    // the re-render can't interrupt an active IME.
+    //
+    // The range [from, to] is derived from the LIVE document at call time, NOT from
+    // `this.source.length`: when `updateDOM` keeps the DOM across a commit, the
+    // cell's listeners still close over the OLD widget (stale source length), so a
+    // captured length would mis-target the replace and leave a stray `|` that
+    // re-parses into an extra cell (cells multiplying "one by one").
     const commit = () => {
       const next = serialize(table, this.delim)
-      if (next === this.source) return
       const from = view.posAtDOM(table)
-      view.dispatch({ changes: { from, to: from + this.source.length, insert: next } })
+      let node = syntaxTree(view.state).resolveInner(from, 1)
+      while (node && node.name !== 'Table') node = node.parent as typeof node
+      const to = node
+        ? view.state.doc.lineAt(Math.min(node.to, view.state.doc.length)).to
+        : from + this.source.length
+      if (view.state.doc.sliceString(from, to) === next) return
+      view.dispatch({ changes: { from, to, insert: next } })
     }
+
+    // Keyboard navigation between cells (in-place makes this just focus movement).
+    // `grid[visualRow][col]` — header is row 0, body rows follow (delimiter is not
+    // rendered). focusCell selects the cell's contents (spreadsheet-style).
+    const grid: HTMLTableCellElement[][] = []
+    const focusCell = (cell: HTMLTableCellElement) => {
+      cell.focus()
+      const range = document.createRange()
+      range.selectNodeContents(cell)
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      sel?.addRange(range)
+    }
+    const nav = (cell: HTMLTableCellElement, dir: 'next' | 'prev' | 'down') => {
+      let r = -1
+      let c = -1
+      for (let i = 0; i < grid.length && r < 0; i++) {
+        const j = grid[i].indexOf(cell)
+        if (j >= 0) {
+          r = i
+          c = j
+        }
+      }
+      if (r < 0) return
+      if (dir === 'down') {
+        const below = grid[r + 1]?.[c]
+        if (below) focusCell(below)
+        return
+      }
+      const flat = grid.flat()
+      const target = flat[flat.indexOf(cell) + (dir === 'next' ? 1 : -1)]
+      if (target) focusCell(target)
+    }
+
     const wireCell = (cell: HTMLTableCellElement, text: string) => {
       cell.textContent = text
       cell.contentEditable = 'true'
       cell.spellcheck = false
       cell.addEventListener('blur', commit)
-      // Enter / Escape commit (and stop a newline being inserted into the cell).
       cell.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === 'Escape') {
+        if (e.key === 'Tab') {
+          e.preventDefault()
+          nav(cell, e.shiftKey ? 'prev' : 'next')
+        } else if (e.key === 'Enter') {
+          e.preventDefault() // never insert a newline into a cell
+          nav(cell, 'down')
+        } else if (e.key === 'Escape') {
           e.preventDefault()
           cell.blur()
         }
       })
     }
 
+    // Per-column alignment from the delimiter (`:--` left, `:-:` center, `--:`
+    // right) — applied as inline text-align, same as the cm2 table.
+    const aligns = cellsOf(this.delim).map((c) => {
+      const l = c.startsWith(':')
+      const r = c.endsWith(':')
+      return l && r ? 'center' : r ? 'right' : l ? 'left' : ''
+    })
+
     let headerDone = false
     let body: HTMLTableSectionElement | null = null
     for (const line of rows) {
       if (isDelim(line)) continue
+      const rowCells: HTMLTableCellElement[] = []
       if (!headerDone) {
         const tr = table.createTHead().insertRow()
-        cellsOf(line).forEach((c) => wireCell(tr.appendChild(document.createElement('th')), c))
+        cellsOf(line).forEach((c, i) => {
+          const th = document.createElement('th')
+          wireCell(th, c)
+          if (aligns[i]) th.style.textAlign = aligns[i]
+          tr.appendChild(th)
+          rowCells.push(th)
+        })
         headerDone = true
-        continue
+      } else {
+        if (!body) body = table.createTBody()
+        const tr = body.insertRow()
+        cellsOf(line).forEach((c, i) => {
+          const td = tr.insertCell()
+          wireCell(td, c)
+          if (aligns[i]) td.style.textAlign = aligns[i]
+          rowCells.push(td)
+        })
       }
-      if (!body) body = table.createTBody()
-      const tr = body.insertRow()
-      cellsOf(line).forEach((c) => wireCell(tr.insertCell(), c))
+      grid.push(rowCells)
     }
     return table
   }
