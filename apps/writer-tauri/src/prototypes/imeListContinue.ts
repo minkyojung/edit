@@ -22,9 +22,8 @@
 // stand back and let the keymap do its job.
 
 import { EditorView } from '@codemirror/view'
-import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown'
-import { insertNewlineAndIndent } from '@codemirror/commands'
 import { Prec, type Extension } from '@codemirror/state'
+import { smartEnter } from './listEnter'
 
 const NEWLINE_INTENT = new Set(['insertParagraph', 'insertLineBreak'])
 
@@ -53,7 +52,7 @@ export function imeListContinue(): Extension {
         // first command and prevent-defaulting swallowed Enter in plain text /
         // empty-item-exit cases (the "have to press Enter twice" regression).
         event.preventDefault()
-        return insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view)
+        return smartEnter(view)
       },
     }),
   )

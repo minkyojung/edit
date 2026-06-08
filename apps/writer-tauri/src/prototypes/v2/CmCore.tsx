@@ -16,13 +16,13 @@ import { EditorState, Prec } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, dropCursor } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
-import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@codemirror/lang-markdown'
+import { markdown, deleteMarkupBackward } from '@codemirror/lang-markdown'
 import { autocompletion } from '@codemirror/autocomplete'
 import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from '../cmTheme'
 import { livePreviewV2, taskCheckboxClick } from './livePreview'
 import { blocksV2 } from './blocks'
-import { listEnter } from '../listEnter'
+import { smartEnter } from '../listEnter'
 import { imeListContinue } from '../imeListContinue'
 import { wikilinkSource } from '../wikilinkComplete'
 import { wikilinkClick } from '../wikilinkNav'
@@ -127,8 +127,12 @@ export default function CmCore() {
           // the browser's own beforeinput (insertParagraph/insertLineBreak) signal.
           imeListContinue(),
           indentUnit.of('  '), // 2-space nesting
+          // ENTER — one deterministic handler at Prec.highest (atomic-editor's
+          // pattern): tight list continuation / clean exit, blockquote continuation,
+          // else plain newline. Beats every other Enter handler so CM's loose-list
+          // (blank-line) inference and its task-continuation deletion never run.
+          Prec.highest(keymap.of([{ key: 'Enter', run: smartEnter }])),
           keymap.of([
-            { key: 'Enter', run: insertNewlineContinueMarkup },
             { key: 'Backspace', run: deleteMarkupBackward },
             indentWithTab,
             ...defaultKeymap,
