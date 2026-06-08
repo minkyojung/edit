@@ -149,6 +149,11 @@ export const cmPrototypeTheme = EditorView.theme({
   '.cm-task-cell': {
     fontFamily: 'var(--font-mono, ui-monospace, monospace)',
   },
+  // Completed task body — struck through and muted (v2 step 5c).
+  '.cm-task-done': {
+    textDecoration: 'line-through',
+    color: 'var(--muted-foreground)',
+  },
   // OVERLAY trick (same as the bullet): keep the `- [ ]` source but visibility:
   // hidden (its box stays → no reflow on reveal) and draw the box with an
   // absolutely-positioned ::after (out of flow → never reflows → no paint lag).
@@ -200,22 +205,20 @@ export const cmPrototypeTheme = EditorView.theme({
   // Media card (SPIKE: native webview controls). Flex so the edit-source button
   // sits BESIDE the media (not overlaying the native control bar — which matters
   // for audio, whose whole height is the bar).
+  // Inline-level (like `.cm-img`) so the inline replace renders in flow AND the
+  // caret can land on the line. inline-flex keeps the player + edit button on one row.
   '.cm-media-card': {
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'flex-start',
     gap: '6px',
+    maxWidth: '100%',
+    verticalAlign: 'bottom',
     margin: 'var(--prose-gap-block, 14px) 0',
   },
   '.cm-media-card video': {
-    flex: '1',
-    minWidth: '0',
     maxWidth: '100%',
     borderRadius: '8px',
     display: 'block',
-  },
-  '.cm-media-card audio': {
-    flex: '1',
-    minWidth: '0',
   },
   '.cm-media-edit': {
     flex: '0 0 auto',

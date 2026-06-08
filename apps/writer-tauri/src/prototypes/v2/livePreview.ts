@@ -156,6 +156,9 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
                 // not revealed → hide the source and draw the checkbox over it
                 mark(nf, markerTo, checked ? 'cm-task-marker cm-task-marker-checked' : 'cm-task-marker')
               }
+              // Completed task → strike + mute the body text (kept even while editing,
+              // like Obsidian). Body = after the marker to the end of the item line.
+              if (checked) mark(markerTo, state.doc.lineAt(nf).to, 'cm-task-done')
               return
             }
           }
