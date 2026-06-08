@@ -61,6 +61,21 @@ export class TableWidget extends WidgetType {
         .split('|')
         .map((c) => c.trim())
     const isDelim = (line: string) => /^[\s|:-]+$/.test(line) && line.includes('-')
+    // Per-column alignment from the GFM delimiter row: a leading colon = left,
+    // trailing = right, both = center, none = default (left via CSS). Applied as
+    // inline text-align on every cell in that column.
+    const delim = rows.find(isDelim)
+    const aligns: string[] = delim
+      ? cellsOf(delim).map((c) => {
+          const l = c.startsWith(':')
+          const r = c.endsWith(':')
+          return l && r ? 'center' : r ? 'right' : l ? 'left' : ''
+        })
+      : []
+    const setCell = (cell: HTMLTableCellElement, text: string, i: number) => {
+      cell.textContent = text
+      if (aligns[i]) cell.style.textAlign = aligns[i]
+    }
     let headerDone = false
     let body: HTMLTableSectionElement | null = null
     for (const line of rows) {
@@ -68,20 +83,17 @@ export class TableWidget extends WidgetType {
       if (!headerDone) {
         const thead = table.createTHead()
         const tr = thead.insertRow()
-        for (const c of cellsOf(line)) {
+        cellsOf(line).forEach((c, i) => {
           const th = document.createElement('th')
-          th.textContent = c
+          setCell(th, c, i)
           tr.appendChild(th)
-        }
+        })
         headerDone = true
         continue
       }
       if (!body) body = table.createTBody()
       const tr = body.insertRow()
-      for (const c of cellsOf(line)) {
-        const td = tr.insertCell()
-        td.textContent = c
-      }
+      cellsOf(line).forEach((c, i) => setCell(tr.insertCell(), c, i))
     }
     return table
   }
