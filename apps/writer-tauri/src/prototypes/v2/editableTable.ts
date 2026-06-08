@@ -142,13 +142,74 @@ export class EditableTableWidget extends WidgetType {
       const target = flat[flat.indexOf(v) + (dir === 'next' ? 1 : -1)]
       if (target) focusCell(target)
     }
-    // Tab/Shift-Tab move between cells; Escape commits + leaves. Arrows/Enter use the
-    // cell editor's own defaults (char/line motion, Enter = newline) for now; cross-
-    // cell arrow nav + Enter-adds-row is a later step.
+    // ── Arrow navigation (cell ↔ cell, and out of the table at its edges) ────────
+    const findPos = (v: EditorView): { r: number; c: number } | null => {
+      for (let r = 0; r < grid.length; r++) {
+        const c = grid[r].indexOf(v)
+        if (c >= 0) return { r, c }
+      }
+      return null
+    }
+    const enterCell = (v: EditorView, atEnd: boolean) => {
+      v.focus()
+      v.dispatch({ selection: { anchor: atEnd ? v.state.doc.length : 0 }, scrollIntoView: true })
+    }
+    // Escape the whole table to the parent line above (dir<0) / below (dir>0). The
+    // `maybeEscape` half of the ProseMirror nested-editor pattern, via rangeFromDoc.
+    const escapeTable = (dir: -1 | 1): boolean => {
+      const { from, to } = rangeFromDoc()
+      const no = dir < 0 ? view.state.doc.lineAt(from).number - 1 : view.state.doc.lineAt(to).number + 1
+      if (no < 1 || no > view.state.doc.lines) return false // no line beyond the table that way
+      const tgt = view.state.doc.line(no)
+      view.dispatch({ selection: { anchor: dir < 0 ? tgt.to : tgt.from }, scrollIntoView: true })
+      view.focus()
+      return true
+    }
+    // Returns true when the arrow CROSSES a boundary (handled here); false lets the
+    // cell editor's own default motion run (char/line within the cell).
+    const arrow = (v: EditorView, key: string): boolean => {
+      const { main } = v.state.selection
+      if (!main.empty) return false
+      const len = v.state.doc.length
+      const pos = findPos(v)
+      if (!pos) return false
+      if (key === 'ArrowUp') {
+        if (v.state.doc.lineAt(main.head).from > 0) return false // not the cell's first line
+        const above = grid[pos.r - 1]?.[pos.c]
+        if (above) return (enterCell(above, true), true)
+        return escapeTable(-1)
+      }
+      if (key === 'ArrowDown') {
+        if (v.state.doc.lineAt(main.head).to < len) return false // not the cell's last line
+        const below = grid[pos.r + 1]?.[pos.c]
+        if (below) return (enterCell(below, false), true)
+        return escapeTable(1)
+      }
+      const flat = grid.flat()
+      const i = flat.indexOf(v)
+      if (key === 'ArrowLeft') {
+        if (main.head > 0) return false // not at the cell start
+        const prev = flat[i - 1]
+        if (prev) return (enterCell(prev, true), true)
+        return escapeTable(-1)
+      }
+      // ArrowRight
+      if (main.head < len) return false // not at the cell end
+      const nextCell = flat[i + 1]
+      if (nextCell) return (enterCell(nextCell, false), true)
+      return escapeTable(1)
+    }
+    // Tab/Shift-Tab move between cells (select-all, spreadsheet-style). Arrows move
+    // char/line within the cell, then between cells, then out of the table. Escape
+    // commits + leaves. (Enter = newline default for now → Enter-adds-row is later.)
     const cellKeymap = Prec.highest(
       keymap.of([
         { key: 'Tab', run: (v) => (nav(v, 'next'), true) },
         { key: 'Shift-Tab', run: (v) => (nav(v, 'prev'), true) },
+        { key: 'ArrowUp', run: (v) => arrow(v, 'ArrowUp') },
+        { key: 'ArrowDown', run: (v) => arrow(v, 'ArrowDown') },
+        { key: 'ArrowLeft', run: (v) => arrow(v, 'ArrowLeft') },
+        { key: 'ArrowRight', run: (v) => arrow(v, 'ArrowRight') },
         { key: 'Escape', run: (v) => ((v.contentDOM as HTMLElement).blur(), true) },
       ]),
     )
