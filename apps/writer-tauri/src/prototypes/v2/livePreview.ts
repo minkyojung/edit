@@ -119,15 +119,16 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
           return
         }
 
-        // List bullet (STEP 1) — `- `/`* `/`+ ` → • drawn over the dash with CSS
-        // (the mark sets visibility:hidden + an absolute ::after '•'). Same width
-        // as the dash, so NOTHING reflows. Rendered only when the marker is
-        // followed by a space (a real item). Ordered/task markers + reveal come in
-        // later steps; for now the bullet is ALWAYS shown (no caret toggle).
+        // List bullet — `- `/`* `/`+ ` → • drawn over the dash with CSS (the mark
+        // sets visibility:hidden + an absolute ::after '•'). Same box as the dash,
+        // so NOTHING reflows. STEP 2 reveal: a caret on the marker shows the raw
+        // `-` (no mark); because visibility:hidden and a visible `-` occupy the
+        // identical box, toggling the mark can't move the caret (no lag).
         if (name === 'ListMark') {
           const item = node.node.parent
           if (item?.parent?.name === 'OrderedList' || item?.getChild('Task')) return // bullet only
           if (state.doc.sliceString(nt, nt + 1) !== ' ') return // `- ` only
+          if (cursorInRange(state, nf, nt)) return // caret on the marker → raw `-`
           mark(nf, nt, 'cm-list-bullet')
           return
         }
