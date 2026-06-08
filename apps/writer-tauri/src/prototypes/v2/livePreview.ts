@@ -126,7 +126,39 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
         // reveal toggle never reflows (no caret lag). Task markers are step 5.
         if (name === 'ListMark') {
           const item = node.node.parent
-          if (item?.getChild('Task')) return // task → step 5
+          // Task `- [ ] ` → draw a checkbox over the `- [ ]` prefix. Detect by the
+          // text after the dash (regex), NOT the lezer `Task` node — which only forms
+          // once the item has content, so the checkbox would pop in a keystroke late;
+          // the regex makes it instant, like bullets.
+          //
+          // OVERLAY, not replace (same trick as the bullet): mark `- [ ]` as a
+          // visibility:hidden span — its box (width + caret height) stays exactly the
+          // same — and draw the checkbox with a position:absolute ::after, which is
+          // out of flow. Because the geometry never changes when the reveal toggles,
+          // there is ZERO reflow, so the checkbox appears with no paint lag. A replace
+          // widget would instead delete the 5 source chars and shrink the line →
+          // reflow that lands one frame after the caret moved ("raw lingers a frame").
+          // Reveal: a caret anywhere on the `- [ ]` prefix shows the raw source.
+          if (item?.parent?.name === 'BulletList') {
+            const tm = /^ \[([ xX])\]/.exec(state.doc.sliceString(nt, nt + 4))
+            if (tm) {
+              const markerTo = nt + 4 // after `]`
+              const checked = /[xX]/.test(tm[1])
+              // The ONLY thing whose width drifts between `[ ]` and `[x]` is the inner
+              // status char (a space vs an `x`). So render JUST that one char monospace
+              // (always — revealed AND hidden): in mono a space and an `x` share the
+              // same advance, so the marker width is constant → the box and the task-
+              // text start never shift when ticked, with no reveal reflow. Confining
+              // mono to one char keeps the spacing normal (whole-marker mono ballooned
+              // the indent).
+              mark(nt + 2, nt + 3, 'cm-task-cell')
+              if (!cursorInRange(state, nf, markerTo)) {
+                // not revealed → hide the source and draw the checkbox over it
+                mark(nf, markerTo, checked ? 'cm-task-marker cm-task-marker-checked' : 'cm-task-marker')
+              }
+              return
+            }
+          }
           if (state.doc.sliceString(nt, nt + 1) !== ' ') return // `- `/`1. ` only
           if (cursorInRange(state, nf, nt)) return // caret on the marker → raw
           mark(nf, nt, item?.parent?.name === 'OrderedList' ? 'cm-list-num' : 'cm-list-bullet')

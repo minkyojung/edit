@@ -54,6 +54,8 @@ Try it here:
 - first item (press Enter at the end of this line)
 - second item
 1. ordered one (Enter continues as 2.)
+- [ ] an unchecked task
+- [x] a checked task
 
 Does it FEEL like a list to edit, the way the old editor did — even without the •?
 (Headings/bold reveal still work; 한글 IME too.)
@@ -169,7 +171,7 @@ export default function CmCore() {
           borderBottom: '1px solid var(--border)',
         }}
       >
-        CM Core (clean rewrite) — list step 3 (+ ordered numbers)
+        CM Core (clean rewrite) — list step 5a (task checkbox display, no click yet)
       </div>
       <div className="cm-prototype" ref={hostRef} />
     </div>

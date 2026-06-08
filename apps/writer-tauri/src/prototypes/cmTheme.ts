@@ -140,6 +140,48 @@ export const cmPrototypeTheme = EditorView.theme({
   '.cm-list-num': {
     color: 'var(--muted-foreground)',
   },
+  // Task marker (v2 step 5). Only the inner status char (the space / `x` between
+  // the brackets) is rendered monospace, ALWAYS (revealed + hidden): in mono a
+  // space and an `x` share one advance, so `[ ]` and `[x]` have identical width →
+  // the box and the task-text start never shift when ticked, with no reveal
+  // reflow. Confined to one char so the marker spacing stays normal (monospacing
+  // the whole `- [ ]` ballooned the indent).
+  '.cm-task-cell': {
+    fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+  },
+  // OVERLAY trick (same as the bullet): keep the `- [ ]` source but visibility:
+  // hidden (its box stays → no reflow on reveal) and draw the box with an
+  // absolutely-positioned ::after (out of flow → never reflows → no paint lag).
+  // The hidden marker width becomes a hanging indent; the box sits at its right
+  // edge, just before the task text (stable now that the width is constant).
+  '.cm-task-marker': {
+    visibility: 'hidden',
+    position: 'relative',
+  },
+  '.cm-task-marker::after': {
+    content: '""',
+    visibility: 'visible',
+    position: 'absolute',
+    right: '0.15em',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    boxSizing: 'border-box',
+    width: '1.05em',
+    height: '1.05em',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: '1',
+    border: '1.5px solid var(--muted-foreground)',
+    borderRadius: '0.3em',
+    color: '#fff',
+    cursor: 'pointer',
+  },
+  '.cm-task-marker-checked::after': {
+    content: '"✓"',
+    background: 'var(--info)',
+    borderColor: 'var(--info)',
+  },
 
   // Image widget
   '.cm-img': {
