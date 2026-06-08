@@ -204,3 +204,39 @@ export const livePreviewV2 = ViewPlugin.fromClass(
   },
   { decorations: (v) => v.deco },
 )
+
+// Click the drawn checkbox → toggle `[ ]`↔`[x]`. The box is a CSS `::after`
+// pseudo-element, so it can't be an event target. Instead we hit-test the click
+// against the box's rect — derived from the marker's end coordinate (the right
+// edge of the hidden `- [ ]`) plus the known CSS geometry (right:0.15em, 1.05em
+// square, vertically centred) — at the editor level, which always receives the
+// event. ONLY a hit inside the box toggles; anything else falls through to normal
+// caret placement, so "box only" is honoured. Toggling = a 1-char doc change
+// (text is the source of truth); the decoration re-renders the box from it.
+const TASK_RE = /^(\s*[-*+] \[)([ xX])\]/
+export const taskCheckboxClick = EditorView.domEventHandlers({
+  mousedown(event, view) {
+    if (event.button !== 0) return false
+    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
+    if (pos == null) return false
+    const line = view.state.doc.lineAt(pos)
+    const m = TASK_RE.exec(line.text)
+    if (!m) return false
+    const markerStart = line.from + (m[1].length - 3) // the `-`
+    const markerTo = line.from + m[0].length // just after `]`
+    if (cursorInRange(view.state, markerStart, markerTo)) return false // revealed → no box
+    const end = view.coordsAtPos(markerTo) // right edge of the hidden marker
+    if (!end) return false
+    const fs = parseFloat(getComputedStyle(view.contentDOM).fontSize) || 16
+    const boxRight = end.left - 0.15 * fs
+    const boxLeft = boxRight - 1.05 * fs
+    const cy = (end.top + end.bottom) / 2
+    const halfH = 0.525 * fs + 2 // +2px vertical tolerance
+    if (event.clientX < boxLeft || event.clientX > boxRight) return false
+    if (event.clientY < cy - halfH || event.clientY > cy + halfH) return false
+    event.preventDefault()
+    const statusPos = line.from + m[1].length // the space / `x`
+    view.dispatch({ changes: { from: statusPos, to: statusPos + 1, insert: /[xX]/.test(m[2]) ? ' ' : 'x' } })
+    return true
+  },
+})

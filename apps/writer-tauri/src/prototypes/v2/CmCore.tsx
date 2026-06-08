@@ -20,7 +20,7 @@ import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@co
 import { autocompletion } from '@codemirror/autocomplete'
 import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from '../cmTheme'
-import { livePreviewV2 } from './livePreview'
+import { livePreviewV2, taskCheckboxClick } from './livePreview'
 import { blocksV2 } from './blocks'
 import { imeListContinue } from '../imeListContinue'
 import { wikilinkSource } from '../wikilinkComplete'
@@ -94,8 +94,9 @@ raw markdown, move out to re-render. Typing above it must not reload it.
 
 MEDIA (block widget, SPIKE: NATIVE webview controls): play/seek/volume use the OS
 (WKWebView) player chrome — pressing them must NOT flip the card to raw source.
-The "</>" button beside it (or arrowing a caret in) reveals the raw markup to edit.
-Then type on the lines ABOVE — playback must NOT reset (map preserves the element).
+The "</>" button (or arrowing a caret in) reveals the raw \`<video>\` line ABOVE the
+player (image-style) — drag/cut that TEXT to move the block. Type on the lines ABOVE
+— playback must NOT reset (map preserves the element).
 
 <video src="https://www.w3schools.com/html/mov_bbb.mp4" controls></video>
 
@@ -146,6 +147,7 @@ export default function CmCore() {
           autocompletion({ override: [wikilinkSource], icons: true }),
           wikilinkClick((title) => toast(`→ open note: ${title}`)),
           linkClick((url) => toast(`→ open URL: ${url}`)),
+          taskCheckboxClick, // click the drawn checkbox → toggle `[ ]`↔`[x]`
           livePreviewV2, // heading/emphasis/link/wikilink/quote/hr/code (inline+line)
           blocksV2, // image + table + media widgets — StateField + map (no reload above)
           cmPrototypeTheme,
