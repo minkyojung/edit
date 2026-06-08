@@ -73,19 +73,24 @@ export const cmPrototypeTheme = EditorView.theme({
     textDecoration: 'underline',
     textUnderlineOffset: '2px',
   },
+  // Wikilink — Obsidian style: underlined coloured TEXT (no pill/background), so
+  // it reads as a link and revealing the `[[ ]]` brackets adds no padding gap.
   '.cm-wikilink': {
     color: 'var(--info)',
-    background: 'color-mix(in oklch, var(--info) 12%, transparent)',
-    padding: '0 0.3em',
-    borderRadius: '0.25em',
+    textDecoration: 'underline',
+    textUnderlineOffset: '2px',
+    cursor: 'pointer',
   },
   '.cm-wikilink-broken': {
     color: 'var(--destructive, crimson)',
-    background: 'color-mix(in oklch, crimson 12%, transparent)',
-    padding: '0 0.3em',
-    borderRadius: '0.25em',
     textDecoration: 'underline dashed',
     textDecorationColor: 'var(--destructive, crimson)',
+    textUnderlineOffset: '2px',
+    cursor: 'pointer',
+  },
+  // The `[[ ]]` brackets while editing — shown but muted (Obsidian dims them).
+  '.cm-wikilink-bracket': {
+    color: 'var(--muted-foreground)',
   },
 
   // Highlight (read-it-later) — view-only mark over recorded ranges

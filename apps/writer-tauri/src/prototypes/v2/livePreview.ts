@@ -14,6 +14,7 @@
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { type EditorState, type Range } from '@codemirror/state'
+import { type SyntaxNode } from '@lezer/common'
 import { isKnownNote } from '../wikilinkComplete'
 
 const HIDE = Decoration.replace({})
@@ -28,6 +29,23 @@ const LIST_INDENT = 1.8
 function cursorInRange(state: EditorState, from: number, to: number): boolean {
   for (const r of state.selection.ranges) {
     if (r.from <= to && from <= r.to) return true
+  }
+  return false
+}
+
+/** lezer parses `[[Title]]` as a `Link` ([Title]) wrapped in an extra `[`…`]`.
+ * Detect that so the grammar Link/LinkMark handling can bail and leave wikilinks
+ * entirely to the regex overlay (otherwise both fire → double styling, overlapping
+ * hides, and split reveal gates). */
+function isWikiLink(state: EditorState, from: number, to: number): boolean {
+  return state.doc.sliceString(from - 1, from) === '[' && state.doc.sliceString(to, to + 1) === ']'
+}
+
+/** Inside an inline or fenced code context → text is literal (don't apply the
+ * wikilink regex overlay there). Node names: InlineCode, FencedCode, CodeText… */
+function inCodeContext(state: EditorState, pos: number): boolean {
+  for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1); n; n = n.parent) {
+    if (/Code/.test(n.name)) return true
   }
   return false
 }
@@ -76,7 +94,11 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
         if (name === 'Strikethrough') return void mark(nf, nt, 'cm-strike')
         if (name === 'InlineCode') return void mark(nf, nt, 'cm-inline-code')
         // Link `[text](url)` — style the whole node; hide the `[`/`](url)` markers.
-        if (name === 'Link') return void mark(nf, nt, 'cm-link')
+        // Skip `[[wikilinks]]` (parsed as a Link too) — the regex overlay owns them.
+        if (name === 'Link') {
+          if (isWikiLink(state, nf, nt)) return
+          return void mark(nf, nt, 'cm-link')
+        }
         if (
           name === 'EmphasisMark' ||
           name === 'StrikethroughMark' ||
@@ -84,6 +106,12 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
           name === 'LinkMark' ||
           name === 'URL'
         ) {
+          // A wikilink's inner `[`/`]` are LinkMarks of a Link — leave them to the
+          // regex overlay so the two layers don't both hide them with split gates.
+          if (name === 'LinkMark' || name === 'URL') {
+            const p = node.node.parent
+            if (p?.name === 'Link' && isWikiLink(state, p.from, p.to)) return
+          }
           // ACTIVE-LINE reveal (not per-construct). Show the WHOLE line raw when the
           // selection touches it — exactly like headings/quotes below, and like
           // Obsidian. This is the fundamental IME fix: the line the caret (and thus
@@ -197,19 +225,30 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
       },
     })
 
-    // Wikilinks `[[Title]]` — not in the markdown grammar, so a regex overlay over
-    // the same range. Mark the inner title (broken-styled if the note is unknown)
-    // and hide `[[`/`]]` unless the caret is inside the whole `[[...]]`.
+    // Wikilinks `[[Title]]` — not (cleanly) in the markdown grammar, so a regex
+    // overlay over the same range. Mark the inner title (broken-styled if unknown)
+    // and hide `[[`/`]]` unless the caret is on the LINE — line-level reveal, same
+    // as every other construct, so a composing caret elsewhere on the line never
+    // leaves a `[[`/`]]` replace decoration on it (IME safety).
     const text = state.doc.sliceString(from, to)
     const re = /\[\[([^\]\n]+)\]\]/g
     let m: RegExpExecArray | null
     while ((m = re.exec(text))) {
       const start = from + m.index
+      if (inCodeContext(state, start)) continue // `[[...]]` inside `code` is literal
       const innerFrom = start + 2
       const innerTo = innerFrom + m[1].length
       const end = innerTo + 2
+      // Obsidian model: the TITLE is always the link (blue underline / red broken).
       mark(innerFrom, innerTo, isKnownNote(m[1]) ? 'cm-wikilink' : 'cm-wikilink-broken')
-      if (!cursorInRange(state, start, end)) {
+      const line = state.doc.lineAt(start)
+      if (cursorInRange(state, line.from, line.to)) {
+        // editing → SHOW the `[[`/`]]` brackets, just muted (a class, not a replace,
+        // so the composing caret's line never carries a replace → IME-safe).
+        mark(start, innerFrom, 'cm-wikilink-bracket')
+        mark(innerTo, end, 'cm-wikilink-bracket')
+      } else {
+        // rendered → hide the brackets entirely (just the styled title shows).
         hide(start, innerFrom)
         hide(innerTo, end)
       }
