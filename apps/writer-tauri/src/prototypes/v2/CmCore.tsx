@@ -12,7 +12,7 @@
 // which are wrong for a prose editor. We hand-pick the minimal extension set.
 
 import { useEffect, useRef } from 'react'
-import { EditorState } from '@codemirror/state'
+import { EditorState, Prec } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, dropCursor } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
@@ -22,6 +22,7 @@ import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from '../cmTheme'
 import { livePreviewV2, taskCheckboxClick } from './livePreview'
 import { blocksV2 } from './blocks'
+import { listEnter } from '../listEnter'
 import { imeListContinue } from '../imeListContinue'
 import { wikilinkSource } from '../wikilinkComplete'
 import { wikilinkClick } from '../wikilinkNav'
@@ -84,13 +85,14 @@ reveals the raw \`![...](...)\`.
 
 Some text below the image.
 
-TABLE (block widget): renders as a real table; put the caret inside to edit the
-raw markdown, move out to re-render. Typing above it must not reload it.
+TABLE (block widget): renders as a real table with PER-COLUMN ALIGNMENT from the
+delimiter row (\`:---\` left, \`:---:\` center, \`---:\` right). Put the caret inside to
+edit the raw markdown, move out to re-render. Typing above it must not reload it.
 
 | Feature | PM | CM |
-| --- | --- | --- |
-| Anchor stability | 100% | 100% |
-| Anchor LOC | 724 | 130 |
+| :--- | :---: | ---: |
+| **Anchor** stability | \`100%\` | [docs](https://x.com) |
+| Anchor LOC | 724 | ~~724~~ 130 |
 
 MEDIA (block widget, SPIKE: NATIVE webview controls): play/seek/volume use the OS
 (WKWebView) player chrome — pressing them must NOT flip the card to raw source.

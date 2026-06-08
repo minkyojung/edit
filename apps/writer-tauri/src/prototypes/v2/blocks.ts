@@ -20,6 +20,7 @@
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 import {
+  EditorSelection,
   StateField,
   type EditorState,
   type Extension,
@@ -145,4 +146,46 @@ const blocksField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 })
 
-export const blocksV2: Extension = [blocksField]
+// Click a RENDERED table → reveal the raw markdown with the caret near the click.
+// A block widget is otherwise unreachable (the caret can't land in it and arrow
+// motion skips it), so this is the table's ONLY entry point — the canonical
+// approach (Obsidian uses posAtDOM on the table element to find its source start).
+// Once confirmed the click is on a table, it ALWAYS dispatches a valid caret and
+// returns true — it never falls through to CM's default block handling, which is
+// what used to drop the caret at the block's front ("jumps to the very front").
+const tableClick = EditorView.domEventHandlers({
+  mousedown(event, view) {
+    const target = event.target as HTMLElement | null
+    const tableEl = target?.closest?.('.cm-md-table')
+    if (!tableEl) return false
+    // Source start of the table: posAtDOM on the widget ROOT (reliable), not a
+    // deep cell node (which can resolve outside the block range).
+    const startLine = view.state.doc.lineAt(view.posAtDOM(tableEl))
+    // Best-effort row/column from the clicked cell; fall back to the table's first
+    // line. Rendered header row = source line 0; the delimiter line (1) is NOT
+    // rendered, so a body row at table-rowIndex k≥1 → source line k+1. Within the
+    // line, the column's content starts after the colIndex-th `|`.
+    let lineNo = startLine.number
+    let off = 0
+    const cell = target?.closest?.('td, th') as HTMLTableCellElement | null
+    const row = cell?.parentElement as HTMLTableRowElement | null
+    if (cell && row) {
+      const candidate = startLine.number + (row.rowIndex === 0 ? 0 : row.rowIndex + 1)
+      if (candidate <= view.state.doc.lines) {
+        lineNo = candidate
+        const text = view.state.doc.line(lineNo).text
+        const pipes: number[] = []
+        for (let i = 0; i < text.length; i++) if (text[i] === '|') pipes.push(i)
+        off = pipes[cell.cellIndex] !== undefined ? pipes[cell.cellIndex] + 1 : 0
+        while (off < text.length && text[off] === ' ') off++
+      }
+    }
+    const line = view.state.doc.line(lineNo)
+    event.preventDefault()
+    view.dispatch({ selection: EditorSelection.cursor(line.from + Math.min(off, line.text.length)) })
+    view.focus()
+    return true
+  },
+})
+
+export const blocksV2: Extension = [blocksField, tableClick]

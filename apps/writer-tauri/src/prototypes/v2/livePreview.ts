@@ -69,9 +69,8 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
           return
         }
 
-        // Emphasis / inline code — per-construct reveal: hide the markers unless
-        // the caret is anywhere inside the PARENT construct (so both the opening
-        // and closing markers reveal together).
+        // Emphasis / inline code — keep the STYLING mark on the text regardless;
+        // the marker hiding is decided per-LINE below.
         if (name === 'StrongEmphasis') return void mark(nf, nt, 'cm-strong')
         if (name === 'Emphasis') return void mark(nf, nt, 'cm-em')
         if (name === 'Strikethrough') return void mark(nf, nt, 'cm-strike')
@@ -85,9 +84,13 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
           name === 'LinkMark' ||
           name === 'URL'
         ) {
-          const p = node.node.parent
-          const reveal = p ? cursorInRange(state, p.from, p.to) : cursorInRange(state, nf, nt)
-          if (!reveal) hide(nf, nt)
+          // ACTIVE-LINE reveal (not per-construct). Show the WHOLE line raw when the
+          // selection touches it — exactly like headings/quotes below, and like
+          // Obsidian. This is the fundamental IME fix: the line the caret (and thus
+          // an IME composition) is on never carries a replace decoration, so CJK
+          // composition can never be disturbed. Other lines hide markers as before.
+          const line = state.doc.lineAt(nf)
+          if (!cursorInRange(state, line.from, line.to)) hide(nf, nt)
           return
         }
 

@@ -141,6 +141,13 @@ export class TableWidget extends WidgetType {
     }
     return table
   }
+  // FALSE → clicks on the rendered table reach the editor's domEventHandlers. A
+  // block widget is otherwise unreachable (the caret can't land in it and arrow
+  // motion skips it), so the click handler in blocks.ts is the ONLY way to enter
+  // the table for editing — it reveals the raw markdown at the clicked spot.
+  ignoreEvent() {
+    return false
+  }
   get estimatedHeight() {
     return 120
   }
