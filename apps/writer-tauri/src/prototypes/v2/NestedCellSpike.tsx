@@ -15,7 +15,7 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from '../cmTheme'
-import { livePreviewV2 } from './livePreview'
+import { livePreviewInline } from './livePreview'
 
 // Neutralize the prose theme's huge page padding for the tiny nested view.
 const cellTheme = EditorView.theme({
@@ -51,7 +51,7 @@ class NestedCellWidget extends WidgetType {
           drawSelection(),
           EditorView.lineWrapping,
           markdown({ extensions: [GFM], addKeymap: false }),
-          livePreviewV2,
+          livePreviewInline,
           cmPrototypeTheme,
           cellTheme,
         ],
@@ -72,7 +72,7 @@ class NestedCellWidget extends WidgetType {
   }
 }
 
-const SEED = '**bold** and a [link](https://x.com)\nsecond line — type 한글 here'
+const SEED = '**bold** and a [link](https://x.com)\n- this dash stays RAW (no bullet in a cell)\n# this stays raw too — type 한글'
 
 function build(state: EditorState): DecorationSet {
   const out: Range<Decoration>[] = []

@@ -50,7 +50,11 @@ function inCodeContext(state: EditorState, pos: number): boolean {
   return false
 }
 
-function buildDecos(state: EditorState, ranges: readonly { from: number; to: number }[]): Range<Decoration>[] {
+function buildDecos(
+  state: EditorState,
+  ranges: readonly { from: number; to: number }[],
+  inlineOnly = false,
+): Range<Decoration>[] {
   const out: Range<Decoration>[] = []
   const tree = syntaxTree(state)
   const mark = (from: number, to: number, cls: string) => {
@@ -72,6 +76,23 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
         const { name } = node
         const nf = node.from
         const nt = node.to
+
+        // INLINE-ONLY mode (table cells): a GFM table cell holds inline content
+        // only — there are no real headings/lists/quotes/rules/code-blocks in a
+        // cell. Skip those block branches (return undefined → still descend so
+        // inline marks INSIDE them, e.g. bold, render); the block markers stay raw.
+        if (
+          inlineOnly &&
+          (/^ATXHeading[1-6]$/.test(name) ||
+            name === 'HeaderMark' ||
+            name === 'Blockquote' ||
+            name === 'QuoteMark' ||
+            name === 'HorizontalRule' ||
+            name === 'FencedCode' ||
+            name === 'ListMark')
+        ) {
+          return undefined
+        }
 
         // Headings — line-level reveal: hide `# ` unless the caret is on the line.
         if (/^ATXHeading[1-6]$/.test(name)) {
@@ -257,22 +278,28 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
   return out
 }
 
-export const livePreviewV2 = ViewPlugin.fromClass(
-  class {
-    deco: DecorationSet
-    constructor(view: EditorView) {
-      this.deco = this.build(view)
-    }
-    build(view: EditorView): DecorationSet {
-      return Decoration.set(buildDecos(view.state, view.visibleRanges), true)
-    }
-    update(u: ViewUpdate) {
-      // Reveal depends on the selection now, so rebuild on selection changes too.
-      if (u.docChanged || u.viewportChanged || u.selectionSet) this.deco = this.build(u.view)
-    }
-  },
-  { decorations: (v) => v.deco },
-)
+function previewPlugin(inlineOnly: boolean) {
+  return ViewPlugin.fromClass(
+    class {
+      deco: DecorationSet
+      constructor(view: EditorView) {
+        this.deco = this.build(view)
+      }
+      build(view: EditorView): DecorationSet {
+        return Decoration.set(buildDecos(view.state, view.visibleRanges, inlineOnly), true)
+      }
+      update(u: ViewUpdate) {
+        // Reveal depends on the selection now, so rebuild on selection changes too.
+        if (u.docChanged || u.viewportChanged || u.selectionSet) this.deco = this.build(u.view)
+      }
+    },
+    { decorations: (v) => v.deco },
+  )
+}
+
+export const livePreviewV2 = previewPlugin(false)
+// Inline-only variant for table cells (no block constructs — see `inlineOnly`).
+export const livePreviewInline = previewPlugin(true)
 
 // Click the drawn checkbox → toggle `[ ]`↔`[x]`. The box is a CSS `::after`
 // pseudo-element, so it can't be an event target. Instead we hit-test the click
