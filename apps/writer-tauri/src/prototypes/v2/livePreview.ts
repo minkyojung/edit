@@ -175,8 +175,13 @@ function buildDecos(state: EditorState, ranges: readonly { from: number; to: num
                   ? 'cm-list-marker'
                   : `cm-list-marker cm-task-marker${checked ? ' cm-task-marker-checked' : ''}`,
               )
-              // Completed task → strike + mute the body (kept while editing, like Obsidian).
-              if (checked) mark(markerTo, line.to, 'cm-task-done')
+              // Completed task → strike + mute the body (kept while editing, like
+              // Obsidian). Start at the first non-space AFTER the marker so the
+              // strike doesn't run through the gap between the checkbox and the text.
+              if (checked) {
+                const gapLen = /^[ \t]*/.exec(state.doc.sliceString(markerTo, line.to))?.[0].length ?? 0
+                mark(markerTo + gapLen, line.to, 'cm-task-done')
+              }
               return
             }
           }

@@ -171,25 +171,18 @@ export const cmPrototypeTheme = EditorView.theme({
     top: '50%',
     transform: 'translateY(-50%)',
     boxSizing: 'border-box',
-    // font-size on the box so the ✓ glyph is smaller than the box and centres
-    // cleanly; width/height are in this (0.82em) em so the box stays ~1.05 of the
-    // editor em (1.28 × 0.82 ≈ 1.05) — same size checked or not, and the click
-    // hit-test (which assumes 1.05em) still matches.
-    fontSize: '0.82em',
-    width: '1.28em',
-    height: '1.28em',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    lineHeight: '1',
+    width: '1.05em',
+    height: '1.05em',
     border: '1.5px solid var(--muted-foreground)',
-    borderRadius: '0.36em',
-    color: '#fff',
+    borderRadius: '0.3em',
     cursor: 'pointer',
   },
+  // Checked → fill + a checkmark drawn as a centred SVG BACKGROUND (not the `✓`
+  // glyph, whose font metrics pushed it to the box's top-left). background-position
+  // center is pixel-exact and font-independent.
   '.cm-task-marker-checked::after': {
-    content: '"✓"',
-    background: 'var(--info)',
+    background:
+      "var(--info) url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12.5l4.5 4.5L19 7'/></svg>\") center / 0.72em no-repeat",
     borderColor: 'var(--info)',
   },
 
