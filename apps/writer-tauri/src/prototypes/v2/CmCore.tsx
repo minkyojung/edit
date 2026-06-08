@@ -94,9 +94,9 @@ raw markdown, move out to re-render. Typing above it must not reload it.
 
 MEDIA (block widget, SPIKE: NATIVE webview controls): play/seek/volume use the OS
 (WKWebView) player chrome — pressing them must NOT flip the card to raw source.
-The "</>" button (or arrowing a caret in) reveals the raw \`<video>\` line ABOVE the
-player (image-style) — drag/cut that TEXT to move the block. Type on the lines ABOVE
-— playback must NOT reset (map preserves the element).
+Arrow a caret onto it to reveal the raw \`<video>\` line ABOVE the player (Obsidian-
+style) — select & drag that TEXT to move the block. Type on the lines ABOVE — playback
+must NOT reset (map preserves the element).
 
 <video src="https://www.w3schools.com/html/mov_bbb.mp4" controls></video>
 

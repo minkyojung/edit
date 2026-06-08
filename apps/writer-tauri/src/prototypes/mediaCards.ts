@@ -11,7 +11,7 @@
 
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
-import { EditorSelection, StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
+import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
 import { activeLines } from './reveal'
 import { isComposing, compositionEnded } from './imeComposition'
 
@@ -44,9 +44,8 @@ export class MediaWidget extends WidgetType {
   eq(other: MediaWidget) {
     return other.kind === this.kind && other.src === this.src && other.title === this.title
   }
-  // SPIKE: native webview controls instead of the custom `createMediaControls`
-  // bar. toDOM gets the `view` so the edit-source button can dispatch a selection.
-  toDOM(view: EditorView) {
+  // SPIKE: native webview controls instead of the custom `createMediaControls` bar.
+  toDOM() {
     const fig = document.createElement('figure')
     fig.className = 'cm-media-card'
     fig.dataset.card = this.kind
@@ -62,32 +61,12 @@ export class MediaWidget extends WidgetType {
     media.controls = true
     media.setAttribute('preload', this.kind === 'video' ? 'auto' : 'metadata')
     fig.appendChild(media)
-
-    // Because `ignoreEvent()` is true, clicking the card no longer reveals the
-    // raw `<video src=...>` markup (that click never reaches CM now). So give an
-    // explicit affordance: a button that drops a caret on the media line → the
-    // field swaps the widget for raw source (`cursorInRange`). Arrowing a caret
-    // in from an adjacent line still works too (keyboard is unaffected by
-    // `ignoreEvent`). The button uses its OWN listener + `view.dispatch`.
-    const edit = document.createElement('button')
-    edit.type = 'button'
-    edit.className = 'cm-media-edit'
-    edit.textContent = '</>'
-    edit.setAttribute('aria-label', 'Edit source')
-    edit.addEventListener('mousedown', (e) => {
-      e.preventDefault()
-      const pos = view.posAtDOM(fig)
-      const line = view.state.doc.lineAt(pos)
-      view.dispatch({ selection: EditorSelection.cursor(line.from) })
-      view.focus()
-    })
-    fig.appendChild(edit)
     return fig
   }
   // Ignore EVERY widget-internal event so the native controls operate freely and
   // never move CM's selection (no reveal-on-play). To MOVE the block you reveal
-  // the raw `<video>`/`<audio>` line (`</>` or a caret) and drag/cut that TEXT —
-  // a normal text move, so no drag handle is needed here.
+  // the raw `<video>`/`<audio>` line (arrow a caret onto it) and drag/cut that
+  // TEXT — a normal text move, so no drag handle is needed here.
   ignoreEvent() {
     return true
   }

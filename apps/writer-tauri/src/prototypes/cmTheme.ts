@@ -188,10 +188,11 @@ export const cmPrototypeTheme = EditorView.theme({
     borderColor: 'var(--info)',
   },
 
-  // Image widget
+  // Image widget — `width:100%` stretches it to the full editor (prose) width,
+  // matching the media card; `height:auto` keeps the aspect ratio.
   '.cm-img': {
     display: 'inline-block',
-    maxWidth: '100%',
+    width: '100%',
     height: 'auto',
     borderRadius: '8px',
     verticalAlign: 'bottom',
@@ -202,16 +203,12 @@ export const cmPrototypeTheme = EditorView.theme({
     outline: '2px solid var(--info)',
     outlineOffset: '2px',
   },
-  // Media card (SPIKE: native webview controls). Flex so the edit-source button
-  // sits BESIDE the media (not overlaying the native control bar — which matters
-  // for audio, whose whole height is the bar).
-  // Inline-level (like `.cm-img`) so the inline replace renders in flow AND the
-  // caret can land on the line. inline-flex keeps the player + edit button on one row.
+  // Media card (SPIKE: native webview controls). Inline-block (like `.cm-img`) so
+  // the inline replace renders in flow AND the caret can land on the line, but
+  // `width:100%` stretches the player to the full editor (prose) width.
   '.cm-media-card': {
-    display: 'inline-flex',
-    alignItems: 'flex-start',
-    gap: '6px',
-    maxWidth: '100%',
+    display: 'inline-block',
+    width: '100%',
     verticalAlign: 'bottom',
     margin: 'var(--prose-gap-block, 14px) 0',
     // The player is a non-text widget — never let a text drag highlight/grab it
@@ -219,20 +216,13 @@ export const cmPrototypeTheme = EditorView.theme({
     userSelect: 'none',
   },
   '.cm-media-card video': {
-    maxWidth: '100%',
+    width: '100%',
     borderRadius: '8px',
     display: 'block',
   },
-  '.cm-media-edit': {
-    flex: '0 0 auto',
-    padding: '2px 6px',
-    fontSize: '11px',
-    fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-    color: 'var(--muted-foreground)',
-    background: 'transparent',
-    border: '1px solid var(--border)',
-    borderRadius: '6px',
-    cursor: 'pointer',
+  '.cm-media-card audio': {
+    width: '100%',
+    display: 'block',
   },
   // Table widget
   '.cm-md-table': {
