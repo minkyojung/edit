@@ -25,3 +25,37 @@ export function addColumn(source: string): string {
     .map((line) => (line.includes('|') ? `${line.trimEnd()} ${isDelim(line) ? '---' : ''} |` : line))
     .join('\n')
 }
+
+/** Remove the `col`-th cell (0-based) from every row, including the delimiter.
+ * No-op when the table has a single column (would leave a degenerate `||` row). */
+export function deleteColumn(source: string, col: number): string {
+  const header = source.split('\n').find((l) => l.includes('|'))
+  if (!header || columnCount(header) <= 1) return source
+  return source
+    .split('\n')
+    .map((line) => {
+      if (!line.includes('|')) return line
+      const parts = line.split('|') // ['', c0, c1, ..., '']  (edge pipes → empty ends)
+      if (col + 1 < parts.length - 1) parts.splice(col + 1, 1)
+      return parts.join('|')
+    })
+    .join('\n')
+}
+
+/** Remove the `dataRow`-th DATA row (0-based; the header and delimiter are kept). */
+export function deleteRow(source: string, dataRow: number): string {
+  let seenHeader = false
+  let dataIdx = -1
+  return source
+    .split('\n')
+    .filter((line) => {
+      if (!line.includes('|') || isDelim(line)) return true
+      if (!seenHeader) {
+        seenHeader = true
+        return true // header row
+      }
+      dataIdx++
+      return dataIdx !== dataRow
+    })
+    .join('\n')
+}

@@ -3,7 +3,7 @@
 // widgets.)
 
 import { WidgetType, type EditorView } from '@codemirror/view'
-import { addRow, addColumn } from './tableEdit'
+import { addRow, addColumn, deleteRow, deleteColumn } from './tableEdit'
 
 export class ImageWidget extends WidgetType {
   constructor(
@@ -98,6 +98,35 @@ export class TableWidget extends WidgetType {
       .split('\n')
       .map((l) => l.trim())
       .filter((l) => l.startsWith('|') || l.includes('|'))
+
+    // Wrapper = positioning context for the hover controls. Every control rewrites
+    // the table SOURCE (the doc text is the source of truth) and dispatches it; the
+    // decoration re-renders. The widget's current doc range is [from, from+length] —
+    // `from` via posAtDOM on the wrapper at click time, so it survives edits above.
+    // stopPropagation keeps a control click from reaching the cell-reveal handler.
+    const wrap = document.createElement('div')
+    wrap.className = 'cm-table-wrap'
+    const rewrite = (fn: (src: string) => string) => (e: MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const from = view.posAtDOM(wrap)
+      view.dispatch({ changes: { from, to: from + this.source.length, insert: fn(this.source) } })
+    }
+    const ctrl = (
+      cls: string,
+      glyph: string,
+      label: string,
+      fn: (src: string) => string,
+    ): HTMLButtonElement => {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = cls
+      b.textContent = glyph
+      b.setAttribute('aria-label', label)
+      b.addEventListener('mousedown', rewrite(fn))
+      return b
+    }
+
     const table = document.createElement('table')
     table.className = 'cm-md-table'
     const cellsOf = (line: string) =>
@@ -123,6 +152,7 @@ export class TableWidget extends WidgetType {
     }
     let headerDone = false
     let body: HTMLTableSectionElement | null = null
+    let dataIndex = -1
     for (const line of rows) {
       if (isDelim(line)) continue
       if (!headerDone) {
@@ -131,6 +161,8 @@ export class TableWidget extends WidgetType {
         cellsOf(line).forEach((c, i) => {
           const th = document.createElement('th')
           setCell(th, c, i)
+          // Per-column delete handle (above the column, hover-revealed).
+          th.appendChild(ctrl('cm-table-delcol', '×', 'Delete column', (s) => deleteColumn(s, i)))
           tr.appendChild(th)
         })
         headerDone = true
@@ -138,36 +170,19 @@ export class TableWidget extends WidgetType {
       }
       if (!body) body = table.createTBody()
       const tr = body.insertRow()
-      cellsOf(line).forEach((c, i) => setCell(tr.insertCell(), c, i))
+      const di = ++dataIndex
+      cellsOf(line).forEach((c, i) => {
+        const td = tr.insertCell()
+        setCell(td, c, i)
+        // Per-row delete handle on the first cell (left of the row, hover-revealed).
+        if (i === 0) td.appendChild(ctrl('cm-table-delrow', '×', 'Delete row', (s) => deleteRow(s, di)))
+      })
     }
 
-    // P4 — add row / column. Wrap the table so the hover "+" rails can sit on its
-    // right and bottom edges. Each button rewrites the table SOURCE (the doc text
-    // is the source of truth) and dispatches it; the decoration re-renders. The
-    // widget's current doc range is [from, from+source.length] — `from` via
-    // posAtDOM on the wrapper (resolved at click time, so it survives edits above).
-    // stopPropagation keeps the click from reaching the cell-reveal handler.
-    const wrap = document.createElement('div')
-    wrap.className = 'cm-table-wrap'
     wrap.appendChild(table)
-    const rewrite = (fn: (src: string) => string) => (e: MouseEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
-      const from = view.posAtDOM(wrap)
-      view.dispatch({ changes: { from, to: from + this.source.length, insert: fn(this.source) } })
-    }
-    const railBtn = (cls: string, label: string, fn: (src: string) => string): HTMLButtonElement => {
-      const b = document.createElement('button')
-      b.type = 'button'
-      b.className = cls
-      b.textContent = '+'
-      b.setAttribute('aria-label', label)
-      b.addEventListener('mousedown', rewrite(fn))
-      return b
-    }
     wrap.append(
-      railBtn('cm-table-addcol', 'Add column', addColumn),
-      railBtn('cm-table-addrow', 'Add row', addRow),
+      ctrl('cm-table-addcol', '+', 'Add column', addColumn),
+      ctrl('cm-table-addrow', '+', 'Add row', addRow),
     )
     return wrap
   }

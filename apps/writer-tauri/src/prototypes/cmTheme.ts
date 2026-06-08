@@ -171,14 +171,19 @@ export const cmPrototypeTheme = EditorView.theme({
     top: '50%',
     transform: 'translateY(-50%)',
     boxSizing: 'border-box',
-    width: '1.05em',
-    height: '1.05em',
+    // font-size on the box so the ✓ glyph is smaller than the box and centres
+    // cleanly; width/height are in this (0.82em) em so the box stays ~1.05 of the
+    // editor em (1.28 × 0.82 ≈ 1.05) — same size checked or not, and the click
+    // hit-test (which assumes 1.05em) still matches.
+    fontSize: '0.82em',
+    width: '1.28em',
+    height: '1.28em',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     lineHeight: '1',
     border: '1.5px solid var(--muted-foreground)',
-    borderRadius: '0.3em',
+    borderRadius: '0.36em',
     color: '#fff',
     cursor: 'pointer',
   },
@@ -244,12 +249,38 @@ export const cmPrototypeTheme = EditorView.theme({
   '.cm-table-wrap:hover .cm-table-addcol, .cm-table-wrap:hover .cm-table-addrow': {
     opacity: '1',
   },
+  // Per-column (top gutter) / per-row (left gutter) delete handles — each revealed
+  // only when its own column-header / row is hovered.
+  '.cm-table-delcol, .cm-table-delrow': {
+    position: 'absolute',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '15px',
+    height: '15px',
+    padding: '0',
+    color: 'var(--muted-foreground)',
+    background: 'var(--background)',
+    border: '1px solid var(--border)',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    lineHeight: '1',
+    opacity: '0',
+    transition: 'opacity 120ms',
+    zIndex: '1',
+  },
+  '.cm-table-delcol': { top: '-19px', left: '50%', transform: 'translateX(-50%)' },
+  '.cm-table-delrow': { left: '-19px', top: '50%', transform: 'translateY(-50%)' },
+  '.cm-md-table th:hover .cm-table-delcol': { opacity: '1' },
+  '.cm-md-table tr:hover .cm-table-delrow': { opacity: '1' },
   '.cm-md-table': {
     borderCollapse: 'collapse',
     width: '100%',
     fontSize: '0.92em',
   },
   '.cm-md-table th, .cm-md-table td': {
+    position: 'relative',
     border: '1px solid var(--border)',
     padding: '0.35em 0.6em',
     textAlign: 'left',
