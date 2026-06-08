@@ -56,6 +56,8 @@ const CodeMirrorPreview = lazy(() => import('@/prototypes/CodeMirrorPreview'))
 const CmCore = lazy(() => import('@/prototypes/v2/CmCore'))
 // DEV-only spike: Obsidian-style in-place contenteditable table cells.
 const TableCellSpike = lazy(() => import('@/prototypes/v2/TableCellSpike'))
+// DEV-only spike: nested CodeMirror EditorView inside a cell (rich-cell IME test).
+const NestedCellSpike = lazy(() => import('@/prototypes/v2/NestedCellSpike'))
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
@@ -138,6 +140,16 @@ export function App() {
                       <BootGate>
                         <Suspense fallback={null}>
                           <TableCellSpike />
+                        </Suspense>
+                      </BootGate>
+                    }
+                  />
+                  <Route
+                    path="/dev/nestedcell"
+                    element={
+                      <BootGate>
+                        <Suspense fallback={null}>
+                          <NestedCellSpike />
                         </Suspense>
                       </BootGate>
                     }
