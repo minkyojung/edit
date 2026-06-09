@@ -24,6 +24,7 @@ import { livePreviewV2, taskCheckboxClick } from './livePreview'
 import { blocksV2 } from './blocks'
 import { tableArrowEntry } from './editableTable'
 import { tableBackspace } from './tableBackspace'
+import { inlineFormatKeymap } from './inlineFormat'
 import { smartEnter } from '../listEnter'
 import { imeListContinue } from '../imeListContinue'
 import { wikilinkSource } from '../wikilinkComplete'
@@ -142,6 +143,8 @@ export default function CmCore() {
               { key: 'Backspace', run: tableBackspace },
             ]),
           ),
+          // Inline-format shortcuts: ⌘B/⌘I/⌘E/⌘⇧X wrap-toggles + ⌘K link.
+          inlineFormatKeymap,
           keymap.of([
             { key: 'Backspace', run: deleteMarkupBackward },
             indentWithTab,
