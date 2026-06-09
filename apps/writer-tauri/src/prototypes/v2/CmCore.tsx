@@ -22,6 +22,7 @@ import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from '../cmTheme'
 import { livePreviewV2, taskCheckboxClick } from './livePreview'
 import { blocksV2 } from './blocks'
+import { tableArrowEntry } from './editableTable'
 import { smartEnter } from '../listEnter'
 import { imeListContinue } from '../imeListContinue'
 import { wikilinkSource } from '../wikilinkComplete'
@@ -156,6 +157,7 @@ export default function CmCore() {
           taskCheckboxClick, // click the drawn checkbox → toggle `[ ]`↔`[x]`
           livePreviewV2, // heading/emphasis/link/wikilink/quote/hr/code (inline+line)
           blocksV2, // image + table + media widgets — StateField + map (no reload above)
+          tableArrowEntry, // ArrowDown/Up on the line above/below a table → enter a cell
           cmPrototypeTheme,
         ],
       }),

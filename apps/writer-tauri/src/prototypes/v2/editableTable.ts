@@ -289,7 +289,10 @@ export class EditableTableWidget extends WidgetType {
     // vertical arrows below the table mapped to the wrong line. `frame` (no padding,
     // position:relative) hugs the table so the hover rails anchor to the table edge,
     // not to the padded wrap.
-    const wrap = document.createElement('div') as HTMLElement & { _cellViews?: EditorView[] }
+    const wrap = document.createElement('div') as HTMLElement & {
+      _cellViews?: EditorView[]
+      _cols?: number
+    }
     wrap.className = 'cm-table-wrap'
     const frame = document.createElement('div')
     frame.className = 'cm-table-frame'
@@ -307,6 +310,7 @@ export class EditableTableWidget extends WidgetType {
     rail('cm-table-addrow', 'Add row', addRow)
     wrap.appendChild(frame)
     wrap._cellViews = cellViews
+    wrap._cols = grid[0]?.length ?? 1
     return wrap
   }
   // Own-commit re-render → keep DOM (focus/IME of nested cell views survive);
@@ -325,3 +329,58 @@ export class EditableTableWidget extends WidgetType {
     return 120
   }
 }
+
+// ── OUTER → INNER: enter the table with arrow keys ──────────────────────────────
+// A PARENT-editor keymap: when the caret is on the line just above/below a table,
+// ArrowDown/ArrowUp focuses a cell of the first/last row instead of skipping the
+// block. Add `tableArrowEntry` to the PARENT editor's extensions. (The INNER→OUTER
+// escape lives on each cell's keymap.) Finds the rendered table via the stored
+// `_cellViews` on its `.cm-table-wrap` DOM.
+type TableWrap = HTMLElement & { _cellViews?: EditorView[]; _cols?: number }
+
+function tableWrapAdjacent(view: EditorView, dir: -1 | 1): TableWrap | null {
+  const { main } = view.state.selection
+  if (!main.empty) return null
+  const curLine = view.state.doc.lineAt(main.head)
+  const probe = dir < 0 ? curLine.from - 1 : curLine.to + 1
+  if (probe < 0 || probe > view.state.doc.length) return null
+  // Is the adjacent line a table? Resolve with side = dir: going UP, `probe` sits at
+  // the table's END boundary, so side +1 would pick the FOLLOWING block — we must
+  // look backward (-1) into the table that ends there. Going down it's the reverse.
+  let node = syntaxTree(view.state).resolveInner(probe, dir)
+  while (node && node.name !== 'Table') node = node.parent as typeof node
+  if (!node) return null
+  const from = view.state.doc.lineAt(node.from).from
+  const to = view.state.doc.lineAt(Math.min(node.to, view.state.doc.length)).to
+  // Find the RENDERED wrap for this table by matching its document position. NOT via
+  // `domAtPos(insideTable)` + `closest`: for a block widget, domAtPos points at the
+  // widget from its PARENT (parent node + sibling offset), so `closest` (ancestor
+  // search) can never reach `.cm-table-wrap`, which is a CHILD. `posAtDOM` on the
+  // wrap returns the block's start, which lands in [from, to].
+  for (const w of view.contentDOM.querySelectorAll<HTMLElement>('.cm-table-wrap')) {
+    const p = view.posAtDOM(w)
+    if (p >= from && p <= to) return w as TableWrap
+  }
+  return null
+}
+
+const enterTable = (dir: -1 | 1) => (view: EditorView): boolean => {
+  const wrap = tableWrapAdjacent(view, dir)
+  const cells = wrap?._cellViews
+  if (!wrap || !cells || cells.length === 0) return false
+  const cols = wrap._cols ?? 1
+  // From above (ArrowDown, dir>0) → first cell, caret start. From below (ArrowUp,
+  // dir<0) → first cell of the LAST row, caret end. (Same-column entry is a later,
+  // x-coordinate-based refinement.)
+  const target = dir > 0 ? cells[0] : cells[Math.max(0, cells.length - cols)]
+  target.focus()
+  target.dispatch({ selection: { anchor: dir > 0 ? 0 : target.state.doc.length }, scrollIntoView: true })
+  return true
+}
+
+export const tableArrowEntry = Prec.highest(
+  keymap.of([
+    { key: 'ArrowDown', run: enterTable(1) },
+    { key: 'ArrowUp', run: enterTable(-1) },
+  ]),
+)

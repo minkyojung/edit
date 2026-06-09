@@ -10,7 +10,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
 import { GFM } from '@lezer/markdown'
 import { cmPrototypeTheme } from '../cmTheme'
-import { EditableTableWidget } from './editableTable'
+import { EditableTableWidget, tableArrowEntry } from './editableTable'
 
 function build(state: EditorState): DecorationSet {
   const out: Range<Decoration>[] = []
@@ -68,6 +68,7 @@ export default function TableCellSpike() {
           EditorView.lineWrapping,
           markdown({ extensions: [GFM], addKeymap: false }),
           editableTables,
+          tableArrowEntry,
           cmPrototypeTheme,
         ],
       }),
