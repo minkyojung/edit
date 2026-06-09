@@ -12,7 +12,7 @@
 
 import { EditorState, Prec } from '@codemirror/state'
 import { EditorView, WidgetType, keymap, drawSelection } from '@codemirror/view'
-import { history, defaultKeymap, historyKeymap } from '@codemirror/commands'
+import { history, defaultKeymap, historyKeymap, insertNewlineAndIndent } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
 import { GFM } from '@lezer/markdown'
@@ -199,9 +199,36 @@ export class EditableTableWidget extends WidgetType {
       if (nextCell) return (enterCell(nextCell, false), true)
       return escapeTable(1)
     }
-    // Tab/Shift-Tab move between cells (select-all, spreadsheet-style). Arrows move
-    // char/line within the cell, then between cells, then out of the table. Escape
-    // commits + leaves. (Enter = newline default for now → Enter-adds-row is later.)
+    // Enter: move to the cell BELOW (same column). On the last row, append a row and
+    // focus its same-column cell. The append rewrites the source → the widget
+    // rebuilds (new cell views), so we re-find the new cell in a microtask (after the
+    // update settles) by matching the table's stable start position.
+    const enterDown = (v: EditorView): boolean => {
+      const pos = findPos(v)
+      if (!pos) return false
+      const below = grid[pos.r + 1]?.[pos.c]
+      if (below) return (enterCell(below, false), true)
+      const col = pos.c
+      const { from, to } = rangeFromDoc()
+      const next = addRow(serialize(table, this.delim))
+      if (view.state.doc.sliceString(from, to) === next) return true
+      view.dispatch({ changes: { from, to, insert: next } })
+      queueMicrotask(() => {
+        for (const w of view.contentDOM.querySelectorAll<HTMLElement>('.cm-table-wrap')) {
+          if (view.posAtDOM(w) !== from) continue
+          const ww = w as TableWrap
+          const cells = ww._cellViews
+          const cols = ww._cols
+          const target = cells && cols ? cells[cells.length - cols + col] : undefined
+          if (target) enterCell(target, false)
+          return
+        }
+      })
+      return true
+    }
+    // Tab/Shift-Tab move between cells (select-all). Arrows move char/line within the
+    // cell, then between cells, then out of the table. Enter → cell below / add row;
+    // Shift-Enter → in-cell line break (serialized as <br>). Escape commits + leaves.
     const cellKeymap = Prec.highest(
       keymap.of([
         { key: 'Tab', run: (v) => (nav(v, 'next'), true) },
@@ -210,6 +237,8 @@ export class EditableTableWidget extends WidgetType {
         { key: 'ArrowDown', run: (v) => arrow(v, 'ArrowDown') },
         { key: 'ArrowLeft', run: (v) => arrow(v, 'ArrowLeft') },
         { key: 'ArrowRight', run: (v) => arrow(v, 'ArrowRight') },
+        { key: 'Enter', run: (v) => enterDown(v) },
+        { key: 'Shift-Enter', run: insertNewlineAndIndent },
         { key: 'Escape', run: (v) => ((v.contentDOM as HTMLElement).blur(), true) },
       ]),
     )
