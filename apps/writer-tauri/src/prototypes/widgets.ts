@@ -15,12 +15,18 @@ export class ImageWidget extends WidgetType {
   eq(o: ImageWidget) {
     return o.src === this.src && o.alt === this.alt
   }
-  toDOM() {
+  toDOM(view: EditorView) {
     const img = document.createElement('img')
     img.className = 'cm-img'
     img.src = this.src
     img.alt = this.alt
     img.loading = 'lazy'
+    // The image loads asynchronously, so its real height only appears AFTER CM has
+    // already measured this line at the placeholder/estimated height. Tell CM to
+    // re-measure once it loads so the heightmap matches what's on screen — without
+    // this, clicks and up/down-arrow map to the wrong line (stale heightmap). This
+    // is the canonical way to handle a widget whose height settles late.
+    img.addEventListener('load', () => view.requestMeasure())
     return img
   }
   // Reuse the existing <img> when src changes — re-set in place. Setting src to the

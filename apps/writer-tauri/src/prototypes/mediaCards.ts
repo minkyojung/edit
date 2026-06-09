@@ -45,7 +45,7 @@ export class MediaWidget extends WidgetType {
     return other.kind === this.kind && other.src === this.src && other.title === this.title
   }
   // SPIKE: native webview controls instead of the custom `createMediaControls` bar.
-  toDOM() {
+  toDOM(view: EditorView) {
     const fig = document.createElement('figure')
     fig.className = 'cm-media-card'
     fig.dataset.card = this.kind
@@ -53,6 +53,10 @@ export class MediaWidget extends WidgetType {
     const media = document.createElement(this.kind) as HTMLMediaElement
     media.src = this.src
     if (this.title) media.title = this.title
+    // Dimensions/height arrive async (loadedmetadata) — re-measure then so CM's
+    // heightmap matches the rendered player. Without it, clicks / up-down arrow
+    // map to the wrong line for content below the player (stale heightmap).
+    media.addEventListener('loadedmetadata', () => view.requestMeasure())
     // NATIVE controls — the OS webview (WKWebView on macOS) renders its own
     // Safari/QuickTime-style player chrome. The reason the PM editor couldn't use
     // these (shadow-DOM scrubber/volume events misread as a card drag) is gone in

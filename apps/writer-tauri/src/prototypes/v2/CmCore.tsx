@@ -23,6 +23,7 @@ import { cmPrototypeTheme } from '../cmTheme'
 import { livePreviewV2, taskCheckboxClick } from './livePreview'
 import { blocksV2 } from './blocks'
 import { tableArrowEntry } from './editableTable'
+import { tableBackspace } from './tableBackspace'
 import { smartEnter } from '../listEnter'
 import { imeListContinue } from '../imeListContinue'
 import { wikilinkSource } from '../wikilinkComplete'
@@ -132,7 +133,15 @@ export default function CmCore() {
           // pattern): tight list continuation / clean exit, blockquote continuation,
           // else plain newline. Beats every other Enter handler so CM's loose-list
           // (blank-line) inference and its task-continuation deletion never run.
-          Prec.highest(keymap.of([{ key: 'Enter', run: smartEnter }])),
+          Prec.highest(
+            keymap.of([
+              { key: 'Enter', run: smartEnter },
+              // Swallow Backspace ONLY on the blank line right below a table (with a
+              // paragraph under it) — deleting it would let GFM absorb that paragraph
+              // into the table (it vanishes). Keeps the blank; everything else normal.
+              { key: 'Backspace', run: tableBackspace },
+            ]),
+          ),
           keymap.of([
             { key: 'Backspace', run: deleteMarkupBackward },
             indentWithTab,
