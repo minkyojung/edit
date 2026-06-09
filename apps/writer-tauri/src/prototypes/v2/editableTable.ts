@@ -20,18 +20,27 @@ import { livePreviewInline } from './livePreview'
 import { addRow, addColumn, deleteRow, deleteColumn } from '../tableEdit'
 
 const isDelim = (line: string): boolean => /^[\s|:-]+$/.test(line) && line.includes('-')
+// Split a row into its source cells on UNESCAPED pipes only (a `\|` inside a cell is
+// a literal pipe, not a boundary). Returns the still-escaped cell source.
 const cellsOf = (line: string): string[] =>
   line
     .replace(/^\||\|$/g, '')
-    .split('|')
+    .split(/(?<!\\)\|/)
     .map((c) => c.trim())
 
 type WithView = HTMLElement & { _cellView?: EditorView }
 
-// A cell's GFM source ↔ the nested editor's plain doc. `<br>` is how a table cell
-// stores a line break (a real newline would end the row), so map both ways.
-const cellToDoc = (text: string): string => text.replace(/<br\s*\/?>/gi, '\n')
-const docToCell = (doc: string): string => doc.replace(/\n/g, '<br>').trim()
+// A cell's GFM SOURCE ↔ the nested editor's plain doc. Two cell-level escapes:
+//  • line break — a real newline would end the table row, so it's stored as `<br>`.
+//  • literal `|` — a bare pipe is a column boundary, so it's stored as `\|` (and a
+//    literal `\` as `\\`). Without this, typing `|` in a cell splits it into columns.
+const cellToDoc = (text: string): string =>
+  text.replace(/<br\s*\/?>/gi, '\n').replace(/\\([\\|])/g, '$1')
+const docToCell = (doc: string): string =>
+  doc
+    .replace(/([\\|])/g, '\\$1')
+    .replace(/\n/g, '<br>')
+    .trim()
 
 // Self-contained theme for a tiny in-cell editor — does NOT reuse the prose page
 // theme (whose 48px/120px page padding made cells huge). Just compact layout + the

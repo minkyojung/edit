@@ -31,4 +31,10 @@ describe('tableEdit', () => {
     const T = ['| a | b |', '| --- | --- |', '| 1 | 2 |', '| 3 | 4 |'].join('\n')
     expect(deleteRow(T, 0).split('\n')).toEqual(['| a | b |', '| --- | --- |', '| 3 | 4 |'])
   })
+
+  it('deleteColumn treats `\\|` (escaped pipe) as cell content, not a boundary', () => {
+    // first cell holds a literal pipe `a|b` (stored as a\|b); delete column 1 ("c")
+    const T = ['| a\\|b | c | d |', '| --- | --- | --- |', '| 1 | 2 | 3 |'].join('\n')
+    expect(deleteColumn(T, 1).split('\n')).toEqual(['| a\\|b | d |', '| --- | --- |', '| 1 | 3 |'])
+  })
 })

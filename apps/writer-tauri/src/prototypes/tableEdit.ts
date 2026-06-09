@@ -5,9 +5,13 @@
 
 const isDelim = (line: string): boolean => /^[\s|:-]+$/.test(line) && line.includes('-')
 
+/** Split a row on UNESCAPED pipes only — a `\|` inside a cell is a literal pipe
+ * (GFM escaping), not a column boundary. */
+const splitOnPipe = (line: string): string[] => line.split(/(?<!\\)\|/)
+
 /** Number of cells in a `| a | b | c |` row (between the edge pipes). */
 function columnCount(line: string): number {
-  return Math.max(1, line.split('|').length - 2)
+  return Math.max(1, splitOnPipe(line).length - 2)
 }
 
 /** Append an empty row (matching the header's column count) at the bottom. */
@@ -35,7 +39,7 @@ export function deleteColumn(source: string, col: number): string {
     .split('\n')
     .map((line) => {
       if (!line.includes('|')) return line
-      const parts = line.split('|') // ['', c0, c1, ..., '']  (edge pipes → empty ends)
+      const parts = splitOnPipe(line) // ['', c0, c1, ..., '']  (edge pipes → empty ends)
       if (col + 1 < parts.length - 1) parts.splice(col + 1, 1)
       return parts.join('|')
     })
