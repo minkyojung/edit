@@ -44,6 +44,11 @@ export const cmPrototypeTheme = EditorView.theme({
   '.cm-celledit .cm-scroller': {
     lineHeight: '1.5', // ← page: 1.7
   },
+  // Make the cell's nested editor FILL the cell (the cell can be taller than its own
+  // text when another cell in the row is multi-line). Then clicking anywhere in the
+  // cell — not just on the text — lands on the editor and focuses it. `height:100%`
+  // resolves against the table cell's used height.
+  '.cm-celledit .cm-editor': { height: '100%' },
   '.cm-line': { padding: '0' },
   '.cm-cursor': { borderLeftColor: 'var(--foreground)' },
   // Drop-position indicator during drag. CM's default is solid black →
