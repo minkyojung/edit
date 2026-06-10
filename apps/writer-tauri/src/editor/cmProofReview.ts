@@ -13,9 +13,43 @@
 
 import { StateField, StateEffect, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
+import { invertedEffects } from '@codemirror/commands'
 import { usePendingChangesStore, type PendingChange } from '@/state/pendingChangesStore'
 import { looseFindRange } from '@/lib/looseMatch'
 import { renderInline } from '@/prototypes/widgets'
+
+// Undo-link for accept: the accept's doc change (dispatched by the CM bridge) carries
+// `acceptEffect.of(changeId)`. invertedEffects makes its undo carry `reopenEffect`, so
+// Cmd-Z reverts the doc AND reopens the change (the mark comes back). The watcher below
+// calls store.accept/reopen accordingly. Exported so CmEditor's bridge can tag the
+// accept transaction.
+export const acceptEffect = StateEffect.define<string>() // changeId
+const reopenEffect = StateEffect.define<string>() // changeId
+
+const acceptUndoLink = invertedEffects.of((tr) => {
+  const out: StateEffect<unknown>[] = []
+  for (const e of tr.effects) {
+    if (e.is(acceptEffect)) out.push(reopenEffect.of(e.value))
+    if (e.is(reopenEffect)) out.push(acceptEffect.of(e.value))
+  }
+  return out
+})
+
+const acceptUndoWatcher = EditorView.updateListener.of((u) => {
+  for (const tr of u.transactions) {
+    for (const e of tr.effects) {
+      // Defer the store mutation: store.reopen triggers cmProofReview's subscription →
+      // view.dispatch, which is illegal during an update. accept is idempotent.
+      if (e.is(acceptEffect)) {
+        const id = e.value
+        queueMicrotask(() => usePendingChangesStore.getState().accept(id))
+      } else if (e.is(reopenEffect)) {
+        const id = e.value
+        queueMicrotask(() => usePendingChangesStore.getState().reopen(id))
+      }
+    }
+  }
+})
 
 type AnchoredEdit = {
   changeId: string
@@ -182,5 +216,12 @@ export function cmProofReview(slug: string): Extension {
       }
     },
   )
-  return [anchoredField, EditorView.decorations.compute([anchoredField], build), proofTheme, sub]
+  return [
+    anchoredField,
+    EditorView.decorations.compute([anchoredField], build),
+    proofTheme,
+    sub,
+    acceptUndoLink,
+    acceptUndoWatcher,
+  ]
 }

@@ -93,6 +93,7 @@ export function applyPendingLogsForView(view: EditorView): number {
 export async function applyToWikiPage(
   slug: string,
   transform: (currentMd: string) => string,
+  changeId?: string,
 ): Promise<boolean> {
   const docs = useDocsStore.getState()
   const known = docs.knownDocs.find((d) => d.slug === slug && !d.archivedAt)
@@ -122,7 +123,7 @@ export async function applyToWikiPage(
   // via the same bridge external-reload uses, then mark dirty (the CM body-set is
   // annotated to skip its own dirty-tracking). Without this, an accepted edit reached
   // disk but the open CM editor didn't update until reload.
-  if (applyMarkdownToActiveCmEditor(slug, newMd)) {
+  if (applyMarkdownToActiveCmEditor(slug, newMd, changeId)) {
     markSlugDirty(slug)
     return true
   }
@@ -183,14 +184,19 @@ export async function applyToWikiPage(
 export async function appendMarkdownToWikiPage(
   slug: string,
   markdown: string,
+  changeId?: string,
 ): Promise<boolean> {
   const trimmed = markdown.trim()
   if (trimmed.length === 0) return false
-  return applyToWikiPage(slug, (oldMd) => {
-    const head = oldMd.trimEnd()
-    const sep = head.length > 0 ? '\n\n' : ''
-    return `${head}${sep}${trimmed}\n`
-  })
+  return applyToWikiPage(
+    slug,
+    (oldMd) => {
+      const head = oldMd.trimEnd()
+      const sep = head.length > 0 ? '\n\n' : ''
+      return `${head}${sep}${trimmed}\n`
+    },
+    changeId,
+  )
 }
 
 /** Replace `before` text with `after` in wiki page `slug`. Match is
@@ -204,19 +210,24 @@ export async function applyReplaceInWikiPage(
   slug: string,
   before: string,
   after: string,
+  changeId?: string,
 ): Promise<boolean> {
   if (before.length === 0) return false
   let foundMatch = false
-  const ok = await applyToWikiPage(slug, (oldMd) => {
-    // Tolerant match (exact → normalized-line) so a benign drift in the
-    // model's `old_string` (leading bullet, colon spacing, trailing
-    // space) still resolves instead of failing the edit — the failure
-    // mode that made `propose_edit` get disabled in the first place.
-    const replaced = looseReplace(oldMd, before, after)
-    if (replaced === null) return oldMd
-    foundMatch = true
-    return replaced
-  })
+  const ok = await applyToWikiPage(
+    slug,
+    (oldMd) => {
+      // Tolerant match (exact → normalized-line) so a benign drift in the
+      // model's `old_string` (leading bullet, colon spacing, trailing
+      // space) still resolves instead of failing the edit — the failure
+      // mode that made `propose_edit` get disabled in the first place.
+      const replaced = looseReplace(oldMd, before, after)
+      if (replaced === null) return oldMd
+      foundMatch = true
+      return replaced
+    },
+    changeId,
+  )
   if (!ok) return false
   if (!foundMatch) {
     // Diagnostic: log the byte-level shape so we can see whether the
@@ -239,8 +250,9 @@ export async function applyReplaceInWikiPage(
 export async function applyWriteWikiPage(
   slug: string,
   content: string,
+  changeId?: string,
 ): Promise<boolean> {
-  return applyToWikiPage(slug, () => content)
+  return applyToWikiPage(slug, () => content, changeId)
 }
 
 /** Append a log row to the system:log page. Creates the page on

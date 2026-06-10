@@ -37,7 +37,7 @@ import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
 import { wikilinkClick } from '@/prototypes/wikilinkNav'
 import { linkClick } from '@/prototypes/linkNav'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
-import { cmProofReview } from '@/editor/cmProofReview'
+import { cmProofReview, acceptEffect } from '@/editor/cmProofReview'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 import { slashSource } from '@/prototypes/slashCommands'
@@ -141,15 +141,20 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
       })
       onViewReady?.(null) // no PM view — PM-view consumers degrade, not break
       setStats(computeCmStats(handle.bodyMarkdown))
-      // Register so docsStore body-replace paths (external reload / background
-      // rewrite) can push fresh markdown into this view instead of skipping it.
-      registerCmEditor(handle.slug, (md) => {
+      // Register so docsStore body-replace paths can push fresh markdown into this
+      // view. An ACCEPT (changeId present) is dispatched as an UNDOABLE transaction
+      // tagged with acceptEffect, so Cmd-Z reverts the doc AND reopens the change
+      // (cmProofReview's invertedEffects). External reload / seed (no changeId) stays
+      // non-undoable and carries externalBody so the dirty tracker ignores it.
+      registerCmEditor(handle.slug, (md, changeId) => {
         const v = view
         if (!v) return
-        v.dispatch({
-          changes: { from: 0, to: v.state.doc.length, insert: md },
-          annotations: externalBody.of(true),
-        })
+        const changes = { from: 0, to: v.state.doc.length, insert: md }
+        v.dispatch(
+          changeId
+            ? { changes, effects: acceptEffect.of(changeId) }
+            : { changes, annotations: externalBody.of(true) },
+        )
       })
     })
 

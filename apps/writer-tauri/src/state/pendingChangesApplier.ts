@@ -96,7 +96,7 @@ async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
         allOk = false
         continue
       }
-      const ok = await appendMarkdownToWikiPage(change.pageSlug, edit.after)
+      const ok = await appendMarkdownToWikiPage(change.pageSlug, edit.after, change.id)
       if (!ok) allOk = false
       continue
     }
@@ -107,7 +107,7 @@ async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
       // wholesale writer; range-replace covers the Edit / MultiEdit
       // shape where `before` carries the literal text to swap.
       if (!edit.before) {
-        const ok = await applyWriteWikiPage(change.pageSlug, edit.after ?? '')
+        const ok = await applyWriteWikiPage(change.pageSlug, edit.after ?? '', change.id)
         if (!ok) allOk = false
         continue
       }
@@ -115,6 +115,7 @@ async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
         change.pageSlug,
         edit.before,
         edit.after ?? '',
+        change.id,
       )
       if (!ok) allOk = false
       continue
@@ -124,7 +125,7 @@ async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
         allOk = false
         continue
       }
-      const ok = await applyReplaceInWikiPage(change.pageSlug, edit.before, '')
+      const ok = await applyReplaceInWikiPage(change.pageSlug, edit.before, '', change.id)
       if (!ok) allOk = false
       continue
     }

@@ -8,7 +8,10 @@
 // register a body-setter; the store paths try it before the PM path. Only one doc is
 // active at a time, so a single slug-keyed setter suffices (mirrors editorViewStore).
 
-type CmBodySetter = (markdown: string) => void
+// `changeId` (when set) means this body-set is an ACCEPT of that pending change — the
+// bridge tags the transaction so Cmd-Z can reopen it. Absent = external reload / seed
+// (not undoable).
+type CmBodySetter = (markdown: string, changeId?: string) => void
 
 let active: { slug: string; setBody: CmBodySetter } | null = null
 
@@ -21,9 +24,10 @@ export function unregisterCmEditor(slug: string): void {
 }
 
 /** Push markdown into the mounted CM editor for `slug`. Returns true when a CM editor
- * handled it — the caller then SKIPS the ProseMirror dispatch. */
-export function applyMarkdownToActiveCmEditor(slug: string, markdown: string): boolean {
+ * handled it — the caller then SKIPS the ProseMirror dispatch. `changeId` marks an
+ * accept (undoable) vs an external reload. */
+export function applyMarkdownToActiveCmEditor(slug: string, markdown: string, changeId?: string): boolean {
   if (!active || active.slug !== slug) return false
-  active.setBody(markdown)
+  active.setBody(markdown, changeId)
   return true
 }
