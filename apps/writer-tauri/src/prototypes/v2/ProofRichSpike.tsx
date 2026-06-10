@@ -44,6 +44,31 @@ Edit anywhere — type before a suggestion, delete inside it — the strike/repl
 its ✓/✕ must follow exactly, alongside the markdown styling.
 `
 
+// TEMP DEBUG — arrow-jump instrumentation. Logs the caret's DOC position (line/col)
+// and SCREEN y before an ArrowUp/Down and again two frames later (after the
+// reveal-redraw settles). Reading the pair answers the open question:
+//   • line moves by exactly ±1 but y/scroll leaps → landing is correct, the LAYOUT
+//     shift (reveal/img reload) is the bug.
+//   • line moves by many → the vertical-motion calculation itself is wrong.
+const arrowDebug = EditorView.domEventHandlers({
+  keydown(e, view) {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return false
+    const snap = (tag: string) => {
+      const h = view.state.selection.main.head
+      const l = view.state.doc.lineAt(h)
+      const c = view.coordsAtPos(h)
+      // eslint-disable-next-line no-console
+      console.log(
+        `[arrow] ${tag} ${e.key} pos=${h} line=${l.number} col=${h - l.from}` +
+          ` y=${c ? Math.round(c.top) : 'null'} lineH=${Math.round(view.lineBlockAt(h).height)}`,
+      )
+    }
+    snap('BEFORE')
+    requestAnimationFrame(() => requestAnimationFrame(() => snap('AFTER ')))
+    return false // never handle — observe only
+  },
+})
+
 export default function ProofRichSpike() {
   const hostRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -72,6 +97,7 @@ export default function ProofRichSpike() {
           blocksV2, // table / image / media widgets
           tableArrowEntry,
           proofMarks, // ← suggestion marks layered on top
+          arrowDebug, // TEMP — arrow-jump instrumentation, remove after diagnosis
           cmPrototypeTheme,
         ],
       }),
