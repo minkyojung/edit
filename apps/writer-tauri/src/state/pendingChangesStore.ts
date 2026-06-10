@@ -285,7 +285,9 @@ export const usePendingChangesStore = create<PendingChangesState>()(
       reopen: (id) => {
         set((s) => {
           const existing = s.byId[id]
-          if (!existing || existing.status !== 'accepted') return s
+          // Un-decide a change back to pending — from accepted OR rejected (the CM
+          // editor's Cmd-Z undoes both an accept and a reject via this).
+          if (!existing || existing.status === 'pending') return s
           return {
             byId: {
               ...s.byId,

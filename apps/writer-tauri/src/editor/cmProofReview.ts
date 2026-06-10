@@ -24,13 +24,17 @@ import { renderInline } from '@/prototypes/widgets'
 // calls store.accept/reopen accordingly. Exported so CmEditor's bridge can tag the
 // accept transaction.
 export const acceptEffect = StateEffect.define<string>() // changeId
+// Reject is dispatched as an EFFECT-ONLY transaction (no doc change) so it lands in
+// CM's history and Cmd-Z can undo it — a plain store.reject leaves no undoable trace.
+const rejectEffect = StateEffect.define<string>() // changeId
 const reopenEffect = StateEffect.define<string>() // changeId
 
 const acceptUndoLink = invertedEffects.of((tr) => {
   const out: StateEffect<unknown>[] = []
   for (const e of tr.effects) {
-    if (e.is(acceptEffect)) out.push(reopenEffect.of(e.value))
-    if (e.is(reopenEffect)) out.push(acceptEffect.of(e.value))
+    // The inverse of an accept/reject is "reopen" (un-decide). Redo replays the
+    // original transaction's own effect, so no reopen→accept/reject mapping is needed.
+    if (e.is(acceptEffect) || e.is(rejectEffect)) out.push(reopenEffect.of(e.value))
   }
   return out
 })
@@ -38,14 +42,18 @@ const acceptUndoLink = invertedEffects.of((tr) => {
 const acceptUndoWatcher = EditorView.updateListener.of((u) => {
   for (const tr of u.transactions) {
     for (const e of tr.effects) {
-      // Defer the store mutation: store.reopen triggers cmProofReview's subscription →
-      // view.dispatch, which is illegal during an update. accept is idempotent.
+      // Defer the store mutation: it triggers cmProofReview's subscription →
+      // view.dispatch, which is illegal during an update. accept/reject are idempotent.
+      const store = usePendingChangesStore.getState()
       if (e.is(acceptEffect)) {
         const id = e.value
-        queueMicrotask(() => usePendingChangesStore.getState().accept(id))
+        queueMicrotask(() => store.accept(id))
+      } else if (e.is(rejectEffect)) {
+        const id = e.value
+        queueMicrotask(() => store.reject(id))
       } else if (e.is(reopenEffect)) {
         const id = e.value
-        queueMicrotask(() => usePendingChangesStore.getState().reopen(id))
+        queueMicrotask(() => store.reopen(id))
       }
     }
   }
@@ -102,7 +110,9 @@ function anchorChanges(docText: string, changes: PendingChange[]): AnchoredEdit[
 }
 
 const accept = (id: string) => usePendingChangesStore.getState().accept(id)
-const reject = (id: string) => usePendingChangesStore.getState().reject(id)
+// Reject via an effect-only transaction so Cmd-Z can undo it (the watcher does the
+// actual store.reject; invertedEffects records it in history).
+const reject = (view: EditorView, id: string) => view.dispatch({ effects: rejectEffect.of(id) })
 
 const proofBtn = (label: string, cls: string, fn: () => void): HTMLButtonElement => {
   const b = document.createElement('button')
@@ -125,7 +135,7 @@ class ReviewWidget extends WidgetType {
   eq(o: ReviewWidget) {
     return o.a.changeId === this.a.changeId && o.a.editId === this.a.editId && o.a.after === this.a.after
   }
-  toDOM() {
+  toDOM(view: EditorView) {
     const box = document.createElement('span')
     box.className = 'cm-proof-review'
     if (this.a.kind === 'replace' && this.a.after) {
@@ -139,7 +149,7 @@ class ReviewWidget extends WidgetType {
     }
     box.append(
       proofBtn('✓', 'cm-proof-keep', () => accept(this.a.changeId)),
-      proofBtn('✕', 'cm-proof-reject', () => reject(this.a.changeId)),
+      proofBtn('✕', 'cm-proof-reject', () => reject(view, this.a.changeId)),
     )
     return box
   }
