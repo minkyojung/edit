@@ -28,6 +28,7 @@ import { replaceVizById } from '@/editor/vizBlockOps'
 import { assembleContext } from '@/agent/contextPipeline'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
+import { pathForDoc } from '@/lib/docPaths'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -144,11 +145,22 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // never blocks on the context round-trip.
   const ctx = await assembleContext({ mode: 'chat' })
 
+  // The note the user is currently viewing, as a vault-relative path — orientation
+  // context (Cursor's "attached current file"), NOT a hard constraint. Lets the model
+  // resolve "this note" / "여기" deictically while staying free to act on other notes
+  // via its tools. Null on the queue route or before the catalog hydrates.
+  const knownDocs = useDocsStore.getState().knownDocs
+  const currentDoc = slug ? knownDocs.find((d) => d.slug === slug) : undefined
+  const currentFilePath = currentDoc
+    ? pathForDoc(currentDoc, (s) => knownDocs.find((d) => d.slug === s))
+    : null
+
   const system = composeSystemBlocks({
     docForPrompt,
     systemBody,
     ctx,
     appendDocument,
+    currentFilePath,
     vizEditTarget,
     today: todayLocalDate(),
   })

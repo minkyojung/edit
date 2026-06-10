@@ -58,6 +58,10 @@ export interface SystemBlocksArgs {
    * Slash commands that already embed `{{document}}` in their body
    * pass false to avoid the document showing up twice. */
   appendDocument: boolean
+  /** Vault-relative path of the note the user is currently viewing (orientation
+   * context, not a constraint). Resolves deictic references ("this note", "여기")
+   * to the open file by default while leaving the model free to act on others. */
+  currentFilePath?: string | null
   /** When set, a high-salience block naming the visualization being edited
    * (id + current spec) is pinned past the cache boundary, instructing the
    * model to apply changes via the edit_visualization tool. */
@@ -94,7 +98,7 @@ export interface SystemBlocksArgs {
  *   - bare `string` when the prefix is just `systemBody` — keeps the
  *     SDK call simple and matches the pre-multi-block shape. */
 export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
-  const { docForPrompt, systemBody, ctx, appendDocument, vizEditTarget, today } =
+  const { docForPrompt, systemBody, ctx, appendDocument, currentFilePath, vizEditTarget, today } =
     args
   const prefix: string[] = []
   if (ctx.selfProfile) {
@@ -121,6 +125,16 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `Apply the user's request by calling the edit_visualization tool with chartId "${vizEditTarget.id}" ` +
         `and the FULL updated tree as root. Do NOT write a \`\`\`chart fence or any HTML for this edit, ` +
         `and preserve data you weren't asked to change.\n\nCurrent spec:\n${vizEditTarget.source}`,
+    )
+  }
+  if (currentFilePath) {
+    dynamic.push(
+      `--- CURRENT FILE ---\n` +
+        `The note the user is currently viewing is \`${currentFilePath}\`. When they say ` +
+        `"this", "여기", "this note", or ask to edit / rewrite / add without naming a file, ` +
+        `they mean THIS note by default — target it with your edit tools. You may still read ` +
+        `or edit other notes via your tools when the request clearly calls for it (a different ` +
+        `note, a new note, a linked one).`,
     )
   }
   if (appendDocument) dynamic.push(`--- DOCUMENT ---\n${docForPrompt}`)
