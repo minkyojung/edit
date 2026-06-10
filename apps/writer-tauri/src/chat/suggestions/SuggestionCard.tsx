@@ -10,6 +10,7 @@
 import { useMemo } from 'react'
 import {
   usePendingChangesStore,
+  rejectPendingChange,
   type PendingChange,
 } from '@/state/pendingChangesStore'
 import { useDocsStore } from '@/state/docsStore'
@@ -18,7 +19,6 @@ import { DiffBlock } from '@/components/DiffBlock'
 
 export function SuggestionCard({ change }: { change: PendingChange }) {
   const accept = usePendingChangesStore((s) => s.accept)
-  const reject = usePendingChangesStore((s) => s.reject)
   const title = useDocsStore((s) => {
     const doc = s.knownDocs.find((d) => d.slug === change.pageSlug)
     return doc?.title?.trim() || doc?.type || change.pageSlug
@@ -52,7 +52,7 @@ export function SuggestionCard({ change }: { change: PendingChange }) {
           <button
             type="button"
             className="pending-edit__action pending-edit__action--reject"
-            onClick={() => reject(change.id)}
+            onClick={() => rejectPendingChange(change.id)}
           >
             Reject
           </button>

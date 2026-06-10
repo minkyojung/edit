@@ -37,7 +37,7 @@ import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
 import { wikilinkClick } from '@/prototypes/wikilinkNav'
 import { linkClick } from '@/prototypes/linkNav'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
-import { cmProofReview, acceptEffect } from '@/editor/cmProofReview'
+import { cmProofReview, acceptEffect, rejectEffect } from '@/editor/cmProofReview'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 import { slashSource } from '@/prototypes/slashCommands'
@@ -146,16 +146,22 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
       // tagged with acceptEffect, so Cmd-Z reverts the doc AND reopens the change
       // (cmProofReview's invertedEffects). External reload / seed (no changeId) stays
       // non-undoable and carries externalBody so the dirty tracker ignores it.
-      registerCmEditor(handle.slug, (md, changeId) => {
-        const v = view
-        if (!v) return
-        const changes = { from: 0, to: v.state.doc.length, insert: md }
-        v.dispatch(
-          changeId
-            ? { changes, effects: acceptEffect.of(changeId) }
-            : { changes, annotations: externalBody.of(true) },
-        )
-      })
+      registerCmEditor(
+        handle.slug,
+        (md, changeId) => {
+          const v = view
+          if (!v) return
+          const changes = { from: 0, to: v.state.doc.length, insert: md }
+          v.dispatch(
+            changeId
+              ? { changes, effects: acceptEffect.of(changeId) }
+              : { changes, annotations: externalBody.of(true) },
+          )
+        },
+        // Reject bridge: an effect-only, undoable transaction (used by both the inline
+        // ✕ and the chat panel via rejectPendingChange).
+        (changeId) => view?.dispatch({ effects: rejectEffect.of(changeId) }),
+      )
     })
 
     return () => {

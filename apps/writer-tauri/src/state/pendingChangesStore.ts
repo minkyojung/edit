@@ -37,6 +37,7 @@
 //     are separate concerns that subscribe to this store.
 
 import { create } from 'zustand'
+import { rejectActiveCmChange } from '@/state/activeCmEditor'
 import { persist } from 'zustand/middleware'
 import { useDocsStore } from '@/state/docsStore'
 
@@ -431,4 +432,14 @@ if (import.meta.env.DEV) {
       ),
     state: () => usePendingChangesStore.getState(),
   }
+}
+
+/** Reject a change from ANY surface (chat card, inline editor ✕). When the change's
+ * doc is open in a CM editor, route the reject THROUGH the editor so it lands in CM's
+ * history and Cmd-Z can undo it; otherwise fall back to a plain store mutation. The one
+ * shared path keeps the chat panel and the editor behaving identically. */
+export function rejectPendingChange(id: string): void {
+  const slug = usePendingChangesStore.getState().byId[id]?.pageSlug
+  if (slug && rejectActiveCmChange(slug, id)) return
+  usePendingChangesStore.getState().reject(id)
 }

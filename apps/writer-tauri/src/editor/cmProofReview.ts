@@ -14,7 +14,7 @@
 import { StateField, StateEffect, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
 import { invertedEffects } from '@codemirror/commands'
-import { usePendingChangesStore, type PendingChange } from '@/state/pendingChangesStore'
+import { usePendingChangesStore, rejectPendingChange, type PendingChange } from '@/state/pendingChangesStore'
 import { looseFindRange } from '@/lib/looseMatch'
 import { renderInline } from '@/prototypes/widgets'
 
@@ -26,7 +26,9 @@ import { renderInline } from '@/prototypes/widgets'
 export const acceptEffect = StateEffect.define<string>() // changeId
 // Reject is dispatched as an EFFECT-ONLY transaction (no doc change) so it lands in
 // CM's history and Cmd-Z can undo it — a plain store.reject leaves no undoable trace.
-const rejectEffect = StateEffect.define<string>() // changeId
+// Exported so the registered reject-bridge (CmEditor) dispatches it; both the inline ✕
+// and the chat panel reach this same path via rejectPendingChange.
+export const rejectEffect = StateEffect.define<string>() // changeId
 const reopenEffect = StateEffect.define<string>() // changeId
 
 const acceptUndoLink = invertedEffects.of((tr) => {
@@ -110,9 +112,6 @@ function anchorChanges(docText: string, changes: PendingChange[]): AnchoredEdit[
 }
 
 const accept = (id: string) => usePendingChangesStore.getState().accept(id)
-// Reject via an effect-only transaction so Cmd-Z can undo it (the watcher does the
-// actual store.reject; invertedEffects records it in history).
-const reject = (view: EditorView, id: string) => view.dispatch({ effects: rejectEffect.of(id) })
 
 const proofBtn = (label: string, cls: string, fn: () => void): HTMLButtonElement => {
   const b = document.createElement('button')
@@ -135,7 +134,7 @@ class ReviewWidget extends WidgetType {
   eq(o: ReviewWidget) {
     return o.a.changeId === this.a.changeId && o.a.editId === this.a.editId && o.a.after === this.a.after
   }
-  toDOM(view: EditorView) {
+  toDOM() {
     const box = document.createElement('span')
     box.className = 'cm-proof-review'
     if (this.a.kind === 'replace' && this.a.after) {
@@ -149,7 +148,8 @@ class ReviewWidget extends WidgetType {
     }
     box.append(
       proofBtn('✓', 'cm-proof-keep', () => accept(this.a.changeId)),
-      proofBtn('✕', 'cm-proof-reject', () => reject(view, this.a.changeId)),
+      // Same shared path the chat panel uses → undoable when this doc is open.
+      proofBtn('✕', 'cm-proof-reject', () => rejectPendingChange(this.a.changeId)),
     )
     return box
   }

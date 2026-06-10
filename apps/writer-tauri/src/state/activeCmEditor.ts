@@ -12,11 +12,14 @@
 // bridge tags the transaction so Cmd-Z can reopen it. Absent = external reload / seed
 // (not undoable).
 type CmBodySetter = (markdown: string, changeId?: string) => void
+// Reject a change INSIDE the CM editor — an effect-only transaction so Cmd-Z can undo
+// it (the editor's mark code owns the actual store.reject + history link).
+type CmRejecter = (changeId: string) => void
 
-let active: { slug: string; setBody: CmBodySetter } | null = null
+let active: { slug: string; setBody: CmBodySetter; rejectChange: CmRejecter } | null = null
 
-export function registerCmEditor(slug: string, setBody: CmBodySetter): void {
-  active = { slug, setBody }
+export function registerCmEditor(slug: string, setBody: CmBodySetter, rejectChange: CmRejecter): void {
+  active = { slug, setBody, rejectChange }
 }
 
 export function unregisterCmEditor(slug: string): void {
@@ -29,5 +32,13 @@ export function unregisterCmEditor(slug: string): void {
 export function applyMarkdownToActiveCmEditor(slug: string, markdown: string, changeId?: string): boolean {
   if (!active || active.slug !== slug) return false
   active.setBody(markdown, changeId)
+  return true
+}
+
+/** Reject `changeId` via the mounted CM editor for `slug` (undoable). Returns true when
+ * a CM editor handled it — the caller then SKIPS the plain store.reject. */
+export function rejectActiveCmChange(slug: string, changeId: string): boolean {
+  if (!active || active.slug !== slug) return false
+  active.rejectChange(changeId)
   return true
 }
