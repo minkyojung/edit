@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { runChat } from '@/agent/chat/index'
+import { flushDirty } from '@/lib/docFileSync'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import { modelSupportsFastMode } from '@/chat/types'
@@ -294,6 +295,11 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       }
 
       try {
+        // Flush the editor's unsaved body to disk BEFORE the turn so the agent's
+        // file tools (read_page) and the propose_edit anchor see the same content the
+        // user sees — otherwise the model reads a stale .md and its old_string won't
+        // match the live doc. Idempotent (skips unchanged docs).
+        await flushDirty()
         // Plan turns go read-only: 'plan' permission mode blocks tool
         // execution, and we drop the propose_* relays + Bash so the model
         // explores with Read/Glob/Grep and writes a plan instead of editing.
