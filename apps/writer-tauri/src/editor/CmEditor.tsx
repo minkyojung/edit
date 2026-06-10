@@ -29,12 +29,12 @@ import { markSlugDirty } from '@/lib/docFileSync'
 import { EditorFooter } from '@/components/EditorFooter'
 import type { DocStats } from '@/stores/editorFooter'
 import { cmPrototypeTheme } from '@/prototypes/cmTheme'
-import { livePreviewV2, taskCheckboxClick } from '@/prototypes/v2/livePreview'
+import { livePreviewV2, taskCheckboxClick, wikilinkKnown } from '@/prototypes/v2/livePreview'
 import { blocksV2 } from '@/prototypes/v2/blocks'
 import { tableArrowEntry } from '@/prototypes/v2/editableTable'
 import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
 import { wikilinkClick } from '@/prototypes/wikilinkNav'
-import { navigateToNoteByTitle } from '@/editor/cmNav'
+import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
 
 interface Props {
   handle: CollabHandle | null
@@ -99,6 +99,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             blocksV2,
             tableArrowEntry,
             blockVerticalNav,
+            wikilinkKnown.of(isKnownNoteTitle), // blue vs red from REAL knownDocs
             wikilinkClick(navigateToNoteByTitle), // click [[Title]] → open that note
             // Save: mirror the doc text into the handle cache + flag dirty. The flush
             // loop (serializeDocToFiles → handle.bodyMarkdown) does the rest. A

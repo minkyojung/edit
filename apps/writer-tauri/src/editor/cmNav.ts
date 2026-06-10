@@ -24,3 +24,16 @@ export function navigateToNoteByTitle(title: string): void {
     slug: target.slug,
   })
 }
+
+/** Does this wikilink title resolve to a LIVE note? Drives blue (known) vs red
+ * (broken) styling. Same filter as navigateToNoteByTitle, read fresh each call so
+ * newly created/renamed notes are reflected on the next decoration rebuild. */
+export function isKnownNoteTitle(title: string): boolean {
+  const key = title.trim().toLowerCase()
+  if (!key) return false
+  return useDocsStore
+    .getState()
+    .knownDocs.some(
+      (d) => !d.archivedAt && !d.type.startsWith('system:') && (d.title ?? '').trim().toLowerCase() === key,
+    )
+}

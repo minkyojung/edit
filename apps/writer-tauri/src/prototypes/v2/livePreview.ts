@@ -13,11 +13,18 @@
 
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
-import { type EditorState, type Range } from '@codemirror/state'
+import { Facet, type EditorState, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
 import { isKnownNote } from '../wikilinkComplete'
 
 const HIDE = Decoration.replace({})
+
+// Whether a wikilink title resolves to a real note (drives blue vs red styling).
+// Injectable so the dev prototypes keep the static stub while production (CmEditor)
+// provides a real knownDocs-backed check. Last value wins; default = the stub.
+export const wikilinkKnown = Facet.define<(title: string) => boolean, (title: string) => boolean>({
+  combine: (values) => values[values.length - 1] ?? isKnownNote,
+})
 
 // Width (em) of the list marker column. The hanging-indent padding (JS, here) and
 // the `.cm-list-marker` inline-block width (CSS, cmTheme) MUST match this value so
@@ -265,7 +272,7 @@ function buildDecos(
       const innerTo = innerFrom + m[1].length
       const end = innerTo + 2
       // Obsidian model: the TITLE is always the link (blue underline / red broken).
-      mark(innerFrom, innerTo, isKnownNote(m[1]) ? 'cm-wikilink' : 'cm-wikilink-broken')
+      mark(innerFrom, innerTo, state.facet(wikilinkKnown)(m[1]) ? 'cm-wikilink' : 'cm-wikilink-broken')
       const line = state.doc.lineAt(start)
       if (revealAll ?? cursorInRange(state, line.from, line.to)) {
         // editing → SHOW the `[[`/`]]` brackets, just muted (a class, not a replace,
