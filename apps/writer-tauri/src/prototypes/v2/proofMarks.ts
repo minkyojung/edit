@@ -191,30 +191,23 @@ const proofTheme = EditorView.theme({
   },
   '.cm-proof-keep': { color: '#2ecc71' },
   '.cm-proof-reject': { color: 'var(--destructive, crimson)' },
-  // ── Block suggestion: a QUIET card in the app's own tokens ──────────────────
-  // The suggestion semantics are carried by the label + the green ✓ Insert button;
-  // tinting the whole tile green read as murky on the dark palette. Neutral border,
-  // neutral bar — green lives in exactly one place.
+  // ── Block suggestion: NO box around the preview ──────────────────────────────
+  // The previewed block keeps its own chrome (a table draws its own borders, exactly
+  // as it will look in the document); the suggestion is announced by the slim action
+  // bar alone. Green lives in exactly one place — the ✓ Insert button.
   '.cm-proof-block': {
     margin: '0.5em 0',
-    border: '1px solid var(--border)',
-    borderRadius: '8px',
-    overflow: 'hidden',
-    background: 'transparent',
   },
   '.cm-proof-bar': {
     display: 'flex',
     alignItems: 'center',
     gap: '4px',
-    padding: '4px 8px',
+    padding: '2px 0 6px',
     fontSize: '12px',
     color: 'var(--muted-foreground)',
-    borderBottom: '1px solid var(--border)',
-    background: 'var(--muted)',
   },
   '.cm-proof-label': { marginRight: 'auto' },
-  // Flush: no inner gutter — the previewed block meets the tile edge. The table's
-  // outer border is hidden inside the preview (see cmTheme) so lines don't double.
+  // No inner gutter — the preview shows the block exactly as the document would.
   '.cm-proof-preview': { padding: '0' },
 })
 

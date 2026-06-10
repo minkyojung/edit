@@ -63,13 +63,13 @@ export const cmPrototypeTheme = EditorView.theme({
   '.cm-proof-preview .cm-table-wrap': {
     padding: '0',
   },
-  // Flush preview: the tile's own border doubles as the table's OUTER border, so
-  // hide the edge cells' outward-facing lines (borders are per-cell under
-  // border-collapse). Inner grid lines stay.
-  '.cm-proof-preview .cm-md-table tr > :first-child': { borderLeft: 'none' },
-  '.cm-proof-preview .cm-md-table tr > :last-child': { borderRight: 'none' },
-  '.cm-proof-preview .cm-md-table thead tr:first-child th': { borderTop: 'none' },
-  '.cm-proof-preview .cm-md-table tbody tr:last-child td': { borderBottom: 'none' },
+  // The preview-content reset above (padding 0) ties with the `.cm-celledit
+  // .cm-content` rule on specificity and wins on source order — which stripped the
+  // CELL editors' inner padding inside a previewed table. Re-assert it one class
+  // deeper so cells in a preview pad exactly like cells in the document.
+  '.cm-proof-preview .cm-celledit .cm-content': {
+    padding: '0.3em 0.55em',
+  },
   '.cm-line': { padding: '0' },
   '.cm-cursor': { borderLeftColor: 'var(--foreground)' },
   // Drop-position indicator during drag. CM's default is solid black →
