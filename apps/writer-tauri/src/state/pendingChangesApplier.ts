@@ -283,7 +283,15 @@ export function startPendingChangesApplier(): void {
 
   unsub = usePendingChangesStore.subscribe((state) => {
     for (const c of Object.values(state.byId)) {
-      if (c.status === 'pending') continue
+      if (c.status === 'pending') {
+        // Reopened (Cmd-Z undid an accept/reject) — clear the "handled" mark so the
+        // NEXT decision re-runs the apply. Without this, re-accepting a change the
+        // user undid is silently skipped: the mark clears but the doc never changes
+        // and no undoable CM transaction is produced. New pending changes aren't in
+        // the set, so this is a no-op for them.
+        handledIds.delete(c.id)
+        continue
+      }
       if (handledIds.has(c.id)) continue
       handledIds.add(c.id)
       if (c.status === 'accepted') {
