@@ -35,7 +35,9 @@ import { blocksV2 } from '@/prototypes/v2/blocks'
 import { tableArrowEntry } from '@/prototypes/v2/editableTable'
 import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
 import { wikilinkClick } from '@/prototypes/wikilinkNav'
+import { linkClick } from '@/prototypes/linkNav'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
+import { openLinkSafely } from '@/editor/linkUtils'
 import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 import { slashSource } from '@/prototypes/slashCommands'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
@@ -107,6 +109,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             blockVerticalNav,
             wikilinkKnown.of(isKnownNoteTitle), // blue vs red from REAL knownDocs
             wikilinkClick(navigateToNoteByTitle), // click [[Title]] → open that note
+            linkClick(openLinkSafely), // Cmd/Ctrl-click [text](url) → open (safe schemes)
             mediaDropPaste(importMediaToVault), // drop/paste media → vault + insert
             // Save: mirror the doc text into the handle cache + flag dirty. The flush
             // loop (serializeDocToFiles → handle.bodyMarkdown) does the rest. A

@@ -29,6 +29,10 @@ export function linkClick(onOpen: (url: string) => void): Extension {
   return EditorView.domEventHandlers({
     mousedown(event, view) {
       if (!(event.metaKey || event.ctrlKey)) return false
+      // Gate on the clicked `.cm-link` element — posAtCoords alone clamps an off-text
+      // click to the nearest position, so empty line space could open a link. The URL
+      // is then read from the document at that position.
+      if (!(event.target as HTMLElement | null)?.closest?.('.cm-link')) return false
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
       if (pos == null) return false
       const url = linkAtPos(view.state, pos)
