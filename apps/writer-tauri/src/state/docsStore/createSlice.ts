@@ -25,6 +25,7 @@ import { todayLocalDate } from '@/hooks/useDocMeta'
 import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
 import { markSlugDirty } from '@/lib/docFileSync'
 import { useEditorViewStore } from '../editorViewStore'
+import { applyMarkdownToActiveCmEditor } from '../activeCmEditor'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
@@ -221,6 +222,7 @@ export const createCreateSlice = (
     // disk regardless of whether the user opens the doc.
     handle.bodyMarkdown = markdown
     markSlugDirty(slug)
+    if (applyMarkdownToActiveCmEditor(slug, markdown)) return true
     const activeView = activeViewForSlug(slug)
     if (activeView) {
       const parser = useEditorViewStore.getState().parser
@@ -248,6 +250,7 @@ export const createCreateSlice = (
     // updates the cache for the next mount + kicks the flush.
     handle.bodyMarkdown = markdown
     markSlugDirty(slug)
+    if (applyMarkdownToActiveCmEditor(slug, markdown)) return true
     const activeView = activeViewForSlug(slug)
     if (activeView) {
       const parser = useEditorViewStore.getState().parser

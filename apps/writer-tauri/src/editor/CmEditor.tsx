@@ -16,7 +16,7 @@
 
 import { useEffect, useRef } from 'react'
 import type { EditorView as PMEditorView } from '@milkdown/kit/prose/view'
-import { EditorState, Prec } from '@codemirror/state'
+import { EditorState, Prec, Annotation } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, dropCursor } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
@@ -24,6 +24,7 @@ import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@co
 import { GFM } from '@lezer/markdown'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
+import { registerCmEditor, unregisterCmEditor } from '@/state/activeCmEditor'
 import { markSlugDirty } from '@/lib/docFileSync'
 import { cmPrototypeTheme } from '@/prototypes/cmTheme'
 import { livePreviewV2, taskCheckboxClick } from '@/prototypes/v2/livePreview'
@@ -43,6 +44,10 @@ interface Props {
 const layoutReset = EditorView.theme({
   '.cm-content': { maxWidth: 'none', margin: '0', padding: '0' },
 })
+
+// Tags a programmatic whole-body replace (external reload / background rewrite) so the
+// dirty-tracking update listener ignores it — it's a load FROM disk, not a user edit.
+const externalBody = Annotation.define<boolean>()
 
 export function CmEditor({ handle, status, onViewReady, header }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
@@ -80,9 +85,11 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             tableArrowEntry,
             blockVerticalNav,
             // Save: mirror the doc text into the handle cache + flag dirty. The flush
-            // loop (serializeDocToFiles → handle.bodyMarkdown) does the rest.
+            // loop (serializeDocToFiles → handle.bodyMarkdown) does the rest. A
+            // programmatic body set (externalBody) is a load from disk — skip it.
             EditorView.updateListener.of((u) => {
               if (!u.docChanged) return
+              if (u.transactions.some((t) => t.annotation(externalBody))) return
               const h = useDocsStore.getState().handles[handle.slug]
               if (h) h.bodyMarkdown = u.state.doc.toString()
               markSlugDirty(handle.slug)
@@ -93,10 +100,21 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
         }),
       })
       onViewReady?.(null) // no PM view — PM-view consumers degrade, not break
+      // Register so docsStore body-replace paths (external reload / background
+      // rewrite) can push fresh markdown into this view instead of skipping it.
+      registerCmEditor(handle.slug, (md) => {
+        const v = view
+        if (!v) return
+        v.dispatch({
+          changes: { from: 0, to: v.state.doc.length, insert: md },
+          annotations: externalBody.of(true),
+        })
+      })
     })
 
     return () => {
       mounted = false
+      if (handle) unregisterCmEditor(handle.slug)
       view?.destroy()
       view = null
     }

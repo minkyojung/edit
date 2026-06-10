@@ -20,6 +20,7 @@ import {
 } from '@/lib/docFileSync'
 import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
 import { useEditorViewStore } from '@/state/editorViewStore'
+import { applyMarkdownToActiveCmEditor } from '@/state/activeCmEditor'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { pathForDoc } from '@/lib/docPaths'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
@@ -120,7 +121,7 @@ export const createHandlesSlice = (
     handle.bodyMarkdown = refreshedMarkdown
     clearDirty(slug)
     const activeSlug = getActiveSlugFromHash()
-    if (activeSlug === slug) {
+    if (activeSlug === slug && !applyMarkdownToActiveCmEditor(slug, refreshedMarkdown)) {
       const view = useEditorViewStore.getState().view
       const parser = useEditorViewStore.getState().parser
       if (view && parser) {
