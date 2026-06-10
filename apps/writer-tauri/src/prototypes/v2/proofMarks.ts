@@ -8,12 +8,22 @@
 import { StateEffect, StateField, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { invertedEffects } from '@codemirror/commands'
+import { renderMarkdownReadonly } from './renderMarkdownReadonly'
 
 export type Suggestion = {
   id: string
   from: number
-  to: number // existing text range to replace (to > from)
-  after: string // suggested replacement text
+  to: number // range to replace (to > from); for a block INSERTION, to === from
+  after: string // suggested markdown — a word, or a whole block (table/image/video…)
+  // 'inline' = small text edit, rendered as a green replacement span.
+  // 'block'  = the `after` markdown is a whole block; rendered as a real read-only
+  //            PREVIEW (same pipeline as the doc) in a block widget. Covers
+  //            table/image/video/… with one code path.
+  layout: 'inline' | 'block'
+  // Optional local file to import into the vault on accept. The doc only ever stores
+  // a vault-relative path (portable); the actual copy happens at accept time via the
+  // same import path drop/paste uses. (Spike: carried but not yet wired to Tauri.)
+  asset?: { srcPath: string }
 }
 
 // addSuggestion carries a positioned range, so it MUST provide `map`: when CM stores
@@ -32,7 +42,9 @@ export const suggestionField = StateField.define<Suggestion[]>({
     let next = tr.docChanged
       ? value
           .map((s) => ({ ...s, from: tr.changes.mapPos(s.from, 1), to: tr.changes.mapPos(s.to, -1) }))
-          .filter((s) => s.to > s.from)
+          // Drop a fully-deleted inline range; a block INSERTION is to === from by
+          // design, so keep it (its anchor still maps).
+          .filter((s) => s.layout === 'block' || s.to > s.from)
       : [...value]
     for (const e of tr.effects) {
       if (e.is(addSuggestion)) next.push(e.value)
@@ -45,10 +57,28 @@ export const suggestionField = StateField.define<Suggestion[]>({
 function acceptOp(view: EditorView, id: string) {
   const s = view.state.field(suggestionField).find((x) => x.id === id)
   if (!s) return
+  // Production: if s.asset is set, first copy the file into the vault (same import
+  // path as drop/paste) and rewrite s.after to the vault-relative link before
+  // inserting — the doc only ever stores a portable path. (Not wired in the spike.)
   view.dispatch({ changes: { from: s.from, to: s.to, insert: s.after }, effects: acceptSuggestion.of(id) })
 }
 function rejectOp(view: EditorView, id: string) {
   view.dispatch({ effects: rejectSuggestion.of(id) })
+}
+
+type WithPreview = HTMLElement & { _preview?: EditorView }
+
+const proofBtn = (label: string, cls: string, fn: () => void) => {
+  const b = document.createElement('button')
+  b.type = 'button'
+  b.className = cls
+  b.textContent = label
+  b.addEventListener('mousedown', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    fn()
+  })
+  return b
 }
 
 class ReviewWidget extends WidgetType {
@@ -56,32 +86,49 @@ class ReviewWidget extends WidgetType {
     super()
   }
   eq(o: ReviewWidget) {
-    return o.s.id === this.s.id && o.s.after === this.s.after
+    return o.s.id === this.s.id && o.s.after === this.s.after && o.s.layout === this.s.layout
   }
   toDOM(view: EditorView) {
+    return this.s.layout === 'block' ? this.blockDOM(view) : this.inlineDOM(view)
+  }
+  // Inline: strike-through old text (the cm-proof-old mark) + green replacement here.
+  inlineDOM(view: EditorView): HTMLElement {
     const box = document.createElement('span')
     box.className = 'cm-proof-review'
     const ins = document.createElement('span')
     ins.className = 'cm-proof-new'
     ins.textContent = this.s.after
-    const btn = (label: string, cls: string, fn: () => void) => {
-      const b = document.createElement('button')
-      b.type = 'button'
-      b.className = cls
-      b.textContent = label
-      b.addEventListener('mousedown', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        fn()
-      })
-      return b
-    }
     box.append(
       ins,
-      btn('✓', 'cm-proof-keep', () => acceptOp(view, this.s.id)),
-      btn('✕', 'cm-proof-reject', () => rejectOp(view, this.s.id)),
+      proofBtn('✓', 'cm-proof-keep', () => acceptOp(view, this.s.id)),
+      proofBtn('✕', 'cm-proof-reject', () => rejectOp(view, this.s.id)),
     )
     return box
+  }
+  // Block: render `after` through the REAL renderer (read-only) so the suggested
+  // table/image/video previews as itself. One path covers every block type.
+  blockDOM(view: EditorView): HTMLElement {
+    const box = document.createElement('div') as WithPreview
+    box.className = 'cm-proof-block'
+    const bar = document.createElement('div')
+    bar.className = 'cm-proof-bar'
+    const label = document.createElement('span')
+    label.className = 'cm-proof-label'
+    label.textContent = this.s.to > this.s.from ? 'Suggested replacement' : 'Suggested insertion'
+    bar.append(
+      label,
+      proofBtn('✓ Insert', 'cm-proof-keep', () => acceptOp(view, this.s.id)),
+      proofBtn('✕', 'cm-proof-reject', () => rejectOp(view, this.s.id)),
+    )
+    const preview = document.createElement('div')
+    preview.className = 'cm-proof-preview'
+    box._preview = renderMarkdownReadonly(preview, this.s.after)
+    box.append(bar, preview)
+    return box
+  }
+  // CM does not auto-destroy the nested preview view — release it on teardown.
+  destroy(dom: HTMLElement) {
+    ;(dom as WithPreview)._preview?.destroy()
   }
   ignoreEvent() {
     return true
@@ -89,10 +136,15 @@ class ReviewWidget extends WidgetType {
 }
 
 function buildDecorations(suggestions: Suggestion[]): DecorationSet {
-  const ranges = suggestions.flatMap((s) => [
-    Decoration.mark({ class: 'cm-proof-old' }).range(s.from, s.to),
-    Decoration.widget({ widget: new ReviewWidget(s), side: 1 }).range(s.to),
-  ])
+  const ranges = suggestions.flatMap((s) =>
+    s.layout === 'block'
+      ? // A block widget must sit at a line boundary; the seed anchors s.from there.
+        [Decoration.widget({ widget: new ReviewWidget(s), block: true, side: 1 }).range(s.from)]
+      : [
+          Decoration.mark({ class: 'cm-proof-old' }).range(s.from, s.to),
+          Decoration.widget({ widget: new ReviewWidget(s), side: 1 }).range(s.to),
+        ],
+  )
   return Decoration.set(ranges, true)
 }
 
@@ -139,12 +191,38 @@ const proofTheme = EditorView.theme({
   },
   '.cm-proof-keep': { color: '#2ecc71' },
   '.cm-proof-reject': { color: 'var(--destructive, crimson)' },
+  // ── Block suggestion: a real preview tile + action bar ──────────────────────
+  '.cm-proof-block': {
+    margin: '0.5em 0',
+    border: '1px solid color-mix(in oklch, #2ecc71 45%, var(--border))',
+    borderRadius: '8px',
+    overflow: 'hidden',
+    background: 'color-mix(in oklch, #2ecc71 6%, transparent)',
+  },
+  '.cm-proof-bar': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '4px 8px',
+    fontSize: '12px',
+    color: 'var(--muted-foreground)',
+    borderBottom: '1px solid color-mix(in oklch, #2ecc71 30%, var(--border))',
+    background: 'color-mix(in oklch, #2ecc71 11%, transparent)',
+  },
+  '.cm-proof-label': { marginRight: 'auto' },
+  '.cm-proof-preview': { padding: '6px 10px' },
 })
 
 export const proofMarks: Extension = [suggestionField, proofDecorations, proofInvertedEffects, proofTheme]
 
-/** Build a replace-suggestion by locating `word` in the doc text (first match). */
+/** Build an INLINE replace-suggestion by locating `word` in the doc text (first match). */
 export function seedSuggestion(docText: string, word: string, after: string, id: string): Suggestion | null {
   const from = docText.indexOf(word)
-  return from < 0 ? null : { id, from, to: from + word.length, after }
+  return from < 0 ? null : { id, from, to: from + word.length, after, layout: 'inline' }
+}
+
+/** Build a BLOCK insertion-suggestion anchored at `pos` (must be a line boundary).
+ * `after` is the block markdown to insert (table / image / video / …). */
+export function blockSuggestion(pos: number, after: string, id: string, asset?: { srcPath: string }): Suggestion {
+  return { id, from: pos, to: pos, after, layout: 'block', asset }
 }

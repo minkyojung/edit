@@ -18,7 +18,7 @@ import { cmPrototypeTheme } from '../cmTheme'
 import { livePreviewV2, taskCheckboxClick } from './livePreview'
 import { blocksV2 } from './blocks'
 import { tableArrowEntry } from './editableTable'
-import { proofMarks, addSuggestion, seedSuggestion } from './proofMarks'
+import { proofMarks, addSuggestion, seedSuggestion, blockSuggestion } from './proofMarks'
 
 const SAMPLE = `# Proof marks over full markdown
 
@@ -79,11 +79,31 @@ export default function ProofRichSpike() {
     // Seed AI-style suggestions over DIFFERENT markdown contexts: plain prose, inside
     // bold, inside a list item, inside a heading-ish line, inside a blockquote.
     const doc = view.state.doc.toString()
+    // Anchor a block insertion at the END of the line containing `needle` (a line
+    // boundary, where a block widget is allowed).
+    const lineEndAfter = (needle: string): number | null => {
+      const i = doc.indexOf(needle)
+      return i < 0 ? null : view.state.doc.lineAt(i).to
+    }
+    const tablePos = lineEndAfter('Prove the table works')
+    const imagePos = lineEndAfter('A blockquote with')
     const seeds = [
       seedSuggestion(doc, 'dependable', 'reliable', 'p1'), // plain prose
       seedSuggestion(doc, 'fast', 'quick', 'p2'), // inside **bold**
       seedSuggestion(doc, 'clearly', 'plainly', 'p3'), // inside a bullet list item
       seedSuggestion(doc, 'notable', 'striking', 'p4'), // inside a blockquote
+      // BLOCK suggestions — `after` previews as the real thing (table / image),
+      // ✓ Insert drops the markdown into the doc and blocksV2 renders it for real.
+      tablePos == null
+        ? null
+        : blockSuggestion(
+            tablePos,
+            '\n\n| Quarter | Revenue |\n| :-- | --: |\n| Q1 | $1.2M |\n| Q2 | $1.8M |\n',
+            'b1',
+          ),
+      imagePos == null
+        ? null
+        : blockSuggestion(imagePos, '\n\n![Mountain lake](https://picsum.photos/seed/lake/520/300)\n', 'b2'),
     ].filter((s) => s != null)
     view.dispatch({
       effects: seeds.map((s) => addSuggestion.of(s)),
