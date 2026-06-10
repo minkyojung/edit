@@ -8,7 +8,7 @@
 // track exactly the same, even over styled text.
 
 import { useEffect, useRef } from 'react'
-import { EditorState, Transaction } from '@codemirror/state'
+import { EditorState, Prec, Transaction } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, dropCursor } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
@@ -50,6 +50,8 @@ its ✓/✕ must follow exactly, alongside the markdown styling.
 //   • line moves by exactly ±1 but y/scroll leaps → landing is correct, the LAYOUT
 //     shift (reveal/img reload) is the bug.
 //   • line moves by many → the vertical-motion calculation itself is wrong.
+// Prec.highest: CM stops dispatching a DOM event at the first handler returning
+// true — the default keymap's ArrowUp does — so an observer must run before it.
 const arrowDebug = EditorView.domEventHandlers({
   keydown(e, view) {
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return false
@@ -95,9 +97,9 @@ export default function ProofRichSpike() {
           taskCheckboxClick,
           livePreviewV2, // inline + line markdown styling
           blocksV2, // table / image / media widgets
+          Prec.highest(arrowDebug), // TEMP — arrow-jump instrumentation, remove after diagnosis
           tableArrowEntry,
           proofMarks, // ← suggestion marks layered on top
-          arrowDebug, // TEMP — arrow-jump instrumentation, remove after diagnosis
           cmPrototypeTheme,
         ],
       }),
