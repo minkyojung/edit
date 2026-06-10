@@ -20,9 +20,14 @@ export function classifyMedia(file: { type: string }): MediaKind | null {
 }
 
 /** The card markdown for an imported file — matches what livePreview /
- * mediaCards detect (`![..](..)`, `<video>`, `<audio>`). */
+ * mediaCards detect (`![..](..)`, `<video>`, `<audio>`). The image URL is
+ * percent-encoded: markdown `![](url)` (and our Image regex) forbid spaces, so a
+ * filename like `Screenshot 2026.png` must ride as `Screenshot%202026.png` or it
+ * won't parse as an image. (`<video>`/`<audio>` srcs sit in quoted HTML attributes,
+ * where spaces are legal, so they stay raw.) resolveVaultAssetSrc decodes on the way
+ * back to the file. */
 export function markdownForMedia(kind: MediaKind, url: string, name: string): string {
-  if (kind === 'image') return `![${name}](${url})`
+  if (kind === 'image') return `![${name}](${encodeURI(url)})`
   if (kind === 'video') return `<video src="${url}" controls></video>`
   return `<audio src="${url}" title="${name}" controls></audio>`
 }
