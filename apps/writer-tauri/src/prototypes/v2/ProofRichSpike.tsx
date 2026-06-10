@@ -52,7 +52,7 @@ its ✓/✕ must follow exactly, alongside the markdown styling.
 //   • line moves by many → the vertical-motion calculation itself is wrong.
 // Prec.highest: CM stops dispatching a DOM event at the first handler returning
 // true — the default keymap's ArrowUp does — so an observer must run before it.
-const arrowDebug = EditorView.domEventHandlers({
+export const arrowDebug = EditorView.domEventHandlers({
   keydown(e, view) {
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return false
     const snap = (tag: string) => {
