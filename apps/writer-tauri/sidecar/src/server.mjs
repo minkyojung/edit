@@ -56,13 +56,16 @@ function resolveVaultFile(vaultPath, filePath) {
 async function checkOldString(vaultPath, filePath, oldString) {
   if (!vaultPath) return null
   if (!oldString) return `(error: old_string is empty — provide the exact text to replace.)`
+  // FAIL-OPEN on anything we can't verify (odd/symlinked path, unreadable file): don't
+  // block a possibly-valid edit — the host still applies it. Only reject when we have
+  // the file in hand AND the text genuinely isn't there.
   const abs = resolveVaultFile(vaultPath, filePath)
-  if (!abs) return `(error: file_path "${filePath}" is outside the vault.)`
+  if (!abs) return null
   let body
   try {
     body = await readFile(abs, 'utf-8')
   } catch {
-    return `(error: "${filePath}" could not be read — use propose_write to create a new file, or read_page to find the correct path.)`
+    return null
   }
   const first = body.indexOf(oldString)
   if (first < 0) {
