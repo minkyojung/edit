@@ -1,5 +1,5 @@
 import { readFile, readdir } from 'node:fs/promises'
-import { join, normalize, resolve as resolvePath } from 'node:path'
+import { join, normalize, relative, isAbsolute, resolve as resolvePath } from 'node:path'
 import { tmpdir } from 'node:os'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
@@ -37,6 +37,41 @@ function validateVaultRelPath(rawPath) {
   if (normalised.startsWith('..') || normalised.includes('/../')) return null
   if (!READABLE_PREFIXES.some((p) => normalised.startsWith(p))) return null
   return normalised
+}
+
+/** Resolve a model-supplied file_path (absolute OR vault-relative) to an absolute
+ * path inside the vault, or null if it escapes the vault. */
+function resolveVaultFile(vaultPath, filePath) {
+  const raw = String(filePath ?? '').trim()
+  if (!raw) return null
+  const rel = isAbsolute(raw) ? relative(vaultPath, raw) : normalize(raw)
+  if (!rel || rel.startsWith('..') || rel.includes('/../')) return null
+  return resolvePath(vaultPath, rel)
+}
+
+/** Validate a propose_edit `old_string` against the live file — the built-in Edit
+ * tool's contract: it must match VERBATIM and UNIQUELY. Returns an error string for
+ * the model (so it re-reads and retries with exact text) or null on success. Without
+ * a vaultPath we can't read the file, so we let the edit through (host still checks). */
+async function checkOldString(vaultPath, filePath, oldString) {
+  if (!vaultPath) return null
+  if (!oldString) return `(error: old_string is empty — provide the exact text to replace.)`
+  const abs = resolveVaultFile(vaultPath, filePath)
+  if (!abs) return `(error: file_path "${filePath}" is outside the vault.)`
+  let body
+  try {
+    body = await readFile(abs, 'utf-8')
+  } catch {
+    return `(error: "${filePath}" could not be read — use propose_write to create a new file, or read_page to find the correct path.)`
+  }
+  const first = body.indexOf(oldString)
+  if (first < 0) {
+    return `(error: old_string was not found in ${filePath}. read_page to get the current content and copy old_string VERBATIM, then retry.)`
+  }
+  if (body.indexOf(oldString, first + 1) >= 0) {
+    return `(error: old_string matches more than one place in ${filePath}. Include enough surrounding lines to make it unique, then retry.)`
+  }
+  return null
 }
 
 // Relay tools: defined here, but every invocation reports back to the host
@@ -299,7 +334,7 @@ function buildSubmitIngestResultTool(runId, emit) {
 // new_string"). The model has prior experience with those names — the
 // `propose_` prefix is the only visible difference, and the matching
 // input shape keeps the tool-call ergonomics unchanged.
-function buildProposeEditTool(runId, emit) {
+function buildProposeEditTool(runId, emit, vaultPath) {
   return tool(
     'propose_edit',
     'PREFERRED tool for changing an existing file. Propose a surgical edit: provide the absolute file_path, the exact old_string to replace (copy it VERBATIM from the file — read_page first if unsure), and the new_string. old_string MUST identify exactly ONE place in the file — if the text appears more than once, include enough surrounding lines to make it unique, otherwise the edit is rejected as ambiguous (the host never guesses which occurrence you meant). Works exactly like the built-in Edit tool. The host locates old_string and applies the change in place, then queues it for user review. Returns immediately — do not wait for the user.',
@@ -310,6 +345,11 @@ function buildProposeEditTool(runId, emit) {
       replace_all: z.boolean().optional(),
     },
     async (input) => {
+      // Validate the anchor against the live file (the built-in Edit's contract) so a
+      // bad old_string is fixed by the model NOW instead of surfacing as a broken
+      // proposal at Keep time.
+      const err = await checkOldString(vaultPath, input.file_path, input.old_string)
+      if (err) return { content: [{ type: 'text', text: err }] }
       const pendingId = globalThis.crypto.randomUUID()
       emit(
         notification('chat/edit-pending', {
@@ -361,7 +401,7 @@ function buildProposeWriteTool(runId, emit) {
   )
 }
 
-function buildProposeMultiEditTool(runId, emit) {
+function buildProposeMultiEditTool(runId, emit, vaultPath) {
   return tool(
     'propose_multi_edit',
     'Propose multiple edits to a single file in one transaction. The host queues this proposal for user review and applies it on approval. Use the same way as the built-in MultiEdit tool: provide the file_path and an array of edits, each with old_string and new_string. Each old_string MUST identify exactly ONE place in the file — when the same text appears more than once (e.g. two identical lines you want changed differently), include enough surrounding lines in each old_string to make it unique, otherwise that edit is rejected as ambiguous (the host never guesses which occurrence you meant). Returns immediately — do not wait for the user.',
@@ -376,6 +416,12 @@ function buildProposeMultiEditTool(runId, emit) {
       ),
     },
     async (input) => {
+      // Validate every anchor before queuing — one bad old_string fails the whole
+      // transaction (same as the built-in MultiEdit) so the model fixes it now.
+      for (let i = 0; i < input.edits.length; i++) {
+        const err = await checkOldString(vaultPath, input.file_path, input.edits[i].old_string)
+        if (err) return { content: [{ type: 'text', text: `(edit #${i + 1}) ${err}` }] }
+      }
       const pendingId = globalThis.crypto.randomUUID()
       emit(
         notification('chat/edit-pending', {
@@ -946,11 +992,11 @@ export class Server {
         }
         relayDefs.push(buildSearchWikiTool(vaultPath))
       } else if (name === 'propose_edit') {
-        relayDefs.push(buildProposeEditTool(runId, this.emit))
+        relayDefs.push(buildProposeEditTool(runId, this.emit, vaultPath))
       } else if (name === 'propose_write') {
         relayDefs.push(buildProposeWriteTool(runId, this.emit))
       } else if (name === 'propose_multi_edit') {
-        relayDefs.push(buildProposeMultiEditTool(runId, this.emit))
+        relayDefs.push(buildProposeMultiEditTool(runId, this.emit, vaultPath))
       } else if (name === 'edit_visualization') {
         relayDefs.push(buildEditVisualizationTool(runId, this.emit))
       }
