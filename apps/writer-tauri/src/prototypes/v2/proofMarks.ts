@@ -213,7 +213,9 @@ const proofTheme = EditorView.theme({
     background: 'var(--muted)',
   },
   '.cm-proof-label': { marginRight: 'auto' },
-  '.cm-proof-preview': { padding: '6px 10px' },
+  // Flush: no inner gutter — the previewed block meets the tile edge. The table's
+  // outer border is hidden inside the preview (see cmTheme) so lines don't double.
+  '.cm-proof-preview': { padding: '0' },
 })
 
 export const proofMarks: Extension = [suggestionField, proofDecorations, proofInvertedEffects, proofTheme]

@@ -61,8 +61,15 @@ export const cmPrototypeTheme = EditorView.theme({
     padding: '0',
   },
   '.cm-proof-preview .cm-table-wrap': {
-    padding: '4px 0',
+    padding: '0',
   },
+  // Flush preview: the tile's own border doubles as the table's OUTER border, so
+  // hide the edge cells' outward-facing lines (borders are per-cell under
+  // border-collapse). Inner grid lines stay.
+  '.cm-proof-preview .cm-md-table tr > :first-child': { borderLeft: 'none' },
+  '.cm-proof-preview .cm-md-table tr > :last-child': { borderRight: 'none' },
+  '.cm-proof-preview .cm-md-table thead tr:first-child th': { borderTop: 'none' },
+  '.cm-proof-preview .cm-md-table tbody tr:last-child td': { borderBottom: 'none' },
   '.cm-line': { padding: '0' },
   '.cm-cursor': { borderLeftColor: 'var(--foreground)' },
   // Drop-position indicator during drag. CM's default is solid black →
