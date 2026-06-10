@@ -62,6 +62,8 @@ const NestedCellSpike = lazy(() => import('@/prototypes/v2/NestedCellSpike'))
 const ProofMarkSpike = lazy(() => import('@/prototypes/v2/ProofMarkSpike'))
 // DEV-only spike: proof marks layered over the FULL markdown live-preview.
 const ProofRichSpike = lazy(() => import('@/prototypes/v2/ProofRichSpike'))
+// DEV-only spike: structural anchor resolution (text-search vs syntax-tree).
+const ProofAnchorSpike = lazy(() => import('@/prototypes/v2/ProofAnchorSpike'))
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
@@ -174,6 +176,16 @@ export function App() {
                       <BootGate>
                         <Suspense fallback={null}>
                           <ProofRichSpike />
+                        </Suspense>
+                      </BootGate>
+                    }
+                  />
+                  <Route
+                    path="/dev/proofanchor"
+                    element={
+                      <BootGate>
+                        <Suspense fallback={null}>
+                          <ProofAnchorSpike />
                         </Suspense>
                       </BootGate>
                     }
