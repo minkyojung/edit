@@ -14,10 +14,10 @@
 // Stage 2/3. onViewReady is called with null because PM-view consumers can't use a CM
 // view; they degrade rather than break.
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { EditorView as PMEditorView } from '@milkdown/kit/prose/view'
 import { EditorState, Prec, Annotation } from '@codemirror/state'
-import { EditorView, keymap, drawSelection, dropCursor } from '@codemirror/view'
+import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
 import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@codemirror/lang-markdown'
@@ -26,6 +26,8 @@ import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
 import { registerCmEditor, unregisterCmEditor } from '@/state/activeCmEditor'
 import { markSlugDirty } from '@/lib/docFileSync'
+import { EditorFooter } from '@/components/EditorFooter'
+import type { DocStats } from '@/stores/editorFooter'
 import { cmPrototypeTheme } from '@/prototypes/cmTheme'
 import { livePreviewV2, taskCheckboxClick } from '@/prototypes/v2/livePreview'
 import { blocksV2 } from '@/prototypes/v2/blocks'
@@ -49,9 +51,19 @@ const layoutReset = EditorView.theme({
 // dirty-tracking update listener ignores it — it's a load FROM disk, not a user edit.
 const externalBody = Annotation.define<boolean>()
 
+// Word/char count from the raw markdown. (Counts include markdown syntax chars —
+// good enough for a status-bar number; AI% needs proof marks, a Stage-3 concern.)
+const computeCmStats = (text: string): DocStats => ({
+  totalChars: text.length,
+  aiChars: 0,
+  wordCount: text.split(/\s+/).filter(Boolean).length,
+  lastAcceptedAt: null,
+})
+
 export function CmEditor({ handle, status, onViewReady, header }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const slug = handle?.slug ?? null
+  const [stats, setStats] = useState<DocStats>(() => computeCmStats(''))
 
   useEffect(() => {
     const parent = rootRef.current
@@ -79,6 +91,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             dropCursor(),
             EditorView.lineWrapping,
             markdown({ extensions: [GFM], addKeymap: false }),
+            placeholder('Start writing…'),
             taskCheckboxClick,
             livePreviewV2,
             blocksV2,
@@ -86,9 +99,11 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             blockVerticalNav,
             // Save: mirror the doc text into the handle cache + flag dirty. The flush
             // loop (serializeDocToFiles → handle.bodyMarkdown) does the rest. A
-            // programmatic body set (externalBody) is a load from disk — skip it.
+            // programmatic body set (externalBody) is a load from disk — don't dirty
+            // it, but DO refresh the footer stats either way.
             EditorView.updateListener.of((u) => {
               if (!u.docChanged) return
+              setStats(computeCmStats(u.state.doc.toString()))
               if (u.transactions.some((t) => t.annotation(externalBody))) return
               const h = useDocsStore.getState().handles[handle.slug]
               if (h) h.bodyMarkdown = u.state.doc.toString()
@@ -100,6 +115,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
         }),
       })
       onViewReady?.(null) // no PM view — PM-view consumers degrade, not break
+      setStats(computeCmStats(handle.bodyMarkdown))
       // Register so docsStore body-replace paths (external reload / background
       // rewrite) can push fresh markdown into this view instead of skipping it.
       registerCmEditor(handle.slug, (md) => {
@@ -132,11 +148,20 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
           <div className="cm-prototype" ref={rootRef} />
         </div>
       </div>
-      {status === 'error' && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded bg-destructive px-3 py-1 text-sm text-white">
-          문서를 불러오지 못했습니다
-        </div>
-      )}
+      <div className="absolute bottom-0 left-0 right-0 z-sticky" style={{ height: 'var(--footer-h)' }}>
+        <div
+          aria-hidden
+          className="pointer-events-none absolute bottom-0 left-0 right-0 bg-background/90"
+          style={{
+            height: 'calc(var(--footer-h) + 2rem)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            maskImage: 'linear-gradient(to top, black 0, black calc(var(--footer-h) * 0.7), transparent)',
+            WebkitMaskImage: 'linear-gradient(to top, black 0, black calc(var(--footer-h) * 0.7), transparent)',
+          }}
+        />
+        <EditorFooter view={null} parentSlug={slug} status={status} externalStats={stats} />
+      </div>
     </div>
   )
 }

@@ -44,9 +44,12 @@ interface Props {
   view: EditorView | null
   parentSlug: string | null
   status: CollabStatus
+  /** CM editor has no PM view; it computes its own stats and passes them
+   * here. When set, the footer renders these instead of walking a PM doc. */
+  externalStats?: DocStats | null
 }
 
-export function EditorFooter({ view, parentSlug, status }: Props) {
+export function EditorFooter({ view, parentSlug, status, externalStats }: Props) {
   const stats = useEditorFooter((s) => s.stats)
   const setStats = useEditorFooter((s) => s.setStats)
 
@@ -55,6 +58,10 @@ export function EditorFooter({ view, parentSlug, status }: Props) {
   // granularity React needs, so we don't have to subscribe to PM
   // transactions directly.
   useEffect(() => {
+    if (externalStats) {
+      setStats(externalStats)
+      return
+    }
     if (!view) {
       setStats({
         totalChars: 0,
@@ -67,7 +74,7 @@ export function EditorFooter({ view, parentSlug, status }: Props) {
     const recompute = () => setStats(computeStats(view))
     recompute()
     return subscribeToPmDocChanges(recompute)
-  }, [view, setStats])
+  }, [view, setStats, externalStats])
 
   const aiPct = useMemo(() => {
     if (stats.totalChars === 0) return 0
