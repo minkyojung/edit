@@ -37,6 +37,7 @@ import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
 import { wikilinkClick } from '@/prototypes/wikilinkNav'
 import { linkClick } from '@/prototypes/linkNav'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
+import { cmProofReview } from '@/editor/cmProofReview'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 import { slashSource } from '@/prototypes/slashCommands'
@@ -111,6 +112,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             wikilinkClick(navigateToNoteByTitle), // click [[Title]] → open that note
             linkClick(openLinkSafely), // Cmd/Ctrl-click [text](url) → open (safe schemes)
             mediaDropPaste(importMediaToVault), // drop/paste media → vault + insert
+            cmProofReview(handle.slug), // AI suggestions from pendingChangesStore → inline marks
             // Save: mirror the doc text into the handle cache + flag dirty. The flush
             // loop (serializeDocToFiles → handle.bodyMarkdown) does the rest. A
             // programmatic body set (externalBody) is a load from disk — don't dirty
