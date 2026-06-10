@@ -14,12 +14,7 @@
 import { StateField, StateEffect, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
 import { usePendingChangesStore, type PendingChange } from '@/state/pendingChangesStore'
-import { renderMarkdownReadonly } from '@/prototypes/v2/renderMarkdownReadonly'
-
-// A multi-line or long `after` is block-shaped: render it as a real preview tile that
-// wraps within the column (an inline nowrap span overflowed the editor's max-width)
-// AND shows rendered markdown instead of raw `##`/`**` source.
-const isBlockAfter = (after: string): boolean => after.includes('\n') || after.length > 60
+import { renderInline } from '@/prototypes/widgets'
 
 type AnchoredEdit = {
   changeId: string
@@ -100,7 +95,10 @@ class ReviewWidget extends WidgetType {
     if (this.a.kind === 'replace' && this.a.after) {
       const ins = document.createElement('span')
       ins.className = 'cm-proof-new'
-      ins.textContent = this.a.after
+      // Render INLINE markdown (bold/italic/code/strike/link) inside the green
+      // highlight; block markers (##, -) in a large insertion stay literal — inline
+      // by design. `white-space: pre-wrap` (theme) keeps line breaks + wraps.
+      ins.append(...renderInline(this.a.after))
       box.append(ins)
     }
     box.append(
@@ -114,55 +112,11 @@ class ReviewWidget extends WidgetType {
   }
 }
 
-type WithPreview = HTMLElement & { _preview?: EditorView }
-
-// Block review: a multi-line/large `after` → a preview tile (the markdown rendered
-// read-only, wrapping within the column) + a ✓ Keep / ✕ Reject bar.
-class BlockReviewWidget extends WidgetType {
-  constructor(readonly a: AnchoredEdit) {
-    super()
-  }
-  eq(o: BlockReviewWidget) {
-    return o.a.changeId === this.a.changeId && o.a.editId === this.a.editId && o.a.after === this.a.after
-  }
-  toDOM() {
-    const box = document.createElement('div') as WithPreview
-    box.className = 'cm-proof-block'
-    const bar = document.createElement('div')
-    bar.className = 'cm-proof-bar'
-    const label = document.createElement('span')
-    label.className = 'cm-proof-label'
-    label.textContent = 'Suggested change'
-    bar.append(
-      label,
-      proofBtn('✓ Keep', 'cm-proof-keep', () => accept(this.a.changeId)),
-      proofBtn('✕', 'cm-proof-reject', () => reject(this.a.changeId)),
-    )
-    const preview = document.createElement('div')
-    preview.className = 'cm-proof-preview'
-    box._preview = renderMarkdownReadonly(preview, this.a.after)
-    box.append(bar, preview)
-    return box
-  }
-  destroy(dom: HTMLElement) {
-    ;(dom as WithPreview)._preview?.destroy()
-  }
-  ignoreEvent() {
-    return true
-  }
-}
-
 function build(state: EditorState): DecorationSet {
-  const ranges = state.field(anchoredField).flatMap((a) => {
-    const strike = Decoration.mark({ class: 'cm-proof-old' }).range(a.from, a.to)
-    if (a.kind === 'replace' && isBlockAfter(a.after)) {
-      // Block preview sits on its own line below the struck text (must be at a line
-      // boundary). The strike stays inline on the replaced text.
-      const lineEnd = state.doc.lineAt(a.to).to
-      return [strike, Decoration.widget({ widget: new BlockReviewWidget(a), block: true, side: 1 }).range(lineEnd)]
-    }
-    return [strike, Decoration.widget({ widget: new ReviewWidget(a), side: 1 }).range(a.to)]
-  })
+  const ranges = state.field(anchoredField).flatMap((a) => [
+    Decoration.mark({ class: 'cm-proof-old' }).range(a.from, a.to),
+    Decoration.widget({ widget: new ReviewWidget(a), side: 1 }).range(a.to),
+  ])
   return Decoration.set(ranges, true)
 }
 
@@ -173,13 +127,15 @@ const proofTheme = EditorView.theme({
     background: 'color-mix(in oklch, var(--destructive, crimson) 14%, transparent)',
     borderRadius: '2px',
   },
-  '.cm-proof-review': { whiteSpace: 'nowrap' },
   '.cm-proof-new': {
     color: 'var(--foreground)',
     background: 'color-mix(in oklch, #2ecc71 22%, transparent)',
     borderRadius: '2px',
     padding: '0 0.15em',
     marginLeft: '0.15em',
+    // Wrap within the editor column (no nowrap) and keep the insertion's own line
+    // breaks instead of collapsing them to spaces.
+    whiteSpace: 'pre-wrap',
   },
   '.cm-proof-keep, .cm-proof-reject': {
     fontSize: '11px',
@@ -193,25 +149,6 @@ const proofTheme = EditorView.theme({
   },
   '.cm-proof-keep': { color: '#2ecc71' },
   '.cm-proof-reject': { color: 'var(--destructive, crimson)' },
-  // ── Block preview tile (multi-line / large suggestion) ──────────────────────
-  '.cm-proof-block': {
-    margin: '0.4em 0',
-    border: '1px solid color-mix(in oklch, #2ecc71 35%, var(--border))',
-    borderRadius: '8px',
-    overflow: 'hidden',
-    background: 'color-mix(in oklch, #2ecc71 6%, transparent)',
-  },
-  '.cm-proof-bar': {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '4px',
-    padding: '4px 8px',
-    fontSize: '12px',
-    color: 'var(--muted-foreground)',
-    borderBottom: '1px solid color-mix(in oklch, #2ecc71 25%, var(--border))',
-  },
-  '.cm-proof-label': { marginRight: 'auto' },
-  '.cm-proof-preview': { padding: '6px 10px' },
 })
 
 const serialise = (pending: PendingChange[]) => pending.map((c) => `${c.id}:${c.edits.length}`).join('|')
