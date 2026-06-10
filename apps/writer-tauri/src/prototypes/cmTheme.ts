@@ -49,6 +49,20 @@ export const cmPrototypeTheme = EditorView.theme({
   // cell — not just on the text — lands on the editor and focuses it. `height:100%`
   // resolves against the table cell's used height.
   '.cm-celledit .cm-editor': { height: '100%' },
+  // ── Proof block-suggestion preview reset ────────────────────────────────────
+  // Same story as the cell reset above: the preview tile hosts a nested read-only
+  // editor (renderMarkdownReadonly) and must not inherit the PAGE-LAYOUT padding —
+  // 48px/120px of dead space dwarfed the previewed table. The extra `.cm-proof-
+  // preview` class out-specifies both the leaking page rule and the nested editor's
+  // own theme instance. Inner table-wrap spacing is also page-scale; tighten it.
+  '.cm-proof-preview .cm-content': {
+    maxWidth: 'none',
+    margin: '0',
+    padding: '0',
+  },
+  '.cm-proof-preview .cm-table-wrap': {
+    padding: '4px 0',
+  },
   '.cm-line': { padding: '0' },
   '.cm-cursor': { borderLeftColor: 'var(--foreground)' },
   // Drop-position indicator during drag. CM's default is solid black →

@@ -13,13 +13,10 @@ import { blocksV2 } from './blocks'
 import { cmPrototypeTheme } from '../cmTheme'
 
 // cmPrototypeTheme adds the full editor's page padding / max-width — a preview tile
-// should hug its content instead. A later theme of equal specificity wins, so this
-// reset overrides just those two without touching the inline-mark styles we want.
-const previewReset = EditorView.theme({
-  '&': { fontSize: 'inherit' },
-  '.cm-content': { padding: '0', maxWidth: 'none', caretColor: 'transparent' },
-  '.cm-scroller': { lineHeight: '1.6' },
-})
+// must hug its content instead. The reset lives in cmTheme.ts under
+// `.cm-proof-preview` (same pattern as the `.cm-celledit` cell reset): scoping under
+// the host class out-specifies both the parent theme's leak and this nested editor's
+// own theme instance, which an equal-specificity local theme could not reliably beat.
 
 /** Mount a read-only mini editor rendering `text` (leading/trailing blank lines
  * trimmed so an insertion's newline padding doesn't show as empty rows). Caller owns
@@ -37,7 +34,6 @@ export function renderMarkdownReadonly(parent: HTMLElement, text: string): Edito
         livePreviewV2,
         blocksV2,
         cmPrototypeTheme,
-        previewReset,
       ],
     }),
   })
