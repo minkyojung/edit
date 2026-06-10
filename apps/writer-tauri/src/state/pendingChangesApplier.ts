@@ -32,7 +32,6 @@ import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { flushDirty } from '@/lib/docFileSync'
 import { pathForDoc } from '@/lib/docPaths'
 import { todayLocalDate } from '@/hooks/useDocMeta'
-import { notify } from '@/lib/notify'
 
 // HMR safety: vite's `import.meta.hot.dispose` fires right before
 // the module is replaced. That's the only hook that runs against
@@ -297,18 +296,13 @@ export function startPendingChangesApplier(): void {
             void logAcceptedChange(c)
           }
           if (!ok) {
-            // The edit couldn't be placed — almost always because the note
-            // changed between proposal and Keep, so the literal `before`
-            // text no longer matches (see applyReplaceInWikiPage). Tell the
-            // user instead of letting the widget vanish silently.
-            notify.markCantApply()
-            // Keep the suggestion alive: revert accepted → pending so its
-            // widget reappears and the user can fix the note and Keep
-            // again. Also drop it from handledIds — otherwise the re-accept
-            // would be skipped by the dedupe guard above and the retry
-            // would silently no-op.
-            handledIds.delete(c.id)
-            usePendingChangesStore.getState().reopen(c.id)
+            // The edit couldn't be placed — and since propose_edit now validates the
+            // anchor at proposal time (sidecar) AND the editor flushes before the
+            // turn, the ONLY way to reach here is the user editing that region AFTER
+            // the proposal. Cursor's rule: their edit wins. So just DISMISS — apply
+            // nothing, keep the user's text, no error toast (the mark clearing is the
+            // feedback). The change stays 'accepted' (resolved, drops from pending).
+            console.info('[applier] suggestion outdated by a user edit — kept user text', c.id)
           }
           // Commit at accept time for BOTH sources — Keep is when the
           // disk actually changes. The coordinator debounces a burst of
