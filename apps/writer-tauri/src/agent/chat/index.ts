@@ -121,11 +121,16 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     .find((t) => t.role === 'user' && !t.synthetic)
     ?.content?.trim()
 
-  // No `view` (e.g. the Read Later queue route) → use the caller-supplied
-  // page markdown as the current-page context instead of editor text.
+  // No `view` (the Read Later queue route, OR the CodeMirror editor — which never
+  // publishes a PM view) → fall back to the caller-supplied page markdown, else the
+  // open doc's bodyMarkdown cache (the editor-agnostic single source of truth, kept
+  // current on every keystroke). Without this, chat over a CM-edited note saw an
+  // empty document.
   const docText = view
     ? view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
-    : (pageContextMarkdown ?? '')
+    : (pageContextMarkdown ??
+      (slug ? useDocsStore.getState().handles[slug]?.bodyMarkdown : undefined) ??
+      '')
   const docForPrompt = truncateDocForPrompt(docText)
   const systemBody = systemPrompt ?? FREE_CHAT_PROMPT
   const prompt = promptOverride ?? buildUserPrompt(history ?? [])
