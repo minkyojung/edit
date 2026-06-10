@@ -86,14 +86,14 @@ export default function ProofRichSpike() {
       return i < 0 ? null : view.state.doc.lineAt(i).to
     }
     const tablePos = lineEndAfter('Prove the table works')
-    const imagePos = lineEndAfter('A blockquote with')
     const seeds = [
       seedSuggestion(doc, 'dependable', 'reliable', 'p1'), // plain prose
       seedSuggestion(doc, 'fast', 'quick', 'p2'), // inside **bold**
       seedSuggestion(doc, 'clearly', 'plainly', 'p3'), // inside a bullet list item
       seedSuggestion(doc, 'notable', 'striking', 'p4'), // inside a blockquote
-      // BLOCK suggestions — `after` previews as the real thing (table / image),
-      // ✓ Insert drops the markdown into the doc and blocksV2 renders it for real.
+      // BLOCK suggestion — `after` previews as a real table, ✓ Insert drops the
+      // markdown into the doc and blocksV2 renders it for real. (Media block
+      // suggestions deferred: the preview tile needs styling work first.)
       tablePos == null
         ? null
         : blockSuggestion(
@@ -101,9 +101,6 @@ export default function ProofRichSpike() {
             '\n\n| Quarter | Revenue |\n| :-- | --: |\n| Q1 | $1.2M |\n| Q2 | $1.8M |\n',
             'b1',
           ),
-      imagePos == null
-        ? null
-        : blockSuggestion(imagePos, '\n\n![Mountain lake](https://picsum.photos/seed/lake/520/300)\n', 'b2'),
     ].filter((s) => s != null)
     view.dispatch({
       effects: seeds.map((s) => addSuggestion.of(s)),
