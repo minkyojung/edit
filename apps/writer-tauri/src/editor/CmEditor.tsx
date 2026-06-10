@@ -33,6 +33,8 @@ import { livePreviewV2, taskCheckboxClick } from '@/prototypes/v2/livePreview'
 import { blocksV2 } from '@/prototypes/v2/blocks'
 import { tableArrowEntry } from '@/prototypes/v2/editableTable'
 import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
+import { wikilinkClick } from '@/prototypes/wikilinkNav'
+import { navigateToNoteByTitle } from '@/editor/cmNav'
 
 interface Props {
   handle: CollabHandle | null
@@ -97,6 +99,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             blocksV2,
             tableArrowEntry,
             blockVerticalNav,
+            wikilinkClick(navigateToNoteByTitle), // click [[Title]] → open that note
             // Save: mirror the doc text into the handle cache + flag dirty. The flush
             // loop (serializeDocToFiles → handle.bodyMarkdown) does the rest. A
             // programmatic body set (externalBody) is a load from disk — don't dirty
