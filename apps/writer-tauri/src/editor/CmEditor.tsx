@@ -37,6 +37,7 @@ import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
 import { wikilinkClick } from '@/prototypes/wikilinkNav'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
 import { cmWikilinkSource } from '@/editor/cmAutocomplete'
+import { slashSource } from '@/prototypes/slashCommands'
 
 interface Props {
   handle: CollabHandle | null
@@ -95,7 +96,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             dropCursor(),
             EditorView.lineWrapping,
             markdown({ extensions: [GFM], addKeymap: false }),
-            autocompletion({ override: [cmWikilinkSource], icons: true }), // [[ → real notes
+            autocompletion({ override: [cmWikilinkSource, slashSource], icons: true }), // [[ notes, / blocks
             placeholder('Start writing…'),
             taskCheckboxClick,
             livePreviewV2,
