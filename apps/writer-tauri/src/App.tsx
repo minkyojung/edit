@@ -64,6 +64,8 @@ const ProofMarkSpike = lazy(() => import('@/prototypes/v2/ProofMarkSpike'))
 const ProofRichSpike = lazy(() => import('@/prototypes/v2/ProofRichSpike'))
 // DEV-only spike: structural anchor resolution (text-search vs syntax-tree).
 const ProofAnchorSpike = lazy(() => import('@/prototypes/v2/ProofAnchorSpike'))
+// DEV-only spike: suggestion lifecycle (alive/stale/unplaced + reload re-anchor).
+const AnchorLifecycleSpike = lazy(() => import('@/prototypes/v2/AnchorLifecycleSpike'))
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
@@ -186,6 +188,16 @@ export function App() {
                       <BootGate>
                         <Suspense fallback={null}>
                           <ProofAnchorSpike />
+                        </Suspense>
+                      </BootGate>
+                    }
+                  />
+                  <Route
+                    path="/dev/anchorlife"
+                    element={
+                      <BootGate>
+                        <Suspense fallback={null}>
+                          <AnchorLifecycleSpike />
                         </Suspense>
                       </BootGate>
                     }
