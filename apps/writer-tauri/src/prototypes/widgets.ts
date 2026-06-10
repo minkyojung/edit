@@ -4,6 +4,7 @@
 
 import { WidgetType, type EditorView } from '@codemirror/view'
 import { addRow, addColumn, deleteRow, deleteColumn } from './tableEdit'
+import { setVaultAssetSrc } from './setAssetSrc'
 
 export class ImageWidget extends WidgetType {
   constructor(
@@ -18,7 +19,7 @@ export class ImageWidget extends WidgetType {
   toDOM(view: EditorView) {
     const img = document.createElement('img')
     img.className = 'cm-img'
-    img.src = this.src
+    setVaultAssetSrc(img, this.src) // resolve vault-relative paths to asset:// URLs
     img.alt = this.alt
     img.loading = 'lazy'
     // The image loads asynchronously, so its real height only appears AFTER CM has
@@ -33,7 +34,7 @@ export class ImageWidget extends WidgetType {
   // same string is a no-op, so unrelated edits never reload the image.
   updateDOM(dom: HTMLElement) {
     const img = dom as HTMLImageElement
-    img.src = this.src
+    setVaultAssetSrc(img, this.src)
     img.alt = this.alt
     return true
   }

@@ -14,6 +14,7 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
 import { activeLines } from './reveal'
 import { isComposing, compositionEnded } from './imeComposition'
+import { setVaultAssetSrc } from './setAssetSrc'
 
 type MediaKind = 'video' | 'audio'
 
@@ -51,7 +52,7 @@ export class MediaWidget extends WidgetType {
     fig.dataset.card = this.kind
 
     const media = document.createElement(this.kind) as HTMLMediaElement
-    media.src = this.src
+    setVaultAssetSrc(media, this.src) // resolve vault-relative paths to asset:// URLs
     if (this.title) media.title = this.title
     // Dimensions/height arrive async (loadedmetadata) — re-measure then so CM's
     // heightmap matches the rendered player. Without it, clicks / up-down arrow
