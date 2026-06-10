@@ -31,7 +31,6 @@ import { imeListContinue } from '../imeListContinue'
 import { wikilinkSource } from '../wikilinkComplete'
 import { wikilinkClick } from '../wikilinkNav'
 import { linkClick } from '../linkNav'
-import { arrowDebug } from './ProofRichSpike' // TEMP — arrow-jump instrumentation
 
 // Transient toast — the spike's stand-in for "navigate to note" / "open URL".
 function toast(message: string): void {
@@ -173,7 +172,6 @@ export default function CmCore() {
           blocksV2, // image + table + media widgets — StateField + map (no reload above)
           tableArrowEntry, // ArrowDown/Up on the line above/below a table → enter a cell
           blockVerticalNav, // correct ArrowUp/Down overshoot across stacked block widgets
-          Prec.highest(arrowDebug), // TEMP — arrow-jump instrumentation, remove after diagnosis
           cmPrototypeTheme,
         ],
       }),
