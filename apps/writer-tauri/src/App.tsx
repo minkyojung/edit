@@ -60,6 +60,8 @@ const TableCellSpike = lazy(() => import('@/prototypes/v2/TableCellSpike'))
 const NestedCellSpike = lazy(() => import('@/prototypes/v2/NestedCellSpike'))
 // DEV-only spike: CM-native proof/suggestion mark system (AI-collaboration port).
 const ProofMarkSpike = lazy(() => import('@/prototypes/v2/ProofMarkSpike'))
+// DEV-only spike: proof marks layered over the FULL markdown live-preview.
+const ProofRichSpike = lazy(() => import('@/prototypes/v2/ProofRichSpike'))
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
@@ -162,6 +164,16 @@ export function App() {
                       <BootGate>
                         <Suspense fallback={null}>
                           <ProofMarkSpike />
+                        </Suspense>
+                      </BootGate>
+                    }
+                  />
+                  <Route
+                    path="/dev/proofrich"
+                    element={
+                      <BootGate>
+                        <Suspense fallback={null}>
+                          <ProofRichSpike />
                         </Suspense>
                       </BootGate>
                     }
