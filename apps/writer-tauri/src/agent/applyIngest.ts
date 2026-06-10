@@ -20,6 +20,7 @@
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { useIngestStore } from '@/state/ingestStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
+import { applyMarkdownToActiveCmEditor } from '@/state/activeCmEditor'
 import { useDocsStore } from '@/state/docsStore'
 import { prepareMarkdownAppend } from '@/lib/markdownAppend'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
@@ -116,6 +117,15 @@ export async function applyToWikiPage(
   // Live in-memory mirror first. flushDirty (Phase I) writes from
   // this on the next tick.
   handle.bodyMarkdown = newMd
+
+  // CodeMirror editor (no PM view): push the new body straight into the live CM doc
+  // via the same bridge external-reload uses, then mark dirty (the CM body-set is
+  // annotated to skip its own dirty-tracking). Without this, an accepted edit reached
+  // disk but the open CM editor didn't update until reload.
+  if (applyMarkdownToActiveCmEditor(slug, newMd)) {
+    markSlugDirty(slug)
+    return true
+  }
 
   const view = useEditorViewStore.getState().view
   const activeSlug = getActiveSlugFromHash()
