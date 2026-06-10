@@ -38,6 +38,8 @@ import { wikilinkClick } from '@/prototypes/wikilinkNav'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
 import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 import { slashSource } from '@/prototypes/slashCommands'
+import { mediaDropPaste } from '@/prototypes/mediaDrop'
+import { importMediaToVault } from '@/editor/cmMedia'
 
 interface Props {
   handle: CollabHandle | null
@@ -105,6 +107,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             blockVerticalNav,
             wikilinkKnown.of(isKnownNoteTitle), // blue vs red from REAL knownDocs
             wikilinkClick(navigateToNoteByTitle), // click [[Title]] → open that note
+            mediaDropPaste(importMediaToVault), // drop/paste media → vault + insert
             // Save: mirror the doc text into the handle cache + flag dirty. The flush
             // loop (serializeDocToFiles → handle.bodyMarkdown) does the rest. A
             // programmatic body set (externalBody) is a load from disk — don't dirty
