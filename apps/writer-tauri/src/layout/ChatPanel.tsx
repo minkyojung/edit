@@ -200,9 +200,11 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     })
   }, [turnsHook.turns, streaming, pinned])
 
-  // On the queue route there's no editor view, but chat still works
-  // (read-only Q&A over the article list) — gate on the thread only.
-  const ready = !!activeId && (!!editorView || isQueue)
+  // Chat works without a (ProseMirror) editorView: the queue route is read-only
+  // Q&A, and the CodeMirror editor doesn't publish a PM view at all — in both cases
+  // an open doc (`slug`) is enough, since edits flow through pendingChangesStore, not
+  // the live view. Gate on having a place to act on, not on a specific editor type.
+  const ready = !!activeId && (!!editorView || isQueue || !!slug)
 
   // Track whether the editor currently has *something* selectable for slash
   // commands — either a live non-empty selection or a frozen snapshot taken
