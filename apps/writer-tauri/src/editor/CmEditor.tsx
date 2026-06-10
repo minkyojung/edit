@@ -20,7 +20,7 @@ import { EditorState, Prec, Annotation } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
-import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@codemirror/lang-markdown'
+import { markdown, deleteMarkupBackward } from '@codemirror/lang-markdown'
 import { autocompletion } from '@codemirror/autocomplete'
 import { GFM } from '@lezer/markdown'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
@@ -41,6 +41,8 @@ import { cmProofReview } from '@/editor/cmProofReview'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 import { slashSource } from '@/prototypes/slashCommands'
+import { smartEnter } from '@/prototypes/listEnter'
+import { imeListContinue } from '@/prototypes/imeListContinue'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
 import { importMediaToVault } from '@/editor/cmMedia'
 
@@ -89,9 +91,16 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
           doc: handle.bodyMarkdown,
           extensions: [
             history(),
+            // Safari/WKWebView drops the Enter that confirms an IME composition, so a
+            // Korean list item + Enter wouldn't continue the list. Recover it from the
+            // browser's own beforeinput (insertParagraph/insertLineBreak) signal.
+            imeListContinue(),
             indentUnit.of('  '),
+            // ENTER — one deterministic handler at Prec.highest: tight list continuation
+            // / clean exit, blockquote continuation, else plain newline. Must beat every
+            // other Enter handler so CM's loose-list inference never runs.
+            Prec.highest(keymap.of([{ key: 'Enter', run: smartEnter }])),
             keymap.of([
-              { key: 'Enter', run: insertNewlineContinueMarkup },
               { key: 'Backspace', run: deleteMarkupBackward },
               indentWithTab,
               ...defaultKeymap,
