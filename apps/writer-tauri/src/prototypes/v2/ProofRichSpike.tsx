@@ -89,7 +89,24 @@ export default function ProofRichSpike() {
       effects: seeds.map((s) => addSuggestion.of(s)),
       annotations: Transaction.addToHistory.of(false),
     })
-    return () => view.destroy()
+    // A suggestion INSIDE a table cell can't be seeded on the outer doc: the table's
+    // source range is replaced by the block widget, so an outer mark there is hidden.
+    // Each cell is its OWN nested editor, though — and it now carries `proofMarks` too.
+    // So we seed into the cell's LOCAL doc once the table has rendered.
+    const seedInCell = () => {
+      const wrap = view.dom.querySelector('.cm-table-wrap') as
+        | (HTMLElement & { _cellViews?: import('@codemirror/view').EditorView[] })
+        | null
+      const cell = wrap?._cellViews?.find((cv) => cv.state.doc.toString().includes('Anchor'))
+      if (!cell) return
+      const s = seedSuggestion(cell.state.doc.toString(), 'Anchor', 'Re-anchor', 'c1')
+      if (s) cell.dispatch({ effects: addSuggestion.of(s), annotations: Transaction.addToHistory.of(false) })
+    }
+    const raf = requestAnimationFrame(seedInCell)
+    return () => {
+      cancelAnimationFrame(raf)
+      view.destroy()
+    }
   }, [])
   return (
     <div style={{ position: 'fixed', inset: 0, overflow: 'auto', background: 'var(--background)', color: 'var(--foreground)' }}>

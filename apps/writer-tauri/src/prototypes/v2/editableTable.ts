@@ -17,6 +17,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
 import { GFM } from '@lezer/markdown'
 import { livePreviewInline } from './livePreview'
+import { proofMarks } from './proofMarks'
 import { addRow, addColumn, deleteRow, deleteColumn } from '../tableEdit'
 
 const isDelim = (line: string): boolean => /^[\s|:-]+$/.test(line) && line.includes('-')
@@ -265,6 +266,7 @@ export class EditableTableWidget extends WidgetType {
             EditorView.lineWrapping,
             markdown({ extensions: [GFM], addKeymap: false }),
             livePreviewInline,
+            proofMarks, // suggestions can target a cell's own (local) doc; inert otherwise
             cellTheme,
             EditorView.domEventHandlers({ blur: () => commit() }),
           ],
