@@ -191,13 +191,16 @@ const proofTheme = EditorView.theme({
   },
   '.cm-proof-keep': { color: '#2ecc71' },
   '.cm-proof-reject': { color: 'var(--destructive, crimson)' },
-  // ── Block suggestion: a real preview tile + action bar ──────────────────────
+  // ── Block suggestion: a QUIET card in the app's own tokens ──────────────────
+  // The suggestion semantics are carried by the label + the green ✓ Insert button;
+  // tinting the whole tile green read as murky on the dark palette. Neutral border,
+  // neutral bar — green lives in exactly one place.
   '.cm-proof-block': {
     margin: '0.5em 0',
-    border: '1px solid color-mix(in oklch, #2ecc71 45%, var(--border))',
+    border: '1px solid var(--border)',
     borderRadius: '8px',
     overflow: 'hidden',
-    background: 'color-mix(in oklch, #2ecc71 6%, transparent)',
+    background: 'transparent',
   },
   '.cm-proof-bar': {
     display: 'flex',
@@ -206,8 +209,8 @@ const proofTheme = EditorView.theme({
     padding: '4px 8px',
     fontSize: '12px',
     color: 'var(--muted-foreground)',
-    borderBottom: '1px solid color-mix(in oklch, #2ecc71 30%, var(--border))',
-    background: 'color-mix(in oklch, #2ecc71 11%, transparent)',
+    borderBottom: '1px solid var(--border)',
+    background: 'var(--muted)',
   },
   '.cm-proof-label': { marginRight: 'auto' },
   '.cm-proof-preview': { padding: '6px 10px' },
