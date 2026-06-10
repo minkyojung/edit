@@ -204,14 +204,9 @@ export const cmPrototypeTheme = EditorView.theme({
     color: 'var(--muted-foreground)',
   },
   // Ordered number (v2 step 3) — the digits ARE the glyph, so just tint them
-  // (right-aligned in the column, next to the body). The trailing space after `N.`
-  // is folded out of the render (livePreview, so wrapped lines align), which would
-  // otherwise glue the digits to the body — `padding-right` restores the gap inside
-  // the fixed `box-sizing:border-box` column (width unchanged; only on `.cm-list-num`,
-  // so the task checkbox's hit-test anchor is untouched).
+  // (right-aligned in the column, next to the body).
   '.cm-list-num': {
     color: 'var(--muted-foreground)',
-    paddingRight: '0.3em',
   },
   // Completed task body — struck through and muted (v2 step 5c).
   '.cm-task-done': {
