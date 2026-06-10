@@ -14,6 +14,7 @@
 import { StateField, StateEffect, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
 import { usePendingChangesStore, type PendingChange } from '@/state/pendingChangesStore'
+import { looseFindRange } from '@/lib/looseMatch'
 import { renderInline } from '@/prototypes/widgets'
 
 type AnchoredEdit = {
@@ -41,20 +42,21 @@ const anchoredField = StateField.define<AnchoredEdit[]>({
   },
 })
 
-/** Find each pending edit's `before` text in the doc (first match). Unfound edits are
- * dropped for now — the unplaced tray is Stage 3-1c. */
+/** Anchor each pending edit's `before` text in the doc using the SAME matcher the
+ * applier uses (looseFindRange) — so "a mark shows" ⟺ "Keep will place it". Unfound
+ * edits are dropped for now; the unplaced tray is Stage 3-1c. */
 function anchorChanges(docText: string, changes: PendingChange[]): AnchoredEdit[] {
   const out: AnchoredEdit[] = []
   for (const c of changes) {
     for (const e of c.edits) {
       if ((e.kind === 'replace' || e.kind === 'delete') && e.before) {
-        const i = docText.indexOf(e.before)
-        if (i < 0) continue
+        const range = looseFindRange(docText, e.before)
+        if (!range) continue
         out.push({
           changeId: c.id,
           editId: e.id,
-          from: i,
-          to: i + e.before.length,
+          from: range.start,
+          to: range.end,
           after: e.kind === 'delete' ? '' : (e.after ?? ''),
           kind: e.kind,
         })
