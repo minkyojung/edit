@@ -11,23 +11,13 @@
 // When closed the column is width 0 but this component stays mounted, so
 // reopening shows the last-active mode without a re-mount flicker.
 
-import { IconHistory } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
-import { Button } from '@/components/ui/button'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/state/layoutStore'
-import { useGitStore } from '@/state/gitStore'
 import { useThreads, type UseThreadsResult } from '@/hooks/useThreads'
 import { useActiveThread } from '@/hooks/useActiveThread'
 import { ThreadPicker } from '@/chat/ThreadPicker'
 import { notify } from '@/lib/notify'
 import { ChatPanel } from './ChatPanel'
-import { ReviewPanel } from './ReviewPanel'
 
 interface Props {
   editorView: EditorView | null
@@ -35,7 +25,6 @@ interface Props {
 }
 
 export function RightPanel({ editorView, slug }: Props) {
-  const mode = useLayoutStore((s) => s.rightPanelMode)
   // Threads are owned here, not in ChatPanel, so the picker can live in
   // the shared top bar that sits above BOTH the chat transcript and the
   // history view. useActiveThread holds a single useState — calling it
@@ -46,16 +35,14 @@ export function RightPanel({ editorView, slug }: Props) {
   return (
     <div className="relative flex h-full flex-col">
       <div className="min-h-0 flex-1">
-        {mode === 'chat' ? (
-          <ChatPanel
-            editorView={editorView}
-            slug={slug}
-            threads={threads}
-            activeId={activeId}
-          />
-        ) : (
-          <ReviewPanel />
-        )}
+        {/* Review/history panel removed — versioning/backup is being redesigned
+            as an opt-in layer. The right panel is chat-only for now. */}
+        <ChatPanel
+          editorView={editorView}
+          slug={slug}
+          threads={threads}
+          activeId={activeId}
+        />
       </div>
       {/* Glass fade band: content dissolves UNDER the header instead of being
           cut by a divider — the same treatment as the editor header and the
@@ -101,18 +88,7 @@ function RightPanelHeader({
   activeId: string | null
   setActiveId: (id: string | null) => void
 }) {
-  const mode = useLayoutStore((s) => s.rightPanelMode)
   const setMode = useLayoutStore((s) => s.setRightPanelMode)
-  const activityCount = useGitStore((s) => s.activity.length)
-  const gitStatus = useGitStore((s) => s.status)
-  const showActivityDot =
-    mode !== 'review' && (activityCount > 0 || gitStatus === 'error')
-  const historyTooltip =
-    gitStatus === 'error'
-      ? 'History (storage error)'
-      : activityCount > 0
-        ? `History (${activityCount} new)`
-        : 'History'
 
   return (
     <div
@@ -148,68 +124,7 @@ function RightPanelHeader({
           notify.threadLimitReached()
         }}
       />
-      <ModeToggleButton
-        active={mode === 'review'}
-        onClick={() => setMode(mode === 'review' ? 'chat' : 'review')}
-        icon={<IconHistory size={16} />}
-        tooltip={historyTooltip}
-        ariaLabel="History"
-        dot={
-          showActivityDot
-            ? gitStatus === 'error'
-              ? 'destructive'
-              : 'primary'
-            : undefined
-        }
-      />
     </div>
   )
 }
 
-function ModeToggleButton({
-  active,
-  onClick,
-  icon,
-  tooltip,
-  ariaLabel,
-  dot,
-}: {
-  active: boolean
-  onClick: () => void
-  icon: React.ReactNode
-  tooltip: string
-  ariaLabel: string
-  dot?: 'primary' | 'destructive'
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onClick}
-          aria-pressed={active}
-          aria-label={ariaLabel}
-          className={cn(
-            'relative cursor-pointer transition-colors',
-            active
-              ? 'bg-accent text-foreground hover:bg-accent'
-              : 'text-muted-foreground hover:text-foreground',
-          )}
-        >
-          {icon}
-          {dot && (
-            <span
-              className={cn(
-                'absolute right-1 top-1 h-1.5 w-1.5 rounded-full',
-                dot === 'destructive' ? 'bg-destructive' : 'bg-primary',
-              )}
-              aria-hidden
-            />
-          )}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">{tooltip}</TooltipContent>
-    </Tooltip>
-  )
-}

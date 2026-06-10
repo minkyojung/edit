@@ -6,9 +6,7 @@ import {
   IconSelector,
   IconLogout,
   IconSparkles,
-  IconCameraPlus,
   IconBrandGithub,
-  IconCloudUpload,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { SidebarDateMenu } from './SidebarDateMenu'
@@ -21,7 +19,6 @@ import { WikiMetaRows } from './WikiMetaRows'
 import { ArchivedDocsPopover } from './ArchivedDocsPopover'
 import { IngestProposalCard } from './IngestProposalCard'
 import { useDocsStore } from '@/state/docsStore'
-import { useGitStore } from '@/state/gitStore'
 import { buildDayUrl, buildViewUrl, getActiveSlugFromHash } from '@/lib/viewUrl'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
@@ -29,8 +26,6 @@ import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useGitHubAuth } from '@/hooks/useGitHubAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
 import { useConnectGitHubDialog } from '@/stores/connectGitHubDialog'
-import { syncGitHubActivity } from '@/lib/githubSync'
-import { backupToGitHub } from '@/lib/vaultBackup'
 import { useTheme } from '@/components/theme-provider'
 import { useFont, type FontOption } from '@/components/font-provider'
 import {
@@ -155,10 +150,6 @@ export function AppSidebar() {
     disconnect: disconnectGithub,
   } = useGitHubAuth()
   const sidebarTab = useDocsStore((s) => s.sidebarTab)
-  const dirtyCount = useGitStore((s) => s.dirtyPaths.size)
-  const gitStatus = useGitStore((s) => s.status)
-  const commitImmediate = useGitStore((s) => s.commitImmediate)
-  const saveSnapshotDisabled = dirtyCount === 0 || gitStatus === 'committing'
 
   const handleSignOut = useCallback(async () => {
     if (account.connected) {
@@ -343,30 +334,14 @@ export function AppSidebar() {
                         {githubAccount.login ?? 'Connected'}
                       </span>
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => void backupToGitHub()}>
-                      <IconCloudUpload size={16} stroke={1.5} />
-                      Back up to GitHub
-                    </DropdownMenuItem>
+                    {/* Backup to GitHub removed — versioning/backup is being
+                        redesigned as an opt-in layer; GitHub login stays. */}
                     <DropdownMenuItem onClick={disconnectGithub}>
                       Disconnect GitHub
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                   </>
                 )}
-                <DropdownMenuItem
-                  disabled={saveSnapshotDisabled}
-                  onSelect={() => {
-                    void commitImmediate()
-                  }}
-                >
-                  <IconCameraPlus size={16} stroke={1.5} />
-                  <span>Save snapshot</span>
-                  {dirtyCount > 0 && (
-                    <span className="ml-auto text-xs text-muted-foreground">
-                      {dirtyCount}
-                    </span>
-                  )}
-                </DropdownMenuItem>
                 <DropdownMenuItem disabled title="Coming soon">
                   <IconSettings size={16} stroke={1.5} />
                   Settings
@@ -424,7 +399,6 @@ export function AppSidebar() {
         onOpenChange={setGithubConnectOpen}
         onConnected={() => {
           void refreshGithub()
-          void syncGitHubActivity()
         }}
       />
     </Sidebar>

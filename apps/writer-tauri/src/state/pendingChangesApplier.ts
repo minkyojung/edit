@@ -25,7 +25,6 @@ import {
   applyWriteWikiPage,
   appendToSystemLog,
 } from '@/agent/applyIngest'
-import { useGitStore } from './gitStore'
 import { useDocsStore } from './docsStore'
 import { useEditorViewStore } from './editorViewStore'
 import { commitSuggestionInDoc } from '@/editor/markReconcile'
@@ -231,27 +230,18 @@ function scheduleGroupCommit(change: PendingChange, ok: boolean): void {
 }
 
 async function commitGroup(
-  sourceLabel: string,
+  _sourceLabel: string,
   accepts: Array<{ pageTitle: string; change: PendingChange }>,
 ): Promise<void> {
+  if (accepts.length === 0) return
+  // Git commit was removed here — versioning/backup is being redesigned as an
+  // opt-in layer. Accepts still persist: flushDirty writes the accepted burst to
+  // disk promptly (the 500ms auto-flush loop would also catch it). The vault `.md`
+  // remains the single durable source.
   try {
     await flushDirty()
   } catch (err) {
-    console.warn('[applier] flushDirty failed before commit', err)
-  }
-  const n = accepts.length
-  const plural = n === 1 ? '' : 's'
-  // Chat and ingest share this coordinator; only the subject differs.
-  // Both keep the `ai-edit:` prefix so isAiEditCommit + the Review
-  // panel's commitSource parser recognise them.
-  const subject =
-    accepts[0]?.change.source === 'chat'
-      ? `ai-edit: chat reply (${n} page update${plural})`
-      : `ai-edit: ingest from ${sourceLabel} (${n} page update${plural})`
-  try {
-    await useGitStore.getState().commitChangesNow(subject)
-  } catch (err) {
-    console.warn('[applier] commit failed', err)
+    console.warn('[applier] flushDirty failed', err)
   }
 }
 

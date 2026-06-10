@@ -25,26 +25,12 @@ import { useEffect, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocsStore } from '@/state/docsStore'
 import { useThreadsStore } from '@/state/threadsStore'
-import { useGitStore } from '@/state/gitStore'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { VaultLauncher } from '@/components/VaultLauncher'
-import {
-  gitInit,
-  gitHeadTimestamp,
-  gitEnsureGitignoreEntries,
-} from '@/lib/git'
 import { exists, remove } from '@tauri-apps/plugin-fs'
 import { join } from '@tauri-apps/api/path'
 import { cleanupYdocV2 } from '@/lib/cleanupYdocV2'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
-import { syncGitHubActivity } from '@/lib/githubSync'
-import { pullVault } from '@/lib/vaultRestore'
-
-/** Daily safety net: if HEAD is older than this, BootGate fires a
- * silent "daily snapshot" commit on app open so a passive user who
- * never clicks the manual button still has at most one day's worth
- * of work in a single uncommitted blob. */
-const DAILY_SNAPSHOT_MS = 24 * 60 * 60 * 1000
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
@@ -105,54 +91,12 @@ export function BootGate({ children }: Props) {
     // disk — never start the boot sequence against a missing folder.
     if (!hasVault || !vaultChecked) return
     const init = async () => {
-      // Initialise git in the vault folder. Idempotent: the rust
-      // side fast-paths when `.git/` already exists. We swallow
-      // errors here because the editor itself shouldn't be blocked
-      // on history setup — a missing `git` binary degrades to
-      // "no rollback safety net" rather than "can't open the app".
-      try {
-        await gitInit()
-      } catch (err) {
-        console.warn('[boot] git init failed (history disabled)', err)
-      }
-      // Receive remote changes (multi-device) BEFORE bootstrap creates today's
-      // daily — so a daily pushed from another device arrives first and
-      // bootstrap sees it rather than minting a duplicate. Fast-forward only:
-      // no-ops when not backed up, and bails (no merge commit) on divergence —
-      // the conflict slice will handle that case. Awaited so the order holds;
-      // pullVault never throws (it catches internally).
-      await pullVault()
-      // One-shot migration: pre-existing vaults predate the
-      // `threads/` ignore rule in `DEFAULT_GITIGNORE`, so chat-session
-      // JSON ended up tracked and bloating every commit. Sync the
-      // .gitignore + untrack any matches that snuck in. Idempotent
-      // after the first run — subsequent boots see the entry and
-      // return false.
-      try {
-        await gitEnsureGitignoreEntries([
-          'threads/',
-          // Migration sentinel files dropped at vault root by the
-          // Yjs-removal one-shots. Plain filenames (not dot-prefixed)
-          // because Tauri's `fs:scope` glob silently excludes dot-
-          // files; ignoring them here keeps the user's vault git
-          // history clean. `writer-migration-v2.done` and
-          // `writer-meta-migration-v1.done` are kept in the list so
-          // vaults that already wear those markers don't suddenly
-          // surface them as untracked files when the migration
-          // scripts themselves are gone.
-          'writer-migration-v2.done',
-          'writer-meta-migration-v1.done',
-          'writer-cleanup-ydoc.done',
-          // GitHub-activity cache — derived/binary, must not ride along in
-          // the vault backup. Untracks it from vaults where it already
-          // landed (e.g. before this rule existed).
-          'events.db',
-          'events.db-wal',
-          'events.db-shm',
-        ])
-      } catch (err) {
-        console.warn('[boot] gitignore migration failed', err)
-      }
+      // NOTE: git history + GitHub backup + activity sync were disabled here
+      // (kept only GitHub login). The vault `.md` files remain the single durable
+      // source — docFileSync still flushes to disk. Versioning/backup will be
+      // redesigned as an opt-in layer later; the dead modules (gitStore, vault_sync,
+      // ReviewPanel, …) are slated for a separate deletion pass.
+      //
       // Clean-boundary follow-up: the activity cache now lives in per-device
       // app-data, so delete the leftover in-vault `events.db*` (+ WAL/SHM) one
       // time. Best-effort — a missing file just means an already-clean vault.
@@ -197,30 +141,6 @@ export function BootGate({ children }: Props) {
       // `threads/`). hydrate is idempotent so StrictMode's double-
       // mount is safe.
       void useThreadsStore.getState().hydrate()
-      // Prime the activity feed so the badge has the right count
-      // the first time the user looks at it.
-      void useGitStore.getState().refreshActivity()
-
-      // Pull GitHub activity once on launch (the 30-min timer is too
-      // slow for first paint). No-ops when not connected / no vault.
-      void syncGitHubActivity()
-
-      // Daily safety net. When HEAD is older than 24 h, fire a silent
-      // "daily snapshot" commit so a passive user — one who never
-      // clicks "Save snapshot" manually — still gets at most one day
-      // of work in a single uncommitted blob. No-op when HEAD is
-      // missing (fresh vault), recent (<24 h), or there's nothing
-      // dirty to commit (gitCommit returns null in that case).
-      void (async () => {
-        const headTs = await gitHeadTimestamp()
-        if (headTs === null) return
-        const ageMs = Date.now() - headTs * 1000
-        if (ageMs < DAILY_SNAPSHOT_MS) return
-        const today = new Date().toISOString().slice(0, 10)
-        await useGitStore
-          .getState()
-          .commitChangesNow(`daily snapshot — ${today}`)
-      })()
     }
     void init()
   }, [hasVault, vaultChecked, bootstrap])

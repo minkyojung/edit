@@ -1,73 +1,26 @@
-// First-run launcher (Obsidian-style "open vault" screen). Shown by BootGate
-// when no vault is selected yet, BEFORE git init / bootstrap touch the folder —
-// which is the only point restore can run (once the app fills an empty folder
-// it's no longer restorable). Two paths:
+// First-run launcher (Obsidian-style "open vault" screen). Shown by BootGate when
+// no vault is selected yet. Opens a local folder as the vault.
 //
-//   1. Open a local folder (new vault, or an existing Writer vault).
-//   2. Restore from GitHub — connect (inline device flow, since the normal
-//      connect dialog lives post-boot in the Sidebar), list the user's repos,
-//      pick one, choose an empty destination folder, clone it down.
+// Restore-from-GitHub was removed — versioning/backup is being redesigned as an
+// opt-in layer (GitHub login stays elsewhere). Local folder only for now.
 //
 // Calls `onReady` once a vault is in place so BootGate proceeds with the normal
-// boot sequence (git init is idempotent — a restore's clone already made .git).
+// boot sequence.
 
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
-import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
-import { useGitHubAuth } from '@/hooks/useGitHubAuth'
 import { pickVault } from '@/lib/vaultPicker'
-import { listMyRepos, restoreFromGitHub, type RepoSummary } from '@/lib/vaultRestore'
 
 interface Props {
-  /** Fired once a vault is ready (picked locally or restored) so BootGate runs
-   * the normal boot sequence. */
+  /** Fired once a vault is ready so BootGate runs the normal boot sequence. */
   onReady: () => void
 }
 
 export function VaultLauncher({ onReady }: Props) {
-  const { account, refresh } = useGitHubAuth()
-  const [mode, setMode] = useState<'home' | 'repos'>('home')
-  const [connectOpen, setConnectOpen] = useState(false)
-  const [repos, setRepos] = useState<RepoSummary[]>([])
-  const [loadingRepos, setLoadingRepos] = useState(false)
-  const [busy, setBusy] = useState(false)
-
   const handleLocal = useCallback(async () => {
     const path = await pickVault()
     if (path) onReady()
   }, [onReady])
-
-  const loadRepos = useCallback(async () => {
-    setLoadingRepos(true)
-    try {
-      setRepos(await listMyRepos())
-      setMode('repos')
-    } finally {
-      setLoadingRepos(false)
-    }
-  }, [])
-
-  const handleRestoreClick = useCallback(() => {
-    if (account.connected) void loadRepos()
-    else setConnectOpen(true)
-  }, [account.connected, loadRepos])
-
-  const handlePickRepo = useCallback(
-    async (repo: RepoSummary) => {
-      // Restore clones into an empty folder — let the user choose where.
-      const path = await pickVault()
-      if (!path) return
-      setBusy(true)
-      try {
-        const ok = await restoreFromGitHub(repo)
-        if (ok) onReady()
-      } finally {
-        setBusy(false)
-      }
-    },
-    [onReady],
-  )
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-background p-6">
@@ -76,75 +29,17 @@ export function VaultLauncher({ onReady }: Props) {
           Writer
         </h1>
         <p className="mb-6 text-center text-sm text-muted-foreground">
-          {mode === 'home'
-            ? 'Open a vault, or restore one from a backup.'
-            : 'Choose a repo to restore.'}
+          Open a folder on this computer as your vault.
         </p>
 
         <div className="rounded-xl border bg-card p-2">
-          {mode === 'home' ? (
-            <>
-              <LauncherRow
-                title="Open folder / start fresh"
-                desc="Use a folder on this computer as your vault."
-                action={<Button onClick={() => void handleLocal()}>Open</Button>}
-              />
-              <LauncherRow
-                title="Restore from GitHub"
-                desc="Pull notes backed up from another device."
-                action={
-                  <Button
-                    variant="secondary"
-                    onClick={handleRestoreClick}
-                    disabled={loadingRepos}
-                  >
-                    {loadingRepos ? <Spinner /> : 'Restore'}
-                  </Button>
-                }
-              />
-            </>
-          ) : (
-            <div className="space-y-1">
-              <button
-                type="button"
-                onClick={() => setMode('home')}
-                className="mb-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-              >
-                ← Back
-              </button>
-              {repos.length === 0 ? (
-                <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  No backed-up vaults found.
-                </p>
-              ) : (
-                <div className="max-h-72 overflow-y-auto">
-                  {repos.map((r) => (
-                    <button
-                      key={r.fullName}
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void handlePickRepo(r)}
-                      className="block w-full truncate rounded-md px-3 py-2 text-left text-sm text-foreground hover:bg-muted disabled:opacity-50"
-                      title={r.fullName}
-                    >
-                      {r.fullName}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <LauncherRow
+            title="Open folder / start fresh"
+            desc="Use a folder on this computer as your vault."
+            action={<Button onClick={() => void handleLocal()}>Open</Button>}
+          />
         </div>
       </div>
-
-      <ConnectGitHubDialog
-        open={connectOpen}
-        onOpenChange={setConnectOpen}
-        onConnected={() => {
-          void refresh()
-          void loadRepos()
-        }}
-      />
     </div>
   )
 }
