@@ -9,9 +9,18 @@
 // collapsed caret, and content-stays-selected so a second press un-toggles.
 
 import { keymap, type Command } from '@codemirror/view'
-import { EditorSelection, Prec, type Extension } from '@codemirror/state'
+import { EditorSelection, Prec, type EditorState, type Extension } from '@codemirror/state'
 
 const isSpace = (c: string) => c === '' || /\s/.test(c)
+
+// Start of a line's CONTENT — past any leading markdown block marker (blockquote
+// `>`, list `- `/`1. `/`- [ ] `, heading `# `). Format shortcuts clamp the wrap to
+// this so ⌘B bolds the TEXT, not the marker (`- **x**`, never `**- x**`).
+function lineContentStart(state: EditorState, pos: number): number {
+  const line = state.doc.lineAt(pos)
+  const m = /^(?:[ \t]*(?:>[ \t]*)*)(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?|#{1,6}[ \t]+)?/.exec(line.text)
+  return line.from + (m ? m[0].length : 0)
+}
 
 function toggleWrap(marker: string): Command {
   const L = marker.length
@@ -31,6 +40,11 @@ function toggleWrap(marker: string): Command {
           return { changes: { from, insert: marker + marker }, range: EditorSelection.cursor(from + L) }
         }
       }
+
+      // Don't swallow the line's leading marker (`- `, `1. `, `> `, `# `, `- [ ] `):
+      // pull the start to the content so ⌘B wraps the TEXT, not the marker.
+      const cs = lineContentStart(state, from)
+      if (from < cs) from = Math.min(cs, to)
 
       // Trim whitespace inward — `** bold **` is invalid; wrap only the core.
       while (from < to && isSpace(state.sliceDoc(from, from + 1))) from++
@@ -73,10 +87,11 @@ const toggleLink: Command = (view) => {
     if (range.empty) {
       return { changes: { from: range.from, insert: '[]()' }, range: EditorSelection.cursor(range.from + 1) }
     }
-    const text = state.sliceDoc(range.from, range.to)
+    const from = Math.min(Math.max(range.from, lineContentStart(state, range.from)), range.to) // skip the marker
+    const text = state.sliceDoc(from, range.to)
     return {
-      changes: { from: range.from, to: range.to, insert: `[${text}]()` },
-      range: EditorSelection.cursor(range.from + 1 + text.length + 2), // inside ()
+      changes: { from, to: range.to, insert: `[${text}]()` },
+      range: EditorSelection.cursor(from + 1 + text.length + 2), // inside ()
     }
   })
   view.dispatch({ ...tr, userEvent: 'input.format.link', scrollIntoView: true })

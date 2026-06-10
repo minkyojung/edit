@@ -76,6 +76,39 @@ describe('toggleWrap', () => {
   })
 })
 
+describe('toggleWrap skips the line marker', () => {
+  it('bullet: select whole line → wraps text only', () => {
+    const v = mk('- hello', 0, 7) // select "- hello"
+    bold(v)
+    expect(v.state.doc.toString()).toBe('- **hello**') // NOT **- hello**
+    v.destroy()
+  })
+  it('ordered: select whole line → wraps text only', () => {
+    const v = mk('1. hello', 0, 8)
+    bold(v)
+    expect(v.state.doc.toString()).toBe('1. **hello**')
+    v.destroy()
+  })
+  it('task: select whole line → wraps text only', () => {
+    const v = mk('- [ ] task', 0, 10)
+    bold(v)
+    expect(v.state.doc.toString()).toBe('- [ ] **task**')
+    v.destroy()
+  })
+  it('blockquote: select whole line → wraps text only', () => {
+    const v = mk('> quote', 0, 7)
+    bold(v)
+    expect(v.state.doc.toString()).toBe('> **quote**')
+    v.destroy()
+  })
+  it('link on a bullet line wraps text only', () => {
+    const v = mk('- google', 0, 8)
+    _toggleLink(v)
+    expect(v.state.doc.toString()).toBe('- [google]()')
+    v.destroy()
+  })
+})
+
 describe('toggleLink', () => {
   it('wraps selection, caret inside ()', () => {
     const v = mk('google', 0, 6)

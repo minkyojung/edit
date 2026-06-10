@@ -75,9 +75,18 @@ export const cmPrototypeTheme = EditorView.theme({
   // Drop-position indicator during drag. CM's default is solid black →
   // invisible on a dark palette; tint it so you can gauge where it'll land.
   '.cm-dropCursor': { borderLeftColor: 'var(--info)', borderLeftWidth: '2px' },
-  '.cm-selectionBackground, ::selection': {
-    backgroundColor: 'color-mix(in oklch, var(--info) 22%, transparent)',
-  },
+  // Selection fill. CM's built-in theme paints a FOCUSED selection with a very
+  // high-specificity selector (`&light.cm-focused > .cm-scroller >
+  // .cm-selectionLayer .cm-selectionBackground` = #d7d4f0, a lavender) that out-
+  // specifies a plain `.cm-selectionBackground` rule — so a naive override loses
+  // while focused and the drag highlight goes two-tone. The official One Dark theme's
+  // fix (no !important): list the SAME focused selector to win on equal specificity,
+  // plus the plain class for the unfocused state, plus the native `.cm-content
+  // ::selection` so both the drawn layer and the OS selection share one colour.
+  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection':
+    {
+      backgroundColor: 'color-mix(in oklch, var(--info) 22%, transparent)',
+    },
 
   // Headings (line decorations)
   '.cm-h1, .cm-h2, .cm-h3, .cm-h4, .cm-h5, .cm-h6': {
@@ -195,9 +204,14 @@ export const cmPrototypeTheme = EditorView.theme({
     color: 'var(--muted-foreground)',
   },
   // Ordered number (v2 step 3) — the digits ARE the glyph, so just tint them
-  // (right-aligned in the column, next to the body).
+  // (right-aligned in the column, next to the body). The trailing space after `N.`
+  // is folded out of the render (livePreview, so wrapped lines align), which would
+  // otherwise glue the digits to the body — `padding-right` restores the gap inside
+  // the fixed `box-sizing:border-box` column (width unchanged; only on `.cm-list-num`,
+  // so the task checkbox's hit-test anchor is untouched).
   '.cm-list-num': {
     color: 'var(--muted-foreground)',
+    paddingRight: '0.3em',
   },
   // Completed task body — struck through and muted (v2 step 5c).
   '.cm-task-done': {

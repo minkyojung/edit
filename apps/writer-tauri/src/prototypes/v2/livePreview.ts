@@ -248,6 +248,13 @@ function buildDecos(
                   ? 'cm-list-marker'
                   : `cm-list-marker cm-task-marker${checked ? ' cm-task-marker-checked' : ''}`,
               )
+              // Fold the space after `]` out of the render (same reason/gate as the
+              // bullet/number branch below) so the body lands at the column edge on
+              // every line. The marker box range (nf..markerTo) is untouched, so
+              // `coordsAtPos(markerTo)` — the checkbox click hit-test anchor — is
+              // unaffected.
+              if (!cursorInRange(state, line.from, line.to) && state.doc.sliceString(markerTo, markerTo + 1) === ' ')
+                hide(markerTo, markerTo + 1)
               // Completed task → strike + mute the body (kept while editing, like
               // Obsidian). Start at the first non-space AFTER the marker so the
               // strike doesn't run through the gap between the checkbox and the text.
@@ -260,6 +267,13 @@ function buildDecos(
           }
           if (state.doc.sliceString(nt, nt + 1) !== ' ') return // `- `/`1. ` only
           const isNum = item?.parent?.name === 'OrderedList'
+          // Fold the marker's trailing space (nt..nt+1) OUT of the render so body
+          // text starts at the column edge on EVERY line. That space is a real char:
+          // left in the flow it only indents the FIRST line, so wrapped lines hang one
+          // space-width too far left. This is a render-only replace (doc unchanged) and
+          // is gated LINE-level (caret off the line) — never leave a replace beside a
+          // composing IME caret — exactly like the heading/wikilink hides above.
+          if (!cursorInRange(state, line.from, line.to)) hide(nt, nt + 1)
           // Number is its own glyph (just tinted) → always shown. Bullet hides its
           // dash and draws a •, unless the caret is on it (then raw). Either way the
           // `.cm-list-marker` column stays, so the body never shifts on reveal.
