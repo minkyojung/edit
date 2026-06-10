@@ -23,6 +23,7 @@ import { cmPrototypeTheme } from '../cmTheme'
 import { livePreviewV2, taskCheckboxClick } from './livePreview'
 import { blocksV2 } from './blocks'
 import { tableArrowEntry } from './editableTable'
+import { blockVerticalNav } from './blockVerticalNav'
 import { tableBackspace } from './tableBackspace'
 import { inlineFormatKeymap } from './inlineFormat'
 import { smartEnter } from '../listEnter'
@@ -171,6 +172,7 @@ export default function CmCore() {
           livePreviewV2, // heading/emphasis/link/wikilink/quote/hr/code (inline+line)
           blocksV2, // image + table + media widgets — StateField + map (no reload above)
           tableArrowEntry, // ArrowDown/Up on the line above/below a table → enter a cell
+          blockVerticalNav, // correct ArrowUp/Down overshoot across stacked block widgets
           Prec.highest(arrowDebug), // TEMP — arrow-jump instrumentation, remove after diagnosis
           cmPrototypeTheme,
         ],

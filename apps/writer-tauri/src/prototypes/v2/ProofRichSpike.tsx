@@ -18,6 +18,7 @@ import { cmPrototypeTheme } from '../cmTheme'
 import { livePreviewV2, taskCheckboxClick } from './livePreview'
 import { blocksV2 } from './blocks'
 import { tableArrowEntry } from './editableTable'
+import { blockVerticalNav } from './blockVerticalNav'
 import { proofMarks, addSuggestion, seedSuggestion, blockSuggestion } from './proofMarks'
 
 const SAMPLE = `# Proof marks over full markdown
@@ -99,6 +100,7 @@ export default function ProofRichSpike() {
           blocksV2, // table / image / media widgets
           Prec.highest(arrowDebug), // TEMP — arrow-jump instrumentation, remove after diagnosis
           tableArrowEntry,
+          blockVerticalNav, // correct ArrowUp/Down overshoot across stacked block widgets
           proofMarks, // ← suggestion marks layered on top
           cmPrototypeTheme,
         ],
