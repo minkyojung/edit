@@ -13,6 +13,7 @@
  * it just no longer renders the page header on its own.
  */
 
+import { lazy, Suspense } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { MilkdownEditor } from '@/editor/MilkdownEditor'
@@ -24,13 +25,22 @@ interface Props {
   onViewReady?: (view: EditorView | null) => void
 }
 
+// Stage-1 swap flag (DEV-only, reversible). Flip in the console:
+//   localStorage.setItem('writer.cmEditor', '1'); location.reload()
+// to mount the CodeMirror editor instead of Milkdown; remove it to revert.
+// Lazy so the CM editor + its prototype modules never enter the production bundle.
+const CmEditor = lazy(() => import('@/editor/CmEditor').then((m) => ({ default: m.CmEditor })))
+const useCmEditor = (): boolean =>
+  import.meta.env.DEV && typeof localStorage !== 'undefined' && localStorage.getItem('writer.cmEditor') === '1'
+
 export function Page({ handle, status, onViewReady }: Props) {
-  return (
-    <MilkdownEditor
-      handle={handle}
-      status={status}
-      onViewReady={onViewReady}
-      header={handle ? <PageHeader slug={handle.slug} /> : null}
-    />
-  )
+  const header = handle ? <PageHeader slug={handle.slug} /> : null
+  if (useCmEditor()) {
+    return (
+      <Suspense fallback={null}>
+        <CmEditor handle={handle} status={status} onViewReady={onViewReady} header={header} />
+      </Suspense>
+    )
+  }
+  return <MilkdownEditor handle={handle} status={status} onViewReady={onViewReady} header={header} />
 }
