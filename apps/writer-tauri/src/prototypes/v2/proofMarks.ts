@@ -124,6 +124,12 @@ class ReviewWidget extends WidgetType {
     preview.className = 'cm-proof-preview'
     box._preview = renderMarkdownReadonly(preview, this.s.after)
     box.append(bar, preview)
+    // The preview's real height settles a frame or two later (its nested table/image
+    // editor measures async). Until then the OUTER heightmap holds the stale
+    // estimatedHeight — and vertical-arrow motion crossing this block lands on the
+    // wrong line. Tell the outer view to re-measure once it has settled, exactly as
+    // ImageWidget does on <img> load. Two frames covers mount + nested first layout.
+    requestAnimationFrame(() => requestAnimationFrame(() => view.requestMeasure()))
     return box
   }
   // CM does not auto-destroy the nested preview view — release it on teardown.
@@ -132,6 +138,12 @@ class ReviewWidget extends WidgetType {
   }
   ignoreEvent() {
     return true
+  }
+  // Seed the heightmap with a realistic block height (a preview tile is ~ a few
+  // lines + the bar). Without this CM assumes ~0 and everything below maps wrong
+  // until the first measure. -1 on the inline branch = "let CM estimate".
+  get estimatedHeight() {
+    return this.s.layout === 'block' ? 180 : -1
   }
 }
 
