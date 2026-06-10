@@ -58,6 +58,8 @@ const CmCore = lazy(() => import('@/prototypes/v2/CmCore'))
 const TableCellSpike = lazy(() => import('@/prototypes/v2/TableCellSpike'))
 // DEV-only spike: nested CodeMirror EditorView inside a cell (rich-cell IME test).
 const NestedCellSpike = lazy(() => import('@/prototypes/v2/NestedCellSpike'))
+// DEV-only spike: CM-native proof/suggestion mark system (AI-collaboration port).
+const ProofMarkSpike = lazy(() => import('@/prototypes/v2/ProofMarkSpike'))
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
@@ -150,6 +152,16 @@ export function App() {
                       <BootGate>
                         <Suspense fallback={null}>
                           <NestedCellSpike />
+                        </Suspense>
+                      </BootGate>
+                    }
+                  />
+                  <Route
+                    path="/dev/proofmark"
+                    element={
+                      <BootGate>
+                        <Suspense fallback={null}>
+                          <ProofMarkSpike />
                         </Suspense>
                       </BootGate>
                     }
