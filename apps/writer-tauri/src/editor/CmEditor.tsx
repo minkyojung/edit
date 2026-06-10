@@ -21,6 +21,7 @@ import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@cod
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
 import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@codemirror/lang-markdown'
+import { autocompletion } from '@codemirror/autocomplete'
 import { GFM } from '@lezer/markdown'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
@@ -35,6 +36,7 @@ import { tableArrowEntry } from '@/prototypes/v2/editableTable'
 import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
 import { wikilinkClick } from '@/prototypes/wikilinkNav'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
+import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 
 interface Props {
   handle: CollabHandle | null
@@ -93,6 +95,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             dropCursor(),
             EditorView.lineWrapping,
             markdown({ extensions: [GFM], addKeymap: false }),
+            autocompletion({ override: [cmWikilinkSource], icons: true }), // [[ → real notes
             placeholder('Start writing…'),
             taskCheckboxClick,
             livePreviewV2,
