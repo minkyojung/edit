@@ -22,13 +22,17 @@ export function wikilinkAtPos(state: EditorState, pos: number): string | null {
 }
 
 /** Click a `[[Title]]` → `onNavigate(title)` (and suppress the default caret
- * placement so it reads as a link, not a text click). */
+ * placement so it reads as a link, not a text click).
+ *
+ * Hit-test by the clicked DOM ELEMENT, not by `posAtCoords`: the latter clamps an
+ * off-text click to the nearest position, so on a line dominated by a wikilink ANY
+ * click on the line lands inside the link's range and (wrongly) navigates. The styled
+ * title span (`.cm-wikilink`) is the real target — empty line space is a `.cm-line`. */
 export function wikilinkClick(onNavigate: (title: string) => void): Extension {
   return EditorView.domEventHandlers({
-    mousedown(event, view) {
-      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
-      if (pos == null) return false
-      const title = wikilinkAtPos(view.state, pos)
+    mousedown(event) {
+      const el = (event.target as HTMLElement | null)?.closest?.('.cm-wikilink')
+      const title = el?.textContent?.trim()
       if (!title) return false
       event.preventDefault()
       onNavigate(title)
