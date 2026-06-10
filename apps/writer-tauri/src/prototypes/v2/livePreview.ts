@@ -132,16 +132,29 @@ function buildDecos(
           if (isWikiLink(state, nf, nt)) return
           return void mark(nf, nt, 'cm-link')
         }
+        // URL nodes are TWO different things: the `(url)` destination of a
+        // `[text](url)` link (hideable — the text stays), OR a GFM bare autolink
+        // `https://…` which IS the only visible content (hiding it erases the line).
+        // Distinguish by whether a `[text](` precedes it inside a Link.
+        if (name === 'URL') {
+          const p = node.node.parent
+          if (p?.name === 'Link' && isWikiLink(state, p.from, p.to)) return // overlay owns wikilinks
+          const isDestination = p?.name === 'Link' && p.from < nf // a `[text](` sits before the url
+          if (!isDestination) return void mark(nf, nt, 'cm-link') // bare autolink — style, never hide
+          const line = state.doc.lineAt(nf)
+          const reveal = revealAll ?? cursorInRange(state, line.from, line.to)
+          if (!reveal) hide(nf, nt)
+          return
+        }
         if (
           name === 'EmphasisMark' ||
           name === 'StrikethroughMark' ||
           name === 'CodeMark' ||
-          name === 'LinkMark' ||
-          name === 'URL'
+          name === 'LinkMark'
         ) {
           // A wikilink's inner `[`/`]` are LinkMarks of a Link — leave them to the
           // regex overlay so the two layers don't both hide them with split gates.
-          if (name === 'LinkMark' || name === 'URL') {
+          if (name === 'LinkMark') {
             const p = node.node.parent
             if (p?.name === 'Link' && isWikiLink(state, p.from, p.to)) return
           }
