@@ -88,15 +88,17 @@ const ARTICLE_POLICY: DocPolicy = {
 
 const YOUTUBE_POLICY: DocPolicy = {
   // Captured YouTube video (transcript + metadata). Like article it's a
-  // raw external source the user saved and can archive — but UNLIKE
-  // article it IS an ingest source: the whole point of capture is to feed
-  // the transcript into the wiki. User-owned (not agent-managed); shares
+  // raw external source the user saved and can archive. NOT an automatic
+  // ingest source: a transcript is large and feeding it into the wiki on
+  // every idle tick would flood the proposal queue. Capture is a
+  // human-facing read first; pushing a transcript into the wiki should be
+  // an explicit, user-initiated action, not a background trigger. Shares
   // the article sidebar section for now (a dedicated inbox view is later).
   category: 'youtube',
   sidebarGroup: 'article',
   canArchive: true,
   canBeMovedInWikiTree: false,
-  isIngestSource: true,
+  isIngestSource: false,
   isAgentManaged: false,
 }
 

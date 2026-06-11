@@ -11,6 +11,7 @@
 import { generateClientSlug } from '@/lib/slug'
 import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
 import { fetchYoutubeCapture, type YoutubeCapture } from '@/lib/youtube'
+import { summarizeTranscript, withSummary } from '@/agent/summarizeTranscript'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 
 /** Project a fetched capture onto a `youtube` KnownDoc. Pure — the caller
@@ -63,7 +64,27 @@ export async function createYoutubeNote(
   markSlugDirty(slug)
   void flushDirty()
 
+  // Summarize in the background: the note shows instantly with the raw
+  // transcript; a TL;DR + key points is prepended a few seconds later.
+  // Best-effort — a failed/timed-out summary just leaves the transcript.
+  void summarizeInBackground(slug, capture.bodyMarkdown)
+
   return slug
+}
+
+async function summarizeInBackground(
+  slug: string,
+  transcript: string,
+): Promise<void> {
+  try {
+    const summary = await summarizeTranscript(transcript)
+    if (!summary) return
+    await useDocsStore
+      .getState()
+      .replaceDocBody(slug, withSummary(summary, transcript))
+  } catch (err) {
+    console.warn('[youtube] background summarize failed', err)
+  }
 }
 
 /** Fetch a YouTube URL's transcript + metadata and create the note in one
