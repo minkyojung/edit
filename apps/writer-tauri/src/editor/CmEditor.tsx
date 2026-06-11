@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { EditorView as PMEditorView } from '@milkdown/kit/prose/view'
 import { EditorState, Prec, Annotation } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@codemirror/view'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
 import { markdown, deleteMarkupBackward } from '@codemirror/lang-markdown'
 import { autocompletion } from '@codemirror/autocomplete'
@@ -82,6 +82,23 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
     if (!parent || !handle) return
     let view: EditorView | null = null
     let mounted = true
+
+    // Cmd-Z / Cmd-Shift-Z router. Accept/Reject from the CHAT PANEL lands an undoable
+    // entry in THIS editor's history, but the click leaves focus on the chat button, so
+    // a plain Cmd-Z never reaches CM. We catch it at the document level and forward to
+    // this view's undo/redo — UNLESS focus is in a text-entry element (the editor's own
+    // contenteditable, the chat composer, any input), which owns its undo. That guard
+    // also prevents a double-undo when the editor itself is focused (CM's keymap runs).
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return
+      const el = document.activeElement as HTMLElement | null
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      const v = view
+      if (!v) return
+      const did = e.shiftKey ? redo(v) : undo(v)
+      if (did) e.preventDefault()
+    }
+    document.addEventListener('keydown', onKeyDown)
 
     void handle.contentReady.then(() => {
       if (!mounted || !rootRef.current) return
@@ -166,6 +183,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
 
     return () => {
       mounted = false
+      document.removeEventListener('keydown', onKeyDown)
       if (handle) unregisterCmEditor(handle.slug)
       view?.destroy()
       view = null
