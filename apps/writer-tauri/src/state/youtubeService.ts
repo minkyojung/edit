@@ -15,7 +15,11 @@ import {
   linkifyTimestamps,
   type YoutubeCapture,
 } from '@/lib/youtube'
-import { summarizeTranscript, withSummary } from '@/agent/summarizeTranscript'
+import {
+  splitSummary,
+  summarizeTranscript,
+  withSummary,
+} from '@/agent/summarizeTranscript'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 
 /** Project a fetched capture onto a `youtube` KnownDoc. Pure — the caller
@@ -86,12 +90,21 @@ async function summarizeInBackground(
   videoId: string,
 ): Promise<void> {
   try {
-    // Summarize the clean transcript (no link noise), then linkify the
-    // whole composed body so the summary's timestamps are clickable too.
+    // Summarize the clean transcript (no link noise). The TL;DR becomes
+    // the header dek (stored on the doc); the key points stay in the
+    // body. Linkify the whole composed body so timestamps are clickable.
     const summary = await summarizeTranscript(transcript)
     if (!summary) return
-    const body = linkifyTimestamps(withSummary(summary, transcript), videoId)
-    await useDocsStore.getState().replaceDocBody(slug, body)
+    const { dek, body } = splitSummary(summary)
+    if (dek) {
+      useDocsStore.setState((s) => ({
+        knownDocs: s.knownDocs.map((d) =>
+          d.slug === slug ? { ...d, description: dek } : d,
+        ),
+      }))
+    }
+    const noteBody = linkifyTimestamps(withSummary(body, transcript), videoId)
+    await useDocsStore.getState().replaceDocBody(slug, noteBody)
   } catch (err) {
     console.warn('[youtube] background summarize failed', err)
   }

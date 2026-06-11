@@ -115,6 +115,10 @@ export interface DocMetaFile {
   videoId?: string
   durationSec?: number
   thumbnailUrl?: string
+  /** Short summary shown as the reader "dek" under the title (the TL;DR
+   * for a youtube capture). Lifted out of the body so the header can
+   * render it styled, separate from the editable content. */
+  description?: string
 }
 
 /** Lookup a doc by slug. Required by {@link pathForDoc} only for
@@ -206,6 +210,7 @@ export function frontmatterToMeta(
     if (Number.isFinite(n)) meta.durationSec = n
   }
   if (data.thumbnailUrl) meta.thumbnailUrl = data.thumbnailUrl
+  if (data.description) meta.description = data.description
   return meta
 }
 
@@ -241,6 +246,7 @@ export function metaToFrontmatterFields(
     videoId: meta.videoId,
     durationSec: meta.durationSec,
     thumbnailUrl: meta.thumbnailUrl,
+    description: meta.description,
   }
 }
 

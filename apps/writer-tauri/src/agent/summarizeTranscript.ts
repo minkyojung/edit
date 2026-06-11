@@ -85,11 +85,35 @@ export async function summarizeTranscript(
   ])
 
   const text = outcome?.text?.trim()
+  if (!text) {
+    // Empty usually means the run never settled — e.g. the app reloaded
+    // mid-run and orphaned the listeners. Best-effort: leave the transcript.
+    console.warn('[youtube] summary empty or timed out')
+  }
   return text ? text : null
 }
 
-/** Compose the note body: the summary on top, the full transcript below
- *  a `## Transcript` heading. Pure — the summary call is separate. */
+/** Split the model's `## TL;DR … ## Key points …` output into the dek
+ *  (TL;DR text — rendered as the header subtitle) and the body (the key
+ *  points, kept in the note). Falls back to treating the whole thing as
+ *  the dek if the `## Key points` heading is missing. Pure. */
+export function splitSummary(summary: string): { dek: string; body: string } {
+  const kp = summary.match(/\n##\s*Key points/i)
+  const stripTldr = (s: string) => s.replace(/^\s*##\s*TL;DR\s*\n?/i, '').trim()
+  if (!kp || kp.index === undefined) {
+    return { dek: stripTldr(summary), body: '' }
+  }
+  return {
+    dek: stripTldr(summary.slice(0, kp.index)),
+    body: summary.slice(kp.index + 1).trim(),
+  }
+}
+
+/** Compose the note body: the body markdown (key points) on top, the full
+ *  transcript below a `## Transcript` heading. The TL;DR dek is handled
+ *  separately (header), so an empty body just yields the transcript. */
 export function withSummary(summaryMarkdown: string, transcript: string): string {
-  return `${summaryMarkdown.trim()}\n\n## Transcript\n\n${transcript.trim()}\n`
+  const s = summaryMarkdown.trim()
+  const t = transcript.trim()
+  return s ? `${s}\n\n## Transcript\n\n${t}\n` : `## Transcript\n\n${t}\n`
 }

@@ -215,6 +215,7 @@ function buildMetaForKnownDoc(
     videoId: known?.videoId,
     durationSec: known?.durationSec,
     thumbnailUrl: known?.thumbnailUrl,
+    description: known?.description,
   }
 }
 

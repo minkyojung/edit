@@ -183,6 +183,7 @@ export function mdRelToKnownDoc(
   if (typeof meta.videoId === 'string') overlay.videoId = meta.videoId
   if (typeof meta.durationSec === 'number') overlay.durationSec = meta.durationSec
   if (typeof meta.thumbnailUrl === 'string') overlay.thumbnailUrl = meta.thumbnailUrl
+  if (typeof meta.description === 'string') overlay.description = meta.description
   return { ...base, ...overlay } as KnownDoc
 }
 
