@@ -141,8 +141,10 @@ function buildDecos(
           if (p?.name === 'Link' && isWikiLink(state, p.from, p.to)) return // overlay owns wikilinks
           const isDestination = p?.name === 'Link' && p.from < nf // a `[text](` sits before the url
           if (!isDestination) return void mark(nf, nt, 'cm-link') // bare autolink — style, never hide
-          const line = state.doc.lineAt(nf)
-          const reveal = revealAll ?? cursorInRange(state, line.from, line.to)
+          // Reveal the raw `(url)` only when the caret is inside THIS link's
+          // span — not anywhere on the (line-wrapped) line. Without this, a
+          // caret in a long bullet's text pops every link's URL on the line.
+          const reveal = revealAll ?? cursorInRange(state, p!.from, p!.to)
           if (!reveal) hide(nf, nt)
           return
         }
@@ -154,15 +156,23 @@ function buildDecos(
         ) {
           // A wikilink's inner `[`/`]` are LinkMarks of a Link — leave them to the
           // regex overlay so the two layers don't both hide them with split gates.
+          // Cell mode (revealAll defined) → reveal by focus. Else ACTIVE-LINE reveal:
+          // show the WHOLE line raw when the selection touches it (the IME-safe rule —
+          // the composing line never carries a replace decoration). Exception:
+          // a link's marks reveal with their OWN link span (below), so a caret
+          // in a long wrapped bullet's text doesn't pop the link's raw URL.
+          const ln = state.doc.lineAt(nf)
+          let rFrom = ln.from
+          let rTo = ln.to
           if (name === 'LinkMark') {
             const p = node.node.parent
             if (p?.name === 'Link' && isWikiLink(state, p.from, p.to)) return
+            if (p?.name === 'Link') {
+              rFrom = p.from
+              rTo = p.to
+            }
           }
-          // Cell mode (revealAll defined) → reveal by focus. Else ACTIVE-LINE reveal:
-          // show the WHOLE line raw when the selection touches it (the IME-safe rule —
-          // the composing line never carries a replace decoration).
-          const line = state.doc.lineAt(nf)
-          const reveal = revealAll ?? cursorInRange(state, line.from, line.to)
+          const reveal = revealAll ?? cursorInRange(state, rFrom, rTo)
           if (!reveal) hide(nf, nt)
           return
         }
