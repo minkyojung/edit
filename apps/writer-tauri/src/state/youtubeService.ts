@@ -10,7 +10,11 @@
 
 import { generateClientSlug } from '@/lib/slug'
 import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
-import { fetchYoutubeCapture, type YoutubeCapture } from '@/lib/youtube'
+import {
+  fetchYoutubeCapture,
+  linkifyTimestamps,
+  type YoutubeCapture,
+} from '@/lib/youtube'
 import { summarizeTranscript, withSummary } from '@/agent/summarizeTranscript'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 
@@ -51,9 +55,13 @@ export async function createYoutubeNote(
   useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, doc] }))
 
   // Seed the transcript as the body so the note is fully ready on return.
+  // Timestamps become deep-links here so they're clickable immediately,
+  // before the summary lands.
   if (capture.bodyMarkdown.trim()) {
     try {
-      await useDocsStore.getState().seedDocBody(slug, capture.bodyMarkdown)
+      await useDocsStore
+        .getState()
+        .seedDocBody(slug, linkifyTimestamps(capture.bodyMarkdown, capture.videoId))
     } catch (err) {
       console.warn('[youtube] createYoutubeNote seed failed', err)
     }
@@ -67,7 +75,7 @@ export async function createYoutubeNote(
   // Summarize in the background: the note shows instantly with the raw
   // transcript; a TL;DR + key points is prepended a few seconds later.
   // Best-effort — a failed/timed-out summary just leaves the transcript.
-  void summarizeInBackground(slug, capture.bodyMarkdown)
+  void summarizeInBackground(slug, capture.bodyMarkdown, capture.videoId)
 
   return slug
 }
@@ -75,13 +83,15 @@ export async function createYoutubeNote(
 async function summarizeInBackground(
   slug: string,
   transcript: string,
+  videoId: string,
 ): Promise<void> {
   try {
+    // Summarize the clean transcript (no link noise), then linkify the
+    // whole composed body so the summary's timestamps are clickable too.
     const summary = await summarizeTranscript(transcript)
     if (!summary) return
-    await useDocsStore
-      .getState()
-      .replaceDocBody(slug, withSummary(summary, transcript))
+    const body = linkifyTimestamps(withSummary(summary, transcript), videoId)
+    await useDocsStore.getState().replaceDocBody(slug, body)
   } catch (err) {
     console.warn('[youtube] background summarize failed', err)
   }

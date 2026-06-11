@@ -36,6 +36,7 @@ import { tableArrowEntry } from '@/prototypes/v2/editableTable'
 import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
 import { wikilinkClick } from '@/prototypes/wikilinkNav'
 import { linkClick } from '@/prototypes/linkNav'
+import { timestampSeekClick } from '@/editor/cmTimestampSeek'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
 import { cmProofReview, acceptEffect, rejectEffect } from '@/editor/cmProofReview'
 import { openLinkSafely } from '@/editor/linkUtils'
@@ -136,6 +137,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             blockVerticalNav,
             wikilinkKnown.of(isKnownNoteTitle), // blue vs red from REAL knownDocs
             wikilinkClick(navigateToNoteByTitle), // click [[Title]] → open that note
+            timestampSeekClick, // plain-click a YouTube timestamp → seek the embed
             linkClick(openLinkSafely), // Cmd/Ctrl-click [text](url) → open (safe schemes)
             mediaDropPaste(importMediaToVault), // drop/paste media → vault + insert
             cmProofReview(handle.slug), // AI suggestions from pendingChangesStore → inline marks

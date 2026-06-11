@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   approxDurationSec,
+  linkifyTimestamps,
   parseYoutubeId,
+  parseYoutubeTimestampLink,
   transcriptToMarkdown,
   type TranscriptSegment,
 } from './youtube'
@@ -72,6 +74,56 @@ describe('transcriptToMarkdown', () => {
 
   it('returns empty string for no segments', () => {
     expect(transcriptToMarkdown([])).toBe('')
+  })
+})
+
+describe('linkifyTimestamps', () => {
+  const ID = 'dQw4w9WgXcQ'
+
+  it('converts [mm:ss] into a deep-link at the right second', () => {
+    expect(linkifyTimestamps('[00:44] and then', ID)).toBe(
+      '[00:44](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=44s) and then',
+    )
+  })
+
+  it('handles [h:mm:ss] timestamps', () => {
+    expect(linkifyTimestamps('[1:01:01] late', ID)).toBe(
+      '[1:01:01](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=3661s) late',
+    )
+  })
+
+  it('linkifies every timestamp in a multi-line body', () => {
+    const out = linkifyTimestamps('[00:12] a\n\n[02:05] b', ID)
+    expect(out).toContain('[00:12](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=12s)')
+    expect(out).toContain('[02:05](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=125s)')
+  })
+
+  it('is idempotent — already-linked timestamps are left alone', () => {
+    const once = linkifyTimestamps('[00:44] x', ID)
+    expect(linkifyTimestamps(once, ID)).toBe(once)
+  })
+
+  it('leaves non-timestamp bracketed text untouched', () => {
+    expect(linkifyTimestamps('[note] and [TODO]', ID)).toBe('[note] and [TODO]')
+  })
+})
+
+describe('parseYoutubeTimestampLink', () => {
+  it('round-trips a link emitted by linkifyTimestamps', () => {
+    const href = linkifyTimestamps('[02:05]', 'dQw4w9WgXcQ').match(/\((.+)\)/)![1]
+    expect(parseYoutubeTimestampLink(href)).toEqual({ videoId: 'dQw4w9WgXcQ', sec: 125 })
+  })
+
+  it('parses the seconds off the t=Ns param', () => {
+    expect(
+      parseYoutubeTimestampLink('https://www.youtube.com/watch?v=abc12345678&t=44s'),
+    ).toEqual({ videoId: 'abc12345678', sec: 44 })
+  })
+
+  it('returns null for non-timestamp / non-youtube links', () => {
+    expect(parseYoutubeTimestampLink('https://www.youtube.com/watch?v=abc12345678')).toBeNull()
+    expect(parseYoutubeTimestampLink('https://example.com/watch?v=x&t=10s')).toBeNull()
+    expect(parseYoutubeTimestampLink('not a url')).toBeNull()
   })
 })
 

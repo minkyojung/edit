@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: https://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://api.anthropic.com; worker-src 'self' blob:",
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: https://asset.localhost https://*.ytimg.com; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://api.anthropic.com; frame-src https://www.youtube-nocookie.com https://www.youtube.com; worker-src 'self' blob:",
       "assetProtocol": {
         "enable": true,
         "scope": [

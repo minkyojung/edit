@@ -19,6 +19,7 @@ import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { useObservePageTitle } from '@/hooks/useObservePageTitle'
 import { EditableTitleInput } from './EditableTitleInput'
+import { YoutubeHeader } from './YoutubeHeader'
 
 interface Props {
   slug: string
@@ -40,6 +41,13 @@ export function PageHeader({ slug }: Props) {
   // they are agent-managed.
   if (isWikiDoc(known) && known.type.startsWith('system:')) {
     return <ReadOnlyHeader label={label} ariaLabel="System page" />
+  }
+
+  // Captured YouTube videos get a metadata card (thumbnail / channel /
+  // duration / source link) instead of an editable title — the title is
+  // the video's, not something the user names.
+  if (known.type === 'youtube') {
+    return <YoutubeHeader known={known} />
   }
 
   // User-editable docs (user-owned wiki + writing) get an inline

@@ -142,6 +142,47 @@ export function transcriptToMarkdown(
   return lines.join('\n\n')
 }
 
+/** Convert bare `[mm:ss]` / `[h:mm:ss]` timestamps in markdown into
+ *  deep-links that jump to that moment in the video. Timestamps already
+ *  written as links (followed by `(`) are left alone, so re-running is
+ *  idempotent. Pure — applied to the final note body so both the
+ *  transcript and the LLM summary's timestamps become clickable; a
+ *  ⌘/Ctrl-click opens them in the browser (linkClickPlugin). */
+export function linkifyTimestamps(markdown: string, videoId: string): string {
+  return markdown.replace(
+    /\[(\d{1,2}:\d{2}(?::\d{2})?)\](?!\()/g,
+    (_match, ts: string) => {
+      const seconds = ts
+        .split(':')
+        .reduce((acc, part) => acc * 60 + Number(part), 0)
+      return `[${ts}](https://www.youtube.com/watch?v=${videoId}&t=${seconds}s)`
+    },
+  )
+}
+
+/** Parse a timestamp deep-link (as emitted by {@link linkifyTimestamps})
+ *  back into its video id + seconds, so a click handler can seek the
+ *  embedded player instead of opening the browser. Returns null for any
+ *  URL that isn't one of our `watch?v=…&t=…s` links. */
+export function parseYoutubeTimestampLink(
+  href: string,
+): { videoId: string; sec: number } | null {
+  let u: URL
+  try {
+    u = new URL(href)
+  } catch {
+    return null
+  }
+  if (u.hostname.replace(/^www\./, '') !== 'youtube.com') return null
+  if (u.pathname !== '/watch') return null
+  const videoId = u.searchParams.get('v')
+  const t = u.searchParams.get('t')
+  if (!videoId || !t) return null
+  const sec = parseInt(t, 10) // "125s" → 125
+  if (!Number.isFinite(sec)) return null
+  return { videoId, sec }
+}
+
 /** Approximate the video length from the last segment's end time (offset
  *  + duration), in whole seconds. Undefined for an empty transcript. */
 export function approxDurationSec(
