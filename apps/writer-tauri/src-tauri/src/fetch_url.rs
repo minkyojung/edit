@@ -11,6 +11,7 @@
 //! All errors surface as `Result<_, String>` so the frontend gets a
 //! short human-readable reason for any failure. The frontend logs
 //! these to console and shows them in the Profile Review UI.
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -234,5 +235,93 @@ pub async fn fetch_binary(
         status,
         content_type,
         base64,
+    })
+}
+
+#[derive(serde::Deserialize)]
+pub struct HttpRequest {
+    /// HTTP verb (case-insensitive). GET / POST are the only ones we use,
+    /// but any valid method is accepted.
+    pub method: String,
+    pub url: String,
+    /// Request headers as a plain map. The caller sets whatever a
+    /// cross-origin call needs (Content-Type, a client-specific
+    /// User-Agent, ...). An explicit `user-agent` here overrides the
+    /// client default below.
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    /// Raw request body (e.g. a JSON string for a POST). None for GET.
+    pub body: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct HttpResponse {
+    /// Final URL after redirects.
+    pub url: String,
+    pub status: u16,
+    pub content_type: Option<String>,
+    /// UTF-8 decoded body, returned verbatim — no XML sanitisation (that
+    /// would corrupt JSON), no size-trimming beyond the cap. Callers
+    /// parse it as JSON / XML / text themselves.
+    pub body: String,
+}
+
+/// Generic HTTP passthrough for the WebView frontend: lets JS issue a
+/// cross-origin request (POST included, with arbitrary headers/body) by
+/// bouncing it through Rust, which isn't bound by the WebView's CORS
+/// policy. Same safety policy as `fetch_url` (http(s) only, SSRF guard
+/// on the initial URL, timeout, redirect limit, body cap).
+///
+/// Added for the YouTube transcript path: the InnerTube `youtubei/v1/player`
+/// endpoint is a POST with a JSON body and a client-specific User-Agent,
+/// which the GET-only `fetch_url` can't express. Kept generic so other
+/// capture sources can reuse it rather than each minting a bespoke command.
+#[tauri::command]
+pub async fn fetch_http(req: HttpRequest) -> Result<HttpResponse, String> {
+    let parsed = parse_public_url(&req.url)?;
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(TIMEOUT_SECS))
+        .redirect(reqwest::redirect::Policy::limited(REDIRECT_LIMIT))
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(|e| format!("client init: {e}"))?;
+
+    let method = reqwest::Method::from_bytes(req.method.to_uppercase().as_bytes())
+        .map_err(|e| format!("invalid method: {e}"))?;
+    let mut builder = client.request(method, parsed);
+    for (k, v) in &req.headers {
+        builder = builder.header(k.as_str(), v.as_str());
+    }
+    if let Some(b) = req.body {
+        builder = builder.body(b);
+    }
+
+    let resp = builder.send().await.map_err(|e| format!("fetch: {e}"))?;
+    let status = resp.status().as_u16();
+    let final_url = resp.url().to_string();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("body read: {e}"))?;
+    if bytes.len() > MAX_BODY_BYTES {
+        return Err(format!(
+            "response too large: {} bytes (cap {MAX_BODY_BYTES})",
+            bytes.len()
+        ));
+    }
+    let body = String::from_utf8_lossy(&bytes).into_owned();
+
+    Ok(HttpResponse {
+        url: final_url,
+        status,
+        content_type,
+        body,
     })
 }

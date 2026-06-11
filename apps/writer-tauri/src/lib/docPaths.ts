@@ -30,6 +30,7 @@
 
 import type { KnownDoc } from '@/state/docsStore'
 import type { HighlightRecord } from '@/lib/highlightTypes'
+import type { FrontmatterScalar } from '@/lib/frontmatter'
 
 /**
  * Doc identity sidecar — the `<stem>.meta.json` file that scanVault
@@ -107,6 +108,13 @@ export interface DocMetaFile {
    * truth for highlights — the editor re-anchors each to the body on
    * mount. Absent on every other doc type. */
   highlights?: HighlightRecord[]
+  /** YouTube capture metadata (type 'youtube' only). Persisted in `.md`
+   * frontmatter rather than this sidecar — youtube is the first
+   * frontmatter-native type — but the field shape is shared so the
+   * frontmatter ⇄ meta mapping has one definition. */
+  videoId?: string
+  durationSec?: number
+  thumbnailUrl?: string
 }
 
 /** Lookup a doc by slug. Required by {@link pathForDoc} only for
@@ -141,7 +149,99 @@ export function pathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null {
     const filename = sanitizeFilename(doc.title?.trim() || 'Untitled')
     return `articles/${filename}.md`
   }
+  if (doc.type === 'youtube') {
+    const filename = sanitizeFilename(doc.title?.trim() || 'Untitled')
+    return `inbox/${filename}.md`
+  }
   return null
+}
+
+/** True when a doc stores its metadata inside its own `.md` frontmatter
+ * rather than a `.meta.json` sidecar. YouTube captures are the first
+ * (and currently only) frontmatter-native type; every other type keeps
+ * the sidecar until the bulk migration. The flush writer
+ * (`docFileSync`) and the body loader (`handlesSlice`) both gate on this
+ * so a doc's on-disk shape stays consistent in both directions. */
+export function usesFrontmatter(doc: Pick<KnownDoc, 'type'>): boolean {
+  return doc.type === 'youtube'
+}
+
+/** Coerce a parsed frontmatter block (whose values are all raw strings)
+ * into the sidecar-shaped meta the catalog overlay reads. Numeric fields
+ * are parsed; unrecognised keys are ignored. Mirrors exactly the fields
+ * `mdRelToKnownDoc` layers, so a doc whose metadata lives in frontmatter
+ * rebuilds identically to one whose metadata lives in a `.meta.json`
+ * sidecar.
+ *
+ * `highlights` is intentionally omitted: it's a nested array that doesn't
+ * fit a flat frontmatter block, and no frontmatter-stored doc type uses
+ * it yet. */
+export function frontmatterToMeta(
+  data: Record<string, string>,
+): Partial<DocMetaFile> {
+  const meta: Partial<DocMetaFile> = {}
+  if (data.slug) meta.slug = data.slug
+  if (data.createdAt) meta.createdAt = data.createdAt
+  if (data.archivedAt) {
+    const n = Number(data.archivedAt)
+    if (Number.isFinite(n)) meta.archivedAt = n
+  }
+  if (data.archivedFromParent) meta.archivedFromParent = data.archivedFromParent
+  if (data.titleIntent === 'empty' || data.titleIntent === 'set') {
+    meta.titleIntent = data.titleIntent
+  }
+  if (data.aiSummary) meta.aiSummary = data.aiSummary
+  if (data.aiImportance) {
+    const n = Number(data.aiImportance)
+    if (Number.isFinite(n)) meta.aiImportance = n
+  }
+  if (data.sourceUrl) meta.sourceUrl = data.sourceUrl
+  if (data.siteName) meta.siteName = data.siteName
+  if (data.faviconUrl) meta.faviconUrl = data.faviconUrl
+  if (data.savedAt) meta.savedAt = data.savedAt
+  if (data.readAt) meta.readAt = data.readAt
+  if (data.videoId) meta.videoId = data.videoId
+  if (data.durationSec) {
+    const n = Number(data.durationSec)
+    if (Number.isFinite(n)) meta.durationSec = n
+  }
+  if (data.thumbnailUrl) meta.thumbnailUrl = data.thumbnailUrl
+  return meta
+}
+
+/** Inverse of {@link frontmatterToMeta}: project the sidecar-shaped meta
+ * onto the flat frontmatter fields we emit when a doc stores its metadata
+ * in its own `.md` instead of a `.meta.json` sidecar.
+ *
+ * `version` and `highlights` are dropped — the former is sidecar-only
+ * bookkeeping, the latter is a nested array that doesn't fit a flat
+ * block. Undefined fields are returned as-is; `composeFrontmatter` skips
+ * them, so the caller can hand over the whole record.
+ *
+ * Kept beside `frontmatterToMeta` on purpose: the two field lists must
+ * stay in lockstep, and the round-trip test pins them together so adding
+ * a field to one without the other fails CI rather than silently dropping
+ * metadata on save. */
+export function metaToFrontmatterFields(
+  meta: Partial<DocMetaFile>,
+): Record<string, FrontmatterScalar | undefined> {
+  return {
+    slug: meta.slug,
+    createdAt: meta.createdAt,
+    archivedAt: meta.archivedAt,
+    archivedFromParent: meta.archivedFromParent,
+    titleIntent: meta.titleIntent,
+    aiSummary: meta.aiSummary,
+    aiImportance: meta.aiImportance,
+    sourceUrl: meta.sourceUrl,
+    siteName: meta.siteName,
+    faviconUrl: meta.faviconUrl,
+    savedAt: meta.savedAt,
+    readAt: meta.readAt,
+    videoId: meta.videoId,
+    durationSec: meta.durationSec,
+    thumbnailUrl: meta.thumbnailUrl,
+  }
 }
 
 /** Reverse of {@link pathForDoc}: given a vault-relative path,

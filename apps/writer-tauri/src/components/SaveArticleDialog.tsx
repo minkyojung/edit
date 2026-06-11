@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { saveArticleFromUrl } from '@/lib/saveArticle'
+import { parseYoutubeId } from '@/lib/youtube'
 import { useSaveArticleDialogStore } from '@/state/saveArticleDialogStore'
 
 export function SaveArticleDialog() {
@@ -46,6 +47,7 @@ export function SaveArticleDialog() {
   }
 
   const canSave = url.trim().length > 0 && !saving
+  const isYoutube = parseYoutubeId(url.trim()) !== null
 
   return (
     <Dialog
@@ -65,16 +67,16 @@ export function SaveArticleDialog() {
         }}
       >
         <DialogHeader>
-          <DialogTitle>Save to Read Later</DialogTitle>
+          <DialogTitle>Add to Inbox</DialogTitle>
           <DialogDescription>
-            Paste a link. We'll grab a clean copy you can read and highlight.
+            Paste an article or YouTube link — we'll capture it into your inbox.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-3">
           <Input
             autoFocus
-            placeholder="https://example.com/article"
+            placeholder="https://… (article or YouTube)"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => {
@@ -82,6 +84,11 @@ export function SaveArticleDialog() {
             }}
             disabled={saving}
           />
+          {isYoutube && (
+            <p className="text-xs text-muted-foreground">
+              🎬 YouTube detected — we'll capture the transcript.
+            </p>
+          )}
           <div className="flex items-center justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={handleClose} disabled={saving}>
               Cancel

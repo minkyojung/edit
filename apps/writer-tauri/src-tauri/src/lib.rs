@@ -150,6 +150,7 @@ pub fn run() {
             claude_sidecar::commands::claude_title,
             fetch_url::fetch_url,
             fetch_url::fetch_binary,
+            fetch_url::fetch_http,
             anthropic::anthropic_messages_create,
             git::git_init,
             git::git_commit,

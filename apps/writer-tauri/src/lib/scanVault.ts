@@ -32,8 +32,9 @@ import {
   writeVaultFile,
 } from '@/lib/vault'
 import type { KnownDoc } from '@/state/docsStore'
-import type { DocMetaFile } from '@/lib/docPaths'
+import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
 import { seedLastWrittenPath } from '@/lib/docFileSync'
+import { splitFrontmatter } from '@/lib/frontmatter'
 
 /** Read the doc's persistent slug from its `.meta.json` sidecar, or
  * mint one + write the sidecar if missing. Two-tier lookup:
@@ -68,6 +69,22 @@ async function getOrAssignSlug(mdRel: string): Promise<SidecarLoad> {
     } catch {
       // Corrupted .meta.json — fall through to mint a fresh slug.
     }
+  }
+
+  // No usable sidecar: try frontmatter embedded in the `.md` itself —
+  // the file-first home for metadata. A doc carries either a sidecar or
+  // frontmatter, never both (the migration deletes the sidecar once
+  // frontmatter is written), so reading the sidecar first costs existing
+  // docs nothing; this branch only fires for frontmatter-native docs
+  // (e.g. captured YouTube notes). When found, we return without minting
+  // a sidecar, keeping those docs sidecar-free.
+  try {
+    const { data } = splitFrontmatter(await readVaultFile(mdRel))
+    if (data.slug) {
+      return { slug: data.slug, meta: frontmatterToMeta(data) }
+    }
+  } catch {
+    // Unreadable `.md` — fall through to mint a fresh slug.
   }
 
   const slug = generateClientSlug()
@@ -161,6 +178,11 @@ export function mdRelToKnownDoc(
   if (typeof meta.savedAt === 'string') overlay.savedAt = meta.savedAt
   if (typeof meta.readAt === 'string') overlay.readAt = meta.readAt
   if (Array.isArray(meta.highlights)) overlay.highlights = meta.highlights
+  // YouTube capture metadata (type 'youtube'). Harmless on other types —
+  // their frontmatter/sidecar never carries these.
+  if (typeof meta.videoId === 'string') overlay.videoId = meta.videoId
+  if (typeof meta.durationSec === 'number') overlay.durationSec = meta.durationSec
+  if (typeof meta.thumbnailUrl === 'string') overlay.thumbnailUrl = meta.thumbnailUrl
   return { ...base, ...overlay } as KnownDoc
 }
 
@@ -212,6 +234,15 @@ function mdRelToBaseDoc(
   if (articleMatch) {
     return { slug, type: 'article', title: articleMatch[1] }
   }
+  // inbox/<title>.md — a captured item. Today the inbox holds only
+  // YouTube captures, so the placement maps straight to `youtube`; when
+  // more capture kinds land, the kind moves into frontmatter and is read
+  // by mdRelToKnownDoc to refine the type. Video metadata (videoId, url,
+  // channel, duration) is layered from the frontmatter by mdRelToKnownDoc.
+  const inboxMatch = mdRel.match(/^inbox\/([^/]+)\.md$/)
+  if (inboxMatch) {
+    return { slug, type: 'youtube', title: inboxMatch[1] }
+  }
   return null
 }
 
@@ -227,6 +258,7 @@ export async function scanVault(): Promise<KnownDoc[]> {
     ...(await listMdRecursive('daily')),
     ...(await listMdRecursive('_system')),
     ...(await listMdRecursive('articles')),
+    ...(await listMdRecursive('inbox')),
   ]
 
   // Pass 1: resolve slug + load sidecar metadata for every file in one

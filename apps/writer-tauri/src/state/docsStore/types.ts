@@ -39,7 +39,7 @@ export interface KnownDoc {
    * pre-2026-05-13 single `wiki:*` bucket so sidebar grouping, prompt
    * channels, and write-protection guards line up with Karpathy's
    * schema-vs-wiki separation. */
-  type: 'daily' | 'writing' | 'article' | `system:${string}` | `wiki:${string}`
+  type: 'daily' | 'writing' | 'article' | 'youtube' | `system:${string}` | `wiki:${string}`
   /** YYYY-MM-DD when type === 'daily'. */
   date?: string
   /** Parent doc's slug for tree-nested writing notes. Undefined for
@@ -86,6 +86,14 @@ export interface KnownDoc {
    * truth, persisted via `.meta.json`; the editor re-anchors each one to
    * the body on mount. */
   highlights?: HighlightRecord[]
+  /** YouTube capture metadata (type === 'youtube'). The transcript is the
+   * body; these describe the source video. `sourceUrl` (watch URL) and
+   * `siteName` (channel) reuse the article fields above. Unlike article,
+   * youtube captures are persisted via `.md` frontmatter, not a sidecar —
+   * they're the first frontmatter-native doc type. */
+  videoId?: string
+  durationSec?: number
+  thumbnailUrl?: string
 }
 
 /** Coarse classification used by the DOC_POLICIES table below. Every
@@ -102,6 +110,7 @@ export type DocCategory =
   | 'wiki-profile'  // user self-profile — editable + ingest-updatable, non-archivable
   | 'system-meta'   // agent-managed config / metadata (system:conventions/log/index)
   | 'article'       // user-saved read-later page (external raw source)
+  | 'youtube'       // captured YouTube video (transcript + metadata)
 
 /** Capability matrix for one doc category. Every caller that used
  * to ask "can this doc be archived / moved / ingested" reads from

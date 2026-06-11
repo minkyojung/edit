@@ -24,9 +24,12 @@ import { invalidateWikiIndex } from '@/state/wikiIndex'
 import { hasExternalConflict } from '@/state/externalConflictStore'
 import {
   metaPathForDoc,
+  metaToFrontmatterFields,
   pathForDoc,
+  usesFrontmatter,
   type DocMetaFile,
 } from '@/lib/docPaths'
+import { composeFrontmatter } from '@/lib/frontmatter'
 import {
   readVaultFile,
   renameVaultFile,
@@ -207,6 +210,11 @@ function buildMetaForKnownDoc(
     // authoritative array). Undefined for non-articles → mergeSidecar
     // drops the key.
     highlights: known?.highlights,
+    // YouTube capture metadata (type 'youtube'). Re-emitted each flush so
+    // the frontmatter writer embeds it; undefined elsewhere.
+    videoId: known?.videoId,
+    durationSec: known?.durationSec,
+    thumbnailUrl: known?.thumbnailUrl,
   }
 }
 
@@ -426,6 +434,16 @@ async function flushDirtyOnce(): Promise<void> {
     // `mergeSidecar` callers means no read-modify-write races.
     const handle = docs.handles[slug]
     if (!handle) {
+      // Frontmatter docs keep their metadata inside the `.md`; without a
+      // handle we can't re-serialise the body to re-embed it, and writing
+      // a `.meta.json` here would mint a spurious sidecar the loader would
+      // then prefer over the frontmatter. Skip — a frontmatter doc's
+      // soft-state is persisted while it's open, by the body flush below
+      // that embeds it in the frontmatter block.
+      if (usesFrontmatter(known)) {
+        clearDirty(slug)
+        continue
+      }
       const metaOnly = serializeMetaOnly(slug)
       if (!metaOnly) {
         clearDirty(slug)
@@ -455,16 +473,29 @@ async function flushDirtyOnce(): Promise<void> {
       // files to the new path rather than write a fresh copy and
       // orphan the old one. Skipped silently when the old file is
       // already gone.
+      const frontmatterDoc = usesFrontmatter(known)
       const oldMd = lastWrittenPath.get(slug)
       if (oldMd && oldMd !== mdPath) {
-        const oldMeta = oldMd.replace(/\.md$/, '.meta.json')
         if (await vaultFileExists(oldMd)) {
           await renameVaultFile(oldMd, mdPath)
         }
-        if (await vaultFileExists(oldMeta)) {
-          await renameVaultFile(oldMeta, metaPath)
+        // Only sidecar-backed docs have a `.meta.json` to move alongside;
+        // frontmatter docs carry their metadata inside the renamed `.md`.
+        if (!frontmatterDoc) {
+          const oldMeta = oldMd.replace(/\.md$/, '.meta.json')
+          if (await vaultFileExists(oldMeta)) {
+            await renameVaultFile(oldMeta, metaPath)
+          }
         }
       }
+      // Frontmatter-native docs embed their metadata at the top of the
+      // `.md`; every other type writes a plain body + a `.meta.json`
+      // sidecar. `result.md` is already body-only for frontmatter docs
+      // (the loader strips the block on read), so re-attaching here
+      // round-trips cleanly instead of doubling the block.
+      const fileContent = frontmatterDoc
+        ? composeFrontmatter(metaToFrontmatterFields(result.meta), result.md)
+        : result.md
       // Skip the write when the serialized output is byte-identical to
       // what's already on disk. Opening a doc marks it dirty
       // (installDocSync) even when the user never edits it; without this
@@ -473,17 +504,19 @@ async function flushDirtyOnce(): Promise<void> {
       // is cheap — flush only runs for the small dirty set, and a slug
       // clears its dirty bit after one flush. Defensive on read errors:
       // fall through to writing so a transient read never strands an edit.
-      if (!(await fileContentEquals(mdPath, result.md))) {
-        await writeVaultFile(mdPath, result.md)
+      if (!(await fileContentEquals(mdPath, fileContent))) {
+        await writeVaultFile(mdPath, fileContent)
       }
-      // Sidecar carries identity (version + slug) plus opt-in context
-      // metadata other code paths populate (aiSummary, aiImportance,
-      // and any future fields). Read-modify-write so a flush doesn't
-      // clobber fields this layer doesn't know about.
-      const mergedMeta = await mergeSidecar(metaPath, result.meta)
-      const metaJson = JSON.stringify(mergedMeta, null, 2)
-      if (!(await fileContentEquals(metaPath, metaJson))) {
-        await writeVaultFile(metaPath, metaJson)
+      if (!frontmatterDoc) {
+        // Sidecar carries identity (version + slug) plus opt-in context
+        // metadata other code paths populate (aiSummary, aiImportance,
+        // and any future fields). Read-modify-write so a flush doesn't
+        // clobber fields this layer doesn't know about.
+        const mergedMeta = await mergeSidecar(metaPath, result.meta)
+        const metaJson = JSON.stringify(mergedMeta, null, 2)
+        if (!(await fileContentEquals(metaPath, metaJson))) {
+          await writeVaultFile(metaPath, metaJson)
+        }
       }
       lastWrittenPath.set(slug, mdPath)
       clearDirty(slug)

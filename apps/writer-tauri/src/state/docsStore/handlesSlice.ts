@@ -22,7 +22,8 @@ import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { applyMarkdownToActiveCmEditor } from '@/state/activeCmEditor'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
-import { pathForDoc } from '@/lib/docPaths'
+import { pathForDoc, usesFrontmatter } from '@/lib/docPaths'
+import { splitFrontmatter } from '@/lib/frontmatter'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { isWikiDoc } from './helpers'
@@ -316,7 +317,14 @@ async function loadBodyMarkdown(
   if (!mdPath) return { kind: 'missing' }
   try {
     if (!(await vaultFileExists(mdPath))) return { kind: 'missing' }
-    const markdown = await readVaultFile(mdPath)
+    const raw = await readVaultFile(mdPath)
+    // Frontmatter-native docs carry a `---` metadata block the editor must
+    // never see (it would render as raw YAML and the user could clobber
+    // identity fields). Strip it here so `bodyMarkdown` is body-only; the
+    // flush re-attaches it on save (see usesFrontmatter in docFileSync).
+    const markdown = usesFrontmatter(known)
+      ? splitFrontmatter(raw).body
+      : raw
     return { kind: 'loaded', markdown }
   } catch (error) {
     console.warn('[vault:load] bodyMarkdown read failed for', slug, error)

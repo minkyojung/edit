@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { KnownDoc } from '@/state/docsStore'
-import { metaPathForDoc, pathForDoc, sanitizeFilename } from './docPaths'
+import { metaPathForDoc, pathForDoc, sanitizeFilename, usesFrontmatter } from './docPaths'
 
 function known(partial: Partial<KnownDoc> & { type: KnownDoc['type'] }): KnownDoc {
   return {
@@ -127,6 +127,24 @@ describe('pathForDoc', () => {
       'articles/Untitled.md',
     )
     expect(pathForDoc(known({ type: 'article' }))).toBe('articles/Untitled.md')
+  })
+
+  it('places youtube captures under inbox/ by title', () => {
+    expect(
+      pathForDoc(known({ type: 'youtube', title: 'Inside the Mind of a Procrastinator' })),
+    ).toBe('inbox/Inside the Mind of a Procrastinator.md')
+    expect(pathForDoc(known({ type: 'youtube' }))).toBe('inbox/Untitled.md')
+  })
+})
+
+describe('usesFrontmatter', () => {
+  it('is true only for youtube captures (the first frontmatter-native type)', () => {
+    expect(usesFrontmatter(known({ type: 'youtube' }))).toBe(true)
+    expect(usesFrontmatter(known({ type: 'article' }))).toBe(false)
+    expect(usesFrontmatter(known({ type: 'daily' }))).toBe(false)
+    expect(usesFrontmatter(known({ type: 'writing' }))).toBe(false)
+    expect(usesFrontmatter(known({ type: 'wiki:custom-x' }))).toBe(false)
+    expect(usesFrontmatter(known({ type: 'system:log' }))).toBe(false)
   })
 })
 

@@ -1,13 +1,13 @@
-// Read Later entry for the sidebar — a single collapsed row, NOT the
-// full queue. The queue itself lives at the `/read-later` route
+// Inbox entry for the sidebar — a single collapsed row, NOT the full
+// queue. The queue itself lives at the `/read-later` route
 // (ReadLaterQueue): clicking this row navigates there. Collapsing to one
-// line is the point — the old flat list grew unbounded as articles piled
-// up. The row shows the unread count; the hover `+` opens the
-// Save-to-Read-Later dialog.
+// line is the point — the list grew unbounded as captures piled up. The
+// row shows the unprocessed count; the hover `+` opens the Add-to-Inbox
+// dialog. Holds both saved articles and captured YouTube videos.
 
 import { useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { IconBookmarks, IconPlus } from '@tabler/icons-react'
+import { IconInbox, IconPlus } from '@tabler/icons-react'
 import { useDocsStore } from '@/state/docsStore'
 import { useSaveArticleDialogStore } from '@/state/saveArticleDialogStore'
 import {
@@ -27,14 +27,20 @@ export function ArticlesSection() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
-  const hasArticles = useMemo(
-    () => knownDocs.some((d) => d.type === 'article' && !d.archivedAt),
+  const hasItems = useMemo(
+    () =>
+      knownDocs.some(
+        (d) => (d.type === 'article' || d.type === 'youtube') && !d.archivedAt,
+      ),
     [knownDocs],
   )
   const unreadCount = useMemo(
     () =>
       knownDocs.filter(
-        (d) => d.type === 'article' && !d.archivedAt && !d.readAt,
+        (d) =>
+          (d.type === 'article' || d.type === 'youtube') &&
+          !d.archivedAt &&
+          !d.readAt,
       ).length,
     [knownDocs],
   )
@@ -42,13 +48,13 @@ export function ArticlesSection() {
   // Empty queue: hide the row so it isn't a bare heading. The `+` stays
   // reachable here, and the Command Palette command is the other entry
   // point until the first save.
-  if (!hasArticles) {
+  if (!hasItems) {
     return (
       <SidebarGroup>
-        <SidebarGroupLabel>Read Later</SidebarGroupLabel>
+        <SidebarGroupLabel>Inbox</SidebarGroupLabel>
         <SidebarGroupAction
           onClick={() => openSaveArticle()}
-          aria-label="Save a URL to Read Later"
+          aria-label="Add a URL to Inbox"
         >
           <IconPlus />
         </SidebarGroupAction>
@@ -65,8 +71,8 @@ export function ArticlesSection() {
               onClick={() => navigate('/read-later')}
               isActive={pathname === '/read-later'}
             >
-              <IconBookmarks />
-              <span className="flex-1 truncate">Read Later</span>
+              <IconInbox />
+              <span className="flex-1 truncate">Inbox</span>
               {unreadCount > 0 && (
                 <span className="text-xs text-muted-foreground">
                   {unreadCount}
@@ -76,7 +82,7 @@ export function ArticlesSection() {
             <SidebarMenuAction
               showOnHover
               onClick={() => openSaveArticle()}
-              aria-label="Save a URL to Read Later"
+              aria-label="Add a URL to Inbox"
             >
               <IconPlus />
             </SidebarMenuAction>

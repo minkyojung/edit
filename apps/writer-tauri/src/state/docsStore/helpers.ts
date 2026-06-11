@@ -86,6 +86,20 @@ const ARTICLE_POLICY: DocPolicy = {
   isAgentManaged: false,
 }
 
+const YOUTUBE_POLICY: DocPolicy = {
+  // Captured YouTube video (transcript + metadata). Like article it's a
+  // raw external source the user saved and can archive — but UNLIKE
+  // article it IS an ingest source: the whole point of capture is to feed
+  // the transcript into the wiki. User-owned (not agent-managed); shares
+  // the article sidebar section for now (a dedicated inbox view is later).
+  category: 'youtube',
+  sidebarGroup: 'article',
+  canArchive: true,
+  canBeMovedInWikiTree: false,
+  isIngestSource: true,
+  isAgentManaged: false,
+}
+
 /** Resolve a doc's policy by type. Unknown / legacy types fall
  * through to wiki-content — the v6 migration already moved the
  * pre-rename `wiki:conventions|log|index` to `system:*`, so any
@@ -95,6 +109,7 @@ export function getDocPolicy(doc: Pick<KnownDoc, 'type'>): DocPolicy {
   if (doc.type === 'daily') return DAILY_POLICY
   if (doc.type === 'writing') return WRITING_POLICY
   if (doc.type === 'article') return ARTICLE_POLICY
+  if (doc.type === 'youtube') return YOUTUBE_POLICY
   if (doc.type === 'wiki:profile') return WIKI_PROFILE_POLICY
   if (doc.type.startsWith('system:')) return SYSTEM_META_POLICY
   if (doc.type.startsWith('wiki:')) return WIKI_CONTENT_POLICY

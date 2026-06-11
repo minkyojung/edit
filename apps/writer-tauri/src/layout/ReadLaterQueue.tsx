@@ -13,6 +13,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   IconArchive,
+  IconBrandYoutube,
   IconCircleCheck,
   IconCircleDot,
   IconWorld,
@@ -62,11 +63,14 @@ export function ReadLaterQueue() {
   const [filter, setFilter] = useState<Filter>('unread')
   const [query, setQuery] = useState('')
 
-  // Live articles, newest save first — same predicate the sidebar used.
+  // Live inbox items (saved articles + captured YouTube), newest first —
+  // same predicate the sidebar entry uses.
   const articles = useMemo(
     () =>
       knownDocs
-        .filter((d) => d.type === 'article' && !d.archivedAt)
+        .filter(
+          (d) => (d.type === 'article' || d.type === 'youtube') && !d.archivedAt,
+        )
         .sort((a, b) => (b.savedAt ?? '').localeCompare(a.savedAt ?? '')),
     [knownDocs],
   )
@@ -97,7 +101,7 @@ export function ReadLaterQueue() {
     <div className="mx-auto w-full max-w-3xl px-6 pb-16 pt-[calc(var(--header-h)+8px)]">
       <header className="mb-4 flex items-center justify-between gap-3">
         <div className="flex items-baseline gap-2">
-          <h1 className="text-lg font-semibold text-foreground">Read Later</h1>
+          <h1 className="text-lg font-semibold text-foreground">Inbox</h1>
           {unreadCount > 0 && (
             <span className="text-sm text-muted-foreground">
               {unreadCount} unread
@@ -108,7 +112,7 @@ export function ReadLaterQueue() {
           variant="ghost"
           size="sm"
           onClick={() => openSaveArticle()}
-          aria-label="Save a URL to Read Later"
+          aria-label="Add a URL to Inbox"
         >
           <IconPlus className="size-4" />
           Save
@@ -134,7 +138,7 @@ export function ReadLaterQueue() {
       {visible.length === 0 ? (
         <p className="px-1 py-10 text-center text-sm text-muted-foreground">
           {articles.length === 0
-            ? 'No saved articles yet. Save a URL to read it later.'
+            ? 'Your inbox is empty. Add a URL (article or YouTube) to capture it.'
             : 'Nothing here for this filter.'}
         </p>
       ) : (
@@ -187,7 +191,9 @@ function QueueRow({
             )}
             title={doc.siteName ? `${title} — ${doc.siteName}` : title}
           >
-            {doc.faviconUrl ? (
+            {doc.type === 'youtube' ? (
+              <IconBrandYoutube className="size-5 shrink-0 text-red-500" />
+            ) : doc.faviconUrl ? (
               <img
                 src={doc.faviconUrl}
                 alt=""

@@ -13,6 +13,8 @@
 import { extractPage } from '@/profile/adapters/extractPage'
 import { appendMarkdownToWikiPage } from '@/agent/applyIngest'
 import { createArticle } from '@/state/articleService'
+import { captureYoutubeToNote } from '@/state/youtubeService'
+import { parseYoutubeId } from '@/lib/youtube'
 import { localizeArticleImages } from '@/lib/articleAssets'
 import { generateClientSlug } from '@/lib/slug'
 import { todayLocalDate } from '@/hooks/useDocMeta'
@@ -31,6 +33,27 @@ export interface SaveArticleResult {
 export async function saveArticleFromUrl(url: string): Promise<SaveArticleResult> {
   const trimmed = url.trim()
   if (!trimmed) return { ok: false }
+
+  // YouTube URLs capture the transcript (ANDROID InnerTube) instead of
+  // scraping the page — a different extractor, same "paste a URL" entry.
+  if (parseYoutubeId(trimmed)) {
+    try {
+      const slug = await captureYoutubeToNote(trimmed)
+      if (!slug) {
+        notify.articleSaveFailed()
+        return { ok: false }
+      }
+      const title = useDocsStore
+        .getState()
+        .knownDocs.find((d) => d.slug === slug)?.title
+      notify.articleSaved({ title: title ?? 'YouTube video' })
+      return { ok: true, slug }
+    } catch (err) {
+      console.error('[inbox] youtube capture failed', err)
+      notify.articleSaveFailed()
+      return { ok: false }
+    }
+  }
 
   let docs
   try {

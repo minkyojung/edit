@@ -44,6 +44,10 @@ if (import.meta.env.DEV) {
   // can be exercised from the dev console while we tune the prompt.
   // Production builds skip this block entirely.
   void import('./agent/ingest')
+  // Same pattern: registers window.__captureYoutube so the full capture
+  // pipeline (fetch → create → frontmatter flush) can be run from the
+  // dev console before the capture UI lands.
+  void import('./state/youtubeService')
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
