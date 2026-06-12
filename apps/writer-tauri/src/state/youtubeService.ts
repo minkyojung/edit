@@ -15,11 +15,7 @@ import {
   linkifyTimestamps,
   type YoutubeCapture,
 } from '@/lib/youtube'
-import {
-  splitSummary,
-  summarizeTranscript,
-  withSummary,
-} from '@/agent/summarizeTranscript'
+import { summarizeTranscript, withSummary } from '@/agent/summarizeTranscript'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 
 /** Project a fetched capture onto a `youtube` KnownDoc. Pure — the caller
@@ -58,17 +54,18 @@ export async function createYoutubeNote(
   const doc = youtubeCaptureToDoc(capture, slug, now)
   useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, doc] }))
 
-  // Seed the transcript as the body so the note is fully ready on return.
-  // Timestamps become deep-links here so they're clickable immediately,
-  // before the summary lands.
-  if (capture.bodyMarkdown.trim()) {
-    try {
-      await useDocsStore
-        .getState()
-        .seedDocBody(slug, linkifyTimestamps(capture.bodyMarkdown, capture.videoId))
-    } catch (err) {
-      console.warn('[youtube] createYoutubeNote seed failed', err)
-    }
+  // Seed the body: the video URL on its own line (renders as the inline
+  // player) + the transcript. The note is a uniform markdown note — no
+  // special header. Timestamps become deep-links so they're clickable
+  // immediately, before the summary lands.
+  try {
+    const seed = linkifyTimestamps(
+      `${capture.sourceUrl}\n\n${capture.bodyMarkdown}`,
+      capture.videoId,
+    )
+    await useDocsStore.getState().seedDocBody(slug, seed)
+  } catch (err) {
+    console.warn('[youtube] createYoutubeNote seed failed', err)
   }
 
   // Force the note (frontmatter + body) to disk now so it survives a
@@ -76,10 +73,11 @@ export async function createYoutubeNote(
   markSlugDirty(slug)
   void flushDirty()
 
-  // Summarize in the background: the note shows instantly with the raw
-  // transcript; a TL;DR + key points is prepended a few seconds later.
-  // Best-effort — a failed/timed-out summary just leaves the transcript.
-  void summarizeInBackground(slug, capture.bodyMarkdown, capture.videoId)
+  // Summarize in the background: the note shows instantly with the
+  // transcript; the Summary + key points slots in above it a few seconds
+  // later. Best-effort — a failed/timed-out summary just leaves the
+  // transcript.
+  void summarizeInBackground(slug, capture.bodyMarkdown, capture.videoId, capture.sourceUrl)
 
   return slug
 }
@@ -88,22 +86,18 @@ async function summarizeInBackground(
   slug: string,
   transcript: string,
   videoId: string,
+  sourceUrl: string,
 ): Promise<void> {
   try {
-    // Summarize the clean transcript (no link noise). The TL;DR becomes
-    // the header dek (stored on the doc); the key points stay in the
-    // body. Linkify the whole composed body so timestamps are clickable.
     const summary = await summarizeTranscript(transcript)
     if (!summary) return
-    const { dek, body } = splitSummary(summary)
-    if (dek) {
-      useDocsStore.setState((s) => ({
-        knownDocs: s.knownDocs.map((d) =>
-          d.slug === slug ? { ...d, description: dek } : d,
-        ),
-      }))
-    }
-    const noteBody = linkifyTimestamps(withSummary(body, transcript), videoId)
+    // Body = video URL (inline player) + summary + transcript, all in the
+    // note. Linkify the whole thing so the summary's timestamps are
+    // clickable too.
+    const noteBody = linkifyTimestamps(
+      `${sourceUrl}\n\n${withSummary(summary, transcript)}`,
+      videoId,
+    )
     await useDocsStore.getState().replaceDocBody(slug, noteBody)
   } catch (err) {
     console.warn('[youtube] background summarize failed', err)

@@ -1,22 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitSummary, withSummary } from './summarizeTranscript'
-
-describe('splitSummary', () => {
-  it('separates the TL;DR dek from the key points body', () => {
-    const summary = '## TL;DR\nA talk about procrastination.\n\n## Key points\n- [00:12] a\n- [02:05] b'
-    expect(splitSummary(summary)).toEqual({
-      dek: 'A talk about procrastination.',
-      body: '## Key points\n- [00:12] a\n- [02:05] b',
-    })
-  })
-
-  it('treats the whole thing as the dek when there is no key-points section', () => {
-    expect(splitSummary('## TL;DR\nJust a one-liner.')).toEqual({
-      dek: 'Just a one-liner.',
-      body: '',
-    })
-  })
-})
+import { withSummary } from './summarizeTranscript'
 
 describe('withSummary', () => {
   it('puts the summary on top and the transcript under a heading', () => {

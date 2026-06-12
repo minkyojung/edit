@@ -25,7 +25,7 @@ const SYSTEM = `You are summarizing a YouTube video transcript for someone who h
 
 Write the summary as GitHub-flavored markdown, in the SAME LANGUAGE as the transcript, using EXACTLY these two sections and nothing else:
 
-## TL;DR
+## Summary
 2–3 sentences capturing the core message.
 
 ## Key points
@@ -93,25 +93,9 @@ export async function summarizeTranscript(
   return text ? text : null
 }
 
-/** Split the model's `## TL;DR … ## Key points …` output into the dek
- *  (TL;DR text — rendered as the header subtitle) and the body (the key
- *  points, kept in the note). Falls back to treating the whole thing as
- *  the dek if the `## Key points` heading is missing. Pure. */
-export function splitSummary(summary: string): { dek: string; body: string } {
-  const kp = summary.match(/\n##\s*Key points/i)
-  const stripTldr = (s: string) => s.replace(/^\s*##\s*TL;DR\s*\n?/i, '').trim()
-  if (!kp || kp.index === undefined) {
-    return { dek: stripTldr(summary), body: '' }
-  }
-  return {
-    dek: stripTldr(summary.slice(0, kp.index)),
-    body: summary.slice(kp.index + 1).trim(),
-  }
-}
-
-/** Compose the note body: the body markdown (key points) on top, the full
- *  transcript below a `## Transcript` heading. The TL;DR dek is handled
- *  separately (header), so an empty body just yields the transcript. */
+/** Compose the note body: the summary markdown on top, the full
+ *  transcript below a `## Transcript` heading. Empty summary → just the
+ *  transcript. */
 export function withSummary(summaryMarkdown: string, transcript: string): string {
   const s = summaryMarkdown.trim()
   const t = transcript.trim()
