@@ -13,6 +13,11 @@ import { StateField, type EditorState, type Extension, type Range } from '@codem
 import { activeLines } from './reveal'
 import { isComposing, compositionEnded } from './imeComposition'
 import { detectYoutubeEmbed } from '@/lib/youtube'
+import { useYoutubePlayerStore } from '@/state/youtubePlayerStore'
+
+// The widget's wrapper DOM carries its store-subscription cleanup so
+// destroy() can drop it (CM reuses/destroys widget DOM, not instances).
+type WrapEl = HTMLElement & { __ytUnsub?: () => void }
 
 class YoutubeWidget extends WidgetType {
   constructor(readonly videoId: string) {
@@ -48,19 +53,46 @@ class YoutubeWidget extends WidgetType {
       'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:2rem;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,0.6);'
     poster.appendChild(play)
 
-    poster.addEventListener('click', () => {
-      const iframe = document.createElement('iframe')
-      iframe.src = `https://www.youtube-nocookie.com/embed/${this.videoId}?autoplay=1&enablejsapi=1&rel=0`
+    // The live iframe, once the poster is clicked. Kept so a later seek
+    // request can postMessage it instead of remounting.
+    let iframe: HTMLIFrameElement | null = null
+    const mountIframe = (startSec: number) => {
+      iframe = document.createElement('iframe')
+      const start = startSec > 0 ? `&start=${Math.floor(startSec)}` : ''
+      iframe.src = `https://www.youtube-nocookie.com/embed/${this.videoId}?autoplay=1&enablejsapi=1&rel=0${start}`
       iframe.title = 'YouTube video player'
       iframe.allow =
         'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
       iframe.allowFullscreen = true
       iframe.style.cssText = 'width:100%;height:100%;border:0;display:block;'
       wrap.replaceChildren(iframe)
+    }
+
+    poster.addEventListener('click', () => mountIframe(0))
+
+    // A clicked transcript/summary timestamp pushes a seek request here.
+    // Already playing → postMessage seekTo; not yet → start at that point.
+    const unsub = useYoutubePlayerStore.subscribe((s) => {
+      const seek = s.pendingSeek
+      if (!seek || seek.videoId !== this.videoId) return
+      if (iframe?.contentWindow) {
+        iframe.contentWindow.postMessage(
+          JSON.stringify({ event: 'command', func: 'seekTo', args: [seek.sec, true] }),
+          '*',
+        )
+      } else {
+        mountIframe(seek.sec)
+      }
     })
+    ;(wrap as WrapEl).__ytUnsub = unsub
 
     wrap.appendChild(poster)
     return wrap
+  }
+  // CM removed the widget's DOM (line edited away / caret revealed it) →
+  // drop the store subscription so it doesn't leak or seek a dead iframe.
+  destroy(dom: HTMLElement) {
+    ;(dom as WrapEl).__ytUnsub?.()
   }
   // Ignore widget-internal events so clicking the player never moves CM's
   // selection. To edit the URL, reveal the raw line (caret onto it).
