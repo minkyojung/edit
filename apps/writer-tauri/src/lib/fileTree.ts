@@ -48,6 +48,10 @@ export function buildFileTree(docs: KnownDoc[]): TreeNode[] {
     if (doc.archivedAt) continue
     const path = pathForDoc(doc, getDoc)
     if (!path) continue
+    // Hide `_`-prefixed folders (e.g. `_system/` — agent-managed
+    // conventions/log/index). On disk but out of the sidebar, like
+    // Obsidian hiding `.obsidian/`.
+    if (path.startsWith('_')) continue
 
     const segments = path.split('/')
     const fileName = segments.pop() ?? path // last segment is the file

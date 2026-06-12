@@ -230,11 +230,6 @@ describe('frontmatterToMeta', () => {
     expect(frontmatterToMeta({ slug: 'x', archivedAt: 'oops' })).toEqual({ slug: 'x' })
   })
 
-  it('only accepts the two valid titleIntent values', () => {
-    expect(frontmatterToMeta({ titleIntent: 'empty' })).toEqual({ titleIntent: 'empty' })
-    expect(frontmatterToMeta({ titleIntent: 'garbage' })).toEqual({})
-  })
-
   it('restores article source metadata', () => {
     expect(
       frontmatterToMeta({
@@ -282,12 +277,12 @@ describe('frontmatter → KnownDoc (read path logic)', () => {
     })
   })
 
-  it('honours titleIntent:empty by dropping the filename title', () => {
-    const { data } = splitFrontmatter('---\nslug: w1\ntitleIntent: empty\n---\n\nbody')
+  it('takes the title from the filename verbatim (Obsidian-style)', () => {
+    const { data } = splitFrontmatter('---\nslug: w1\n---\n\nbody')
     const daily = new Map([['2026-06-08', 'daily-1']])
     const doc = mdRelToKnownDoc('w1', 'daily/2026-06-08/Untitled.md', daily, frontmatterToMeta(data))
 
-    expect(doc?.title).toBeUndefined()
+    expect(doc?.title).toBe('Untitled') // shown literally, no placeholder flag
     expect(doc?.type).toBe('writing')
     expect(doc?.parentId).toBe('daily-1')
   })
@@ -303,7 +298,6 @@ describe('meta ⇄ frontmatter round-trip', () => {
     const meta: Partial<DocMetaFile> = {
       slug: 'note-9',
       createdAt: '2026-06-11T00:00:00.000Z',
-      titleIntent: 'set',
       aiSummary: 'A one: line summary #with punctuation',
       aiImportance: 64,
       sourceUrl: 'https://example.com/watch?v=abc',

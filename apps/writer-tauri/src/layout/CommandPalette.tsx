@@ -232,7 +232,7 @@ export function CommandPalette() {
         {mode === 'any' && (
           <CommandGroup heading="Actions">
             <CommandItem
-              value="action:save-article"
+              value="action:add-to-inbox add url inbox youtube article"
               onSelect={() => {
                 setOpen(false)
                 // Defer so the palette's dismiss animation doesn't race
@@ -241,17 +241,17 @@ export function CommandPalette() {
               }}
             >
               <IconBookmarkPlus size={16} stroke={1.75} />
-              <span className="flex-1 truncate">Save URL to Read Later</span>
+              <span className="flex-1 truncate">Add URL to Inbox</span>
             </CommandItem>
             <CommandItem
-              value="action:open-read-later"
+              value="action:open-inbox inbox read later"
               onSelect={() => {
                 setOpen(false)
                 navigate('/read-later')
               }}
             >
               <IconBookmarks size={16} stroke={1.75} />
-              <span className="flex-1 truncate">Open Read Later</span>
+              <span className="flex-1 truncate">Open Inbox</span>
             </CommandItem>
             {renameableDoc && (
               <CommandItem

@@ -61,6 +61,14 @@ describe('buildFileTree', () => {
     expect(buildFileTree([doc({ slug: 'd1', type: 'daily' })])).toEqual([])
   })
 
+  it('hides `_`-prefixed folders (e.g. _system)', () => {
+    const tree = buildFileTree([
+      doc({ slug: 's1', type: 'system:conventions' }),
+      doc({ slug: 'w1', type: 'wiki:custom-w1', title: 'Tom' }),
+    ])
+    expect(tree.map((n) => n.name)).toEqual(['wiki']) // no `_system`
+  })
+
   it('sorts folders before files, each alphabetically', () => {
     const tree = buildFileTree([
       doc({ slug: 'a1', type: 'article', title: 'zebra article' }),

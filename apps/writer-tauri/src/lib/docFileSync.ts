@@ -145,15 +145,6 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
   // because the cache survived the editor unmount.
   const md = handle.bodyMarkdown
 
-  // `titleIntent` reflects whether the in-memory title is the user's
-  // chosen value or whether `pathForDoc` had to fall back to
-  // 'Untitled' because the doc was created without a title. The boot
-  // reader uses this flag to decide whether the filename should
-  // hydrate back into KnownDoc.title; if 'empty', the title stays
-  // undefined and the EditableTitleInput renders its placeholder
-  // instead of the literal string "Untitled". Wiki, system, and
-  // writing docs all share the same rule so the flush owns it for
-  // every type at once.
   const known = docs.knownDocs.find((d) => d.slug === slug)
   const meta = buildMetaForKnownDoc(slug, known)
   return { md, meta }
@@ -162,11 +153,7 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
 /** Compose the sidecar payload from the in-memory `KnownDoc`. Shared
  * between the full-flush path (`serializeDocToFiles`) and the
  * meta-only path (`flushDirty` for archived docs whose handle has
- * been torn down). Fields included:
- *   - `titleIntent`            — see comment below
- *   - `archivedAt`             — present iff the doc is currently
- *                                archived in memory
- *   - `archivedFromParent`     — same condition
+ * been torn down).
  *
  * `archivedAt`/`archivedFromParent` are emitted explicitly (including
  * the `undefined` case for live docs) so `mergeSidecar` can clear
@@ -178,20 +165,9 @@ function buildMetaForKnownDoc(
   slug: string,
   known: KnownDoc | undefined,
 ): DocMetaFile {
-  // `titleIntent` reflects whether the in-memory title is the user's
-  // chosen value or whether `pathForDoc` had to fall back to
-  // 'Untitled' because the doc was created without a title. The boot
-  // reader uses this flag to decide whether the filename should
-  // hydrate back into KnownDoc.title; if 'empty', the title stays
-  // undefined and the EditableTitleInput renders its placeholder
-  // instead of the literal string "Untitled". Wiki, system, and
-  // writing docs all share the same rule so the flush owns it for
-  // every type at once.
-  const titleIntent: 'empty' | 'set' = known?.title?.trim() ? 'set' : 'empty'
   return {
     version: 1,
     slug,
-    titleIntent,
     archivedAt: known?.archivedAt,
     archivedFromParent: known?.archivedFromParent,
     // Phase 5b of the Yjs-removal migration: createdAt now lives on

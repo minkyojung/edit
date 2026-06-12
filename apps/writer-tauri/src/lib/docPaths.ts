@@ -71,22 +71,6 @@ export interface DocMetaFile {
    * cascade group's tree structure. Lives in the same sidecar as
    * `archivedAt` to keep the archive state self-contained. */
   archivedFromParent?: string
-  /** Distinguishes "the filename is a system fallback because the user
-   * hadn't named the doc" from "the filename is the user's chosen
-   * title". Path C requires every file on disk to have a name, so a
-   * new doc whose title is empty/undefined still has to land at
-   * `Untitled.md`. Without this flag the boot scan would read that
-   * filename back as the literal title "Untitled", erasing the
-   * placeholder state the user originally saw.
-   *
-   * Derived at serialize time from the in-memory `KnownDoc.title`:
-   * empty / undefined → `'empty'`, otherwise → `'set'`. No code path
-   * sets it directly; the flush owns the rule.
-   *
-   * Legacy sidecars (pre-S2) lack this field and are treated as
-   * `'set'` by the boot reader for backward compatibility — they
-   * always carried a non-fallback filename. */
-  titleIntent?: 'empty' | 'set'
   /** ISO timestamp recorded when the doc was first created. Migrated
    * out of `Y.Map('meta')` in Phase 5b of the Yjs-removal migration —
    * the Y.Map was the prior home for this field, but it's the only
@@ -168,11 +152,13 @@ export function pathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null {
 /** True when a doc stores its metadata inside its own `.md` frontmatter
  * rather than a `.meta.json` sidecar. YouTube captures are the first
  * (and currently only) frontmatter-native type; every other type keeps
- * the sidecar until the bulk migration. The flush writer
- * (`docFileSync`) and the body loader (`handlesSlice`) both gate on this
- * so a doc's on-disk shape stays consistent in both directions. */
-export function usesFrontmatter(doc: Pick<KnownDoc, 'type'>): boolean {
-  return doc.type === 'youtube'
+ * Every doc is now frontmatter-native — metadata lives in the `.md`'s
+ * `---` block, no `.meta.json` sidecar. The flush writer (`docFileSync`)
+ * and the body loader (`handlesSlice`) both gate on this. Kept as a
+ * function (rather than inlining `true`) so the one remaining sidecar
+ * holdout, if any ever returns, has a single switch. */
+export function usesFrontmatter(_doc: Pick<KnownDoc, 'type'>): boolean {
+  return true
 }
 
 /** Coerce a parsed frontmatter block (whose values are all raw strings)
@@ -196,9 +182,6 @@ export function frontmatterToMeta(
     if (Number.isFinite(n)) meta.archivedAt = n
   }
   if (data.archivedFromParent) meta.archivedFromParent = data.archivedFromParent
-  if (data.titleIntent === 'empty' || data.titleIntent === 'set') {
-    meta.titleIntent = data.titleIntent
-  }
   if (data.aiSummary) meta.aiSummary = data.aiSummary
   if (data.aiImportance) {
     const n = Number(data.aiImportance)
@@ -240,7 +223,6 @@ export function metaToFrontmatterFields(
     createdAt: meta.createdAt,
     archivedAt: meta.archivedAt,
     archivedFromParent: meta.archivedFromParent,
-    titleIntent: meta.titleIntent,
     aiSummary: meta.aiSummary,
     aiImportance: meta.aiImportance,
     sourceUrl: meta.sourceUrl,

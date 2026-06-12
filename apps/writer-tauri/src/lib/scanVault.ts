@@ -35,7 +35,7 @@ import type { KnownDoc } from '@/state/docsStore'
 import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
 import { folderTreeFlag } from '@/lib/flags'
 import { seedLastWrittenPath } from '@/lib/docFileSync'
-import { splitFrontmatter } from '@/lib/frontmatter'
+import { composeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
 
 /** Read the doc's persistent slug from its `.meta.json` sidecar, or
  * mint one + write the sidecar if missing. Two-tier lookup:
@@ -58,40 +58,45 @@ interface SidecarLoad {
 }
 
 async function getOrAssignSlug(mdRel: string): Promise<SidecarLoad> {
-  const metaRel = mdRel.replace(/\.md$/, '.meta.json')
-
-  if (await vaultFileExists(metaRel)) {
-    try {
-      const raw = await readVaultFile(metaRel)
-      const parsed = JSON.parse(raw) as Partial<DocMetaFile>
-      if (typeof parsed.slug === 'string' && parsed.slug.length > 0) {
-        return { slug: parsed.slug, meta: parsed }
-      }
-    } catch {
-      // Corrupted .meta.json — fall through to mint a fresh slug.
-    }
-  }
-
-  // No usable sidecar: try frontmatter embedded in the `.md` itself —
-  // the file-first home for metadata. A doc carries either a sidecar or
-  // frontmatter, never both (the migration deletes the sidecar once
-  // frontmatter is written), so reading the sidecar first costs existing
-  // docs nothing; this branch only fires for frontmatter-native docs
-  // (e.g. captured YouTube notes). When found, we return without minting
-  // a sidecar, keeping those docs sidecar-free.
+  // Frontmatter is the source of truth — read it first. A slug there means
+  // the `.md` fully describes the doc (no sidecar consulted).
+  let body = ''
+  let data: Record<string, string> = {}
   try {
-    const { data } = splitFrontmatter(await readVaultFile(mdRel))
+    const split = splitFrontmatter(await readVaultFile(mdRel))
+    data = split.data
+    body = split.body
     if (data.slug) {
       return { slug: data.slug, meta: frontmatterToMeta(data) }
     }
   } catch {
-    // Unreadable `.md` — fall through to mint a fresh slug.
+    // Unreadable `.md` — fall through.
   }
 
+  // Legacy fallback: a `.meta.json` sidecar from before the frontmatter
+  // switch, for docs not yet re-saved. We read its slug but never write
+  // sidecars anymore; the next flush migrates the doc to frontmatter.
+  const metaRel = mdRel.replace(/\.md$/, '.meta.json')
+  if (await vaultFileExists(metaRel)) {
+    try {
+      const parsed = JSON.parse(await readVaultFile(metaRel)) as Partial<DocMetaFile>
+      if (typeof parsed.slug === 'string' && parsed.slug.length > 0) {
+        return { slug: parsed.slug, meta: parsed }
+      }
+    } catch {
+      // Corrupted sidecar — fall through to mint.
+    }
+  }
+
+  // Neither: mint a slug and persist it INTO the file's frontmatter
+  // (no sidecar), so identity is stable on the next scan.
   const slug = generateClientSlug()
-  const meta: DocMetaFile = { version: 1, slug }
-  await writeVaultFile(metaRel, `${JSON.stringify(meta, null, 2)}\n`)
-  return { slug, meta }
+  try {
+    await writeVaultFile(mdRel, composeFrontmatter({ ...data, slug }, body))
+  } catch (err) {
+    console.warn('[scan] could not write slug frontmatter for', mdRel, err)
+  }
+  return { slug, meta: { slug } }
 }
 
 /** Walk a vault subdirectory recursively and return every body-.md
@@ -155,15 +160,6 @@ export function mdRelToKnownDoc(
   }
   if (typeof meta.archivedFromParent === 'string') {
     overlay.archivedFromParent = meta.archivedFromParent
-  }
-  // `titleIntent === 'empty'` means the on-disk filename is a system
-  // fallback ('Untitled.md') rather than the user's chosen title.
-  // Drop the filename-derived title so the EditableTitleInput renders
-  // its placeholder instead of treating "Untitled" as the user's
-  // input. Legacy sidecars (no titleIntent) are treated as 'set' —
-  // they always carried a non-fallback filename.
-  if (meta.titleIntent === 'empty') {
-    overlay.title = undefined
   }
   // Phase 5b of the Yjs-removal migration: the doc's creation time
   // used to live in `Y.Map('meta').createdAt`; we now read it off

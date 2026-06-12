@@ -147,13 +147,14 @@ describe('pathForDoc', () => {
 })
 
 describe('usesFrontmatter', () => {
-  it('is true only for youtube captures (the first frontmatter-native type)', () => {
+  it('is true for every type — all docs are frontmatter-native (no sidecars)', () => {
     expect(usesFrontmatter(known({ type: 'youtube' }))).toBe(true)
-    expect(usesFrontmatter(known({ type: 'article' }))).toBe(false)
-    expect(usesFrontmatter(known({ type: 'daily' }))).toBe(false)
-    expect(usesFrontmatter(known({ type: 'writing' }))).toBe(false)
-    expect(usesFrontmatter(known({ type: 'wiki:custom-x' }))).toBe(false)
-    expect(usesFrontmatter(known({ type: 'system:log' }))).toBe(false)
+    expect(usesFrontmatter(known({ type: 'article' }))).toBe(true)
+    expect(usesFrontmatter(known({ type: 'daily' }))).toBe(true)
+    expect(usesFrontmatter(known({ type: 'writing' }))).toBe(true)
+    expect(usesFrontmatter(known({ type: 'note' }))).toBe(true)
+    expect(usesFrontmatter(known({ type: 'wiki:custom-x' }))).toBe(true)
+    expect(usesFrontmatter(known({ type: 'system:log' }))).toBe(true)
   })
 })
 
