@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   approxDurationSec,
+  detectYoutubeEmbed,
   linkifyTimestamps,
   parseYoutubeId,
   parseYoutubeTimestampLink,
@@ -124,6 +125,30 @@ describe('parseYoutubeTimestampLink', () => {
     expect(parseYoutubeTimestampLink('https://www.youtube.com/watch?v=abc12345678')).toBeNull()
     expect(parseYoutubeTimestampLink('https://example.com/watch?v=x&t=10s')).toBeNull()
     expect(parseYoutubeTimestampLink('not a url')).toBeNull()
+  })
+})
+
+describe('detectYoutubeEmbed', () => {
+  it('detects a bare youtube URL line', () => {
+    expect(detectYoutubeEmbed('https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toEqual({
+      videoId: 'dQw4w9WgXcQ',
+    })
+    expect(detectYoutubeEmbed('  https://youtu.be/dQw4w9WgXcQ  ')).toEqual({
+      videoId: 'dQw4w9WgXcQ',
+    })
+  })
+
+  it('ignores a URL with other text on the line', () => {
+    expect(detectYoutubeEmbed('watch this https://youtu.be/dQw4w9WgXcQ')).toBeNull()
+  })
+
+  it('ignores a bare 11-char word (must be an http URL)', () => {
+    expect(detectYoutubeEmbed('dQw4w9WgXcQ')).toBeNull()
+  })
+
+  it('ignores non-youtube URLs and empty lines', () => {
+    expect(detectYoutubeEmbed('https://example.com/watch?v=dQw4w9WgXcQ')).toBeNull()
+    expect(detectYoutubeEmbed('')).toBeNull()
   })
 })
 

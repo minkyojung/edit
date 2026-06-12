@@ -37,6 +37,7 @@ import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
 import { wikilinkClick } from '@/prototypes/wikilinkNav'
 import { linkClick } from '@/prototypes/linkNav'
 import { timestampSeekClick } from '@/editor/cmTimestampSeek'
+import { youtubeCards } from '@/prototypes/youtubeCards'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
 import { cmProofReview, acceptEffect, rejectEffect } from '@/editor/cmProofReview'
 import { openLinkSafely } from '@/editor/linkUtils'
@@ -133,6 +134,8 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             taskCheckboxClick,
             livePreviewV2,
             blocksV2,
+            youtubeCards, // a bare youtube URL line → inline player
+
             tableArrowEntry,
             blockVerticalNav,
             wikilinkKnown.of(isKnownNoteTitle), // blue vs red from REAL knownDocs

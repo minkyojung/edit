@@ -183,6 +183,19 @@ export function parseYoutubeTimestampLink(
   return { videoId, sec }
 }
 
+/** A body line that is *just* a YouTube URL is rendered as an inline
+ *  player (the editor's youtubeCards widget) — the unified-view way to
+ *  embed a video, no special doc type. Returns the video id, or null when
+ *  the line isn't a bare YouTube URL (a stray 11-char word doesn't embed —
+ *  it must be an actual `http(s)://…` URL on its own). */
+export function detectYoutubeEmbed(lineText: string): { videoId: string } | null {
+  const trimmed = lineText.trim()
+  if (!trimmed || /\s/.test(trimmed)) return null
+  if (!/^https?:\/\//i.test(trimmed)) return null
+  const videoId = parseYoutubeId(trimmed)
+  return videoId ? { videoId } : null
+}
+
 /** Approximate the video length from the last segment's end time (offset
  *  + duration), in whole seconds. Undefined for an empty transcript. */
 export function approxDurationSec(
