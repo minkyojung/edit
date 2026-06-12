@@ -98,15 +98,22 @@ const toggleLink: Command = (view) => {
   return true
 }
 
+// The wrap toggles (⌘B/⌘I/⌘E/⌘⇧X). ⌘K (link) is kept separate so a host where
+// ⌘K is owned by a global shortcut (e.g. the command palette) can omit it.
+const wrapBindings = [
+  { key: 'Mod-b', run: toggleWrap('**') },
+  { key: 'Mod-i', run: toggleWrap('*') },
+  { key: 'Mod-e', run: toggleWrap('`') },
+  { key: 'Mod-Shift-x', run: toggleWrap('~~') },
+]
+
 export const inlineFormatKeymap: Extension = Prec.high(
-  keymap.of([
-    { key: 'Mod-b', run: toggleWrap('**') },
-    { key: 'Mod-i', run: toggleWrap('*') },
-    { key: 'Mod-e', run: toggleWrap('`') },
-    { key: 'Mod-Shift-x', run: toggleWrap('~~') },
-    { key: 'Mod-k', run: toggleLink },
-  ]),
+  keymap.of([...wrapBindings, { key: 'Mod-k', run: toggleLink }]),
 )
+
+// Variant WITHOUT ⌘K — for CmEditor, where ⌘K opens the command palette
+// (a window-level shortcut) and binding link here would double-fire both.
+export const inlineFormatKeymapNoLink: Extension = Prec.high(keymap.of(wrapBindings))
 
 // exported for tests
 export const _toggleWrap = toggleWrap

@@ -34,6 +34,7 @@ import { livePreviewV2, taskCheckboxClick, wikilinkKnown } from '@/prototypes/v2
 import { blocksV2 } from '@/prototypes/v2/blocks'
 import { tableArrowEntry } from '@/prototypes/v2/editableTable'
 import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
+import { inlineFormatKeymapNoLink } from '@/prototypes/v2/inlineFormat'
 import { wikilinkClick } from '@/prototypes/wikilinkNav'
 import { linkClick } from '@/prototypes/linkNav'
 import { timestampSeekClick } from '@/editor/cmTimestampSeek'
@@ -119,6 +120,9 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             // / clean exit, blockquote continuation, else plain newline. Must beat every
             // other Enter handler so CM's loose-list inference never runs.
             Prec.highest(keymap.of([{ key: 'Enter', run: smartEnter }])),
+            // ⌘B/⌘I/⌘E/⌘⇧X wrap toggles (Prec.high → beats defaultKeymap). ⌘K
+            // (link) is intentionally omitted: it opens the command palette.
+            inlineFormatKeymapNoLink,
             keymap.of([
               { key: 'Backspace', run: deleteMarkupBackward },
               indentWithTab,
