@@ -157,6 +157,11 @@ export function pathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null {
     const filename = sanitizeFilename(doc.title?.trim() || 'Untitled')
     return `inbox/${filename}.md`
   }
+  // Generic note: the file lives wherever the user put it, so its stored
+  // relative path IS the placement (no folder/name convention to apply).
+  if (doc.type === 'note') {
+    return doc.relPath ?? null
+  }
   return null
 }
 

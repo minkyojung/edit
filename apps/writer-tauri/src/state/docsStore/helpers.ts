@@ -102,6 +102,19 @@ const YOUTUBE_POLICY: DocPolicy = {
   isAgentManaged: false,
 }
 
+const NOTE_POLICY: DocPolicy = {
+  // Generic user .md anywhere in the vault (surfaced by the folder tree).
+  // The user owns it; free to archive/move. Not an ingest source and not
+  // agent-managed. Sidebar placement is the folder tree, not a fixed
+  // group — 'none' keeps it out of the legacy date/wiki sections.
+  category: 'note',
+  sidebarGroup: 'none',
+  canArchive: true,
+  canBeMovedInWikiTree: false,
+  isIngestSource: false,
+  isAgentManaged: false,
+}
+
 /** Resolve a doc's policy by type. Unknown / legacy types fall
  * through to wiki-content — the v6 migration already moved the
  * pre-rename `wiki:conventions|log|index` to `system:*`, so any
@@ -112,6 +125,7 @@ export function getDocPolicy(doc: Pick<KnownDoc, 'type'>): DocPolicy {
   if (doc.type === 'writing') return WRITING_POLICY
   if (doc.type === 'article') return ARTICLE_POLICY
   if (doc.type === 'youtube') return YOUTUBE_POLICY
+  if (doc.type === 'note') return NOTE_POLICY
   if (doc.type === 'wiki:profile') return WIKI_PROFILE_POLICY
   if (doc.type.startsWith('system:')) return SYSTEM_META_POLICY
   if (doc.type.startsWith('wiki:')) return WIKI_CONTENT_POLICY

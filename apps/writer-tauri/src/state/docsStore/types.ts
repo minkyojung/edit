@@ -39,7 +39,14 @@ export interface KnownDoc {
    * pre-2026-05-13 single `wiki:*` bucket so sidebar grouping, prompt
    * channels, and write-protection guards line up with Karpathy's
    * schema-vs-wiki separation. */
-  type: 'daily' | 'writing' | 'article' | 'youtube' | `system:${string}` | `wiki:${string}`
+  type:
+    | 'daily'
+    | 'writing'
+    | 'article'
+    | 'youtube'
+    | 'note'
+    | `system:${string}`
+    | `wiki:${string}`
   /** YYYY-MM-DD when type === 'daily'. */
   date?: string
   /** Parent doc's slug for tree-nested writing notes. Undefined for
@@ -94,6 +101,11 @@ export interface KnownDoc {
   videoId?: string
   durationSec?: number
   thumbnailUrl?: string
+  /** Vault-relative path for a generic `note` (a `.md` outside the
+   * recognised folders, surfaced by the folder-tree scan). The path IS
+   * the placement — pathForDoc returns it verbatim — since these files
+   * live wherever the user put them. Unset on every typed doc. */
+  relPath?: string
 }
 
 /** Coarse classification used by the DOC_POLICIES table below. Every
@@ -111,6 +123,7 @@ export type DocCategory =
   | 'system-meta'   // agent-managed config / metadata (system:conventions/log/index)
   | 'article'       // user-saved read-later page (external raw source)
   | 'youtube'       // captured YouTube video (transcript + metadata)
+  | 'note'          // generic user .md anywhere in the vault (folder tree)
 
 /** Capability matrix for one doc category. Every caller that used
  * to ask "can this doc be archived / moved / ingested" reads from

@@ -9,6 +9,7 @@ function known(partial: Partial<KnownDoc> & { type: KnownDoc['type'] }): KnownDo
     date: partial.date,
     title: partial.title,
     parentId: partial.parentId,
+    relPath: partial.relPath,
   }
 }
 
@@ -134,6 +135,14 @@ describe('pathForDoc', () => {
       pathForDoc(known({ type: 'youtube', title: 'Inside the Mind of a Procrastinator' })),
     ).toBe('inbox/Inside the Mind of a Procrastinator.md')
     expect(pathForDoc(known({ type: 'youtube' }))).toBe('inbox/Untitled.md')
+  })
+
+  it('returns a generic note at its stored relPath verbatim', () => {
+    expect(pathForDoc(known({ type: 'note', relPath: 'projects/Memo.md' }))).toBe(
+      'projects/Memo.md',
+    )
+    // No relPath → no placement.
+    expect(pathForDoc(known({ type: 'note' }))).toBeNull()
   })
 })
 

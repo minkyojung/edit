@@ -33,6 +33,7 @@ import {
 } from '@/lib/vault'
 import type { KnownDoc } from '@/state/docsStore'
 import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
+import { folderTreeFlag } from '@/lib/flags'
 import { seedLastWrittenPath } from '@/lib/docFileSync'
 import { splitFrontmatter } from '@/lib/frontmatter'
 
@@ -98,10 +99,13 @@ async function getOrAssignSlug(mdRel: string): Promise<SidecarLoad> {
  * (`.marks.json`) and hidden entries (`.DS_Store`, `.git/`, ...) are
  * filtered out at every level. */
 async function listMdRecursive(subRel: string): Promise<string[]> {
-  if (!(await vaultFileExists(subRel))) return []
   const root = getActiveVaultPath()
   if (!root) return []
-  const absPath = await join(root, subRel)
+  // Root (`subRel === ''`) always exists when a vault is selected; the
+  // vault path helpers reject an empty relPath, so don't route '' through
+  // vaultFileExists — use the root directly.
+  if (subRel !== '' && !(await vaultFileExists(subRel))) return []
+  const absPath = subRel === '' ? root : await join(root, subRel)
   const entries = await readDir(absPath)
   const results: string[] = []
   for (const entry of entries) {
@@ -138,8 +142,9 @@ export function mdRelToKnownDoc(
   mdRel: string,
   dailySlugByDate: Map<string, string>,
   meta: Partial<DocMetaFile> = {},
+  allowGeneric = false,
 ): KnownDoc | null {
-  const base = mdRelToBaseDoc(slug, mdRel, dailySlugByDate)
+  const base = mdRelToBaseDoc(slug, mdRel, dailySlugByDate, allowGeneric)
   if (!base) return null
   // Sidecar-stored fields layer onto the path-derived base so soft
   // state (archive flag, title intent) survives the boot rebuild that
@@ -191,6 +196,7 @@ function mdRelToBaseDoc(
   slug: string,
   mdRel: string,
   dailySlugByDate: Map<string, string>,
+  allowGeneric = false,
 ): KnownDoc | null {
   // wiki/<title>.md — no nesting beyond one level.
   const wikiMatch = mdRel.match(/^wiki\/([^/]+)\.md$/)
@@ -244,6 +250,14 @@ function mdRelToBaseDoc(
   if (inboxMatch) {
     return { slug, type: 'youtube', title: inboxMatch[1] }
   }
+  // Generic note (folder-tree mode): any other `.md` in the vault. The
+  // path is the placement, carried on relPath; the title is the filename.
+  // Off by default — without the flag, unrecognised paths are skipped as
+  // before so the legacy sidebar's catalog is unchanged.
+  if (allowGeneric) {
+    const name = mdRel.split('/').pop()?.replace(/\.md$/, '') ?? mdRel
+    return { slug, type: 'note', title: name, relPath: mdRel }
+  }
   return null
 }
 
@@ -254,13 +268,19 @@ function mdRelToBaseDoc(
 export async function scanVault(): Promise<KnownDoc[]> {
   if (!getActiveVaultPath()) return []
 
-  const allMd = [
-    ...(await listMdRecursive('wiki')),
-    ...(await listMdRecursive('daily')),
-    ...(await listMdRecursive('_system')),
-    ...(await listMdRecursive('articles')),
-    ...(await listMdRecursive('inbox')),
-  ]
+  // Folder-tree mode: walk the WHOLE vault so arbitrary user folders
+  // surface as generic `note` docs. Default: only the recognised folders
+  // (current behaviour — the legacy sidebar shows nothing else anyway).
+  const allowGeneric = folderTreeFlag()
+  const allMd = allowGeneric
+    ? await listMdRecursive('')
+    : [
+        ...(await listMdRecursive('wiki')),
+        ...(await listMdRecursive('daily')),
+        ...(await listMdRecursive('_system')),
+        ...(await listMdRecursive('articles')),
+        ...(await listMdRecursive('inbox')),
+      ]
 
   // Pass 1: resolve slug + load sidecar metadata for every file in one
   // read. Done up-front because pass-2's writing-note resolution needs
@@ -287,7 +307,7 @@ export async function scanVault(): Promise<KnownDoc[]> {
   // Pass 2: assemble KnownDoc entries. Unrecognised paths drop out.
   const docs: KnownDoc[] = []
   for (const { slug, mdRel, meta } of scanned) {
-    const doc = mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta)
+    const doc = mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta, allowGeneric)
     if (doc) docs.push(doc)
   }
 
@@ -329,7 +349,7 @@ export async function buildKnownDocForExternalPath(
   for (const d of catalog) {
     if (d.type === 'daily' && d.date) dailySlugByDate.set(d.date, d.slug)
   }
-  return mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta)
+  return mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta, folderTreeFlag())
 }
 
 // Dev-only console handle. `await __scanVault()` to inspect what the

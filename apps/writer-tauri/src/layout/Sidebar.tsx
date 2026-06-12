@@ -12,14 +12,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { SidebarDateMenu } from './SidebarDateMenu'
 import { DayView } from './views/DayView'
 import { FolderTree } from './FolderTree'
-
-/** Dev flag to preview the Obsidian-style folder tree in place of the
- * date views. Mirrors Page.tsx's `writer.cmEditor` gate. Set in the
- * console: `localStorage.setItem('writer.folderTree', '1')` + reload. */
-const folderTreeEnabled = (): boolean =>
-  import.meta.env.DEV &&
-  typeof localStorage !== 'undefined' &&
-  localStorage.getItem('writer.folderTree') === '1'
+import { folderTreeFlag } from '@/lib/flags'
 import { WeekView } from './views/WeekView'
 import { MonthView } from './views/MonthView'
 import { WikiSection } from './WikiSection'
@@ -261,7 +254,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        {folderTreeEnabled() ? (
+        {folderTreeFlag() ? (
           // Obsidian-style folder tree (dev flag `writer.folderTree=1`).
           // Replaces the date views while it's being built; flag off keeps
           // the existing sidebar untouched.

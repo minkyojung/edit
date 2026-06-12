@@ -153,6 +153,36 @@ describe('mdRelToKnownDoc — inbox (youtube captures)', () => {
   })
 })
 
+describe('mdRelToKnownDoc — generic notes (folder-tree mode)', () => {
+  it('maps any other .md to a note carrying its path, when allowed', () => {
+    expect(mdRelToKnownDoc('n1', 'projects/Memo.md', noChildren, {}, true)).toEqual({
+      slug: 'n1',
+      type: 'note',
+      title: 'Memo',
+      relPath: 'projects/Memo.md',
+    })
+  })
+
+  it('handles a root-level note', () => {
+    expect(mdRelToKnownDoc('n2', 'README.md', noChildren, {}, true)).toMatchObject({
+      type: 'note',
+      title: 'README',
+      relPath: 'README.md',
+    })
+  })
+
+  it('still skips unrecognised paths when allowGeneric is off (default)', () => {
+    expect(mdRelToKnownDoc('n3', 'projects/Memo.md', noChildren)).toBeNull()
+  })
+
+  it('prefers a recognised type over generic, even when allowed', () => {
+    expect(mdRelToKnownDoc('w1', 'wiki/Tom.md', noChildren, {}, true)).toMatchObject({
+      type: 'wiki:custom-w1',
+      title: 'Tom',
+    })
+  })
+})
+
 describe('mdRelToKnownDoc — unknown paths', () => {
   it('returns null for paths outside the four recognised subdirectories', () => {
     expect(mdRelToKnownDoc('s1', 'random.md', noChildren)).toBeNull()
