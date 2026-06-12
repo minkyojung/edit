@@ -154,24 +154,21 @@ function buildDecos(
           name === 'CodeMark' ||
           name === 'LinkMark'
         ) {
+          // PER-CONSTRUCT reveal: a marker shows raw only when the caret is inside
+          // its OWN construct (Emphasis / StrongEmphasis / Strikethrough / InlineCode
+          // / Link) — the marker's parent node — NOT anywhere on the (possibly long,
+          // wrapped) line. This is the Obsidian rule and matches the per-link fix; it
+          // stops a caret in a long bullet's prose from popping every `**`/`` ` ``/URL
+          // on the line raw. IME safety is NOT provided by line-level reveal anymore —
+          // it comes from the composing-freeze (the plugin maps, never recomputes,
+          // decorations while view.composing) plus @codemirror/view ≥6.39.16.
           // A wikilink's inner `[`/`]` are LinkMarks of a Link — leave them to the
           // regex overlay so the two layers don't both hide them with split gates.
-          // Cell mode (revealAll defined) → reveal by focus. Else ACTIVE-LINE reveal:
-          // show the WHOLE line raw when the selection touches it (the IME-safe rule —
-          // the composing line never carries a replace decoration). Exception:
-          // a link's marks reveal with their OWN link span (below), so a caret
-          // in a long wrapped bullet's text doesn't pop the link's raw URL.
-          const ln = state.doc.lineAt(nf)
-          let rFrom = ln.from
-          let rTo = ln.to
-          if (name === 'LinkMark') {
-            const p = node.node.parent
-            if (p?.name === 'Link' && isWikiLink(state, p.from, p.to)) return
-            if (p?.name === 'Link') {
-              rFrom = p.from
-              rTo = p.to
-            }
-          }
+          const p = node.node.parent
+          if (name === 'LinkMark' && p?.name === 'Link' && isWikiLink(state, p.from, p.to)) return
+          const line = state.doc.lineAt(nf)
+          const rFrom = p ? p.from : line.from
+          const rTo = p ? p.to : line.to
           const reveal = revealAll ?? cursorInRange(state, rFrom, rTo)
           if (!reveal) hide(nf, nt)
           return
@@ -282,9 +279,10 @@ function buildDecos(
 
     // Wikilinks `[[Title]]` — not (cleanly) in the markdown grammar, so a regex
     // overlay over the same range. Mark the inner title (broken-styled if unknown)
-    // and hide `[[`/`]]` unless the caret is on the LINE — line-level reveal, same
-    // as every other construct, so a composing caret elsewhere on the line never
-    // leaves a `[[`/`]]` replace decoration on it (IME safety).
+    // and hide `[[`/`]]` unless the caret is inside THIS wikilink — per-construct
+    // reveal, same as every other inline construct, so a caret elsewhere on the
+    // (long, wrapped) line no longer pops the brackets raw. IME safety comes from
+    // the composing-freeze + @codemirror/view ≥6.39.16, not line-level reveal.
     const text = state.doc.sliceString(from, to)
     const re = /\[\[([^\]\n]+)\]\]/g
     let m: RegExpExecArray | null
@@ -296,8 +294,7 @@ function buildDecos(
       const end = innerTo + 2
       // Obsidian model: the TITLE is always the link (blue underline / red broken).
       mark(innerFrom, innerTo, state.facet(wikilinkKnown)(m[1]) ? 'cm-wikilink' : 'cm-wikilink-broken')
-      const line = state.doc.lineAt(start)
-      if (revealAll ?? cursorInRange(state, line.from, line.to)) {
+      if (revealAll ?? cursorInRange(state, start, end)) {
         // editing → SHOW the `[[`/`]]` brackets, just muted (a class, not a replace,
         // so the composing caret's line never carries a replace → IME-safe).
         mark(start, innerFrom, 'cm-wikilink-bracket')
@@ -354,6 +351,10 @@ function previewPlugin(inlineOnly: boolean) {
 export const livePreviewV2 = previewPlugin(false)
 // Inline-only variant for table cells (no block constructs — see `inlineOnly`).
 export const livePreviewInline = previewPlugin(true)
+
+// Test-only: the pure decoration builder, so reveal behavior can be asserted
+// headlessly (the ViewPlugin's composing-freeze needs a real browser).
+export { buildDecos as _buildDecos, HIDE as _HIDE }
 
 // Click the drawn checkbox → toggle `[ ]`↔`[x]`. The box is a CSS `::after`
 // pseudo-element, so it can't be an event target. Instead we hit-test the click
