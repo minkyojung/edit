@@ -29,19 +29,12 @@ export function ArticlesSection() {
 
   const hasItems = useMemo(
     () =>
-      knownDocs.some(
-        (d) => (d.type === 'article' || d.type === 'youtube') && !d.archivedAt,
-      ),
+      knownDocs.some((d) => d.sourceUrl && !d.archivedAt),
     [knownDocs],
   )
   const unreadCount = useMemo(
     () =>
-      knownDocs.filter(
-        (d) =>
-          (d.type === 'article' || d.type === 'youtube') &&
-          !d.archivedAt &&
-          !d.readAt,
-      ).length,
+      knownDocs.filter((d) => d.sourceUrl && !d.archivedAt && !d.readAt).length,
     [knownDocs],
   )
 

@@ -13,11 +13,12 @@ const capture: YoutubeCapture = {
 }
 
 describe('youtubeCaptureToDoc', () => {
-  it('maps a capture onto a youtube KnownDoc, trimming the title', () => {
+  it('maps a capture onto a generic inbox note, trimming the title', () => {
     expect(youtubeCaptureToDoc(capture, 'yt-1', '2026-06-11T00:00:00.000Z')).toEqual({
       slug: 'yt-1',
-      type: 'youtube',
+      type: 'note',
       title: 'Inside the Mind of a Master Procrastinator',
+      relPath: 'inbox/Inside the Mind of a Master Procrastinator.md',
       createdAt: '2026-06-11T00:00:00.000Z',
       savedAt: '2026-06-11T00:00:00.000Z',
       sourceUrl: 'https://www.youtube.com/watch?v=arj7oStGLkU',

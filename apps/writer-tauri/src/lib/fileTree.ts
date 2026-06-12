@@ -24,6 +24,10 @@ export interface TreeFile {
   slug: string
   /** Doc type, for icon selection in the renderer. */
   type: KnownDoc['type']
+  /** KIND discriminators for icon selection: a captured video has a
+   *  `videoId`, a saved page has a `sourceUrl`. Both absent → plain note. */
+  videoId?: string
+  sourceUrl?: string
 }
 
 export interface TreeFolder {
@@ -77,6 +81,8 @@ export function buildFileTree(docs: KnownDoc[]): TreeNode[] {
       path,
       slug: doc.slug,
       type: doc.type,
+      videoId: doc.videoId,
+      sourceUrl: doc.sourceUrl,
     })
   }
 

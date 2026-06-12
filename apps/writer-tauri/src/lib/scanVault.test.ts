@@ -116,16 +116,17 @@ describe('mdRelToKnownDoc — system pages', () => {
   })
 })
 
-describe('mdRelToKnownDoc — inbox (youtube captures)', () => {
-  it('maps inbox/<title>.md to a youtube doc', () => {
+describe('mdRelToKnownDoc — inbox (captures)', () => {
+  it('maps inbox/<title>.md to a generic note carrying its path', () => {
     expect(mdRelToKnownDoc('yt-1', 'inbox/Tim Urban TED.md', noChildren)).toEqual({
       slug: 'yt-1',
-      type: 'youtube',
+      type: 'note',
       title: 'Tim Urban TED',
+      relPath: 'inbox/Tim Urban TED.md',
     })
   })
 
-  it('layers youtube frontmatter metadata onto the path-derived doc', () => {
+  it('layers youtube frontmatter metadata onto the path-derived note', () => {
     const md = [
       '---',
       'slug: yt-2',
@@ -142,8 +143,9 @@ describe('mdRelToKnownDoc — inbox (youtube captures)', () => {
     const doc = mdRelToKnownDoc('yt-2', 'inbox/Master Procrastinator.md', noChildren, frontmatterToMeta(data))
     expect(doc).toEqual({
       slug: 'yt-2',
-      type: 'youtube',
+      type: 'note',
       title: 'Master Procrastinator',
+      relPath: 'inbox/Master Procrastinator.md',
       sourceUrl: 'https://www.youtube.com/watch?v=arj7oStGLkU',
       siteName: 'TED',
       videoId: 'arj7oStGLkU',
@@ -269,8 +271,9 @@ describe('frontmatter → KnownDoc (read path logic)', () => {
 
     expect(doc).toEqual({
       slug: 'art-1',
-      type: 'article',
+      type: 'note',
       title: 'My Saved Post',
+      relPath: 'articles/My Saved Post.md',
       sourceUrl: 'https://example.com/post',
       siteName: 'Example',
       archivedAt: 1718000000000,

@@ -66,7 +66,9 @@ export const createEditSlice = (
     const idx = get().knownDocs.findIndex((d) => d.slug === slug)
     if (idx < 0) return
     const cur = get().knownDocs[idx]
-    if (cur.type !== 'article') return
+    // Read/unread is a read-it-later concept — only captured-from-URL
+    // notes (saved pages / youtube) have a `sourceUrl`.
+    if (!cur.sourceUrl) return
     const readAt = read ? new Date().toISOString() : undefined
     if (cur.readAt === readAt) return
     const list = [...get().knownDocs]

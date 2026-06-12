@@ -80,11 +80,12 @@ export function SelectionMenu() {
   const selectionEmpty = useFormatStateStore((s) => s.selectionEmpty)
   const selectionRect = useFormatStateStore((s) => s.selectionRect)
   const activeMarks = useFormatStateStore((s) => s.activeMarks)
-  // Highlight / comment is a read-it-later feature — only on saved articles.
+  // Highlight / comment is a read-it-later feature — only on captured
+  // notes (saved pages / youtube), identified by a `sourceUrl`.
   const activeSlug = useActiveSlug()
-  const isArticle = useDocsStore((s) =>
+  const isReadLater = useDocsStore((s) =>
     activeSlug
-      ? s.knownDocs.find((d) => d.slug === activeSlug)?.type === 'article'
+      ? !!s.knownDocs.find((d) => d.slug === activeSlug)?.sourceUrl
       : false,
   )
 
@@ -266,7 +267,7 @@ export function SelectionMenu() {
         {/* Remove lives at the right end of the format row (not a prominent
             red row below) — a quiet icon that only appears when the selection
             is on an existing highlight. */}
-        {isArticle && noteMode && (
+        {isReadLater && noteMode && (
           <Button
             variant="ghost"
             size="icon-sm"
@@ -282,8 +283,8 @@ export function SelectionMenu() {
         )}
       </div>
 
-      {/* Comment / highlight management (saved articles only). */}
-      {isArticle &&
+      {/* Comment / highlight management (captured read-it-later notes only). */}
+      {isReadLater &&
         (noteMode && record ? (
             <HighlightNoteField
               key={activeId!}

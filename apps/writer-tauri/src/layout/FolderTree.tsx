@@ -17,7 +17,7 @@ import {
   IconFileText,
   IconWorld,
 } from '@tabler/icons-react'
-import { useDocsStore, type KnownDoc } from '@/state/docsStore'
+import { useDocsStore } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { buildFileTree, type TreeNode } from '@/lib/fileTree'
 import { buildViewUrl } from '@/lib/viewUrl'
@@ -33,11 +33,9 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 
-function FileIcon({ type }: { type: KnownDoc['type'] }) {
-  if (type === 'youtube')
-    return <IconBrandYoutube size={16} className="text-red-500" />
-  if (type === 'article')
-    return <IconWorld size={16} className="text-muted-foreground" />
+function FileIcon({ videoId, sourceUrl }: { videoId?: string; sourceUrl?: string }) {
+  if (videoId) return <IconBrandYoutube size={16} className="text-red-500" />
+  if (sourceUrl) return <IconWorld size={16} className="text-muted-foreground" />
   return <IconFileText size={16} className="text-muted-foreground" />
 }
 
@@ -55,7 +53,7 @@ function FolderTreeNode({ node, expanded, onToggle, onOpen, activeSlug }: NodePr
       <li>
         <TreeRow active={node.slug === activeSlug}>
           <TreeRowLead>
-            <FileIcon type={node.type} />
+            <FileIcon videoId={node.videoId} sourceUrl={node.sourceUrl} />
           </TreeRowLead>
           <TreeRowLabel onClick={() => onOpen(node.slug)}>
             <span className="truncate">{node.name}</span>

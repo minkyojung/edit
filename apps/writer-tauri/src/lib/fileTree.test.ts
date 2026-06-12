@@ -25,11 +25,18 @@ describe('buildFileTree', () => {
     ])
   })
 
-  it('places a youtube capture under inbox/', () => {
-    const tree = buildFileTree([doc({ slug: 'y1', type: 'youtube', title: 'My Video' })])
+  it('places a youtube capture (note + inbox/ relPath) under inbox/ with its videoId', () => {
+    const tree = buildFileTree([
+      doc({ slug: 'y1', type: 'note', title: 'My Video', relPath: 'inbox/My Video.md', videoId: 'abc' }),
+    ])
     const inbox = tree[0] as TreeFolder
     expect(inbox.name).toBe('inbox')
-    expect(inbox.children[0]).toMatchObject({ kind: 'file', name: 'My Video', slug: 'y1' })
+    expect(inbox.children[0]).toMatchObject({
+      kind: 'file',
+      name: 'My Video',
+      slug: 'y1',
+      videoId: 'abc',
+    })
   })
 
   it('renders a daily and its writing child (literal file + folder)', () => {
@@ -71,7 +78,7 @@ describe('buildFileTree', () => {
 
   it('sorts folders before files, each alphabetically', () => {
     const tree = buildFileTree([
-      doc({ slug: 'a1', type: 'article', title: 'zebra article' }),
+      doc({ slug: 'a1', type: 'note', title: 'zebra article', relPath: 'articles/zebra article.md' }),
       doc({ slug: 'w1', type: 'wiki:custom-w1', title: 'Apple' }),
       doc({ slug: 'w2', type: 'wiki:custom-w2', title: 'banana' }),
     ])

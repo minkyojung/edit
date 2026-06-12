@@ -230,21 +230,15 @@ function mdRelToBaseDoc(
       type: `system:${systemMatch[1]}` as KnownDoc['type'],
     }
   }
-  // articles/<title>.md — a saved read-it-later page. Flat (no nesting).
-  // Source metadata (url/site/favicon/read state) is layered from the
-  // sidecar by mdRelToKnownDoc; the title comes from the filename.
-  const articleMatch = mdRel.match(/^articles\/([^/]+)\.md$/)
-  if (articleMatch) {
-    return { slug, type: 'article', title: articleMatch[1] }
-  }
-  // inbox/<title>.md — a captured item. Today the inbox holds only
-  // YouTube captures, so the placement maps straight to `youtube`; when
-  // more capture kinds land, the kind moves into frontmatter and is read
-  // by mdRelToKnownDoc to refine the type. Video metadata (videoId, url,
-  // channel, duration) is layered from the frontmatter by mdRelToKnownDoc.
-  const inboxMatch = mdRel.match(/^inbox\/([^/]+)\.md$/)
-  if (inboxMatch) {
-    return { slug, type: 'youtube', title: inboxMatch[1] }
+  // inbox/<title>.md (or legacy articles/<title>.md) — a captured item:
+  // a saved web page or a YouTube capture. Both are generic notes; their
+  // KIND is carried in frontmatter (sourceUrl = saved page, videoId =
+  // video), layered on by mdRelToKnownDoc. The path IS the placement, so
+  // relPath is set even though it's a recognised folder — pathForDoc
+  // returns it verbatim and the file never moves.
+  const captureMatch = mdRel.match(/^(?:inbox|articles)\/([^/]+)\.md$/)
+  if (captureMatch) {
+    return { slug, type: 'note', title: captureMatch[1], relPath: mdRel }
   }
   // Generic note (folder-tree mode): any other `.md` in the vault. The
   // path is the placement, carried on relPath; the title is the filename.

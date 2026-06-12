@@ -73,40 +73,12 @@ const SYSTEM_META_POLICY: DocPolicy = {
   isIngestSource: false,
   isAgentManaged: true,
 }
-const ARTICLE_POLICY: DocPolicy = {
-  // Read-it-later saved page. Raw external source (like daily, not
-  // synthesized), so it's user-owned (not agent-managed) and NOT an
-  // ingest source — we don't feed saved articles back into the wiki /
-  // LLM-context pass. Archivable; lives in its own sidebar section.
-  category: 'article',
-  sidebarGroup: 'article',
-  canArchive: true,
-  canBeMovedInWikiTree: false,
-  isIngestSource: false,
-  isAgentManaged: false,
-}
-
-const YOUTUBE_POLICY: DocPolicy = {
-  // Captured YouTube video (transcript + metadata). Like article it's a
-  // raw external source the user saved and can archive. NOT an automatic
-  // ingest source: a transcript is large and feeding it into the wiki on
-  // every idle tick would flood the proposal queue. Capture is a
-  // human-facing read first; pushing a transcript into the wiki should be
-  // an explicit, user-initiated action, not a background trigger. Shares
-  // the article sidebar section for now (a dedicated inbox view is later).
-  category: 'youtube',
-  sidebarGroup: 'article',
-  canArchive: true,
-  canBeMovedInWikiTree: false,
-  isIngestSource: false,
-  isAgentManaged: false,
-}
-
 const NOTE_POLICY: DocPolicy = {
-  // Generic user .md anywhere in the vault (surfaced by the folder tree).
-  // The user owns it; free to archive/move. Not an ingest source and not
-  // agent-managed. Sidebar placement is the folder tree, not a fixed
-  // group — 'none' keeps it out of the legacy date/wiki sections.
+  // Generic user .md anywhere in the vault — folder-tree files AND inbox
+  // captures (saved pages / youtube, distinguished by frontmatter, not
+  // type). The user owns it; free to archive/move. Not an ingest source
+  // and not agent-managed. Sidebar placement is the folder tree, not a
+  // fixed group — 'none' keeps it out of the legacy date/wiki sections.
   category: 'note',
   sidebarGroup: 'none',
   canArchive: true,
@@ -123,8 +95,6 @@ const NOTE_POLICY: DocPolicy = {
 export function getDocPolicy(doc: Pick<KnownDoc, 'type'>): DocPolicy {
   if (doc.type === 'daily') return DAILY_POLICY
   if (doc.type === 'writing') return WRITING_POLICY
-  if (doc.type === 'article') return ARTICLE_POLICY
-  if (doc.type === 'youtube') return YOUTUBE_POLICY
   if (doc.type === 'note') return NOTE_POLICY
   if (doc.type === 'wiki:profile') return WIKI_PROFILE_POLICY
   if (doc.type.startsWith('system:')) return SYSTEM_META_POLICY

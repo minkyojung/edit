@@ -111,36 +111,15 @@ describe('pathForDoc', () => {
     expect(pathForDoc(note)).toBeNull()
   })
 
-  it('places articles under articles/ by title', () => {
-    expect(
-      pathForDoc(known({ type: 'article', title: 'A Recipe for Training' })),
-    ).toBe('articles/A Recipe for Training.md')
-  })
-
-  it('sanitises reserved characters in article titles', () => {
-    expect(
-      pathForDoc(known({ type: 'article', title: 'URL: https://example.com' })),
-    ).toBe('articles/URL- https---example.com.md')
-  })
-
-  it('falls back to Untitled for blank-titled articles', () => {
-    expect(pathForDoc(known({ type: 'article', title: '   ' }))).toBe(
-      'articles/Untitled.md',
-    )
-    expect(pathForDoc(known({ type: 'article' }))).toBe('articles/Untitled.md')
-  })
-
-  it('places youtube captures under inbox/ by title', () => {
-    expect(
-      pathForDoc(known({ type: 'youtube', title: 'Inside the Mind of a Procrastinator' })),
-    ).toBe('inbox/Inside the Mind of a Procrastinator.md')
-    expect(pathForDoc(known({ type: 'youtube' }))).toBe('inbox/Untitled.md')
-  })
-
   it('returns a generic note at its stored relPath verbatim', () => {
     expect(pathForDoc(known({ type: 'note', relPath: 'projects/Memo.md' }))).toBe(
       'projects/Memo.md',
     )
+    // Inbox captures (saved pages / youtube) are notes — placement is the
+    // relPath set at creation (inbox/<title>.md), returned verbatim.
+    expect(
+      pathForDoc(known({ type: 'note', relPath: 'inbox/Inside the Mind.md' })),
+    ).toBe('inbox/Inside the Mind.md')
     // No relPath → no placement.
     expect(pathForDoc(known({ type: 'note' }))).toBeNull()
   })
@@ -148,8 +127,6 @@ describe('pathForDoc', () => {
 
 describe('usesFrontmatter', () => {
   it('is true for every type — all docs are frontmatter-native (no sidecars)', () => {
-    expect(usesFrontmatter(known({ type: 'youtube' }))).toBe(true)
-    expect(usesFrontmatter(known({ type: 'article' }))).toBe(true)
     expect(usesFrontmatter(known({ type: 'daily' }))).toBe(true)
     expect(usesFrontmatter(known({ type: 'writing' }))).toBe(true)
     expect(usesFrontmatter(known({ type: 'note' }))).toBe(true)

@@ -42,8 +42,6 @@ export interface KnownDoc {
   type:
     | 'daily'
     | 'writing'
-    | 'article'
-    | 'youtube'
     | 'note'
     | `system:${string}`
     | `wiki:${string}`
@@ -78,26 +76,27 @@ export interface KnownDoc {
    * whose Y.Map had no createdAt either; DocumentInfoDialog renders
    * `—` in that case. */
   createdAt?: string
-  /** Read-it-later source metadata. Set only on `type === 'article'`
-   * docs (saved web pages). Populated by `createArticle` from the
-   * defuddle extraction and persisted via the `.meta.json` sidecar
-   * (DocMetaFile) so they survive restart. `readAt` is set when the
-   * user marks the article read; absent = unread. */
+  /** Read-it-later source metadata. Set on captured-from-URL notes
+   * (saved web pages). A present `sourceUrl` is what marks a generic
+   * `note` as a read-it-later item (the old `type === 'article'` gate).
+   * Populated by `createArticle` from the defuddle extraction and
+   * persisted via the `.md` frontmatter so it survives restart. `readAt`
+   * is set when the user marks it read; absent = unread. */
   sourceUrl?: string
   siteName?: string
   faviconUrl?: string
   description?: string
   savedAt?: string
   readAt?: string
-  /** User highlights on this article (type 'article' only). Source of
-   * truth, persisted via `.meta.json`; the editor re-anchors each one to
+  /** User highlights on a captured note (read-it-later). Source of
+   * truth, persisted via frontmatter; the editor re-anchors each one to
    * the body on mount. */
   highlights?: HighlightRecord[]
-  /** YouTube capture metadata (type === 'youtube'). The transcript is the
-   * body; these describe the source video. `sourceUrl` (watch URL) and
-   * `siteName` (channel) reuse the article fields above. Unlike article,
-   * youtube captures are persisted via `.md` frontmatter, not a sidecar —
-   * they're the first frontmatter-native doc type. */
+  /** YouTube capture metadata. A present `videoId` is what marks a
+   * generic `note` as a video capture (the old `type === 'youtube'`
+   * gate) — it renders an inline player and picks the video icon. The
+   * transcript is the body; these describe the source video. `sourceUrl`
+   * (watch URL) and `siteName` (channel) reuse the fields above. */
   videoId?: string
   durationSec?: number
   thumbnailUrl?: string
@@ -121,9 +120,7 @@ export type DocCategory =
   | 'wiki-content'  // agent-created, user-editable wiki page (wiki:custom-*)
   | 'wiki-profile'  // user self-profile — editable + ingest-updatable, non-archivable
   | 'system-meta'   // agent-managed config / metadata (system:conventions/log/index)
-  | 'article'       // user-saved read-later page (external raw source)
-  | 'youtube'       // captured YouTube video (transcript + metadata)
-  | 'note'          // generic user .md anywhere in the vault (folder tree)
+  | 'note'          // generic user .md anywhere in the vault (folder tree + inbox captures)
 
 /** Capability matrix for one doc category. Every caller that used
  * to ask "can this doc be archived / moved / ingested" reads from
@@ -134,7 +131,7 @@ export interface DocPolicy {
   /** Which sidebar region this doc belongs in. The Day / Week / Month
    * views render `date` and `none` (latter never appears); the
    * Wiki section splits `wiki` (content) and `system` (meta). */
-  sidebarGroup: 'date' | 'wiki' | 'system' | 'article' | 'none'
+  sidebarGroup: 'date' | 'wiki' | 'system' | 'none'
   /** User can soft-delete via archive UI. Karpathy write-ownership
    * invariant: only docs the user authored or owns can be wiped. */
   canArchive: boolean

@@ -3,7 +3,8 @@
 // the sidebar now collapses to a single entry that navigates here, so it
 // stays one line no matter how many articles pile up.
 //
-// Pure read over `knownDocs` (type === 'article'); no new persistence.
+// Pure read over `knownDocs` (captured notes — those with a `sourceUrl`);
+// no new persistence.
 // Filter (unread/read/all) + search are local state. A row click opens
 // the article in the editor (the editor IS the reader); the context menu
 // toggles read state and archives — same actions as the sidebar used to
@@ -68,9 +69,7 @@ export function ReadLaterQueue() {
   const articles = useMemo(
     () =>
       knownDocs
-        .filter(
-          (d) => (d.type === 'article' || d.type === 'youtube') && !d.archivedAt,
-        )
+        .filter((d) => d.sourceUrl && !d.archivedAt)
         .sort((a, b) => (b.savedAt ?? '').localeCompare(a.savedAt ?? '')),
     [knownDocs],
   )
@@ -191,7 +190,7 @@ function QueueRow({
             )}
             title={doc.siteName ? `${title} — ${doc.siteName}` : title}
           >
-            {doc.type === 'youtube' ? (
+            {doc.videoId ? (
               <IconBrandYoutube className="size-5 shrink-0 text-red-500" />
             ) : doc.faviconUrl ? (
               <img

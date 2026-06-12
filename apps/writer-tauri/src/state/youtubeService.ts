@@ -16,21 +16,25 @@ import {
   type YoutubeCapture,
 } from '@/lib/youtube'
 import { summarizeTranscript, withSummary } from '@/agent/summarizeTranscript'
+import { sanitizeFilename } from '@/lib/docPaths'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 
-/** Project a fetched capture onto a `youtube` KnownDoc. Pure — the caller
- *  supplies the slug and timestamp. The channel name rides on `siteName`
- *  (shared with the article fields) so the sidebar can show a source
- *  label without a youtube-specific column. */
+/** Project a fetched capture onto a generic inbox `note`. Pure — the
+ *  caller supplies the slug and timestamp. The video-ness is expressed by
+ *  the `videoId` frontmatter field (not a doc type); the channel name
+ *  rides on `siteName` (shared with the article fields). The note lives in
+ *  `inbox/` — `relPath` IS its on-disk placement. */
 export function youtubeCaptureToDoc(
   capture: YoutubeCapture,
   slug: string,
   now: string,
 ): KnownDoc {
+  const title = capture.title.trim()
   return {
     slug,
-    type: 'youtube',
-    title: capture.title.trim(),
+    type: 'note',
+    title,
+    relPath: `inbox/${sanitizeFilename(title)}.md`,
     createdAt: now,
     savedAt: now,
     sourceUrl: capture.sourceUrl,

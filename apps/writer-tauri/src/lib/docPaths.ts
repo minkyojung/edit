@@ -78,24 +78,22 @@ export interface DocMetaFile {
    * the sidecar is the natural permanent home. Absent on legacy
    * sidecars; DocumentInfoDialog falls back to "—". */
   createdAt?: string
-  /** Read-it-later article metadata. Present only on docs of type
-   * `article` (saved web pages). Persisted here because the catalog is
-   * rebuilt from disk on every boot — without the sidecar, source URL,
-   * site name, favicon, and read/unread state would be lost on
-   * restart. Mirrors how `archivedAt` survives. */
+  /** Read-it-later source metadata. Present on captured-from-URL notes
+   * (saved web pages); a present `sourceUrl` is what marks a generic
+   * `note` as a read-it-later item. Persisted in `.md` frontmatter so
+   * source URL, site name, favicon, and read/unread state survive the
+   * boot-time catalog rebuild. */
   sourceUrl?: string
   siteName?: string
   faviconUrl?: string
   savedAt?: string
   readAt?: string
-  /** User highlights on a saved article (type 'article' only). Source of
-   * truth for highlights — the editor re-anchors each to the body on
-   * mount. Absent on every other doc type. */
+  /** User highlights on a captured read-it-later note. Source of truth
+   * for highlights — the editor re-anchors each to the body on mount. */
   highlights?: HighlightRecord[]
-  /** YouTube capture metadata (type 'youtube' only). Persisted in `.md`
-   * frontmatter rather than this sidecar — youtube is the first
-   * frontmatter-native type — but the field shape is shared so the
-   * frontmatter ⇄ meta mapping has one definition. */
+  /** YouTube capture metadata. A present `videoId` marks a generic `note`
+   * as a video capture. Persisted in `.md` frontmatter; the field shape
+   * is shared so the frontmatter ⇄ meta mapping has one definition. */
   videoId?: string
   durationSec?: number
   thumbnailUrl?: string
@@ -133,16 +131,10 @@ export function pathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null {
     const filename = sanitizeFilename(doc.title?.trim() || 'Untitled')
     return `daily/${dailyAncestor.date}/${filename}.md`
   }
-  if (doc.type === 'article') {
-    const filename = sanitizeFilename(doc.title?.trim() || 'Untitled')
-    return `articles/${filename}.md`
-  }
-  if (doc.type === 'youtube') {
-    const filename = sanitizeFilename(doc.title?.trim() || 'Untitled')
-    return `inbox/${filename}.md`
-  }
   // Generic note: the file lives wherever the user put it, so its stored
   // relative path IS the placement (no folder/name convention to apply).
+  // Inbox captures (saved pages / youtube) are notes too — their relPath
+  // is `inbox/<title>.md`, set at creation.
   if (doc.type === 'note') {
     return doc.relPath ?? null
   }
