@@ -41,6 +41,12 @@ import { timestampSeekClick } from '@/editor/cmTimestampSeek'
 import { youtubeCards } from '@/prototypes/youtubeCards'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
 import { cmProofReview, acceptEffect, rejectEffect } from '@/editor/cmProofReview'
+import {
+  highlightRenderExtension,
+  highlightSelectionNotifier,
+  highlightsSyncEffect,
+} from '@/editor/cmHighlights'
+import { CmHighlightMenu } from '@/editor/CmHighlightMenu'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 import { slashSource } from '@/prototypes/slashCommands'
@@ -77,6 +83,7 @@ const computeCmStats = (text: string): DocStats => ({
 
 export function CmEditor({ handle, status, onViewReady, header }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
+  const viewRef = useRef<EditorView | null>(null)
   const slug = handle?.slug ?? null
   const [stats, setStats] = useState<DocStats>(() => computeCmStats(''))
 
@@ -139,6 +146,8 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             livePreviewV2,
             blocksV2,
             youtubeCards, // a bare youtube URL line → inline player
+            highlightRenderExtension(handle.slug), // paint recorded highlights
+            highlightSelectionNotifier, // publish selection rect → floating button
 
             tableArrowEntry,
             blockVerticalNav,
@@ -165,6 +174,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
           ],
         }),
       })
+      viewRef.current = view // expose for the highlight sync + floating menu
       onViewReady?.(null) // no PM view — PM-view consumers degrade, not break
       setStats(computeCmStats(handle.bodyMarkdown))
       // Register so docsStore body-replace paths can push fresh markdown into this
@@ -196,8 +206,21 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
       if (handle) unregisterCmEditor(handle.slug)
       view?.destroy()
       view = null
+      viewRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug])
+
+  // Repaint highlights when this doc's highlight records change (create /
+  // remove / note edit). The render extension seeds the initial set at
+  // mount; this keeps it in sync afterwards.
+  useEffect(() => {
+    if (!slug) return
+    return useDocsStore.subscribe((s, prev) => {
+      const cur = s.knownDocs.find((d) => d.slug === slug)?.highlights
+      const old = prev.knownDocs.find((d) => d.slug === slug)?.highlights
+      if (cur !== old) viewRef.current?.dispatch({ effects: highlightsSyncEffect(slug) })
+    })
   }, [slug])
 
   return (
@@ -225,6 +248,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
         />
         <EditorFooter view={null} parentSlug={slug} status={status} externalStats={stats} />
       </div>
+      <CmHighlightMenu viewRef={viewRef} slug={slug} />
     </div>
   )
 }
