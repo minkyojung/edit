@@ -76,6 +76,41 @@ export const highlightSelectionNotifier: Extension =
     set({ from: m.from, to: m.to, left: a.left, top: a.top })
   })
 
+// Active-highlight state for the note popup: which highlight was clicked +
+// where to anchor the card (below the clicked span). Null = no popup.
+export interface CmActiveHighlight {
+  id: string
+  left: number
+  top: number
+}
+interface ActiveStore {
+  active: CmActiveHighlight | null
+  setActive: (a: CmActiveHighlight | null) => void
+}
+export const useCmActiveHighlight = create<ActiveStore>((set) => ({
+  active: null,
+  setActive: (active) => set({ active }),
+}))
+
+/** Click a painted highlight (`[data-hl-id]`) → publish it as the active
+ * highlight so the note/remove card opens beneath it. Leaves the caret to
+ * CM's default (return false). */
+export const highlightClickExtension: Extension = EditorView.domEventHandlers({
+  mousedown(event) {
+    const el = (event.target as HTMLElement | null)?.closest('[data-hl-id]')
+    if (!el) return false
+    const id = el.getAttribute('data-hl-id')
+    if (!id) return false
+    const rect = el.getBoundingClientRect()
+    useCmActiveHighlight.getState().setActive({
+      id,
+      left: rect.left + rect.width / 2,
+      top: rect.bottom,
+    })
+    return false
+  },
+})
+
 /** Record a highlight from a selection range (raw doc offsets). The quote
  * is the exact substring so the offset re-anchor (rangeFor) finds it back
  * across reloads; occurrence disambiguates repeated phrases. */

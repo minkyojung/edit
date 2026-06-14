@@ -44,9 +44,11 @@ import { cmProofReview, acceptEffect, rejectEffect } from '@/editor/cmProofRevie
 import {
   highlightRenderExtension,
   highlightSelectionNotifier,
+  highlightClickExtension,
   highlightsSyncEffect,
 } from '@/editor/cmHighlights'
 import { CmHighlightMenu } from '@/editor/CmHighlightMenu'
+import { CmHighlightNote } from '@/editor/CmHighlightNote'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 import { slashSource } from '@/prototypes/slashCommands'
@@ -148,6 +150,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             youtubeCards, // a bare youtube URL line → inline player
             highlightRenderExtension(handle.slug), // paint recorded highlights
             highlightSelectionNotifier, // publish selection rect → floating button
+            highlightClickExtension, // click a highlight → open its note/remove card
 
             tableArrowEntry,
             blockVerticalNav,
@@ -249,6 +252,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
         <EditorFooter view={null} parentSlug={slug} status={status} externalStats={stats} />
       </div>
       <CmHighlightMenu viewRef={viewRef} slug={slug} />
+      <CmHighlightNote slug={slug} />
     </div>
   )
 }
