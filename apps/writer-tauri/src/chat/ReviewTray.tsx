@@ -17,6 +17,8 @@ import {
 } from '@/state/pendingChangesStore'
 import { useDocsStore } from '@/state/docsStore'
 import { computePendingDiffLines } from '@/lib/pendingDiff'
+import { DiffBlock } from '@/components/DiffBlock'
+import type { DiffLine } from '@/lib/git'
 import { navigateToNoteBySlug } from '@/editor/cmNav'
 import { requestScrollToChange } from '@/state/activeCmEditor'
 import { cn } from '@/lib/utils'
@@ -27,22 +29,26 @@ interface FileGroup {
   changes: PendingChange[]
   added: number
   removed: number
+  /** Combined diff lines for this file's pending changes — shown inline when the tray is
+   * expanded so the user can review without jumping to the note. */
+  diff: DiffLine[]
   /** True while the user hasn't opened this note since the change landed — the tray's
    * reason to exist: surfacing edits made while you weren't looking. Cleared by
    * markPageViewed when the note becomes active (App.tsx). */
   unviewed: boolean
 }
 
-function countLines(changes: PendingChange[]): { added: number; removed: number } {
+/** Combined diff lines for a file's pending changes, plus +/- counts derived from the
+ * same lines (so the header count and the inline preview never disagree). */
+function diffForGroup(changes: PendingChange[]): { diff: DiffLine[]; added: number; removed: number } {
+  const diff = changes.flatMap((c) => computePendingDiffLines(c))
   let added = 0
   let removed = 0
-  for (const c of changes) {
-    for (const l of computePendingDiffLines(c)) {
-      if (l.kind === 'add') added += 1
-      else if (l.kind === 'remove') removed += 1
-    }
+  for (const l of diff) {
+    if (l.kind === 'add') added += 1
+    else if (l.kind === 'remove') removed += 1
   }
-  return { added, removed }
+  return { diff, added, removed }
 }
 
 /** Small "unviewed" dot — a change the user hasn't opened the note for yet. Reserves
@@ -86,7 +92,7 @@ export function ReviewTray() {
         title: doc?.title?.trim() || doc?.type || slug,
         changes,
         unviewed: changes.some((c) => c.viewedAt === null),
-        ...countLines(changes),
+        ...diffForGroup(changes),
       }
     })
   }, [byId, knownDocs])
@@ -112,10 +118,11 @@ export function ReviewTray() {
   }
 
   return (
-    // Inset left/right by the prompt input's corner radius (rounded-3xl = 24px / mx-6)
-    // so the tray spans the input's straight top edge — slightly narrower than the input.
-    // Flat bottom (rounded-t-md) + no bottom margin so it sits flush on top of the input.
-    <div className="mx-6 overflow-hidden rounded-t-2xl border border-border bg-background text-xs">
+    // Match the in-transcript suggestion-card width: the transcript content is inset by
+    // `--surface-inset + 1rem` while this footer is only `--surface-inset`, so an extra
+    // 1rem (mx-4) each side lines the tray up with the cards above. Flat bottom
+    // (rounded-t-2xl) + no bottom margin so it sits flush on top of the composer.
+    <div className="mx-4 overflow-hidden rounded-t-2xl border border-border bg-background text-xs">
       {/* Summary — collapsed view. Left toggles the file list; right is the bulk decision. */}
       <div className="flex items-stretch">
         <button
@@ -150,41 +157,47 @@ export function ReviewTray() {
         </div>
       </div>
 
-      {/* Per-file rows — each jumps to the note and decides that file alone. */}
+      {/* Per-file rows — header (jump + decide that file) over an inline diff preview.
+          Height-capped so a big diff scrolls inside the tray instead of shoving the
+          composer down. */}
       {open && (
-        <div className="border-t border-border/60">
+        <div className="max-h-[40vh] overflow-y-auto border-t border-border/60">
           {groups.map((g) => (
-            <div
-              key={g.slug}
-              className="flex items-stretch border-b border-border/40 last:border-b-0"
-            >
-              <button
-                type="button"
-                onClick={() => jump(g)}
-                title="Jump to this change in the note"
-                className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted/60"
-              >
-                <UnviewedDot on={g.unviewed} />
-                <Code2Icon className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate text-foreground">{g.title}</span>
-                <Counts added={g.added} removed={g.removed} />
-              </button>
-              <div className="flex shrink-0 items-center gap-1 px-2.5">
+            <div key={g.slug} className="border-b border-border/40 last:border-b-0">
+              <div className="flex items-stretch">
                 <button
                   type="button"
-                  className="pending-edit__action pending-edit__action--reject"
-                  onClick={() => reject(g.changes)}
+                  onClick={() => jump(g)}
+                  title="Jump to this change in the note"
+                  className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted/60"
                 >
-                  Reject
+                  <UnviewedDot on={g.unviewed} />
+                  <Code2Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-foreground">{g.title}</span>
+                  <Counts added={g.added} removed={g.removed} />
                 </button>
-                <button
-                  type="button"
-                  className="pending-edit__action pending-edit__action--keep"
-                  onClick={() => keep(g.changes)}
-                >
-                  Keep
-                </button>
+                <div className="flex shrink-0 items-center gap-1 px-2.5">
+                  <button
+                    type="button"
+                    className="pending-edit__action pending-edit__action--reject"
+                    onClick={() => reject(g.changes)}
+                  >
+                    Reject
+                  </button>
+                  <button
+                    type="button"
+                    className="pending-edit__action pending-edit__action--keep"
+                    onClick={() => keep(g.changes)}
+                  >
+                    Keep
+                  </button>
+                </div>
               </div>
+              {g.diff.length > 0 && (
+                <div className="border-t border-border/40">
+                  <DiffBlock lines={g.diff} bare />
+                </div>
+              )}
             </div>
           ))}
         </div>
