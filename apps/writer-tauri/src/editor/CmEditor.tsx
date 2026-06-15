@@ -45,10 +45,10 @@ import {
   highlightRenderExtension,
   highlightSelectionNotifier,
   highlightClickExtension,
+  highlightHotkey,
   highlightsSyncEffect,
 } from '@/editor/cmHighlights'
-import { CmHighlightMenu } from '@/editor/CmHighlightMenu'
-import { CmHighlightNote } from '@/editor/CmHighlightNote'
+import { CmHighlightBar } from '@/editor/CmHighlightBar'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 import { slashSource } from '@/prototypes/slashCommands'
@@ -149,8 +149,9 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             blocksV2,
             youtubeCards, // a bare youtube URL line → inline player
             highlightRenderExtension(handle.slug), // paint recorded highlights
-            highlightSelectionNotifier, // publish selection rect → floating button
-            highlightClickExtension, // click a highlight → open its note/remove card
+            highlightSelectionNotifier, // selection → "Highlight" prompt in the bar
+            highlightClickExtension, // click a highlight → open it for a note
+            highlightHotkey(handle.slug), // ⌘⇧M → highlight the selection
 
             tableArrowEntry,
             blockVerticalNav,
@@ -251,8 +252,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
         />
         <EditorFooter view={null} parentSlug={slug} status={status} externalStats={stats} />
       </div>
-      <CmHighlightMenu viewRef={viewRef} slug={slug} />
-      <CmHighlightNote slug={slug} />
+      <CmHighlightBar viewRef={viewRef} slug={slug} />
     </div>
   )
 }
