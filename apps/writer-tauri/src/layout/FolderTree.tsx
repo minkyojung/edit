@@ -128,6 +128,12 @@ interface TreeCtx {
   onCommitRename: (slug: string, name: string) => void
   onCancelRename: () => void
   onDelete: (slug: string) => void
+  onMoveToRoot: (slug: string) => void
+  editingFolderPath: string | null
+  onStartFolderRename: (path: string) => void
+  onCommitFolderRename: (path: string, name: string) => void
+  onCancelFolderRename: () => void
+  onDeleteFolder: (path: string) => void
 }
 
 function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
@@ -170,6 +176,11 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
           <ContextMenuItem onSelect={() => ctx.onStartRename(node.slug)}>
             Rename
           </ContextMenuItem>
+          {node.path.includes('/') && (
+            <ContextMenuItem onSelect={() => ctx.onMoveToRoot(node.slug)}>
+              Move to root
+            </ContextMenuItem>
+          )}
           <ContextMenuSeparator />
           <ContextMenuItem
             onSelect={() => ctx.onDelete(node.slug)}
@@ -185,38 +196,66 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
 
 function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
   const isOpen = ctx.expanded.has(node.path)
+  const isEditing = ctx.editingFolderPath === node.path
   // Droppable wraps ONLY the row (not the children) so nested folder
   // drop zones don't overlap. `folder:` prefix distinguishes the id.
   const { setNodeRef, isOver } = useDroppable({ id: `folder:${node.path}` })
   return (
     <Collapsible asChild open={isOpen} onOpenChange={() => ctx.onToggle(node.path)}>
       <li>
-        <div ref={setNodeRef}>
-          <TreeRow
-            className={
-              isOver
-                ? 'bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring/50'
-                : undefined
-            }
-          >
-            <CollapsibleTrigger asChild>
-              <TreeRowLead
-                aria-label={isOpen ? 'Collapse' : 'Expand'}
-                onClick={(e: MouseEvent) => e.stopPropagation()}
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div ref={setNodeRef}>
+              <TreeRow
+                className={
+                  isOver
+                    ? 'bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring/50'
+                    : undefined
+                }
               >
-                <IconChevronRight
-                  size={16}
-                  stroke={1.75}
-                  className="transition-transform"
-                  style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
-                />
-              </TreeRowLead>
-            </CollapsibleTrigger>
-            <TreeRowLabel onClick={() => ctx.onToggle(node.path)}>
-              <span className="truncate">{node.name}</span>
-            </TreeRowLabel>
-          </TreeRow>
-        </div>
+                <CollapsibleTrigger asChild>
+                  <TreeRowLead
+                    aria-label={isOpen ? 'Collapse' : 'Expand'}
+                    onClick={(e: MouseEvent) => e.stopPropagation()}
+                  >
+                    <IconChevronRight
+                      size={16}
+                      stroke={1.75}
+                      className="transition-transform"
+                      style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                    />
+                  </TreeRowLead>
+                </CollapsibleTrigger>
+                {isEditing ? (
+                  <RenameInput
+                    initial={node.name}
+                    onCommit={(name) => ctx.onCommitFolderRename(node.path, name)}
+                    onCancel={ctx.onCancelFolderRename}
+                  />
+                ) : (
+                  <TreeRowLabel
+                    onClick={() => ctx.onToggle(node.path)}
+                    onDoubleClick={() => ctx.onStartFolderRename(node.path)}
+                  >
+                    <span className="truncate">{node.name}</span>
+                  </TreeRowLabel>
+                )}
+              </TreeRow>
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem onSelect={() => ctx.onStartFolderRename(node.path)}>
+              Rename
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              onSelect={() => ctx.onDeleteFolder(node.path)}
+              className="text-destructive focus:text-destructive"
+            >
+              Delete
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
         <CollapsibleContent asChild>
           <TreeSub>
             {node.children.map((child) => (
@@ -237,6 +276,23 @@ function NodeView({ node, ctx }: { node: TreeNode; ctx: TreeCtx }) {
   )
 }
 
+/** Drop target for the empty area below the tree = the vault root.
+ * Separate region from folder rows, so `pointerWithin` never confuses
+ * the two. Lets a note be dragged back out of a folder (Finder-style).
+ * id `folder:` → empty folder path → root in onDragEnd. */
+function RootDropZone() {
+  const { setNodeRef, isOver } = useDroppable({ id: 'folder:' })
+  return (
+    <div
+      ref={setNodeRef}
+      className={
+        'mx-2 mt-1 min-h-16 flex-1 rounded-lg ' +
+        (isOver ? 'bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring/50' : '')
+      }
+    />
+  )
+}
+
 export function FolderTree() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const knownFolders = useDocsStore((s) => s.knownFolders)
@@ -247,6 +303,8 @@ export function FolderTree() {
   const deleteToTrash = useDocsStore((s) => s.deleteToTrash)
   const createFolder = useDocsStore((s) => s.createFolder)
   const moveDocToFolder = useDocsStore((s) => s.moveDocToFolder)
+  const renameFolder = useDocsStore((s) => s.renameFolder)
+  const deleteFolder = useDocsStore((s) => s.deleteFolder)
   const creatingFolder = useNewFolderStore((s) => s.creating)
   const stopNewFolder = useNewFolderStore((s) => s.stop)
   const navigate = useNavigate()
@@ -258,6 +316,7 @@ export function FolderTree() {
   )
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [editingSlug, setEditingSlug] = useState<string | null>(null)
+  const [editingFolderPath, setEditingFolderPath] = useState<string | null>(null)
   // Slug currently being dragged — drives the DragOverlay chip that
   // follows the cursor so the drag is visible before the drop.
   const [draggingSlug, setDraggingSlug] = useState<string | null>(null)
@@ -294,6 +353,16 @@ export function FolderTree() {
     stopNewFolder()
     if (trimmed) void createFolder(sanitizeFilename(trimmed))
   }
+  const onCommitFolderRename = (path: string, name: string) => {
+    setEditingFolderPath(null)
+    if (name.trim()) void renameFolder(path, name)
+  }
+  const onDeleteFolder = (path: string) => {
+    void deleteFolder(path).then((next) => {
+      if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
+    })
+  }
+  const onMoveToRoot = (slug: string) => moveDocToFolder(slug, '')
   const onDragStart = (e: DragStartEvent) => setDraggingSlug(String(e.active.id))
   const onDragEnd = (e: DragEndEvent) => {
     setDraggingSlug(null)
@@ -312,6 +381,12 @@ export function FolderTree() {
     onCommitRename,
     onCancelRename: () => setEditingSlug(null),
     onDelete,
+    onMoveToRoot,
+    editingFolderPath,
+    onStartFolderRename: setEditingFolderPath,
+    onCommitFolderRename,
+    onCancelFolderRename: () => setEditingFolderPath(null),
+    onDeleteFolder,
   }
 
   return (
@@ -322,27 +397,31 @@ export function FolderTree() {
       onDragEnd={onDragEnd}
       onDragCancel={() => setDraggingSlug(null)}
     >
-      <ul className="flex flex-col px-2 py-1">
-        {creatingFolder && (
-          <li>
-            <TreeRow>
-              <TreeRowLead asChild>
-                <span aria-hidden>
-                  <IconFolder size={16} className="text-muted-foreground" />
-                </span>
-              </TreeRowLead>
-              <RenameInput
-                initial=""
-                onCommit={onCreateFolder}
-                onCancel={stopNewFolder}
-              />
-            </TreeRow>
-          </li>
-        )}
-        {tree.map((node) => (
-          <NodeView key={node.path} node={node} ctx={ctx} />
-        ))}
-      </ul>
+      <div className="flex h-full flex-col">
+        <ul className="flex flex-col px-2 py-1">
+          {creatingFolder && (
+            <li>
+              <TreeRow>
+                <TreeRowLead asChild>
+                  <span aria-hidden>
+                    <IconFolder size={16} className="text-muted-foreground" />
+                  </span>
+                </TreeRowLead>
+                <RenameInput
+                  initial=""
+                  onCommit={onCreateFolder}
+                  onCancel={stopNewFolder}
+                />
+              </TreeRow>
+            </li>
+          )}
+          {tree.map((node) => (
+            <NodeView key={node.path} node={node} ctx={ctx} />
+          ))}
+        </ul>
+        {/* Empty area below the tree = drag-to-root target. */}
+        <RootDropZone />
+      </div>
       {/* Chip that follows the cursor while dragging, so the drag is
           visible before the drop lands. */}
       <DragOverlay dropAnimation={null}>

@@ -64,6 +64,11 @@ export interface ArchiveSlice {
    * Refuses daily / system / agent-managed pages (same gate as
    * archiveDoc). */
   deleteToTrash: (slug: string) => Promise<string | null>
+  /** Delete a whole folder: move the directory to the OS trash and drop
+   * every doc inside it from the catalog / tabs / handles. Returns the
+   * slug to navigate to next, or null. Refuses folders that contain
+   * non-archivable docs (wiki:profile / system pages). */
+  deleteFolder: (folderPath: string) => Promise<string | null>
 }
 
 export const createArchiveSlice = (
@@ -334,6 +339,64 @@ export const createArchiveSlice = (
     if (finalActive && !get().handles[finalActive]) {
       get().ensureHandle(finalActive).catch((err) =>
         console.error('[docs] post-delete ensureHandle failed', err),
+      )
+    }
+    return finalActive
+  },
+
+  deleteFolder: async (folderPath) => {
+    const state = get()
+    const prefix = `${folderPath}/`
+    const bySlug = new Map(state.knownDocs.map((d) => [d.slug, d]))
+    const getDoc = (s: string) => bySlug.get(s)
+    const affected = state.knownDocs.filter((d) => {
+      const p = pathForDoc(d, getDoc)
+      return !!p && p.startsWith(prefix)
+    })
+    // Protect agent-managed / non-archivable docs (wiki:profile, system
+    // pages): refuse to delete a folder that contains them.
+    if (affected.some((d) => !getDocPolicy(d).canArchive)) return null
+
+    // Tear down every contained doc (mirrors deleteToTrash, for a set).
+    const group = new Set(affected.map((d) => d.slug))
+    const nextHandles = { ...state.handles }
+    const nextStatus = { ...state.status }
+    for (const d of affected) {
+      useChatRuns.getState().abortBySlug(d.slug)
+      nextHandles[d.slug]?.destroy()
+      delete nextHandles[d.slug]
+      delete nextStatus[d.slug]
+    }
+    const nextOpen = state.openSlugs.filter((s) => !group.has(s))
+    const nextExpanded = state.expandedDocSlugs.filter((s) => !group.has(s))
+    const nextKnown = state.knownDocs.filter((d) => !group.has(d.slug))
+    const nextFolders = state.knownFolders.filter(
+      (f) => f !== folderPath && !f.startsWith(prefix),
+    )
+    const postState: DocsState = { ...state, knownDocs: nextKnown }
+    const patch = ensureNonEmptyTabStrip(postState, {
+      knownDocs: nextKnown,
+      openSlugs: nextOpen,
+      expandedDocSlugs: nextExpanded,
+      handles: nextHandles,
+      status: nextStatus,
+      knownFolders: nextFolders,
+    })
+    set(patch)
+
+    // Move the whole folder to the OS trash (recoverable). trash::delete
+    // handles directories. Best-effort — fail-safe (no data loss).
+    try {
+      await trashVaultFile(folderPath)
+    } catch (err) {
+      console.error('[docs] deleteFolder move failed', err)
+      notify.cantDeleteNote({ onRetry: () => get().deleteFolder(folderPath) })
+    }
+
+    const finalActive = (patch.openSlugs ?? nextOpen)[0] ?? null
+    if (finalActive && !get().handles[finalActive]) {
+      get().ensureHandle(finalActive).catch((err) =>
+        console.error('[docs] post-delete-folder ensureHandle failed', err),
       )
     }
     return finalActive

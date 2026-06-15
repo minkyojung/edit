@@ -273,6 +273,10 @@ export interface DocsState {
    * and dropping it from the catalog / tabs / handles. Returns the slug
    * to navigate to next, or null. */
   deleteToTrash: (slug: string) => Promise<string | null>
+  /** Delete a whole folder to the OS trash + drop contained docs from
+   * the catalog/tabs/handles. Refuses folders with non-archivable docs.
+   * Returns the slug to navigate to next, or null. */
+  deleteFolder: (folderPath: string) => Promise<string | null>
   /** Seed a new doc's body from a markdown string. Used by
    * createCustomWikiPage / ensureSystemPage to plant initial content.
    * Ensures the handle (IDB shard + Y.Doc) exists first, then applies
@@ -301,6 +305,10 @@ export interface DocsState {
    * flush move the file on disk. No-op if already there; refuses
    * non-note docs. */
   moveDocToFolder: (slug: string, folderPath: string) => boolean
+  /** Rename a folder: move the directory on disk, rewrite the relPath of
+   * every note inside, and update knownFolders. Refuses folders holding
+   * type-derived docs (wiki/system). */
+  renameFolder: (oldPath: string, newLeafName: string) => Promise<boolean>
   /** Toggle a read-it-later article's read/unread state (sets/clears
    * `readAt` and flushes the sidecar). No-op for non-article docs. */
   setArticleRead: (slug: string, read: boolean) => void

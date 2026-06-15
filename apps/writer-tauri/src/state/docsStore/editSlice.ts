@@ -13,8 +13,9 @@
  * to renameDoc belongs to createSlice (initial content) instead.
  */
 
-import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
-import { sanitizeFilename } from '@/lib/docPaths'
+import { flushDirty, markSlugDirty, seedLastWrittenPath } from '@/lib/docFileSync'
+import { renameVaultFile } from '@/lib/vault'
+import { pathForDoc, sanitizeFilename } from '@/lib/docPaths'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
 /** First free `<prefix><base>.md` (then ` 1`, ` 2`, …) not already
@@ -61,6 +62,12 @@ export interface EditSlice {
    * on disk. No-op if already there; refuses non-note docs. Returns true
    * on success. */
   moveDocToFolder: (slug: string, folderPath: string) => boolean
+  /** Rename a folder: move the directory on disk (one atomic rename),
+   * rewrite the relPath of every doc inside it, and update knownFolders
+   * (parent + nested). `oldPath` is the folder's vault-relative path,
+   * `newLeafName` the new last segment. No-op if unchanged; returns
+   * false on a filesystem error. */
+  renameFolder: (oldPath: string, newLeafName: string) => Promise<boolean>
   /** Toggle the read/unread state of a read-it-later article. Sets
    * `readAt` to now when marking read, clears it (undefined) when
    * marking unread, then flushes so the `.meta.json` sidecar reflects
@@ -138,6 +145,67 @@ export const createEditSlice = (
     // renamed file). Fire it now so the move lands promptly.
     markSlugDirty(slug)
     void flushDirty()
+    return true
+  },
+
+  renameFolder: async (oldPath, newLeafName) => {
+    const safe = sanitizeFilename(newLeafName)
+    const slash = oldPath.lastIndexOf('/')
+    const parent = slash >= 0 ? oldPath.slice(0, slash + 1) : ''
+    let newPath = `${parent}${safe}`
+    if (newPath === oldPath) return true
+
+    const oldPrefix = `${oldPath}/`
+    const bySlug = new Map(get().knownDocs.map((d) => [d.slug, d]))
+    const getDoc = (s: string) => bySlug.get(s)
+    const affected = get().knownDocs.filter((d) => {
+      const p = pathForDoc(d, getDoc)
+      return !!p && p.startsWith(oldPrefix)
+    })
+    // Folders holding type-derived docs (wiki/system) can't be renamed
+    // by rewriting relPath — refuse rather than leave them dangling.
+    if (affected.some((d) => d.type !== 'note' || !d.relPath)) return false
+
+    // Dedupe against an existing folder of the same target name.
+    const folders = new Set(get().knownFolders)
+    let n = 1
+    while (folders.has(newPath)) {
+      newPath = `${parent}${safe} ${n}`
+      n += 1
+    }
+
+    // Flush pending edits to the OLD paths first so no doc inside is
+    // dirty during the directory rename (a stray flush would otherwise
+    // recreate the old folder by writing to the pre-move path).
+    await flushDirty()
+    try {
+      await renameVaultFile(oldPath, newPath)
+    } catch (err) {
+      console.error('[docs] renameFolder failed', err)
+      return false
+    }
+
+    // Rewrite the relPath of every note under the folder, and re-seed
+    // the flush rename-tracker to the new paths so it won't try to move
+    // the (already-moved) files again.
+    const seeds: Array<{ slug: string; mdRel: string }> = []
+    const list = get().knownDocs.map((d) => {
+      if (!d.relPath || !d.relPath.startsWith(oldPrefix)) return d
+      const newRel = `${newPath}/${d.relPath.slice(oldPrefix.length)}`
+      seeds.push({ slug: d.slug, mdRel: newRel })
+      return { ...d, relPath: newRel }
+    })
+    set({ knownDocs: list })
+    seedLastWrittenPath(seeds)
+    set((s) => ({
+      knownFolders: s.knownFolders.map((f) =>
+        f === oldPath
+          ? newPath
+          : f.startsWith(oldPrefix)
+            ? `${newPath}/${f.slice(oldPrefix.length)}`
+            : f,
+      ),
+    }))
     return true
   },
 
