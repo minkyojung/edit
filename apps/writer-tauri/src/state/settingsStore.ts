@@ -37,6 +37,14 @@ interface SettingsState {
   /** Flip bootstrapCompleted to true. Called by onboarding on
    * Finish / Skip. Idempotent. */
   markBootstrapCompleted: () => void
+
+  /** Folder new chat-created notes land in (Obsidian's "default location for
+   * new notes"). Default 'inbox'. The host FORCES this folder — the LLM's
+   * chosen path is ignored — so the model can't scatter notes into wiki/ on a
+   * whim. User-changeable (settings modal). */
+  defaultNoteFolder: string
+  /** Set the default new-note folder. Trims slashes; empty → 'inbox'. */
+  setDefaultNoteFolder: (folder: string) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -45,10 +53,13 @@ export const useSettingsStore = create<SettingsState>()(
       vaultPaths: [],
       activeVaultIndex: 0,
       bootstrapCompleted: false,
+      defaultNoteFolder: 'inbox',
       setActiveVaultPath: (path) =>
         set({ vaultPaths: [path], activeVaultIndex: 0 }),
       clearVault: () => set({ vaultPaths: [], activeVaultIndex: 0 }),
       markBootstrapCompleted: () => set({ bootstrapCompleted: true }),
+      setDefaultNoteFolder: (folder) =>
+        set({ defaultNoteFolder: folder.trim().replace(/^\/+|\/+$/g, '') || 'inbox' }),
     }),
     {
       name: 'writer-tauri:settings',
@@ -57,6 +68,7 @@ export const useSettingsStore = create<SettingsState>()(
         vaultPaths: s.vaultPaths,
         activeVaultIndex: s.activeVaultIndex,
         bootstrapCompleted: s.bootstrapCompleted,
+        defaultNoteFolder: s.defaultNoteFolder,
       }),
     },
   ),
@@ -67,4 +79,10 @@ export const useSettingsStore = create<SettingsState>()(
 export function getActiveVaultPath(): string | null {
   const { vaultPaths, activeVaultIndex } = useSettingsStore.getState()
   return vaultPaths[activeVaultIndex] ?? null
+}
+
+/** Folder new chat-created notes land in. Default 'inbox'. Non-React read for the
+ * chat materialiser (toPendingChange). */
+export function getDefaultNoteFolder(): string {
+  return useSettingsStore.getState().defaultNoteFolder || 'inbox'
 }

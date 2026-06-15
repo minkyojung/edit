@@ -23,7 +23,8 @@
 import type { PendingChange, PendingEdit } from '@/state/pendingChangesStore'
 import type { KnownDoc } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
-import { createCustomWikiPage } from '@/state/wikiService'
+import { createGenericNote } from '@/state/wikiService'
+import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { stripDuplicateTitleHeading } from '@/lib/markdownText'
 
 export interface ChatEditPendingPayload {
@@ -129,21 +130,21 @@ export function mapChatEditToPendingChange(
   }
 }
 
-/** Create a brand-new wiki page for a chat `propose_write` whose target
- * path doesn't resolve to an existing doc, then return a PendingChange
- * staging its body for review. Mirrors ingest's
- * `materializeNewPageProposals`: the page is born with just its H1
- * title (so it exists in the catalog, shows in the sidebar, and can
- * host a staged change), and the body sits in the review queue until
- * the user Keeps it.
+/** Create a brand-new generic note for a chat `propose_write` whose target path doesn't
+ * resolve to an existing doc, then return a PendingChange staging its body for review.
  *
- * Returns null when this isn't a new-wiki-page write — wrong tool
- * (only whole-file `propose_write`/`Write` creates pages; Edit /
- * MultiEdit target existing text, where a missing target is a real
- * miss), a non-wiki path (daily / writing have date / parent placement
- * rules this path doesn't model), no body, or an already-resolvable
- * path — and when page creation itself fails. The caller then falls
- * through to the existing "unmappable" warning. */
+ * Placement is HOST-FORCED: the note lands in the user's configured default folder
+ * (settings `defaultNoteFolder`, default 'inbox') REGARDLESS of the folder the model
+ * put in `file_path` — only the filename is taken from the model. This is why notes no
+ * longer scatter into wiki/ on a model whim: the LLM proposes a name + content, the
+ * host owns where it goes. The note is born empty (so it exists in the catalog + sidebar
+ * and can host a staged change); the body sits in the review queue until the user Keeps.
+ *
+ * (Function name is legacy — kept so the caller in agent/chat/index.ts is untouched.)
+ *
+ * Returns null when this isn't a new-note write — wrong tool (only whole-file
+ * `propose_write`/`Write` creates notes), no body, an already-resolvable path, or when
+ * note creation fails. The caller then logs the unmappable miss. */
 export async function materializeChatNewWikiPage(
   payload: ChatEditPendingPayload,
   ctx: MapContext,
@@ -154,27 +155,26 @@ export async function materializeChatNewWikiPage(
   if (!filePath || !content.trim()) return null
 
   const relative = toVaultRelative(filePath, ctx.vaultPath)
-  if (!relative.startsWith('wiki/') || !relative.endsWith('.md')) return null
+  if (!relative.endsWith('.md')) return null
 
-  // Belt-and-suspenders: if the path already resolves to a live doc
-  // this isn't a creation (the pure mapper owns it). Guards against a
-  // duplicate page if this ever runs for a resolvable path.
+  // Belt-and-suspenders: if the path already resolves to a live doc this isn't a
+  // creation (the pure mapper owns it). Guards against a duplicate.
   if (resolveSlugForVaultPath(filePath, ctx.knownDocs, ctx.vaultPath)) return null
 
-  const name = relative.slice('wiki/'.length).replace(/\.md$/, '').trim()
+  // Take only the FILENAME from the model — its folder is discarded (host forces it).
+  const name = (relative.split('/').pop() ?? '').replace(/\.md$/, '').trim()
   if (!name) return null
 
-  // The page title lives in the header field (createCustomWikiPage sets
-  // it from `name`), decoupled from the body — so we DON'T seed a `#
-  // name` heading into the body, which would render the title twice.
-  // The model often opens its content with that same title heading
-  // anyway; strip it (and only it — a different leading heading is real
-  // content) so the page doesn't show the name twice.
+  // The note's title comes from its filename (createGenericNote sets it from `name`),
+  // decoupled from the body — so we DON'T keep a leading `# name` heading that would
+  // render the title twice. Strip only that duplicate; a different leading heading is
+  // real content.
   const { body: stagedBody, removed } = stripDuplicateTitleHeading(content, name)
   if (removed) {
-    console.log('[chat] dropped duplicate title heading from new page body', { name })
+    console.log('[chat] dropped duplicate title heading from new note body', { name })
   }
-  const slug = await createCustomWikiPage(name)
+  // Host-forced placement: configured default folder (Obsidian-style; default 'inbox').
+  const slug = await createGenericNote(name, getDefaultNoteFolder())
   if (!slug) return null
 
   return {

@@ -14,6 +14,7 @@
 // `ensureLogWikiSlug` below.
 
 import { generateClientSlug } from '@/lib/slug'
+import { markSlugDirty, flushDirty } from '@/lib/docFileSync'
 import { isEffectivelyEmpty } from '@/lib/markdownText'
 import {
   useDocsStore,
@@ -365,6 +366,53 @@ export async function createCustomWikiPage(
       console.warn('[wiki] createCustomWikiPage seed failed', err)
     }
   }
+  return slug
+}
+
+/** Create a brand-new EMPTY generic `note` at `<folder>/<name>.md` and return its
+ * slug — the chat counterpart to createCustomWikiPage, but for a plain note in a
+ * user-chosen folder (default 'inbox') instead of a wiki page. The body is NOT seeded
+ * here: the chat materialiser stages it as a PendingChange the user reviews.
+ *
+ * Mirrors docsStore createNew's note placement: a `note` doc needs `relPath` or
+ * pathForDoc returns null and flushDirty skips it (the note never reaches disk), so we
+ * set relPath and force a flush. Name collisions get a numeric suffix. Returns null on
+ * failure. */
+export async function createGenericNote(
+  name: string,
+  folder: string,
+): Promise<string | null> {
+  const cleanFolder = folder.trim().replace(/^\/+|\/+$/g, '') || 'inbox'
+  const stem = name.trim() || 'Untitled'
+  const taken = new Set(
+    useDocsStore
+      .getState()
+      .knownDocs.map((d) => d.relPath)
+      .filter((p): p is string => Boolean(p)),
+  )
+  let relPath = `${cleanFolder}/${stem}.md`
+  let n = 1
+  while (taken.has(relPath)) {
+    relPath = `${cleanFolder}/${stem} ${n}.md`
+    n += 1
+  }
+  const slug = generateClientSlug()
+  const meta: KnownDoc = {
+    slug,
+    type: 'note',
+    title: stem,
+    relPath,
+    createdAt: new Date().toISOString(),
+  }
+  useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+  try {
+    await useDocsStore.getState().ensureHandle(slug)
+  } catch (err) {
+    console.warn('[note] createGenericNote ensureHandle failed', err)
+    return null
+  }
+  markSlugDirty(slug)
+  void flushDirty()
   return slug
 }
 
