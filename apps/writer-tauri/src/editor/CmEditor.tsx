@@ -39,6 +39,7 @@ import { wikilinkClick } from '@/prototypes/wikilinkNav'
 import { linkClick } from '@/prototypes/linkNav'
 import { timestampSeekClick } from '@/editor/cmTimestampSeek'
 import { youtubeCards } from '@/prototypes/youtubeCards'
+import { mermaidCards } from '@/prototypes/mermaidCards'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
 import { cmProofReview, acceptEffect, rejectEffect } from '@/editor/cmProofReview'
 import {
@@ -148,6 +149,7 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             livePreviewV2,
             blocksV2,
             youtubeCards, // a bare youtube URL line → inline player
+            mermaidCards, // ```mermaid fence → live diagram (portable across md apps)
             highlightRenderExtension(handle.slug), // paint recorded highlights
             highlightSelectionNotifier, // selection → "Highlight" prompt in the bar
             highlightClickExtension, // click a highlight → open it for a note
