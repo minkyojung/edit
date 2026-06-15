@@ -43,13 +43,12 @@ import {
 } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useSaveArticleDialogStore } from '@/state/saveArticleDialogStore'
+import { useCommandPaletteStore } from '@/state/commandPaletteStore'
 import { buildDayUrl, buildViewUrl } from '@/lib/viewUrl'
 import {
   formatLocalDate,
   todayLocalDate,
 } from '@/hooks/useDocMeta'
-
-type Mode = 'any' | 'date'
 
 interface DateResult {
   kind: 'date'
@@ -65,9 +64,18 @@ interface DocResult {
 type Result = DateResult | DocResult
 
 export function CommandPalette() {
-  const [open, setOpen] = useState(false)
-  const [mode, setMode] = useState<Mode>('any')
+  // Open + mode live in a store so the sidebar search button can drive
+  // the same palette the ⌘K / ⌘G shortcuts open. Query stays local.
+  const open = useCommandPaletteStore((s) => s.open)
+  const setOpen = useCommandPaletteStore((s) => s.setOpen)
+  const mode = useCommandPaletteStore((s) => s.mode)
+  const openPalette = useCommandPaletteStore((s) => s.openPalette)
   const [query, setQuery] = useState('')
+
+  // Reset the query each time the palette opens (from any trigger).
+  useEffect(() => {
+    if (open) setQuery('')
+  }, [open])
 
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const activeSlug = useActiveSlug()
@@ -106,21 +114,17 @@ export function CommandPalette() {
       if (e.shiftKey || e.altKey) return
       if (e.key === 'k' || e.key === 'K') {
         e.preventDefault()
-        setMode('any')
-        setQuery('')
-        setOpen(true)
+        openPalette('any')
         return
       }
       if (e.key === 'g' || e.key === 'G') {
         e.preventDefault()
-        setMode('date')
-        setQuery('')
-        setOpen(true)
+        openPalette('date')
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [openPalette])
 
   const liveDocs = useMemo(
     () => knownDocs.filter((d) => !d.archivedAt),

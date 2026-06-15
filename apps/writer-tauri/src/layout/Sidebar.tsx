@@ -8,6 +8,7 @@ import {
   IconSparkles,
   IconBrandGithub,
   IconEdit,
+  IconSearch,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { FolderTree } from './FolderTree'
@@ -15,6 +16,7 @@ import { WikiMetaRows } from './WikiMetaRows'
 import { ArchivedDocsPopover } from './ArchivedDocsPopover'
 import { IngestProposalCard } from './IngestProposalCard'
 import { useDocsStore } from '@/state/docsStore'
+import { useCommandPaletteStore } from '@/state/commandPaletteStore'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
@@ -152,6 +154,7 @@ export function AppSidebar() {
   }, [account.connected, disconnect])
 
   const createNew = useDocsStore((s) => s.createNew)
+  const openPalette = useCommandPaletteStore((s) => s.openPalette)
   const navigate = useNavigate()
 
   // New flat note (lands at inbox/Untitled.md) → open it. Shared by the
@@ -209,6 +212,15 @@ export function AppSidebar() {
             right edge (the space freed when the day/week/month switcher
             was removed). Outside the drag region so it stays clickable. */}
         <div data-tauri-drag-region className="flex-1 h-full" />
+        <button
+          type="button"
+          aria-label="Search"
+          title="Search (⌘K)"
+          onClick={() => openPalette('any')}
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+        >
+          <IconSearch size={16} stroke={1.75} />
+        </button>
         <button
           type="button"
           aria-label="New note"
