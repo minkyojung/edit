@@ -48,6 +48,7 @@ import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
 import { ReviewTray } from '@/chat/ReviewTray'
+import { SkillProposalTray } from '@/chat/SkillProposalTray'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -705,6 +706,8 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
         />
         {/* Pending AI changes, grouped by file — sits above the input, hides when empty. */}
         <ReviewTray />
+        {/* Proposed skills (propose_skill) — same slot, separate store. */}
+        <SkillProposalTray />
         {pendingPermission?.toolName === 'AskUserQuestion' ||
         pendingPermission?.toolName === 'ExitPlanMode' ? (
           // Any parked gate (clarifying question or plan approval) takes the

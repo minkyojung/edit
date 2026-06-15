@@ -404,6 +404,44 @@ function buildProposeWriteTool(runId, emit) {
   )
 }
 
+// Propose saving a reusable procedure as a vault-local Agent Skill. Unlike
+// propose_write (which targets wiki pages), this routes to the host's skill
+// path, which on approval writes `_system/agent/skills/<name>/SKILL.md` —
+// discovered + loaded on the next session via the plugins path. Decoupled
+// from the doc-edit pipeline because a skill is agent infrastructure, not a
+// wiki document.
+function buildProposeSkillTool(runId, emit) {
+  return tool(
+    'propose_skill',
+    'Propose saving a REUSABLE procedure as a skill the user approves. Use ONLY when you notice a way of working worth applying again next time — a multi-step procedure you just performed, or a correction to how you should work. Do NOT use for one-off tasks, simple answers, or facts (those are memory, not skills); when unsure, lean toward NOT proposing. Provide: `name` (short kebab-case id), `description` (WHEN to use this skill — this is how it gets matched on future turns, so name the triggering situation specifically), and `body` (the procedure as markdown). Returns immediately — do not wait for the user.',
+    {
+      name: z.string(),
+      description: z.string(),
+      body: z.string(),
+    },
+    async (input) => {
+      const pendingId = globalThis.crypto.randomUUID()
+      emit(
+        notification('chat/skill-pending', {
+          runId,
+          pendingId,
+          name: input.name,
+          description: input.description,
+          body: input.body,
+        }),
+      )
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Skill "${input.name}" proposed for user review (id: ${pendingId}). Continue — do not wait.`,
+          },
+        ],
+      }
+    },
+  )
+}
+
 function buildProposeMultiEditTool(runId, emit, vaultPath) {
   return tool(
     'propose_multi_edit',
@@ -1085,6 +1123,8 @@ export class Server {
         relayDefs.push(buildProposeEditTool(runId, this.emit, vaultPath))
       } else if (name === 'propose_write') {
         relayDefs.push(buildProposeWriteTool(runId, this.emit))
+      } else if (name === 'propose_skill') {
+        relayDefs.push(buildProposeSkillTool(runId, this.emit))
       } else if (name === 'propose_multi_edit') {
         relayDefs.push(buildProposeMultiEditTool(runId, this.emit, vaultPath))
       } else if (name === 'edit_visualization') {

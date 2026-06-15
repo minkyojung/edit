@@ -229,6 +229,11 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             // proposal in `pendingChangesStore` and applies it on
             // user Keep via the inline review widget.
             "chat/edit-pending" => "claude:edit-pending",
+            // propose_skill MCP tool (Phase 2B): the sidecar relays a
+            // proposed reusable skill (name / description / body); the host
+            // renders a Keep/Reject card and, on approval, writes it to
+            // `_system/agent/skills/<name>/SKILL.md`.
+            "chat/skill-pending" => "claude:skill-pending",
             // edit_visualization MCP tool: the sidecar relays the new chart
             // spec (chartId + VizNode tree) via this notification; the chat
             // runner re-validates it and applies it to the target block by id

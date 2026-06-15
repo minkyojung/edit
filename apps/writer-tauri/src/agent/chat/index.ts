@@ -32,6 +32,7 @@ import { pathForDoc } from '@/lib/docPaths'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
+import { useSkillProposalStore } from '@/state/skillProposalStore'
 import {
   mapChatEditToPendingChange,
   materializeChatNewWikiPage,
@@ -90,6 +91,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       'propose_edit',
       'propose_multi_edit',
       'propose_write',
+      'propose_skill',
     ],
     appendDocument = true,
     vizEditTarget,
@@ -301,6 +303,27 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             { toolName: e.payload.toolName, pendingId: e.payload.pendingId },
           )
         }
+      }),
+      // propose_skill tool fired (Phase 2B). The sidecar relays a proposed
+      // reusable skill; we stage it in the dedicated skillProposalStore (NOT
+      // pendingChangesStore — a skill isn't a wiki doc). The card renders
+      // Keep/Reject; on Keep the store writes `_system/agent/skills/<name>/
+      // SKILL.md`, picked up on the next session via the plugins path.
+      listen<{
+        runId: string
+        pendingId: string
+        name: string
+        description: string
+        body: string
+      }>('claude:skill-pending', (e) => {
+        if (e.payload.runId !== runId) return
+        useSkillProposalStore.getState().push({
+          pendingId: e.payload.pendingId,
+          runId: e.payload.runId,
+          name: e.payload.name,
+          description: e.payload.description,
+          body: e.payload.body,
+        })
       }),
       // edit_visualization tool fired (see sidecar buildEditVisualizationTool).
       // Apply the new spec to the target block by id, on the view this run was
