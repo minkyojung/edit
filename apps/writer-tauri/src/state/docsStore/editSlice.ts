@@ -55,6 +55,12 @@ export interface EditSlice {
    * and refuse empty strings; the caller's UI should validate
    * before calling, but this is a hard backstop. */
   renameDoc: (slug: string, newTitle: string) => boolean
+  /** Move a generic `note` into `folderPath` ('' = vault root): keeps
+   * the filename, swaps the folder part of relPath (de-duped against the
+   * target), and lets the flush rename-on-change machinery move the file
+   * on disk. No-op if already there; refuses non-note docs. Returns true
+   * on success. */
+  moveDocToFolder: (slug: string, folderPath: string) => boolean
   /** Toggle the read/unread state of a read-it-later article. Sets
    * `readAt` to now when marking read, clears it (undefined) when
    * marking unread, then flushes so the `.meta.json` sidecar reflects
@@ -111,6 +117,30 @@ export const createEditSlice = (
     void flushDirty()
     return true
   },
+
+  moveDocToFolder: (slug, folderPath) => {
+    const idx = get().knownDocs.findIndex((d) => d.slug === slug)
+    if (idx < 0) return false
+    const cur = get().knownDocs[idx]
+    // Only generic notes carry a free-form relPath; daily / writing /
+    // wiki / system docs have type-derived locations and don't move.
+    if (cur.type !== 'note' || !cur.relPath) return false
+    const base = cur.relPath.split('/').pop() ?? cur.relPath
+    const stem = base.replace(/\.md$/, '')
+    const prefix = folderPath ? `${folderPath}/` : ''
+    if (cur.relPath === `${prefix}${base}`) return true // already there
+    const newRelPath = uniqueRelPath(get().knownDocs, prefix, stem, slug)
+    const list = [...get().knownDocs]
+    list[idx] = { ...cur, relPath: newRelPath }
+    set({ knownDocs: list })
+    // The flush's lastWrittenPath branch detects the changed path and
+    // moves the file on disk (handles a different folder, not just a
+    // renamed file). Fire it now so the move lands promptly.
+    markSlugDirty(slug)
+    void flushDirty()
+    return true
+  },
+
   setArticleRead: (slug, read) => {
     const idx = get().knownDocs.findIndex((d) => d.slug === slug)
     if (idx < 0) return

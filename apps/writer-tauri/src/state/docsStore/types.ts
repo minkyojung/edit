@@ -296,6 +296,11 @@ export interface DocsState {
    * and refuse empty strings; the caller's UI should validate
    * before calling, but this is a hard backstop. */
   renameDoc: (slug: string, newTitle: string) => boolean
+  /** Move a generic `note` into `folderPath` ('' = root): keeps the
+   * filename, swaps the folder part of relPath (de-duped), and lets the
+   * flush move the file on disk. No-op if already there; refuses
+   * non-note docs. */
+  moveDocToFolder: (slug: string, folderPath: string) => boolean
   /** Toggle a read-it-later article's read/unread state (sets/clears
    * `readAt` and flushes the sidecar). No-op for non-article docs. */
   setArticleRead: (slug: string, read: boolean) => void
