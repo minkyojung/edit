@@ -36,6 +36,7 @@
 
 import { create } from 'zustand'
 import type { ChatTurn, ThreadMeta } from '@/chat/types'
+import { useContextUsageStore } from '@/state/contextUsageStore'
 import {
   appendThreadTurn,
   appendThreadTurns,
@@ -121,6 +122,12 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
         if (!meta) continue
         threads[meta.id] = meta
         turns[meta.id] = await readThreadTurns(meta.id)
+        // Rehydrate the context gauge from the thread's last persisted
+        // snapshot so a resumed session shows its real fill on boot instead
+        // of an empty gauge until the next turn completes.
+        if (meta.contextUsage) {
+          useContextUsageStore.getState().set(meta.id, meta.contextUsage)
+        }
       }
       set({ threads, turns, hydrated: true })
     })()

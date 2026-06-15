@@ -37,8 +37,10 @@ import {
   materializeChatNewWikiPage,
 } from './toPendingChange'
 import { useContextUsageStore } from '@/state/contextUsageStore'
+import { useThreadsStore } from '@/state/threadsStore'
 import { useFastModeStore } from '@/state/fastModeStore'
 import { contextLimitForModel } from '@/lib/contextLimit'
+import type { ContextSnapshot } from '@/chat/types'
 import {
   agentIdForModel,
   DEFAULT_MODEL,
@@ -447,13 +449,30 @@ function recordContextUsage(
   usage: DoneEvent['usage'],
   contextUsage?: DoneEvent['contextUsage'],
 ): void {
+  const snapshot = buildContextSnapshot(model, usage, contextUsage)
+  if (!snapshot) return
+  useContextUsageStore.getState().set(threadId, snapshot)
+  // Persist so the gauge survives an app restart — a resumed session keeps its
+  // prior history, so an empty gauge would misrepresent how full the window is
+  // until the next turn. Fire-and-forget; updateMeta no-ops if the thread was
+  // dropped from the store mid-turn.
+  void useThreadsStore.getState().updateMeta(threadId, { contextUsage: snapshot })
+}
+
+/** Build the post-turn context snapshot, or null when there's nothing to
+ * record (no usage / zero tokens — leaves the prior snapshot untouched). */
+function buildContextSnapshot(
+  model: string,
+  usage: DoneEvent['usage'],
+  contextUsage?: DoneEvent['contextUsage'],
+): ContextSnapshot | null {
   // STEP 3: prefer the exact per-category breakdown from getContextUsage().
   // It carries the authoritative window size and the auto-compact trigger,
   // so the gauge shows real category rows and aligns its warning line to the
   // point compaction actually fires (converted from tokens to a 0..1
   // fraction the gauge/popover compare against).
   if (contextUsage && contextUsage.maxTokens > 0) {
-    useContextUsageStore.getState().set(threadId, {
+    return {
       totalTokens: contextUsage.totalTokens,
       maxTokens: contextUsage.maxTokens,
       model: contextUsage.model ?? model,
@@ -463,23 +482,21 @@ function recordContextUsage(
           ? contextUsage.autoCompactThreshold / contextUsage.maxTokens
           : undefined,
       updatedAt: Date.now(),
-    })
-    return
+    }
   }
   // Fallback (no contextUsage): approximate the total from `usage` and the
-  // per-model window estimate. A turn with no usage leaves the prior
-  // snapshot untouched.
-  if (!usage) return
+  // per-model window estimate.
+  if (!usage) return null
   const total =
     (usage.input_tokens ?? 0) +
     (usage.cache_read_input_tokens ?? 0) +
     (usage.cache_creation_input_tokens ?? 0)
-  if (total <= 0) return
-  useContextUsageStore.getState().set(threadId, {
+  if (total <= 0) return null
+  return {
     totalTokens: total,
     maxTokens: contextLimitForModel(model),
     model,
     updatedAt: Date.now(),
-  })
+  }
 }
 

@@ -1,11 +1,10 @@
 // Per-thread context-usage snapshots for the PromptInput gauge.
 //
-// In-memory only (not persisted to disk): the snapshot is a derived,
-// per-session view that the runner refreshes on every chat/done. A fresh
-// app start therefore shows an empty gauge until the next turn completes —
-// acceptable for a status indicator, and it keeps ThreadMeta's on-disk
-// schema unchanged. Revisit with a small persisted summary if surviving
-// reload becomes a requirement.
+// This store is the in-memory source the gauge reads. The runner refreshes it
+// on every chat/done and also persists the latest snapshot to
+// ThreadMeta.contextUsage; threadsStore.hydrate seeds this store back from
+// those persisted snapshots on boot, so a resumed session shows its real fill
+// instead of an empty gauge.
 
 import { create } from 'zustand'
 import type { ContextSnapshot } from '@/chat/types'

@@ -146,6 +146,7 @@ pub fn run() {
             oauth::get_claude_account,
             oauth::disconnect_claude,
             claude_sidecar::commands::claude_chat_start,
+            claude_sidecar::commands::claude_list_models,
             claude_sidecar::commands::claude_chat_cancel,
             claude_sidecar::commands::claude_chat_decision,
             claude_sidecar::commands::claude_title,

@@ -603,6 +603,8 @@ export class Server {
           return this.#handleInitialize(id, params)
         case 'setToken':
           return this.#handleSetToken(id, params)
+        case 'models':
+          return this.#handleModels(id)
         case 'chat':
           return this.#handleChat(id, params)
         case 'chat/cancel':
@@ -655,6 +657,66 @@ export class Server {
       const waiters = this.tokenUpdateWaiters
       this.tokenUpdateWaiters = []
       for (const w of waiters) w()
+    }
+  }
+
+  // List the models this account can actually use, so the host's picker can
+  // hide ones the user has no access to (e.g. region-gated models). The list
+  // comes from the SDK's session-init handshake via query.supportedModels();
+  // each entry carries capability flags (effort levels, fast mode) the host
+  // can drive the UI from. Best-effort and bounded: any failure returns an
+  // error the host swallows, falling back to its built-in model list.
+  async #handleModels(id) {
+    if (id === undefined) return
+    if (!this.initialized) {
+      this.emit(errorResponse(id, NOT_INITIALIZED, 'initialize required first'))
+      return
+    }
+    if (!this.token) {
+      this.emit(errorResponse(id, INVALID_PARAMS, 'setToken required first'))
+      return
+    }
+    const controller = new AbortController()
+    let releaseInput
+    const inputClosed = new Promise((resolve) => {
+      releaseInput = resolve
+    })
+    // No user message — supportedModels() is answered from the init handshake
+    // that runs as soon as the claude subprocess starts. The generator just
+    // holds the control channel open until we've read the list.
+    const makeInput = async function* () {
+      await inputClosed
+    }
+    const options = {
+      abortController: controller,
+      settingSources: [],
+      env: {
+        ...process.env,
+        CLAUDE_CODE_OAUTH_TOKEN: this.token,
+        ANTHROPIC_API_KEY: undefined,
+        ANTHROPIC_AUTH_TOKEN: undefined,
+      },
+    }
+    if (process.env.CLAUDE_CODE_CLI_PATH) {
+      options.pathToClaudeCodeExecutable = process.env.CLAUDE_CODE_CLI_PATH
+    }
+    let stream = null
+    try {
+      stream = query({ prompt: makeInput(), options })
+      // Bound the wait so a wedged subprocess can't hang the request forever.
+      const models = await Promise.race([
+        stream.supportedModels(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('supportedModels timed out')), 15_000),
+        ),
+      ])
+      this.emit(response(id, { models }))
+    } catch (err) {
+      logErrorContext('supportedModels', null, err, { mode: this.mode })
+      this.emit(errorResponse(id, INTERNAL_ERROR, err?.message ?? String(err)))
+    } finally {
+      releaseInput() // close input → query tears down
+      controller.abort()
     }
   }
 

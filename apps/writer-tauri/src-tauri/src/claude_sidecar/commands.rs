@@ -170,6 +170,23 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
         .map_err(|e| e.to_string())
 }
 
+/// Lists the models this account can actually use, from the SDK's session-init
+/// handshake (`query.supportedModels()`). The host filters its model picker to
+/// this set; on any error it falls back to the built-in list, so this is purely
+/// additive — a failure never blocks model selection.
+#[tauri::command]
+pub async fn claude_list_models(app: AppHandle) -> Result<Value, String> {
+    let manager = get_manager(&app)?;
+    manager
+        .try_inject_token(&app)
+        .await
+        .map_err(|e| e.to_string())?;
+    let chat = manager.chat_client().await;
+    chat.request("models", None)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Cancels an in-flight chat. Notification only — no response expected.
 #[tauri::command]
 pub async fn claude_chat_cancel(app: AppHandle, args: ChatCancelArgs) -> Result<(), String> {

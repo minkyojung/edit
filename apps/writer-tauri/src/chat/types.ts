@@ -16,21 +16,40 @@
 /** Models the user can pick from in the PromptInput model selector.
  * Kept narrow + explicit so the UI can display friendly labels without
  * round-tripping through agent ids. The sidecar accepts the raw id. */
-export type ChatModel = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-8'
+export type ChatModel =
+  | 'claude-haiku-4-5'
+  | 'claude-sonnet-4-6'
+  | 'claude-opus-4-8'
+  | 'claude-fable-5'
 
 export const CHAT_MODELS: readonly ChatModel[] = [
   'claude-haiku-4-5',
   'claude-sonnet-4-6',
   'claude-opus-4-8',
+  'claude-fable-5',
 ] as const
 
 export const CHAT_MODEL_LABELS: Record<ChatModel, string> = {
   'claude-haiku-4-5': 'Haiku 4.5',
   'claude-sonnet-4-6': 'Sonnet 4.6',
   'claude-opus-4-8': 'Opus 4.8',
+  'claude-fable-5': 'Fable 5',
 }
 
 export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-4-6'
+
+/** One model the account can actually use, as reported by the Claude Agent
+ * SDK's session-init handshake (query.supportedModels()). Only `value` is
+ * consumed today — the picker intersects CHAT_MODELS against these so models
+ * the account lacks access to (e.g. region-gated) stay hidden. The capability
+ * fields mirror the SDK shape and are kept for future use. */
+export interface ModelInfo {
+  value: string
+  displayName?: string
+  description?: string
+  supportsFastMode?: boolean
+  supportedEffortLevels?: string[]
+}
 
 /** Coerce a persisted model id to a currently-offered one. Threads created
  * before a model was retired carry an id no longer in CHAT_MODELS (e.g.
@@ -75,6 +94,7 @@ export const EFFORTS_BY_MODEL: Record<ChatModel, readonly ChatEffort[]> = {
   'claude-haiku-4-5': ['low', 'medium', 'high'],
   'claude-sonnet-4-6': ['low', 'medium', 'high'],
   'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh'],
+  'claude-fable-5': ['low', 'medium', 'high', 'xhigh'],
 }
 
 export function effortsForModel(model: ChatModel): readonly ChatEffort[] {
@@ -167,6 +187,11 @@ export interface ThreadMeta {
   /** Per-thread fast-mode preference (faster Opus output). Absent/false = off.
    * Only meaningful where modelSupportsFastMode(model) is true. */
   fastMode?: boolean
+  /** Last context-window snapshot for this thread, persisted so the gauge
+   * survives an app restart. A resumed session keeps its prior history, so
+   * the stored fill is still representative until the next turn refreshes it.
+   * Absent until the first turn completes (and on pre-existing threads). */
+  contextUsage?: ContextSnapshot
   /** True once the SDK has confirmed a session for this thread (set on the
    * first stream event of the first run). Subsequent runs must use `resume`
    * regardless of history shape — including Regenerate, which deletes the
