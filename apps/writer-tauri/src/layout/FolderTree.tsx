@@ -14,12 +14,15 @@ import {
   IconBrandYoutube,
   IconChevronRight,
   IconFileText,
+  IconFolder,
   IconWorld,
 } from '@tabler/icons-react'
 import { useDocsStore } from '@/state/docsStore'
+import { useNewFolderStore } from '@/state/newFolderStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { buildFileTree, type TreeNode } from '@/lib/fileTree'
 import { buildViewUrl } from '@/lib/viewUrl'
+import { sanitizeFilename } from '@/lib/docPaths'
 import {
   TreeRow,
   TreeRowLabel,
@@ -216,6 +219,9 @@ export function FolderTree() {
   const monthAnchor = useDocsStore((s) => s.monthAnchor)
   const renameDoc = useDocsStore((s) => s.renameDoc)
   const deleteToTrash = useDocsStore((s) => s.deleteToTrash)
+  const createFolder = useDocsStore((s) => s.createFolder)
+  const creatingFolder = useNewFolderStore((s) => s.creating)
+  const stopNewFolder = useNewFolderStore((s) => s.stop)
   const navigate = useNavigate()
   const activeSlug = useActiveSlug()
 
@@ -244,9 +250,30 @@ export function FolderTree() {
       if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
     })
   }
+  const onCreateFolder = (name: string) => {
+    const trimmed = name.trim()
+    stopNewFolder()
+    if (trimmed) void createFolder(sanitizeFilename(trimmed))
+  }
 
   return (
     <ul className="flex flex-col px-2 py-1">
+      {creatingFolder && (
+        <li>
+          <TreeRow>
+            <TreeRowLead asChild>
+              <span aria-hidden>
+                <IconFolder size={16} className="text-muted-foreground" />
+              </span>
+            </TreeRowLead>
+            <RenameInput
+              initial=""
+              onCommit={onCreateFolder}
+              onCancel={stopNewFolder}
+            />
+          </TreeRow>
+        </li>
+      )}
       {tree.map((node) => (
         <FolderTreeNode
           key={node.path}

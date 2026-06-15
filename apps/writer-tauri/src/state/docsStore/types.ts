@@ -220,6 +220,9 @@ export interface DocsState {
   ensureOpen: (slug: string) => void
   closeDoc: (slug: string) => string | null
   createNew: () => Promise<string>
+  /** Create a folder on disk at `relPath` and add it to knownFolders.
+   * Idempotent; returns false on a filesystem error. */
+  createFolder: (relPath: string) => Promise<boolean>
   /** Find or create the daily entry for the given local date and make
    * it the active tab. Returns the slug. */
   openDaily: (date?: string) => Promise<string | null>

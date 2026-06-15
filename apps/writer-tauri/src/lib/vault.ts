@@ -449,6 +449,14 @@ export async function deleteVaultDir(relPath: string): Promise<void> {
   }
 }
 
+/** Create a folder (recursively) in the vault. Idempotent — succeeds
+ * even if it already exists. Empty folders aren't tracked by git, but
+ * they persist on disk and re-surface via listVaultDirsRecursive. */
+export async function createVaultFolder(relPath: string): Promise<void> {
+  const path = await resolveVaultPath(relPath)
+  await mkdir(path, { recursive: true })
+}
+
 /** Send a vault file to the OS trash (macOS Trash / Windows Recycle Bin
  * / Linux trash) — the recoverable sibling of the permanent
  * {@link deleteVaultFile}. Routes through the native `move_to_trash`

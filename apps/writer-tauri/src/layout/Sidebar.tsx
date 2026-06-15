@@ -9,6 +9,7 @@ import {
   IconBrandGithub,
   IconEdit,
   IconSearch,
+  IconFolderPlus,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { FolderTree } from './FolderTree'
@@ -16,6 +17,7 @@ import { WikiMetaRows } from './WikiMetaRows'
 import { IngestProposalCard } from './IngestProposalCard'
 import { useDocsStore } from '@/state/docsStore'
 import { useCommandPaletteStore } from '@/state/commandPaletteStore'
+import { useNewFolderStore } from '@/state/newFolderStore'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
@@ -154,6 +156,7 @@ export function AppSidebar() {
 
   const createNew = useDocsStore((s) => s.createNew)
   const openPalette = useCommandPaletteStore((s) => s.openPalette)
+  const startNewFolder = useNewFolderStore((s) => s.start)
   const navigate = useNavigate()
 
   // New flat note (lands at inbox/Untitled.md) → open it. Shared by the
@@ -219,6 +222,15 @@ export function AppSidebar() {
           className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
         >
           <IconSearch size={16} stroke={1.75} />
+        </button>
+        <button
+          type="button"
+          aria-label="New folder"
+          title="New folder"
+          onClick={startNewFolder}
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+        >
+          <IconFolderPlus size={16} stroke={1.75} />
         </button>
         <button
           type="button"

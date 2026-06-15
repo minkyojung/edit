@@ -24,6 +24,7 @@ import { generateClientSlug } from '@/lib/slug'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
 import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
+import { createVaultFolder } from '@/lib/vault'
 import { useEditorViewStore } from '../editorViewStore'
 import { applyMarkdownToActiveCmEditor } from '../activeCmEditor'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
@@ -36,6 +37,10 @@ export interface CreateSlice {
    * (URL is the source of truth — the store no longer sets activeSlug
    * on its own). */
   createNew: () => Promise<string>
+  /** Create a folder on disk at `relPath` and add it to knownFolders so
+   * the sidebar tree shows it immediately. Idempotent. Returns false on
+   * a filesystem error. */
+  createFolder: (relPath: string) => Promise<boolean>
   /** Find or create the daily entry for the given local date and
    * make it the active tab. Returns the slug (or null on edge cases
    * the caller treats as no-op). */
@@ -115,6 +120,28 @@ export const createCreateSlice = (
     markSlugDirty(slug)
     void flushDirty()
     return slug
+  },
+
+  createFolder: async (relPath) => {
+    // Optimistic: show the folder in the tree immediately, then create
+    // it on disk in the background (the mkdir IPC round-trip — slower on
+    // iCloud — would otherwise delay the row appearing). Roll back the
+    // optimistic add if the disk op fails.
+    set((s) => ({
+      knownFolders: s.knownFolders.includes(relPath)
+        ? s.knownFolders
+        : [...s.knownFolders, relPath],
+    }))
+    try {
+      await createVaultFolder(relPath)
+      return true
+    } catch (err) {
+      console.error('[docs] createFolder failed', err)
+      set((s) => ({
+        knownFolders: s.knownFolders.filter((f) => f !== relPath),
+      }))
+      return false
+    }
   },
 
   openDaily: async (date) => {
