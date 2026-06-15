@@ -78,6 +78,18 @@ describe('computePendingDiffLines', () => {
     ])
   })
 
+  it('falls back to the fragment diff when `before` is ambiguous (appears twice)', () => {
+    // Two occurrences → applyEditsToText would rewrite only the first; show the faithful
+    // fragment instead of a mis-placed context diff.
+    const out = computePendingDiffLines(
+      change([{ kind: 'replace', before: 'AAA', after: 'BBB' }], 'AAA\nmid\nAAA'),
+    )
+    expect(out).toEqual([
+      { kind: 'remove', text: 'AAA', lineNum: 0 },
+      { kind: 'add', text: 'BBB', lineNum: 0 },
+    ])
+  })
+
   it('treats $ sequences in replacement text literally (no String.replace mangling)', () => {
     const out = computePendingDiffLines(
       change([{ kind: 'replace', before: 'AAA', after: 'cost $& and $$' }], 'l1\nAAA\nl3'),

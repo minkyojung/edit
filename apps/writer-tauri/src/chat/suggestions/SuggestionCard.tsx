@@ -45,8 +45,10 @@ export function SuggestionCard({ change }: { change: PendingChange }) {
         <button
           type="button"
           onClick={() => {
-            navigateToNoteBySlug(change.pageSlug)
-            requestScrollToChange(change.pageSlug, change.id)
+            // Only park a scroll request when navigation actually happened (live slug).
+            if (navigateToNoteBySlug(change.pageSlug)) {
+              requestScrollToChange(change.pageSlug, change.id)
+            }
           }}
           title="Jump to this change in the note"
           className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-muted/60"

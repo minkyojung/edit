@@ -76,6 +76,19 @@ function applyEditsToText(snapshot: string, edits: PendingEdit[]): string {
   return doc
 }
 
+/** Count non-overlapping occurrences of `needle` in `haystack`. */
+function countOccurrences(haystack: string, needle: string): number {
+  if (needle === '') return 0
+  let n = 0
+  let i = 0
+  for (;;) {
+    const idx = haystack.indexOf(needle, i)
+    if (idx === -1) return n
+    n += 1
+    i = idx + needle.length
+  }
+}
+
 /** Context-free fragment diff (the pre-context behaviour): diff each edit's own
  * before→after. Used as a fallback when document context can't be derived. */
 function fragmentDiff(change: PendingChange): DiffLine[] {
@@ -100,6 +113,17 @@ function fragmentDiff(change: PendingChange): DiffLine[] {
 export function computePendingDiffLines(change: PendingChange): DiffLine[] {
   const snapshot = change.pageMarkdownSnapshot
   if (snapshot == null) return fragmentDiff(change)
+  // Only render the document-context diff when EVERY before-anchored edit matches the
+  // snapshot literally and unambiguously (exactly one occurrence). Otherwise
+  // applyEditsToText's first-occurrence String.replace could mis-place or silently drop
+  // an edit (multi-occurrence, or a `before` that only loose-matched on disk). Fall back
+  // to the per-edit fragment diff, which faithfully shows EVERY edit (no context).
+  const cleanlyApplies = change.edits.every((e) => {
+    if (e.kind === 'add') return true
+    if (e.kind === 'replace' && !e.before) return true // whole-file swap
+    return !!e.before && countOccurrences(snapshot, e.before) === 1
+  })
+  if (!cleanlyApplies) return fragmentDiff(change)
   const after = applyEditsToText(snapshot, change.edits)
   if (after === snapshot) return fragmentDiff(change)
   const patch = structuredPatch(

@@ -146,12 +146,16 @@ function anchorChanges(docText: string, changes: PendingChange[]): AnchoredEdit[
  * whose text never landed). */
 export function scrollOffsetForChange(docText: string, change: PendingChange): number | null {
   for (const e of change.edits) {
-    if (e.after) {
-      const r = looseFindRange(docText, e.after)
-      if (r) return r.start
-    }
+    // Prefer the `before` anchor: while the change is PENDING that's the text actually
+    // in the doc now (the `after` isn't applied yet and could coincidentally match
+    // unrelated text elsewhere, jumping to the wrong spot). Once accepted, `before` is
+    // gone and we fall through to `after`.
     if (e.before) {
       const r = looseFindRange(docText, e.before)
+      if (r) return r.start
+    }
+    if (e.after) {
+      const r = looseFindRange(docText, e.after)
       if (r) return r.start
     }
     if (e.kind === 'add') {

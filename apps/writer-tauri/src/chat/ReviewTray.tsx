@@ -90,8 +90,9 @@ export function ReviewTray() {
   const keep = (changes: PendingChange[]) => changes.forEach((c) => accept(c.id))
   const reject = (changes: PendingChange[]) => changes.forEach((c) => rejectPendingChange(c.id))
   const jump = (g: FileGroup) => {
-    navigateToNoteBySlug(g.slug)
-    requestScrollToChange(g.slug, g.changes[0].id)
+    // Only park a scroll request when navigation actually happened — a dead slug
+    // (navigateToNoteBySlug → false) would otherwise leave a stale pending scroll.
+    if (navigateToNoteBySlug(g.slug)) requestScrollToChange(g.slug, g.changes[0].id)
   }
 
   return (
