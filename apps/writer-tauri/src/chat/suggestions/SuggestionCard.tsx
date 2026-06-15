@@ -43,8 +43,10 @@ export function SuggestionCard({ change }: { change: PendingChange }) {
   const [open, setOpen] = useState(true)
 
   return (
-    <div className="my-2 rounded-md border border-border bg-muted/40 p-2 text-xs">
-      <div className={cn('flex items-center gap-2', open && 'mb-1.5')}>
+    <div className="my-2 overflow-hidden rounded-md border border-border bg-background text-xs">
+      {/* Header: a flush block. The title area is its own clickable jump target with a
+          hover state; the chevron toggles the body separately. */}
+      <div className="flex items-stretch">
         <button
           type="button"
           onClick={() => {
@@ -52,14 +54,14 @@ export function SuggestionCard({ change }: { change: PendingChange }) {
             requestScrollToChange(change.pageSlug, change.id)
           }}
           title="Jump to this change in the note"
-          className="flex min-w-0 flex-1 items-center gap-2 rounded text-left hover:opacity-80"
+          className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-muted/60"
         >
           <Code2Icon className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate font-medium text-foreground">{title}</span>
           {(added > 0 || removed > 0) && (
             <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px]">
-              {added > 0 && <span className="text-green-600 dark:text-green-400">+{added}</span>}
-              {removed > 0 && <span className="text-destructive">-{removed}</span>}
+              {added > 0 && <span className="text-green-700 dark:text-green-600">+{added}</span>}
+              {removed > 0 && <span className="text-red-700 dark:text-red-600">-{removed}</span>}
             </span>
           )}
           {!isPending && (
@@ -72,7 +74,7 @@ export function SuggestionCard({ change }: { change: PendingChange }) {
           type="button"
           onClick={() => setOpen((o) => !o)}
           aria-label={open ? 'Collapse diff' : 'Expand diff'}
-          className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="shrink-0 px-2 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
         >
           <ChevronDownIcon
             className={cn('size-3.5 transition-transform', !open && '-rotate-90')}
@@ -80,24 +82,30 @@ export function SuggestionCard({ change }: { change: PendingChange }) {
         </button>
       </div>
 
-      {open && diffLines.length > 0 && <DiffBlock lines={diffLines} />}
+      {open && diffLines.length > 0 && (
+        <div className="border-t border-border/60">
+          <DiffBlock lines={diffLines} bare />
+        </div>
+      )}
 
       {isPending && (
-        <div className="pending-edit__actions mt-2">
-          <button
-            type="button"
-            className="pending-edit__action pending-edit__action--reject"
-            onClick={() => rejectPendingChange(change.id)}
-          >
-            Reject
-          </button>
-          <button
-            type="button"
-            className="pending-edit__action pending-edit__action--keep"
-            onClick={() => accept(change.id)}
-          >
-            Keep
-          </button>
+        <div className="flex justify-end border-t border-border/60 p-2">
+          <div className="pending-edit__actions">
+            <button
+              type="button"
+              className="pending-edit__action pending-edit__action--reject"
+              onClick={() => rejectPendingChange(change.id)}
+            >
+              Reject
+            </button>
+            <button
+              type="button"
+              className="pending-edit__action pending-edit__action--keep"
+              onClick={() => accept(change.id)}
+            >
+              Keep
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -12,29 +12,34 @@ import { cn } from '@/lib/utils'
 import { highlightMarkdownLine } from '@/lib/highlightMarkdown'
 import './diffHighlight.css'
 
-export function DiffBlock({ lines }: { lines: DiffLine[] }) {
+export function DiffBlock({ lines, bare = false }: { lines: DiffLine[]; bare?: boolean }) {
   return (
-    <pre className="overflow-x-auto rounded-md border border-border bg-background p-0 font-mono text-[12px] leading-relaxed">
+    <pre
+      className={cn(
+        'overflow-x-auto p-0 font-mono text-[12px] leading-relaxed',
+        // `bare` lets a host container (e.g. SuggestionCard) own the border so the
+        // header / body / footer read as one flush block.
+        !bare && 'rounded-md border border-border bg-background',
+      )}
+    >
       {lines.map((line, i) => (
         <div
           key={i}
           className={cn(
-            // Left accent bar (border-l-2) + tinted row, matching the review-card look.
-            'flex items-start gap-2 border-l-2 px-3 py-0.5',
+            // GitHub-style: no +/- glyph — the left accent bar + a soft row tint carry
+            // add/remove. The TEXT keeps its syntax-token colours (no green/red override)
+            // so the diff reads like coloured source.
+            'border-l-2 px-3 py-0.5',
             line.kind === 'add'
-              ? 'border-green-500 bg-green-500/10 text-green-700 dark:text-green-300'
-              : 'border-red-500 bg-red-500/10 text-destructive',
+              ? 'border-green-700/60 bg-green-500/[0.06]'
+              : 'border-red-800/60 bg-red-500/[0.06]',
           )}
         >
-          <span className="shrink-0 select-none opacity-70">
-            {line.kind === 'add' ? '+' : '-'}
-          </span>
           <span className="whitespace-pre-wrap break-words">
             {line.text.length === 0
               ? ' '
               : // Colour the markdown source tokens via CodeMirror's classifier so the
-                // diff reads like source, not flat text. The row's add/remove colour
-                // stays as the default; tok-* classes override only matched tokens.
+                // diff reads like source, not flat text.
                 highlightMarkdownLine(line.text).map((seg, j) =>
                   seg.cls ? (
                     <span key={j} className={seg.cls}>
