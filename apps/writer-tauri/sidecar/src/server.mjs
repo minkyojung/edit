@@ -963,6 +963,31 @@ export class Server {
       // permissionMode stays 'bypassPermissions' (its default) so
       // the SDK auto-runs the remaining read-side tools without a
       // CLI prompt. No `canUseTool` callback needed.
+
+      // Vault-local Agent Skills (procedural memory). Load the vault's
+      // skill plugin (`_system/agent`) and enable only its skills by name.
+      // We pass an explicit allowlist (the discovered skill dir names), NOT
+      // `'all'` — `'all'` would also pull Claude Code's bundled skills
+      // (loop / schedule / ...) into context. `settingSources` stays `[]`,
+      // so skills arrive via the plugin path alone and our injected
+      // CLAUDE.md / cache discipline is untouched. Progressive disclosure:
+      // only each skill's name+description sits in context until the model
+      // activates one. Additive + backward-compatible: no skills dir → the
+      // `readdir` throws, we swallow it, and nothing about the call changes.
+      try {
+        const skillNames = (
+          await readdir(join(vaultPath, '_system/agent/skills'), { withFileTypes: true })
+        )
+          .filter((d) => d.isDirectory())
+          .map((d) => d.name)
+        if (skillNames.length > 0) {
+          options.plugins = [{ type: 'local', path: join(vaultPath, '_system/agent') }]
+          options.skills = skillNames
+        }
+      } catch {
+        // No `_system/agent/skills` directory (or unreadable) → no skills,
+        // no change to the SDK call.
+      }
     }
 
     // Wire relay tools: each one runs inside this sidecar but its handler
