@@ -398,6 +398,31 @@ export async function listVaultDir(relPath: string): Promise<string[]> {
     .map((e) => e.name)
 }
 
+/** Every (non-hidden) subdirectory in the vault, vault-relative and
+ * recursive. The sidebar tree is otherwise built only from file paths,
+ * so this is how empty folders surface. Hidden (`.`-prefixed) dirs are
+ * skipped; `_`-prefixed are returned but the tree filters them. */
+export async function listVaultDirsRecursive(subRel = ''): Promise<string[]> {
+  const root = getActiveVaultPath()
+  if (!root) return []
+  if (subRel !== '' && !(await exists(await resolveVaultPath(subRel)))) return []
+  const absPath = subRel === '' ? root : await resolveVaultPath(subRel)
+  let entries: Awaited<ReturnType<typeof readDir>>
+  try {
+    entries = await readDir(absPath)
+  } catch {
+    return []
+  }
+  const out: string[] = []
+  for (const entry of entries) {
+    if (!entry.isDirectory || entry.name.startsWith('.')) continue
+    const childRel = subRel === '' ? entry.name : `${subRel}/${entry.name}`
+    out.push(childRel)
+    out.push(...(await listVaultDirsRecursive(childRel)))
+  }
+  return out
+}
+
 /** Does the given vault-relative path exist (file OR directory)? */
 export async function vaultFileExists(relPath: string): Promise<boolean> {
   const path = await resolveVaultPath(relPath)

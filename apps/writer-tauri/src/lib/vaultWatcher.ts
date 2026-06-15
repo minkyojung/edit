@@ -35,7 +35,7 @@ import { getActiveVaultPath } from '@/state/settingsStore'
 import { useDocsStore } from '@/state/docsStore'
 import { findSlugByVaultPath } from '@/state/docsStore/helpers'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
-import { isOurRecentWrite } from './vault'
+import { isOurRecentWrite, listVaultDirsRecursive } from './vault'
 import { isDirty } from './docFileSync'
 import { buildKnownDocForExternalPath } from './scanVault'
 import { useExternalConflictStore } from '@/state/externalConflictStore'
@@ -55,6 +55,22 @@ function isActivityPath(rel: string): boolean {
 }
 
 let activeUnwatch: (() => void) | null = null
+
+/** Folder create/rename/delete (including external Finder changes)
+ * never surface as watchable `.md` files, so the file router below
+ * ignores them — leaving the sidebar's folder inventory (`knownFolders`)
+ * stale. Re-read the folder list on any create/remove burst, debounced
+ * so a batch op (or our own write) collapses to one cheap dir walk. */
+let folderRefreshTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleFolderRefresh(): void {
+  if (folderRefreshTimer) clearTimeout(folderRefreshTimer)
+  folderRefreshTimer = setTimeout(() => {
+    folderRefreshTimer = null
+    void listVaultDirsRecursive()
+      .then((folders) => useDocsStore.setState({ knownFolders: folders }))
+      .catch((err) => console.warn('[watch] folder refresh failed', err))
+  }, 400)
+}
 
 /** Start watching the active vault. Returns a disposer; calling it
  * (or `stopVaultWatcher`) tears the watcher down. Safe to call
@@ -87,6 +103,11 @@ export async function startVaultWatcher(): Promise<() => void> {
       // Paths can be either vault-relative (most events) or absolute
       // (whole-dir metadata pings) — `toVaultRelative` normalises.
       if (!isActionableEvent(event)) return
+
+      // A create/remove burst may be a folder add / rename / delete (or
+      // a file add/remove that creates/empties a folder) — refresh the
+      // folder inventory so empty + renamed folders stay in sync.
+      if (isCreateOrRemoveEvent(event)) scheduleFolderRefresh()
 
       const rawPaths = Array.isArray(event.paths) ? event.paths : []
       const relPaths = rawPaths.map((p) => toVaultRelative(p, vaultPath))
@@ -186,6 +207,17 @@ function isActionableEvent(event: { type: unknown }): boolean {
     return kind !== 'metadata'
   }
   return false
+}
+
+/** True for create or remove fsevents (folder churn shows up as these,
+ * never as `modify`). Used to gate the folder-inventory refresh so plain
+ * file edits don't trigger a dir walk. */
+function isCreateOrRemoveEvent(event: { type: unknown }): boolean {
+  const type = event.type as
+    | { create?: unknown; remove?: unknown }
+    | undefined
+  if (!type) return false
+  return ('create' in type && !!type.create) || ('remove' in type && !!type.remove)
 }
 
 /** Classify a single external fsevent and dispatch each path to the

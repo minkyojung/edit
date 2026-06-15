@@ -157,6 +157,10 @@ export interface DocsState {
   // Persisted
   openSlugs: string[]
   knownDocs: KnownDoc[]
+  /** Vault-relative paths of every folder on disk (recursive). Runtime-
+   * only, rebuilt by bootstrap's scan. Lets the sidebar tree show empty
+   * folders, which the file-derived tree alone can't. */
+  knownFolders: string[]
   /** Slugs of docs whose tree row is currently expanded in the
    * sidebar — daily and writing alike. Persisted so the user's
    * fold layout survives a reload. Today's daily is force-added

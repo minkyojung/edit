@@ -18,6 +18,7 @@
  */
 
 import { scanVault } from '@/lib/scanVault'
+import { listVaultDirsRecursive } from '@/lib/vault'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import type { GetDocsState, SetDocsState } from './types'
 
@@ -67,6 +68,15 @@ export const createBootstrapSlice = (
       // a vault from the picker that BootGate auto-triggered).
       const scanned = await scanVault()
       set({ knownDocs: scanned })
+
+      // Folder inventory (incl. empty folders) so the sidebar tree can
+      // show folders that hold no file yet. Best-effort — failure just
+      // means empty folders won't appear until the next boot.
+      try {
+        set({ knownFolders: await listVaultDirsRecursive() })
+      } catch (err) {
+        console.warn('[boot] folder scan failed', err)
+      }
 
       // Validate persisted tab state against the freshly hydrated
       // catalog. Slugs that don't have a backing KnownDoc are

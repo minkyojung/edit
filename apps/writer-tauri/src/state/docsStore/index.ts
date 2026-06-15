@@ -35,6 +35,7 @@ export const useDocsStore = create<DocsState>()(
       // Catalog state lives here at the top level — every slice
       // reads/writes it via set/get but no single slice owns it.
       knownDocs: [],
+      knownFolders: [],
 
       ...createTabsSlice(set, get),
       ...createSidebarSlice(set),

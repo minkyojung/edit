@@ -14,6 +14,17 @@
 import type { KnownDoc } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
 
+/** Paths hidden from the sidebar tree: `_`-prefixed agent folders
+ * (`_system/`) and `threads/` (chat-thread JSON, gitignored app state).
+ * Mirrors Obsidian hiding `.obsidian/`. */
+function isHiddenTreePath(path: string): boolean {
+  return (
+    path.startsWith('_') ||
+    path === 'threads' ||
+    path.startsWith('threads/')
+  )
+}
+
 export interface TreeFile {
   kind: 'file'
   /** Display name — the filename without its `.md` extension. */
@@ -43,27 +54,21 @@ export type TreeNode = TreeFile | TreeFolder
 /** Build the sidebar tree from the catalog. Archived docs and docs with
  *  no placement (e.g. a daily without a date) are dropped. Folders sort
  *  before files, each alphabetically (case-insensitive). */
-export function buildFileTree(docs: KnownDoc[]): TreeNode[] {
+export function buildFileTree(
+  docs: KnownDoc[],
+  folders: string[] = [],
+): TreeNode[] {
   const bySlug = new Map(docs.map((d) => [d.slug, d]))
   const getDoc = (slug: string) => bySlug.get(slug)
   const rootChildren: TreeNode[] = []
 
-  for (const doc of docs) {
-    if (doc.archivedAt) continue
-    const path = pathForDoc(doc, getDoc)
-    if (!path) continue
-    // Hide `_`-prefixed folders (e.g. `_system/` — agent-managed
-    // conventions/log/index). On disk but out of the sidebar, like
-    // Obsidian hiding `.obsidian/`.
-    if (path.startsWith('_')) continue
-
-    const segments = path.split('/')
-    const fileName = segments.pop() ?? path // last segment is the file
-
-    // Descend into (creating as needed) the folder chain.
+  // Descend into (creating as needed) the folder chain for `dirPath`,
+  // returning the children array of the deepest folder. '' → root.
+  function ensureFolder(dirPath: string): TreeNode[] {
+    if (!dirPath) return rootChildren
     let children = rootChildren
     let acc = ''
-    for (const seg of segments) {
+    for (const seg of dirPath.split('/')) {
       acc = acc ? `${acc}/${seg}` : seg
       let folder = children.find(
         (c): c is TreeFolder => c.kind === 'folder' && c.name === seg,
@@ -74,6 +79,18 @@ export function buildFileTree(docs: KnownDoc[]): TreeNode[] {
       }
       children = folder.children
     }
+    return children
+  }
+
+  for (const doc of docs) {
+    if (doc.archivedAt) continue
+    const path = pathForDoc(doc, getDoc)
+    if (!path) continue
+    if (isHiddenTreePath(path)) continue
+
+    const segments = path.split('/')
+    const fileName = segments.pop() ?? path // last segment is the file
+    const children = ensureFolder(segments.join('/'))
 
     children.push({
       kind: 'file',
@@ -84,6 +101,13 @@ export function buildFileTree(docs: KnownDoc[]): TreeNode[] {
       videoId: doc.videoId,
       sourceUrl: doc.sourceUrl,
     })
+  }
+
+  // Folders that exist on disk but hold no file still get a node, so the
+  // user can see and target empty folders (Obsidian keeps them too).
+  for (const dir of folders) {
+    if (!dir || isHiddenTreePath(dir)) continue
+    ensureFolder(dir)
   }
 
   sortNodes(rootChildren)

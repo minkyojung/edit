@@ -210,6 +210,7 @@ function FolderTreeNode({
 
 export function FolderTree() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
+  const knownFolders = useDocsStore((s) => s.knownFolders)
   const sidebarTab = useDocsStore((s) => s.sidebarTab)
   const dayAnchor = useDocsStore((s) => s.dayAnchor)
   const monthAnchor = useDocsStore((s) => s.monthAnchor)
@@ -218,7 +219,10 @@ export function FolderTree() {
   const navigate = useNavigate()
   const activeSlug = useActiveSlug()
 
-  const tree = useMemo(() => buildFileTree(knownDocs), [knownDocs])
+  const tree = useMemo(
+    () => buildFileTree(knownDocs, knownFolders),
+    [knownDocs, knownFolders],
+  )
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [editingSlug, setEditingSlug] = useState<string | null>(null)
 
