@@ -29,7 +29,7 @@
  *   - Debouncing event bursts (git checkout, batch rename)
  */
 
-import { watch } from '@tauri-apps/plugin-fs'
+import { watchImmediate } from '@tauri-apps/plugin-fs'
 import { normalize } from '@tauri-apps/api/path'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useDocsStore } from '@/state/docsStore'
@@ -95,10 +95,10 @@ export async function startVaultWatcher(): Promise<() => void> {
   const vaultPath = await normalize(rawVaultPath)
 
   console.log('[watch] starting on', vaultPath)
-  const unwatch = await watch(
+  const unwatch = await watchImmediate(
     vaultPath,
     (event) => {
-      // Tauri's `watch` callback fires for every fsevent. On macOS
+      // Tauri's watch callback fires for every fsevent. On macOS
       // the event shape is `{ type: { create: {...} | modify: {...} | remove: {...} }, paths: [...] }`.
       // Paths can be either vault-relative (most events) or absolute
       // (whole-dir metadata pings) — `toVaultRelative` normalises.
@@ -127,6 +127,8 @@ export async function startVaultWatcher(): Promise<() => void> {
       // listener signature is sync.
       void resolveAndDispatch(event, candidates, rawPaths)
     },
+    // watchImmediate (no debounce) — external edits reflect right away;
+    // the default debounced `watch` was adding latency / missing events.
     { recursive: true },
   )
   activeUnwatch = unwatch
@@ -399,28 +401,20 @@ function handleExternalRemove(rel: string): void {
   state.removeKnownDoc(slug)
 }
 
-/** True for vault-relative paths we want the router to consider.
+/** True for vault-relative paths the router should process.
  *
- * Only `.md` body files inside the four placement subdirectories
- * (`wiki/`, `daily/`, `_system/`, `threads/`) are interesting:
+ * Flat vault: EVERY `.md` anywhere in the vault is a note, so external
+ * adds/edits/deletes in arbitrary user folders (articles/, projects/,
+ * the root, …) must sync live — not just the old four system folders.
+ * (Echo suppression is content-hash based, so our own writes in any
+ * folder are still filtered before reaching the handlers.)
  *
- *   - `.meta.json` / `.ydoc` are app-internal sidecars; users
- *     don't edit them directly, and atomic-write tmp variants
- *     also share their suffix.
- *   - `.md.tmp` is leaked by the atomic-write pattern; the echo
- *     filter catches it but this gate is a defensive double-check.
- *   - Bare directory names (no extension) fire on metadata pings.
- *
- * Phase 4.E.2's router will use the same predicate to classify
- * what to do with each `.md`. */
+ * Excludes:
+ *   - non-`.md` (sidecars `.meta.json`, atomic-write `.md.tmp`, etc.),
+ *   - anything inside a dot-dir (`.git/`, `.obsidian/`) — noise. */
 function isWatchableBodyFile(rel: string): boolean {
   if (!rel.endsWith('.md')) return false
-  return (
-    rel.startsWith('wiki/') ||
-    rel.startsWith('daily/') ||
-    rel.startsWith('_system/') ||
-    rel.startsWith('threads/')
-  )
+  return !rel.split('/').some((seg) => seg.startsWith('.'))
 }
 
 // Dev-only console handle for manual testing.

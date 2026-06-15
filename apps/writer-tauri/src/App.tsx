@@ -17,7 +17,7 @@ import { ImageAltDialog } from '@/editor/ImageAltDialog'
 import { SaveArticleDialog } from '@/components/SaveArticleDialog'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
-import { useSettingsStore } from '@/state/settingsStore'
+import { useSettingsStore, getActiveVaultPath } from '@/state/settingsStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
@@ -72,11 +72,20 @@ const AnchorLifecycleSpike = lazy(() => import('@/prototypes/v2/AnchorLifecycleS
 // that might also start it.
 startAutoFlush()
 
-// Watch the vault folder for external edits. Gated on
-// getActiveVaultPath() inside startVaultWatcher — when BootGate's
-// auto-picker is still up, it logs an inert message and no-ops.
-// The picker re-invokes after selecting a vault.
+// Watch the vault folder for external edits. At module load the vault
+// may not be picked yet (first-run VaultLauncher), so startVaultWatcher
+// no-ops; the subscription below (re)starts it whenever the active vault
+// path changes — first pick, or switching vaults later — so the watcher
+// always tracks the current vault without needing a reload.
 void startVaultWatcher()
+let watchedVaultPath = getActiveVaultPath()
+useSettingsStore.subscribe(() => {
+  const current = getActiveVaultPath()
+  if (current !== watchedVaultPath) {
+    watchedVaultPath = current
+    void startVaultWatcher()
+  }
+})
 
 // Listen for `pending → accepted` transitions in pendingChangesStore
 // and run the matching disk-write path. Without this no click on the
