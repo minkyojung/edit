@@ -26,15 +26,21 @@ export function navigateToNoteByTitle(title: string): void {
 }
 
 /** Navigate to a note by its slug (the card already holds one — no title resolution
- * needed). Sets the URL hash, the single source of truth for the active doc. */
-export function navigateToNoteBySlug(slug: string): void {
+ * needed). No-ops when the slug isn't a LIVE catalog doc (e.g. an inspect-only
+ * proposal whose page was never materialised, or a stale pending change for a deleted
+ * note) — navigating to a dead slug would just blank the editor. Returns whether it
+ * navigated. Sets the URL hash, the single source of truth for the active doc. */
+export function navigateToNoteBySlug(slug: string): boolean {
   const store = useDocsStore.getState()
+  const target = store.knownDocs.find((d) => d.slug === slug && !d.archivedAt)
+  if (!target) return false
   window.location.hash = buildViewUrl({
     tab: store.sidebarTab,
     dayAnchor: store.dayAnchor,
     monthAnchor: store.monthAnchor,
     slug,
   })
+  return true
 }
 
 /** Does this wikilink title resolve to a LIVE note? Drives blue (known) vs red

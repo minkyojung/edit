@@ -9,11 +9,7 @@
 
 import { useMemo, useState } from 'react'
 import { Code2Icon, ChevronDownIcon } from 'lucide-react'
-import {
-  usePendingChangesStore,
-  rejectPendingChange,
-  type PendingChange,
-} from '@/state/pendingChangesStore'
+import type { PendingChange } from '@/state/pendingChangesStore'
 import { useDocsStore } from '@/state/docsStore'
 import { computePendingDiffLines } from '@/lib/pendingDiff'
 import { DiffBlock } from '@/components/DiffBlock'
@@ -22,7 +18,6 @@ import { navigateToNoteBySlug } from '@/editor/cmNav'
 import { requestScrollToChange } from '@/state/activeCmEditor'
 
 export function SuggestionCard({ change }: { change: PendingChange }) {
-  const accept = usePendingChangesStore((s) => s.accept)
   const title = useDocsStore((s) => {
     const doc = s.knownDocs.find((d) => d.slug === change.pageSlug)
     return doc?.title?.trim() || doc?.type || change.pageSlug
@@ -35,7 +30,7 @@ export function SuggestionCard({ change }: { change: PendingChange }) {
     let removed = 0
     for (const l of diffLines) {
       if (l.kind === 'add') added += 1
-      else removed += 1
+      else if (l.kind === 'remove') removed += 1
     }
     return { added, removed }
   }, [diffLines])
@@ -85,27 +80,6 @@ export function SuggestionCard({ change }: { change: PendingChange }) {
       {open && diffLines.length > 0 && (
         <div className="border-t border-border/60">
           <DiffBlock lines={diffLines} bare />
-        </div>
-      )}
-
-      {isPending && (
-        <div className="flex justify-end border-t border-border/60 p-2">
-          <div className="pending-edit__actions">
-            <button
-              type="button"
-              className="pending-edit__action pending-edit__action--reject"
-              onClick={() => rejectPendingChange(change.id)}
-            >
-              Reject
-            </button>
-            <button
-              type="button"
-              className="pending-edit__action pending-edit__action--keep"
-              onClick={() => accept(change.id)}
-            >
-              Keep
-            </button>
-          </div>
         </div>
       )}
     </div>

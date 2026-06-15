@@ -47,6 +47,7 @@ import {
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
+import { ReviewTray } from '@/chat/ReviewTray'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -702,6 +703,8 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
           visible={!pinned && renderedTurns.length > 0}
           onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
         />
+        {/* Pending AI changes, grouped by file — sits above the input, hides when empty. */}
+        <ReviewTray />
         {pendingPermission?.toolName === 'AskUserQuestion' ||
         pendingPermission?.toolName === 'ExitPlanMode' ? (
           // Any parked gate (clarifying question or plan approval) takes the

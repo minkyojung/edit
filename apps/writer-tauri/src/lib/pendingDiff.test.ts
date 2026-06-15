@@ -50,13 +50,31 @@ describe('computePendingDiffLines', () => {
     expect(out).toEqual([{ kind: 'remove', text: '성별: 남자', lineNum: 0 }])
   })
 
-  it('diffs a whole-file replace against the snapshot', () => {
+  it('diffs a whole-file replace against the snapshot, keeping context', () => {
     const out = computePendingDiffLines(
       change([{ kind: 'replace', after: 'a\nc' }], 'a\nb'),
     )
     expect(out).toEqual([
+      { kind: 'context', text: 'a', lineNum: 0 },
       { kind: 'remove', text: 'b', lineNum: 0 },
       { kind: 'add', text: 'c', lineNum: 0 },
+    ])
+  })
+
+  it('shows 3 lines of document context around an inline replace', () => {
+    const snapshot = 'l1\nl2\nl3\nl4\nOLD\nl6\nl7\nl8\nl9'
+    const out = computePendingDiffLines(
+      change([{ kind: 'replace', before: 'OLD', after: 'NEW' }], snapshot),
+    )
+    expect(out).toEqual([
+      { kind: 'context', text: 'l2', lineNum: 0 },
+      { kind: 'context', text: 'l3', lineNum: 0 },
+      { kind: 'context', text: 'l4', lineNum: 0 },
+      { kind: 'remove', text: 'OLD', lineNum: 0 },
+      { kind: 'add', text: 'NEW', lineNum: 0 },
+      { kind: 'context', text: 'l6', lineNum: 0 },
+      { kind: 'context', text: 'l7', lineNum: 0 },
+      { kind: 'context', text: 'l8', lineNum: 0 },
     ])
   })
 

@@ -42,6 +42,10 @@ import { todayLocalDate } from '@/hooks/useDocMeta'
 // before the fix itself was written into the codebase.
 let unsub: (() => void) | null = null
 let pruneTimer: ReturnType<typeof setInterval> | null = null
+// One-shot subscription waiting for docs to finish loading so we can drop orphaned
+// pending changes (a pageSlug with no catalog doc). Held at module scope so HMR / stop
+// can clear it if it hasn't fired yet.
+let orphanUnsub: (() => void) | null = null
 
 /** How often the boot-time applier sweeps decided (accepted /
  * rejected) entries past their retention window. The store keeps
@@ -281,6 +285,29 @@ export function startPendingChangesApplier(): void {
     usePendingChangesStore.getState().pruneDecided()
   }, PRUNE_INTERVAL_MS)
 
+  // Drop persisted pending changes whose target page no longer exists — orphans from a
+  // prior session or a deleted note. They'd otherwise haunt every surface (review tray,
+  // chat cards, sidebar dot) as ghost rows that show a raw slug and can't be opened.
+  // pruneOrphaned was defined but never wired; this is its one caller. Run only once
+  // docs have finished loading (bootstrapping === false) and never against an empty
+  // catalog, so a transient loaded-but-empty state can't nuke every pending change.
+  const pruneOrphansOnce = (): boolean => {
+    const ds = useDocsStore.getState()
+    if (ds.bootstrapping) return false
+    const valid = new Set(ds.knownDocs.map((d) => d.slug))
+    if (valid.size === 0) return false
+    usePendingChangesStore.getState().pruneOrphaned(valid)
+    return true
+  }
+  if (!pruneOrphansOnce()) {
+    orphanUnsub = useDocsStore.subscribe(() => {
+      if (pruneOrphansOnce()) {
+        orphanUnsub?.()
+        orphanUnsub = null
+      }
+    })
+  }
+
   unsub = usePendingChangesStore.subscribe((state) => {
     for (const c of Object.values(state.byId)) {
       if (c.status === 'pending') {
@@ -339,6 +366,8 @@ export function startPendingChangesApplier(): void {
 export function stopPendingChangesApplier(): void {
   unsub?.()
   unsub = null
+  orphanUnsub?.()
+  orphanUnsub = null
   if (pruneTimer) clearInterval(pruneTimer)
   pruneTimer = null
   handledIds.clear()
@@ -357,6 +386,8 @@ if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     unsub?.()
     unsub = null
+    orphanUnsub?.()
+    orphanUnsub = null
     if (pruneTimer) clearInterval(pruneTimer)
     pruneTimer = null
     handledIds.clear()

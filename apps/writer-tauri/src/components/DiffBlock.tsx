@@ -32,7 +32,11 @@ export function DiffBlock({ lines, bare = false }: { lines: DiffLine[]; bare?: b
             'border-l-2 px-3 py-0.5',
             line.kind === 'add'
               ? 'border-green-700/60 bg-green-500/[0.06]'
-              : 'border-red-800/60 bg-red-500/[0.06]',
+              : line.kind === 'remove'
+                ? 'border-red-800/60 bg-red-500/[0.06]'
+                : // context — unchanged surrounding line: no tint, transparent bar so the
+                  // text still aligns with changed rows. Dimmed so changes stand out.
+                  'border-transparent text-muted-foreground',
           )}
         >
           <span className="whitespace-pre-wrap break-words">

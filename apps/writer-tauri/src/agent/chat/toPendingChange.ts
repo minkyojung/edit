@@ -55,10 +55,30 @@ export function mapChatEditToPendingChange(
   ctx: MapContext,
 ): Omit<PendingChange, 'status' | 'decidedAt' | 'viewedAt'> | null {
   const filePath = readString(payload.input.file_path)
-  if (!filePath) return null
+  if (!filePath) {
+    console.warn('[map] miss: no file_path', { toolName: payload.toolName })
+    return null
+  }
 
   const slug = resolveSlugForVaultPath(filePath, ctx.knownDocs, ctx.vaultPath)
-  if (!slug) return null
+  if (!slug) {
+    // For a brand-new `propose_write` this miss is EXPECTED — the caller falls through
+    // to materializeChatNewWikiPage which creates the page. For `propose_edit` /
+    // `propose_multi_edit` (toolName Edit/MultiEdit) there is NO such recovery, so a
+    // miss here is the "create-then-edit in one turn" bug. Log the edit's file_path +
+    // the catalog paths we matched against so a path MISMATCH (b) is distinguishable
+    // from a NOT-YET-CREATED note (a).
+    const getDoc = (s: string) => ctx.knownDocs.find((d) => d.slug === s)
+    console.warn('[map] miss: slug unresolved', {
+      toolName: payload.toolName,
+      filePath,
+      knownPaths: ctx.knownDocs
+        .filter((d) => !d.archivedAt)
+        .map((d) => pathForDoc(d, getDoc))
+        .filter(Boolean),
+    })
+    return null
+  }
 
   // System pages (system:log, system:index, system:conventions, ...)
   // are host-managed. We deterministically build their bodies — the
@@ -79,7 +99,13 @@ export function mapChatEditToPendingChange(
   }
 
   const edits = buildEditsForTool(payload.toolName, payload.input)
-  if (edits.length === 0) return null
+  if (edits.length === 0) {
+    console.warn('[map] miss: no edits built', {
+      toolName: payload.toolName,
+      inputKeys: Object.keys(payload.input),
+    })
+    return null
+  }
 
   return {
     id: payload.pendingId,

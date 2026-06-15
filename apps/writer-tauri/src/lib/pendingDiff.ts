@@ -12,9 +12,9 @@
 // committed-change view: an inline tweak shows as `-old line / +new
 // line`, an appended bullet as a single `+` line.
 
-import { diffLines } from 'diff'
+import { diffLines, structuredPatch } from 'diff'
 import type { DiffLine } from './git'
-import type { PendingChange } from '@/state/pendingChangesStore'
+import type { PendingChange, PendingEdit } from '@/state/pendingChangesStore'
 
 /** diffLines tokenises by line; a string whose last line lacks a
  * trailing newline makes that line's token differ from an otherwise
@@ -53,20 +53,72 @@ export function diffPairsToLines(
   return out
 }
 
-/** Flatten a pending change's edits into `+`/`-` diff lines.
- *
- * Per edit the "before" text is:
- *   - whole-file replace (replace with no `before`) → the page snapshot
- *   - otherwise → the edit's own `before` (empty for a pure add)
- * and the "after" is the edit's `after` (empty for a pure delete). */
-export function computePendingDiffLines(change: PendingChange): DiffLine[] {
+/** Apply a change's edits to the page snapshot, returning the resulting body. Pure
+ * string transform mirroring the applier's write paths — `add` appends to the end
+ * (appendMarkdownToWikiPage), `replace`/`delete` splice the first `before` match, a
+ * whole-file replace (no `before`) swaps the body. Used to derive the "after" page so
+ * the diff can show document context, not just the changed fragment. */
+function applyEditsToText(snapshot: string, edits: PendingEdit[]): string {
+  let doc = snapshot
+  for (const e of edits) {
+    if (e.kind === 'add') {
+      const body = e.after ?? ''
+      doc = doc.length > 0 ? `${doc}\n\n${body}` : body
+    } else if (e.kind === 'replace') {
+      doc = e.before ? doc.replace(e.before, e.after ?? '') : (e.after ?? '')
+    } else if (e.kind === 'delete' && e.before) {
+      doc = doc.replace(e.before, '')
+    }
+  }
+  return doc
+}
+
+/** Context-free fragment diff (the pre-context behaviour): diff each edit's own
+ * before→after. Used as a fallback when document context can't be derived. */
+function fragmentDiff(change: PendingChange): DiffLine[] {
+  const snapshot = change.pageMarkdownSnapshot ?? ''
   return diffPairsToLines(
     change.edits.map((edit) => ({
-      before:
-        edit.kind === 'replace' && !edit.before
-          ? (change.pageMarkdownSnapshot ?? '')
-          : (edit.before ?? ''),
+      // Whole-file replace (no `before`) diffs against the page snapshot.
+      before: edit.kind === 'replace' && !edit.before ? snapshot : (edit.before ?? ''),
       after: edit.after ?? '',
     })),
   )
+}
+
+/** Diff lines for a pending change, WITH 3 lines of document context around each change
+ * (GitHub-style). We diff the page snapshot against the page with the edits applied, so
+ * the surrounding note text shows — not just the edited fragment.
+ *
+ * Falls back to the context-free fragment diff when there's no snapshot (legacy
+ * persisted entries) OR when applying the edits to the snapshot changes nothing — e.g.
+ * a `before` that loose-matched on disk but isn't a literal substring of the snapshot.
+ * Without that fallback the change would silently vanish from the card. */
+export function computePendingDiffLines(change: PendingChange): DiffLine[] {
+  const snapshot = change.pageMarkdownSnapshot
+  if (snapshot == null) return fragmentDiff(change)
+  const after = applyEditsToText(snapshot, change.edits)
+  if (after === snapshot) return fragmentDiff(change)
+  const patch = structuredPatch(
+    'a',
+    'b',
+    withTrailingNewline(snapshot),
+    withTrailingNewline(after),
+    '',
+    '',
+    { context: 3 },
+  )
+  const out: DiffLine[] = []
+  patch.hunks.forEach((hunk, hi) => {
+    // A gap between hunks (omitted unchanged lines) — a faint ellipsis row.
+    if (hi > 0) out.push({ kind: 'context', text: '⋯', lineNum: 0 })
+    for (const raw of hunk.lines) {
+      const tag = raw[0]
+      if (tag === '\\') continue // "\ No newline at end of file"
+      const text = raw.slice(1)
+      const kind: DiffLine['kind'] = tag === '+' ? 'add' : tag === '-' ? 'remove' : 'context'
+      out.push({ kind, text, lineNum: 0 })
+    }
+  })
+  return out
 }
