@@ -192,8 +192,11 @@ export function ReviewTray() {
                     <Counts added={g.added} removed={g.removed} />
                   </button>
                   {/* Per-file decisions as compact icons — visually distinct from the
-                      bulk text buttons up top, so they don't read as a repeat. */}
-                  <div className="flex shrink-0 items-center gap-0.5 px-2">
+                      bulk text buttons up top, so they don't read as a repeat. Right
+                      padding (pr-4) lines the ✓ up with the bulk "Keep" text's right
+                      edge: summary px-2.5 (10) + text-button pad (10) = 20; here pr-4
+                      (16) + icon-button p-1 (4) = 20. */}
+                  <div className="flex shrink-0 items-center gap-0.5 pl-2 pr-4">
                     <button
                       type="button"
                       aria-label="Reject"
