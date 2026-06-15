@@ -23,7 +23,7 @@
  * involvement, no async. Safe to import from anywhere.
  */
 
-import { formatLocalDate, todayLocalDate } from '@/hooks/useDocMeta'
+import { formatLocalDate } from '@/hooks/useDocMeta'
 import { pathForDoc } from '@/lib/docPaths'
 import type { DocPolicy, DocsState, KnownDoc } from './types'
 
@@ -192,13 +192,11 @@ export function shiftMonthAnchor(anchor: string, delta: number): string {
  * The invariant lives here rather than scattered across each
  * mutation (closeDoc / archiveDoc / deleteForever / emptyArchive)
  * because the policy is identical at every site: "if removing this
- * slug would empty the strip, fall back to today's daily."
+ * slug would empty the strip, fall back to any live doc."
  *
- * No-op when today's daily isn't in the catalog (bootstrap hasn't
- * run yet, or the day rolled over since bootstrap). In that edge
- * case the strip stays empty for the moment — caller's own async
- * follow-up (ensureHandle, openDaily) is the next line of defense,
- * but it's not relied on for the common path.
+ * No-op when the catalog has no non-archived doc to fall back to
+ * (empty vault, or bootstrap hasn't run yet). In that edge case the
+ * strip stays empty for the moment and the app shows its empty state.
  *
  * Note: this helper no longer sets an "active slug" — the URL is
  * the source of truth for that. Callers (closeDoc, archiveDoc, …)
@@ -209,14 +207,11 @@ export function ensureNonEmptyTabStrip(
 ): Partial<DocsState> {
   const nextOpen = patch.openSlugs ?? state.openSlugs
   if (nextOpen.length > 0) return patch
-  const today = todayLocalDate()
-  const todayDaily = state.knownDocs.find(
-    (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
-  )
-  if (!todayDaily) return patch
+  const fallback = state.knownDocs.find((d) => !d.archivedAt)
+  if (!fallback) return patch
   return {
     ...patch,
-    openSlugs: [todayDaily.slug],
+    openSlugs: [fallback.slug],
   }
 }
 

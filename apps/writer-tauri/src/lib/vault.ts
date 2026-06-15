@@ -412,6 +412,17 @@ export async function deleteVaultFile(relPath: string): Promise<void> {
   }
 }
 
+/** Recursively delete a vault directory and everything inside it.
+ * No-op if it doesn't exist. Used by one-time migrations that retire
+ * a whole layout subtree (e.g. the old `daily/` folder). */
+export async function deleteVaultDir(relPath: string): Promise<void> {
+  const path = await resolveVaultPath(relPath)
+  if (await exists(path)) {
+    await remove(path, { recursive: true })
+    scheduleAutoCommit(relPath)
+  }
+}
+
 // Dev-only console handle. Open DevTools, run e.g.
 //   await __vault.ensureStructure()
 //   await __vault.write('wiki/Test.md', '# Hello')

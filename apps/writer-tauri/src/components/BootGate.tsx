@@ -30,6 +30,7 @@ import { VaultLauncher } from '@/components/VaultLauncher'
 import { exists, remove } from '@tauri-apps/plugin-fs'
 import { join } from '@tauri-apps/api/path'
 import { cleanupYdocV2 } from '@/lib/cleanupYdocV2'
+import { flattenVaultV1 } from '@/lib/flattenVaultV1'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
@@ -122,6 +123,14 @@ export function BootGate({ children }: Props) {
         await cleanupYdocV2()
       } catch (err) {
         console.warn('[boot] ydoc cleanup failed', err)
+      }
+      // Flat-vault migration: remove the retired `daily/` folder so the
+      // scan below never surfaces legacy daily/writing files. Sentinel-
+      // gated; runs the delete exactly once per vault.
+      try {
+        await flattenVaultV1()
+      } catch (err) {
+        console.warn('[boot] flatten-vault migration failed', err)
       }
       // Seed `CLAUDE.md` at the vault root if the file is missing —
       // the Karpathy / Claude Code schema document the agent reads

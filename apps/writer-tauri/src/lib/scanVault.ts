@@ -33,7 +33,6 @@ import {
 } from '@/lib/vault'
 import type { KnownDoc } from '@/state/docsStore'
 import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
-import { folderTreeFlag } from '@/lib/flags'
 import { seedLastWrittenPath } from '@/lib/docFileSync'
 import { composeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
 
@@ -240,10 +239,10 @@ function mdRelToBaseDoc(
   if (captureMatch) {
     return { slug, type: 'note', title: captureMatch[1], relPath: mdRel }
   }
-  // Generic note (folder-tree mode): any other `.md` in the vault. The
-  // path is the placement, carried on relPath; the title is the filename.
-  // Off by default — without the flag, unrecognised paths are skipped as
-  // before so the legacy sidebar's catalog is unchanged.
+  // Generic note: any other `.md` in the vault. The path is the
+  // placement, carried on relPath; the title is the filename. Always on
+  // now (flat vault) — `allowGeneric` stays a parameter only so the
+  // unit tests can still exercise the recognised-folders-only path.
   if (allowGeneric) {
     const name = mdRel.split('/').pop()?.replace(/\.md$/, '') ?? mdRel
     return { slug, type: 'note', title: name, relPath: mdRel }
@@ -258,19 +257,11 @@ function mdRelToBaseDoc(
 export async function scanVault(): Promise<KnownDoc[]> {
   if (!getActiveVaultPath()) return []
 
-  // Folder-tree mode: walk the WHOLE vault so arbitrary user folders
-  // surface as generic `note` docs. Default: only the recognised folders
-  // (current behaviour — the legacy sidebar shows nothing else anyway).
-  const allowGeneric = folderTreeFlag()
-  const allMd = allowGeneric
-    ? await listMdRecursive('')
-    : [
-        ...(await listMdRecursive('wiki')),
-        ...(await listMdRecursive('daily')),
-        ...(await listMdRecursive('_system')),
-        ...(await listMdRecursive('articles')),
-        ...(await listMdRecursive('inbox')),
-      ]
+  // Flat Obsidian-style vault: walk the WHOLE vault so every `.md`
+  // surfaces in the catalog (recognised folders keep their special
+  // classification; anything else becomes a generic `note` at its
+  // relPath). Always on now that the folder tree is the only sidebar.
+  const allMd = await listMdRecursive('')
 
   // Pass 1: resolve slug + load sidecar metadata for every file in one
   // read. Done up-front because pass-2's writing-note resolution needs
@@ -297,7 +288,7 @@ export async function scanVault(): Promise<KnownDoc[]> {
   // Pass 2: assemble KnownDoc entries. Unrecognised paths drop out.
   const docs: KnownDoc[] = []
   for (const { slug, mdRel, meta } of scanned) {
-    const doc = mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta, allowGeneric)
+    const doc = mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta, true)
     if (doc) docs.push(doc)
   }
 
@@ -339,7 +330,7 @@ export async function buildKnownDocForExternalPath(
   for (const d of catalog) {
     if (d.type === 'daily' && d.date) dailySlugByDate.set(d.date, d.slug)
   }
-  return mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta, folderTreeFlag())
+  return mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta, true)
 }
 
 // Dev-only console handle. `await __scanVault()` to inspect what the

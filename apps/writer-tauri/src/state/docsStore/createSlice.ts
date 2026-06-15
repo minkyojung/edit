@@ -23,7 +23,7 @@
 import { generateClientSlug } from '@/lib/slug'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
-import { markSlugDirty } from '@/lib/docFileSync'
+import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
 import { useEditorViewStore } from '../editorViewStore'
 import { applyMarkdownToActiveCmEditor } from '../activeCmEditor'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
@@ -63,38 +63,57 @@ export interface CreateSlice {
   replaceDocBody: (slug: string, markdown: string) => Promise<boolean>
 }
 
+/** First free inbox path for a new untitled note: `inbox/Untitled.md`,
+ * then `inbox/Untitled 1.md`, `inbox/Untitled 2.md`, … so two quick
+ * ⌘N presses don't collide on the same file. */
+function uniqueInboxPath(knownDocs: KnownDoc[]): string {
+  const taken = new Set(
+    knownDocs.map((d) => d.relPath).filter((p): p is string => Boolean(p)),
+  )
+  let candidate = 'inbox/Untitled.md'
+  let n = 1
+  while (taken.has(candidate)) {
+    candidate = `inbox/Untitled ${n}.md`
+    n += 1
+  }
+  return candidate
+}
+
 export const createCreateSlice = (
   set: SetDocsState,
   get: GetDocsState,
 ): CreateSlice => ({
   createNew: async () => {
-    // Anchor the new writing under today's daily. `type: 'writing'`
-    // has no disk placement of its own — `pathForDoc` walks parentId
-    // up to a daily ancestor to derive `daily/<date>/<title>.md`, and
-    // returns null when no daily is found. Pre-fix this slice created
-    // `{ type: 'writing' }` with no parentId, which meant pathForDoc
-    // returned null, flushDirty silently skipped the doc, and the
-    // brand-new note never reached disk — so it vanished on restart.
-    //
-    // Going through openDaily + createChildNote reuses the existing
-    // daily-anchoring logic (so its `daily/<date>.md` lands on disk —
-    // the boot scan needs that file to resolve the writing's parentId
-    // on next session).
-    //
-    // Side effect worth noting: openDaily adds today's daily to the
-    // tab strip if it wasn't already there. Calling code (the "+ tab"
-    // button in EditorTabs) then navigates to the returned slug — the
-    // new writing, not the daily — so the user lands where they
-    // expected. The visible daily tab is a deliberate context cue
-    // ("you created this under today").
-    const dailySlug = await get().openDaily()
-    if (!dailySlug) {
-      throw new Error('createNew: failed to anchor under today\'s daily')
+    // Flat Obsidian-style note: a plain `note` lands at
+    // `inbox/<name>.md`. (The vault is now a flat tree — the old
+    // "anchor every new note under today's daily as a `writing`"
+    // model was retired.) For `note` docs `relPath` is the only
+    // placement rule pathForDoc knows; without it pathForDoc returns
+    // null, flushDirty skips the doc, and the brand-new note never
+    // reaches disk — so we always set relPath here.
+    const slug = generateClientSlug()
+    const createdAt = new Date().toISOString()
+    const relPath = uniqueInboxPath(get().knownDocs)
+    const meta: KnownDoc = {
+      slug,
+      type: 'note',
+      // Filename (sans `inbox/` + `.md`) is the sidebar label; keep
+      // title in sync so CommandPalette / tabs show the same name.
+      title: relPath.slice('inbox/'.length).replace(/\.md$/, ''),
+      relPath,
+      createdAt,
     }
-    const slug = await get().createChildNote(dailySlug)
-    if (!slug) {
-      throw new Error('createNew: createChildNote refused')
-    }
+    set((s) => ({
+      knownDocs: [...s.knownDocs, meta],
+      openSlugs: s.openSlugs.includes(slug)
+        ? s.openSlugs
+        : [...s.openSlugs, slug],
+    }))
+    await get().ensureHandle(slug)
+    // Force the (empty) note to disk now so it survives a restart even
+    // before the first edit — mirrors createArticle's explicit flush.
+    markSlugDirty(slug)
+    void flushDirty()
     return slug
   },
 

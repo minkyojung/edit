@@ -9,19 +9,12 @@ import {
   IconBrandGithub,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { SidebarDateMenu } from './SidebarDateMenu'
-import { DayView } from './views/DayView'
 import { FolderTree } from './FolderTree'
-import { folderTreeFlag } from '@/lib/flags'
-import { WeekView } from './views/WeekView'
-import { MonthView } from './views/MonthView'
-import { WikiSection } from './WikiSection'
-import { ArticlesSection } from './ArticlesSection'
 import { WikiMetaRows } from './WikiMetaRows'
 import { ArchivedDocsPopover } from './ArchivedDocsPopover'
 import { IngestProposalCard } from './IngestProposalCard'
 import { useDocsStore } from '@/state/docsStore'
-import { buildDayUrl, buildViewUrl, getActiveSlugFromHash } from '@/lib/viewUrl'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
@@ -151,81 +144,47 @@ export function AppSidebar() {
     refresh: refreshGithub,
     disconnect: disconnectGithub,
   } = useGitHubAuth()
-  const sidebarTab = useDocsStore((s) => s.sidebarTab)
-
   const handleSignOut = useCallback(async () => {
     if (account.connected) {
       await disconnect()
     }
   }, [account.connected, disconnect])
 
-  const openDaily = useDocsStore((s) => s.openDaily)
-  const createChildNote = useDocsStore((s) => s.createChildNote)
-  const findDailyAncestorSlug = useDocsStore((s) => s.findDailyAncestorSlug)
+  const createNew = useDocsStore((s) => s.createNew)
   const navigate = useNavigate()
 
-  // Global doc shortcuts:
-  //   ⌘T → today's daily entry (always reachable). Routes through
-  //         buildDayUrl so the jump lands a back/forward entry.
-  //   ⌘N → new child note under whatever's currently active. Mirrors
-  //         Linear / Notion: "make a new thing inside this thing".
+  // Global doc shortcut:
+  //   ⌘N → new flat note (lands at inbox/Untitled.md) and opens it.
+  //         The vault is flat now, so a new note no longer nests under
+  //         today's daily — it's just a fresh file.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
       if (e.shiftKey || e.altKey) return
-      if (e.key === 't' || e.key === 'T') {
-        e.preventDefault()
-        // ⌘T jumps to today and lands the user on Day view so the
-        // shortcut reads as "take me to today's work surface,"
-        // regardless of which date view they had open. Driving this
-        // through navigate() (not direct store setters) gives the
-        // jump a slot in the back/forward stack — ⌘[ undoes the ⌘T.
-        const realToday = new Date()
-        const yyyy = realToday.getFullYear()
-        const mm = String(realToday.getMonth() + 1).padStart(2, '0')
-        const dd = String(realToday.getDate()).padStart(2, '0')
-        const todayISO = `${yyyy}-${mm}-${dd}`
-        openDaily(todayISO).then((slug) => {
-          navigate(buildDayUrl(todayISO, slug ?? null))
-        }).catch((err) =>
-          console.error('[docs] ⌘T openDaily failed', err),
-        )
-        return
-      }
       if (e.key === 'n' || e.key === 'N') {
         e.preventDefault()
-        const activeSlug = getActiveSlugFromHash()
-        if (!activeSlug) return
-        // Writings nest only 1-deep under a daily. If a writing is
-        // currently active, ⌘N creates a sibling under the same daily
-        // rather than a (forbidden) grandchild. Daily / wiki active
-        // pass through unchanged: daily → child writing, wiki → null
-        // (createChildNote refuses, ⌘N becomes a no-op on wiki pages).
-        const target =
-          findDailyAncestorSlug(activeSlug) ?? activeSlug
-        createChildNote(target).then((created) => {
-          if (!created) return
+        createNew().then((slug) => {
           const store = useDocsStore.getState()
           navigate(
             buildViewUrl({
               tab: store.sidebarTab,
               dayAnchor: store.dayAnchor,
               monthAnchor: store.monthAnchor,
-              slug: created,
+              slug,
             }),
           )
         }).catch((err) =>
-          console.error('[docs] ⌘N createChildNote failed', err),
+          console.error('[docs] ⌘N createNew failed', err),
         )
       }
     }
     // Capture phase so the editor / chat input / any descendant that
-    // calls stopPropagation in its own keydown can't swallow these
-    // shortcuts. ⌘T and ⌘N are global doc actions; they need to win
-    // over local input handling.
+    // calls stopPropagation in its own keydown can't swallow the
+    // shortcut. ⌘N is a global doc action; it needs to win over local
+    // input handling.
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [openDaily, createChildNote, findDailyAncestorSlug, navigate])
+  }, [createNew, navigate])
 
   return (
     <Sidebar>
@@ -243,33 +202,15 @@ export function AppSidebar() {
           className="h-full shrink-0"
           style={{ width: 'var(--traffic-light-w)' }}
         />
-        {/* Cluster wrapper matches EditorHeader's pl-3 + gap-2 so the
-            SidebarDateMenu sits 12px past the stoplight zone, the same
-            distance EditorHeader's SidebarTrigger keeps from the
-            window's left edge. */}
-        <div className="flex items-center gap-2 pl-3">
-          <SidebarDateMenu />
-        </div>
+        {/* Header carries only the drag region now — the day/week/month
+            switcher was removed with the flat-vault change. */}
         <div data-tauri-drag-region className="flex-1 h-full" />
       </SidebarHeader>
 
       <SidebarContent>
-        {folderTreeFlag() ? (
-          // Obsidian-style folder tree (dev flag `writer.folderTree=1`).
-          // Replaces the date views while it's being built; flag off keeps
-          // the existing sidebar untouched.
-          <FolderTree />
-        ) : (
-          <>
-            <div>
-              {sidebarTab === 'day' && <DayView />}
-              {sidebarTab === 'week' && <WeekView />}
-              {sidebarTab === 'month' && <MonthView />}
-            </div>
-            <ArticlesSection />
-            <WikiSection />
-          </>
-        )}
+        {/* Obsidian-style folder tree — the vault's folder structure is
+            the sidebar. (Replaced the day/week/month date views.) */}
+        <FolderTree />
       </SidebarContent>
 
       <SidebarFooter>
