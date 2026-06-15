@@ -9,7 +9,7 @@
 // inline chat cards + editor widgets stay in sync automatically.
 
 import { useMemo, useState } from 'react'
-import { Code2Icon, ChevronDownIcon } from 'lucide-react'
+import { Code2Icon, ChevronDownIcon, CheckIcon, XIcon } from 'lucide-react'
 import {
   usePendingChangesStore,
   rejectPendingChange,
@@ -19,8 +19,6 @@ import { useDocsStore } from '@/state/docsStore'
 import { computePendingDiffLines } from '@/lib/pendingDiff'
 import { DiffBlock } from '@/components/DiffBlock'
 import type { DiffLine } from '@/lib/git'
-import { navigateToNoteBySlug } from '@/editor/cmNav'
-import { requestScrollToChange } from '@/state/activeCmEditor'
 import { cn } from '@/lib/utils'
 
 interface FileGroup {
@@ -76,6 +74,9 @@ export function ReviewTray() {
   const accept = usePendingChangesStore((s) => s.accept)
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const [open, setOpen] = useState(false)
+  // Which file rows have their inline diff expanded — collapsed by default so the tray
+  // stays a compact list; click a row to peek its diff.
+  const [openSlugs, setOpenSlugs] = useState<Set<string>>(() => new Set())
 
   const groups = useMemo<FileGroup[]>(() => {
     const map = new Map<string, PendingChange[]>()
@@ -111,10 +112,17 @@ export function ReviewTray() {
   const anyUnviewed = groups.some((g) => g.unviewed)
   const keep = (changes: PendingChange[]) => changes.forEach((c) => accept(c.id))
   const reject = (changes: PendingChange[]) => changes.forEach((c) => rejectPendingChange(c.id))
-  const jump = (g: FileGroup) => {
-    // Only park a scroll request when navigation actually happened — a dead slug
-    // (navigateToNoteBySlug → false) would otherwise leave a stale pending scroll.
-    if (navigateToNoteBySlug(g.slug)) requestScrollToChange(g.slug, g.changes[0].id)
+  const toggleFile = (slug: string) => {
+    const willOpen = !openSlugs.has(slug)
+    setOpenSlugs((prev) => {
+      const next = new Set(prev)
+      if (next.has(slug)) next.delete(slug)
+      else next.add(slug)
+      return next
+    })
+    // Expanding a file's diff = the user reviewed it → clear its unviewed dot (same
+    // markPageViewed used on navigation).
+    if (willOpen) usePendingChangesStore.getState().markPageViewed(slug)
   }
 
   return (
@@ -162,44 +170,56 @@ export function ReviewTray() {
           composer down. */}
       {open && (
         <div className="max-h-[40vh] overflow-y-auto border-t border-border/60">
-          {groups.map((g) => (
-            <div key={g.slug} className="border-b border-border/40 last:border-b-0">
-              <div className="flex items-stretch">
-                <button
-                  type="button"
-                  onClick={() => jump(g)}
-                  title="Jump to this change in the note"
-                  className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted/60"
-                >
-                  <UnviewedDot on={g.unviewed} />
-                  <Code2Icon className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate text-foreground">{g.title}</span>
-                  <Counts added={g.added} removed={g.removed} />
-                </button>
-                <div className="flex shrink-0 items-center gap-1 px-2.5">
+          {groups.map((g) => {
+            const expanded = openSlugs.has(g.slug)
+            return (
+              <div key={g.slug} className="border-b border-border/40 last:border-b-0">
+                <div className="flex items-stretch">
                   <button
                     type="button"
-                    className="pending-edit__action pending-edit__action--reject"
-                    onClick={() => reject(g.changes)}
+                    onClick={() => toggleFile(g.slug)}
+                    className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted/60"
                   >
-                    Reject
+                    <ChevronDownIcon
+                      className={cn(
+                        'size-3 shrink-0 text-muted-foreground transition-transform',
+                        !expanded && '-rotate-90',
+                      )}
+                    />
+                    <UnviewedDot on={g.unviewed} />
+                    <Code2Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate text-foreground">{g.title}</span>
+                    <Counts added={g.added} removed={g.removed} />
                   </button>
-                  <button
-                    type="button"
-                    className="pending-edit__action pending-edit__action--keep"
-                    onClick={() => keep(g.changes)}
-                  >
-                    Keep
-                  </button>
+                  {/* Per-file decisions as compact icons — visually distinct from the
+                      bulk text buttons up top, so they don't read as a repeat. */}
+                  <div className="flex shrink-0 items-center gap-0.5 px-2">
+                    <button
+                      type="button"
+                      aria-label="Reject"
+                      onClick={() => reject(g.changes)}
+                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                    >
+                      <XIcon className="size-4" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Keep"
+                      onClick={() => keep(g.changes)}
+                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-green-600 dark:hover:text-green-500"
+                    >
+                      <CheckIcon className="size-4" />
+                    </button>
+                  </div>
                 </div>
+                {expanded && g.diff.length > 0 && (
+                  <div className="border-t border-border/40">
+                    <DiffBlock lines={g.diff} bare />
+                  </div>
+                )}
               </div>
-              {g.diff.length > 0 && (
-                <div className="border-t border-border/40">
-                  <DiffBlock lines={g.diff} bare />
-                </div>
-              )}
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
