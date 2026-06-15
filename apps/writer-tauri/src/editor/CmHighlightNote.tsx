@@ -6,8 +6,12 @@
 // that served Milkdown serves CM: a note saved on a bare highlight mirrors
 // into today's daily. Adds a Remove action below it.
 
+import { IconTrash } from '@tabler/icons-react'
 import { useDocsStore } from '@/state/docsStore'
 import { removeHighlightRecord } from '@/lib/highlights'
+import { Button } from '@/components/ui/button'
+import { FLOATING_MENU_SHELL } from '@/editor/floatingMenuShell'
+import { cn } from '@/lib/utils'
 import { HighlightNoteField } from '@/editor/HighlightNoteField'
 import { useCmActiveHighlight } from '@/editor/cmHighlights'
 
@@ -34,7 +38,10 @@ export function CmHighlightNote({ slug }: { slug: string | null }) {
 
   return (
     <div
-      className="fixed z-[60] w-72 -translate-x-1/2 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-md"
+      className={cn(
+        FLOATING_MENU_SHELL,
+        'fixed z-50 flex w-72 -translate-x-1/2 flex-col gap-3',
+      )}
       style={{ left: active.left, top: active.top + 6 }}
     >
       <HighlightNoteField
@@ -48,8 +55,9 @@ export function CmHighlightNote({ slug }: { slug: string | null }) {
         autoFocus
         onClose={close}
       />
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="xs"
         // preventDefault so the note input doesn't blur-commit before this
         // runs (we're deleting the record anyway).
         onMouseDown={(e) => e.preventDefault()}
@@ -57,10 +65,11 @@ export function CmHighlightNote({ slug }: { slug: string | null }) {
           removeHighlightRecord(slug, record.id)
           close()
         }}
-        className="mt-2 text-xs text-muted-foreground hover:text-destructive"
+        className="self-start text-muted-foreground hover:text-destructive"
       >
+        <IconTrash size={13} stroke={2} />
         Remove highlight
-      </button>
+      </Button>
     </div>
   )
 }
