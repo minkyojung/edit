@@ -196,10 +196,22 @@ function mdRelToBaseDoc(
   // wiki/<title>.md — no nesting beyond one level.
   const wikiMatch = mdRel.match(/^wiki\/([^/]+)\.md$/)
   if (wikiMatch) {
+    const title = wikiMatch[1]
+    // The self-profile page is a singleton the rest of the app keys off by
+    // the fixed type `wiki:profile` (readSelfProfile, ensureProfileWikiSlug,
+    // WIKI_PROFILE_POLICY, the profile pipeline, ingest routing). Recognise
+    // it here by its canonical path so scan and those consumers agree on ONE
+    // identity. Without this the scan registers it as `wiki:custom-*`,
+    // ensureSystemPage can't find it, mints a SECOND `wiki:profile` doc for
+    // the same file, and the slug churns — breaking edits to the profile.
+    // `pathForDoc(wiki:profile)` returns `wiki/Profile.md`, so this round-trips.
+    if (title === 'Profile') {
+      return { slug, type: 'wiki:profile', title }
+    }
     return {
       slug,
       type: `wiki:custom-${slug}` as KnownDoc['type'],
-      title: wikiMatch[1],
+      title,
     }
   }
   // daily/<YYYY-MM-DD>.md — strict date format gate so a stray
