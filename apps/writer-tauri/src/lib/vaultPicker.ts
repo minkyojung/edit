@@ -11,18 +11,21 @@
 
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { exists, mkdir, readDir } from '@tauri-apps/plugin-fs'
-import { documentDir, join } from '@tauri-apps/api/path'
+import { homeDir, join } from '@tauri-apps/api/path'
 import { useSettingsStore } from '@/state/settingsStore'
 import { VAULT_SUBDIRS } from '@/lib/vault'
 import { notify } from '@/lib/notify'
 
-/** Compute the default vault location (`~/Documents/Writer` on macOS,
- * platform-equivalent elsewhere). Returns null when the platform
- * doesn't expose documentDir so callers can fall back gracefully. */
+/** Compute the default vault location (`~/Writer`). Uses the home dir
+ * (not Documents) on purpose: `~/Documents` is iCloud-synced when the
+ * user has "Desktop & Documents Folders" on, and iCloud's dataless-file
+ * eviction breaks trash/rename and adds sync lag for an app doing
+ * frequent file I/O. A plain home folder stays local. Returns null when
+ * the platform doesn't expose homeDir so callers fall back gracefully. */
 async function defaultVaultPath(): Promise<string | null> {
   try {
-    const docs = await documentDir()
-    return await join(docs, 'Writer')
+    const home = await homeDir()
+    return await join(home, 'Writer')
   } catch {
     return null
   }
@@ -44,22 +47,31 @@ async function ensureDefaultVaultFolder(): Promise<string | null> {
 
 /** Decide whether a user-picked folder is acceptable as a vault.
  *
- * Policy: "one folder = one Writer vault". The folder is acceptable
- * when it's empty (a fresh vault) or it's already a Writer vault
- * (some/all of our four standard subdirectories present, no foreign
- * files). Anything else gets rejected so the user doesn't drop our
- * structure into ~/Documents or another folder with their own files,
- * which would mix our metadata into their personal tree.
+ * Policy: "one folder = one Writer vault". Acceptable when:
+ *   - empty (a fresh vault), OR
+ *   - it's already a Writer vault — identified by a marker the app
+ *     always writes: a standard subdir (`wiki/`, `_system/`, …),
+ *     `CLAUDE.md`, or a `writer-*.done` migration sentinel.
  *
- * Hidden entries (starting with `.`) are ignored — `.DS_Store`,
- * `.git/`, etc. don't count as "foreign content". */
+ * The old rule ("only our subdirs, no foreign files") no longer fits:
+ * a flat vault holds arbitrary user folders + files (inbox/, articles/,
+ * notes at the root, …), so we detect "is this OUR vault" by marker
+ * presence instead of rejecting everything unrecognised. A random
+ * folder with the user's own files and no marker is still rejected so
+ * we don't scatter our structure into it.
+ *
+ * Hidden entries (starting with `.`) are ignored. */
 async function isAcceptableVaultFolder(path: string): Promise<boolean> {
   const entries = await readDir(path)
   const visible = entries.filter((e) => !e.name.startsWith('.'))
   if (visible.length === 0) return true
 
-  const ourDirs = new Set<string>(VAULT_SUBDIRS)
-  return visible.every((e) => e.isDirectory && ourDirs.has(e.name))
+  const names = new Set(visible.map((e) => e.name))
+  const markers = [...VAULT_SUBDIRS, 'CLAUDE.md']
+  if (markers.some((m) => names.has(m))) return true
+  return visible.some(
+    (e) => !e.isDirectory && e.name.startsWith('writer-') && e.name.endsWith('.done'),
+  )
 }
 
 /** Open the OS folder picker and persist the selection. Returns the
