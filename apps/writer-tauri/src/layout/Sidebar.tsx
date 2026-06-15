@@ -216,7 +216,7 @@ export function AppSidebar() {
           type="button"
           aria-label="Search"
           title="Search (⌘K)"
-          onClick={() => openPalette('any')}
+          onClick={() => openPalette()}
           className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
         >
           <IconSearch size={16} stroke={1.75} />
