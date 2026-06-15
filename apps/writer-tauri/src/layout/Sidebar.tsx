@@ -7,6 +7,7 @@ import {
   IconLogout,
   IconSparkles,
   IconBrandGithub,
+  IconEdit,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { FolderTree } from './FolderTree'
@@ -153,29 +154,31 @@ export function AppSidebar() {
   const createNew = useDocsStore((s) => s.createNew)
   const navigate = useNavigate()
 
-  // Global doc shortcut:
-  //   ⌘N → new flat note (lands at inbox/Untitled.md) and opens it.
-  //         The vault is flat now, so a new note no longer nests under
-  //         today's daily — it's just a fresh file.
+  // New flat note (lands at inbox/Untitled.md) → open it. Shared by the
+  // header "+" button and the ⌘N shortcut so there's one code path.
+  const handleCreateNew = useCallback(() => {
+    createNew().then((slug) => {
+      const store = useDocsStore.getState()
+      navigate(
+        buildViewUrl({
+          tab: store.sidebarTab,
+          dayAnchor: store.dayAnchor,
+          monthAnchor: store.monthAnchor,
+          slug,
+        }),
+      )
+    }).catch((err) => console.error('[docs] createNew failed', err))
+  }, [createNew, navigate])
+
+  // ⌘N → new note. The vault is flat now, so a new note no longer nests
+  // under today's daily — it's just a fresh file.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
       if (e.shiftKey || e.altKey) return
       if (e.key === 'n' || e.key === 'N') {
         e.preventDefault()
-        createNew().then((slug) => {
-          const store = useDocsStore.getState()
-          navigate(
-            buildViewUrl({
-              tab: store.sidebarTab,
-              dayAnchor: store.dayAnchor,
-              monthAnchor: store.monthAnchor,
-              slug,
-            }),
-          )
-        }).catch((err) =>
-          console.error('[docs] ⌘N createNew failed', err),
-        )
+        handleCreateNew()
       }
     }
     // Capture phase so the editor / chat input / any descendant that
@@ -184,7 +187,7 @@ export function AppSidebar() {
     // input handling.
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [createNew, navigate])
+  }, [handleCreateNew])
 
   return (
     <Sidebar>
@@ -202,9 +205,19 @@ export function AppSidebar() {
           className="h-full shrink-0"
           style={{ width: 'var(--traffic-light-w)' }}
         />
-        {/* Header carries only the drag region now — the day/week/month
-            switcher was removed with the flat-vault change. */}
+        {/* Drag region fills the gap; the new-note action sits at the
+            right edge (the space freed when the day/week/month switcher
+            was removed). Outside the drag region so it stays clickable. */}
         <div data-tauri-drag-region className="flex-1 h-full" />
+        <button
+          type="button"
+          aria-label="New note"
+          title="New note (⌘N)"
+          onClick={handleCreateNew}
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+        >
+          <IconEdit size={16} stroke={1.75} />
+        </button>
       </SidebarHeader>
 
       <SidebarContent>
