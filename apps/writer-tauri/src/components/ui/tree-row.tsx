@@ -23,6 +23,7 @@
 import * as React from 'react'
 import { Slot } from 'radix-ui'
 import { cn } from '@/lib/utils'
+import { SIDEBAR_ROW_INTERACTION } from './sidebarRow'
 
 interface TreeRowProps extends React.ComponentProps<'div'> {
   /** Whether this row is the currently selected doc. Drives the
@@ -53,14 +54,11 @@ function TreeRow({ active, className, ...props }: TreeRowProps) {
       data-slot="tree-row"
       data-active={active || undefined}
       className={cn(
-        'group/tree-row relative flex h-8 w-full items-center rounded-xl',
-        'text-sm font-medium text-sidebar-foreground/60',
-        // Two-step surface tone: hover gets a softer wash (/50) so an
-        // active row hovered alongside an inactive one still reads as
-        // the stronger surface. data-active wins specificity in cn's
-        // merge, and we don't need a data-active:hover override.
-        'hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
-        'data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground',
+        'group/tree-row relative flex h-8 w-full items-center',
+        'text-sm font-medium',
+        // Shared row skin (radius + hover + selected) so tree rows match
+        // the footer menu buttons exactly — see sidebarRow.ts.
+        SIDEBAR_ROW_INTERACTION,
         className,
       )}
       {...props}
