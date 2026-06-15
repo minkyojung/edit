@@ -12,7 +12,7 @@
 // no-op. A 5px activation distance keeps plain clicks / double-clicks
 // working. Fold state is local + by folder path.
 
-import { useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   DndContext,
@@ -26,13 +26,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
-import {
-  IconBrandYoutube,
-  IconChevronRight,
-  IconFileText,
-  IconFolder,
-  IconWorld,
-} from '@tabler/icons-react'
+import { IconChevronRight, IconFolder } from '@tabler/icons-react'
 import { useDocsStore } from '@/state/docsStore'
 import { useNewFolderStore } from '@/state/newFolderStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
@@ -43,7 +37,7 @@ import {
   type TreeNode,
 } from '@/lib/fileTree'
 import { buildViewUrl } from '@/lib/viewUrl'
-import { sanitizeFilename } from '@/lib/docPaths'
+import { pathForDoc, sanitizeFilename } from '@/lib/docPaths'
 import {
   TreeRow,
   TreeRowLabel,
@@ -62,12 +56,6 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
-
-function FileIcon({ videoId, sourceUrl }: { videoId?: string; sourceUrl?: string }) {
-  if (videoId) return <IconBrandYoutube size={16} className="text-red-500" />
-  if (sourceUrl) return <IconWorld size={16} className="text-muted-foreground" />
-  return <IconFileText size={16} className="text-muted-foreground" />
-}
 
 /** Inline rename input. Mounts focused with the name pre-selected.
  * Enter / blur commit, Esc cancels. A `done` latch makes the blur that
@@ -141,20 +129,30 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
     id: node.slug,
   })
   const isEditing = ctx.editingSlug === node.slug
+  const isActive = node.slug === ctx.activeSlug
+  // Scroll the active note into view when it becomes active (e.g. opened
+  // from search, or revealed by auto-expanding its folders).
+  const rowRef = useRef<HTMLLIElement | null>(null)
+  useEffect(() => {
+    if (isActive) rowRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [isActive])
   return (
     <li
-      ref={setNodeRef}
+      ref={(el) => {
+        setNodeRef(el)
+        rowRef.current = el
+      }}
       {...attributes}
       {...listeners}
       className={isDragging ? 'opacity-50' : undefined}
     >
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <TreeRow active={node.slug === ctx.activeSlug}>
+          <TreeRow active={isActive}>
+            {/* Empty lead keeps file text aligned under folder labels;
+                files are text-only (no icon) per the Obsidian look. */}
             <TreeRowLead asChild>
-              <span aria-hidden>
-                <FileIcon videoId={node.videoId} sourceUrl={node.sourceUrl} />
-              </span>
+              <span aria-hidden />
             </TreeRowLead>
             {isEditing ? (
               <RenameInput
@@ -317,6 +315,36 @@ export function FolderTree() {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [editingSlug, setEditingSlug] = useState<string | null>(null)
   const [editingFolderPath, setEditingFolderPath] = useState<string | null>(null)
+
+  // Reveal the active note: when it changes, expand all of its ancestor
+  // folders so it's always visible (and FileNode scrolls it into view).
+  // Reads knownDocs via getState so this only fires on activeSlug change,
+  // not on every edit — leaving manual collapses alone between navigations.
+  useEffect(() => {
+    if (!activeSlug) return
+    const docs = useDocsStore.getState().knownDocs
+    const doc = docs.find((d) => d.slug === activeSlug)
+    if (!doc) return
+    const bySlug = new Map(docs.map((d) => [d.slug, d]))
+    const p = pathForDoc(doc, (s) => bySlug.get(s))
+    if (!p) return
+    const segs = p.split('/')
+    segs.pop() // drop the filename
+    if (segs.length === 0) return
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      let acc = ''
+      let changed = false
+      for (const seg of segs) {
+        acc = acc ? `${acc}/${seg}` : seg
+        if (!next.has(acc)) {
+          next.add(acc)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [activeSlug])
   // Slug currently being dragged — drives the DragOverlay chip that
   // follows the cursor so the drag is visible before the drop.
   const [draggingSlug, setDraggingSlug] = useState<string | null>(null)
@@ -426,11 +454,7 @@ export function FolderTree() {
           visible before the drop lands. */}
       <DragOverlay dropAnimation={null}>
         {draggingDoc ? (
-          <div className="flex items-center gap-2 rounded-xl bg-sidebar px-2 py-1 text-sm font-medium text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border">
-            <FileIcon
-              videoId={draggingDoc.videoId}
-              sourceUrl={draggingDoc.sourceUrl}
-            />
+          <div className="rounded-xl bg-sidebar px-3 py-1 text-sm font-medium text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border">
             <span className="truncate">
               {draggingDoc.title?.trim() ||
                 draggingDoc.relPath?.split('/').pop()?.replace(/\.md$/, '') ||

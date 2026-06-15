@@ -182,7 +182,7 @@ function TreeSub({ className, ...props }: React.ComponentProps<'ul'>) {
       className={cn(
         'flex min-w-0 translate-x-px flex-col gap-0.5 py-0.5',
         'ml-3.5 pl-2.5',
-        'border-l border-sidebar-border',
+        'border-l border-sidebar-foreground/20',
         className,
       )}
       {...props}
