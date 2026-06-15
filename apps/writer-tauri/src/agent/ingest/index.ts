@@ -70,12 +70,16 @@ export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreRes
   // one path instead of being offered redundant choices.
   const ctx = await assembleContext({ mode: 'ingest' })
 
-  const prompt = buildPrompt({
+  // Default to the wiki-ingest prompts; the inbox router passes its own
+  // builders (knowledge→wiki, action/interpretation/event→daily).
+  const buildUser = args.buildUser ?? buildPrompt
+  const composeSystem = args.composeSystem ?? composeSystemPrompt
+  const prompt = buildUser({
     date: todayLocalDate(),
     noteLabel: sourceLabel,
     noteMarkdown: text,
   })
-  const systemPrompt = composeSystemPrompt({
+  const systemPrompt = composeSystem({
     claudeMd: ctx.claudeMd,
     conventions: ctx.conventions,
     selfProfile: ctx.selfProfile,

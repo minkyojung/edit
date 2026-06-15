@@ -88,6 +88,21 @@ export interface IngestCoreArgs {
    * in its proposals; the prompt builder also branches on the
    * `chat:` prefix to tighten extraction. */
   sourceLabel: string
+  /** Optional prompt-builder overrides. Default to the wiki-ingest
+   * prompts (composeSystemPrompt / buildPrompt). The inbox router
+   * injects its own variant — knowledge→wiki proposals,
+   * action/interpretation/event→daily entries — without forking the
+   * LLM-call choreography in runIngestCore. */
+  composeSystem?: (args: {
+    claudeMd: string
+    conventions: string
+    selfProfile: string
+  }) => string[]
+  buildUser?: (args: {
+    date: string
+    noteLabel: string
+    noteMarkdown: string
+  }) => string
 }
 
 export interface IngestCoreResult {

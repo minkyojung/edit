@@ -44,6 +44,9 @@ if (import.meta.env.DEV) {
   // can be exercised from the dev console while we tune the prompt.
   // Production builds skip this block entirely.
   void import('./agent/ingest')
+  // Same pattern: registers window.__route so the inbox→wiki/daily router
+  // PoC can be eyeballed on real captures from the dev console.
+  void import('./agent/ingestRouter')
   // Same pattern: registers window.__captureYoutube so the full capture
   // pipeline (fetch → create → frontmatter flush) can be run from the
   // dev console before the capture UI lands.
