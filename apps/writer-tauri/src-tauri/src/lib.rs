@@ -7,6 +7,7 @@ mod git;
 mod github;
 mod oauth;
 mod os_trash;
+mod reveal;
 mod secure_storage;
 mod vault_sync;
 
@@ -154,6 +155,7 @@ pub fn run() {
             fetch_url::fetch_binary,
             fetch_url::fetch_http,
             os_trash::move_to_trash,
+            reveal::reveal_in_finder,
             anthropic::anthropic_messages_create,
             git::git_init,
             git::git_commit,

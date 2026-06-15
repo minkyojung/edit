@@ -37,6 +37,7 @@ import {
   type TreeNode,
 } from '@/lib/fileTree'
 import { open as openInDefaultApp } from '@tauri-apps/plugin-shell'
+import { invoke } from '@tauri-apps/api/core'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { vaultAbsPath } from '@/lib/vault'
 import { pathForDoc, sanitizeFilename } from '@/lib/docPaths'
@@ -122,6 +123,7 @@ interface TreeCtx {
   onDuplicate: (slug: string) => void
   onCopyPath: (relPath: string) => void
   onOpenInDefaultApp: (relPath: string) => void
+  onRevealInFinder: (relPath: string) => void
   editingFolderPath: string | null
   onStartFolderRename: (path: string) => void
   onCommitFolderRename: (path: string, name: string) => void
@@ -193,6 +195,9 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
           </ContextMenuItem>
           <ContextMenuItem onSelect={() => ctx.onOpenInDefaultApp(node.path)}>
             Open in default app
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => ctx.onRevealInFinder(node.path)}>
+            Reveal in Finder
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem
@@ -426,6 +431,13 @@ export function FolderTree() {
       ),
     )
   }
+  const onRevealInFinder = (relPath: string) => {
+    void vaultAbsPath(relPath).then((abs) =>
+      invoke('reveal_in_finder', { path: abs }).catch((err) =>
+        console.warn('[docs] reveal in finder failed', err),
+      ),
+    )
+  }
   const onDragStart = (e: DragStartEvent) => setDraggingSlug(String(e.active.id))
   const onDragEnd = (e: DragEndEvent) => {
     setDraggingSlug(null)
@@ -448,6 +460,7 @@ export function FolderTree() {
     onDuplicate,
     onCopyPath,
     onOpenInDefaultApp,
+    onRevealInFinder,
     editingFolderPath,
     onStartFolderRename: setEditingFolderPath,
     onCommitFolderRename,
