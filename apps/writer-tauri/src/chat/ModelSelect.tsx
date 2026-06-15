@@ -26,7 +26,7 @@ export function ModelSelect({ value, onChange, disabled }: Props) {
       <DropdownMenuTrigger
         disabled={disabled}
         className={cn(
-          'inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-sm text-muted-foreground transition-colors',
+          'inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-sm text-muted-foreground transition-colors',
           'hover:bg-accent hover:text-foreground',
           'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
           'disabled:pointer-events-none disabled:opacity-50',

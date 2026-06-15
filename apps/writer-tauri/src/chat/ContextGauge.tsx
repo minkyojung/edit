@@ -36,12 +36,12 @@ export function ContextGauge({ snapshot }: Props) {
           type="button"
           aria-label="Context usage"
           className={cn(
-            'flex size-7 items-center justify-center rounded-full transition-colors',
+            'flex size-8 items-center justify-center rounded-full transition-colors',
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/30 hover:bg-accent',
             warn ? 'text-amber-500' : 'text-muted-foreground hover:text-foreground',
           )}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
             {/* Track */}
             <circle cx="12" cy="12" r={R} stroke="currentColor" strokeWidth="3" opacity="0.2" />
             {/* Progress arc — starts at 12 o'clock (rotate -90). */}

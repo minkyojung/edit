@@ -270,7 +270,7 @@ export function PromptInput({
         className={cn(
           'w-full resize-none bg-transparent px-1.5 py-1.5 text-[15px] leading-relaxed text-foreground outline-none',
           'placeholder:text-muted-foreground',
-          'field-sizing-content max-h-48 min-h-16',
+          'field-sizing-content max-h-48 min-h-28',
           '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
         )}
       />
@@ -308,7 +308,7 @@ export function PromptInput({
               aria-disabled={!isStreaming && !canSubmit}
               aria-label={isStreaming ? 'Stop' : 'Send'}
               className={cn(
-                'flex size-7 items-center justify-center rounded-full transition-colors',
+                'flex size-8 items-center justify-center rounded-full transition-colors',
                 'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
                 isStreaming
                   ? 'bg-foreground text-background hover:bg-foreground/90'
@@ -345,8 +345,8 @@ export function PromptInput({
 }
 
 function SubmitIcon({ status, canSubmit }: { status: PromptStatus; canSubmit: boolean }) {
-  if (status === 'streaming') return <IconPlayerStop size={14} stroke={2} />
-  return <IconArrowUp size={14} stroke={2} className={cn(!canSubmit && 'opacity-60')} />
+  if (status === 'streaming') return <IconPlayerStop size={16} stroke={2} />
+  return <IconArrowUp size={16} stroke={2} className={cn(!canSubmit && 'opacity-60')} />
 }
 
 /** Inline keyboard glyph used in tooltips. The tooltip CSS auto-styles
