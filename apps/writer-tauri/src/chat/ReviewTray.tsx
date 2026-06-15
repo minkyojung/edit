@@ -27,6 +27,10 @@ interface FileGroup {
   changes: PendingChange[]
   added: number
   removed: number
+  /** True while the user hasn't opened this note since the change landed — the tray's
+   * reason to exist: surfacing edits made while you weren't looking. Cleared by
+   * markPageViewed when the note becomes active (App.tsx). */
+  unviewed: boolean
 }
 
 function countLines(changes: PendingChange[]): { added: number; removed: number } {
@@ -39,6 +43,16 @@ function countLines(changes: PendingChange[]): { added: number; removed: number 
     }
   }
   return { added, removed }
+}
+
+/** Small "unviewed" dot — a change the user hasn't opened the note for yet. Reserves
+ * its slot even when off so row text doesn't shift as it appears/clears. */
+function UnviewedDot({ on }: { on: boolean }) {
+  return (
+    <span className="flex size-1.5 shrink-0 items-center justify-center" aria-hidden>
+      {on && <span className="size-1.5 rounded-full bg-blue-500" />}
+    </span>
+  )
 }
 
 function Counts({ added, removed }: { added: number; removed: number }) {
@@ -71,6 +85,7 @@ export function ReviewTray() {
         slug,
         title: doc?.title?.trim() || doc?.type || slug,
         changes,
+        unviewed: changes.some((c) => c.viewedAt === null),
         ...countLines(changes),
       }
     })
@@ -87,6 +102,7 @@ export function ReviewTray() {
   if (groups.length === 0) return null
 
   const allPending = groups.flatMap((g) => g.changes)
+  const anyUnviewed = groups.some((g) => g.unviewed)
   const keep = (changes: PendingChange[]) => changes.forEach((c) => accept(c.id))
   const reject = (changes: PendingChange[]) => changes.forEach((c) => rejectPendingChange(c.id))
   const jump = (g: FileGroup) => {
@@ -96,23 +112,27 @@ export function ReviewTray() {
   }
 
   return (
-    <div className="mb-2 overflow-hidden rounded-md border border-border bg-background text-xs">
+    // Inset left/right by the prompt input's corner radius (rounded-3xl = 24px / mx-6)
+    // so the tray spans the input's straight top edge — slightly narrower than the input.
+    // Flat bottom (rounded-t-md) + no bottom margin so it sits flush on top of the input.
+    <div className="mx-6 overflow-hidden rounded-t-2xl border border-border bg-background text-xs">
       {/* Summary — collapsed view. Left toggles the file list; right is the bulk decision. */}
       <div className="flex items-stretch">
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5 text-left transition-colors hover:bg-muted/60"
+          className="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2.5 text-left transition-colors hover:bg-muted/60"
         >
           <ChevronDownIcon
             className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', !open && '-rotate-90')}
           />
+          <UnviewedDot on={anyUnviewed} />
           <span className="font-medium text-foreground">
             {groups.length} {groups.length === 1 ? 'file' : 'files'}
           </span>
           <Counts added={total.added} removed={total.removed} />
         </button>
-        <div className="flex shrink-0 items-center gap-1 px-2">
+        <div className="flex shrink-0 items-center gap-1 px-2.5">
           <button
             type="button"
             className="pending-edit__action pending-edit__action--reject"
@@ -142,13 +162,14 @@ export function ReviewTray() {
                 type="button"
                 onClick={() => jump(g)}
                 title="Jump to this change in the note"
-                className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-muted/60"
+                className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted/60"
               >
+                <UnviewedDot on={g.unviewed} />
                 <Code2Icon className="size-3.5 shrink-0 text-muted-foreground" />
                 <span className="truncate text-foreground">{g.title}</span>
                 <Counts added={g.added} removed={g.removed} />
               </button>
-              <div className="flex shrink-0 items-center gap-1 px-2">
+              <div className="flex shrink-0 items-center gap-1 px-2.5">
                 <button
                   type="button"
                   className="pending-edit__action pending-edit__action--reject"
