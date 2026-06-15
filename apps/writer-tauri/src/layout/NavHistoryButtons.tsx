@@ -11,7 +11,6 @@
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
-import { TAHOE_CHROME } from '@/lib/chrome'
 import {
   Tooltip,
   TooltipContent,
@@ -21,15 +20,10 @@ import {
 export function NavHistoryButtons() {
   const navigate = useNavigate()
   return (
-    // Tahoe-style pill: a single rounded-full capsule from chrome.ts,
-    // with a short faint 1px divider between the two buttons to hint
-    // at the group split without a hard outline. Icons use chevrons
-    // (no horizontal stem) and the text color matches the other
-    // header chrome (muted-foreground → foreground on hover) so the
-    // pill reads as part of the same family as SidebarTrigger and
-    // ContextPanelTrigger.
+    // Icon-only back/forward — two plain ghost buttons, no pill chrome,
+    // matching the rest of the header's icon buttons.
     <div
-      className={`inline-flex h-8 items-center ${TAHOE_CHROME}`}
+      className="inline-flex items-center"
       role="group"
       aria-label="Navigation history"
     >
@@ -38,7 +32,7 @@ export function NavHistoryButtons() {
           <Button
             variant="ghost"
             size="icon-sm"
-            className="rounded-full text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground"
+            className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
             onClick={() => navigate(-1)}
             aria-label="Go back"
           >
@@ -47,16 +41,12 @@ export function NavHistoryButtons() {
         </TooltipTrigger>
         <TooltipContent side="bottom">Back (⌘[)</TooltipContent>
       </Tooltip>
-      <span
-        aria-hidden
-        className="h-3 w-px shrink-0 bg-foreground/15"
-      />
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
             size="icon-sm"
-            className="rounded-full text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground"
+            className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
             onClick={() => navigate(1)}
             aria-label="Go forward"
           >

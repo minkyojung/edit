@@ -1,7 +1,7 @@
 // Top window-chrome row above the editor canvas. Sits at --header-h so it
 // lines up with the sidebar header and the chat panel's matching header row.
-// All chrome buttons share the Tahoe-style treatment defined in
-// lib/chrome.ts (translucent fill + hairline border + emboss).
+// Header buttons are plain icon-only ghost buttons (no filled chrome),
+// matching the sidebar header's icon buttons.
 //
 // Structure: a 3-column flex row. Equal flex-1 columns so the centered
 // active-doc label sits in the visual middle regardless of how the side
@@ -35,7 +35,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { TAHOE_CHROME } from '@/lib/chrome'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useGitStore } from '@/state/gitStore'
 import { EditorTabs } from '@/editor/EditorTabs'
@@ -90,7 +89,7 @@ export function EditorHeader({
         data-tauri-drag-region
         className="flex flex-1 items-center gap-2 self-stretch pl-3"
       >
-        <SidebarTrigger className={TAHOE_CHROME} />
+        <SidebarTrigger className="text-sidebar-foreground/60 hover:text-sidebar-foreground" />
         <NavHistoryButtons />
       </div>
       <div className="flex min-w-0 flex-1 items-center justify-center">
@@ -134,8 +133,7 @@ function ContextPanelTrigger() {
           onClick={toggle}
           className={cn(
             'relative cursor-pointer transition-colors',
-            TAHOE_CHROME,
-            open ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+            'text-sidebar-foreground/60 hover:text-sidebar-foreground',
           )}
           aria-label={open ? 'Hide right panel' : 'Show right panel'}
           aria-pressed={open}
