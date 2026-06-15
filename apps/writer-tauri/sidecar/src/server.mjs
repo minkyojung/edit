@@ -1083,6 +1083,16 @@ export class Server {
         if (skillNames.length > 0) {
           options.plugins = [{ type: 'local', path: join(vaultPath, '_system/agent') }]
           options.skills = skillNames
+          // The `Skill` tool must be exposed for skills to load + activate.
+          // When `options.tools` is an explicit allowlist — which the chat
+          // shape is (host passes builtinTools = ['Read','Glob','Grep','Bash'])
+          // — 'Skill' isn't in it, so skills silently never load (no Skills
+          // category, model can't invoke them). Add it. The preset shape
+          // ({type:'preset',...}) already includes Skill, so only the array
+          // case needs patching.
+          if (Array.isArray(options.tools) && !options.tools.includes('Skill')) {
+            options.tools = [...options.tools, 'Skill']
+          }
         }
       } catch {
         // No `_system/agent/skills` directory (or unreadable) → no skills,
