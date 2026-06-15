@@ -122,6 +122,13 @@ export async function readVaultFile(relPath: string): Promise<string> {
   return await readTextFile(path)
 }
 
+/** Absolute filesystem path for a vault-relative path. For UI actions
+ * that hand a real path to the OS (open in default app, reveal in
+ * Finder, copy path). */
+export async function vaultAbsPath(relPath: string): Promise<string> {
+  return resolveVaultPath(relPath)
+}
+
 /** Window (ms) during which a content-hash we recently wrote stays
  * in the echo-suppression set. macOS fsevents can coalesce + delay
  * events under load by 1-3 seconds, so the window must comfortably

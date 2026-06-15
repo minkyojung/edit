@@ -223,6 +223,9 @@ export interface DocsState {
   /** Create a folder on disk at `relPath` and add it to knownFolders.
    * Idempotent; returns false on a filesystem error. */
   createFolder: (relPath: string) => Promise<boolean>
+  /** Duplicate a generic note (same folder, "<name> copy", source body).
+   * Returns the new slug or null for non-note docs. */
+  duplicateDoc: (slug: string) => Promise<string | null>
   /** Find or create the daily entry for the given local date and make
    * it the active tab. Returns the slug. */
   openDaily: (date?: string) => Promise<string | null>

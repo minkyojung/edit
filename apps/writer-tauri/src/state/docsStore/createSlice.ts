@@ -24,7 +24,8 @@ import { generateClientSlug } from '@/lib/slug'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
 import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
-import { createVaultFolder } from '@/lib/vault'
+import { createVaultFolder, readVaultFile } from '@/lib/vault'
+import { splitFrontmatter } from '@/lib/frontmatter'
 import { useEditorViewStore } from '../editorViewStore'
 import { applyMarkdownToActiveCmEditor } from '../activeCmEditor'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
@@ -41,6 +42,10 @@ export interface CreateSlice {
    * the sidebar tree shows it immediately. Idempotent. Returns false on
    * a filesystem error. */
   createFolder: (relPath: string) => Promise<boolean>
+  /** Duplicate a generic `note`: a copy in the same folder named
+   * "<name> copy" (de-duped), with the source body. Returns the new
+   * slug (or null for non-note docs). */
+  duplicateDoc: (slug: string) => Promise<string | null>
   /** Find or create the daily entry for the given local date and
    * make it the active tab. Returns the slug (or null on edge cases
    * the caller treats as no-op). */
@@ -142,6 +147,58 @@ export const createCreateSlice = (
       }))
       return false
     }
+  },
+
+  duplicateDoc: async (slug) => {
+    const src = get().knownDocs.find((d) => d.slug === slug)
+    if (src?.type !== 'note' || !src.relPath) return null
+    const dir = src.relPath.includes('/')
+      ? src.relPath.slice(0, src.relPath.lastIndexOf('/') + 1)
+      : ''
+    const stem = (src.relPath.split('/').pop() ?? '').replace(/\.md$/, '')
+    // First free "<stem> copy.md", then " copy 2", …
+    const taken = new Set(
+      get().knownDocs.map((d) => d.relPath).filter((p): p is string => Boolean(p)),
+    )
+    let relPath = `${dir}${stem} copy.md`
+    let n = 2
+    while (taken.has(relPath)) {
+      relPath = `${dir}${stem} copy ${n}.md`
+      n += 1
+    }
+    // Copy the source body (strip its frontmatter — the copy mints a
+    // fresh slug).
+    let body = ''
+    try {
+      body = splitFrontmatter(await readVaultFile(src.relPath)).body
+    } catch (err) {
+      console.warn('[docs] duplicateDoc read failed', err)
+    }
+    const newSlug = generateClientSlug()
+    const meta: KnownDoc = {
+      slug: newSlug,
+      type: 'note',
+      title: relPath.slice(dir.length).replace(/\.md$/, ''),
+      relPath,
+      createdAt: new Date().toISOString(),
+    }
+    set((s) => ({
+      knownDocs: [...s.knownDocs, meta],
+      openSlugs: s.openSlugs.includes(newSlug)
+        ? s.openSlugs
+        : [...s.openSlugs, newSlug],
+    }))
+    await get().ensureHandle(newSlug)
+    if (body.trim()) {
+      try {
+        await get().seedDocBody(newSlug, body)
+      } catch (err) {
+        console.warn('[docs] duplicateDoc seed failed', err)
+      }
+    }
+    markSlugDirty(newSlug)
+    void flushDirty()
+    return newSlug
   },
 
   openDaily: async (date) => {

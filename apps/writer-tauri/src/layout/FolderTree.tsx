@@ -36,7 +36,9 @@ import {
   type TreeFolder,
   type TreeNode,
 } from '@/lib/fileTree'
+import { open as openInDefaultApp } from '@tauri-apps/plugin-shell'
 import { buildViewUrl } from '@/lib/viewUrl'
+import { vaultAbsPath } from '@/lib/vault'
 import { pathForDoc, sanitizeFilename } from '@/lib/docPaths'
 import {
   TreeRow,
@@ -117,6 +119,9 @@ interface TreeCtx {
   onCancelRename: () => void
   onDelete: (slug: string) => void
   onMoveToRoot: (slug: string) => void
+  onDuplicate: (slug: string) => void
+  onCopyPath: (relPath: string) => void
+  onOpenInDefaultApp: (relPath: string) => void
   editingFolderPath: string | null
   onStartFolderRename: (path: string) => void
   onCommitFolderRename: (path: string, name: string) => void
@@ -174,11 +179,21 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
           <ContextMenuItem onSelect={() => ctx.onStartRename(node.slug)}>
             Rename
           </ContextMenuItem>
+          <ContextMenuItem onSelect={() => ctx.onDuplicate(node.slug)}>
+            Duplicate
+          </ContextMenuItem>
           {node.path.includes('/') && (
             <ContextMenuItem onSelect={() => ctx.onMoveToRoot(node.slug)}>
               Move to root
             </ContextMenuItem>
           )}
+          <ContextMenuSeparator />
+          <ContextMenuItem onSelect={() => ctx.onCopyPath(node.path)}>
+            Copy path
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => ctx.onOpenInDefaultApp(node.path)}>
+            Open in default app
+          </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem
             onSelect={() => ctx.onDelete(node.slug)}
@@ -303,6 +318,7 @@ export function FolderTree() {
   const moveDocToFolder = useDocsStore((s) => s.moveDocToFolder)
   const renameFolder = useDocsStore((s) => s.renameFolder)
   const deleteFolder = useDocsStore((s) => s.deleteFolder)
+  const duplicateDoc = useDocsStore((s) => s.duplicateDoc)
   const creatingFolder = useNewFolderStore((s) => s.creating)
   const stopNewFolder = useNewFolderStore((s) => s.stop)
   const navigate = useNavigate()
@@ -391,6 +407,25 @@ export function FolderTree() {
     })
   }
   const onMoveToRoot = (slug: string) => moveDocToFolder(slug, '')
+  const onDuplicate = (slug: string) => {
+    void duplicateDoc(slug).then((next) => {
+      if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
+    })
+  }
+  const onCopyPath = (relPath: string) => {
+    void vaultAbsPath(relPath).then((abs) =>
+      navigator.clipboard.writeText(abs).catch((err) =>
+        console.warn('[docs] copy path failed', err),
+      ),
+    )
+  }
+  const onOpenInDefaultApp = (relPath: string) => {
+    void vaultAbsPath(relPath).then((abs) =>
+      openInDefaultApp(abs).catch((err) =>
+        console.warn('[docs] open in default app failed', err),
+      ),
+    )
+  }
   const onDragStart = (e: DragStartEvent) => setDraggingSlug(String(e.active.id))
   const onDragEnd = (e: DragEndEvent) => {
     setDraggingSlug(null)
@@ -410,6 +445,9 @@ export function FolderTree() {
     onCancelRename: () => setEditingSlug(null),
     onDelete,
     onMoveToRoot,
+    onDuplicate,
+    onCopyPath,
+    onOpenInDefaultApp,
     editingFolderPath,
     onStartFolderRename: setEditingFolderPath,
     onCommitFolderRename,
