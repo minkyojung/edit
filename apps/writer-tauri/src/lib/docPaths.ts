@@ -160,9 +160,9 @@ export function usesFrontmatter(_doc: Pick<KnownDoc, 'type'>): boolean {
  * rebuilds identically to one whose metadata lives in a `.meta.json`
  * sidecar.
  *
- * `highlights` is intentionally omitted: it's a nested array that doesn't
- * fit a flat frontmatter block, and no frontmatter-stored doc type uses
- * it yet. */
+ * `highlights` is a nested array, so it rides as a JSON string in a single
+ * frontmatter scalar (composeFrontmatter single-quotes it; JSON escapes any
+ * newline, so it stays one line) and is parsed back here. */
 export function frontmatterToMeta(
   data: Record<string, string>,
 ): Partial<DocMetaFile> {
@@ -191,6 +191,15 @@ export function frontmatterToMeta(
   }
   if (data.thumbnailUrl) meta.thumbnailUrl = data.thumbnailUrl
   if (data.description) meta.description = data.description
+  if (data.highlights) {
+    try {
+      const parsed = JSON.parse(data.highlights)
+      if (Array.isArray(parsed)) meta.highlights = parsed
+    } catch {
+      // Corrupt highlights JSON (e.g. hand-edited frontmatter) → skip it
+      // rather than fail the whole doc load.
+    }
+  }
   return meta
 }
 
@@ -198,9 +207,10 @@ export function frontmatterToMeta(
  * onto the flat frontmatter fields we emit when a doc stores its metadata
  * in its own `.md` instead of a `.meta.json` sidecar.
  *
- * `version` and `highlights` are dropped — the former is sidecar-only
- * bookkeeping, the latter is a nested array that doesn't fit a flat
- * block. Undefined fields are returned as-is; `composeFrontmatter` skips
+ * `version` is dropped (sidecar-only bookkeeping). `highlights` is a
+ * nested array, so it's JSON-serialized into a single scalar (see
+ * frontmatterToMeta for the inverse); an empty/absent list emits nothing.
+ * Other undefined fields are returned as-is; `composeFrontmatter` skips
  * them, so the caller can hand over the whole record.
  *
  * Kept beside `frontmatterToMeta` on purpose: the two field lists must
@@ -226,6 +236,10 @@ export function metaToFrontmatterFields(
     durationSec: meta.durationSec,
     thumbnailUrl: meta.thumbnailUrl,
     description: meta.description,
+    highlights:
+      meta.highlights && meta.highlights.length
+        ? JSON.stringify(meta.highlights)
+        : undefined,
   }
 }
 

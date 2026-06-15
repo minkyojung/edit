@@ -340,14 +340,33 @@ describe('meta ⇄ frontmatter round-trip', () => {
     expect(frontmatterToMeta(data)).toEqual(meta)
   })
 
-  it('drops version and highlights (not part of the flat block)', () => {
-    const fields = metaToFrontmatterFields({
-      version: 1,
-      slug: 'x',
-      highlights: [{ id: 'h1' }] as unknown as DocMetaFile['highlights'],
-    })
+  it('drops version (sidecar-only bookkeeping)', () => {
+    const fields = metaToFrontmatterFields({ version: 1, slug: 'x' })
     expect(fields.slug).toBe('x')
     expect('version' in fields).toBe(false)
-    expect('highlights' in fields).toBe(false)
+  })
+
+  it('round-trips highlights as a JSON scalar (quotes/apostrophes survive)', () => {
+    const meta: Partial<DocMetaFile> = {
+      slug: 'h-1',
+      highlights: [
+        {
+          id: 'h1',
+          quote: `it's "the most" — a, b: c`,
+          occurrence: 2,
+          note: '메모',
+          createdAt: '2026-06-15T00:00:00.000Z',
+        },
+      ],
+    }
+    const { data } = splitFrontmatter(
+      composeFrontmatter(metaToFrontmatterFields(meta), 'body'),
+    )
+    expect(frontmatterToMeta(data)).toEqual(meta)
+  })
+
+  it('emits no highlights field for an empty list', () => {
+    const fields = metaToFrontmatterFields({ slug: 'x', highlights: [] })
+    expect(fields.highlights).toBeUndefined()
   })
 })
