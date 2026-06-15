@@ -65,9 +65,12 @@ function applyEditsToText(snapshot: string, edits: PendingEdit[]): string {
       const body = e.after ?? ''
       doc = doc.length > 0 ? `${doc}\n\n${body}` : body
     } else if (e.kind === 'replace') {
-      doc = e.before ? doc.replace(e.before, e.after ?? '') : (e.after ?? '')
+      // Use a replacement FUNCTION, not a string — a string replacement makes
+      // String.replace interpret `$&` / `$$` / `` $` `` etc. as special patterns, which
+      // would corrupt `after` text containing a literal `$` (prices, LaTeX, …).
+      doc = e.before ? doc.replace(e.before, () => e.after ?? '') : (e.after ?? '')
     } else if (e.kind === 'delete' && e.before) {
-      doc = doc.replace(e.before, '')
+      doc = doc.replace(e.before, () => '')
     }
   }
   return doc

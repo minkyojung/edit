@@ -78,6 +78,13 @@ describe('computePendingDiffLines', () => {
     ])
   })
 
+  it('treats $ sequences in replacement text literally (no String.replace mangling)', () => {
+    const out = computePendingDiffLines(
+      change([{ kind: 'replace', before: 'AAA', after: 'cost $& and $$' }], 'l1\nAAA\nl3'),
+    )
+    expect(out.find((l) => l.kind === 'add')?.text).toBe('cost $& and $$')
+  })
+
   it('returns nothing for a no-op edit', () => {
     expect(computePendingDiffLines(change([{ kind: 'replace', before: 'x', after: 'x' }]))).toEqual([])
   })
