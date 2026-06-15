@@ -6,10 +6,10 @@
 //     text + ✓/✕ that call store.accept/reject
 //   • positions track edits via the field's map() while the doc is open
 //
-// Stage 3-1a scope: inline `replace` (before→after) and `delete` (before→∅) — the
-// common chat propose_edit shape. Whole-file Write / multi-line hunks / block inserts
-// are Stage 3-2. Accept persists via the existing applier; the live-doc refresh on
-// accept is wired separately (Stage 3-1b, the applyToWikiPage CM bridge).
+// Scope: inline `replace` (before→after), `delete` (before→∅), and `add` (insertion at
+// an anchor / append) — chat propose_edit + ingest proposals. Whole-file Write /
+// multi-line hunks are still Stage 3-2. Accept persists via the existing applier; the
+// live-doc refresh on accept is wired separately (the applyToWikiPage CM bridge).
 
 import { StateField, StateEffect, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
@@ -65,12 +65,21 @@ type AnchoredEdit = {
   changeId: string
   editId: string
   from: number
-  to: number // end of the matched `before`; === from would be a pure insertion (not used yet)
-  after: string // replacement text ('' for a delete)
-  kind: 'replace' | 'delete'
+  to: number // end of the matched `before`; for 'add' === from (a pure insertion point)
+  after: string // replacement / inserted text ('' for a delete)
+  kind: 'replace' | 'delete' | 'add'
 }
 
 const setAnchored = StateEffect.define<AnchoredEdit[]>()
+
+/** Where an `add` lands: end of doc for the empty anchor (append), else just after the
+ * LAST occurrence of the anchor text. Mirrors the applier's insertion rule so "a widget
+ * shows" ⟺ "Keep inserts there". */
+function resolveAddInsertion(doc: string, anchor: string): number | null {
+  if (anchor.length === 0) return doc.length
+  const i = doc.lastIndexOf(anchor)
+  return i < 0 ? null : i + anchor.length
+}
 
 const anchoredField = StateField.define<AnchoredEdit[]>({
   create: () => [],
@@ -78,8 +87,14 @@ const anchoredField = StateField.define<AnchoredEdit[]>({
     let next = value
     if (tr.docChanged) {
       next = value
-        .map((a) => ({ ...a, from: tr.changes.mapPos(a.from, 1), to: tr.changes.mapPos(a.to, -1) }))
-        .filter((a) => a.to > a.from)
+        .map((a) => {
+          const from = tr.changes.mapPos(a.from, 1)
+          // 'add' is a pure insertion point (to === from); replace/delete keep their range.
+          const to = a.kind === 'add' ? from : tr.changes.mapPos(a.to, -1)
+          return { ...a, from, to }
+        })
+        // Drop a replace/delete whose `before` range collapsed; 'add' (to === from) stays.
+        .filter((a) => a.kind === 'add' || a.to > a.from)
     }
     for (const e of tr.effects) if (e.is(setAnchored)) next = e.value
     return next
@@ -104,11 +119,47 @@ function anchorChanges(docText: string, changes: PendingChange[]): AnchoredEdit[
           after: e.kind === 'delete' ? '' : (e.after ?? ''),
           kind: e.kind,
         })
+      } else if (e.kind === 'add') {
+        // Insertion: anchor at the LAST occurrence of `anchorBefore` (empty → append at
+        // end of doc). No `before` range to strike — a pure insertion point (from === to).
+        const at = resolveAddInsertion(docText, e.anchorBefore)
+        if (at === null) continue
+        out.push({
+          changeId: c.id,
+          editId: e.id,
+          from: at,
+          to: at,
+          after: e.after ?? '',
+          kind: 'add',
+        })
       }
-      // 'add' / whole-file 'replace' (no `before`) → block-shaped, Stage 3-2.
+      // Whole-file 'replace' (no `before`) → hunk-shaped, still Stage 3-2.
     }
   }
   return out
+}
+
+/** Best doc offset to scroll to for a change — used when the user clicks a chat
+ * suggestion card to jump to the spot in the note. Prefers the resulting `after` text
+ * (present once accepted, a fine target while pending too), then the `before` anchor,
+ * then an `add`'s insertion point. Null when nothing resolves (e.g. a rejected change
+ * whose text never landed). */
+export function scrollOffsetForChange(docText: string, change: PendingChange): number | null {
+  for (const e of change.edits) {
+    if (e.after) {
+      const r = looseFindRange(docText, e.after)
+      if (r) return r.start
+    }
+    if (e.before) {
+      const r = looseFindRange(docText, e.before)
+      if (r) return r.start
+    }
+    if (e.kind === 'add') {
+      const at = resolveAddInsertion(docText, e.anchorBefore)
+      if (at !== null) return at
+    }
+  }
+  return null
 }
 
 const accept = (id: string) => usePendingChangesStore.getState().accept(id)
@@ -137,7 +188,7 @@ class ReviewWidget extends WidgetType {
   toDOM() {
     const box = document.createElement('span')
     box.className = 'cm-proof-review'
-    if (this.a.kind === 'replace' && this.a.after) {
+    if ((this.a.kind === 'replace' || this.a.kind === 'add') && this.a.after) {
       const ins = document.createElement('span')
       ins.className = 'cm-proof-new'
       // Render INLINE markdown (bold/italic/code/strike/link) inside the green
@@ -159,10 +210,15 @@ class ReviewWidget extends WidgetType {
 }
 
 function build(state: EditorState): DecorationSet {
-  const ranges = state.field(anchoredField).flatMap((a) => [
-    Decoration.mark({ class: 'cm-proof-old' }).range(a.from, a.to),
-    Decoration.widget({ widget: new ReviewWidget(a), side: 1 }).range(a.to),
-  ])
+  const ranges = state.field(anchoredField).flatMap((a) =>
+    a.kind === 'add'
+      ? // Pure insertion: no old text to strike — just the green widget at the point.
+        [Decoration.widget({ widget: new ReviewWidget(a), side: 1 }).range(a.from)]
+      : [
+          Decoration.mark({ class: 'cm-proof-old' }).range(a.from, a.to),
+          Decoration.widget({ widget: new ReviewWidget(a), side: 1 }).range(a.to),
+        ],
+  )
   return Decoration.set(ranges, true)
 }
 

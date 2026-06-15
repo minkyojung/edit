@@ -25,6 +25,18 @@ export function navigateToNoteByTitle(title: string): void {
   })
 }
 
+/** Navigate to a note by its slug (the card already holds one — no title resolution
+ * needed). Sets the URL hash, the single source of truth for the active doc. */
+export function navigateToNoteBySlug(slug: string): void {
+  const store = useDocsStore.getState()
+  window.location.hash = buildViewUrl({
+    tab: store.sidebarTab,
+    dayAnchor: store.dayAnchor,
+    monthAnchor: store.monthAnchor,
+    slug,
+  })
+}
+
 /** Does this wikilink title resolve to a LIVE note? Drives blue (known) vs red
  * (broken) styling. Same filter as navigateToNoteByTitle, read fresh each call so
  * newly created/renamed notes are reflected on the next decoration rebuild. */

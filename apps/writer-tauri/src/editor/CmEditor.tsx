@@ -41,7 +41,8 @@ import { timestampSeekClick } from '@/editor/cmTimestampSeek'
 import { youtubeCards } from '@/prototypes/youtubeCards'
 import { mermaidCards } from '@/prototypes/mermaidCards'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
-import { cmProofReview, acceptEffect, rejectEffect } from '@/editor/cmProofReview'
+import { cmProofReview, acceptEffect, rejectEffect, scrollOffsetForChange } from '@/editor/cmProofReview'
+import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import {
   highlightRenderExtension,
   highlightSelectionNotifier,
@@ -203,6 +204,16 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
         // Reject bridge: an effect-only, undoable transaction (used by both the inline
         // ✕ and the chat panel via rejectPendingChange).
         (changeId) => view?.dispatch({ effects: rejectEffect.of(changeId) }),
+        // Scroll bridge: jump to a change's location (chat suggestion card click).
+        (changeId) => {
+          const v = view
+          if (!v) return
+          const change = usePendingChangesStore.getState().byId[changeId]
+          if (!change) return
+          const at = scrollOffsetForChange(v.state.doc.toString(), change)
+          if (at === null) return
+          v.dispatch({ selection: { anchor: Math.min(at, v.state.doc.length) }, scrollIntoView: true })
+        },
       )
     })
 
