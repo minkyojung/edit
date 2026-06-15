@@ -262,6 +262,10 @@ export interface DocsState {
   deleteForever: (slug: string) => Promise<string | null>
   /** Permanently delete every archived doc (sidecar + local state). */
   emptyArchive: () => Promise<string | null>
+  /** Delete a user doc by moving its file to the OS trash (recoverable)
+   * and dropping it from the catalog / tabs / handles. Returns the slug
+   * to navigate to next, or null. */
+  deleteToTrash: (slug: string) => Promise<string | null>
   /** Seed a new doc's body from a markdown string. Used by
    * createCustomWikiPage / ensureSystemPage to plant initial content.
    * Ensures the handle (IDB shard + Y.Doc) exists first, then applies

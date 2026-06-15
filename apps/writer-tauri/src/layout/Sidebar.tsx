@@ -13,7 +13,6 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { FolderTree } from './FolderTree'
 import { WikiMetaRows } from './WikiMetaRows'
-import { ArchivedDocsPopover } from './ArchivedDocsPopover'
 import { IngestProposalCard } from './IngestProposalCard'
 import { useDocsStore } from '@/state/docsStore'
 import { useCommandPaletteStore } from '@/state/commandPaletteStore'
@@ -240,16 +239,13 @@ export function AppSidebar() {
 
       <SidebarFooter>
         {/* Karpathy Memories card — surfaces the queued ingest
-            proposals above the archive button so they're easy to
-            notice without crowding the doc tree above. */}
+            proposals so they're easy to notice without crowding the
+            doc tree above. */}
         <IngestProposalCard />
         <SidebarMenu>
           {/* Profile + Conventions: always-present, low-frequency wiki
-              surfaces, stacked just above Archived. */}
+              surfaces. */}
           <WikiMetaRows />
-          <SidebarMenuItem>
-            <ArchivedDocsPopover />
-          </SidebarMenuItem>
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

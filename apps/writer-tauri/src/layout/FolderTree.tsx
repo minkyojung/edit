@@ -35,6 +35,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 
@@ -101,6 +102,7 @@ interface NodeProps {
   onStartRename: (slug: string) => void
   onCommitRename: (slug: string, name: string) => void
   onCancelRename: () => void
+  onDelete: (slug: string) => void
 }
 
 function FolderTreeNode({
@@ -113,6 +115,7 @@ function FolderTreeNode({
   onStartRename,
   onCommitRename,
   onCancelRename,
+  onDelete,
 }: NodeProps) {
   if (node.kind === 'file') {
     const isEditing = editingSlug === node.slug
@@ -145,6 +148,13 @@ function FolderTreeNode({
           <ContextMenuContent>
             <ContextMenuItem onSelect={() => onStartRename(node.slug)}>
               Rename
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              onSelect={() => onDelete(node.slug)}
+              className="text-destructive focus:text-destructive"
+            >
+              Delete
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
@@ -188,6 +198,7 @@ function FolderTreeNode({
                 onStartRename={onStartRename}
                 onCommitRename={onCommitRename}
                 onCancelRename={onCancelRename}
+                onDelete={onDelete}
               />
             ))}
           </TreeSub>
@@ -203,6 +214,7 @@ export function FolderTree() {
   const dayAnchor = useDocsStore((s) => s.dayAnchor)
   const monthAnchor = useDocsStore((s) => s.monthAnchor)
   const renameDoc = useDocsStore((s) => s.renameDoc)
+  const deleteToTrash = useDocsStore((s) => s.deleteToTrash)
   const navigate = useNavigate()
   const activeSlug = useActiveSlug()
 
@@ -223,6 +235,11 @@ export function FolderTree() {
     renameDoc(slug, name) // trims / validates / de-dupes; empty is a no-op
     setEditingSlug(null)
   }
+  const onDelete = (slug: string) => {
+    void deleteToTrash(slug).then((next) => {
+      if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
+    })
+  }
 
   return (
     <ul className="flex flex-col px-2 py-1">
@@ -238,6 +255,7 @@ export function FolderTree() {
           onStartRename={setEditingSlug}
           onCommitRename={onCommitRename}
           onCancelRename={() => setEditingSlug(null)}
+          onDelete={onDelete}
         />
       ))}
     </ul>

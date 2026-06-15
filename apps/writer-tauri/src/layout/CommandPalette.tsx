@@ -12,7 +12,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  IconArchive,
   IconBookmarkPlus,
   IconBookmarks,
   IconEdit,
@@ -55,18 +54,9 @@ export function CommandPalette() {
 
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const activeSlug = useActiveSlug()
-  const archiveDoc = useDocsStore((s) => s.archiveDoc)
   const renameDoc = useDocsStore((s) => s.renameDoc)
   const openSaveArticle = useSaveArticleDialogStore((s) => s.openDialog)
   const navigate = useNavigate()
-
-  // Active doc — used by the "Archive current note" action. Only
-  // writing-type counts; archiveDoc refuses dailies anyway.
-  const activeDoc = useMemo(() => {
-    if (!activeSlug) return null
-    const d = knownDocs.find((x) => x.slug === activeSlug)
-    return d && d.type === 'writing' && !d.archivedAt ? d : null
-  }, [knownDocs, activeSlug])
 
   // Renameable active doc — generic notes, writing notes, AND
   // user-owned wiki pages. System pages (fixed names) and dailies
@@ -195,32 +185,6 @@ export function CommandPalette() {
               <IconEdit size={16} stroke={1.75} />
               <span className="flex-1 truncate">
                 Rename “{renameableDoc.title || 'Untitled'}”
-              </span>
-            </CommandItem>
-          )}
-          {activeDoc && (
-            <CommandItem
-              value="action:archive-active"
-              onSelect={() => {
-                const next = archiveDoc(activeDoc.slug)
-                if (next) {
-                  const store = useDocsStore.getState()
-                  navigate(
-                    buildViewUrl({
-                      tab: store.sidebarTab,
-                      dayAnchor: store.dayAnchor,
-                      monthAnchor: store.monthAnchor,
-                      slug: next,
-                    }),
-                  )
-                }
-                setOpen(false)
-              }}
-              className="text-destructive data-[selected=true]:text-destructive"
-            >
-              <IconArchive size={16} stroke={1.75} />
-              <span className="flex-1 truncate">
-                Archive “{activeDoc.title || 'Untitled'}”
               </span>
             </CommandItem>
           )}

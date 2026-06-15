@@ -28,6 +28,8 @@
 import { notify } from '@/lib/notify'
 import { useChatRuns } from '@/stores/chatRuns'
 import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
+import { trashVaultFile } from '@/lib/vault'
+import { pathForDoc } from '@/lib/docPaths'
 import { ensureNonEmptyTabStrip, getDocPolicy, isUserOwnedWiki, isWikiDoc } from './helpers'
 import type { DocsState, GetDocsState, KnownDoc, SetDocsState } from './types'
 
@@ -56,6 +58,12 @@ export interface ArchiveSlice {
    * active slug for the caller's navigate, or null if the tab strip
    * was untouched. */
   emptyArchive: () => Promise<string | null>
+  /** Delete a user doc by moving its `.md` to the OS
+   * trash (recoverable) and dropping it from the catalog,
+   * tabs, and handles. Returns the slug to navigate to next, or null.
+   * Refuses daily / system / agent-managed pages (same gate as
+   * archiveDoc). */
+  deleteToTrash: (slug: string) => Promise<string | null>
 }
 
 export const createArchiveSlice = (
@@ -268,6 +276,67 @@ export const createArchiveSlice = (
       notify.cantEmptyTrash({ onRetry: () => get().emptyArchive() })
     }
     return (patch.openSlugs ?? nextOpen)[0] ?? null
+  },
+
+  deleteToTrash: async (slug) => {
+    const state = get()
+    const target = state.knownDocs.find((d) => d.slug === slug)
+    if (!target) return null
+    // Same ownership gate as archiveDoc: daily spine, system pages, and
+    // agent-managed wiki are never user-deletable.
+    if (target.type === 'daily') return null
+    if (!getDocPolicy(target).canArchive) return null
+    if (isWikiDoc(target) && !isUserOwnedWiki(target)) return null
+
+    // Resolve the on-disk path BEFORE removing the doc — pathForDoc
+    // walks the catalog to derive a writing's location.
+    const bySlug = new Map(state.knownDocs.map((d) => [d.slug, d]))
+    const rel = pathForDoc(target, (s) => bySlug.get(s))
+
+    // Tear down in-memory FIRST so the flush loop can't recreate the
+    // file mid-move: destroying the handle clears its dirty flag, and
+    // dropping it from knownDocs makes flushDirty skip the slug.
+    useChatRuns.getState().abortBySlug(slug)
+    const nextHandles = { ...state.handles }
+    const nextStatus = { ...state.status }
+    nextHandles[slug]?.destroy()
+    delete nextHandles[slug]
+    delete nextStatus[slug]
+
+    const nextOpen = state.openSlugs.filter((s) => s !== slug)
+    const nextExpanded = state.expandedDocSlugs.filter((s) => s !== slug)
+    const nextKnown = state.knownDocs.filter((d) => d.slug !== slug)
+    const postState: DocsState = { ...state, knownDocs: nextKnown }
+    const patch = ensureNonEmptyTabStrip(postState, {
+      knownDocs: nextKnown,
+      openSlugs: nextOpen,
+      expandedDocSlugs: nextExpanded,
+      handles: nextHandles,
+      status: nextStatus,
+    })
+    set(patch)
+
+    // Send the file (and any legacy `.meta.json` sidecar) to the OS
+    // trash — recoverable from Finder / Recycle Bin. Best-effort: on
+    // failure the file stays put and would re-surface on the next scan
+    // (fail-safe — no data loss), so we just notify.
+    if (rel) {
+      try {
+        await trashVaultFile(rel)
+        await trashVaultFile(rel.replace(/\.md$/, '.meta.json'))
+      } catch (err) {
+        console.error('[docs] deleteToTrash move failed', err)
+        notify.cantDeleteNote({ onRetry: () => get().deleteToTrash(slug) })
+      }
+    }
+
+    const finalActive = (patch.openSlugs ?? nextOpen)[0] ?? null
+    if (finalActive && !get().handles[finalActive]) {
+      get().ensureHandle(finalActive).catch((err) =>
+        console.error('[docs] post-delete ensureHandle failed', err),
+      )
+    }
+    return finalActive
   },
 })
 

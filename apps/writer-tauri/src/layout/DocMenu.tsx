@@ -1,10 +1,11 @@
 // Doc-level action menu for the editor header. The `⋯` trigger sits
 // in the rightmost slot of EditorHeader and reveals a small dropdown
-// of doc-scoped actions: Document info (read-only stats) and
-// Archive (soft-delete with cascade + confirm). Daily entries
-// disable Archive since they're the time-axis spine.
+// of doc-scoped actions: Document info (read-only stats) and Delete
+// (move to the OS trash, recoverable). Daily entries
+// disable Delete since they're the time-axis spine.
 
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { IconDots } from '@tabler/icons-react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { Button } from '@/components/ui/button'
@@ -23,8 +24,8 @@ import { cn } from '@/lib/utils'
 import { TAHOE_CHROME } from '@/lib/chrome'
 import { useDocsStore } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { DocumentInfoDialog } from './DocumentInfoDialog'
-import { ConfirmArchiveDialog } from './ConfirmArchiveDialog'
 
 interface Props {
   editorView: EditorView | null
@@ -35,14 +36,15 @@ export function DocMenu({ editorView }: Props) {
   const activeDoc = useDocsStore((s) =>
     activeSlug ? s.knownDocs.find((d) => d.slug === activeSlug) : null,
   )
+  const deleteToTrash = useDocsStore((s) => s.deleteToTrash)
+  const navigate = useNavigate()
   const [infoOpen, setInfoOpen] = useState(false)
-  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
 
   const disabled = !activeSlug
-  // Daily entries are the time-axis spine; archiving them would tear
+  // Daily entries are the time-axis spine; deleting them would tear
   // the breadcrumb anchor out from under their child notes. The
   // store also refuses, but keep the menu honest.
-  const archiveDisabled = !activeDoc || activeDoc.type === 'daily'
+  const deleteDisabled = !activeDoc || activeDoc.type === 'daily'
 
   return (
     <>
@@ -73,11 +75,26 @@ export function DocMenu({ editorView }: Props) {
           </DropdownMenuItem>
 
           <DropdownMenuItem
-            disabled={archiveDisabled}
-            onSelect={() => setArchiveConfirmOpen(true)}
+            disabled={deleteDisabled}
+            onSelect={() => {
+              if (!activeSlug) return
+              void deleteToTrash(activeSlug).then((next) => {
+                if (next) {
+                  const store = useDocsStore.getState()
+                  navigate(
+                    buildViewUrl({
+                      tab: store.sidebarTab,
+                      dayAnchor: store.dayAnchor,
+                      monthAnchor: store.monthAnchor,
+                      slug: next,
+                    }),
+                  )
+                }
+              })
+            }}
             className={cn('text-destructive focus:text-destructive')}
           >
-            Archive
+            Delete
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -86,12 +103,6 @@ export function DocMenu({ editorView }: Props) {
         open={infoOpen}
         onOpenChange={setInfoOpen}
         editorView={editorView}
-      />
-
-      <ConfirmArchiveDialog
-        open={archiveConfirmOpen}
-        onOpenChange={setArchiveConfirmOpen}
-        slug={activeSlug}
       />
     </>
   )

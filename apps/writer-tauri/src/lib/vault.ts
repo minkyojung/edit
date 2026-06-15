@@ -34,6 +34,7 @@ import {
   writeTextFile,
 } from '@tauri-apps/plugin-fs'
 import { dirname, join } from '@tauri-apps/api/path'
+import { invoke } from '@tauri-apps/api/core'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useGitStore } from '@/state/gitStore'
 
@@ -421,6 +422,17 @@ export async function deleteVaultDir(relPath: string): Promise<void> {
     await remove(path, { recursive: true })
     scheduleAutoCommit(relPath)
   }
+}
+
+/** Send a vault file to the OS trash (macOS Trash / Windows Recycle Bin
+ * / Linux trash) — the recoverable sibling of the permanent
+ * {@link deleteVaultFile}. Routes through the native `move_to_trash`
+ * command (the fs plugin only does permanent removes). No-op if the
+ * file doesn't exist. */
+export async function trashVaultFile(relPath: string): Promise<void> {
+  if (!(await vaultFileExists(relPath))) return
+  const path = await resolveVaultPath(relPath)
+  await invoke('move_to_trash', { path })
 }
 
 // Dev-only console handle. Open DevTools, run e.g.
