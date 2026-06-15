@@ -16,8 +16,9 @@ import { pathForDoc } from '@/lib/docPaths'
 
 /** Paths hidden from the sidebar tree: `_`-prefixed agent folders
  * (`_system/`) and `threads/` (chat-thread JSON, gitignored app state).
- * Mirrors Obsidian hiding `.obsidian/`. */
-function isHiddenTreePath(path: string): boolean {
+ * Mirrors Obsidian hiding `.obsidian/`. Exported so other surfaces (the
+ * "Move to…" folder list) hide the same set. */
+export function isHiddenTreePath(path: string): boolean {
   return (
     path.startsWith('_') ||
     path === 'threads' ||

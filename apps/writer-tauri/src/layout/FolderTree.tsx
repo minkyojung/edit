@@ -32,6 +32,7 @@ import { useNewFolderStore } from '@/state/newFolderStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import {
   buildFileTree,
+  isHiddenTreePath,
   type TreeFile,
   type TreeFolder,
   type TreeNode,
@@ -57,6 +58,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 
@@ -119,7 +123,9 @@ interface TreeCtx {
   onCommitRename: (slug: string, name: string) => void
   onCancelRename: () => void
   onDelete: (slug: string) => void
-  onMoveToRoot: (slug: string) => void
+  /** Destination folders for "Move to…" (vault-relative, non-hidden). */
+  folders: string[]
+  onMoveTo: (slug: string, folderPath: string) => void
   onDuplicate: (slug: string) => void
   onCopyPath: (relPath: string) => void
   onOpenInDefaultApp: (relPath: string) => void
@@ -184,11 +190,20 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
           <ContextMenuItem onSelect={() => ctx.onDuplicate(node.slug)}>
             Duplicate
           </ContextMenuItem>
-          {node.path.includes('/') && (
-            <ContextMenuItem onSelect={() => ctx.onMoveToRoot(node.slug)}>
-              Move to root
-            </ContextMenuItem>
-          )}
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>Move to…</ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem onSelect={() => ctx.onMoveTo(node.slug, '')}>
+                (vault root)
+              </ContextMenuItem>
+              {ctx.folders.length > 0 && <ContextMenuSeparator />}
+              {ctx.folders.map((f) => (
+                <ContextMenuItem key={f} onSelect={() => ctx.onMoveTo(node.slug, f)}>
+                  {f}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
           <ContextMenuSeparator />
           <ContextMenuItem onSelect={() => ctx.onCopyPath(node.path)}>
             Copy path
@@ -411,7 +426,15 @@ export function FolderTree() {
       if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
     })
   }
-  const onMoveToRoot = (slug: string) => moveDocToFolder(slug, '')
+  const moveTargets = useMemo(
+    () =>
+      knownFolders
+        .filter((f) => !isHiddenTreePath(f))
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })),
+    [knownFolders],
+  )
+  const onMoveTo = (slug: string, folderPath: string) =>
+    moveDocToFolder(slug, folderPath)
   const onDuplicate = (slug: string) => {
     void duplicateDoc(slug).then((next) => {
       if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
@@ -456,7 +479,8 @@ export function FolderTree() {
     onCommitRename,
     onCancelRename: () => setEditingSlug(null),
     onDelete,
-    onMoveToRoot,
+    folders: moveTargets,
+    onMoveTo,
     onDuplicate,
     onCopyPath,
     onOpenInDefaultApp,
