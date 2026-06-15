@@ -38,6 +38,12 @@ const LOG_TYPE = 'system:log' as const
  * and catalog filtering use a single predicate. */
 const CONVENTIONS_TYPE = 'system:conventions' as const
 
+/** Working memory — the user's current, fast-changing context (active
+ * projects, near deadlines, recent focus). Always loaded into the system
+ * prompt, kept small, pruned often. Long-term facts live in the wiki, not
+ * here. `system:*` prefix groups it with the other agent meta surfaces. */
+const WORKING_TYPE = 'system:working' as const
+
 /** System-owned summary index of every wiki page. Karpathy's
  * `index.md` pattern — one line per page, lets the ingest LLM see
  * "what targets exist" without having to dump every body into the
@@ -120,6 +126,15 @@ const SYSTEM_PAGE_CONVENTIONS: SystemPageConfig = {
   title: 'Conventions',
   initialBody: DEFAULT_CONVENTIONS,
 }
+const SYSTEM_PAGE_WORKING: SystemPageConfig = {
+  type: WORKING_TYPE,
+  title: 'Working',
+  initialBody:
+    '## Working memory\n\n' +
+    "What I'm actively working on right now — current projects, near " +
+    'deadlines, recent focus. Keep this short and prune freely; stale ' +
+    'items here cause confusion. Long-term facts belong in the wiki, not here.\n',
+}
 const SYSTEM_PAGE_INDEX: SystemPageConfig = {
   type: INDEX_TYPE,
   title: 'index',
@@ -201,6 +216,13 @@ export async function ensureConventionsWikiSlug(): Promise<string | null> {
   return ensureSystemPage(SYSTEM_PAGE_CONVENTIONS)
 }
 
+/** Ensure `system:working` exists. Working memory — the user's current,
+ * fast-changing context. Lazy-created on first open (the Working footer
+ * row) or first agent write, same pattern as conventions / profile. */
+export async function ensureWorkingWikiSlug(): Promise<string | null> {
+  return ensureSystemPage(SYSTEM_PAGE_WORKING)
+}
+
 /** Ensure `system:index` exists. The page body is system-owned —
  * see state/wikiIndex.ts which writes a deterministic catalog on
  * every wiki change. Body stays empty until the first persist tick
@@ -226,6 +248,17 @@ export async function readConventions(): Promise<string> {
   const doc = useDocsStore
     .getState()
     .knownDocs.find((d) => d.type === CONVENTIONS_TYPE && !d.archivedAt)
+  if (!doc) return ''
+  return readWikiMarkdown(doc.slug)
+}
+
+/** Read the user's working-memory page body (`system:working`). Returns
+ * '' when the page doesn't exist yet — the system prompt then drops the
+ * WORKING MEMORY block, exactly as before this feature landed. */
+export async function readWorking(): Promise<string> {
+  const doc = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.type === WORKING_TYPE && !d.archivedAt)
   if (!doc) return ''
   return readWikiMarkdown(doc.slug)
 }

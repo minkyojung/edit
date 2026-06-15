@@ -10,7 +10,7 @@
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { IconUser, IconBook2 } from '@tabler/icons-react'
+import { IconUser, IconBook2, IconActivity } from '@tabler/icons-react'
 import { SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -18,6 +18,7 @@ import { useActiveSlug } from '@/hooks/useActiveSlug'
 import {
   ensureProfileWikiSlug,
   ensureConventionsWikiSlug,
+  ensureWorkingWikiSlug,
 } from '@/state/wikiService'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { cn } from '@/lib/utils'
@@ -38,6 +39,9 @@ export function WikiMetaRows() {
   )?.slug
   const conventionsSlug = knownDocs.find(
     (d) => d.type === 'system:conventions' && !d.archivedAt,
+  )?.slug
+  const workingSlug = knownDocs.find(
+    (d) => d.type === 'system:working' && !d.archivedAt,
   )?.slug
 
   // Profile receives ingest banner proposals (the Background zone).
@@ -94,6 +98,17 @@ export function WikiMetaRows() {
         >
           <IconBook2 size={16} stroke={1.5} />
           <span className="flex-1 text-left">Conventions</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          className="text-sidebar-foreground/70"
+          isActive={!!workingSlug && workingSlug === activeSlug}
+          onClick={() => open(ensureWorkingWikiSlug)}
+          aria-label="Working"
+        >
+          <IconActivity size={16} stroke={1.5} />
+          <span className="flex-1 text-left">Working</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </>

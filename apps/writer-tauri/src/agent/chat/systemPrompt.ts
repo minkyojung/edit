@@ -52,6 +52,7 @@ export interface SystemBlocksArgs {
     selfProfile: string
     conventions: string
     claudeMd: string
+    working: string
   }
   /** When true (default for free chat) the document body is appended
    * past the SDK's cache boundary so it doesn't poison the cache key.
@@ -76,7 +77,7 @@ export interface SystemBlocksArgs {
 /** Compose the system prompt as a `string | string[]`.
  *
  * Anchor ordering by cache stability:
- *   prefix (stable):   selfProfile → conventions → claudeMd → systemBody
+ *   prefix (stable):   selfProfile → conventions → claudeMd → working → systemBody
  *   suffix (dynamic):  document
  *
  * `selfProfile` sits at the very top — it changes only when the user
@@ -106,6 +107,11 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   }
   if (ctx.conventions) prefix.push(ctx.conventions)
   if (ctx.claudeMd) prefix.push(ctx.claudeMd)
+  // Working memory sits after the stable trio and before systemBody: it
+  // changes more often than profile/conventions/CLAUDE.md, so keeping it
+  // late in the prefix means a working-memory edit only re-tokenizes from
+  // here on — the cached stable prefix above stays intact.
+  if (ctx.working) prefix.push(`--- WORKING MEMORY ---\n${ctx.working}`)
   prefix.push(systemBody)
 
   // Dynamic suffix — pinned past the SDK cache boundary because it changes

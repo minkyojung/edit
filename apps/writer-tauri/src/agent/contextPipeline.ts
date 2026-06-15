@@ -21,7 +21,12 @@
 // "unrelated context pulls in random wiki pages" failure mode chat
 // already fixed and lets the two flows share a cache prefix.
 
-import { readClaudeMd, readConventions, readSelfProfile } from '@/state/wikiService'
+import {
+  readClaudeMd,
+  readConventions,
+  readSelfProfile,
+  readWorking,
+} from '@/state/wikiService'
 
 /** Names of Tier 3 MCP tools the chat path opts into when the
  * sidecar has a vault path. Ingest does NOT include these in
@@ -47,6 +52,11 @@ export interface ContextBundle {
    * is" before every downstream block. Empty when the page doesn't
    * exist yet. */
   selfProfile: string
+  /** Working memory (`system:working`) body — the user's current,
+   * fast-changing context (active projects, near deadlines, recent
+   * focus). Always loaded but kept small. Empty when the page doesn't
+   * exist yet. */
+  working: string
   /** Tier 3 tool names the chat consumer should pass to
    * `relayTools`. Empty in ingest mode and when the chat caller
    * opts out via `enableTools: false`. */
@@ -73,10 +83,11 @@ export async function assembleContext(
 ): Promise<ContextBundle> {
   const mode: AssembleContextMode = opts.mode ?? 'ingest'
 
-  const [claudeMd, conventions, selfProfile] = await Promise.all([
+  const [claudeMd, conventions, selfProfile, working] = await Promise.all([
     readClaudeMd(),
     readConventions(),
     readSelfProfile(),
+    readWorking(),
   ])
 
   // Tier-3 MCP tools are chat-specific. Ingest uses the SDK's
@@ -86,12 +97,13 @@ export async function assembleContext(
     mode === 'chat' && opts.enableTools !== false ? [...DEFAULT_TOOLS] : []
 
   const budgetUsed =
-    claudeMd.length + conventions.length + selfProfile.length
+    claudeMd.length + conventions.length + selfProfile.length + working.length
 
   return {
     claudeMd,
     conventions,
     selfProfile,
+    working,
     tools,
     budgetUsed,
   }
