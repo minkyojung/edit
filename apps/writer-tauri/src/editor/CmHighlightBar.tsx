@@ -50,11 +50,20 @@ export function CmHighlightBar({ viewRef, slug }: Props) {
   if (state.kind === 'edit' && !record) return null
 
   return (
+    // absolute (not fixed) so it centers on the editor pane — CmEditor's
+    // relative root — not the whole viewport (which the chat panel offsets).
     <div
-      className="fixed left-1/2 z-50 -translate-x-1/2"
+      className="absolute left-1/2 z-50 -translate-x-1/2"
       style={{ bottom: 'calc(var(--footer-h) + 1.5rem)' }}
     >
-      <div className={cn(FLOATING_MENU_SHELL, 'shadow-2xl shadow-black/55')}>
+      {/* Brighter than the bare shell: a light ring edge + blur lift it off
+          the dark editor background so it actually reads. */}
+      <div
+        className={cn(
+          FLOATING_MENU_SHELL,
+          'shadow-2xl shadow-black/60 ring-1 ring-foreground/15 backdrop-blur-xl',
+        )}
+      >
         {state.kind === 'prompt' ? (
           <PromptButton viewRef={viewRef} slug={slug} from={state.from} to={state.to} />
         ) : record ? (
@@ -94,15 +103,16 @@ function PromptButton({
   }
   return (
     <Button
-      variant="ghost"
-      size="xs"
+      variant="secondary"
+      size="sm"
       // preventDefault keeps the editor selection alive through the click.
       onMouseDown={(e) => e.preventDefault()}
       onClick={onHighlight}
+      className="gap-1.5 font-medium"
     >
-      <IconHighlight size={14} stroke={2} />
+      <IconHighlight size={15} stroke={2} style={{ color: 'oklch(0.82 0.17 85)' }} />
       Highlight
-      <kbd className="ml-1 rounded border border-border bg-muted px-1 py-px text-[10px] leading-none text-muted-foreground">
+      <kbd className="ml-0.5 rounded border border-border bg-background/70 px-1 py-px text-[10px] leading-none text-muted-foreground">
         ⌘⇧M
       </kbd>
     </Button>
@@ -151,7 +161,12 @@ function EditRow({
 
   return (
     <div className="flex items-center gap-1">
-      <IconHighlight size={14} stroke={2} className="shrink-0 text-muted-foreground" />
+      <IconHighlight
+        size={15}
+        stroke={2}
+        className="shrink-0"
+        style={{ color: 'oklch(0.82 0.17 85)' }}
+      />
       <input
         ref={inputRef}
         value={note}
