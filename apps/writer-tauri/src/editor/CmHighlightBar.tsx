@@ -18,13 +18,22 @@ import { useDocsStore } from '@/state/docsStore'
 import { setHighlightNote, removeHighlightRecord } from '@/lib/highlights'
 import { appendHighlightToDaily } from '@/lib/appendHighlightToDaily'
 import { Button } from '@/components/ui/button'
-import { FLOATING_MENU_SHELL } from '@/editor/floatingMenuShell'
-import { cn } from '@/lib/utils'
 import {
   useCmHighlightBar,
   closeHighlightBar,
   createHighlightFromSelection,
 } from '@/editor/cmHighlights'
+
+// Arc/Raycast-style glass: a translucent fill the editor text shows through
+// (backdrop blur + saturation for vibrancy), a bright specular top edge +
+// hairline rim (the "liquid glass" light catching the edge), and a soft
+// drop shadow for lift. Pure CSS — it frosts the in-app content behind the
+// bar, which native NSGlassEffectView can't do (that only frosts what's
+// behind the whole window). The contents stay high-contrast so the glass
+// reads as a surface, not a haze.
+const GLASS_SHELL =
+  'rounded-2xl p-2.5 bg-popover/60 backdrop-blur-2xl backdrop-saturate-150 ' +
+  'shadow-[inset_0_1px_0_0_rgba(255,255,255,0.22),inset_0_0_0_1px_rgba(255,255,255,0.09),0_18px_50px_-12px_rgba(0,0,0,0.65)]'
 
 interface Props {
   viewRef: RefObject<EditorView | null>
@@ -56,14 +65,7 @@ export function CmHighlightBar({ viewRef, slug }: Props) {
       className="absolute left-1/2 z-50 -translate-x-1/2"
       style={{ bottom: 'calc(var(--footer-h) + 1.5rem)' }}
     >
-      {/* Brighter than the bare shell: a light ring edge + blur lift it off
-          the dark editor background so it actually reads. */}
-      <div
-        className={cn(
-          FLOATING_MENU_SHELL,
-          'shadow-2xl shadow-black/60 ring-1 ring-foreground/15 backdrop-blur-xl',
-        )}
-      >
+      <div className={GLASS_SHELL}>
         {state.kind === 'prompt' ? (
           <PromptButton viewRef={viewRef} slug={slug} from={state.from} to={state.to} />
         ) : record ? (
@@ -103,16 +105,16 @@ function PromptButton({
   }
   return (
     <Button
-      variant="secondary"
+      variant="ghost"
       size="sm"
       // preventDefault keeps the editor selection alive through the click.
       onMouseDown={(e) => e.preventDefault()}
       onClick={onHighlight}
-      className="gap-1.5 font-medium"
+      className="gap-1.5 font-medium text-foreground hover:bg-white/10"
     >
       <IconHighlight size={15} stroke={2} style={{ color: 'oklch(0.82 0.17 85)' }} />
       Highlight
-      <kbd className="ml-0.5 rounded border border-border bg-background/70 px-1 py-px text-[10px] leading-none text-muted-foreground">
+      <kbd className="ml-0.5 rounded border border-white/15 bg-white/10 px-1 py-px text-[10px] leading-none text-muted-foreground">
         ⌘⇧M
       </kbd>
     </Button>
