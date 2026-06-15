@@ -14,13 +14,41 @@
  */
 
 import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
-import type { GetDocsState, SetDocsState } from './types'
+import { sanitizeFilename } from '@/lib/docPaths'
+import type { GetDocsState, KnownDoc, SetDocsState } from './types'
+
+/** First free `<prefix><base>.md` (then ` 1`, ` 2`, …) not already
+ * taken by another doc's relPath. `prefix` is '' for a root file or
+ * 'folder/' for a file inside a folder. Excludes `selfSlug` so a
+ * no-op rename (or re-case) doesn't collide with itself. */
+function uniqueRelPath(
+  knownDocs: KnownDoc[],
+  prefix: string,
+  base: string,
+  selfSlug: string,
+): string {
+  const taken = new Set(
+    knownDocs
+      .filter((d) => d.slug !== selfSlug)
+      .map((d) => d.relPath)
+      .filter((p): p is string => Boolean(p)),
+  )
+  let candidate = `${prefix}${base}.md`
+  let n = 1
+  while (taken.has(candidate)) {
+    candidate = `${prefix}${base} ${n}.md`
+    n += 1
+  }
+  return candidate
+}
 
 export interface EditSlice {
-  /** Rename a user-owned doc. Updates `knownDocs[slug].title`; the
-   * auto-flush rename-on-change machinery (see `docFileSync.flushDirty`'s
-   * `lastWrittenPath` branch) then moves the `.md` + `.meta.json` +
-   * `.ydoc` on disk on the next tick.
+  /** Rename a user-owned doc. For generic `note` docs the filename is
+   * the label, so this changes `relPath` (same folder, new filename,
+   * de-duped) and keeps `title` in sync; for writing / wiki:custom it
+   * updates `title`. The auto-flush rename-on-change machinery (see
+   * `docFileSync.flushDirty`'s `lastWrittenPath` branch) then moves the
+   * file on disk on the next tick.
    *
    * Refuses (returns false) for daily / system docs — their titles
    * are derived from type and aren't user-editable. Trim whitespace
@@ -44,6 +72,27 @@ export const createEditSlice = (
     const idx = get().knownDocs.findIndex((d) => d.slug === slug)
     if (idx < 0) return false
     const cur = get().knownDocs[idx]
+
+    // Generic notes: the filename IS the sidebar label, so a rename
+    // changes the file's path (same folder, new filename) — not just
+    // `title`. Keep both in sync: relPath drives the disk path + the
+    // tree label, title drives tabs / palette. The flushDirty
+    // rename-on-change machinery moves the file on disk.
+    if (cur.type === 'note') {
+      const safe = sanitizeFilename(trimmed)
+      const slash = cur.relPath?.lastIndexOf('/') ?? -1
+      const prefix =
+        cur.relPath && slash >= 0 ? cur.relPath.slice(0, slash + 1) : ''
+      if (cur.relPath === `${prefix}${safe}.md`) return true
+      const newRelPath = uniqueRelPath(get().knownDocs, prefix, safe, slug)
+      const list = [...get().knownDocs]
+      list[idx] = { ...cur, relPath: newRelPath, title: safe }
+      set({ knownDocs: list })
+      markSlugDirty(slug)
+      void flushDirty()
+      return true
+    }
+
     // Only user-editable doc types can be renamed. Daily titles are
     // derived from date; system page titles are derived from the
     // type suffix.

@@ -68,15 +68,20 @@ export function CommandPalette() {
     return d && d.type === 'writing' && !d.archivedAt ? d : null
   }, [knownDocs, activeSlug])
 
-  // Renameable active doc — writing notes AND user-owned wiki pages.
-  // System pages (fixed names) and dailies (date-derived) refused
-  // by renameDoc anyway, but filter here so they don't appear in
-  // the Actions group at all.
+  // Renameable active doc — generic notes, writing notes, AND
+  // user-owned wiki pages. System pages (fixed names) and dailies
+  // (date-derived) refused by renameDoc anyway, but filter here so
+  // they don't appear in the Actions group at all.
   const renameableDoc = useMemo(() => {
     if (!activeSlug) return null
     const d = knownDocs.find((x) => x.slug === activeSlug)
     if (!d || d.archivedAt) return null
-    if (d.type !== 'writing' && !d.type.startsWith('wiki:custom-')) return null
+    if (
+      d.type !== 'note' &&
+      d.type !== 'writing' &&
+      !d.type.startsWith('wiki:custom-')
+    )
+      return null
     return d
   }, [knownDocs, activeSlug])
 
