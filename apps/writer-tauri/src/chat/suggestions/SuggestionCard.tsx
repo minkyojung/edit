@@ -57,8 +57,8 @@ export function SuggestionCard({ change }: { change: PendingChange }) {
           <span className="truncate font-medium text-foreground">{title}</span>
           {(added > 0 || removed > 0) && (
             <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px]">
-              {added > 0 && <span className="text-green-700 dark:text-green-600">+{added}</span>}
-              {removed > 0 && <span className="text-red-700 dark:text-red-600">-{removed}</span>}
+              {added > 0 && <span className="text-success">+{added}</span>}
+              {removed > 0 && <span className="text-destructive">-{removed}</span>}
             </span>
           )}
           {!isPending && (

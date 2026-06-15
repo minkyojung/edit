@@ -54,7 +54,7 @@ function diffForGroup(changes: PendingChange[]): { diff: DiffLine[]; added: numb
 function UnviewedDot({ on }: { on: boolean }) {
   return (
     <span className="flex size-1.5 shrink-0 items-center justify-center" aria-hidden>
-      {on && <span className="size-1.5 rounded-full bg-blue-500" />}
+      {on && <span className="size-1.5 rounded-full bg-info" />}
     </span>
   )
 }
@@ -63,8 +63,8 @@ function Counts({ added, removed }: { added: number; removed: number }) {
   if (added === 0 && removed === 0) return null
   return (
     <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px]">
-      {added > 0 && <span className="text-green-700 dark:text-green-600">+{added}</span>}
-      {removed > 0 && <span className="text-red-700 dark:text-red-600">-{removed}</span>}
+      {added > 0 && <span className="text-success">+{added}</span>}
+      {removed > 0 && <span className="text-destructive">-{removed}</span>}
     </span>
   )
 }
@@ -136,7 +136,7 @@ export function ReviewTray() {
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2.5 text-left transition-colors hover:bg-muted/60"
+          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted/60"
         >
           <ChevronDownIcon
             className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', !open && '-rotate-90')}
@@ -196,7 +196,7 @@ export function ReviewTray() {
                       padding (pr-4) lines the ✓ up with the bulk "Keep" text's right
                       edge: summary px-2.5 (10) + text-button pad (10) = 20; here pr-4
                       (16) + icon-button p-1 (4) = 20. */}
-                  <div className="flex shrink-0 items-center gap-0.5 pl-2 pr-4">
+                  <div className="flex shrink-0 items-center gap-1 pl-2 pr-4">
                     <button
                       type="button"
                       aria-label="Reject"
@@ -209,7 +209,7 @@ export function ReviewTray() {
                       type="button"
                       aria-label="Keep"
                       onClick={() => keep(g.changes)}
-                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-green-600 dark:hover:text-green-500"
+                      className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-info"
                     >
                       <CheckIcon className="size-4" />
                     </button>

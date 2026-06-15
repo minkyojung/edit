@@ -16,7 +16,7 @@ export function SkillProposalTray() {
   if (pending.length === 0) return null
 
   return (
-    <div className="mb-2 flex flex-col gap-2">
+    <div className="mx-4 mb-2 flex flex-col gap-2">
       {pending.map((p) => (
         <div
           key={p.pendingId}
