@@ -32,7 +32,7 @@ import {
 // behind the whole window). The contents stay high-contrast so the glass
 // reads as a surface, not a haze.
 const GLASS_SHELL =
-  'rounded-2xl p-2.5 bg-popover/60 backdrop-blur-2xl backdrop-saturate-150 ' +
+  'rounded-2xl p-2.5 bg-popover/50 backdrop-blur-2xl backdrop-saturate-150 ' +
   'shadow-[inset_0_1px_0_0_rgba(255,255,255,0.22),inset_0_0_0_1px_rgba(255,255,255,0.09),0_18px_50px_-12px_rgba(0,0,0,0.65)]'
 
 interface Props {
@@ -110,7 +110,7 @@ function PromptButton({
       // preventDefault keeps the editor selection alive through the click.
       onMouseDown={(e) => e.preventDefault()}
       onClick={onHighlight}
-      className="gap-1.5 font-medium text-foreground hover:bg-white/10"
+      className="text-foreground hover:bg-white/10"
     >
       <IconHighlight size={15} stroke={2} style={{ color: 'oklch(0.82 0.17 85)' }} />
       Highlight
