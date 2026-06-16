@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 
 export const SETTINGS_CATEGORIES = [
   { id: 'general', label: 'General' },
+  { id: 'appearance', label: 'Appearance' },
   { id: 'files', label: 'Files & Notes' },
 ] as const
 

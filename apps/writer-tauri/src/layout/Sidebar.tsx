@@ -26,15 +26,11 @@ import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useGitHubAuth } from '@/hooks/useGitHubAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
 import { useConnectGitHubDialog } from '@/stores/connectGitHubDialog'
-import { useTheme } from '@/components/theme-provider'
-import { useFont, type FontOption } from '@/components/font-provider'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -44,7 +40,6 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
 
@@ -73,72 +68,7 @@ function accountDisplayName(email: string | null): string | null {
     .join(' ')
 }
 
-type PaletteOption = {
-  value: 'charcoal' | 'graphite' | 'olive' | 'paper' | 'mist'
-  label: string
-  swatch: { bg: string; fg: string; accent: string; border: string }
-}
-
-const PALETTE_OPTIONS: PaletteOption[] = [
-  {
-    value: 'charcoal',
-    label: 'Charcoal',
-    swatch: { bg: '#141414', fg: '#ECECEC', accent: '#262626', border: '#333333' },
-  },
-  {
-    value: 'graphite',
-    label: 'Graphite',
-    swatch: { bg: '#1D2024', fg: '#ECECEE', accent: '#2B2C32', border: '#383940' },
-  },
-  {
-    value: 'olive',
-    label: 'Olive',
-    swatch: { bg: '#111001', fg: '#E8E4D0', accent: '#26230C', border: '#3A3520' },
-  },
-  {
-    value: 'paper',
-    label: 'Paper',
-    swatch: { bg: '#D2D2D2', fg: '#1A1A1A', accent: '#BCBCBC', border: '#A8A8A8' },
-  },
-  {
-    value: 'mist',
-    label: 'Mist',
-    swatch: { bg: '#E9EAEC', fg: '#1D2024', accent: '#CFD1D4', border: '#B8BABE' },
-  },
-]
-
-type FontOptionDef = {
-  value: FontOption
-  label: string
-  /** Inline font-family used for the swatch so each row previews its
-   * own typeface — Geist row in Geist, Nunito row in Nunito. */
-  preview: string
-}
-
-const FONT_OPTIONS: FontOptionDef[] = [
-  { value: 'pretendard', label: 'Pretendard', preview: "'Pretendard Variable', sans-serif" },
-  { value: 'geist', label: 'Geist', preview: "'Geist Variable', sans-serif" },
-  { value: 'nunito', label: 'Nunito Sans', preview: "'Nunito Sans Variable', sans-serif" },
-]
-
-function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
-  return (
-    <span
-      className="inline-flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-full"
-      style={{ backgroundColor: swatch.bg, boxShadow: `inset 0 0 0 1px ${swatch.border}` }}
-      aria-hidden
-    >
-      <span
-        className="block size-2 rounded-full"
-        style={{ backgroundColor: swatch.fg }}
-      />
-    </span>
-  )
-}
-
 export function AppSidebar() {
-  const { palette, setPalette } = useTheme()
-  const { font, setFont } = useFont()
   const connectOpen = useConnectDialog((s) => s.open)
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const { account, refresh, disconnect } = useClaudeAuth()
@@ -260,22 +190,41 @@ export function AppSidebar() {
               surfaces. */}
           <WikiMetaRows />
           <SidebarMenuItem>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg" className="px-2 h-9 rounded-xl hover:bg-transparent">
-                  <Avatar className="size-4 shrink-0 opacity-80 group-hover/menu-button:opacity-100">
-                    <AvatarImage src="" />
-                    <AvatarFallback className="avatar-luma text-[9px] text-primary-foreground font-medium">
-                      {accountInitials(account.email)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <p className="flex-1 min-w-0 text-sm font-medium text-sidebar-foreground/70 truncate group-hover/menu-button:text-sidebar-foreground">
-                    {accountDisplayName(account.email) ?? 'Guest'}
-                  </p>
-                  <IconSelector size={14} stroke={1.5} className="ml-auto text-sidebar-foreground/60 group-hover/menu-button:text-sidebar-foreground" />
-                </SidebarMenuButton>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent side="top" align="start" className="w-52">
+            {/* Profile row: avatar + name (display), then the settings gear,
+                then the account-menu chevron. Each control is its own button
+                — the gear opens the settings modal, the chevron opens the
+                account dropdown. */}
+            <div className="flex h-9 items-center gap-0.5 rounded-xl px-2">
+              <Avatar className="size-4 shrink-0 opacity-80">
+                <AvatarImage src="" />
+                <AvatarFallback className="avatar-luma text-[9px] text-primary-foreground font-medium">
+                  {accountInitials(account.email)}
+                </AvatarFallback>
+              </Avatar>
+              <p className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/70">
+                {accountDisplayName(account.email) ?? 'Guest'}
+              </p>
+              <button
+                type="button"
+                aria-label="Settings"
+                title="Settings"
+                onClick={openSettings}
+                className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+              >
+                <IconSettings size={16} stroke={1.5} />
+              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Account menu"
+                    title="Account"
+                    className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                  >
+                    <IconSelector size={14} stroke={1.5} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="end" className="w-52">
                 {!account.connected && (
                   <>
                     <DropdownMenuItem onClick={() => setConnectOpen(true)}>
@@ -328,54 +277,18 @@ export function AppSidebar() {
                     <DropdownMenuSeparator />
                   </>
                 )}
-                <DropdownMenuItem onClick={openSettings}>
-                  <IconSettings size={16} stroke={1.5} />
-                  Settings
-                </DropdownMenuItem>
                 <DropdownMenuItem disabled title="Coming soon">
                   <IconFilter size={16} stroke={1.5} />
                   Filter
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-                  Palette
-                </DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={palette}
-                  onValueChange={(v) => setPalette(v as PaletteOption['value'])}
-                >
-                  {PALETTE_OPTIONS.map((opt) => (
-                    <DropdownMenuRadioItem key={opt.value} value={opt.value}>
-                      <PaletteSwatch swatch={opt.swatch} />
-                      {opt.label}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-                  Font
-                </DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={font}
-                  onValueChange={(v) => setFont(v as FontOption)}
-                >
-                  {FONT_OPTIONS.map((opt) => (
-                    <DropdownMenuRadioItem
-                      key={opt.value}
-                      value={opt.value}
-                      style={{ fontFamily: opt.preview }}
-                    >
-                      {opt.label}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-                <DropdownMenuSeparator />
                 <DropdownMenuItem className="text-destructive" onClick={handleSignOut}>
                   <IconLogout size={16} stroke={1.5} />
                   Sign out
                 </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>

@@ -16,6 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useSettingsDialog } from './useSettingsDialog'
 import { SettingsNav, type SettingsCategory } from './SettingsNav'
 import { GeneralSettings } from './categories/GeneralSettings'
+import { AppearanceSettings } from './categories/AppearanceSettings'
 import { FilesSettings } from './categories/FilesSettings'
 
 export function SettingsDialog() {
@@ -32,6 +33,7 @@ export function SettingsDialog() {
           <ScrollArea className="flex-1">
             <div className="px-6 py-5">
               {active === 'general' && <GeneralSettings />}
+              {active === 'appearance' && <AppearanceSettings />}
               {active === 'files' && <FilesSettings />}
             </div>
           </ScrollArea>
