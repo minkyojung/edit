@@ -1,16 +1,16 @@
-// Fixed footer rows for the two always-present, low-frequency wiki
-// surfaces: Profile (`wiki:profile`) and Conventions
-// (`system:conventions`). They sit beside Archived rather than in the
-// browsable wiki list — you visit them rarely, and they're singletons,
-// not catalog entries.
+// Fixed footer rows for the always-present, low-frequency surfaces: Profile
+// (`wiki:profile`), Conventions (`system:conventions`), Working
+// (`system:working`), and a single Skills entry point. They sit beside
+// Archived rather than in the browsable wiki list — singletons you visit
+// rarely. Clicking opens the surface in the main area (Skills opens the
+// SkillsPage; the three meta pages open in the editor).
 //
-// Both pages are lazy-created (ensureWikiDocs is a no-op), so a user
-// who skipped onboarding may not have them yet. Clicking ensures the
-// page exists first, then navigates — the row always works.
+// The three meta pages are lazy-created, so a user who skipped onboarding
+// may not have them yet — clicking ensures the page exists first.
 
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { IconUser, IconBook2, IconActivity } from '@tabler/icons-react'
+import { useNavigate, useLocation } from 'react-router-dom'
+import { IconUser, IconBook2, IconActivity, IconBolt } from '@tabler/icons-react'
 import { SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -30,6 +30,7 @@ export function WikiMetaRows() {
   const monthAnchor = useDocsStore((s) => s.monthAnchor)
   const activeSlug = useActiveSlug()
   const navigate = useNavigate()
+  const location = useLocation()
 
   // Existing slugs, if the pages have been created. Used for the
   // active-highlight and Profile's pending indicator. May be undefined
@@ -109,6 +110,17 @@ export function WikiMetaRows() {
         >
           <IconActivity size={16} stroke={1.5} />
           <span className="flex-1 text-left">Working</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          className="text-sidebar-foreground/70"
+          isActive={location.pathname === '/skills'}
+          onClick={() => navigate('/skills')}
+          aria-label="Skills"
+        >
+          <IconBolt size={16} stroke={1.5} />
+          <span className="flex-1 text-left">Skills</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </>

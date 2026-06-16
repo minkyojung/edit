@@ -11,10 +11,12 @@ import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { AppShell } from '@/layout/AppShell'
 import { Page } from '@/layout/Page'
 import { ReadLaterQueue } from '@/layout/ReadLaterQueue'
+import { SkillsPage } from '@/layout/SkillsPage'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
 import { ImageAltDialog } from '@/editor/ImageAltDialog'
 import { SaveArticleDialog } from '@/components/SaveArticleDialog'
+import { SettingsDialog } from '@/settings/SettingsDialog'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore, getActiveVaultPath } from '@/state/settingsStore'
@@ -251,7 +253,7 @@ export function App() {
 // render their own React surface instead of a document) must be exempt —
 // otherwise the self-heal reads their null slug as "broken" and bounces
 // the user back to today's daily.
-const SLUGLESS_ROUTES = new Set(['/read-later'])
+const SLUGLESS_ROUTES = new Set(['/read-later', '/skills'])
 
 function RouteSyncBridge() {
   useRouteSync()
@@ -403,6 +405,7 @@ function AppContent() {
             <Route path="/month/:ym" element={notesElement} />
             <Route path="/month/:ym/:slug" element={notesElement} />
             <Route path="/read-later" element={<ReadLaterQueue />} />
+            <Route path="/skills" element={<SkillsPage />} />
           </Routes>
         </AppShell>
         <CommandPalette />
@@ -412,6 +415,7 @@ function AppContent() {
         />
         <ImageAltDialog />
         <SaveArticleDialog />
+        <SettingsDialog />
       </>
     </ErrorBoundary>
   )

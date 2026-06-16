@@ -18,6 +18,7 @@ import { IngestProposalCard } from './IngestProposalCard'
 import { useDocsStore } from '@/state/docsStore'
 import { useCommandPaletteStore } from '@/state/commandPaletteStore'
 import { useNewFolderStore } from '@/state/newFolderStore'
+import { openSettings } from '@/settings/useSettingsDialog'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
@@ -327,7 +328,7 @@ export function AppSidebar() {
                     <DropdownMenuSeparator />
                   </>
                 )}
-                <DropdownMenuItem disabled title="Coming soon">
+                <DropdownMenuItem onClick={openSettings}>
                   <IconSettings size={16} stroke={1.5} />
                   Settings
                 </DropdownMenuItem>
