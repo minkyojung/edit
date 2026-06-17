@@ -19,6 +19,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  CardFooter,
+} from '@/components/ui/card'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
+import { Separator } from '@/components/ui/separator'
 
 // Color roles, grouped by purpose. Names only — the swatch resolves each
 // live via `var(--<role>)`, so values track the theme automatically and the
@@ -229,6 +242,17 @@ function RadiusSwatch({ label, cls, varName }: { label: string; cls?: string; va
 // variants × sizes × disabled. hover / focus are live — hover or tab the
 // buttons in the page to see those states.
 const BUTTON_VARIANTS = ['default', 'outline', 'secondary', 'ghost', 'destructive', 'link'] as const
+const BADGE_VARIANTS = [
+  'default',
+  'secondary',
+  'destructive',
+  'info',
+  'success',
+  'warning',
+  'outline',
+  'ghost',
+  'link',
+] as const
 const BUTTON_TEXT_SIZES = ['xs', 'sm', 'default', 'lg'] as const
 const BUTTON_ICON_SIZES = ['icon-xs', 'icon-sm', 'icon', 'icon-lg'] as const
 
@@ -377,6 +401,63 @@ export function GalleryPage() {
               <SelectItem value="one">Option one</SelectItem>
             </SelectContent>
           </Select>
+        </Subgroup>
+      </Section>
+
+      <Section title="Primitives · Display">
+        <Subgroup title="Badge">
+          {BADGE_VARIANTS.map((v) => (
+            <Badge key={v} variant={v}>
+              {v}
+            </Badge>
+          ))}
+        </Subgroup>
+        <Subgroup title="Card">
+          <Card className="w-72">
+            <CardHeader>
+              <CardTitle>Card title</CardTitle>
+              <CardDescription>A short supporting description.</CardDescription>
+            </CardHeader>
+            <CardContent className="text-[13px] text-muted-foreground">
+              Card body content sits here.
+            </CardContent>
+            <CardFooter className="gap-2">
+              <Button size="sm" variant="ghost">
+                Cancel
+              </Button>
+              <Button size="sm">Confirm</Button>
+            </CardFooter>
+          </Card>
+        </Subgroup>
+        <Subgroup title="Avatar">
+          <Avatar>
+            <AvatarFallback>WJ</AvatarFallback>
+          </Avatar>
+          <Avatar>
+            <AvatarFallback>AI</AvatarFallback>
+          </Avatar>
+        </Subgroup>
+        <Subgroup title="Skeleton">
+          <div className="w-56 space-y-2">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-9 w-24" />
+          </div>
+        </Subgroup>
+        <Subgroup title="Spinner">
+          <Spinner className="size-5 text-muted-foreground" />
+        </Subgroup>
+        <Subgroup title="Separator">
+          <div className="w-56">
+            <span className="text-[13px] text-foreground">Above</span>
+            <Separator className="my-2" />
+            <span className="text-[13px] text-foreground">Below</span>
+          </div>
+          <div className="flex h-6 items-center gap-3 text-[13px] text-foreground">
+            <span>Left</span>
+            <Separator orientation="vertical" />
+            <span>Right</span>
+          </div>
         </Subgroup>
       </Section>
     </div>
