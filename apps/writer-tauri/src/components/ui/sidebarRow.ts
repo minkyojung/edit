@@ -12,5 +12,5 @@
 // this overlay is sidebar-specific.
 export const SIDEBAR_ROW_INTERACTION =
   'rounded-sm text-sidebar-foreground/60 ' +
-  'hover:bg-foreground/8 hover:text-sidebar-foreground ' +
-  'data-active:bg-foreground/16 data-active:text-sidebar-foreground'
+  'hover:bg-foreground/12 hover:text-sidebar-foreground ' +
+  'data-active:bg-foreground/22 data-active:text-sidebar-foreground'

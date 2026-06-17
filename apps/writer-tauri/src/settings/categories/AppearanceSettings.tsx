@@ -20,11 +20,9 @@ type PaletteOption = {
 }
 
 const PALETTE_OPTIONS: PaletteOption[] = [
-  { value: 'charcoal', label: 'Charcoal', swatch: { bg: '#141414', fg: '#ECECEC', border: '#333333' } },
+  { value: 'dark', label: 'Dark', swatch: { bg: '#252525', fg: '#ECECEC', border: '#3A3A3A' } },
+  { value: 'light', label: 'Light', swatch: { bg: '#FFFFFF', fg: '#1A1A1A', border: '#D2D2D2' } },
   { value: 'graphite', label: 'Graphite', swatch: { bg: '#1D2024', fg: '#ECECEE', border: '#383940' } },
-  { value: 'olive', label: 'Olive', swatch: { bg: '#111001', fg: '#E8E4D0', border: '#3A3520' } },
-  { value: 'paper', label: 'Paper', swatch: { bg: '#D2D2D2', fg: '#1A1A1A', border: '#A8A8A8' } },
-  { value: 'mist', label: 'Mist', swatch: { bg: '#E9EAEC', fg: '#1D2024', border: '#B8BABE' } },
 ]
 
 type FontOptionDef = {

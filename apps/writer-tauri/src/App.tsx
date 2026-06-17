@@ -124,7 +124,7 @@ export function App() {
   // gates rendering on the catalog bootstrap, so hoisting the router
   // above it doesn't change any timing.
   return (
-    <ThemeProvider defaultPalette="charcoal" storageKey="writer-palette">
+    <ThemeProvider defaultPalette="dark" storageKey="writer-palette">
       <FontProvider defaultFont="pretendard" storageKey="writer-font">
         <TooltipProvider delayDuration={200}>
           <HashRouter>

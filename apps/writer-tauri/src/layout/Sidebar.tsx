@@ -157,7 +157,7 @@ export function AppSidebar() {
           aria-label="Search"
           title="Search (⌘K)"
           onClick={() => openPalette()}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/8 hover:text-sidebar-foreground"
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
         >
           <IconSearch size={16} stroke={1.75} />
         </button>
@@ -167,7 +167,7 @@ export function AppSidebar() {
               type="button"
               aria-label="Sort"
               title="Sort"
-              className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/8 hover:text-sidebar-foreground"
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
             >
               <IconArrowsSort size={16} stroke={1.75} />
             </button>
@@ -190,7 +190,7 @@ export function AppSidebar() {
           aria-label="New folder"
           title="New folder"
           onClick={startNewFolder}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/8 hover:text-sidebar-foreground"
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
         >
           <IconFolderPlus size={16} stroke={1.75} />
         </button>
@@ -199,7 +199,7 @@ export function AppSidebar() {
           aria-label="New note"
           title="New note (⌘N)"
           onClick={handleCreateNew}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/8 hover:text-sidebar-foreground"
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
         >
           <IconEdit size={16} stroke={1.75} />
         </button>

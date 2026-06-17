@@ -665,11 +665,11 @@ export function GalleryPage() {
             <SettingRow title="Theme" description="Color palette for the app.">
               <Select>
                 <SelectTrigger className="w-40">
-                  <SelectValue placeholder="Charcoal" />
+                  <SelectValue placeholder="Dark" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="charcoal">Charcoal</SelectItem>
-                  <SelectItem value="paper">Paper</SelectItem>
+                  <SelectItem value="dark">Dark</SelectItem>
+                  <SelectItem value="light">Light</SelectItem>
                 </SelectContent>
               </Select>
             </SettingRow>
