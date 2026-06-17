@@ -212,6 +212,9 @@ export interface DocsState {
    * so a self-write echoed back through the watcher can't double-add
    * the doc we just created. */
   addKnownDoc: (doc: KnownDoc) => void
+  /** Swap a doc's relPath in place (keeps slug/tab/handle) for an
+   * external move/rename. */
+  updateKnownDocPath: (slug: string, relPath: string) => void
   /** Drop a doc from the catalog because its file vanished from disk.
    * Delegates to {@link closeDoc} for the tab + handle cleanup when
    * the doc is currently open, so the existing tear-down ordering

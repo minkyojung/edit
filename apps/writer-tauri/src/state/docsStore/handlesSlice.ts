@@ -54,6 +54,9 @@ export interface HandlesSlice {
    * already present — protects against the race where our own
    * create flow's `.md` write echoes back as a watch event. */
   addKnownDoc: (doc: KnownDoc) => void
+  /** Swap a doc's `relPath` in place (keeps slug/tab/handle) — used when
+   * an external move/rename reappears the same note at a new path. */
+  updateKnownDocPath: (slug: string, relPath: string) => void
   /** Drop a doc from the catalog after its file disappeared from
    * disk. If the doc is currently open as a tab, closes it first so
    * the handle tear-down + tab-strip invariants run through their
@@ -162,6 +165,18 @@ export const createHandlesSlice = (
       if (s.knownDocs.some((d) => d.slug === doc.slug)) return s
       return { knownDocs: [...s.knownDocs, doc] }
     })
+  },
+
+  updateKnownDocPath: (slug, relPath) => {
+    // In-place relPath swap for an externally-moved/renamed note — keeps
+    // the slug, open tab, and handle intact (unlike remove+add, which
+    // tears them down). Only touches `relPath`, the placement field for
+    // generic notes.
+    set((s) => ({
+      knownDocs: s.knownDocs.map((d) =>
+        d.slug === slug ? { ...d, relPath } : d,
+      ),
+    }))
   },
 
   removeKnownDoc: (slug) => {

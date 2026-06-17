@@ -34,8 +34,9 @@ import { normalize } from '@tauri-apps/api/path'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useDocsStore } from '@/state/docsStore'
 import { findSlugByVaultPath } from '@/state/docsStore/helpers'
+import { pathForDoc } from '@/lib/docPaths'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
-import { isOurRecentWrite, listVaultDirsRecursive } from './vault'
+import { isOurRecentWrite, listVaultDirsRecursive, vaultFileExists } from './vault'
 import { isDirty } from './docFileSync'
 import { buildKnownDocForExternalPath } from './scanVault'
 import { useExternalConflictStore } from '@/state/externalConflictStore'
@@ -258,10 +259,17 @@ function dispatchEvent(event: { type: unknown }, paths: string[]): void {
     return
   }
   if ('modify' in type && type.modify) {
-    // `kind: 'data'` is the only modify variant that reaches here —
-    // `isActionableEvent` already filtered out `metadata`. A future
-    // `rename` kind would also land in `modify`; route it to add /
-    // remove based on shape when Phase 4.E.3 needs it.
+    // macOS notify delivers an external move/rename as a pair of
+    // `modify`/`rename`/`mode:'any'` events — one naming the old path,
+    // one the new — NOT as create+remove. Route those to the rename
+    // handler (which splits them into the add / remove legs A2's
+    // move-coalescing already understands). Plain content saves arrive
+    // as `kind: 'data'` and still reload in place.
+    const kind = (type.modify as { kind?: string }).kind
+    if (kind === 'rename') {
+      for (const rel of paths) void handleExternalRename(rel)
+      return
+    }
     for (const rel of paths) handleExternalReload(rel)
     return
   }
@@ -358,12 +366,19 @@ function handleExternalAdd(rel: string): void {
   void buildKnownDocForExternalPath(rel, state.knownDocs)
     .then((doc) => {
       if (!doc) return
-      // The catalog may have changed between the await above and now
-      // (a near-simultaneous bootstrap rerun, or another watcher
-      // event). Re-fetch to keep the add idempotent against any other
-      // path that might have just added the same slug.
       const live = useDocsStore.getState()
-      if (live.knownDocs.some((d) => d.slug === doc.slug)) return
+      const existing = live.knownDocs.find((d) => d.slug === doc.slug)
+      if (existing) {
+        // Same note (frontmatter slug) reappearing at a new path = an
+        // external move/rename. Update its placement IN PLACE so the
+        // open tab + handle survive, and cancel any pending delete for
+        // it (the remove leg of the move).
+        cancelPendingRemove(doc.slug)
+        if (doc.relPath && existing.relPath !== doc.relPath) {
+          live.updateKnownDocPath(doc.slug, doc.relPath)
+        }
+        return
+      }
       console.log('[vault:add] external doc added', { rel, slug: doc.slug })
       live.addKnownDoc(doc)
     })
@@ -386,6 +401,39 @@ function handleExternalAdd(rel: string): void {
  * edits. The user moved the file to the trash deliberately; second-
  * guessing them with a confirm dialog would feel paternalistic.
  */
+/** One leg of an external move/rename. macOS notify names a single
+ * path per `rename` event with `mode: 'any'`, so the event itself
+ * can't say whether this path is the move's source or destination —
+ * we disambiguate by disk presence:
+ *
+ *   - exists now  → destination. Route like a create: `handleExternalAdd`
+ *     matches the file's frontmatter slug to the open doc and swaps its
+ *     relPath in place (tab + handle survive), or adds a brand-new doc.
+ *   - gone now     → source. Route like a delete: `handleExternalRemove`
+ *     defers removal so the destination leg can cancel it — turning the
+ *     two events back into a single "moved" rather than "deleted + added".
+ *
+ * The two legs can arrive in either order; the add/remove handlers'
+ * existing pending-remove coalescing makes the result order-independent. */
+async function handleExternalRename(rel: string): Promise<void> {
+  if (await vaultFileExists(rel)) {
+    handleExternalAdd(rel)
+  } else {
+    handleExternalRemove(rel)
+  }
+}
+
+/** Pending deletes, keyed by slug. A remove event schedules one; a
+ * matching add (the other half of a move) cancels it. */
+const pendingRemove = new Map<string, ReturnType<typeof setTimeout>>()
+function cancelPendingRemove(slug: string): void {
+  const t = pendingRemove.get(slug)
+  if (t) {
+    clearTimeout(t)
+    pendingRemove.delete(slug)
+  }
+}
+
 function handleExternalRemove(rel: string): void {
   // A deletion is still an activity — `git add -A` in the next commit
   // will turn the missing file into a `D` change. We note it so the
@@ -397,8 +445,26 @@ function handleExternalRemove(rel: string): void {
   const state = useDocsStore.getState()
   const slug = findSlugByVaultPath(state.knownDocs, rel)
   if (!slug) return
-  console.log('[vault:remove] external doc removed', { rel, slug })
-  state.removeKnownDoc(slug)
+  // A move/rename fires remove(old)+add(new) with the SAME slug. Don't
+  // delete immediately — defer briefly. If the note reappears (the add
+  // leg updates its relPath in place), it's a move, not a delete. We
+  // re-check by path so the remove/add order doesn't matter: only
+  // delete if the doc still resolves to the removed path.
+  cancelPendingRemove(slug)
+  pendingRemove.set(
+    slug,
+    setTimeout(() => {
+      pendingRemove.delete(slug)
+      const live = useDocsStore.getState()
+      const doc = live.knownDocs.find((d) => d.slug === slug)
+      if (!doc) return
+      const bySlug = new Map(live.knownDocs.map((d) => [d.slug, d]))
+      if (pathForDoc(doc, (s) => bySlug.get(s)) === rel) {
+        console.log('[vault:remove] external doc removed', { rel, slug })
+        live.removeKnownDoc(slug)
+      }
+    }, 150),
+  )
 }
 
 /** True for vault-relative paths the router should process.
