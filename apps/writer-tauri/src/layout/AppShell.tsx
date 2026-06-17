@@ -26,12 +26,22 @@ interface AppShellProps {
 const PANEL_MIN_W = 300
 const PANEL_MAX_W = 560
 const PANEL_DEFAULT_W = 440
+// Left sidebar width bounds, in px. DEFAULT matches the shadcn SIDEBAR_WIDTH
+// constant (220px) so nothing shifts until the user drags.
+const SIDEBAR_MIN_W = 180
+const SIDEBAR_MAX_W = 360
+const SIDEBAR_DEFAULT_W = 260
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n))
 
 export function AppShell({ children, bottomLeft, collabHandle, collabStatus, editorView }: AppShellProps) {
   const { sidebarOpen, contextPanelOpen, setSidebar, togglePanels } = useLayoutStore()
   const navigate = useNavigate()
   const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_W)
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_W)
+  // True only while a sidebar drag is in flight, so the shadcn open/close
+  // width transition can be suppressed — otherwise the eased sidebar edge
+  // trails the (instant) handle and they visibly separate mid-drag.
+  const [resizingSidebar, setResizingSidebar] = useState(false)
 
   useEffect(() => {
     // App-level meta shortcuts. All three operate on the window scope
@@ -98,13 +108,75 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
     }
   }, [])
 
+  // Drag-to-resize the left sidebar. Mirror of startResize; dragging the
+  // handle right widens. Width is published as the --sidebar-width CSS var
+  // on the SidebarProvider (below), which the shadcn gap + container both
+  // consume — so both reflow together.
+  const startSidebarResize = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault()
+      const startX = e.clientX
+      const startW = sidebarWidth
+      setResizingSidebar(true)
+      const onMove = (ev: PointerEvent) => {
+        setSidebarWidth(clamp(startW + (ev.clientX - startX), SIDEBAR_MIN_W, SIDEBAR_MAX_W))
+      }
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+        setResizingSidebar(false)
+      }
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    },
+    [sidebarWidth],
+  )
+
+  const nudgeSidebarWidth = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault()
+      setSidebarWidth((w) => clamp(w - 16, SIDEBAR_MIN_W, SIDEBAR_MAX_W))
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault()
+      setSidebarWidth((w) => clamp(w + 16, SIDEBAR_MIN_W, SIDEBAR_MAX_W))
+    }
+  }, [])
+
   return (
     <SidebarProvider
       open={sidebarOpen}
       onOpenChange={setSidebar}
+      // Override the shadcn default (220px constant) with live state. The var
+      // cascades to the gap + container which both read w-(--sidebar-width).
+      style={{ '--sidebar-width': `${sidebarWidth}px` } as React.CSSProperties}
+      // Suppresses the width transition on the gap/container while dragging.
+      data-resizing={resizingSidebar ? '' : undefined}
     >
       <CloseConfirmDialog />
       <AppSidebar />
+
+      {/* Sidebar resize handle. Fixed at the sidebar's right edge (left =
+          current width); only mounted while the sidebar is open (off-canvas
+          when closed, nothing to resize). Sits above the z-10 container. */}
+      {sidebarOpen && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          aria-valuenow={sidebarWidth}
+          aria-valuemin={SIDEBAR_MIN_W}
+          aria-valuemax={SIDEBAR_MAX_W}
+          tabIndex={0}
+          onPointerDown={startSidebarResize}
+          onKeyDown={nudgeSidebarWidth}
+          style={{ left: sidebarWidth }}
+          className="fixed inset-y-0 z-20 w-px cursor-col-resize bg-transparent transition-colors hover:bg-sidebar-border/60 focus-visible:bg-sidebar-border focus-visible:outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-2 after:-translate-x-1/2"
+        />
+      )}
       <SidebarInset className="overflow-hidden">
         {/* Layout is plain CSS flex, NOT react-resizable-panels. The editor
             takes the remaining space (flex-1) and the inspector is a fixed

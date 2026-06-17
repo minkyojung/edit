@@ -211,6 +211,9 @@ function Sidebar({
         data-slot="sidebar-gap"
         className={cn(
           "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-tahoe",
+          // Kill the eased width transition mid-drag so the edge tracks the
+          // resize handle 1:1 (set by AppShell via data-resizing on the wrapper).
+          "group-data-[resizing]/sidebar-wrapper:transition-none",
           "group-data-[collapsible=offcanvas]:w-0",
           "group-data-[side=right]:rotate-180",
           variant === "floating" || variant === "inset"
@@ -222,6 +225,7 @@ function Sidebar({
         data-slot="sidebar-container"
         data-side={side}
         className={cn(
+          "group-data-[resizing]/sidebar-wrapper:transition-none",
           "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-tahoe data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] md:flex",
           // Adjust the padding for floating and inset variants.
           variant === "floating" || variant === "inset"
