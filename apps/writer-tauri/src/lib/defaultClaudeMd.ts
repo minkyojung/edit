@@ -35,6 +35,9 @@ daily/                   — user-authored daily journal (raw, immutable)
   2026-05-26.md          — one entry per date
   2026-05-26/<note>.md   — sub-notes nested under that date
 
+inbox/                   — landing zone for newly created / captured notes
+  <Title>.md             — a fresh general note (host places new notes here)
+
 wiki/                    — synthesized entity / topic / concept pages (you own these)
   <Title>.md             — the page itself
   <Title>.meta.json      — identity sidecar (system-managed, do not edit)
@@ -118,7 +121,7 @@ Do NOT read a wiki page when:
 - Use \`Edit\` with a unique \`old_string\`. **One issue per Edit call** — never bundle unrelated fixes into one \`new_string\`.
 - Widen \`old_string\` with surrounding context when the substring is not unique.
 - To append to a file, set \`new_string\` to the current last line followed by the new content.
-- Use \`Write\` only for brand-new files (typically a new \`wiki/<Title>.md\`). Do not \`Write\` over an existing file unless the user explicitly asks for a full rewrite.
+- Use \`Write\` only for brand-new files. A new synthesized page goes to \`wiki/<Title>.md\`. A general note the user asks you to create lands in \`inbox/\` — the host places every new note there regardless of the folder you put in the path, so only the filename you choose matters. Do not \`Write\` over an existing file unless the user explicitly asks for a full rewrite.
 - \`daily/*.md\` — edit only on explicit user request (typo fix, formatting). Otherwise treat as the user's own writing.
 - \`_system/index.md\` — keep it scannable, one line per wiki page. Update after wiki page lifecycle events.
 - \`_system/log.md\` — append-only. Do not rewrite past entries. Use the prefix format above so the user can \`grep "^## \\["\` to tail recent activity.
