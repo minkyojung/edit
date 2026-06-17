@@ -10,6 +10,15 @@
 import type { ReactNode } from 'react'
 import { IconPlus } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 // Color roles, grouped by purpose. Names only — the swatch resolves each
 // live via `var(--<role>)`, so values track the theme automatically and the
@@ -335,6 +344,39 @@ export function GalleryPage() {
               <IconPlus />
             </Button>
           ))}
+        </Subgroup>
+      </Section>
+
+      <Section title="Primitives · Inputs">
+        <Subgroup title="Input">
+          <Input className="w-56" placeholder="Placeholder" />
+          <Input className="w-56" defaultValue="Filled value" />
+          <Input className="w-56" placeholder="Disabled" disabled />
+          <Input className="w-56" defaultValue="Invalid" aria-invalid />
+        </Subgroup>
+        <Subgroup title="Textarea">
+          <Textarea className="w-56" placeholder="Placeholder" />
+          <Textarea className="w-56" placeholder="Disabled" disabled />
+        </Subgroup>
+        <Subgroup title="Select">
+          <Select>
+            <SelectTrigger className="w-56">
+              <SelectValue placeholder="Select an option" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="one">Option one</SelectItem>
+              <SelectItem value="two">Option two</SelectItem>
+              <SelectItem value="three">Option three</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select disabled>
+            <SelectTrigger className="w-56">
+              <SelectValue placeholder="Disabled" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="one">Option one</SelectItem>
+            </SelectContent>
+          </Select>
         </Subgroup>
       </Section>
     </div>
