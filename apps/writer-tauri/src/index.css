@@ -1262,6 +1262,13 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-active: oklch(0.925 0 0);
   --sidebar-active-foreground: oklch(0.205 0 0);
+  /* App-wide "selected" interaction tone. The sidebar rows are the reference
+     implementation of the two-tone interaction (hover = --accent, selected =
+     a recessed tone), so --selected aliases the per-theme --sidebar-active
+     value; var() resolves against whichever palette class is active, so this
+     single :root declaration covers every theme — no per-palette copy. */
+  --selected: var(--sidebar-active);
+  --selected-foreground: var(--sidebar-active-foreground);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
   --proof-ai: oklch(0.78 0.10 270 / 0.18);
@@ -1555,6 +1562,8 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-trigger: var(--sidebar-trigger);
+  --color-selected: var(--selected);
+  --color-selected-foreground: var(--selected-foreground);
   --font-heading: var(--font-sans);
   /* Default to Pretendard (Latin + Korean, unified metrics). Latin-only
      choices (Geist / Nunito) opt back in via their html.font-* class. */

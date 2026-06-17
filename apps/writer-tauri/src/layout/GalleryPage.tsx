@@ -329,6 +329,7 @@ const NAV: { group: string; titles: string[] }[] = [
       'Foundations · Typography',
       'Foundations · Spacing',
       'Foundations · Radius',
+      'Foundations · Interaction',
     ],
   },
   {
@@ -342,6 +343,7 @@ const NAV: { group: string; titles: string[] }[] = [
     ],
   },
   { group: 'Compositions', titles: ['Compositions'] },
+  { group: 'Consistency', titles: ['Consistency · Controls', 'Consistency · Panels'] },
 ]
 
 function GalleryNav() {
@@ -433,6 +435,23 @@ export function GalleryPage() {
           {RADIUS_VARS.map((r) => (
             <RadiusSwatch key={r} label={r} varName={r} />
           ))}
+        </div>
+      </Section>
+
+      <Section title="Foundations · Interaction">
+        <p className="text-[13px] text-muted-foreground">
+          The two-tone row interaction the sidebar uses, now available app-wide:
+          hover = <code className="font-mono">--accent</code>, selected ={' '}
+          <code className="font-mono">--selected</code>.
+        </p>
+        <div className="max-w-xs space-y-1">
+          <div className="rounded-sm px-3 py-2 text-[13px] text-foreground">Resting</div>
+          <div className="rounded-sm bg-accent px-3 py-2 text-[13px] text-accent-foreground">
+            Hover · --accent
+          </div>
+          <div className="rounded-sm bg-selected px-3 py-2 text-[13px] text-selected-foreground">
+            Selected · --selected
+          </div>
         </div>
       </Section>
 
@@ -660,6 +679,70 @@ export function GalleryPage() {
               </Button>
             </SettingRow>
           </div>
+        </div>
+      </Section>
+
+      <Section title="Consistency · Controls">
+        <p className="text-[13px] text-muted-foreground">
+          Same control family — but each has a different corner radius today
+          (button 4xl · input 3xl · select 2xl/3xl · textarea 2xl). Side by side
+          the mismatch shows; pick one radius to unify them.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button>Button</Button>
+          <Input className="w-40" placeholder="Input" />
+          <Select>
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="Select" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="a">Option</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <Textarea className="max-w-md" placeholder="Textarea" />
+      </Section>
+
+      <Section title="Consistency · Panels">
+        <p className="text-[13px] text-muted-foreground">
+          Floating surfaces — open each. Radii differ today (dialog 4xl ·
+          popover 3xl · dropdown 2xl/3xl · tooltip lg/xl). They should share one.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline">Dialog</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Dialog</DialogTitle>
+                <DialogDescription>Compare this corner radius.</DialogDescription>
+              </DialogHeader>
+            </DialogContent>
+          </Dialog>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline">Popover</Button>
+            </PopoverTrigger>
+            <PopoverContent className="text-[13px] text-muted-foreground">
+              Compare this corner radius.
+            </PopoverContent>
+          </Popover>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline">Dropdown</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem>Item one</DropdownMenuItem>
+              <DropdownMenuItem>Item two</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline">Tooltip</Button>
+            </TooltipTrigger>
+            <TooltipContent>Compare this radius</TooltipContent>
+          </Tooltip>
         </div>
       </Section>
       </div>
