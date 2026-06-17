@@ -16,6 +16,7 @@
 import { flushDirty, markSlugDirty, seedLastWrittenPath } from '@/lib/docFileSync'
 import { renameVaultFile } from '@/lib/vault'
 import { pathForDoc, sanitizeFilename } from '@/lib/docPaths'
+import { planFolderMove } from '@/lib/folderMove'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
 /** First free `<prefix><base>.md` (then ` 1`, ` 2`, …) not already
@@ -43,6 +44,81 @@ function uniqueRelPath(
   return candidate
 }
 
+/** Move the folder at `oldPath` to `desiredNewPath`: one atomic disk
+ * rename, then rewrite every derived bit of state (contained docs'
+ * relPath, the flush rename-tracker, and knownFolders — parent + nested).
+ * De-dupes the destination against an existing folder of the same name
+ * (` 1`, ` 2`, …). Shared by renameFolder (parent kept, leaf changes) and
+ * moveFolder (leaf kept, parent changes) so the subtle flush/seed
+ * ordering lives in exactly one place. Returns false when the folder
+ * holds type-derived docs (wiki/system) that can't be relocated by
+ * rewriting relPath, or on a filesystem error. No-op (true) if unchanged. */
+async function relocateFolder(
+  set: SetDocsState,
+  get: GetDocsState,
+  oldPath: string,
+  desiredNewPath: string,
+): Promise<boolean> {
+  if (desiredNewPath === oldPath) return true
+
+  const oldPrefix = `${oldPath}/`
+  const bySlug = new Map(get().knownDocs.map((d) => [d.slug, d]))
+  const getDoc = (s: string) => bySlug.get(s)
+  const affected = get().knownDocs.filter((d) => {
+    const p = pathForDoc(d, getDoc)
+    return !!p && p.startsWith(oldPrefix)
+  })
+  // Folders holding type-derived docs (wiki/system) can't be moved by
+  // rewriting relPath — refuse rather than leave them dangling.
+  if (affected.some((d) => d.type !== 'note' || !d.relPath)) return false
+
+  // Dedupe against an existing folder of the same target name.
+  const slash = desiredNewPath.lastIndexOf('/')
+  const parent = slash >= 0 ? desiredNewPath.slice(0, slash + 1) : ''
+  const leaf = desiredNewPath.slice(slash + 1)
+  const folders = new Set(get().knownFolders)
+  let newPath = desiredNewPath
+  let n = 1
+  while (folders.has(newPath)) {
+    newPath = `${parent}${leaf} ${n}`
+    n += 1
+  }
+
+  // Flush pending edits to the OLD paths first so no doc inside is dirty
+  // during the directory rename (a stray flush would otherwise recreate
+  // the old folder by writing to the pre-move path).
+  await flushDirty()
+  try {
+    await renameVaultFile(oldPath, newPath)
+  } catch (err) {
+    console.error('[docs] relocateFolder failed', err)
+    return false
+  }
+
+  // Rewrite the relPath of every note under the folder, and re-seed the
+  // flush rename-tracker to the new paths so it won't try to move the
+  // (already-moved) files again.
+  const seeds: Array<{ slug: string; mdRel: string }> = []
+  const list = get().knownDocs.map((d) => {
+    if (!d.relPath || !d.relPath.startsWith(oldPrefix)) return d
+    const newRel = `${newPath}/${d.relPath.slice(oldPrefix.length)}`
+    seeds.push({ slug: d.slug, mdRel: newRel })
+    return { ...d, relPath: newRel }
+  })
+  set({ knownDocs: list })
+  seedLastWrittenPath(seeds)
+  set((s) => ({
+    knownFolders: s.knownFolders.map((f) =>
+      f === oldPath
+        ? newPath
+        : f.startsWith(oldPrefix)
+          ? `${newPath}/${f.slice(oldPrefix.length)}`
+          : f,
+    ),
+  }))
+  return true
+}
+
 export interface EditSlice {
   /** Rename a user-owned doc. For generic `note` docs the filename is
    * the label, so this changes `relPath` (same folder, new filename,
@@ -68,6 +144,11 @@ export interface EditSlice {
    * `newLeafName` the new last segment. No-op if unchanged; returns
    * false on a filesystem error. */
   renameFolder: (oldPath: string, newLeafName: string) => Promise<boolean>
+  /** Move a folder into `destParent` ('' = vault root), keeping its leaf
+   * name. Shares relocateFolder with renameFolder. Rejects (false) a drop
+   * onto the folder itself or one of its descendants, and folders holding
+   * type-derived docs; no-op (true) if already under destParent. */
+  moveFolder: (folderPath: string, destParent: string) => Promise<boolean>
   /** Toggle the read/unread state of a read-it-later article. Sets
    * `readAt` to now when marking read, clears it (undefined) when
    * marking unread, then flushes so the `.meta.json` sidecar reflects
@@ -152,61 +233,18 @@ export const createEditSlice = (
     const safe = sanitizeFilename(newLeafName)
     const slash = oldPath.lastIndexOf('/')
     const parent = slash >= 0 ? oldPath.slice(0, slash + 1) : ''
-    let newPath = `${parent}${safe}`
-    if (newPath === oldPath) return true
+    // Same parent, new leaf — relocateFolder handles the disk rename,
+    // child relPath rewrite, dedupe, and knownFolders update.
+    return relocateFolder(set, get, oldPath, `${parent}${safe}`)
+  },
 
-    const oldPrefix = `${oldPath}/`
-    const bySlug = new Map(get().knownDocs.map((d) => [d.slug, d]))
-    const getDoc = (s: string) => bySlug.get(s)
-    const affected = get().knownDocs.filter((d) => {
-      const p = pathForDoc(d, getDoc)
-      return !!p && p.startsWith(oldPrefix)
-    })
-    // Folders holding type-derived docs (wiki/system) can't be renamed
-    // by rewriting relPath — refuse rather than leave them dangling.
-    if (affected.some((d) => d.type !== 'note' || !d.relPath)) return false
-
-    // Dedupe against an existing folder of the same target name.
-    const folders = new Set(get().knownFolders)
-    let n = 1
-    while (folders.has(newPath)) {
-      newPath = `${parent}${safe} ${n}`
-      n += 1
-    }
-
-    // Flush pending edits to the OLD paths first so no doc inside is
-    // dirty during the directory rename (a stray flush would otherwise
-    // recreate the old folder by writing to the pre-move path).
-    await flushDirty()
-    try {
-      await renameVaultFile(oldPath, newPath)
-    } catch (err) {
-      console.error('[docs] renameFolder failed', err)
-      return false
-    }
-
-    // Rewrite the relPath of every note under the folder, and re-seed
-    // the flush rename-tracker to the new paths so it won't try to move
-    // the (already-moved) files again.
-    const seeds: Array<{ slug: string; mdRel: string }> = []
-    const list = get().knownDocs.map((d) => {
-      if (!d.relPath || !d.relPath.startsWith(oldPrefix)) return d
-      const newRel = `${newPath}/${d.relPath.slice(oldPrefix.length)}`
-      seeds.push({ slug: d.slug, mdRel: newRel })
-      return { ...d, relPath: newRel }
-    })
-    set({ knownDocs: list })
-    seedLastWrittenPath(seeds)
-    set((s) => ({
-      knownFolders: s.knownFolders.map((f) =>
-        f === oldPath
-          ? newPath
-          : f.startsWith(oldPrefix)
-            ? `${newPath}/${f.slice(oldPrefix.length)}`
-            : f,
-      ),
-    }))
-    return true
+  moveFolder: async (folderPath, destParent) => {
+    // Cycle guard (into self / own descendant) + leaf-keeping newPath are
+    // decided by the pure planner; relocateFolder does the rest.
+    const plan = planFolderMove(folderPath, destParent)
+    if (plan.kind === 'reject') return false
+    if (plan.kind === 'noop') return true
+    return relocateFolder(set, get, folderPath, plan.newPath)
   },
 
   setArticleRead: (slug, read) => {

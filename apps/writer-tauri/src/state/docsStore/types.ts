@@ -315,6 +315,10 @@ export interface DocsState {
    * every note inside, and update knownFolders. Refuses folders holding
    * type-derived docs (wiki/system). */
   renameFolder: (oldPath: string, newLeafName: string) => Promise<boolean>
+  /** Move a folder into `destParent` ('' = root), keeping its leaf name.
+   * Rejects a drop onto itself / a descendant and type-derived folders;
+   * no-op if already there. */
+  moveFolder: (folderPath: string, destParent: string) => Promise<boolean>
   /** Toggle a read-it-later article's read/unread state (sets/clears
    * `readAt` and flushes the sidecar). No-op for non-article docs. */
   setArticleRead: (slug: string, read: boolean) => void

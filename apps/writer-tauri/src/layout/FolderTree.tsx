@@ -43,6 +43,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { vaultAbsPath } from '@/lib/vault'
 import { pathForDoc, sanitizeFilename } from '@/lib/docPaths'
+import { planFolderMove } from '@/lib/folderMove'
 import {
   TreeRow,
   TreeRowLabel,
@@ -141,6 +142,9 @@ interface TreeCtx {
   onStartCreateSubfolder: (parentPath: string) => void
   onCommitCreateSubfolder: (parentPath: string, name: string) => void
   onCancelCreateSubfolder: () => void
+  /** Path of the folder currently being dragged (null = none / dragging a
+   * doc). Lets each folder row grey out drop targets it can't land in. */
+  draggingFolderPath: string | null
 }
 
 function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
@@ -237,17 +241,38 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
   const isOpen = ctx.expanded.has(node.path)
   const isEditing = ctx.editingFolderPath === node.path
   // Droppable wraps ONLY the row (not the children) so nested folder
-  // drop zones don't overlap. `folder:` prefix distinguishes the id.
-  const { setNodeRef, isOver } = useDroppable({ id: `folder:${node.path}` })
+  // drop zones don't overlap. `folder:` prefix distinguishes the id from
+  // a doc-slug drag. The row is BOTH draggable (move this folder) and
+  // droppable (move something into it) — dnd-kit keeps those registries
+  // separate, so the shared id is fine; refs are composed below.
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id: `folder:${node.path}`,
+  })
+  const {
+    setNodeRef: setDragRef,
+    attributes,
+    listeners,
+    isDragging,
+  } = useDraggable({ id: `folder:${node.path}` })
+  const setRowRef = (el: HTMLElement | null) => {
+    setDropRef(el)
+    setDragRef(el)
+  }
+  // Don't highlight a drop target the dragged folder can't land in (its
+  // own subtree) — same reject rule the move action enforces.
+  const dropInvalid =
+    ctx.draggingFolderPath != null &&
+    planFolderMove(ctx.draggingFolderPath, node.path).kind === 'reject'
+  const showDrop = isOver && !dropInvalid
   return (
     <Collapsible asChild open={isOpen} onOpenChange={() => ctx.onToggle(node.path)}>
-      <li>
+      <li className={isDragging ? 'opacity-50' : undefined}>
         <ContextMenu>
           <ContextMenuTrigger asChild>
-            <div ref={setNodeRef}>
+            <div ref={setRowRef} {...attributes} {...listeners}>
               <TreeRow
                 className={
-                  isOver
+                  showDrop
                     ? 'bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring/50'
                     : undefined
                 }
@@ -362,6 +387,7 @@ export function FolderTree() {
   const createFolder = useDocsStore((s) => s.createFolder)
   const moveDocToFolder = useDocsStore((s) => s.moveDocToFolder)
   const renameFolder = useDocsStore((s) => s.renameFolder)
+  const moveFolder = useDocsStore((s) => s.moveFolder)
   const deleteFolder = useDocsStore((s) => s.deleteFolder)
   const duplicateDoc = useDocsStore((s) => s.duplicateDoc)
   const creatingFolder = useNewFolderStore((s) => s.creating)
@@ -410,9 +436,13 @@ export function FolderTree() {
       return changed ? next : prev
     })
   }, [activeSlug])
-  // Slug currently being dragged — drives the DragOverlay chip that
-  // follows the cursor so the drag is visible before the drop.
+  // What's currently being dragged — drives the DragOverlay chip that
+  // follows the cursor. Exactly one of these is set at a time: a doc
+  // (bare slug id) or a folder (`folder:<path>` id).
   const [draggingSlug, setDraggingSlug] = useState<string | null>(null)
+  const [draggingFolderPath, setDraggingFolderPath] = useState<string | null>(
+    null,
+  )
   const draggingDoc = draggingSlug
     ? knownDocs.find((d) => d.slug === draggingSlug)
     : null
@@ -501,12 +531,31 @@ export function FolderTree() {
       ),
     )
   }
-  const onDragStart = (e: DragStartEvent) => setDraggingSlug(String(e.active.id))
-  const onDragEnd = (e: DragEndEvent) => {
+  const onDragStart = (e: DragStartEvent) => {
+    const id = String(e.active.id)
+    if (id.startsWith('folder:')) {
+      setDraggingFolderPath(id.slice('folder:'.length))
+      setDraggingSlug(null)
+    } else {
+      setDraggingSlug(id)
+      setDraggingFolderPath(null)
+    }
+  }
+  const resetDrag = () => {
     setDraggingSlug(null)
+    setDraggingFolderPath(null)
+  }
+  const onDragEnd = (e: DragEndEvent) => {
+    resetDrag()
+    const activeId = String(e.active.id)
     const overId = e.over ? String(e.over.id) : null
     if (!overId || !overId.startsWith('folder:')) return
-    moveDocToFolder(String(e.active.id), overId.slice('folder:'.length))
+    const dest = overId.slice('folder:'.length)
+    if (activeId.startsWith('folder:')) {
+      void moveFolder(activeId.slice('folder:'.length), dest)
+    } else {
+      moveDocToFolder(activeId, dest)
+    }
   }
 
   const ctx: TreeCtx = {
@@ -534,6 +583,7 @@ export function FolderTree() {
     onStartCreateSubfolder,
     onCommitCreateSubfolder,
     onCancelCreateSubfolder,
+    draggingFolderPath,
   }
 
   return (
@@ -542,7 +592,7 @@ export function FolderTree() {
       collisionDetection={pointerWithin}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      onDragCancel={() => setDraggingSlug(null)}
+      onDragCancel={resetDrag}
     >
       <div className="flex h-full flex-col">
         <ul className="flex flex-col px-2 py-1">
@@ -572,7 +622,14 @@ export function FolderTree() {
       {/* Chip that follows the cursor while dragging, so the drag is
           visible before the drop lands. */}
       <DragOverlay dropAnimation={null}>
-        {draggingDoc ? (
+        {draggingFolderPath ? (
+          <div className="flex items-center gap-1.5 rounded-xl bg-sidebar px-3 py-1 text-sm font-medium text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border">
+            <IconFolder size={16} className="text-muted-foreground" />
+            <span className="truncate">
+              {draggingFolderPath.split('/').pop()}
+            </span>
+          </div>
+        ) : draggingDoc ? (
           <div className="rounded-xl bg-sidebar px-3 py-1 text-sm font-medium text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border">
             <span className="truncate">
               {draggingDoc.title?.trim() ||
