@@ -65,7 +65,7 @@ export function ContextUsagePopover({ snapshot }: { snapshot: ContextSnapshot | 
         <div
           className={cn(
             'h-full rounded-full transition-[width] duration-300',
-            warn ? 'bg-amber-500' : 'bg-foreground/70',
+            warn ? 'bg-warning' : 'bg-foreground/70',
           )}
           style={{ width: `${usedFrac * 100}%` }}
         />

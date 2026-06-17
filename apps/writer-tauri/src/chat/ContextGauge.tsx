@@ -38,7 +38,7 @@ export function ContextGauge({ snapshot }: Props) {
           className={cn(
             'flex size-8 items-center justify-center rounded-full transition-colors',
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/30 hover:bg-accent',
-            warn ? 'text-amber-500' : 'text-muted-foreground hover:text-foreground',
+            warn ? 'text-warning' : 'text-muted-foreground hover:text-foreground',
           )}
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none">

@@ -293,7 +293,7 @@ function ProgressLine({
         <span className="size-4 rounded-full border border-muted-foreground/30" />
       )}
       {status === 'loading' && <Spinner className="size-4" />}
-      {status === 'done' && <IconCheck className="size-4 text-emerald-600" />}
+      {status === 'done' && <IconCheck className="size-4 text-success" />}
       <span
         className={
           status === 'pending' ? 'text-muted-foreground' : 'text-foreground'
@@ -332,7 +332,7 @@ function FailedStage({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-start gap-2 text-sm text-muted-foreground">
-        <IconAlertCircle className="size-4 mt-0.5 text-amber-600" />
+        <IconAlertCircle className="size-4 mt-0.5 text-warning" />
         <span>{message}</span>
       </div>
       <div className="flex justify-end gap-2">

@@ -384,7 +384,7 @@ function DiffStat({ added, removed }: { added: number; removed: number }) {
   return (
     <span className="shrink-0 font-mono text-[12px]">
       {added > 0 && (
-        <span className="text-green-600 dark:text-green-400">+{added}</span>
+        <span className="text-success">+{added}</span>
       )}
       {removed > 0 && (
         <span className="ml-1 text-destructive">-{removed}</span>
