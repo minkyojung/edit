@@ -8,6 +8,8 @@
 // Step 1 ships Foundations → Color only; later steps append sections.
 
 import type { ReactNode } from 'react'
+import { IconPlus } from '@tabler/icons-react'
+import { Button } from '@/components/ui/button'
 
 // Color roles, grouped by purpose. Names only — the swatch resolves each
 // live via `var(--<role>)`, so values track the theme automatically and the
@@ -213,6 +215,24 @@ function RadiusSwatch({ label, cls, varName }: { label: string; cls?: string; va
   )
 }
 
+// ── Primitives · Button ───────────────────────────────────────────────
+// Imports the REAL Button (components/ui/button.tsx) and lays out its
+// variants × sizes × disabled. hover / focus are live — hover or tab the
+// buttons in the page to see those states.
+const BUTTON_VARIANTS = ['default', 'outline', 'secondary', 'ghost', 'destructive', 'link'] as const
+const BUTTON_TEXT_SIZES = ['xs', 'sm', 'default', 'lg'] as const
+const BUTTON_ICON_SIZES = ['icon-xs', 'icon-sm', 'icon', 'icon-lg'] as const
+
+// A labeled row of demo items (reused across primitive subgroups).
+function Subgroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      <h3 className="mb-3 text-[13px] font-medium text-muted-foreground">{title}</h3>
+      <div className="flex flex-wrap items-center gap-3">{children}</div>
+    </div>
+  )
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="mb-12">
@@ -285,6 +305,37 @@ export function GalleryPage() {
             <RadiusSwatch key={r} label={r} varName={r} />
           ))}
         </div>
+      </Section>
+
+      <Section title="Primitives · Button">
+        <Subgroup title="Variants">
+          {BUTTON_VARIANTS.map((v) => (
+            <Button key={v} variant={v}>
+              {v}
+            </Button>
+          ))}
+        </Subgroup>
+        <Subgroup title="Disabled">
+          {BUTTON_VARIANTS.map((v) => (
+            <Button key={v} variant={v} disabled>
+              {v}
+            </Button>
+          ))}
+        </Subgroup>
+        <Subgroup title="Sizes">
+          {BUTTON_TEXT_SIZES.map((s) => (
+            <Button key={s} size={s}>
+              {s}
+            </Button>
+          ))}
+        </Subgroup>
+        <Subgroup title="Icon sizes">
+          {BUTTON_ICON_SIZES.map((s) => (
+            <Button key={s} size={s} aria-label={s}>
+              <IconPlus />
+            </Button>
+          ))}
+        </Subgroup>
       </Section>
     </div>
   )
