@@ -44,6 +44,8 @@ import {
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,
+  SidebarMenuButton,
+  SidebarMenuAction,
 } from '@/components/ui/sidebar'
 
 /** Pull initials from an email's local part, splitting on .+_- so
@@ -218,51 +220,44 @@ export function AppSidebar() {
           {/* Profile + Conventions: always-present, low-frequency wiki
               surfaces. */}
           <WikiMetaRows />
-          <SidebarMenuItem>
-            {/* Profile row: the avatar+name is the primary target (opens the
-                account menu, so the whole identity area highlights on hover
-                like the nav rows above), then the settings gear, then the
-                chevron as the explicit menu affordance. h-8 + row hover keep
-                it in the same visual family as the WikiMetaRows. */}
-            <DropdownMenu open={accountMenuOpen} onOpenChange={setAccountMenuOpen}>
-              <div className="flex h-8 items-center gap-0.5 px-1">
-                <button
-                  type="button"
-                  aria-label="Account"
-                  onClick={() => setAccountMenuOpen(true)}
-                  className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-xl px-1.5 text-left transition-colors hover:bg-sidebar-accent"
-                >
-                  <Avatar className="size-4 shrink-0 opacity-80">
-                    <AvatarImage src="" />
-                    <AvatarFallback className="avatar-luma text-[9px] text-primary-foreground font-medium">
-                      {accountInitials(account.email)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/70">
-                    {accountDisplayName(account.email) ?? 'Guest'}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  aria-label="Settings"
-                  title="Settings"
-                  onClick={() => openSettings()}
-                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
-                >
-                  <IconSettings size={16} stroke={1.5} />
-                </button>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label="Account menu"
-                    title="Account"
-                    className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
-                  >
-                    <IconSelector size={14} stroke={1.5} />
-                  </button>
-                </DropdownMenuTrigger>
-              </div>
-              <DropdownMenuContent side="top" align="end" className="w-52">
+          <DropdownMenu open={accountMenuOpen} onOpenChange={setAccountMenuOpen}>
+            <SidebarMenuItem>
+              {/* Identity uses the SidebarMenuButton primitive so it inherits the
+                  EXACT radius / height / padding / full-width hover of the nav rows
+                  above (the shared SIDEBAR_ROW_INTERACTION skin). The gear and
+                  chevron float on top as SidebarMenuActions, so the whole row
+                  highlights as one unit instead of looking segmented. pr-14 keeps
+                  the name clear of both trailing actions. */}
+              <SidebarMenuButton
+                aria-label="Account"
+                className="pr-14 text-sidebar-foreground/70"
+                onClick={() => setAccountMenuOpen(true)}
+              >
+                <Avatar className="size-4 shrink-0 opacity-80">
+                  <AvatarImage src="" />
+                  <AvatarFallback className="avatar-luma text-[9px] text-primary-foreground font-medium">
+                    {accountInitials(account.email)}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="flex-1 truncate">
+                  {accountDisplayName(account.email) ?? 'Guest'}
+                </span>
+              </SidebarMenuButton>
+              <SidebarMenuAction
+                aria-label="Settings"
+                title="Settings"
+                className="right-7"
+                onClick={() => openSettings()}
+              >
+                <IconSettings stroke={1.5} />
+              </SidebarMenuAction>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuAction aria-label="Account menu" title="Account">
+                  <IconSelector stroke={1.5} />
+                </SidebarMenuAction>
+              </DropdownMenuTrigger>
+            </SidebarMenuItem>
+            <DropdownMenuContent side="top" align="end" className="w-52">
                 {/* The dropdown only *shows* the connected identities — managing
                     them (connect/disconnect) lives in Settings → Connections, so
                     settings stay the single home for connections. */}
@@ -299,8 +294,7 @@ export function AppSidebar() {
                   Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>
-            </DropdownMenu>
-          </SidebarMenuItem>
+          </DropdownMenu>
         </SidebarMenu>
       </SidebarFooter>
       <ConnectClaudeDialog open={connectOpen} onOpenChange={setConnectOpen} onConnected={refresh} />
