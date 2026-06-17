@@ -410,14 +410,31 @@ function buildProposeWriteTool(runId, emit) {
 // discovered + loaded on the next session via the plugins path. Decoupled
 // from the doc-edit pipeline because a skill is agent infrastructure, not a
 // wiki document.
-function buildProposeSkillTool(runId, emit) {
+function buildProposeSkillTool(runId, emit, existingSkills = []) {
+  // Show the model the current skill library so it can decide UPDATE vs NEW
+  // (the canonical extract→retrieve→decide pattern: the existing skills ARE
+  // the retrieved candidates). NOOP is handled by instruction — "don't call
+  // this tool at all" — so there's no NOOP field.
+  const library = existingSkills.length
+    ? existingSkills.map((s) => `- ${s.name}: ${s.description}`).join('\n')
+    : '(none yet)'
+  const description =
+    'Propose saving a REUSABLE procedure as a skill the user approves. Use ONLY when you notice a way of working worth applying again next time — a multi-step procedure you just performed, or a correction to how you should work. Do NOT use for one-off tasks, simple answers, or facts (those are memory, not skills); when unsure, lean toward NOT proposing.\n\n' +
+    'BEFORE proposing, check this list of skills that already exist:\n' +
+    `${library}\n\n` +
+    'Then choose ONE:\n' +
+    '- NOOP: if an existing skill already covers this, do NOT call this tool at all.\n' +
+    '- UPDATE: if this refines, corrects, or extends an existing skill, set `updates` to that skill\'s EXACT name, reuse that same `name`, and put the FULL revised procedure in `body` (it replaces the old one — do not send only the delta).\n' +
+    '- NEW: only for a genuinely new procedure. Pick a fresh kebab-case `name` that does NOT collide with an existing one, and omit `updates`.\n\n' +
+    'Fields: `name` (short kebab-case id), `description` (WHEN to use this skill — this is how it gets matched on future turns, so name the triggering situation specifically), `body` (the procedure as markdown), and optional `updates` (the exact name of the skill being revised). Returns immediately — do not wait for the user.'
   return tool(
     'propose_skill',
-    'Propose saving a REUSABLE procedure as a skill the user approves. Use ONLY when you notice a way of working worth applying again next time — a multi-step procedure you just performed, or a correction to how you should work. Do NOT use for one-off tasks, simple answers, or facts (those are memory, not skills); when unsure, lean toward NOT proposing. Provide: `name` (short kebab-case id), `description` (WHEN to use this skill — this is how it gets matched on future turns, so name the triggering situation specifically), and `body` (the procedure as markdown). Returns immediately — do not wait for the user.',
+    description,
     {
       name: z.string(),
       description: z.string(),
       body: z.string(),
+      updates: z.string().optional(),
     },
     async (input) => {
       const pendingId = globalThis.crypto.randomUUID()
@@ -428,6 +445,9 @@ function buildProposeSkillTool(runId, emit) {
           name: input.name,
           description: input.description,
           body: input.body,
+          // Present only when the model is revising an existing skill. The
+          // host uses it to render "update" vs "new" and to write in place.
+          updates: input.updates ?? null,
         }),
       )
       return {
@@ -1015,6 +1035,11 @@ export class Server {
     //     Claude Code ships with. We don't pass `allowedTools` because
     //     the global `permissionMode = 'bypassPermissions'` already
     //     auto-runs every tool call without prompting the user.
+
+    // Existing skills (name + description), populated below when a vault is
+    // present. propose_skill shows this list to the model so it can decide
+    // UPDATE-an-existing vs create-NEW instead of minting near-duplicates.
+    let existingSkills = []
     if (vaultPath) {
       options.cwd = vaultPath
       // Built-in tool exposure is per-caller. Chat needs the full
@@ -1075,9 +1100,8 @@ export class Server {
       // activates one. Additive + backward-compatible: no skills dir → the
       // `readdir` throws, we swallow it, and nothing about the call changes.
       try {
-        const skillNames = (
-          await readdir(join(vaultPath, '_system/agent/skills'), { withFileTypes: true })
-        )
+        const skillsRoot = join(vaultPath, '_system/agent/skills')
+        const skillNames = (await readdir(skillsRoot, { withFileTypes: true }))
           .filter((d) => d.isDirectory())
           .map((d) => d.name)
         if (skillNames.length > 0) {
@@ -1092,6 +1116,27 @@ export class Server {
           // case needs patching.
           if (Array.isArray(options.tools) && !options.tools.includes('Skill')) {
             options.tools = [...options.tools, 'Skill']
+          }
+          // Read each SKILL.md's frontmatter name + description so
+          // propose_skill can present the existing library to the model for
+          // its UPDATE/NEW decision. A skill folder without a readable
+          // SKILL.md is just skipped (it still loads via the plugin path).
+          for (const dir of skillNames) {
+            try {
+              const raw = await readFile(join(skillsRoot, dir, 'SKILL.md'), 'utf-8')
+              const fm = raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? ''
+              const pick = (k) =>
+                fm
+                  .split('\n')
+                  .find((l) => l.startsWith(`${k}:`))
+                  ?.slice(k.length + 1)
+                  .trim()
+                  .replace(/^["']|["']$/g, '') ?? ''
+              existingSkills.push({ name: pick('name') || dir, description: pick('description') })
+            } catch {
+              // Unreadable SKILL.md — skip; it just won't appear in the
+              // dedup list shown to the model.
+            }
           }
         }
       } catch {
@@ -1134,7 +1179,7 @@ export class Server {
       } else if (name === 'propose_write') {
         relayDefs.push(buildProposeWriteTool(runId, this.emit))
       } else if (name === 'propose_skill') {
-        relayDefs.push(buildProposeSkillTool(runId, this.emit))
+        relayDefs.push(buildProposeSkillTool(runId, this.emit, existingSkills))
       } else if (name === 'propose_multi_edit') {
         relayDefs.push(buildProposeMultiEditTool(runId, this.emit, vaultPath))
       } else if (name === 'edit_visualization') {
