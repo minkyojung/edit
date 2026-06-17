@@ -22,7 +22,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { toast } from 'sonner'
-import { FREE_CHAT_PROMPT } from '../skills/freeChat'
 import { parseVizSpec } from '@/viz/vizSpec'
 import { replaceVizById } from '@/editor/vizBlockOps'
 import { assembleContext } from '@/agent/contextPipeline'
@@ -43,7 +42,6 @@ import { useFastModeStore } from '@/state/fastModeStore'
 import { contextLimitForModel } from '@/lib/contextLimit'
 import type { ContextSnapshot } from '@/chat/types'
 import {
-  agentIdForModel,
   DEFAULT_MODEL,
   type ChatErrorRateLimit,
   type ChatEvent,
@@ -52,6 +50,7 @@ import {
   type RunChatArgs,
   type RunChatResult,
 } from './types'
+import { resolveAgent } from '../agents'
 import {
   buildUserPrompt,
   composeSystemBlocks,
@@ -106,12 +105,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     onSessionStart,
     sessionStarted,
   } = args
-  // agentIdForModel was used to stamp marks; with marks gone the
-  // value is now only kept for compatibility with any downstream
-  // metadata field that still references it. We compute it lazily
-  // so unused imports surface as lint failures if the binding
-  // disappears entirely.
-  void agentIdForModel
 
   // Effort default: Haiku is the copyeditor lane (short, latency-
   // sensitive turns) → 'low'. Sonnet/Opus are the chat lane → 'medium'.
@@ -138,7 +131,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       (slug ? useDocsStore.getState().handles[slug]?.bodyMarkdown : undefined) ??
       '')
   const docForPrompt = truncateDocForPrompt(docText)
-  const systemBody = systemPrompt ?? FREE_CHAT_PROMPT
+  // Resolve this thread's agent (role) — the prompt body + memory
+  // namespace come from here. Currently always the built-in default,
+  // so behaviour is unchanged; the seam lets roles plug in later.
+  const agent = resolveAgent(useThreadsStore.getState().threads[threadId]?.agentId)
+  const systemBody = systemPrompt ?? agent.systemPrompt
   const prompt = promptOverride ?? buildUserPrompt(history ?? [])
 
   // Chat mode — Karpathy / Claude Code shape: only the always-on

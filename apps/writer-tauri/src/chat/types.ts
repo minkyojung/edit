@@ -199,6 +199,11 @@ export interface ThreadMeta {
    * the history-shape heuristic. Absent on threads created before this
    * field existed; callers fall back to the legacy heuristic in that case. */
   sessionStarted?: boolean
+  /** Which agent (role) drives this thread — its persona prompt + memory
+   * namespace. Absent on older threads; resolveAgent() treats absence as
+   * the built-in 'default'. Currently always 'default' (no role-creation
+   * UX yet); the field exists so roles can be assigned without backfilling. */
+  agentId?: string
 }
 
 export interface ChatTurn {

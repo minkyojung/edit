@@ -24,17 +24,6 @@ export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY_
 export const DEFAULT_MODEL = 'claude-sonnet-4-6'
 export const DOC_CHAR_CAP = 60_000
 
-/** Maps Anthropic model id → the agent identifier we stamp on
- * marks created from a turn. The agent id is read by mark UI to
- * attribute proposals. We pass the full id through (e.g.
- * "claude-haiku-4-5-20251001") instead of collapsing it to the
- * family name, so display surfaces can render the family AND the
- * version. formatModel in lib/formatModel.ts handles the
- * user-facing collapse. */
-export function agentIdForModel(model: string): string {
-  return `ai:${model}`
-}
-
 /** A visualization the user armed for editing (via the ✎ toolbar, or by
  * selecting a viz block). When present on a run, the agent is given the
  * edit_visualization relay tool and told the target's id + current spec, so
