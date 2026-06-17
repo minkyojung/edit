@@ -57,8 +57,15 @@ function CommandDialog({
           // background (no whole-screen blur), so just the panel is frosted —
           // the rest of the screen stays sharp, only darker. sm:max-w-2xl makes
           // it much wider than the default dialog.
-          "top-1/3 translate-y-0 overflow-hidden rounded-4xl! p-0 sm:max-w-2xl",
+          "top-1/4 translate-y-0 overflow-hidden rounded-4xl! p-0 sm:max-w-2xl",
           "bg-popover/55 backdrop-blur-2xl supports-backdrop-filter:bg-popover/45",
+          // Theme-adaptive tint/sheen on the glass (richer than flat popover):
+          // a soft top-down foreground gradient gives the panel body + depth,
+          // and it inverts automatically (light sheen on dark, dark on light)
+          // because --foreground flips per theme.
+          "bg-linear-to-b from-foreground/[0.07] to-transparent",
+          // Edge definition: a theme-adaptive hairline + soft drop shadow.
+          "border border-foreground/10 shadow-xl",
           className
         )}
         showCloseButton={showCloseButton}
@@ -75,17 +82,17 @@ function CommandInput({
 }: React.ComponentProps<typeof CommandPrimitive.Input>) {
   return (
     <div data-slot="command-input-wrapper" className="p-1 pb-0">
-      <InputGroup className="h-9 bg-input/50">
+      <InputGroup className="h-14 bg-transparent">
         <CommandPrimitive.Input
           data-slot="command-input"
           className={cn(
-            "w-full text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
+            "w-full text-lg outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
             className
           )}
           {...props}
         />
         <InputGroupAddon>
-          <IconSearch size={16} stroke={2} className="shrink-0 opacity-50" />
+          <IconSearch size={20} stroke={2} className="shrink-0 opacity-50" />
         </InputGroupAddon>
       </InputGroup>
     </div>
