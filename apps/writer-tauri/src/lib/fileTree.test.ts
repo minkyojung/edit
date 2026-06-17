@@ -143,3 +143,39 @@ describe('buildFileTree — sort modes', () => {
     expect(names).toEqual(['apple', 'banana'])
   })
 })
+
+describe('buildFileTree — attachments (non-md files)', () => {
+  it('places a non-md file under its folder as an attachment node (extension kept)', () => {
+    const tree = buildFileTree([], [], 'name-asc', ['inbox/photo.png'])
+    expect(tree).toEqual([
+      {
+        kind: 'folder',
+        name: 'inbox',
+        path: 'inbox',
+        children: [{ kind: 'attachment', name: 'photo.png', path: 'inbox/photo.png' }],
+      },
+    ])
+  })
+
+  it('groups folders first, then notes + attachments together by name', () => {
+    const tree = buildFileTree(
+      [doc({ slug: 'n', type: 'note', title: 'banana', relPath: 'banana.md' })],
+      ['sub'],
+      'name-asc',
+      ['apple.png', 'cherry.pdf'],
+    )
+    // folder 'sub' first, then the file group sorted by name:
+    // apple.png, banana (note), cherry.pdf
+    expect(tree.map((n) => `${n.kind}:${n.name}`)).toEqual([
+      'folder:sub',
+      'attachment:apple.png',
+      'file:banana',
+      'attachment:cherry.pdf',
+    ])
+  })
+
+  it('hides attachments under hidden tree paths', () => {
+    const tree = buildFileTree([], [], 'name-asc', ['_system/secret.png', 'ok.png'])
+    expect(tree.map((n) => n.name)).toEqual(['ok.png'])
+  })
+})

@@ -11,6 +11,7 @@ import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { AppShell } from '@/layout/AppShell'
 import { Page } from '@/layout/Page'
 import { ReadLaterQueue } from '@/layout/ReadLaterQueue'
+import { FileViewer } from '@/layout/FileViewer'
 import { SkillsPage } from '@/layout/SkillsPage'
 import { GalleryPage } from '@/layout/GalleryPage'
 import { CommandPalette } from '@/layout/CommandPalette'
@@ -273,6 +274,10 @@ function RouteSyncBridge() {
     // null slug, judges the URL "broken", and bounces back to today's
     // daily a beat after the queue paints.
     if (SLUGLESS_ROUTES.has(pathname)) return
+    // The file viewer carries a path param, not a slug — its route is
+    // variable (`/file/<encoded path>`), so it can't live in the
+    // exact-match Set above. Exempt the whole prefix from the self-heal.
+    if (pathname.startsWith('/file/')) return
     const slug = parseSlugFromPath(pathname)
     const valid = slug !== null && knownDocs.some((d) => d.slug === slug)
     if (valid) return
@@ -405,6 +410,7 @@ function AppContent() {
             <Route path="/week/:slug" element={notesElement} />
             <Route path="/month/:ym" element={notesElement} />
             <Route path="/month/:ym/:slug" element={notesElement} />
+            <Route path="/file/:rel" element={<FileViewer />} />
             <Route path="/read-later" element={<ReadLaterQueue />} />
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/gallery" element={<GalleryPage />} />

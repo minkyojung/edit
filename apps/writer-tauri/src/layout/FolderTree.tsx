@@ -26,7 +26,16 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
-import { IconChevronRight, IconFolder } from '@tabler/icons-react'
+import {
+  IconChevronRight,
+  IconFolder,
+  IconPhoto,
+  IconFileTypePdf,
+  IconMusic,
+  IconVideo,
+  IconFileText,
+  IconFile,
+} from '@tabler/icons-react'
 import { useDocsStore } from '@/state/docsStore'
 import { useNewFolderStore } from '@/state/newFolderStore'
 import { useSortStore } from '@/state/sortStore'
@@ -34,10 +43,12 @@ import { useActiveSlug } from '@/hooks/useActiveSlug'
 import {
   buildFileTree,
   isHiddenTreePath,
+  type TreeAttachment,
   type TreeFile,
   type TreeFolder,
   type TreeNode,
 } from '@/lib/fileTree'
+import { classifyAsset } from '@/lib/attachments'
 import { open as openInDefaultApp } from '@tauri-apps/plugin-shell'
 import { invoke } from '@tauri-apps/api/core'
 import { buildViewUrl } from '@/lib/viewUrl'
@@ -132,6 +143,8 @@ interface TreeCtx {
   onCopyPath: (relPath: string) => void
   onOpenInDefaultApp: (relPath: string) => void
   onRevealInFinder: (relPath: string) => void
+  /** Open a non-md attachment in the in-app file viewer (by path). */
+  onOpenFile: (relPath: string) => void
   editingFolderPath: string | null
   onStartFolderRename: (path: string) => void
   onCommitFolderRename: (path: string, name: string) => void
@@ -351,12 +364,64 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
   )
 }
 
-function NodeView({ node, ctx }: { node: TreeNode; ctx: TreeCtx }) {
-  return node.kind === 'file' ? (
-    <FileNode node={node} ctx={ctx} />
-  ) : (
-    <FolderNode node={node} ctx={ctx} />
+/** Icon for an attachment row, picked from its extension class. */
+function attachmentIcon(name: string) {
+  switch (classifyAsset(name)) {
+    case 'image':
+      return IconPhoto
+    case 'pdf':
+      return IconFileTypePdf
+    case 'audio':
+      return IconMusic
+    case 'video':
+      return IconVideo
+    case 'text':
+      return IconFileText
+    default:
+      return IconFile
+  }
+}
+
+/** A non-markdown file row. Read-only: clicking opens the in-app viewer;
+ * the context menu only exposes the path-based actions (no rename / delete
+ * / move — attachments aren't catalog docs). */
+function AttachmentNode({ node, ctx }: { node: TreeAttachment; ctx: TreeCtx }) {
+  const Icon = attachmentIcon(node.name)
+  return (
+    <li>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <TreeRow>
+            <TreeRowLead asChild>
+              <span aria-hidden>
+                <Icon size={16} className="text-muted-foreground" />
+              </span>
+            </TreeRowLead>
+            <TreeRowLabel onClick={() => ctx.onOpenFile(node.path)}>
+              <span className="truncate">{node.name}</span>
+            </TreeRowLabel>
+          </TreeRow>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem onSelect={() => ctx.onCopyPath(node.path)}>
+            Copy path
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => ctx.onOpenInDefaultApp(node.path)}>
+            Open in default app
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => ctx.onRevealInFinder(node.path)}>
+            Reveal in Finder
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    </li>
   )
+}
+
+function NodeView({ node, ctx }: { node: TreeNode; ctx: TreeCtx }) {
+  if (node.kind === 'file') return <FileNode node={node} ctx={ctx} />
+  if (node.kind === 'attachment') return <AttachmentNode node={node} ctx={ctx} />
+  return <FolderNode node={node} ctx={ctx} />
 }
 
 /** Drop target for the empty area below the tree = the vault root.
@@ -379,6 +444,7 @@ function RootDropZone() {
 export function FolderTree() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const knownFolders = useDocsStore((s) => s.knownFolders)
+  const knownFiles = useDocsStore((s) => s.knownFiles)
   const sidebarTab = useDocsStore((s) => s.sidebarTab)
   const dayAnchor = useDocsStore((s) => s.dayAnchor)
   const monthAnchor = useDocsStore((s) => s.monthAnchor)
@@ -397,8 +463,8 @@ export function FolderTree() {
   const activeSlug = useActiveSlug()
 
   const tree = useMemo(
-    () => buildFileTree(knownDocs, knownFolders, sortMode),
-    [knownDocs, knownFolders, sortMode],
+    () => buildFileTree(knownDocs, knownFolders, sortMode, knownFiles),
+    [knownDocs, knownFolders, sortMode, knownFiles],
   )
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [editingSlug, setEditingSlug] = useState<string | null>(null)
@@ -462,6 +528,10 @@ export function FolderTree() {
     })
   const onOpen = (slug: string) =>
     navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
+  // Attachments open the in-app file viewer, keyed by path (encode so a
+  // nested path's slashes survive as one route param).
+  const onOpenFile = (relPath: string) =>
+    navigate(`/file/${encodeURIComponent(relPath)}`)
   const onCommitRename = (slug: string, name: string) => {
     renameDoc(slug, name) // trims / validates / de-dupes; empty is a no-op
     setEditingSlug(null)
@@ -574,6 +644,7 @@ export function FolderTree() {
     onCopyPath,
     onOpenInDefaultApp,
     onRevealInFinder,
+    onOpenFile,
     editingFolderPath,
     onStartFolderRename: setEditingFolderPath,
     onCommitFolderRename,

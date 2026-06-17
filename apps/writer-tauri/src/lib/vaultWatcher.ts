@@ -36,7 +36,12 @@ import { useDocsStore } from '@/state/docsStore'
 import { findSlugByVaultPath } from '@/state/docsStore/helpers'
 import { pathForDoc } from '@/lib/docPaths'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
-import { isOurRecentWrite, listVaultDirsRecursive, vaultFileExists } from './vault'
+import {
+  isOurRecentWrite,
+  listVaultDirsRecursive,
+  listVaultFilesRecursive,
+  vaultFileExists,
+} from './vault'
 import { isDirty } from './docFileSync'
 import { buildKnownDocForExternalPath } from './scanVault'
 import { useExternalConflictStore } from '@/state/externalConflictStore'
@@ -57,11 +62,12 @@ function isActivityPath(rel: string): boolean {
 
 let activeUnwatch: (() => void) | null = null
 
-/** Folder create/rename/delete (including external Finder changes)
- * never surface as watchable `.md` files, so the file router below
- * ignores them — leaving the sidebar's folder inventory (`knownFolders`)
- * stale. Re-read the folder list on any create/remove burst, debounced
- * so a batch op (or our own write) collapses to one cheap dir walk. */
+/** Folder create/rename/delete AND non-markdown file add/remove (incl.
+ * external Finder changes) never surface as watchable `.md` files, so the
+ * file router below ignores them — leaving the sidebar's folder inventory
+ * (`knownFolders`) and attachment inventory (`knownFiles`) stale. Re-read
+ * both on any create/remove burst, debounced so a batch op (or our own
+ * write) collapses to one cheap walk. */
 let folderRefreshTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleFolderRefresh(): void {
   if (folderRefreshTimer) clearTimeout(folderRefreshTimer)
@@ -70,6 +76,9 @@ function scheduleFolderRefresh(): void {
     void listVaultDirsRecursive()
       .then((folders) => useDocsStore.setState({ knownFolders: folders }))
       .catch((err) => console.warn('[watch] folder refresh failed', err))
+    void listVaultFilesRecursive()
+      .then((files) => useDocsStore.setState({ knownFiles: files }))
+      .catch((err) => console.warn('[watch] file refresh failed', err))
   }, 400)
 }
 

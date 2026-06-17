@@ -37,6 +37,7 @@ import { dirname, join } from '@tauri-apps/api/path'
 import { invoke } from '@tauri-apps/api/core'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useGitStore } from '@/state/gitStore'
+import { isAttachmentFile } from './attachments'
 
 /** Tell the git layer that a path was just modified. This is an
  * **activity signal**, not a commit trigger — the gitStore decides
@@ -426,6 +427,34 @@ export async function listVaultDirsRecursive(subRel = ''): Promise<string[]> {
     const childRel = subRel === '' ? entry.name : `${subRel}/${entry.name}`
     out.push(childRel)
     out.push(...(await listVaultDirsRecursive(childRel)))
+  }
+  return out
+}
+
+/** Every (non-hidden) attachment file in the vault, vault-relative and
+ * recursive — the non-markdown files (pdf/png/txt/…) the sidebar shows as
+ * read-only rows. Notes (`.md`), dot-dirs/files, and app sidecars are
+ * filtered out by `isAttachmentFile`. Mirrors listVaultDirsRecursive. */
+export async function listVaultFilesRecursive(subRel = ''): Promise<string[]> {
+  const root = getActiveVaultPath()
+  if (!root) return []
+  if (subRel !== '' && !(await exists(await resolveVaultPath(subRel)))) return []
+  const absPath = subRel === '' ? root : await resolveVaultPath(subRel)
+  let entries: Awaited<ReturnType<typeof readDir>>
+  try {
+    entries = await readDir(absPath)
+  } catch {
+    return []
+  }
+  const out: string[] = []
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    const childRel = subRel === '' ? entry.name : `${subRel}/${entry.name}`
+    if (entry.isDirectory) {
+      out.push(...(await listVaultFilesRecursive(childRel)))
+    } else if (entry.isFile && isAttachmentFile(childRel)) {
+      out.push(childRel)
+    }
   }
   return out
 }

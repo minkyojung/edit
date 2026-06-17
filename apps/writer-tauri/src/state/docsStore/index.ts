@@ -36,6 +36,7 @@ export const useDocsStore = create<DocsState>()(
       // reads/writes it via set/get but no single slice owns it.
       knownDocs: [],
       knownFolders: [],
+      knownFiles: [],
 
       ...createTabsSlice(set, get),
       ...createSidebarSlice(set),

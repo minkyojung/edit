@@ -54,7 +54,17 @@ export interface TreeFolder {
   children: TreeNode[]
 }
 
-export type TreeNode = TreeFile | TreeFolder
+/** A non-markdown file (pdf/png/txt/…) shown as a read-only row. No slug
+ * and no Yjs doc — clicking it opens the in-app file viewer by path, not
+ * the editor. `name` keeps its extension so the row reads like Finder. */
+export interface TreeAttachment {
+  kind: 'attachment'
+  name: string
+  /** Vault-relative file path (e.g. `inbox/photo.png`). */
+  path: string
+}
+
+export type TreeNode = TreeFile | TreeFolder | TreeAttachment
 
 /** Build the sidebar tree from the catalog. Archived docs and docs with
  *  no placement (e.g. a daily without a date) are dropped. Folders always
@@ -64,6 +74,7 @@ export function buildFileTree(
   docs: KnownDoc[],
   folders: string[] = [],
   sortMode: SortMode = 'name-asc',
+  files: string[] = [],
 ): TreeNode[] {
   const bySlug = new Map(docs.map((d) => [d.slug, d]))
   const getDoc = (slug: string) => bySlug.get(slug)
@@ -118,6 +129,16 @@ export function buildFileTree(
     ensureFolder(dir)
   }
 
+  // Non-markdown attachments — read-only rows at their on-disk path. The
+  // filename keeps its extension so the row reads like Finder.
+  for (const rel of files) {
+    if (!rel || isHiddenTreePath(rel)) continue
+    const segments = rel.split('/')
+    const fileName = segments.pop() ?? rel
+    const children = ensureFolder(segments.join('/'))
+    children.push({ kind: 'attachment', name: fileName, path: rel })
+  }
+
   sortNodes(rootChildren, sortMode)
   return rootChildren
 }
@@ -142,11 +163,13 @@ function compareInGroup(a: TreeNode, b: TreeNode, mode: SortMode): number {
   return mode === 'created-desc' ? tb.localeCompare(ta) : ta.localeCompare(tb)
 }
 
-/** Folders first, then files; within each group, ordered by `mode`.
- *  Recurses into folder children. */
+/** Folders first, then files + attachments together; within a group,
+ *  ordered by `mode`. Recurses into folder children. */
 function sortNodes(nodes: TreeNode[], mode: SortMode): void {
   nodes.sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
+    const af = a.kind === 'folder'
+    const bf = b.kind === 'folder'
+    if (af !== bf) return af ? -1 : 1
     return compareInGroup(a, b, mode)
   })
   for (const n of nodes) if (n.kind === 'folder') sortNodes(n.children, mode)

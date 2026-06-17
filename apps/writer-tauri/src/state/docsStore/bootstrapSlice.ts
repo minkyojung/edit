@@ -18,7 +18,7 @@
  */
 
 import { scanVault } from '@/lib/scanVault'
-import { listVaultDirsRecursive } from '@/lib/vault'
+import { listVaultDirsRecursive, listVaultFilesRecursive } from '@/lib/vault'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import type { GetDocsState, SetDocsState } from './types'
 
@@ -76,6 +76,14 @@ export const createBootstrapSlice = (
         set({ knownFolders: await listVaultDirsRecursive() })
       } catch (err) {
         console.warn('[boot] folder scan failed', err)
+      }
+
+      // Non-markdown attachments (pdf/png/txt/…) so the tree can show
+      // read-only file rows alongside notes. Best-effort, same as folders.
+      try {
+        set({ knownFiles: await listVaultFilesRecursive() })
+      } catch (err) {
+        console.warn('[boot] file scan failed', err)
       }
 
       // Validate persisted tab state against the freshly hydrated

@@ -161,6 +161,11 @@ export interface DocsState {
    * only, rebuilt by bootstrap's scan. Lets the sidebar tree show empty
    * folders, which the file-derived tree alone can't. */
   knownFolders: string[]
+  /** Vault-relative paths of every non-markdown attachment on disk
+   * (pdf/png/txt/…). Runtime-only, rebuilt by bootstrap's scan and the
+   * watcher's folder refresh. Surfaces read-only file rows in the tree;
+   * never enters knownDocs (no slug / Yjs doc). */
+  knownFiles: string[]
   /** Slugs of docs whose tree row is currently expanded in the
    * sidebar — daily and writing alike. Persisted so the user's
    * fold layout survives a reload. Today's daily is force-added
