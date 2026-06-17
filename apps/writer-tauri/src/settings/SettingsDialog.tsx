@@ -6,15 +6,15 @@
 // Dialog (Radix) gives us focus-trap, ESC-to-close, outside-click, and aria for free.
 // We override the primitive's compact padding to fill the modal with the two panes.
 
-import { useState } from 'react'
+import { useEffect } from 'react'
 import {
   Dialog,
   DialogContent,
   DialogTitle,
 } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useSettingsDialog } from './useSettingsDialog'
-import { SettingsNav, type SettingsCategory } from './SettingsNav'
+import { openSettings, useSettingsDialog } from './useSettingsDialog'
+import { SettingsNav } from './SettingsNav'
 import { GeneralSettings } from './categories/GeneralSettings'
 import { AppearanceSettings } from './categories/AppearanceSettings'
 import { FilesSettings } from './categories/FilesSettings'
@@ -22,7 +22,24 @@ import { FilesSettings } from './categories/FilesSettings'
 export function SettingsDialog() {
   const open = useSettingsDialog((s) => s.open)
   const setOpen = useSettingsDialog((s) => s.setOpen)
-  const [active, setActive] = useState<SettingsCategory>('general')
+  // Active category lives in the store so deep links (openSettings('appearance'),
+  // the command palette, future ⌘,-with-target) all land on the right pane.
+  const active = useSettingsDialog((s) => s.category)
+  const setActive = useSettingsDialog((s) => s.setCategory)
+
+  // ⌘, opens settings — the de-facto macOS standard shortcut.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      if (e.shiftKey || e.altKey) return
+      if (e.key === ',') {
+        e.preventDefault()
+        openSettings()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

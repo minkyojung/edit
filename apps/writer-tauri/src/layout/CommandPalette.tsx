@@ -16,6 +16,7 @@ import {
   IconBookmarks,
   IconEdit,
   IconFileDescription,
+  IconSettings,
 } from '@tabler/icons-react'
 import {
   Command,
@@ -33,6 +34,7 @@ import {
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useSaveArticleDialogStore } from '@/state/saveArticleDialogStore'
 import { useCommandPaletteStore } from '@/state/commandPaletteStore'
+import { openSettings } from '@/settings/useSettingsDialog'
 import { buildViewUrl } from '@/lib/viewUrl'
 
 interface DocResult {
@@ -159,6 +161,16 @@ export function CommandPalette() {
           >
             <IconBookmarks size={16} stroke={1.75} />
             <span className="flex-1 truncate">Open Inbox</span>
+          </CommandItem>
+          <CommandItem
+            value="action:open-settings settings preferences theme font"
+            onSelect={() => {
+              setOpen(false)
+              openSettings()
+            }}
+          >
+            <IconSettings size={16} stroke={1.75} />
+            <span className="flex-1 truncate">Open Settings</span>
           </CommandItem>
           {renameableDoc && (
             <CommandItem

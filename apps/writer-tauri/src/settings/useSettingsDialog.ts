@@ -4,18 +4,25 @@
 // root and subscribes here (mirrors useImageAltDialogStore).
 
 import { create } from 'zustand'
+import type { SettingsCategory } from './SettingsNav'
 
 interface SettingsDialogState {
   open: boolean
+  /** Which category pane is shown — also the deep-link target. */
+  category: SettingsCategory
   setOpen: (open: boolean) => void
+  setCategory: (category: SettingsCategory) => void
 }
 
 export const useSettingsDialog = create<SettingsDialogState>((set) => ({
   open: false,
+  category: 'appearance',
   setOpen: (open) => set({ open }),
+  setCategory: (category) => set({ category }),
 }))
 
-/** Open the settings modal from anywhere (non-React callers too). */
-export function openSettings(): void {
-  useSettingsDialog.getState().setOpen(true)
+/** Open the settings modal from anywhere (non-React callers too), optionally
+ * deep-linking to a category. */
+export function openSettings(category: SettingsCategory = 'appearance'): void {
+  useSettingsDialog.setState({ open: true, category })
 }
