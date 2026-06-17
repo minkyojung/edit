@@ -129,7 +129,9 @@ export function CommandPalette() {
     <CommandDialog open={open} onOpenChange={setOpen}>
       {/* cmdk's built-in filter sorts items by fuzzy match against
           their `value`. We do our own filtering above. */}
-      <Command shouldFilter={false}>
+      {/* Transparent so the CommandDialog's frosted-glass panel shows through
+          (Command's default bg-popover would otherwise cover it). */}
+      <Command shouldFilter={false} className="bg-transparent">
       <CommandInput
         placeholder="Search notes…"
         value={query}
