@@ -29,6 +29,7 @@ import {
   CardFooter,
 } from '@/components/ui/card'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DiffBlock } from '@/components/DiffBlock'
 import type { DiffLine } from '@/lib/git'
 import { SettingRow } from '@/settings/SettingRow'
@@ -303,9 +304,13 @@ function Subgroup({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
+// Section id derived from its title so the nav and the anchors can't drift.
+const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="mb-12">
+    // scroll-mt clears the fixed header when the nav scrolls to this anchor.
+    <section id={slugify(title)} className="mb-12 scroll-mt-[calc(var(--header-h)+16px)]">
       <h2 className="mb-5 border-b border-border/60 pb-2 text-base font-semibold text-foreground">
         {title}
       </h2>
@@ -314,11 +319,65 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
+// Left nav. Buttons (not <a href="#…">) because the app uses HashRouter —
+// a hash anchor would hijack the route. scrollIntoView jumps to the section.
+const NAV: { group: string; titles: string[] }[] = [
+  {
+    group: 'Foundations',
+    titles: [
+      'Foundations · Color',
+      'Foundations · Typography',
+      'Foundations · Spacing',
+      'Foundations · Radius',
+    ],
+  },
+  {
+    group: 'Primitives',
+    titles: [
+      'Primitives · Button',
+      'Primitives · Inputs',
+      'Primitives · Display',
+      'Primitives · Overlays',
+      'Primitives · Navigation',
+    ],
+  },
+  { group: 'Compositions', titles: ['Compositions'] },
+]
+
+function GalleryNav() {
+  const go = (title: string) =>
+    document.getElementById(slugify(title))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  return (
+    <nav className="sticky top-[calc(var(--header-h)+16px)] hidden h-max w-36 shrink-0 text-[13px] lg:block">
+      {NAV.map((g) => (
+        <div key={g.group} className="mb-4">
+          <div className="mb-1.5 font-medium text-foreground">{g.group}</div>
+          <ul className="space-y-0.5">
+            {g.titles.map((t) => (
+              <li key={t}>
+                <button
+                  type="button"
+                  onClick={() => go(t)}
+                  className="block w-full truncate text-left text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {t.includes('·') ? t.split('·').pop()?.trim() : t}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </nav>
+  )
+}
+
 export function GalleryPage() {
   return (
     // pt clears the absolutely-positioned EditorHeader AppShell overlays
     // (matches SkillsPage).
-    <div className="mx-auto w-full max-w-3xl px-6 pb-16 pt-[calc(var(--header-h)+8px)]">
+    <div className="mx-auto flex w-full max-w-5xl gap-10 px-6 pb-16 pt-[calc(var(--header-h)+8px)]">
+      <GalleryNav />
+      <div className="min-w-0 max-w-3xl flex-1">
       <h1 className="mb-8 text-lg font-semibold text-foreground">Gallery</h1>
 
       <Section title="Foundations · Color">
@@ -553,6 +612,27 @@ export function GalleryPage() {
         </Subgroup>
       </Section>
 
+      <Section title="Primitives · Navigation">
+        <Subgroup title="Tabs">
+          <Tabs defaultValue="one" className="max-w-md">
+            <TabsList>
+              <TabsTrigger value="one">First</TabsTrigger>
+              <TabsTrigger value="two">Second</TabsTrigger>
+              <TabsTrigger value="three">Third</TabsTrigger>
+            </TabsList>
+            <TabsContent value="one" className="pt-3 text-[13px] text-muted-foreground">
+              First panel content.
+            </TabsContent>
+            <TabsContent value="two" className="pt-3 text-[13px] text-muted-foreground">
+              Second panel content.
+            </TabsContent>
+            <TabsContent value="three" className="pt-3 text-[13px] text-muted-foreground">
+              Third panel content.
+            </TabsContent>
+          </Tabs>
+        </Subgroup>
+      </Section>
+
       <Section title="Compositions">
         <div>
           <h3 className="mb-3 text-[13px] font-medium text-muted-foreground">DiffBlock</h3>
@@ -582,6 +662,7 @@ export function GalleryPage() {
           </div>
         </div>
       </Section>
+      </div>
     </div>
   )
 }
