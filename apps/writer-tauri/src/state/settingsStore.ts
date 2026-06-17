@@ -45,6 +45,13 @@ interface SettingsState {
   defaultNoteFolder: string
   /** Set the default new-note folder. Trims slashes; empty → 'inbox'. */
   setDefaultNoteFolder: (folder: string) => void
+
+  /** macOS sidebar vibrancy (frosted glass). Default on. When off, the window
+   * canvas + sidebar paint opaque instead of letting the native effect show.
+   * Applied by useVibrancy(); macOS-only (no-op elsewhere). */
+  sidebarVibrancyEnabled: boolean
+  /** Toggle sidebar vibrancy. */
+  setSidebarVibrancy: (enabled: boolean) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -54,12 +61,14 @@ export const useSettingsStore = create<SettingsState>()(
       activeVaultIndex: 0,
       bootstrapCompleted: false,
       defaultNoteFolder: 'inbox',
+      sidebarVibrancyEnabled: true,
       setActiveVaultPath: (path) =>
         set({ vaultPaths: [path], activeVaultIndex: 0 }),
       clearVault: () => set({ vaultPaths: [], activeVaultIndex: 0 }),
       markBootstrapCompleted: () => set({ bootstrapCompleted: true }),
       setDefaultNoteFolder: (folder) =>
         set({ defaultNoteFolder: folder.trim().replace(/^\/+|\/+$/g, '') || 'inbox' }),
+      setSidebarVibrancy: (enabled) => set({ sidebarVibrancyEnabled: enabled }),
     }),
     {
       name: 'writer-tauri:settings',
@@ -69,6 +78,7 @@ export const useSettingsStore = create<SettingsState>()(
         activeVaultIndex: s.activeVaultIndex,
         bootstrapCompleted: s.bootstrapCompleted,
         defaultNoteFolder: s.defaultNoteFolder,
+        sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
       }),
     },
   ),

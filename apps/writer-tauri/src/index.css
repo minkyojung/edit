@@ -33,16 +33,25 @@
 
   body {
     -webkit-font-smoothing: antialiased;
-    /* VIBRANCY SPIKE: the window canvas is now transparent so the native
+    /* VIBRANCY: the window canvas is transparent so the native
        NSVisualEffectView (windowEffects: sidebar) shows through. Opaque
        surfaces (editor column, right panel) paint their own --background;
        the left sidebar + window-inset gaps stay transparent → frosted.
-       Revert: restore `background-color: var(--background)` + the
-       `bg-background` apply below, and drop transparent/windowEffects in
-       tauri.conf. */
+       This is the DEFAULT (vibrancy on) and matches the tauri.conf startup
+       effect, so the common case has no first-paint flash. The toggle
+       (useVibrancy) flips `html[data-vibrancy="off"]` to paint opaque. */
     background-color: transparent;
     color: var(--foreground);
     @apply text-foreground;
+  }
+  /* Vibrancy OFF — paint the canvas + sidebar opaque so no native effect /
+     desktop shows. Driven by useVibrancy() setting the attribute on <html>
+     (and calling clearEffects() on the native side). */
+  html[data-vibrancy='off'] body {
+    background-color: var(--background);
+  }
+  html[data-vibrancy='off'] [data-slot='sidebar-inner'] {
+    background-color: var(--sidebar);
   }
   /* In fullscreen macOS hides the traffic-light buttons, so the 80px
      reservation on the left of EditorHeader / SidebarHeader stops

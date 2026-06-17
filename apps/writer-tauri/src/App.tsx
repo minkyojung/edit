@@ -29,6 +29,7 @@ import { useRouteSync } from '@/hooks/useRouteSync'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { usePersistLastPath } from '@/hooks/usePersistLastPath'
 import { useWindowChrome } from '@/hooks/useWindowChrome'
+import { useVibrancy } from '@/hooks/useVibrancy'
 import {
   buildDayUrl,
   buildMonthUrl,
@@ -329,6 +330,7 @@ function AppContent() {
   // date-poll timer share a single lifetime across the session.
   useIdleTrigger()
   useWindowChrome()
+  useVibrancy()
 
   // Sidebar dot semantic (Phase E2.8): the dot flips to "viewed"
   // (grey) the moment the user navigates to a page that has staged

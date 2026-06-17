@@ -11,7 +11,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { useSettingsStore } from '@/state/settingsStore'
 import { SettingRow } from '../SettingRow'
+
+// Vibrancy is a macOS-only window effect; hide the toggle elsewhere.
+const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent)
 
 type PaletteOption = {
   value: Palette
@@ -53,6 +58,8 @@ function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
 export function AppearanceSettings() {
   const { palette, setPalette } = useTheme()
   const { font, setFont } = useFont()
+  const vibrancy = useSettingsStore((s) => s.sidebarVibrancyEnabled)
+  const setVibrancy = useSettingsStore((s) => s.setSidebarVibrancy)
 
   return (
     <section>
@@ -88,6 +95,18 @@ export function AppearanceSettings() {
           </SelectContent>
         </Select>
       </SettingRow>
+      {IS_MAC && (
+        <SettingRow
+          title="Sidebar vibrancy"
+          description="Frosted translucent sidebar that blends with the desktop behind the window."
+        >
+          <Switch
+            checked={vibrancy}
+            onCheckedChange={setVibrancy}
+            aria-label="Toggle sidebar vibrancy"
+          />
+        </SettingRow>
+      )}
     </section>
   )
 }
