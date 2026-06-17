@@ -29,8 +29,8 @@ export function SettingsNav({
           className={cn(
             'w-full rounded-md px-2.5 py-1.5 text-left text-sm transition-colors',
             active === c.id
-              ? 'bg-accent text-accent-foreground'
-              : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+              ? 'bg-selected text-selected-foreground'
+              : 'text-muted-foreground hover:bg-accent hover:text-foreground',
           )}
         >
           {c.label}

@@ -185,7 +185,7 @@ function QueueRow({
             onClick={onSelect}
             className={cn(
               'flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors hover:bg-accent',
-              isActive && 'bg-accent',
+              isActive && 'bg-selected text-selected-foreground',
               isRead && 'opacity-55',
             )}
             title={doc.siteName ? `${title} — ${doc.siteName}` : title}
