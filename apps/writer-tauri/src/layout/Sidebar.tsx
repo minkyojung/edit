@@ -133,7 +133,13 @@ export function AppSidebar() {
   }, [handleCreateNew])
 
   return (
-    <Sidebar>
+    // The sidebar container's default `border-r` uses the translucent
+    // `--border` token (oklch(1 0 0 / 8–10%) in the dark themes). With the
+    // window transparent for vibrancy, that 1px border sits over the
+    // transparent layout gap and reveals the desktop as a seam at the
+    // sidebar↔editor boundary. Paint it with the opaque `--sidebar` color so
+    // it covers rather than bleeds (seamless, no desktop show-through).
+    <Sidebar className="[border-right-color:var(--sidebar)]">
       <SidebarHeader
         data-tauri-drag-region
         className="flex flex-row items-center p-0 pr-3"
