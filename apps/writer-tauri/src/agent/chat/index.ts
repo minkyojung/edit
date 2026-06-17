@@ -94,6 +94,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       'propose_skill',
     ],
     appendDocument = true,
+    viewingFilePath,
     vizEditTarget,
     permissionMode,
     builtinTools,
@@ -163,8 +164,13 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     docForPrompt,
     systemBody,
     ctx,
-    appendDocument,
+    // Viewing a non-markdown file (PDF/image/…) → there's no doc body to
+    // pin, and `view` may still hold the previously-open note's text, so
+    // suppress the DOCUMENT block to avoid feeding stale, wrong context.
+    // The VIEWING FILE block tells the model to Read the file instead.
+    appendDocument: viewingFilePath ? false : appendDocument,
     currentFilePath,
+    viewingFilePath,
     vizEditTarget,
     today: todayLocalDate(),
   })
@@ -315,6 +321,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         name: string
         description: string
         body: string
+        // Set when the model is revising an existing skill (the exact name
+        // of the skill it updates); null for a brand-new skill.
+        updates: string | null
       }>('claude:skill-pending', (e) => {
         if (e.payload.runId !== runId) return
         useSkillProposalStore.getState().push({
@@ -323,6 +332,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           name: e.payload.name,
           description: e.payload.description,
           body: e.payload.body,
+          updates: e.payload.updates ?? null,
         })
       }),
       // edit_visualization tool fired (see sidecar buildEditVisualizationTool).

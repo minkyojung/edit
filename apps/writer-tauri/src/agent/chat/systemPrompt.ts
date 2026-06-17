@@ -63,6 +63,10 @@ export interface SystemBlocksArgs {
    * context, not a constraint). Resolves deictic references ("this note", "여기")
    * to the open file by default while leaving the model free to act on others. */
   currentFilePath?: string | null
+  /** Vault-relative path of a non-markdown file open in the FileViewer (PDF,
+   * image, audio, …). Unlike `currentFilePath`, there's no text body to inject
+   * — the model is told to Read the path on demand to interpret it. */
+  viewingFilePath?: string | null
   /** When set, a high-salience block naming the visualization being edited
    * (id + current spec) is pinned past the cache boundary, instructing the
    * model to apply changes via the edit_visualization tool. */
@@ -99,8 +103,16 @@ export interface SystemBlocksArgs {
  *   - bare `string` when the prefix is just `systemBody` — keeps the
  *     SDK call simple and matches the pre-multi-block shape. */
 export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
-  const { docForPrompt, systemBody, ctx, appendDocument, currentFilePath, vizEditTarget, today } =
-    args
+  const {
+    docForPrompt,
+    systemBody,
+    ctx,
+    appendDocument,
+    currentFilePath,
+    viewingFilePath,
+    vizEditTarget,
+    today,
+  } = args
   const prefix: string[] = []
   if (ctx.selfProfile) {
     prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
@@ -141,6 +153,17 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `they mean THIS note by default — target it with your edit tools. You may still read ` +
         `or edit other notes via your tools when the request clearly calls for it (a different ` +
         `note, a new note, a linked one).`,
+    )
+  }
+  if (viewingFilePath) {
+    dynamic.push(
+      `--- VIEWING FILE ---\n` +
+        `The user is currently viewing the file \`${viewingFilePath}\` (a non-markdown ` +
+        `file — e.g. a PDF, image, or audio). It is NOT a wiki note: there is no body ` +
+        `text in this prompt for it. When they say "this", "this file", "여기", or ask ` +
+        `you to summarize / explain / analyze without naming a file, they mean THIS file. ` +
+        `Use the Read tool on that exact path to open and interpret it (Read ingests PDFs ` +
+        `and images directly). Treat it as read-only — don't try to edit it.`,
     )
   }
   if (appendDocument) dynamic.push(`--- DOCUMENT ---\n${docForPrompt}`)

@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
+import { parseFilePathFromPath } from '@/lib/viewUrl'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
 import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
@@ -74,7 +75,12 @@ interface Props {
 export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   // Read Later queue route: no editor document, so chat runs read-only with
   // a generated article-list page context (see useChatRunner / runChat).
-  const isQueue = useLocation().pathname === '/read-later'
+  const pathname = useLocation().pathname
+  const isQueue = pathname === '/read-later'
+  // FileViewer route (`/file/:rel`): a non-markdown file (PDF/image/…) is open.
+  // There's no slug/editor for it, so this path is the only signal the chat
+  // gets about what the user is looking at.
+  const viewingFilePath = parseFilePathFromPath(pathname)
   const { account } = useClaudeAuth()
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const turnsHook = useThreadTurns(activeId)
@@ -150,6 +156,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     editorView,
     isQueue,
     slug,
+    viewingFilePath,
     activeId,
     activeThreadModel,
     activeThreadEffort,
@@ -205,8 +212,10 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   // Chat works without a (ProseMirror) editorView: the queue route is read-only
   // Q&A, and the CodeMirror editor doesn't publish a PM view at all — in both cases
   // an open doc (`slug`) is enough, since edits flow through pendingChangesStore, not
-  // the live view. Gate on having a place to act on, not on a specific editor type.
-  const ready = !!activeId && (!!editorView || isQueue || !!slug)
+  // the live view. The FileViewer route has neither a view nor a slug, but a file is
+  // open (`viewingFilePath`) and the chat can read it — so that counts too. Gate on
+  // having something to act on, not on a specific editor type.
+  const ready = !!activeId && (!!editorView || isQueue || !!slug || !!viewingFilePath)
 
   // Track whether the editor currently has *something* selectable for slash
   // commands — either a live non-empty selection or a frozen snapshot taken

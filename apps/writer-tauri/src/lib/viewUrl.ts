@@ -67,6 +67,19 @@ export function parseSlugFromPath(pathname: string): string | null {
 }
 
 /**
+ * Pull the vault-relative file path out of a `/file/:rel` route, or
+ * return null for any other route. The FileViewer route encodes the
+ * path with encodeURIComponent (so `inbox/foo.pdf` → `inbox%2Ffoo.pdf`,
+ * a single segment); we reverse that single encode to match what
+ * `useParams().rel` yields inside the route.
+ */
+export function parseFilePathFromPath(pathname: string): string | null {
+  const parts = pathname.split('/').filter(Boolean)
+  if (parts[0] !== 'file' || parts[1] == null) return null
+  return decodeURIComponent(parts[1])
+}
+
+/**
  * Non-React read of the active slug. HashRouter encodes the live
  * route as the URL fragment, so callers outside React (PM plugins,
  * agent helpers, docFileSync, MarkHoverActionsLayer event handlers)

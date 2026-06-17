@@ -50,6 +50,10 @@ interface UseChatRunnerDeps {
    * the proposal listener can route by slug instead of relying on a
    * captured (and soon-stale) view reference after doc switch. */
   slug: string | null
+  /** Vault-relative path of a non-markdown file open in the FileViewer
+   * (`/file/:rel`) route — null on every other surface. Forwarded to runChat
+   * so the agent knows which file the user is looking at. */
+  viewingFilePath: string | null
   activeId: string | null
   activeThreadModel: ChatModel
   activeThreadEffort: ChatEffort
@@ -97,6 +101,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
     editorView,
     isQueue,
     slug,
+    viewingFilePath,
     activeId,
     activeThreadModel,
     activeThreadEffort,
@@ -313,6 +318,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           slug: slug ?? QUEUE_SLUG,
           // On the queue, feed the saved-article list as the "current page".
           pageContextMarkdown: isQueue ? buildQueueContextMarkdown() : undefined,
+          viewingFilePath,
           threadId,
           history,
           prompt: overrides?.prompt,
@@ -393,7 +399,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [editorView, isQueue, slug, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
+    [editorView, isQueue, slug, viewingFilePath, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
   return { status, streaming, run }

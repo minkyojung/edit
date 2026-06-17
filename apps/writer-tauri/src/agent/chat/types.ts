@@ -100,6 +100,13 @@ export interface RunChatArgs {
    * embed `{{document}}` in their body should pass false to avoid the
    * document showing up twice. */
   appendDocument?: boolean
+  /** Vault-relative path of a non-markdown file the user is viewing in the
+   * FileViewer (`/file/:rel`) route — a PDF, image, audio, etc. There's no
+   * editor/slug for these, so this is the only signal the agent gets that a
+   * file is open. Injected into the system prompt with an instruction to
+   * Read it on demand (the SDK's Read tool ingests PDFs/images natively).
+   * Null/omitted on every other surface. */
+  viewingFilePath?: string | null
   /** When set, this run is editing a specific visualization: the agent gets
    * the edit_visualization relay tool and the target's id + current spec are
    * injected into the system prompt. Omit for normal turns. */
