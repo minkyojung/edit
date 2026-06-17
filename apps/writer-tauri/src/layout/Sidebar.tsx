@@ -30,7 +30,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -77,7 +76,6 @@ export function AppSidebar() {
   const {
     account: githubAccount,
     refresh: refreshGithub,
-    disconnect: disconnectGithub,
   } = useGitHubAuth()
   const handleSignOut = useCallback(async () => {
     if (account.connected) {
@@ -225,58 +223,32 @@ export function AppSidebar() {
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="top" align="end" className="w-52">
-                {!account.connected && (
+                {/* The dropdown only *shows* the connected identities — managing
+                    them (connect/disconnect) lives in Settings → Connections, so
+                    settings stay the single home for connections. */}
+                {(account.connected || githubAccount.connected) && (
                   <>
-                    <DropdownMenuItem onClick={() => setConnectOpen(true)}>
-                      <IconSparkles size={16} stroke={1.5} />
-                      Connect Claude
-                    </DropdownMenuItem>
+                    {account.connected && (
+                      <DropdownMenuItem disabled className="opacity-100">
+                        <IconSparkles size={16} stroke={1.5} />
+                        <span className="truncate">{account.email ?? 'Claude'}</span>
+                      </DropdownMenuItem>
+                    )}
+                    {githubAccount.connected && (
+                      <DropdownMenuItem disabled className="opacity-100">
+                        <IconBrandGithub size={16} stroke={1.5} />
+                        <span className="truncate">
+                          {githubAccount.login ?? 'GitHub'}
+                        </span>
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuSeparator />
                   </>
                 )}
-                {account.connected && (
-                  <>
-                    <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-                      Claude
-                    </DropdownMenuLabel>
-                    <DropdownMenuItem disabled className="opacity-100">
-                      <IconSparkles size={16} stroke={1.5} />
-                      <span className="truncate">{account.email ?? 'Connected'}</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={disconnect}>
-                      Disconnect Claude
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-                {!githubAccount.connected && (
-                  <>
-                    <DropdownMenuItem onClick={() => setGithubConnectOpen(true)}>
-                      <IconBrandGithub size={16} stroke={1.5} />
-                      Connect GitHub
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-                {githubAccount.connected && (
-                  <>
-                    <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-                      GitHub
-                    </DropdownMenuLabel>
-                    <DropdownMenuItem disabled className="opacity-100">
-                      <IconBrandGithub size={16} stroke={1.5} />
-                      <span className="truncate">
-                        {githubAccount.login ?? 'Connected'}
-                      </span>
-                    </DropdownMenuItem>
-                    {/* Backup to GitHub removed — versioning/backup is being
-                        redesigned as an opt-in layer; GitHub login stays. */}
-                    <DropdownMenuItem onClick={disconnectGithub}>
-                      Disconnect GitHub
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
+                <DropdownMenuItem onClick={() => openSettings('connections')}>
+                  <IconSettings size={16} stroke={1.5} />
+                  Manage connections…
+                </DropdownMenuItem>
                 <DropdownMenuItem disabled title="Coming soon">
                   <IconFilter size={16} stroke={1.5} />
                   Filter

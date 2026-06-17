@@ -17,6 +17,7 @@ import { openSettings, useSettingsDialog } from './useSettingsDialog'
 import { SettingsNav } from './SettingsNav'
 import { AppearanceSettings } from './categories/AppearanceSettings'
 import { FilesSettings } from './categories/FilesSettings'
+import { ConnectionsSettings } from './categories/ConnectionsSettings'
 
 export function SettingsDialog() {
   const open = useSettingsDialog((s) => s.open)
@@ -50,6 +51,7 @@ export function SettingsDialog() {
             <div className="px-6 py-5">
               {active === 'appearance' && <AppearanceSettings />}
               {active === 'files' && <FilesSettings />}
+              {active === 'connections' && <ConnectionsSettings />}
             </div>
           </ScrollArea>
         </div>

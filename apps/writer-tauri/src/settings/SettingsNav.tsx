@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 export const SETTINGS_CATEGORIES = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'files', label: 'Files & Notes' },
+  { id: 'connections', label: 'Connections' },
 ] as const
 
 export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number]['id']
