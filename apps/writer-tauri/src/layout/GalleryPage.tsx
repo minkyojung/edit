@@ -32,6 +32,30 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Separator } from '@/components/ui/separator'
+import {
+  Dialog,
+  DialogTrigger,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogClose,
+} from '@/components/ui/dialog'
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from '@/components/ui/popover'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
 
 // Color roles, grouped by purpose. Names only — the swatch resolves each
 // live via `var(--<role>)`, so values track the theme automatically and the
@@ -458,6 +482,61 @@ export function GalleryPage() {
             <Separator orientation="vertical" />
             <span>Right</span>
           </div>
+        </Subgroup>
+      </Section>
+
+      <Section title="Primitives · Overlays">
+        <Subgroup title="Triggers (click / hover to open)">
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline">Dialog</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Dialog title</DialogTitle>
+                <DialogDescription>
+                  A modal surface — overlay, content, header, footer.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button variant="ghost">Cancel</Button>
+                </DialogClose>
+                <DialogClose asChild>
+                  <Button>Confirm</Button>
+                </DialogClose>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline">Popover</Button>
+            </PopoverTrigger>
+            <PopoverContent className="text-[13px] text-muted-foreground">
+              Popover content floats over the page on the popover surface.
+            </PopoverContent>
+          </Popover>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline">Tooltip</Button>
+            </TooltipTrigger>
+            <TooltipContent>Tooltip text</TooltipContent>
+          </Tooltip>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline">Dropdown</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuLabel>Menu</DropdownMenuLabel>
+              <DropdownMenuItem>First item</DropdownMenuItem>
+              <DropdownMenuItem>Second item</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive">Delete</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </Subgroup>
       </Section>
     </div>
