@@ -50,8 +50,13 @@ interface EditorHeaderProps {
   collabStatus?: CollabStatus
 }
 
+// Only the hard-error case surfaces in the header — it's the one
+// status the user must act on. A normal load is near-instant (local
+// file hydrate) so showing it just adds noise in the happy path and
+// reads as wrong when no doc is open at all. The "load is taking too
+// long" signal already lives in the footer behind a grace window.
 const STATUS_LABEL: Record<CollabStatus, string | null> = {
-  loading: 'Starting…',
+  loading: null,
   ready: null,
   error: 'Storage error',
 }
