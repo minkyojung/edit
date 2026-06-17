@@ -372,10 +372,18 @@ function handleExternalAdd(rel: string): void {
         // Same note (frontmatter slug) reappearing at a new path = an
         // external move/rename. Update its placement IN PLACE so the
         // open tab + handle survive, and cancel any pending delete for
-        // it (the remove leg of the move).
+        // it (the remove leg of the move). For a generic note both the
+        // placement (`relPath`) AND the sidebar label (`title`, derived
+        // from the filename) follow the rename — a pure folder move keeps
+        // the filename so only relPath changes, but a rename changes the
+        // title too, and without refreshing it the row would keep the old
+        // name.
         cancelPendingRemove(doc.slug)
-        if (doc.relPath && existing.relPath !== doc.relPath) {
-          live.updateKnownDocPath(doc.slug, doc.relPath)
+        if (
+          doc.relPath &&
+          (existing.relPath !== doc.relPath || existing.title !== doc.title)
+        ) {
+          live.updateKnownDocPath(doc.slug, doc.relPath, doc.title)
         }
         return
       }

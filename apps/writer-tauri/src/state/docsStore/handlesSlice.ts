@@ -54,9 +54,11 @@ export interface HandlesSlice {
    * already present — protects against the race where our own
    * create flow's `.md` write echoes back as a watch event. */
   addKnownDoc: (doc: KnownDoc) => void
-  /** Swap a doc's `relPath` in place (keeps slug/tab/handle) — used when
-   * an external move/rename reappears the same note at a new path. */
-  updateKnownDocPath: (slug: string, relPath: string) => void
+  /** Swap a doc's `relPath` (and, for a renamed file, its `title`) in
+   * place — keeps slug/tab/handle — used when an external move/rename
+   * reappears the same note at a new path. `title` is left untouched when
+   * omitted. */
+  updateKnownDocPath: (slug: string, relPath: string, title?: string) => void
   /** Drop a doc from the catalog after its file disappeared from
    * disk. If the doc is currently open as a tab, closes it first so
    * the handle tear-down + tab-strip invariants run through their
@@ -167,14 +169,18 @@ export const createHandlesSlice = (
     })
   },
 
-  updateKnownDocPath: (slug, relPath) => {
-    // In-place relPath swap for an externally-moved/renamed note — keeps
-    // the slug, open tab, and handle intact (unlike remove+add, which
-    // tears them down). Only touches `relPath`, the placement field for
-    // generic notes.
+  updateKnownDocPath: (slug, relPath, title) => {
+    // In-place swap for an externally-moved/renamed note — keeps the
+    // slug, open tab, and handle intact (unlike remove+add, which tears
+    // them down). Touches `relPath` (placement) and, when the filename
+    // changed, `title` (the sidebar label for a generic note). `title`
+    // is only overwritten when supplied, so a pure folder move that omits
+    // it leaves the label alone.
     set((s) => ({
       knownDocs: s.knownDocs.map((d) =>
-        d.slug === slug ? { ...d, relPath } : d,
+        d.slug === slug
+          ? { ...d, relPath, ...(title !== undefined ? { title } : {}) }
+          : d,
       ),
     }))
   },
