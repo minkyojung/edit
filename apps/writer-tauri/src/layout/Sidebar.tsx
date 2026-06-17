@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   IconSettings,
@@ -81,6 +81,7 @@ export function AppSidebar() {
     account: githubAccount,
     refresh: refreshGithub,
   } = useGitHubAuth()
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
   const handleSignOut = useCallback(async () => {
     if (account.connected) {
       await disconnect()
@@ -218,30 +219,38 @@ export function AppSidebar() {
               surfaces. */}
           <WikiMetaRows />
           <SidebarMenuItem>
-            {/* Profile row: avatar + name (display), then the settings gear,
-                then the account-menu chevron. Each control is its own button
-                — the gear opens the settings modal, the chevron opens the
-                account dropdown. */}
-            <div className="flex h-9 items-center gap-0.5 rounded-xl px-2">
-              <Avatar className="size-4 shrink-0 opacity-80">
-                <AvatarImage src="" />
-                <AvatarFallback className="avatar-luma text-[9px] text-primary-foreground font-medium">
-                  {accountInitials(account.email)}
-                </AvatarFallback>
-              </Avatar>
-              <p className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/70">
-                {accountDisplayName(account.email) ?? 'Guest'}
-              </p>
-              <button
-                type="button"
-                aria-label="Settings"
-                title="Settings"
-                onClick={() => openSettings()}
-                className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
-              >
-                <IconSettings size={16} stroke={1.5} />
-              </button>
-              <DropdownMenu>
+            {/* Profile row: the avatar+name is the primary target (opens the
+                account menu, so the whole identity area highlights on hover
+                like the nav rows above), then the settings gear, then the
+                chevron as the explicit menu affordance. h-8 + row hover keep
+                it in the same visual family as the WikiMetaRows. */}
+            <DropdownMenu open={accountMenuOpen} onOpenChange={setAccountMenuOpen}>
+              <div className="flex h-8 items-center gap-0.5 px-1">
+                <button
+                  type="button"
+                  aria-label="Account"
+                  onClick={() => setAccountMenuOpen(true)}
+                  className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-xl px-1.5 text-left transition-colors hover:bg-sidebar-accent"
+                >
+                  <Avatar className="size-4 shrink-0 opacity-80">
+                    <AvatarImage src="" />
+                    <AvatarFallback className="avatar-luma text-[9px] text-primary-foreground font-medium">
+                      {accountInitials(account.email)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/70">
+                    {accountDisplayName(account.email) ?? 'Guest'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Settings"
+                  title="Settings"
+                  onClick={() => openSettings()}
+                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                >
+                  <IconSettings size={16} stroke={1.5} />
+                </button>
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
@@ -252,7 +261,8 @@ export function AppSidebar() {
                     <IconSelector size={14} stroke={1.5} />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent side="top" align="end" className="w-52">
+              </div>
+              <DropdownMenuContent side="top" align="end" className="w-52">
                 {/* The dropdown only *shows* the connected identities — managing
                     them (connect/disconnect) lives in Settings → Connections, so
                     settings stay the single home for connections. */}
@@ -288,9 +298,8 @@ export function AppSidebar() {
                   <IconLogout size={16} stroke={1.5} />
                   Sign out
                 </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
