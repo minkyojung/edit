@@ -25,6 +25,7 @@
 // of dragging via the standard Tauri exclusion list.
 
 import { IconLayoutSidebarRightFilled } from '@tabler/icons-react'
+import { useMatch } from 'react-router-dom'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Button } from '@/components/ui/button'
@@ -40,6 +41,7 @@ import { useGitStore } from '@/state/gitStore'
 import { EditorTabs } from '@/editor/EditorTabs'
 import type { CollabStatus } from '@/hooks/useCollabDoc'
 import { DocMenu } from './DocMenu'
+import { FileViewerHeaderTitle } from './FileViewer'
 
 interface EditorHeaderProps {
   showSidebarTrigger: boolean
@@ -68,6 +70,9 @@ export function EditorHeader({
   collabStatus,
 }: EditorHeaderProps) {
   const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
+  // On a file route (`/file/:rel`) the center slot shows the file's name
+  // + Open action instead of the active-doc label.
+  const fileRel = useMatch('/file/:rel')?.params.rel ?? null
   return (
     <div
       data-tauri-drag-region
@@ -97,8 +102,20 @@ export function EditorHeader({
         <SidebarTrigger className="text-sidebar-foreground/60 hover:text-sidebar-foreground" />
         <NavHistoryButtons />
       </div>
-      <div className="flex min-w-0 flex-1 items-center justify-center">
-        <EditorTabs />
+      <div
+        className={cn(
+          'flex min-w-0 items-center justify-center',
+          // File titles tend to be long (full filenames), so give the
+          // center a wider share on file routes while keeping the left/
+          // right clusters equal so it stays visually centered.
+          fileRel != null ? 'flex-[1.7]' : 'flex-1',
+        )}
+      >
+        {fileRel != null ? (
+          <FileViewerHeaderTitle rel={fileRel} />
+        ) : (
+          <EditorTabs />
+        )}
       </div>
       <div className="flex flex-1 items-center justify-end gap-2 pr-3">
         {statusLabel && (

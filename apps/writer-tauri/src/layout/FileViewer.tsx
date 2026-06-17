@@ -10,15 +10,50 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { IconExternalLink, IconFolderOpen } from '@tabler/icons-react'
+import { IconExternalLink, IconFile } from '@tabler/icons-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import {
-  openVaultFile,
-  readVaultBinary,
-  revealVaultFile,
-  vaultAbsPath,
-} from '@/lib/vault'
+import { openVaultFile, readVaultBinary, vaultAbsPath } from '@/lib/vault'
 import { classifyAsset } from '@/lib/attachments'
+import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+
+// Title + Open action shown in the EditorHeader's center slot while a
+// file route is active (rendered by EditorHeader, not here) — keeps the
+// file's chrome on the shared header row between the nav arrows and the
+// doc-actions menu, instead of in a second bar of its own.
+export function FileViewerHeaderTitle({ rel }: { rel: string }) {
+  const fileName = rel.split('/').pop() ?? rel
+  const openExternal = () =>
+    void openVaultFile(rel).catch((err) =>
+      console.warn('[file] open in default app failed', err),
+    )
+  return (
+    <div className="flex min-w-0 items-center gap-1.5 px-2">
+      <IconFile size={14} stroke={1.75} className="shrink-0 text-muted-foreground" />
+      <span className="truncate text-sm font-medium text-foreground" title={rel}>
+        {fileName}
+      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={openExternal}
+            aria-label="Open in default app"
+            className="shrink-0 text-sidebar-foreground/60 hover:text-sidebar-foreground"
+          >
+            <IconExternalLink size={14} stroke={1.75} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Open in default app</TooltipContent>
+      </Tooltip>
+    </div>
+  )
+}
 
 export function FileViewer() {
   // react-router v7 useParams returns the decoded value, so the
@@ -60,40 +95,12 @@ export function FileViewer() {
     void openVaultFile(rel).catch((err) =>
       console.warn('[file] open in default app failed', err),
     )
-  const reveal = () =>
-    void revealVaultFile(rel).catch((err) =>
-      console.warn('[file] reveal in finder failed', err),
-    )
 
   return (
     // pt clears the absolutely-positioned EditorHeader AppShell overlays.
+    // The filename + Open action live in EditorHeader (FileViewerHeaderTitle),
+    // so this surface is just the preview area.
     <div className="flex h-full flex-col pt-[var(--header-h)]">
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2">
-        <span className="truncate text-sm font-medium text-foreground" title={rel}>
-          {fileName}
-        </span>
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            onClick={openExternal}
-            title="Open in default app"
-            className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <IconExternalLink size={14} stroke={1.75} />
-            Open
-          </button>
-          <button
-            type="button"
-            onClick={reveal}
-            title="Reveal in Finder"
-            className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <IconFolderOpen size={14} stroke={1.75} />
-            Finder
-          </button>
-        </div>
-      </div>
-
       <div className="min-h-0 flex-1 overflow-auto bg-muted/30">
         {failed ? (
           <Fallback
