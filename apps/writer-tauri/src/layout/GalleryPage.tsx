@@ -114,6 +114,105 @@ function ColorGroup({ title, vars }: { title: string; vars: { varName: string; l
   )
 }
 
+// ── Typography ────────────────────────────────────────────────────────
+// The --text-*, --font-weight-*, --gap-*, --radius-sm..4xl tokens live in
+// `@theme inline` (index.css), so they are inlined into utility classes and
+// NOT emitted as runtime CSS variables — `var(--text-body)` is empty. The
+// gallery therefore renders these via their generated utility class (weights,
+// radius) or, where no utility exists (the size ramp, spacing), via the
+// resolved value the token compiles to (documented here as the source of
+// truth). Color / surface-radius / window-radius stay on :root, so those
+// still read live through var().
+const TYPE_SCALE: { token: string; px: number }[] = [
+  { token: 'caption', px: 11 },
+  { token: 'footnote', px: 12 },
+  { token: 'callout', px: 13 },
+  { token: 'body', px: 14 },
+  { token: 'headline', px: 14 }, // body size, rendered semibold
+  { token: 'title-3', px: 16 },
+  { token: 'title-2', px: 18 },
+  { token: 'title-1', px: 24 },
+]
+// name → built-in Tailwind weight utility (always generated, maps to the
+// --font-weight-* values).
+const WEIGHTS: { name: string; value: number; cls: string }[] = [
+  { name: 'regular', value: 400, cls: 'font-normal' },
+  { name: 'medium', value: 500, cls: 'font-medium' },
+  { name: 'semibold', value: 600, cls: 'font-semibold' },
+  { name: 'bold', value: 700, cls: 'font-bold' },
+]
+const LINE_HEIGHTS = ['tight', 'snug', 'normal', 'loose']
+const TRACKINGS = ['tight', 'normal', 'wide']
+
+function TypeScaleRow({ token, px }: { token: string; px: number }) {
+  const semibold = token === 'headline'
+  return (
+    <div className="flex items-baseline gap-4">
+      <span className="w-32 shrink-0 font-mono text-[11px] text-muted-foreground">
+        --text-{token} · {px}
+      </span>
+      <span
+        className="truncate text-foreground"
+        style={{ fontSize: px, fontWeight: semibold ? 600 : undefined }}
+      >
+        다람쥐 헌 쳇바퀴 Ag
+      </span>
+    </div>
+  )
+}
+
+function WeightRow({ name, value, cls }: { name: string; value: number; cls: string }) {
+  return (
+    <div className="flex items-baseline gap-4">
+      <span className="w-32 shrink-0 font-mono text-[11px] text-muted-foreground">
+        {name} · {value}
+      </span>
+      <span className={`text-[15px] text-foreground ${cls}`}>다람쥐 헌 쳇바퀴 Ag</span>
+    </div>
+  )
+}
+
+// ── Spacing ───────────────────────────────────────────────────────────
+// Resolved values (see @theme inline note above). Bar width = the px the
+// token compiles to.
+const SPACING: { token: string; px: number }[] = [
+  { token: 'gap-inline', px: 8 },
+  { token: 'gap-row', px: 12 },
+  { token: 'gap-section', px: 24 },
+  { token: 'padding-card', px: 16 },
+  { token: 'padding-row-x', px: 12 },
+  { token: 'padding-row-y', px: 8 },
+]
+
+function SpacingBar({ token, px }: { token: string; px: number }) {
+  return (
+    <div className="flex items-center gap-4">
+      <span className="w-32 shrink-0 font-mono text-[11px] text-muted-foreground">
+        --{token} · {px}
+      </span>
+      <span className="h-3 rounded-sm bg-foreground/70" style={{ width: px }} />
+    </div>
+  )
+}
+
+// ── Radius ────────────────────────────────────────────────────────────
+// radius-sm..4xl → rounded-* utilities (generated from @theme). surface- and
+// window-radius are on :root, so they read live via var().
+const RADIUS_UTILS = ['sm', 'md', 'lg', 'xl', '2xl', '3xl', '4xl']
+const RADIUS_VARS = ['surface-radius', 'window-radius']
+
+function RadiusSwatch({ label, cls, varName }: { label: string; cls?: string; varName?: string }) {
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <span
+        className={`h-14 w-14 border border-border bg-card ${cls ?? ''}`}
+        style={varName ? { borderRadius: `var(--${varName})` } : undefined}
+      />
+      <span className="font-mono text-[10px] text-muted-foreground">{label}</span>
+    </div>
+  )
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="mb-12">
@@ -144,6 +243,48 @@ export function GalleryPage() {
           title="Diff"
           vars={DIFF_TOKENS.map((t) => ({ varName: `--${t}`, label: t }))}
         />
+      </Section>
+
+      <Section title="Foundations · Typography">
+        <div>
+          <h3 className="mb-3 text-[13px] font-medium text-muted-foreground">Type scale</h3>
+          <div className="space-y-2.5">
+            {TYPE_SCALE.map((t) => (
+              <TypeScaleRow key={t.token} token={t.token} px={t.px} />
+            ))}
+          </div>
+        </div>
+        <div>
+          <h3 className="mb-3 text-[13px] font-medium text-muted-foreground">Weights</h3>
+          <div className="space-y-2.5">
+            {WEIGHTS.map((w) => (
+              <WeightRow key={w.name} name={w.name} value={w.value} cls={w.cls} />
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-x-10 gap-y-1 font-mono text-[11px] text-muted-foreground">
+          <span>line-height: {LINE_HEIGHTS.map((h) => `${h}`).join(' · ')}</span>
+          <span>tracking: {TRACKINGS.map((t) => `${t}`).join(' · ')}</span>
+        </div>
+      </Section>
+
+      <Section title="Foundations · Spacing">
+        <div className="space-y-3">
+          {SPACING.map((s) => (
+            <SpacingBar key={s.token} token={s.token} px={s.px} />
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Foundations · Radius">
+        <div className="flex flex-wrap gap-6">
+          {RADIUS_UTILS.map((r) => (
+            <RadiusSwatch key={r} label={`radius-${r}`} cls={`rounded-${r}`} />
+          ))}
+          {RADIUS_VARS.map((r) => (
+            <RadiusSwatch key={r} label={r} varName={r} />
+          ))}
+        </div>
       </Section>
     </div>
   )
