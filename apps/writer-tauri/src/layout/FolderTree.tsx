@@ -135,6 +135,11 @@ interface TreeCtx {
   onCommitFolderRename: (path: string, name: string) => void
   onCancelFolderRename: () => void
   onDeleteFolder: (path: string) => void
+  /** Folder path under which a new subfolder is being named (null = none). */
+  creatingSubfolderParent: string | null
+  onStartCreateSubfolder: (parentPath: string) => void
+  onCommitCreateSubfolder: (parentPath: string, name: string) => void
+  onCancelCreateSubfolder: () => void
 }
 
 function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
@@ -277,6 +282,9 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent>
+            <ContextMenuItem onSelect={() => ctx.onStartCreateSubfolder(node.path)}>
+              New subfolder
+            </ContextMenuItem>
             <ContextMenuItem onSelect={() => ctx.onStartFolderRename(node.path)}>
               Rename
             </ContextMenuItem>
@@ -291,6 +299,22 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
         </ContextMenu>
         <CollapsibleContent asChild>
           <TreeSub>
+            {ctx.creatingSubfolderParent === node.path && (
+              <li>
+                <TreeRow>
+                  <TreeRowLead asChild>
+                    <span aria-hidden>
+                      <IconFolder size={16} className="text-muted-foreground" />
+                    </span>
+                  </TreeRowLead>
+                  <RenameInput
+                    initial=""
+                    onCommit={(name) => ctx.onCommitCreateSubfolder(node.path, name)}
+                    onCancel={ctx.onCancelCreateSubfolder}
+                  />
+                </TreeRow>
+              </li>
+            )}
             {node.children.map((child) => (
               <NodeView key={child.path} node={child} ctx={ctx} />
             ))}
@@ -351,6 +375,9 @@ export function FolderTree() {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [editingSlug, setEditingSlug] = useState<string | null>(null)
   const [editingFolderPath, setEditingFolderPath] = useState<string | null>(null)
+  const [creatingSubfolderParent, setCreatingSubfolderParent] = useState<
+    string | null
+  >(null)
 
   // Reveal the active note: when it changes, expand all of its ancestor
   // folders so it's always visible (and FileNode scrolls it into view).
@@ -426,6 +453,17 @@ export function FolderTree() {
       if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
     })
   }
+  const onStartCreateSubfolder = (parentPath: string) => {
+    setCreatingSubfolderParent(parentPath)
+    // Expand the parent so its (newly mounted) name input is visible.
+    setExpanded((prev) => (prev.has(parentPath) ? prev : new Set(prev).add(parentPath)))
+  }
+  const onCommitCreateSubfolder = (parentPath: string, name: string) => {
+    setCreatingSubfolderParent(null)
+    const trimmed = name.trim()
+    if (trimmed) void createFolder(`${parentPath}/${sanitizeFilename(trimmed)}`)
+  }
+  const onCancelCreateSubfolder = () => setCreatingSubfolderParent(null)
   const moveTargets = useMemo(
     () =>
       knownFolders
@@ -490,6 +528,10 @@ export function FolderTree() {
     onCommitFolderRename,
     onCancelFolderRename: () => setEditingFolderPath(null),
     onDeleteFolder,
+    creatingSubfolderParent,
+    onStartCreateSubfolder,
+    onCommitCreateSubfolder,
+    onCancelCreateSubfolder,
   }
 
   return (
