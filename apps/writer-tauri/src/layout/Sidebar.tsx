@@ -230,7 +230,12 @@ export function AppSidebar() {
                   the name clear of both trailing actions. */}
               <SidebarMenuButton
                 aria-label="Account"
-                className="pr-14 text-sidebar-foreground/70"
+                // Bottom-left corner echoes the window's rounded corner it sits in.
+                // The sidebar is flush to the window (side=left, left-0) and the
+                // footer's p-2 inset equals --window-inset, so the concentric value
+                // is exactly --window-radius − --window-inset (≈18px). Other corners
+                // keep the nav-row rounded-sm.
+                className="pr-14 text-sidebar-foreground/70 rounded-bl-[calc(var(--window-radius)-var(--window-inset))]"
                 onClick={() => setAccountMenuOpen(true)}
               >
                 <Avatar className="size-4 shrink-0 opacity-80">
