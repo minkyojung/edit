@@ -29,6 +29,9 @@ import {
   CardFooter,
 } from '@/components/ui/card'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { DiffBlock } from '@/components/DiffBlock'
+import type { DiffLine } from '@/lib/git'
+import { SettingRow } from '@/settings/SettingRow'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Separator } from '@/components/ui/separator'
@@ -279,6 +282,16 @@ const BADGE_VARIANTS = [
 ] as const
 const BUTTON_TEXT_SIZES = ['xs', 'sm', 'default', 'lg'] as const
 const BUTTON_ICON_SIZES = ['icon-xs', 'icon-sm', 'icon', 'icon-lg'] as const
+
+// ── Compositions ──────────────────────────────────────────────────────
+// Mock data so the presentational compositions render realistically (these
+// units take data/children rather than just variant props).
+const DIFF_DEMO: DiffLine[] = [
+  { kind: 'context', text: '## Meeting notes', lineNum: 1 },
+  { kind: 'remove', text: 'Action items at the bottom.', lineNum: 2 },
+  { kind: 'add', text: 'Action items pinned to the top.', lineNum: 2 },
+  { kind: 'context', text: 'Attendees: Will, AI', lineNum: 3 },
+]
 
 // A labeled row of demo items (reused across primitive subgroups).
 function Subgroup({ title, children }: { title: string; children: ReactNode }) {
@@ -538,6 +551,36 @@ export function GalleryPage() {
             </DropdownMenuContent>
           </DropdownMenu>
         </Subgroup>
+      </Section>
+
+      <Section title="Compositions">
+        <div>
+          <h3 className="mb-3 text-[13px] font-medium text-muted-foreground">DiffBlock</h3>
+          <div className="max-w-md">
+            <DiffBlock lines={DIFF_DEMO} />
+          </div>
+        </div>
+        <div>
+          <h3 className="mb-3 text-[13px] font-medium text-muted-foreground">SettingRow</h3>
+          <div className="max-w-md divide-y divide-border rounded-xl border border-border px-4">
+            <SettingRow title="Theme" description="Color palette for the app.">
+              <Select>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Charcoal" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="charcoal">Charcoal</SelectItem>
+                  <SelectItem value="paper">Paper</SelectItem>
+                </SelectContent>
+              </Select>
+            </SettingRow>
+            <SettingRow title="Reset onboarding" description="Show the intro flow again next launch.">
+              <Button size="sm" variant="outline">
+                Reset
+              </Button>
+            </SettingRow>
+          </div>
+        </div>
       </Section>
     </div>
   )
