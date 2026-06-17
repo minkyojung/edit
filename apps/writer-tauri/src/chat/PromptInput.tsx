@@ -9,7 +9,19 @@
 //                 icon hint; the actual error message lives in the turn.
 
 import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { IconArrowUp, IconPlayerStop, IconQuote, IconX } from '@tabler/icons-react'
+import {
+  IconArrowUp,
+  IconFile,
+  IconFileText,
+  IconFileTypePdf,
+  IconMovie,
+  IconMusic,
+  IconPhoto,
+  IconPlayerStop,
+  IconQuote,
+  IconX,
+} from '@tabler/icons-react'
+import { classifyAsset, type AssetKind } from '@/lib/attachments'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
@@ -80,6 +92,12 @@ interface Props {
   selectionText?: string | null
   /** Detach the selection from this run. Called by the chip's X button. */
   onClearSelection?: () => void
+  /** Vault-relative path of the non-markdown file the chat is reading (the
+   * open FileViewer file). When set, a chip renders above the textarea so the
+   * user can see the AI has this file in context; null hides it. */
+  viewingFilePath?: string | null
+  /** Detach the viewed file from the chat's context. Called by the chip's X. */
+  onClearViewingFile?: () => void
 }
 
 // Chip label: first ~24 chars of the selection on a single line, with an
@@ -90,6 +108,17 @@ function chipLabel(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim()
   if (flat.length <= CHIP_MAX) return flat
   return flat.slice(0, CHIP_MAX).trimEnd() + '…'
+}
+
+// Per-kind glyph for the viewed-file chip, so a PDF reads as a PDF and an
+// image as an image at a glance (classifyAsset maps the extension).
+const FILE_KIND_ICON: Record<AssetKind, typeof IconFile> = {
+  pdf: IconFileTypePdf,
+  image: IconPhoto,
+  audio: IconMusic,
+  video: IconMovie,
+  text: IconFileText,
+  other: IconFile,
 }
 
 export function PromptInput({
@@ -111,6 +140,8 @@ export function PromptInput({
   validate,
   selectionText,
   onClearSelection,
+  viewingFilePath,
+  onClearViewingFile,
 }: Props) {
   const [value, setValue] = useState('')
   const [isComposing, setIsComposing] = useState(false)
@@ -226,6 +257,50 @@ export function PromptInput({
           onHover={setSelectedIndex}
         />
       )}
+      {viewingFilePath &&
+        (() => {
+          const fileName = viewingFilePath.split('/').pop() ?? viewingFilePath
+          const FileIcon = FILE_KIND_ICON[classifyAsset(viewingFilePath)]
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className={cn(
+                    'group/filechip inline-flex h-7 w-fit max-w-[220px] items-center gap-1.5',
+                    // bg-background (not bg-muted) so the chip reads as a
+                    // distinct inset against the composer's bg-muted body —
+                    // contrast carries it, no border needed.
+                    'rounded-md bg-background pl-2.5 pr-1.5 text-[13px] text-foreground/80',
+                  )}
+                >
+                  <FileIcon size={14} stroke={1.75} className="shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 truncate font-medium">{fileName}</span>
+                  {onClearViewingFile && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        // mousedown so the textarea keeps focus.
+                        e.preventDefault()
+                        onClearViewingFile()
+                      }}
+                      aria-label="Remove file from context"
+                      className={cn(
+                        'shrink-0 rounded p-0.5 text-muted-foreground outline-none transition-opacity',
+                        'opacity-0 group-hover/filechip:opacity-100 focus-visible:opacity-100',
+                        'hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40',
+                      )}
+                    >
+                      <IconX size={12} stroke={2} />
+                    </button>
+                  )}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" align="start" className="max-w-sm whitespace-pre-wrap text-left">
+                {viewingFilePath}
+              </TooltipContent>
+            </Tooltip>
+          )
+        })()}
       {selectionText && (
         <Tooltip>
           <TooltipTrigger asChild>

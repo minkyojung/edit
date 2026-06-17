@@ -80,7 +80,17 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   // FileViewer route (`/file/:rel`): a non-markdown file (PDF/image/…) is open.
   // There's no slug/editor for it, so this path is the only signal the chat
   // gets about what the user is looking at.
-  const viewingFilePath = parseFilePathFromPath(pathname)
+  const routeFilePath = parseFilePathFromPath(pathname)
+  // The file chip is detachable: the user can drop the open file from the
+  // chat's context via its X. Tracked as a dismissal so we can keep using the
+  // route as the source of truth — opening a different file (route change)
+  // re-attaches automatically.
+  const [fileChipDismissed, setFileChipDismissed] = useState(false)
+  useEffect(() => {
+    setFileChipDismissed(false)
+  }, [routeFilePath])
+  // What the chat actually sees / the chip renders: null once detached.
+  const viewingFilePath = routeFilePath && !fileChipDismissed ? routeFilePath : null
   const { account } = useClaudeAuth()
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const turnsHook = useThreadTurns(activeId)
@@ -212,10 +222,11 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   // Chat works without a (ProseMirror) editorView: the queue route is read-only
   // Q&A, and the CodeMirror editor doesn't publish a PM view at all — in both cases
   // an open doc (`slug`) is enough, since edits flow through pendingChangesStore, not
-  // the live view. The FileViewer route has neither a view nor a slug, but a file is
-  // open (`viewingFilePath`) and the chat can read it — so that counts too. Gate on
-  // having something to act on, not on a specific editor type.
-  const ready = !!activeId && (!!editorView || isQueue || !!slug || !!viewingFilePath)
+  // the live view. The FileViewer route has neither a view nor a slug, but it's still
+  // a valid chat surface — so gate on being ON that route (`routeFilePath`), NOT on
+  // `viewingFilePath`: detaching the file chip must not disable the input, since
+  // general questions are still fine there.
+  const ready = !!activeId && (!!editorView || isQueue || !!slug || !!routeFilePath)
 
   // Track whether the editor currently has *something* selectable for slash
   // commands — either a live non-empty selection or a frozen snapshot taken
@@ -742,6 +753,8 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
             validate={validatePrompt}
             selectionText={selectionPreview}
             onClearSelection={handleClearSelection}
+            viewingFilePath={viewingFilePath}
+            onClearViewingFile={() => setFileChipDismissed(true)}
           />
         )}
       </div>
