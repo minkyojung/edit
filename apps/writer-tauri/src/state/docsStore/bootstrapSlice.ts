@@ -18,7 +18,7 @@
  */
 
 import { scanVault } from '@/lib/scanVault'
-import { listVaultDirsRecursive, listVaultFilesRecursive } from '@/lib/vault'
+import { listVaultTreeRecursive } from '@/lib/vault'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import type { GetDocsState, SetDocsState } from './types'
 
@@ -69,21 +69,15 @@ export const createBootstrapSlice = (
       const scanned = await scanVault()
       set({ knownDocs: scanned })
 
-      // Folder inventory (incl. empty folders) so the sidebar tree can
-      // show folders that hold no file yet. Best-effort — failure just
-      // means empty folders won't appear until the next boot.
+      // Folder inventory (incl. empty folders) + non-markdown attachments
+      // (pdf/png/txt/…) so the sidebar tree can show empty folders and
+      // read-only file rows alongside notes. One walk yields both.
+      // Best-effort — failure just means they won't appear until next boot.
       try {
-        set({ knownFolders: await listVaultDirsRecursive() })
+        const { dirs, files } = await listVaultTreeRecursive()
+        set({ knownFolders: dirs, knownFiles: files })
       } catch (err) {
-        console.warn('[boot] folder scan failed', err)
-      }
-
-      // Non-markdown attachments (pdf/png/txt/…) so the tree can show
-      // read-only file rows alongside notes. Best-effort, same as folders.
-      try {
-        set({ knownFiles: await listVaultFilesRecursive() })
-      } catch (err) {
-        console.warn('[boot] file scan failed', err)
+        console.warn('[boot] tree scan failed', err)
       }
 
       // Validate persisted tab state against the freshly hydrated

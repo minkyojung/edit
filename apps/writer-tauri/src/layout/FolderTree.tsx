@@ -49,10 +49,8 @@ import {
   type TreeNode,
 } from '@/lib/fileTree'
 import { classifyAsset } from '@/lib/attachments'
-import { open as openInDefaultApp } from '@tauri-apps/plugin-shell'
-import { invoke } from '@tauri-apps/api/core'
 import { buildViewUrl } from '@/lib/viewUrl'
-import { vaultAbsPath } from '@/lib/vault'
+import { openVaultFile, revealVaultFile, vaultAbsPath } from '@/lib/vault'
 import { pathForDoc, sanitizeFilename } from '@/lib/docPaths'
 import { planFolderMove } from '@/lib/folderMove'
 import {
@@ -588,17 +586,13 @@ export function FolderTree() {
     )
   }
   const onOpenInDefaultApp = (relPath: string) => {
-    void vaultAbsPath(relPath).then((abs) =>
-      openInDefaultApp(abs).catch((err) =>
-        console.warn('[docs] open in default app failed', err),
-      ),
+    void openVaultFile(relPath).catch((err) =>
+      console.warn('[docs] open in default app failed', err),
     )
   }
   const onRevealInFinder = (relPath: string) => {
-    void vaultAbsPath(relPath).then((abs) =>
-      invoke('reveal_in_finder', { path: abs }).catch((err) =>
-        console.warn('[docs] reveal in finder failed', err),
-      ),
+    void revealVaultFile(relPath).catch((err) =>
+      console.warn('[docs] reveal in finder failed', err),
     )
   }
   const onDragStart = (e: DragStartEvent) => {

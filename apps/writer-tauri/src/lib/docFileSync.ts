@@ -494,13 +494,20 @@ async function flushDirtyOnce(): Promise<void> {
       // out before the watcher updated relPath). A blind write here would
       // recreate a zombie at the stale path and strand the live edits.
       // Defer: leave the slug dirty so the next tick lands at the right
-      // path once the watcher settles. Only stat in the no-rename case.
-      if (oldMd === mdPath && shouldDeferStaleWrite(oldMd, mdPath, await vaultFileExists(mdPath))) {
-        console.warn(
-          '[vault:flush] body target missing — deferring (external move/delete in flight)',
-          { slug, mdPath },
-        )
-        continue
+      // path once the watcher settles. The `oldMd === mdPath` gate scopes
+      // the existence stat to the no-rename case (the rename-on-change
+      // branch above already handles a moved file when the path changed),
+      // so we don't pay a syscall on every rename flush; shouldDeferStaleWrite
+      // is the authoritative rule.
+      if (oldMd === mdPath) {
+        const exists = await vaultFileExists(mdPath)
+        if (shouldDeferStaleWrite(oldMd, mdPath, exists)) {
+          console.warn(
+            '[vault:flush] body target missing — deferring (external move/delete in flight)',
+            { slug, mdPath },
+          )
+          continue
+        }
       }
       // Frontmatter-native docs embed their metadata at the top of the
       // `.md`; every other type writes a plain body + a `.meta.json`

@@ -11,9 +11,13 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { IconExternalLink, IconFolderOpen } from '@tabler/icons-react'
-import { convertFileSrc, invoke } from '@tauri-apps/api/core'
-import { open as openInDefaultApp } from '@tauri-apps/plugin-shell'
-import { readVaultBinary, vaultAbsPath } from '@/lib/vault'
+import { convertFileSrc } from '@tauri-apps/api/core'
+import {
+  openVaultFile,
+  readVaultBinary,
+  revealVaultFile,
+  vaultAbsPath,
+} from '@/lib/vault'
 import { classifyAsset } from '@/lib/attachments'
 
 export function FileViewer() {
@@ -53,16 +57,12 @@ export function FileViewer() {
   }, [rel, kind])
 
   const openExternal = () =>
-    void vaultAbsPath(rel).then((abs) =>
-      openInDefaultApp(abs).catch((err) =>
-        console.warn('[file] open in default app failed', err),
-      ),
+    void openVaultFile(rel).catch((err) =>
+      console.warn('[file] open in default app failed', err),
     )
   const reveal = () =>
-    void vaultAbsPath(rel).then((abs) =>
-      invoke('reveal_in_finder', { path: abs }).catch((err) =>
-        console.warn('[file] reveal in finder failed', err),
-      ),
+    void revealVaultFile(rel).catch((err) =>
+      console.warn('[file] reveal in finder failed', err),
     )
 
   return (

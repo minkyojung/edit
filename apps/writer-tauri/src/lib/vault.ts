@@ -37,6 +37,7 @@ import { dirname, join } from '@tauri-apps/api/path'
 import { invoke } from '@tauri-apps/api/core'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useGitStore } from '@/state/gitStore'
+import { open as openInDefaultApp } from '@tauri-apps/plugin-shell'
 import { isAttachmentFile } from './attachments'
 
 /** Tell the git layer that a path was just modified. This is an
@@ -128,6 +129,18 @@ export async function readVaultFile(relPath: string): Promise<string> {
  * Finder, copy path). */
 export async function vaultAbsPath(relPath: string): Promise<string> {
   return resolveVaultPath(relPath)
+}
+
+/** Open a vault file in the OS default app. Resolves the absolute path
+ * (with the same `..`-rejecting validation as every vault read) and hands
+ * it to the shell. Throws on failure — callers add their own logging. */
+export async function openVaultFile(relPath: string): Promise<void> {
+  await openInDefaultApp(await vaultAbsPath(relPath))
+}
+
+/** Reveal a vault file in Finder (selects it in its enclosing folder). */
+export async function revealVaultFile(relPath: string): Promise<void> {
+  await invoke('reveal_in_finder', { path: await vaultAbsPath(relPath) })
 }
 
 /** Window (ms) during which a content-hash we recently wrote stays
@@ -406,57 +419,44 @@ export async function listVaultDir(relPath: string): Promise<string[]> {
     .map((e) => e.name)
 }
 
-/** Every (non-hidden) subdirectory in the vault, vault-relative and
- * recursive. The sidebar tree is otherwise built only from file paths,
- * so this is how empty folders surface. Hidden (`.`-prefixed) dirs are
- * skipped; `_`-prefixed are returned but the tree filters them. */
-export async function listVaultDirsRecursive(subRel = ''): Promise<string[]> {
+/** One recursive pass over the vault collecting BOTH inventories the
+ * sidebar needs: every non-hidden subdirectory (`dirs`, so empty folders
+ * still surface — the tree is otherwise built only from file paths) and
+ * every non-markdown attachment file (`files`, the pdf/png/txt/… rows).
+ * Notes (`.md`), dot-dirs/files, and app sidecars are excluded from
+ * `files` by `isAttachmentFile`; `.`-prefixed dirs are skipped entirely
+ * while `_`-prefixed ones are returned (the tree filters them). Single
+ * traversal — both call sites (boot scan, watcher refresh) want both, so
+ * walking the tree twice would double the readDir cost. */
+export async function listVaultTreeRecursive(
+  subRel = '',
+): Promise<{ dirs: string[]; files: string[] }> {
+  const empty = { dirs: [] as string[], files: [] as string[] }
   const root = getActiveVaultPath()
-  if (!root) return []
-  if (subRel !== '' && !(await exists(await resolveVaultPath(subRel)))) return []
+  if (!root) return empty
+  if (subRel !== '' && !(await exists(await resolveVaultPath(subRel)))) return empty
   const absPath = subRel === '' ? root : await resolveVaultPath(subRel)
   let entries: Awaited<ReturnType<typeof readDir>>
   try {
     entries = await readDir(absPath)
   } catch {
-    return []
+    return empty
   }
-  const out: string[] = []
-  for (const entry of entries) {
-    if (!entry.isDirectory || entry.name.startsWith('.')) continue
-    const childRel = subRel === '' ? entry.name : `${subRel}/${entry.name}`
-    out.push(childRel)
-    out.push(...(await listVaultDirsRecursive(childRel)))
-  }
-  return out
-}
-
-/** Every (non-hidden) attachment file in the vault, vault-relative and
- * recursive — the non-markdown files (pdf/png/txt/…) the sidebar shows as
- * read-only rows. Notes (`.md`), dot-dirs/files, and app sidecars are
- * filtered out by `isAttachmentFile`. Mirrors listVaultDirsRecursive. */
-export async function listVaultFilesRecursive(subRel = ''): Promise<string[]> {
-  const root = getActiveVaultPath()
-  if (!root) return []
-  if (subRel !== '' && !(await exists(await resolveVaultPath(subRel)))) return []
-  const absPath = subRel === '' ? root : await resolveVaultPath(subRel)
-  let entries: Awaited<ReturnType<typeof readDir>>
-  try {
-    entries = await readDir(absPath)
-  } catch {
-    return []
-  }
-  const out: string[] = []
+  const dirs: string[] = []
+  const files: string[] = []
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue
     const childRel = subRel === '' ? entry.name : `${subRel}/${entry.name}`
     if (entry.isDirectory) {
-      out.push(...(await listVaultFilesRecursive(childRel)))
+      dirs.push(childRel)
+      const sub = await listVaultTreeRecursive(childRel)
+      dirs.push(...sub.dirs)
+      files.push(...sub.files)
     } else if (entry.isFile && isAttachmentFile(childRel)) {
-      out.push(childRel)
+      files.push(childRel)
     }
   }
-  return out
+  return { dirs, files }
 }
 
 /** Does the given vault-relative path exist (file OR directory)? */
@@ -487,7 +487,7 @@ export async function deleteVaultDir(relPath: string): Promise<void> {
 
 /** Create a folder (recursively) in the vault. Idempotent — succeeds
  * even if it already exists. Empty folders aren't tracked by git, but
- * they persist on disk and re-surface via listVaultDirsRecursive. */
+ * they persist on disk and re-surface via listVaultTreeRecursive. */
 export async function createVaultFolder(relPath: string): Promise<void> {
   const path = await resolveVaultPath(relPath)
   await mkdir(path, { recursive: true })

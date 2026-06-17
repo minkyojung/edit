@@ -38,8 +38,7 @@ import { pathForDoc } from '@/lib/docPaths'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
 import {
   isOurRecentWrite,
-  listVaultDirsRecursive,
-  listVaultFilesRecursive,
+  listVaultTreeRecursive,
   vaultFileExists,
 } from './vault'
 import { isDirty } from './docFileSync'
@@ -73,12 +72,11 @@ function scheduleFolderRefresh(): void {
   if (folderRefreshTimer) clearTimeout(folderRefreshTimer)
   folderRefreshTimer = setTimeout(() => {
     folderRefreshTimer = null
-    void listVaultDirsRecursive()
-      .then((folders) => useDocsStore.setState({ knownFolders: folders }))
-      .catch((err) => console.warn('[watch] folder refresh failed', err))
-    void listVaultFilesRecursive()
-      .then((files) => useDocsStore.setState({ knownFiles: files }))
-      .catch((err) => console.warn('[watch] file refresh failed', err))
+    void listVaultTreeRecursive()
+      .then(({ dirs, files }) =>
+        useDocsStore.setState({ knownFolders: dirs, knownFiles: files }),
+      )
+      .catch((err) => console.warn('[watch] tree refresh failed', err))
   }, 400)
 }
 
