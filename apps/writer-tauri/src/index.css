@@ -33,14 +33,16 @@
 
   body {
     -webkit-font-smoothing: antialiased;
-    /* Window-frame tone follows the content canvas (--background), not
-       the sidebar. That makes the floating sidebar read as a card
-       *over* the canvas — the outer gaps around the sidebar are the
-       same tone as the editor surface, so the card appears lifted
-       rather than embedded in a separate strip. */
-    background-color: var(--background);
+    /* VIBRANCY SPIKE: the window canvas is now transparent so the native
+       NSVisualEffectView (windowEffects: sidebar) shows through. Opaque
+       surfaces (editor column, right panel) paint their own --background;
+       the left sidebar + window-inset gaps stay transparent → frosted.
+       Revert: restore `background-color: var(--background)` + the
+       `bg-background` apply below, and drop transparent/windowEffects in
+       tauri.conf. */
+    background-color: transparent;
     color: var(--foreground);
-    @apply bg-background text-foreground;
+    @apply text-foreground;
   }
   /* In fullscreen macOS hides the traffic-light buttons, so the 80px
      reservation on the left of EditorHeader / SidebarHeader stops

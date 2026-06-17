@@ -114,7 +114,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
             flex-grow a frame late). Drag-to-resize is the only JS; window
             resizes touch no JS at all. */}
         <div className="flex h-full">
-          <div data-editor-panel className="relative flex h-full min-w-0 flex-1 flex-col">
+          <div data-editor-panel className="relative flex h-full min-w-0 flex-1 flex-col bg-background">
             <EditorHeader
               showSidebarTrigger={!sidebarOpen}
               editorView={editorView ?? null}
