@@ -25,6 +25,7 @@ import { autocompletion } from '@codemirror/autocomplete'
 import { GFM } from '@lezer/markdown'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
+import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 import { registerCmEditor, unregisterCmEditor } from '@/state/activeCmEditor'
 import { markSlugDirty } from '@/lib/docFileSync'
 import { EditorFooter } from '@/components/EditorFooter'
@@ -153,6 +154,24 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             mermaidCards, // ```mermaid fence → live diagram (portable across md apps)
             highlightRenderExtension(handle.slug), // paint recorded highlights
             highlightSelectionNotifier, // selection → "Highlight" prompt in the bar
+            // Mirror the live selection into the editor-agnostic store so the
+            // chat panel can show the selection chip + inject it as context.
+            // We publish the line range too (CM knows it cheaply) so the chip
+            // can read "Note · L10–14" rather than a raw text snippet.
+            EditorView.updateListener.of((u) => {
+              if (!u.selectionSet && !u.docChanged) return
+              const m = u.state.selection.main
+              const store = useEditorSelectionStore.getState()
+              if (m.empty) {
+                store.setSelection(null)
+                return
+              }
+              store.setSelection({
+                text: u.state.sliceDoc(m.from, m.to),
+                fromLine: u.state.doc.lineAt(m.from).number,
+                toLine: u.state.doc.lineAt(m.to).number,
+              })
+            }),
             highlightClickExtension, // click a highlight → open it for a note
             highlightHotkey(handle.slug), // ⌘⇧M → highlight the selection
 
@@ -183,6 +202,14 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
       })
       viewRef.current = view // expose for the highlight sync + floating menu
       onViewReady?.(null) // no PM view — PM-view consumers degrade, not break
+      // Let the chat's selection-chip X collapse this view's selection
+      // without the chat holding an editor reference.
+      useEditorSelectionStore.getState().setCollapse(() => {
+        const v = view
+        if (!v) return
+        const head = v.state.selection.main.head
+        v.dispatch({ selection: { anchor: head, head } })
+      })
       setStats(computeCmStats(handle.bodyMarkdown))
       // Register so docsStore body-replace paths can push fresh markdown into this
       // view. An ACCEPT (changeId present) is dispatched as an UNDOABLE transaction
@@ -221,6 +248,8 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
       mounted = false
       document.removeEventListener('keydown', onKeyDown)
       if (handle) unregisterCmEditor(handle.slug)
+      useEditorSelectionStore.getState().setSelection(null)
+      useEditorSelectionStore.getState().setCollapse(null)
       view?.destroy()
       view = null
       viewRef.current = null

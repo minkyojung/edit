@@ -68,6 +68,11 @@ export interface SystemBlocksArgs {
    * image, audio, …). Unlike `currentFilePath`, there's no text body to inject
    * — the model is told to Read the path on demand to interpret it. */
   viewingFilePath?: string | null
+  /** Text the user has selected in the editor when sending a free-chat turn.
+   * Injected as a high-salience `--- SELECTION ---` block so "explain this" /
+   * "rewrite this" resolve to the selection, not the whole document. Slash
+   * commands handle selection via `{{selection}}` and don't pass this. */
+  selectionText?: string | null
   /** When set, a high-salience block naming the visualization being edited
    * (id + current spec) is pinned past the cache boundary, instructing the
    * model to apply changes via the edit_visualization tool. */
@@ -111,6 +116,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     appendDocument,
     currentFilePath,
     viewingFilePath,
+    selectionText,
     vizEditTarget,
     today,
   } = args
@@ -169,6 +175,15 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `you to summarize / explain / analyze without naming a file, they mean THIS file. ` +
         `Use the Read tool on that exact path to open and interpret it (Read ingests PDFs ` +
         `and images directly). Treat it as read-only — don't try to edit it.`,
+    )
+  }
+  if (selectionText && selectionText.trim()) {
+    dynamic.push(
+      `--- SELECTION ---\n` +
+        `The user has selected this passage in the document. When they say "this", ` +
+        `"여기", "this part", or ask to explain / rewrite / fix without naming a target, ` +
+        `they mean THIS selection — focus on it (the full document follows for context):\n\n` +
+        selectionText,
     )
   }
   if (appendDocument) dynamic.push(`--- DOCUMENT ---\n${docForPrompt}`)

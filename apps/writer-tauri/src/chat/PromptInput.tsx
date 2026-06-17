@@ -19,9 +19,9 @@ import {
   IconPhoto,
   IconPlayerStop,
   IconQuote,
-  IconX,
 } from '@tabler/icons-react'
 import { classifyAsset, type AssetKind } from '@/lib/attachments'
+import { ContextChip } from '@/chat/ContextChip'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
@@ -87,9 +87,12 @@ interface Props {
   /** Optional pre-submit validator. Runs on every keystroke; an `ok: false`
    * result both renders an inline hint and prevents Send. */
   validate?: (text: string) => ValidationResult
-  /** Currently attached selection text (live or frozen). When set, a
-   * preview chip renders above the textarea; null hides the chip. */
+  /** Currently attached selection text. When set, a chip renders above the
+   * textarea (and the text is the chip's tooltip); null hides the chip. */
   selectionText?: string | null
+  /** Structured chip label for the selection — e.g. "Note · L10–14". Falls
+   * back to a snippet of `selectionText` when absent. */
+  selectionLabel?: string | null
   /** Detach the selection from this run. Called by the chip's X button. */
   onClearSelection?: () => void
   /** Vault-relative path of the non-markdown file the chat is reading (the
@@ -139,6 +142,7 @@ export function PromptInput({
   contextSnapshot,
   validate,
   selectionText,
+  selectionLabel,
   onClearSelection,
   viewingFilePath,
   onClearViewingFile,
@@ -257,81 +261,38 @@ export function PromptInput({
           onHover={setSelectedIndex}
         />
       )}
-      {viewingFilePath &&
-        (() => {
-          const fileName = viewingFilePath.split('/').pop() ?? viewingFilePath
-          const FileIcon = FILE_KIND_ICON[classifyAsset(viewingFilePath)]
-          return (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span
-                  className={cn(
-                    'group/filechip inline-flex h-7 w-fit max-w-[220px] items-center gap-1.5',
-                    // bg-background (not bg-muted) so the chip reads as a
-                    // distinct inset against the composer's bg-muted body —
-                    // contrast carries it, no border needed.
-                    'rounded-md bg-background pl-2.5 pr-1.5 text-[13px] text-foreground/80',
-                  )}
-                >
-                  <FileIcon size={14} stroke={1.75} className="shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 truncate font-medium">{fileName}</span>
-                  {onClearViewingFile && (
-                    <button
-                      type="button"
-                      onMouseDown={(e) => {
-                        // mousedown so the textarea keeps focus.
-                        e.preventDefault()
-                        onClearViewingFile()
-                      }}
-                      aria-label="Remove file from context"
-                      className={cn(
-                        'shrink-0 rounded p-0.5 text-muted-foreground outline-none transition-opacity',
-                        'opacity-0 group-hover/filechip:opacity-100 focus-visible:opacity-100',
-                        'hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40',
-                      )}
-                    >
-                      <IconX size={12} stroke={2} />
-                    </button>
-                  )}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="top" align="start" className="max-w-sm whitespace-pre-wrap text-left">
-                {viewingFilePath}
-              </TooltipContent>
-            </Tooltip>
-          )
-        })()}
+      {/* Context chips (viewed file, selection, …) live in one horizontal
+          row that scrolls sideways when they overflow — the modern chip-bar
+          pattern — instead of stacking vertically and growing the composer.
+          Each chip is shrink-0 so it keeps its size and the row scrolls. */}
+      {(viewingFilePath || selectionText) && (
+        <div
+          className={cn(
+            'flex items-center gap-1.5 overflow-x-auto',
+            '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+          )}
+        >
+      {viewingFilePath && (
+        <ContextChip
+          icon={FILE_KIND_ICON[classifyAsset(viewingFilePath)]}
+          label={viewingFilePath.split('/').pop() ?? viewingFilePath}
+          tooltip={viewingFilePath}
+          onRemove={onClearViewingFile}
+          removeLabel="Remove file from context"
+        />
+      )}
       {selectionText && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span
-              className={cn(
-                'inline-flex w-fit items-center gap-1 rounded-full border border-border',
-                'bg-muted/60 px-2 py-0.5 text-xs text-muted-foreground',
-              )}
-            >
-              <IconQuote size={12} stroke={2} className="shrink-0" />
-              <span className="font-mono">{chipLabel(selectionText)}</span>
-              {onClearSelection && (
-                <button
-                  type="button"
-                  onMouseDown={(e) => {
-                    // mousedown so the textarea keeps focus.
-                    e.preventDefault()
-                    onClearSelection()
-                  }}
-                  aria-label="Detach selection"
-                  className="ml-0.5 rounded-full p-0.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
-                >
-                  <IconX size={12} stroke={2} />
-                </button>
-              )}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="top" align="start" className="max-w-sm whitespace-pre-wrap text-left">
-            {selectionText}
-          </TooltipContent>
-        </Tooltip>
+        <ContextChip
+          icon={IconQuote}
+          // Prefer the structured "Note · L10–14" label from the editor; fall
+          // back to a text snippet when no location is available.
+          label={selectionLabel ?? chipLabel(selectionText)}
+          tooltip={selectionText}
+          onRemove={onClearSelection}
+          removeLabel="Detach selection"
+        />
+      )}
+        </div>
       )}
       <textarea
         value={value}

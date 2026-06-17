@@ -54,6 +54,10 @@ interface UseChatRunnerDeps {
    * (`/file/:rel`) route — null on every other surface. Forwarded to runChat
    * so the agent knows which file the user is looking at. */
   viewingFilePath: string | null
+  /** Editor text currently selected (live or frozen snapshot), or null. For
+   * free-chat turns it's forwarded to runChat as a `--- SELECTION ---` block
+   * so "explain this" focuses on the selection. */
+  selectionText: string | null
   activeId: string | null
   activeThreadModel: ChatModel
   activeThreadEffort: ChatEffort
@@ -102,6 +106,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
     isQueue,
     slug,
     viewingFilePath,
+    selectionText,
     activeId,
     activeThreadModel,
     activeThreadEffort,
@@ -319,6 +324,10 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           // On the queue, feed the saved-article list as the "current page".
           pageContextMarkdown: isQueue ? buildQueueContextMarkdown() : undefined,
           viewingFilePath,
+          // Free-chat only: slash commands already fold the selection into
+          // their rendered body via {{selection}}, so passing it here too
+          // would double-inject. overrides ⇒ slash command ⇒ skip.
+          selectionText: overrides ? undefined : selectionText,
           threadId,
           history,
           prompt: overrides?.prompt,
@@ -399,7 +408,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [editorView, isQueue, slug, viewingFilePath, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
+    [editorView, isQueue, slug, viewingFilePath, selectionText, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
   return { status, streaming, run }

@@ -14,9 +14,10 @@ import { useLocation } from 'react-router-dom'
 import { parseFilePathFromPath } from '@/lib/viewUrl'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
-import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
+import { getFrozenRange } from '@/editor/frozenSelectionPlugin'
 import { getVizSourceById } from '@/editor/vizBlockOps'
-import { TextSelection } from '@milkdown/kit/prose/state'
+import { useEditorSelectionStore } from '@/state/editorSelectionStore'
+import { useDocLabel } from '@/hooks/useDocLabel'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
@@ -91,6 +92,19 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   }, [routeFilePath])
   // What the chat actually sees / the chip renders: null once detached.
   const viewingFilePath = routeFilePath && !fileChipDismissed ? routeFilePath : null
+  // The editor's live selection (text + line range), editor-agnostic: the
+  // active editor (CodeMirror) publishes it to this store, so the chat reads it
+  // without a PM `editorView`. Drives the selection chip, the slash-command
+  // Send gate (hasSelection), and free-chat selection context.
+  const selection = useEditorSelectionStore((s) => s.selection)
+  const noteLabel = useDocLabel(slug)
+  const selectionText = selection?.text ?? null
+  // Chip label uses the editor's metadata — "Note · L10–14" — rather than a
+  // text snippet, so it reads like a code-editor reference.
+  const selectionLabel = selection
+    ? `${noteLabel || 'Selection'} · L${selection.fromLine}` +
+      (selection.toLine !== selection.fromLine ? `–${selection.toLine}` : '')
+    : null
   const { account } = useClaudeAuth()
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const turnsHook = useThreadTurns(activeId)
@@ -167,6 +181,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     isQueue,
     slug,
     viewingFilePath,
+    selectionText,
     activeId,
     activeThreadModel,
     activeThreadEffort,
@@ -228,49 +243,10 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   // general questions are still fine there.
   const ready = !!activeId && (!!editorView || isQueue || !!slug || !!routeFilePath)
 
-  // Track whether the editor currently has *something* selectable for slash
-  // commands — either a live non-empty selection or a frozen snapshot taken
-  // when focus moved to the chat input. selectionchange fires on both
-  // caret moves inside the editor and on focus transitions to the textarea
-  // (the latter triggers blur → snapshot in frozenSelectionPlugin), so it
-  // covers both sources without separate plumbing.
-  // Mirror the editor's "what's attached?" state into React. We track
-  // both a boolean (used by the validator to gate Send) and the full
-  // selected text (used by the chip preview). selectionchange fires on
-  // every caret move and on focus transitions to/from the textarea, so
-  // it covers live selections and the blur-snapshot path together;
-  // focusout/focusin add coverage for keyboard-driven focus shifts.
-  const [selectionPreview, setSelectionPreview] = useState<string | null>(null)
-  const hasSelection = selectionPreview !== null
-  useEffect(() => {
-    if (!editorView) {
-      setSelectionPreview(null)
-      return
-    }
-    const update = () => {
-      const ev = editorView
-      const sel = ev.state.selection
-      if (!sel.empty) {
-        setSelectionPreview(ev.state.doc.textBetween(sel.from, sel.to, '\n', '\n'))
-        return
-      }
-      const frozen = getFrozenRange(ev)
-      if (frozen) {
-        setSelectionPreview(ev.state.doc.textBetween(frozen.from, frozen.to, '\n', '\n'))
-        return
-      }
-      setSelectionPreview(null)
-    }
-    update()
-    document.addEventListener('selectionchange', update)
-    editorView.dom.addEventListener('focusout', update)
-    editorView.dom.addEventListener('focusin', update)
-    return () => {
-      document.removeEventListener('selectionchange', update)
-      editorView.dom.removeEventListener('focusout', update)
-      editorView.dom.removeEventListener('focusin', update)
-    }
-  }, [editorView])
+  // Whether the editor has a non-empty selection — gates selection-scoped
+  // slash commands (validatePrompt). Sourced from the same editor-agnostic
+  // store as the chip.
+  const hasSelection = selection !== null
 
   // "Edit with AI" from a viz block's toolbar arms a one-shot: it carries the
   // block's stable id, and the NEXT chat message becomes an edit instruction for
@@ -288,28 +264,14 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     return () => window.removeEventListener('writer:viz-edit', arm)
   }, [])
 
-  // X-button on the chip detaches the selection from the run. Clears both
-  // the frozen snapshot and any live PM selection so the chip disappears
-  // immediately whether the editor has focus or not. Collapsing live
-  // selection uses TextSelection.create at the current head — no caret
-  // jump, just collapse-in-place.
+  // X-button on the chip detaches the selection: collapse the live selection in
+  // whichever editor is mounted (via the store's registered callback). The
+  // editor's selection-change listener then publishes the now-empty selection
+  // back to the store, so the chip disappears on its own.
   const handleClearSelection = useCallback(() => {
-    if (!editorView) return
     editingVizRef.current = null
-    clearFrozenRange(editorView)
-    const sel = editorView.state.selection
-    if (!sel.empty) {
-      editorView.dispatch(
-        editorView.state.tr.setSelection(
-          TextSelection.create(editorView.state.doc, sel.head),
-        ),
-      )
-    }
-    // PM transactions don't fire DOM selectionchange, so the listener that
-    // mirrors selection state into React doesn't run on its own here.
-    // Push the cleared state directly.
-    setSelectionPreview(null)
-  }, [editorView])
+    useEditorSelectionStore.getState().collapse?.()
+  }, [])
 
   // Merge the in-flight streaming turn (local) with the persisted turns (Yjs)
   // for rendering. Only show the streaming turn if it belongs to the thread
@@ -751,7 +713,8 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
             fastModeState={fastModeState}
             contextSnapshot={contextSnapshot}
             validate={validatePrompt}
-            selectionText={selectionPreview}
+            selectionText={selectionText}
+            selectionLabel={selectionLabel}
             onClearSelection={handleClearSelection}
             viewingFilePath={viewingFilePath}
             onClearViewingFile={() => setFileChipDismissed(true)}

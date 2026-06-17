@@ -96,6 +96,10 @@ export interface RunChatArgs {
    * Read it on demand (the SDK's Read tool ingests PDFs/images natively).
    * Null/omitted on every other surface. */
   viewingFilePath?: string | null
+  /** Editor text the user had selected when sending a free-chat turn. Injected
+   * as a `--- SELECTION ---` block so "explain this" targets the selection. Only
+   * passed for free chat — slash commands embed selection via `{{selection}}`. */
+  selectionText?: string | null
   /** When set, this run is editing a specific visualization: the agent gets
    * the edit_visualization relay tool and the target's id + current spec are
    * injected into the system prompt. Omit for normal turns. */
