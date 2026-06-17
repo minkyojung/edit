@@ -10,6 +10,7 @@ import {
   IconEdit,
   IconSearch,
   IconFolderPlus,
+  IconArrowsSort,
 } from '@tabler/icons-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { FolderTree } from './FolderTree'
@@ -30,9 +31,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useSortStore, SORT_LABELS, type SortMode } from '@/state/sortStore'
 import {
   Sidebar,
   SidebarContent,
@@ -86,6 +90,8 @@ export function AppSidebar() {
   const createNew = useDocsStore((s) => s.createNew)
   const openPalette = useCommandPaletteStore((s) => s.openPalette)
   const startNewFolder = useNewFolderStore((s) => s.start)
+  const sortMode = useSortStore((s) => s.mode)
+  const setSortMode = useSortStore((s) => s.setMode)
   const navigate = useNavigate()
 
   // New flat note (lands at inbox/Untitled.md) → open it. Shared by the
@@ -152,6 +158,30 @@ export function AppSidebar() {
         >
           <IconSearch size={16} stroke={1.75} />
         </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Sort"
+              title="Sort"
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            >
+              <IconArrowsSort size={16} stroke={1.75} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuRadioGroup
+              value={sortMode}
+              onValueChange={(v) => setSortMode(v as SortMode)}
+            >
+              {(Object.keys(SORT_LABELS) as SortMode[]).map((m) => (
+                <DropdownMenuRadioItem key={m} value={m}>
+                  {SORT_LABELS[m]}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <button
           type="button"
           aria-label="New folder"

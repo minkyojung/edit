@@ -88,3 +88,58 @@ describe('buildFileTree', () => {
     expect(wiki.children.map((c) => c.name)).toEqual(['Apple', 'banana'])
   })
 })
+
+describe('buildFileTree — sort modes', () => {
+  // Three notes in one folder with distinct names + createdAt, so each
+  // mode produces a different, unambiguous order.
+  const notes = [
+    doc({ slug: 'b', type: 'note', title: 'banana', relPath: 'inbox/banana.md', createdAt: '2026-02-01T00:00:00Z' }),
+    doc({ slug: 'a', type: 'note', title: 'apple', relPath: 'inbox/apple.md', createdAt: '2026-03-01T00:00:00Z' }),
+    doc({ slug: 'c', type: 'note', title: 'cherry', relPath: 'inbox/cherry.md', createdAt: '2026-01-01T00:00:00Z' }),
+  ]
+  const files = (mode: Parameters<typeof buildFileTree>[2]) =>
+    (buildFileTree(notes, [], mode)[0] as TreeFolder).children.map((c) => c.name)
+
+  it('name-asc orders A→Z (default)', () => {
+    expect(files('name-asc')).toEqual(['apple', 'banana', 'cherry'])
+  })
+
+  it('name-desc orders Z→A', () => {
+    expect(files('name-desc')).toEqual(['cherry', 'banana', 'apple'])
+  })
+
+  it('created-desc orders newest first', () => {
+    // apple 03-01 > banana 02-01 > cherry 01-01
+    expect(files('created-desc')).toEqual(['apple', 'banana', 'cherry'])
+  })
+
+  it('created-asc orders oldest first', () => {
+    expect(files('created-asc')).toEqual(['cherry', 'banana', 'apple'])
+  })
+
+  it('name-desc also reverses folder order, folders still before files', () => {
+    const tree = buildFileTree(
+      [
+        doc({ slug: 'x', type: 'note', title: 'note', relPath: 'apples/note.md' }),
+        doc({ slug: 'y', type: 'note', title: 'note', relPath: 'zebras/note.md' }),
+        doc({ slug: 'loose', type: 'note', title: 'loose', relPath: 'loose.md' }),
+      ],
+      [],
+      'name-desc',
+    )
+    // folders zebras, apples (reversed) THEN the loose file
+    expect(tree.map((n) => n.name)).toEqual(['zebras', 'apples', 'loose'])
+  })
+
+  it('created modes fall back to name when a doc lacks createdAt', () => {
+    const mixed = [
+      doc({ slug: 'a', type: 'note', title: 'apple', relPath: 'inbox/apple.md' }), // no createdAt
+      doc({ slug: 'b', type: 'note', title: 'banana', relPath: 'inbox/banana.md', createdAt: '2026-01-01T00:00:00Z' }),
+    ]
+    const names = (buildFileTree(mixed, [], 'created-desc')[0] as TreeFolder).children.map(
+      (c) => c.name,
+    )
+    // one side has no timestamp → name compare → apple before banana
+    expect(names).toEqual(['apple', 'banana'])
+  })
+})

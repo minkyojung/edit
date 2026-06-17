@@ -29,6 +29,7 @@ import {
 import { IconChevronRight, IconFolder } from '@tabler/icons-react'
 import { useDocsStore } from '@/state/docsStore'
 import { useNewFolderStore } from '@/state/newFolderStore'
+import { useSortStore } from '@/state/sortStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import {
   buildFileTree,
@@ -365,12 +366,13 @@ export function FolderTree() {
   const duplicateDoc = useDocsStore((s) => s.duplicateDoc)
   const creatingFolder = useNewFolderStore((s) => s.creating)
   const stopNewFolder = useNewFolderStore((s) => s.stop)
+  const sortMode = useSortStore((s) => s.mode)
   const navigate = useNavigate()
   const activeSlug = useActiveSlug()
 
   const tree = useMemo(
-    () => buildFileTree(knownDocs, knownFolders),
-    [knownDocs, knownFolders],
+    () => buildFileTree(knownDocs, knownFolders, sortMode),
+    [knownDocs, knownFolders, sortMode],
   )
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [editingSlug, setEditingSlug] = useState<string | null>(null)

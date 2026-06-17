@@ -13,6 +13,7 @@
 
 import type { KnownDoc } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
+import type { SortMode } from '@/state/sortStore'
 
 /** Paths hidden from the sidebar tree: `_`-prefixed agent folders
  * (`_system/`) and `threads/` (chat-thread JSON, gitignored app state).
@@ -40,6 +41,9 @@ export interface TreeFile {
    *  `videoId`, a saved page has a `sourceUrl`. Both absent → plain note. */
   videoId?: string
   sourceUrl?: string
+  /** Creation timestamp (ISO), carried for the `created-*` sort modes.
+   *  Absent on legacy docs — those fall back to a name compare. */
+  createdAt?: string
 }
 
 export interface TreeFolder {
@@ -53,11 +57,13 @@ export interface TreeFolder {
 export type TreeNode = TreeFile | TreeFolder
 
 /** Build the sidebar tree from the catalog. Archived docs and docs with
- *  no placement (e.g. a daily without a date) are dropped. Folders sort
- *  before files, each alphabetically (case-insensitive). */
+ *  no placement (e.g. a daily without a date) are dropped. Folders always
+ *  sort before files; `sortMode` orders within each group (default
+ *  name A→Z). */
 export function buildFileTree(
   docs: KnownDoc[],
   folders: string[] = [],
+  sortMode: SortMode = 'name-asc',
 ): TreeNode[] {
   const bySlug = new Map(docs.map((d) => [d.slug, d]))
   const getDoc = (slug: string) => bySlug.get(slug)
@@ -101,6 +107,7 @@ export function buildFileTree(
       type: doc.type,
       videoId: doc.videoId,
       sourceUrl: doc.sourceUrl,
+      createdAt: doc.createdAt,
     })
   }
 
@@ -111,16 +118,36 @@ export function buildFileTree(
     ensureFolder(dir)
   }
 
-  sortNodes(rootChildren)
+  sortNodes(rootChildren, sortMode)
   return rootChildren
 }
 
-/** Folders first, then files; each group alphabetical, case-insensitive.
+/** Case-insensitive name compare (the A→Z baseline / fallback). */
+function byName(a: TreeNode, b: TreeNode): number {
+  return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+}
+
+/** Compare two same-group nodes under `mode`. Folders carry no timestamp,
+ *  and legacy files may lack `createdAt`, so the `created-*` modes fall
+ *  back to a name compare whenever either side has no timestamp — keeping
+ *  the order deterministic instead of leaving untimestamped rows to drift. */
+function compareInGroup(a: TreeNode, b: TreeNode, mode: SortMode): number {
+  if (mode === 'name-asc') return byName(a, b)
+  if (mode === 'name-desc') return byName(b, a)
+  const ta = a.kind === 'file' ? a.createdAt : undefined
+  const tb = b.kind === 'file' ? b.createdAt : undefined
+  if (!ta || !tb) return byName(a, b)
+  // ISO timestamps are lexicographically ordered, so a string compare is
+  // a correct chronological compare — no Date parsing needed.
+  return mode === 'created-desc' ? tb.localeCompare(ta) : ta.localeCompare(tb)
+}
+
+/** Folders first, then files; within each group, ordered by `mode`.
  *  Recurses into folder children. */
-function sortNodes(nodes: TreeNode[]): void {
+function sortNodes(nodes: TreeNode[], mode: SortMode): void {
   nodes.sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
-    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    return compareInGroup(a, b, mode)
   })
-  for (const n of nodes) if (n.kind === 'folder') sortNodes(n.children)
+  for (const n of nodes) if (n.kind === 'folder') sortNodes(n.children, mode)
 }
