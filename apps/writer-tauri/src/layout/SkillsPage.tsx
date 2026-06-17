@@ -66,7 +66,7 @@ export function SkillsPage() {
                 disabled={!s.slug}
                 className="flex w-full items-center gap-3 pl-3 pr-3.5 text-left transition-colors hover:bg-accent/50 disabled:cursor-default disabled:hover:bg-transparent"
               >
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-blue-500 text-white shadow-sm">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-secondary text-secondary-foreground">
                   <IconBolt size={16} stroke={2} />
                 </span>
                 {/* The separator lives on this inner element so it starts at the

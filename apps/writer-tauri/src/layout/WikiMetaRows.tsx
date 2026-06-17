@@ -10,7 +10,7 @@
 
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { IconUser, IconBook2, IconActivity, IconBolt } from '@tabler/icons-react'
+import { IconUser, IconBook2, IconActivity, IconBolt, IconPalette } from '@tabler/icons-react'
 import { SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -121,6 +121,17 @@ export function WikiMetaRows() {
         >
           <IconBolt size={16} stroke={1.5} />
           <span className="flex-1 text-left">Skills</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          className="text-sidebar-foreground/70"
+          isActive={location.pathname === '/gallery'}
+          onClick={() => navigate('/gallery')}
+          aria-label="Gallery"
+        >
+          <IconPalette size={16} stroke={1.5} />
+          <span className="flex-1 text-left">Gallery</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </>
