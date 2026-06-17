@@ -22,6 +22,7 @@
 // already fixed and lets the two flows share a cache prefix.
 
 import {
+  readAgentMemory,
   readClaudeMd,
   readConventions,
   readSelfProfile,
@@ -57,6 +58,11 @@ export interface ContextBundle {
    * focus). Always loaded but kept small. Empty when the page doesn't
    * exist yet. */
   working: string
+  /** Active agent's long-term memory (`system:memory:<id>` body). Empty
+   * when the caller passes no `agentMemoryType` (ingest) or the page is
+   * blank. Injected into the chat system prompt right after working
+   * memory. */
+  agentMemory: string
   /** Tier 3 tool names the chat consumer should pass to
    * `relayTools`. Empty in ingest mode and when the chat caller
    * opts out via `enableTools: false`. */
@@ -74,6 +80,10 @@ export interface AssembleContextOptions {
   /** When `false`, returns an empty `tools` array — for callers
    * that explicitly don't want LLM-driven fetch. Default `true`. */
   enableTools?: boolean
+  /** Active agent's memory doc type (`system:memory:<id>`, from
+   * Agent.memoryType). When set, the agent's memory body is read and
+   * returned as `agentMemory`. Omitted (ingest) → `agentMemory` is ''. */
+  agentMemoryType?: string
 }
 
 /** Assemble the LLM-facing context bundle. Concurrent reads under
@@ -83,12 +93,14 @@ export async function assembleContext(
 ): Promise<ContextBundle> {
   const mode: AssembleContextMode = opts.mode ?? 'ingest'
 
-  const [claudeMd, conventions, selfProfile, working] = await Promise.all([
-    readClaudeMd(),
-    readConventions(),
-    readSelfProfile(),
-    readWorking(),
-  ])
+  const [claudeMd, conventions, selfProfile, working, agentMemory] =
+    await Promise.all([
+      readClaudeMd(),
+      readConventions(),
+      readSelfProfile(),
+      readWorking(),
+      opts.agentMemoryType ? readAgentMemory(opts.agentMemoryType) : Promise.resolve(''),
+    ])
 
   // Tier-3 MCP tools are chat-specific. Ingest uses the SDK's
   // built-in Read / Glob / Grep preset + its own structured-output
@@ -97,13 +109,18 @@ export async function assembleContext(
     mode === 'chat' && opts.enableTools !== false ? [...DEFAULT_TOOLS] : []
 
   const budgetUsed =
-    claudeMd.length + conventions.length + selfProfile.length + working.length
+    claudeMd.length +
+    conventions.length +
+    selfProfile.length +
+    working.length +
+    agentMemory.length
 
   return {
     claudeMd,
     conventions,
     selfProfile,
     working,
+    agentMemory,
     tools,
     budgetUsed,
   }

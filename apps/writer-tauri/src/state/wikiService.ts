@@ -242,6 +242,23 @@ export async function ensureProfileWikiSlug(): Promise<string | null> {
   return ensureSystemPage(SYSTEM_PAGE_PROFILE)
 }
 
+/** Ensure an agent's memory page exists. `memoryType` is the full doc
+ * type (`system:memory:<agentId>`, from Agent.memoryType). Seeded empty
+ * so the read path injects nothing until the agent (or user) writes a
+ * fact — same lazy pattern as working/conventions. The `system:` prefix
+ * means it inherits SYSTEM_META_POLICY (non-archivable, System sidebar
+ * group, excluded from the wiki catalog / wikilinks). */
+export async function ensureAgentMemorySlug(
+  memoryType: string,
+): Promise<string | null> {
+  const id = memoryType.replace(/^system:memory:/, '')
+  return ensureSystemPage({
+    type: memoryType as KnownDoc['type'],
+    title: id === 'default' ? 'Memory' : `Memory: ${id}`,
+    initialBody: '',
+  })
+}
+
 /** Read the user's conventions page body. Returns '' when the page
  * doesn't exist or fetch fails — caller should treat that as "use
  * the static fallback rules in the system prompt". */
@@ -260,6 +277,18 @@ export async function readWorking(): Promise<string> {
   const doc = useDocsStore
     .getState()
     .knownDocs.find((d) => d.type === WORKING_TYPE && !d.archivedAt)
+  if (!doc) return ''
+  return readWikiMarkdown(doc.slug)
+}
+
+/** Read an agent's long-term memory page body. `memoryType` is the full
+ * doc type (`system:memory:<agentId>`, from Agent.memoryType). Returns ''
+ * when the page doesn't exist or is empty — the system prompt then drops
+ * the AGENT MEMORY block. Mirrors readWorking. */
+export async function readAgentMemory(memoryType: string): Promise<string> {
+  const doc = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.type === memoryType && !d.archivedAt)
   if (!doc) return ''
   return readWikiMarkdown(doc.slug)
 }

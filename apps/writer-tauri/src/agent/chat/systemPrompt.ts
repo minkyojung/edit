@@ -53,6 +53,7 @@ export interface SystemBlocksArgs {
     conventions: string
     claudeMd: string
     working: string
+    agentMemory: string
   }
   /** When true (default for free chat) the document body is appended
    * past the SDK's cache boundary so it doesn't poison the cache key.
@@ -124,6 +125,10 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   // late in the prefix means a working-memory edit only re-tokenizes from
   // here on — the cached stable prefix above stays intact.
   if (ctx.working) prefix.push(`--- WORKING MEMORY ---\n${ctx.working}`)
+  // Agent (role) long-term memory sits alongside working memory — both
+  // fast-changing and late in the prefix, so a memory write only
+  // re-tokenizes from here on and the cached stable prefix stays intact.
+  if (ctx.agentMemory) prefix.push(`--- AGENT MEMORY ---\n${ctx.agentMemory}`)
   prefix.push(systemBody)
 
   // Dynamic suffix — pinned past the SDK cache boundary because it changes

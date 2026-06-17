@@ -51,6 +51,7 @@ import {
   type RunChatResult,
 } from './types'
 import { resolveAgent } from '../agents'
+import { ensureAgentMemorySlug } from '@/state/wikiService'
 import {
   buildUserPrompt,
   composeSystemBlocks,
@@ -145,7 +146,16 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // Read / Glob / Grep to fetch them on demand when a turn actually
   // warrants it. Failures upstream collapse to empty fields — chat
   // never blocks on the context round-trip.
-  const ctx = await assembleContext({ mode: 'chat' })
+  //
+  // The agent's memory page is ensured (lazily created, empty) so the
+  // user has a doc to read/write; its body — empty until written — is
+  // injected as the AGENT MEMORY block. memoryType is null only for
+  // agents with no dedicated memory.
+  if (agent.memoryType) await ensureAgentMemorySlug(agent.memoryType)
+  const ctx = await assembleContext({
+    mode: 'chat',
+    agentMemoryType: agent.memoryType ?? undefined,
+  })
 
   // The note the user is currently viewing, as a vault-relative path — orientation
   // context (Cursor's "attached current file"), NOT a hard constraint. Lets the model
