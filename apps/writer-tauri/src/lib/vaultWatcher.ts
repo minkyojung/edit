@@ -223,6 +223,57 @@ function isCreateOrRemoveEvent(event: { type: unknown }): boolean {
   return ('create' in type && !!type.create) || ('remove' in type && !!type.remove)
 }
 
+/** Pure routing decisions extracted from the watcher handlers so they
+ * can be regression-tested without spinning up the fs event stream, a
+ * vault on disk, or the store. The handlers below call these; the live
+ * verification covers the I/O wiring around them. Three decisions, each
+ * a spot we actually shipped a bug at:
+ *
+ *   A. {@link classifyModify} — a `modify` event is a move/rename
+ *      (`kind:'rename'`) vs a plain content save (everything else →
+ *      reload). Getting this wrong routed external moves through reload,
+ *      so the open tab closed and reopened instead of following the file.
+ *   B. {@link renameLeg} — a single rename event names one path with no
+ *      direction, so disk presence decides whether it's the move's
+ *      destination (add) or its source (remove).
+ *   C. {@link planReappear} — when a rebuilt doc shares a slug with a
+ *      known one, decide whether to add (new), update placement+label
+ *      (move/rename), or no-op (echo). Skipping the title refresh left
+ *      the sidebar row showing the pre-rename name.
+ */
+export type ModifyRoute = 'rename' | 'reload'
+export function classifyModify(kind: string | undefined): ModifyRoute {
+  return kind === 'rename' ? 'rename' : 'reload'
+}
+
+export type RenameLeg = 'add' | 'remove'
+export function renameLeg(existsOnDisk: boolean): RenameLeg {
+  return existsOnDisk ? 'add' : 'remove'
+}
+
+export type ReappearPlan =
+  | { kind: 'add' }
+  | { kind: 'update'; relPath: string; title: string | undefined }
+  | { kind: 'noop' }
+
+/** Decide what to do when a freshly built KnownDoc lands. `existing` is
+ * the catalog entry sharing its slug (undefined when none). A blank
+ * `rebuilt.relPath` can't reposition anything, so it degrades to no-op
+ * rather than writing an empty placement. */
+export function planReappear(
+  existing: { relPath?: string; title?: string } | undefined,
+  rebuilt: { relPath?: string; title?: string },
+): ReappearPlan {
+  if (!existing) return { kind: 'add' }
+  if (
+    rebuilt.relPath &&
+    (existing.relPath !== rebuilt.relPath || existing.title !== rebuilt.title)
+  ) {
+    return { kind: 'update', relPath: rebuilt.relPath, title: rebuilt.title }
+  }
+  return { kind: 'noop' }
+}
+
 /** Classify a single external fsevent and dispatch each path to the
  * matching handler stub. Phase 4.E.2 — no mutations yet; handlers
  * log a classification line so we can verify the router's decisions
@@ -266,7 +317,7 @@ function dispatchEvent(event: { type: unknown }, paths: string[]): void {
     // move-coalescing already understands). Plain content saves arrive
     // as `kind: 'data'` and still reload in place.
     const kind = (type.modify as { kind?: string }).kind
-    if (kind === 'rename') {
+    if (classifyModify(kind) === 'rename') {
       for (const rel of paths) void handleExternalRename(rel)
       return
     }
@@ -368,27 +419,25 @@ function handleExternalAdd(rel: string): void {
       if (!doc) return
       const live = useDocsStore.getState()
       const existing = live.knownDocs.find((d) => d.slug === doc.slug)
-      if (existing) {
-        // Same note (frontmatter slug) reappearing at a new path = an
-        // external move/rename. Update its placement IN PLACE so the
-        // open tab + handle survive, and cancel any pending delete for
-        // it (the remove leg of the move). For a generic note both the
-        // placement (`relPath`) AND the sidebar label (`title`, derived
-        // from the filename) follow the rename — a pure folder move keeps
-        // the filename so only relPath changes, but a rename changes the
-        // title too, and without refreshing it the row would keep the old
-        // name.
-        cancelPendingRemove(doc.slug)
-        if (
-          doc.relPath &&
-          (existing.relPath !== doc.relPath || existing.title !== doc.title)
-        ) {
-          live.updateKnownDocPath(doc.slug, doc.relPath, doc.title)
-        }
+      const plan = planReappear(existing, doc)
+      if (plan.kind === 'add') {
+        console.log('[vault:add] external doc added', { rel, slug: doc.slug })
+        live.addKnownDoc(doc)
         return
       }
-      console.log('[vault:add] external doc added', { rel, slug: doc.slug })
-      live.addKnownDoc(doc)
+      // Same note (frontmatter slug) reappearing = an external
+      // move/rename. Cancel any pending delete for it (the remove leg of
+      // the move) so the open tab + handle survive, then update its
+      // placement IN PLACE when it actually shifted. For a generic note
+      // both the placement (`relPath`) AND the sidebar label (`title`,
+      // derived from the filename) follow the rename — a pure folder move
+      // keeps the filename so only relPath changes, but a rename changes
+      // the title too, and without refreshing it the row would keep the
+      // old name. A `noop` plan (echo: same path + title) skips the write.
+      cancelPendingRemove(doc.slug)
+      if (plan.kind === 'update') {
+        live.updateKnownDocPath(doc.slug, plan.relPath, plan.title)
+      }
     })
     .catch((err) => {
       console.warn('[vault:add] failed to build KnownDoc', { rel, err })
@@ -424,7 +473,7 @@ function handleExternalAdd(rel: string): void {
  * The two legs can arrive in either order; the add/remove handlers'
  * existing pending-remove coalescing makes the result order-independent. */
 async function handleExternalRename(rel: string): Promise<void> {
-  if (await vaultFileExists(rel)) {
+  if (renameLeg(await vaultFileExists(rel)) === 'add') {
     handleExternalAdd(rel)
   } else {
     handleExternalRemove(rel)
