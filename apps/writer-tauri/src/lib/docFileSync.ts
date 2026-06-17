@@ -253,6 +253,29 @@ export function seedLastWrittenPath(
   }
 }
 
+/** A2 hardening — stale-path write guard. True when a flush must DEFER
+ * writing a doc's body because its on-disk file vanished from the path
+ * the catalog still points at: an external move/rename (or delete) landed
+ * in the narrow window between the OS moving the file and the watcher
+ * updating `relPath`. Writing then would recreate a zombie at the stale
+ * path (move) or resurrect a deleted file (delete) — and strand the live
+ * edits there. Deferring keeps the slug dirty; the next tick lands
+ * correctly once the watcher settles (relPath swapped → rename-on-change
+ * moves the file; or doc torn down → nothing to flush).
+ *
+ * Scoped to the no-rename case (`lastWritten === mdPath`): when the
+ * catalog path already changed, the rename-on-change branch handles the
+ * moved file safely, and a brand-new doc (no `lastWritten`) must still
+ * create its file. Timing-independent — depends only on disk truth, not
+ * on whether the flush beat the watcher. */
+export function shouldDeferStaleWrite(
+  lastWritten: string | undefined,
+  mdPath: string,
+  fileExists: boolean,
+): boolean {
+  return lastWritten === mdPath && !fileExists
+}
+
 function markDirty(slug: string): void {
   dirtySlugs.add(slug)
 }
@@ -464,6 +487,20 @@ async function flushDirtyOnce(): Promise<void> {
             await renameVaultFile(oldMeta, metaPath)
           }
         }
+      }
+      // A2 hardening — stale-path guard. When the catalog still points at
+      // the last-written path (no rename intended above) but that file has
+      // vanished, an external move/delete is mid-flight (OS moved the file
+      // out before the watcher updated relPath). A blind write here would
+      // recreate a zombie at the stale path and strand the live edits.
+      // Defer: leave the slug dirty so the next tick lands at the right
+      // path once the watcher settles. Only stat in the no-rename case.
+      if (oldMd === mdPath && shouldDeferStaleWrite(oldMd, mdPath, await vaultFileExists(mdPath))) {
+        console.warn(
+          '[vault:flush] body target missing — deferring (external move/delete in flight)',
+          { slug, mdPath },
+        )
+        continue
       }
       // Frontmatter-native docs embed their metadata at the top of the
       // `.md`; every other type writes a plain body + a `.meta.json`
