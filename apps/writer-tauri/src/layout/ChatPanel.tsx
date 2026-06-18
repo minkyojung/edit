@@ -668,7 +668,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
           the transcript. Mirrors the editor's header/footer glass bands. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute bottom-0 left-0 right-0 bg-sidebar/90"
+        className="pointer-events-none absolute bottom-0 left-0 right-0 bg-background/90"
         style={{
           height: footerHeight + 48,
           backdropFilter: 'blur(12px)',

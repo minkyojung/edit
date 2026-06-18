@@ -223,35 +223,26 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
 
           {/* Inspector. Fixed px width; 0 when closed but still mounted, so
               reopening doesn't re-mount RightPanel and flicker. overflow-hidden
-              clips the card while collapsed. */}
+              clips the content while collapsed. */}
           <div
-            className="relative h-full shrink-0 overflow-hidden"
+            className="relative h-full shrink-0 overflow-hidden border-l border-sidebar-border bg-background"
             style={{ width: contextPanelOpen ? panelWidth : 0 }}
           >
-            {/* The right panel reads as its own floating card. It owns its
-                window gap directly — py- for top/bottom, pr- for the right
-                edge, all --window-inset. Left edge sits against the resize
-                handle (no gap). One consequence: the card top is
-                --window-inset below the window, so its header sits that much
-                lower than the editor header. bg-sidebar fill. */}
-            <div className="h-full py-[var(--window-inset)] pr-[var(--window-inset)]">
-              {/* Corner curve = --surface-radius (an independent design value,
-                  not gap-derived) so the card stays this round as the gap
-                  changes. It's kept ≥ --window-radius − --window-inset, so the
-                  corner never goes squarer than the window's rounding and pokes
-                  into it. Matches the editor's rounded-l-[var(--surface-radius)]. */}
-              <div className="h-full overflow-hidden rounded-[var(--surface-radius)] bg-sidebar">
-                <ErrorBoundary
-                  FallbackComponent={PanelErrorFallback}
-                  onError={(error, info) => console.error('[right-panel] error', error, info)}
-                >
-                  <RightPanel
-                    editorView={editorView ?? null}
-                    slug={collabHandle?.slug ?? null}
-                  />
-                </ErrorBoundary>
-              </div>
-            </div>
+            {/* Flush column, mirroring the left sidebar — no window gap, no
+                rounding. The seam is this border-l (the left sidebar's border-r
+                counterpart); the resize handle is a transparent hit area on top
+                of it. With the inset gone the panel header lines up with the
+                editor header (both start at --header-h). bg-background fill,
+                matching the editor. */}
+            <ErrorBoundary
+              FallbackComponent={PanelErrorFallback}
+              onError={(error, info) => console.error('[right-panel] error', error, info)}
+            >
+              <RightPanel
+                editorView={editorView ?? null}
+                slug={collabHandle?.slug ?? null}
+              />
+            </ErrorBoundary>
           </div>
         </div>
       </SidebarInset>

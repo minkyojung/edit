@@ -91,8 +91,16 @@ export function CommandPalette() {
     return () => window.removeEventListener('keydown', handler)
   }, [openPalette])
 
+  // Exclude archived docs and `system:*` surfaces (_system/index.md,
+  // log.md): the latter are agent-owned, read-only, and have their own
+  // surfaces — they're not valid navigation targets, mirroring the
+  // wikilink palette / autocomplete filters. Without this they'd leak
+  // into search + recents and, once opened, persist as a tab.
   const liveDocs = useMemo(
-    () => knownDocs.filter((d) => !d.archivedAt),
+    () =>
+      knownDocs.filter(
+        (d) => !d.archivedAt && !d.type.startsWith('system:'),
+      ),
     [knownDocs],
   )
 

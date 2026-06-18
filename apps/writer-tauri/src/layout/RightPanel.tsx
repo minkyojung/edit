@@ -49,7 +49,7 @@ export function RightPanel({ editorView, slug }: Props) {
           chat composer. The header chrome paints on top (z-sticky). */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 z-sticky bg-sidebar/90"
+        className="pointer-events-none absolute inset-x-0 top-0 z-sticky bg-background/90"
         style={{
           height: 'calc(var(--header-h) + 2rem)',
           backdropFilter: 'blur(12px)',
@@ -60,14 +60,8 @@ export function RightPanel({ editorView, slug }: Props) {
             'linear-gradient(to bottom, black, black calc(var(--header-h) * 0.7), transparent)',
         }}
       />
-      {/* The card floats --window-inset below the window (AppShell's py- inset),
-          so a full var(--header-h) bar would sit that much lower than the editor
-          header. We keep the card margin and instead trim the bar height by
-          2 * --window-inset: the top edge stays pinned to the card top while the
-          centered buttons rise by --window-inset, landing on the editor header's
-          exact baseline — no translate hack. The bar is transparent, so the
-          resulting (smaller) vertical breathing room around the buttons isn't
-          visible; only the alignment is. */}
+      {/* The panel is flush with the window top (no inset), so a full
+          var(--header-h) bar lands on the editor header's exact baseline. */}
       <div className="absolute inset-x-0 top-0 z-sticky">
         <RightPanelHeader
           threads={threads}
@@ -93,7 +87,7 @@ function RightPanelHeader({
   return (
     <div
       className="flex items-center gap-0.5 bg-transparent px-1.5"
-      style={{ height: 'calc(var(--header-h) - 2 * var(--window-inset))' }}
+      style={{ height: 'var(--header-h)' }}
     >
       <ThreadPicker
         active={threads.active}
