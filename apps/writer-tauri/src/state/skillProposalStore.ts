@@ -22,13 +22,17 @@ export interface SkillProposal {
   description: string
   /** The procedure, markdown; becomes the SKILL.md body. */
   body: string
+  /** When the model is revising an existing skill, its exact name (the
+   * dedup signal). null for a brand-new skill. Drives the "update vs new"
+   * affordance + diff in the tray, and the in-place write target. */
+  updates: string | null
   status: 'pending' | 'accepted' | 'rejected'
 }
 
 /** Folder-safe form of the skill name. The model is told to send a kebab
  * id, but sanitise defensively so a stray space / slash can't escape the
  * skills directory or make an unreadable path. */
-function skillDirName(name: string): string {
+export function skillDirName(name: string): string {
   return (
     name
       .trim()
@@ -58,7 +62,10 @@ export const useSkillProposalStore = create<SkillProposalState>((set, get) => ({
   accept: async (pendingId) => {
     const p = get().byId[pendingId]
     if (!p || p.status !== 'pending') return false
-    const dir = skillDirName(p.name)
+    // On an update, the target folder is the skill being revised — derive
+    // the dir from `updates`, not `name`, so the write lands in place even
+    // if the proposed name drifted. New skills use their own name.
+    const dir = skillDirName(p.updates ?? p.name)
     const rel = `_system/agent/skills/${dir}/SKILL.md`
     const md = composeFrontmatter({ name: dir, description: p.description }, p.body)
     try {

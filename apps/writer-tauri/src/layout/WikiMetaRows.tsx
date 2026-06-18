@@ -1,25 +1,23 @@
 // Fixed footer rows for the always-present, low-frequency surfaces: Profile
-// (`wiki:profile`), Conventions (`system:conventions`), Working
-// (`system:working`), and a single Skills entry point. They sit beside
-// Archived rather than in the browsable wiki list — singletons you visit
-// rarely. Clicking opens the surface in the main area (Skills opens the
-// SkillsPage; the three meta pages open in the editor).
+// (`wiki:profile`) and a single Skills entry point. They sit beside Archived
+// rather than in the browsable wiki list — singletons you visit rarely.
+// Clicking opens the surface in the main area (Skills opens the SkillsPage;
+// Profile opens in the editor).
 //
-// The three meta pages are lazy-created, so a user who skipped onboarding
-// may not have them yet — clicking ensures the page exists first.
+// The vault rules document (`CLAUDE.md`) is an ordinary root-level note, so
+// it shows up directly in the file tree — no dedicated footer row needed.
+//
+// Profile is lazy-created, so a user who skipped onboarding may not have it
+// yet — clicking ensures the page exists first.
 
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { IconUser, IconBook2, IconActivity, IconBolt, IconPalette } from '@tabler/icons-react'
+import { IconUser, IconBolt, IconPalette } from '@tabler/icons-react'
 import { SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
-import {
-  ensureProfileWikiSlug,
-  ensureConventionsWikiSlug,
-  ensureWorkingWikiSlug,
-} from '@/state/wikiService'
+import { ensureProfileWikiSlug } from '@/state/wikiService'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { cn } from '@/lib/utils'
 
@@ -37,12 +35,6 @@ export function WikiMetaRows() {
   // until the first click lazily creates the page.
   const profileSlug = knownDocs.find(
     (d) => d.type === 'wiki:profile' && !d.archivedAt,
-  )?.slug
-  const conventionsSlug = knownDocs.find(
-    (d) => d.type === 'system:conventions' && !d.archivedAt,
-  )?.slug
-  const workingSlug = knownDocs.find(
-    (d) => d.type === 'system:working' && !d.archivedAt,
   )?.slug
 
   // Profile receives ingest banner proposals (the Background zone).
@@ -88,28 +80,6 @@ export function WikiMetaRows() {
             className={cn(profileUnviewed && 'text-info')}
           />
           <span className="flex-1 text-left">Profile</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          className="text-sidebar-foreground/70"
-          isActive={!!conventionsSlug && conventionsSlug === activeSlug}
-          onClick={() => open(ensureConventionsWikiSlug)}
-          aria-label="Conventions"
-        >
-          <IconBook2 size={16} stroke={1.5} />
-          <span className="flex-1 text-left">Conventions</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          className="text-sidebar-foreground/70"
-          isActive={!!workingSlug && workingSlug === activeSlug}
-          onClick={() => open(ensureWorkingWikiSlug)}
-          aria-label="Working"
-        >
-          <IconActivity size={16} stroke={1.5} />
-          <span className="flex-1 text-left">Working</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
       <SidebarMenuItem>

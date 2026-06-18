@@ -7,11 +7,10 @@
 //
 // Anatomy of the system prompt the chat runner assembles:
 //   1. SELF PROFILE   (wiki:profile body)
-//   2. CONVENTIONS    (wiki:conventions body, user-editable)
-//   3. CLAUDE.md      (vault schema, Karpathy / Claude Code pattern)
-//   4. FREE_CHAT_PROMPT  ← this file
-//   5. (cache boundary)
-//   6. DOCUMENT       (current editor body)
+//   2. CLAUDE.md      (vault schema + conventions, Karpathy / Claude Code pattern)
+//   3. FREE_CHAT_PROMPT  ← this file
+//   4. (cache boundary)
+//   5. DOCUMENT       (current editor body)
 //
 // Keep this block short. CLAUDE.md owns the operational rules.
 

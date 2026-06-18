@@ -3,10 +3,10 @@
 //   buildUserPrompt(history)        — derives the user message for the
 //                                     SDK call from the thread's history.
 //   composeSystemBlocks(args)       — assembles the cacheable system
-//                                     blocks (selfProfile, conventions,
-//                                     index, hot pages, systemBody) with
-//                                     the doc body pinned past the SDK's
-//                                     cache boundary.
+//                                     blocks (selfProfile, claudeMd,
+//                                     systemBody) with the doc body
+//                                     pinned past the SDK's cache
+//                                     boundary.
 //
 // Both helpers are pure — they don't read store state or hit the
 // network. The engine (chat/index.ts) does the I/O (ctx assembly,
@@ -50,10 +50,7 @@ export interface SystemBlocksArgs {
    * Read / Glob / Grep when (and only when) a turn warrants it. */
   ctx: {
     selfProfile: string
-    conventions: string
     claudeMd: string
-    working: string
-    agentMemory: string
   }
   /** When true (default for free chat) the document body is appended
    * past the SDK's cache boundary so it doesn't poison the cache key.
@@ -87,17 +84,17 @@ export interface SystemBlocksArgs {
 /** Compose the system prompt as a `string | string[]`.
  *
  * Anchor ordering by cache stability:
- *   prefix (stable):   selfProfile → conventions → claudeMd → working → systemBody
+ *   prefix (stable):   selfProfile → claudeMd → systemBody
  *   suffix (dynamic):  document
  *
  * `selfProfile` sits at the very top — it changes only when the user
  * edits the profile or the ingest LLM accepts a proposal targeting
- * `wiki:profile`. `conventions` is the user's vault-specific rules
- * page; rarely edited but user-owned. `claudeMd` is the Karpathy /
- * Claude Code schema document — vault layout, operations, tool
- * usage. The three blocks are all eligible for prompt caching.
- * `systemBody` (FREE_CHAT_PROMPT) is the shortest, most app-
- * specific framing. The document changes every keystroke so we pin
+ * `wiki:profile`. `claudeMd` is the Karpathy / Claude Code schema
+ * document — vault layout, operations, tool usage, conventions (the
+ * user's vault-specific rules now live inside it). Both blocks are
+ * eligible for prompt caching. `systemBody` (FREE_CHAT_PROMPT) is the
+ * shortest, most app-specific framing. The document changes every
+ * keystroke so we pin
  * it after the SDK's cache boundary.
  *
  * The return type is `string | string[]`:
@@ -124,17 +121,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   if (ctx.selfProfile) {
     prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
   }
-  if (ctx.conventions) prefix.push(ctx.conventions)
   if (ctx.claudeMd) prefix.push(ctx.claudeMd)
-  // Working memory sits after the stable trio and before systemBody: it
-  // changes more often than profile/conventions/CLAUDE.md, so keeping it
-  // late in the prefix means a working-memory edit only re-tokenizes from
-  // here on — the cached stable prefix above stays intact.
-  if (ctx.working) prefix.push(`--- WORKING MEMORY ---\n${ctx.working}`)
-  // Agent (role) long-term memory sits alongside working memory — both
-  // fast-changing and late in the prefix, so a memory write only
-  // re-tokenizes from here on and the cached stable prefix stays intact.
-  if (ctx.agentMemory) prefix.push(`--- AGENT MEMORY ---\n${ctx.agentMemory}`)
   prefix.push(systemBody)
 
   // Dynamic suffix — pinned past the SDK cache boundary because it changes

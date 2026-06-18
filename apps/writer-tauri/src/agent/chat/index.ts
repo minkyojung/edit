@@ -51,7 +51,6 @@ import {
   type RunChatResult,
 } from './types'
 import { resolveAgent } from '../agents'
-import { ensureAgentMemorySlug } from '@/state/wikiService'
 import {
   buildUserPrompt,
   composeSystemBlocks,
@@ -139,21 +138,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const prompt = promptOverride ?? buildUserPrompt(history ?? [])
 
   // Chat mode — Karpathy / Claude Code shape: only the always-on
-  // schema (CLAUDE.md + profile + conventions) lands in the system
-  // prompt. The wiki catalog + page bodies that the legacy shape
-  // injected up-front are intentionally absent here; the LLM uses
-  // Read / Glob / Grep to fetch them on demand when a turn actually
-  // warrants it. Failures upstream collapse to empty fields — chat
-  // never blocks on the context round-trip.
-  //
-  // The agent's memory page is ensured (lazily created, empty) so the
-  // user has a doc to read/write; its body — empty until written — is
-  // injected as the AGENT MEMORY block. memoryType is null only for
-  // agents with no dedicated memory.
-  if (agent.memoryType) await ensureAgentMemorySlug(agent.memoryType)
-  const ctx = await assembleContext({
-    agentMemoryType: agent.memoryType ?? undefined,
-  })
+  // schema (CLAUDE.md + profile) lands in the system prompt. The wiki
+  // catalog + page bodies that the legacy shape injected up-front are
+  // intentionally absent here; the LLM uses Read / Glob / Grep to fetch
+  // them on demand when a turn actually warrants it. Durable facts the
+  // user wants remembered land in the wiki (profile / entity pages) via
+  // the proposal flow — there's no separate always-on memory surface.
+  // Failures upstream collapse to empty fields — chat never blocks on
+  // the context round-trip.
+  const ctx = await assembleContext()
 
   // The note the user is currently viewing, as a vault-relative path — orientation
   // context (Cursor's "attached current file"), NOT a hard constraint. Lets the model

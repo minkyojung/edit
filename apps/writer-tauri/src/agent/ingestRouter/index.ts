@@ -60,12 +60,29 @@ export async function routeInboxNote(slug: string): Promise<RouteResult> {
   const sourceLabel = known.title?.trim() || known.relPath || slug
   let core
   try {
-    core = await runIngestCore({
-      text: md,
-      sourceLabel,
-      composeSystem: composeRouterSystemPrompt,
-      buildUser: buildRouterPrompt,
-    })
+    // awaitChatRun (inside runIngestCore) has no timeout of its own — if the
+    // app reloads mid-call the Tauri callback is orphaned and the run never
+    // settles. Cap the wait so a hung pass surfaces instead of spinning
+    // forever. (The sidecar run still settles on its own idle timeout.)
+    core = await Promise.race([
+      runIngestCore({
+        text: md,
+        sourceLabel,
+        composeSystem: composeRouterSystemPrompt,
+        buildUser: buildRouterPrompt,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                '[router] model call timed out (180s) — likely an orphaned callback from an app reload; rerun without reloading mid-call, or try a smaller capture',
+              ),
+            ),
+          180_000,
+        ),
+      ),
+    ])
   } catch (err) {
     console.error('[router] model call failed', err)
     throw err

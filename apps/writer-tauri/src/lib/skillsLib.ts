@@ -53,3 +53,15 @@ export async function listSkills(): Promise<VaultSkill[]> {
 export async function deleteSkill(dir: string): Promise<void> {
   await deleteVaultDir(`${SKILLS_REL}/${dir}`)
 }
+
+/** Read a skill's current body (frontmatter stripped) by folder name.
+ * Returns '' when the skill doesn't exist — used by the proposal tray to
+ * diff an UPDATE against what's on disk. */
+export async function readSkillBody(dir: string): Promise<string> {
+  try {
+    const raw = await readVaultFile(`${SKILLS_REL}/${dir}/SKILL.md`)
+    return splitFrontmatter(raw).body
+  } catch {
+    return ''
+  }
+}

@@ -1,10 +1,11 @@
 // Agent registry + resolver — the "session = agent" seam.
 //
-// An agent is a ROLE: a persona (systemPrompt) plus an optional memory
-// namespace (memoryType — a `system:memory:<id>` vault doc the agent
-// reads at session start). A thread carries an `agentId`
-// (ThreadMeta.agentId); the chat runner resolves it here to pick the
-// prompt body and the memory slot to inject.
+// An agent is a ROLE: a persona (systemPrompt). A thread carries an
+// `agentId` (ThreadMeta.agentId); the chat runner resolves it here to
+// pick the prompt body. (Agents have no dedicated long-term "memory"
+// surface — durable facts the user wants remembered live in the wiki /
+// self-profile, injected via assembleContext and edited through the
+// normal proposal flow.)
 //
 // Today there is exactly one built-in agent (`default`) and no UX to
 // create others — `resolveAgent` always returns DEFAULT_AGENT, so the
@@ -16,25 +17,20 @@
 import { FREE_CHAT_PROMPT } from './skills/freeChat'
 
 export interface Agent {
-  /** Stable id persisted on `ThreadMeta.agentId`. Also derives the
-   * memory doc type (`system:memory:<id>`). */
+  /** Stable id persisted on `ThreadMeta.agentId`. */
   id: string
   /** Human-facing label (future role picker / attribution). */
   name: string
   /** System-prompt framing for this role. */
   systemPrompt: string
-  /** Vault doc type this agent reads its long-term memory from, or
-   * `null` when the agent has no dedicated memory. */
-  memoryType: string | null
 }
 
 /** The single built-in agent. Its prompt is the existing free-chat
- * framing and its memory namespace is `system:memory:default`. */
+ * framing. */
 export const DEFAULT_AGENT: Agent = {
   id: 'default',
   name: '기본',
   systemPrompt: FREE_CHAT_PROMPT,
-  memoryType: 'system:memory:default',
 }
 
 /** Resolve a thread's `agentId` to its {@link Agent}. Unknown / missing

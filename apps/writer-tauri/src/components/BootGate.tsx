@@ -31,6 +31,7 @@ import { exists, remove } from '@tauri-apps/plugin-fs'
 import { join } from '@tauri-apps/api/path'
 import { cleanupYdocV2 } from '@/lib/cleanupYdocV2'
 import { flattenVaultV1 } from '@/lib/flattenVaultV1'
+import { migrateConventionsIntoClaudeMdV1 } from '@/lib/migrateConventionsIntoClaudeMdV1'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
@@ -142,6 +143,16 @@ export function BootGate({ children }: Props) {
         await seedClaudeMd()
       } catch (err) {
         console.warn('[boot] CLAUDE.md seed failed', err)
+      }
+      // Conventions-merge migration: fold any existing
+      // `_system/conventions.md` into CLAUDE.md, then retire the old page.
+      // Runs AFTER the CLAUDE.md seed (so existing vaults append to their
+      // own file) and BEFORE bootstrap (so the scan sees the consolidated
+      // layout). Sentinel-gated; existing vaults pay the copy cost once.
+      try {
+        await migrateConventionsIntoClaudeMdV1()
+      } catch (err) {
+        console.warn('[boot] conventions-merge migration failed', err)
       }
       bootstrap()
       // Load chat thread metas + turns from `threads/`. Fires in

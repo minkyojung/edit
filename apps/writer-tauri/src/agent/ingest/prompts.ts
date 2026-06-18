@@ -1,11 +1,11 @@
 // Prompt assembly for the ingest pipeline.
 //
 //   composeSystemPrompt(args): string[]
-//     — cacheable system prompt blocks. Vault schema lives in
-//       CLAUDE.md (vault root); profile + conventions ride along
-//       as in chat. The ingest-specific block teaches the model
-//       how to navigate the vault with built-in tools and what
-//       structured output to emit at the end.
+//     — cacheable system prompt blocks. Vault schema + conventions
+//       live in CLAUDE.md (vault root); profile rides along as in
+//       chat. The ingest-specific block teaches the model how to
+//       navigate the vault with built-in tools and what structured
+//       output to emit at the end.
 //
 //   buildPrompt(args): string
 //     — per-call user prompt (today's date + note text). Always
@@ -20,8 +20,8 @@
 // (Sonnet 4.5+), and our chat flow already runs on that pattern.
 
 /** Ingest-specific system prompt. Anchors the agent loop on top
- * of the shared CLAUDE.md + profile + conventions prefix that
- * `assembleContext` produces.
+ * of the shared CLAUDE.md + profile prefix that `assembleContext`
+ * produces.
  *
  * Section ordering inside this block:
  *   1. Role           — what the model is doing on this turn.
@@ -34,10 +34,10 @@
  *   7. Cross-linking  — `[[Title]]` rules.
  *   8. Output schema  — JSON shape, examples, empty-pass behaviour.
  *
- * Stylistic / shape conventions remain in the user's
- * `wiki:conventions` page (loaded by assembleContext); the prefix
- * concatenates them before this block so the user can co-evolve
- * those rules without touching code. */
+ * Stylistic / shape conventions live in the user's CLAUDE.md (its
+ * `## Conventions` section, loaded by assembleContext); the prefix
+ * concatenates it before this block so the user can co-evolve those
+ * rules without touching code. */
 const INGEST_SYSTEM = `You are the ingest agent for the user's personal wiki. You receive recent daily-note activity below and propose append-only edits to the wiki pages that should reflect it. The CLAUDE.md schema above already describes the vault layout, the three-tier discipline, and the ingest operation in general; this block adds the ingest-specific tool usage and wire format you must follow.
 
 ## How to work (agent loop)
@@ -98,18 +98,16 @@ If you found nothing worth filing, still call the tool — pass an empty array f
 
 /** Compose the system prompt as a cacheable string[] for the Agent
  * SDK. Block order matters for cache stability:
- *   1. CLAUDE.md       — vault schema (rarely changes, user-owned)
+ *   1. CLAUDE.md       — vault schema + conventions (user-owned)
  *   2. SELF PROFILE    — what we already know about the user
- *   3. CONVENTIONS     — user-defined wiki rules
- *   4. INGEST_SYSTEM   — agent loop + wire format (this file)
+ *   3. INGEST_SYSTEM   — agent loop + wire format (this file)
  *
  * Subsequent ingest calls hit the cache for the entire prefix as
- * long as the four blocks above don't change between calls. Only
+ * long as the three blocks above don't change between calls. Only
  * the user prompt (DATE + NEW NOTE, built by `buildPrompt`) is
  * fresh per call. */
 export function composeSystemPrompt(args: {
   claudeMd: string
-  conventions: string
   selfProfile: string
 }): string[] {
   const blocks: string[] = []
@@ -121,12 +119,6 @@ export function composeSystemPrompt(args: {
   if (args.selfProfile.trim().length) {
     blocks.push(
       `--- SELF PROFILE (the user, auto-updated) ---\n${args.selfProfile}`,
-    )
-  }
-
-  if (args.conventions.trim().length) {
-    blocks.push(
-      `--- USER WIKI CONVENTIONS ---\n${args.conventions}`,
     )
   }
 

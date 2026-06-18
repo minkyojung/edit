@@ -19,10 +19,7 @@ import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { useIngestStore } from '@/state/ingestStore'
 import { pickNewBlocks } from '@/lib/blockHash'
-import {
-  ensureConventionsWikiSlug,
-  ensureProfileWikiSlug,
-} from '@/state/wikiService'
+import { ensureProfileWikiSlug } from '@/state/wikiService'
 import { assembleContext } from '@/agent/contextPipeline'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { buildPrompt, composeSystemPrompt } from './prompts'
@@ -51,22 +48,15 @@ const INGEST_MODEL = 'claude-haiku-4-5-20251001'
 export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreResult> {
   const { text, sourceLabel } = args
 
-  // Seed the conventions page on first need so the user has
-  // something to edit; assembleContext reads the result a moment
-  // later. Failures degrade gracefully — empty conventions means
-  // the static rules take over alone.
-  await ensureConventionsWikiSlug()
-  // Same lazy-seed for the self-profile page. Guarantees `wiki:profile`
+  // Lazy-seed the self-profile page. Guarantees `wiki:profile`
   // shows up in the INDEX so the model can route self-facts there
   // even for users who skipped the URL bootstrap — the page just
   // starts empty and fills from daily activity instead.
   await ensureProfileWikiSlug()
-  // Karpathy / Claude Code shape: CLAUDE.md + profile + conventions
-  // ride the system prompt, and the agent uses the SDK's built-in
-  // Read / Glob / Grep (enabled by the sidecar's `tools: { preset:
-  // 'claude_code' }`) to navigate the vault on demand. Tier-3 MCP
-  // Wiki navigation runs entirely on the SDK's built-in Read / Glob /
-  // Grep (the `claude_code` preset) — no custom read tools.
+  // Karpathy / Claude Code shape: CLAUDE.md (vault schema + conventions)
+  // + profile ride the system prompt, and the agent uses the SDK's
+  // built-in Read / Glob / Grep to navigate the vault on demand. No
+  // custom read tools.
   const ctx = await assembleContext()
 
   // Default to the wiki-ingest prompts; the inbox router passes its own
@@ -80,7 +70,6 @@ export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreRes
   })
   const systemPrompt = composeSystem({
     claudeMd: ctx.claudeMd,
-    conventions: ctx.conventions,
     selfProfile: ctx.selfProfile,
   })
 

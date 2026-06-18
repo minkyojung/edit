@@ -95,7 +95,6 @@ export interface IngestCoreArgs {
    * LLM-call choreography in runIngestCore. */
   composeSystem?: (args: {
     claudeMd: string
-    conventions: string
     selfProfile: string
   }) => string[]
   buildUser?: (args: {
