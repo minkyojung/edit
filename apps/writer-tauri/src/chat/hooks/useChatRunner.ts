@@ -339,11 +339,11 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           // Plan turns keep the propose_* relays available so the model can
           // execute once the plan is approved. The gate (sidecar canUseTool)
           // denies them while planning and allows them after ExitPlanMode is
-          // approved; read_page/search_wiki are allowed throughout.
+          // approved; reads go through the built-in Read/Glob/Grep throughout.
           // Queue turns are read-only: no propose_* (there's no doc to edit);
           // the model reads article bodies via the built-in Read/Glob/Grep.
           relayTools: isPlan
-            ? ['read_page', 'search_wiki', 'propose_edit', 'propose_multi_edit', 'propose_write']
+            ? ['propose_edit', 'propose_multi_edit', 'propose_write']
             : isQueue
               ? []
               : overrides?.relayTools,

@@ -65,10 +65,9 @@ export async function runIngestCore(args: IngestCoreArgs): Promise<IngestCoreRes
   // ride the system prompt, and the agent uses the SDK's built-in
   // Read / Glob / Grep (enabled by the sidecar's `tools: { preset:
   // 'claude_code' }`) to navigate the vault on demand. Tier-3 MCP
-  // tools (`read_page` / `search_wiki`) are intentionally absent
-  // for ingest — the built-ins are equivalent and the model picks
-  // one path instead of being offered redundant choices.
-  const ctx = await assembleContext({ mode: 'ingest' })
+  // Wiki navigation runs entirely on the SDK's built-in Read / Glob /
+  // Grep (the `claude_code` preset) — no custom read tools.
+  const ctx = await assembleContext()
 
   // Default to the wiki-ingest prompts; the inbox router passes its own
   // builders (knowledge→wiki, action/interpretation/event→daily).

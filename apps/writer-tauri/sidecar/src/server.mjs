@@ -16,28 +16,6 @@ import {
   NO_TOKEN,
 } from './jsonrpc.mjs'
 
-/** Subfolders the LLM is allowed to read via `read_page` / `search_wiki`.
- * Excludes `daily/` and `threads/` — those are user-authored sources, not
- * wiki content the LLM should be looking up. Excludes nothing inside
- * `_system/` either, since system pages (conventions / log / index) are
- * legitimate context for the LLM's routing decisions. */
-const READABLE_PREFIXES = ['wiki/', '_system/']
-
-/** Validate a vault-relative path the model passed in. Returns the
- * normalised relative path on success or null when the path would
- * escape the allowed subfolders. We don't trust the model not to try
- * `../etc/passwd`; the gate here is the only safety net before we
- * hand the path to `readFile`. */
-function validateVaultRelPath(rawPath) {
-  const trimmed = String(rawPath ?? '').trim()
-  if (!trimmed) return null
-  // Reject absolute paths and any segment that climbs out.
-  if (trimmed.startsWith('/') || trimmed.includes('\\')) return null
-  const normalised = normalize(trimmed)
-  if (normalised.startsWith('..') || normalised.includes('/../')) return null
-  if (!READABLE_PREFIXES.some((p) => normalised.startsWith(p))) return null
-  return normalised
-}
 
 /** Resolve a model-supplied file_path (absolute OR vault-relative) to an absolute
  * path inside the vault, or null if it escapes the vault. */
@@ -69,7 +47,7 @@ async function checkOldString(vaultPath, filePath, oldString) {
   }
   const first = body.indexOf(oldString)
   if (first < 0) {
-    return `(error: old_string was not found in ${filePath}. read_page to get the current content and copy old_string VERBATIM, then retry.)`
+    return `(error: old_string was not found in ${filePath}. Read the file to get the current content and copy old_string VERBATIM, then retry.)`
   }
   if (body.indexOf(oldString, first + 1) >= 0) {
     return `(error: old_string matches more than one place in ${filePath}. Include enough surrounding lines to make it unique, then retry.)`
@@ -80,151 +58,6 @@ async function checkOldString(vaultPath, filePath, oldString) {
 // Relay tools: defined here, but every invocation reports back to the host
 // (frontend) via a notification rather than performing the action itself.
 // The frontend (which owns the editor / UI) does the real work.
-
-// `read_page` is the Karpathy-style "structured discovery" primitive —
-// the model reads the Tier 1 catalog (shipped in the system prompt),
-// picks the page it wants in full, and calls this tool with the path.
-// Unlike the relay tools above, the handler IS the data source: it
-// reads markdown from the user's vault directly. No frontend round-
-// trip. This is the standard Claude SDK pattern — async tool
-// handlers return content the model continues with on the next turn.
-//
-// Security: the path must be vault-relative under `wiki/` or `_system/`.
-// Anything else (absolute paths, `..`, daily notes) is rejected with
-// an error string so the model can route differently.
-function buildReadPageTool(vaultPath) {
-  return tool(
-    'read_page',
-    'Read the full markdown body of a wiki or system page from the user\'s vault. Pass a vault-relative path beginning with "wiki/" or "_system/" (e.g., "wiki/Sarah Kim.md"). The catalog in the system prompt lists every page\'s path. Use this when the catalog alone is not enough and you need the page in full to answer or to verify a claim.',
-    { path: z.string() },
-    async (args) => {
-      const rel = validateVaultRelPath(args.path)
-      if (!rel) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `(error: path "${args.path}" is not readable — must be vault-relative under wiki/ or _system/)`,
-            },
-          ],
-        }
-      }
-      try {
-        const abs = resolvePath(vaultPath, rel)
-        const body = await readFile(abs, 'utf-8')
-        return { content: [{ type: 'text', text: body }] }
-      } catch (err) {
-        return {
-          content: [
-            { type: 'text', text: `(error reading ${rel}: ${err?.message ?? err})` },
-          ],
-        }
-      }
-    },
-  )
-}
-
-// `search_wiki` is the "find pages by content" companion to read_page.
-// The model passes a substring query; we scan every .md in wiki/ and
-// return the paths whose title or body contains the query (case-
-// insensitive). Title matches rank first because they're a stronger
-// signal of "this page is about X".
-//
-// Result format: a markdown list of `- path — excerpt` lines so the
-// model has both the path (to feed back into read_page) and a hint
-// of why this file matched. Excerpt is the first body line that
-// contains the query, trimmed to ~80 chars.
-//
-// Cap at 20 results — the catalog (Tier 1) already gave the LLM the
-// full surface area; this tool is for "find anything mentioning X",
-// not for paginating the wiki. If the model needs more it can
-// narrow the query.
-const SEARCH_RESULT_CAP = 20
-const SEARCH_EXCERPT_MAX = 80
-
-function buildSearchWikiTool(vaultPath) {
-  return tool(
-    'search_wiki',
-    'Find wiki pages whose title or body contains a substring. Pass `query` (case-insensitive). Returns up to 20 results as `- path — excerpt` lines, ranked title-match first then body-match. Use this when the catalog\'s one-line summaries are not enough to decide which page is relevant; then call read_page on a result to read the page in full.',
-    { query: z.string() },
-    async (args) => {
-      const q = String(args.query ?? '').trim().toLowerCase()
-      if (!q) {
-        return { content: [{ type: 'text', text: '(error: empty query)' }] }
-      }
-      const wikiDir = resolvePath(vaultPath, 'wiki')
-      let entries
-      try {
-        entries = await readdir(wikiDir, { withFileTypes: true })
-      } catch (err) {
-        return {
-          content: [{ type: 'text', text: `(error reading wiki/: ${err?.message ?? err})` }],
-        }
-      }
-      const titleHits = []
-      const bodyHits = []
-      for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith('.md')) continue
-        // Skip sidecars (.meta.json) — readdir already filters by .md but
-        // belt-and-braces in case future suffixes leak in.
-        if (entry.name.endsWith('.meta.json') || entry.name.endsWith('.ydoc')) continue
-        const filename = entry.name
-        const titleHit = filename.toLowerCase().includes(q)
-        let body = ''
-        try {
-          body = await readFile(resolvePath(wikiDir, filename), 'utf-8')
-        } catch {
-          continue // unreadable file, skip silently
-        }
-        const lower = body.toLowerCase()
-        const bodyIdx = lower.indexOf(q)
-        if (!titleHit && bodyIdx < 0) continue
-        // Build excerpt: first non-empty line that contains the query,
-        // or the first line of the body when only title matched.
-        let excerpt = ''
-        if (bodyIdx >= 0) {
-          const lines = body.split('\n')
-          for (const line of lines) {
-            if (line.toLowerCase().includes(q) && line.trim().length > 0) {
-              excerpt = line.trim()
-              break
-            }
-          }
-        }
-        if (!excerpt) {
-          for (const line of body.split('\n')) {
-            if (line.trim().length > 0) {
-              excerpt = line.trim()
-              break
-            }
-          }
-        }
-        if (excerpt.length > SEARCH_EXCERPT_MAX) {
-          excerpt = excerpt.slice(0, SEARCH_EXCERPT_MAX).trimEnd() + '…'
-        }
-        const entryLine = `- wiki/${filename} — ${excerpt || '(empty)'}`
-        if (titleHit) titleHits.push(entryLine)
-        else bodyHits.push(entryLine)
-      }
-      const all = [...titleHits.sort(), ...bodyHits.sort()].slice(
-        0,
-        SEARCH_RESULT_CAP,
-      )
-      if (all.length === 0) {
-        return {
-          content: [{ type: 'text', text: `(no wiki pages match "${args.query}")` }],
-        }
-      }
-      const truncated =
-        titleHits.length + bodyHits.length > SEARCH_RESULT_CAP
-          ? `\n\n(showing first ${SEARCH_RESULT_CAP} of ${titleHits.length + bodyHits.length} matches; narrow the query for more.)`
-          : ''
-      return {
-        content: [{ type: 'text', text: all.join('\n') + truncated }],
-      }
-    },
-  )
-}
 
 // `edit_document` was the host-bridged Phase 2 / 3.C tool: the model
 // emitted (quote, content, rationale) and the host's editListener →
@@ -340,7 +173,7 @@ function buildSubmitIngestResultTool(runId, emit) {
 function buildProposeEditTool(runId, emit, vaultPath) {
   return tool(
     'propose_edit',
-    'PREFERRED tool for changing an existing file. Propose a surgical edit: provide the absolute file_path, the exact old_string to replace (copy it VERBATIM from the file — read_page first if unsure), and the new_string. old_string MUST identify exactly ONE place in the file — if the text appears more than once, include enough surrounding lines to make it unique, otherwise the edit is rejected as ambiguous (the host never guesses which occurrence you meant). Works exactly like the built-in Edit tool. The host locates old_string and applies the change in place, then queues it for user review. Returns immediately — do not wait for the user.',
+    'PREFERRED tool for changing an existing file. Propose a surgical edit: provide the absolute file_path, the exact old_string to replace (copy it VERBATIM from the file — Read it first if unsure), and the new_string. old_string MUST identify exactly ONE place in the file — if the text appears more than once, include enough surrounding lines to make it unique, otherwise the edit is rejected as ambiguous (the host never guesses which occurrence you meant). Works exactly like the built-in Edit tool. The host locates old_string and applies the change in place, then queues it for user review. Returns immediately — do not wait for the user.',
     {
       file_path: z.string(),
       old_string: z.string(),
@@ -1158,22 +991,6 @@ export class Server {
         relayDefs.push(buildSubmitIngestResultTool(runId, this.emit))
       } else if (name === 'submit_profile') {
         relayDefs.push(buildSubmitProfileTool(runId, this.emit))
-      } else if (name === 'read_page') {
-        if (!vaultPath) {
-          console.warn(
-            `[sidecar] read_page requested but vaultPath not provided; skipping (runId=${runId})`,
-          )
-          continue
-        }
-        relayDefs.push(buildReadPageTool(vaultPath))
-      } else if (name === 'search_wiki') {
-        if (!vaultPath) {
-          console.warn(
-            `[sidecar] search_wiki requested but vaultPath not provided; skipping (runId=${runId})`,
-          )
-          continue
-        }
-        relayDefs.push(buildSearchWikiTool(vaultPath))
       } else if (name === 'propose_edit') {
         relayDefs.push(buildProposeEditTool(runId, this.emit, vaultPath))
       } else if (name === 'propose_write') {

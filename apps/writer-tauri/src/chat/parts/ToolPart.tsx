@@ -20,8 +20,8 @@ import { pathToKnownSlug } from '@/lib/docPaths'
  * user actually wants to read — it's there for inspection, not the
  * star of the turn.
  *
- * Wiki tools (`read_page`) get an extra affordance: when the path the
- * model passed resolves to a known doc, we show an "open in editor"
+ * The built-in `Read` tool gets an extra affordance: when the file_path
+ * the model passed resolves to a known doc, we show an "open in editor"
  * button on the header. Clicking it switches the active doc — the
  * same routing the wikilink click plugin uses — so the citation card
  * doubles as navigation. */
@@ -29,12 +29,12 @@ export function ToolPart({ part }: { part: ToolPartType }) {
   const { label } = humanizeToolCall(part.toolName, part.input, part.output)
 
   // Subscribe so a freshly-loaded wiki page (race with the model's
-  // first read_page) lights up the open button as soon as it lands
+  // first Read) lights up the open button as soon as it lands
   // in knownDocs.
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const openSlug = useMemo(() => {
-    if (part.toolName !== 'read_page') return null
-    const path = (part.input as { path?: string } | null | undefined)?.path
+    if (part.toolName !== 'Read') return null
+    const path = (part.input as { file_path?: string } | null | undefined)?.file_path
     if (!path || typeof path !== 'string') return null
     return pathToKnownSlug(path, knownDocs)
   }, [part.toolName, part.input, knownDocs])

@@ -120,37 +120,6 @@ function humanizeWebFetch(input: unknown): HumanizedToolCall {
   return { label: `Fetching ${host}` }
 }
 
-/** `read_page` — sidecar tool that reads a vault wiki / system page
- * by its vault-relative path. Strips the `.md` extension so the label
- * matches how the rest of the app speaks about pages (`Tom`, not
- * `Tom.md`). The page-open affordance lives on ToolPart's header,
- * driven off `part.input.path` + `pathToKnownSlug`. */
-function humanizeReadPage(input: unknown): HumanizedToolCall {
-  const i = (input ?? {}) as { path?: string }
-  const name = basename(i.path).replace(/\.md$/, '')
-  if (!name) return { label: 'Reading wiki' }
-  return { label: `Read ${name}` }
-}
-
-/** `search_wiki` — sidecar tool that fuzzy-matches the query against
- * page titles and bodies. The output (when available) is a markdown
- * list with one `- path — excerpt` line per hit; counting those gives
- * the user a sense of how broad the model's hit was. While input is
- * still streaming the count is omitted so the label doesn't flap. */
-function humanizeSearchWiki(input: unknown, output?: unknown): HumanizedToolCall {
-  const i = (input ?? {}) as { query?: string }
-  if (!i.query) return { label: 'Searching wiki' }
-  const lines =
-    typeof output === 'string'
-      ? output.split('\n').filter((l) => l.startsWith('- ')).length
-      : undefined
-  const suffix =
-    lines !== undefined
-      ? ` (${lines} ${lines === 1 ? 'result' : 'results'})`
-      : ''
-  return { label: `Searched wiki: "${truncate(i.query, 40)}"${suffix}` }
-}
-
 /** `edit_visualization` — sidecar relay tool that updates a chart already in the
  * document by id. The host applies the new spec in place; the label just signals
  * the activity (the change itself shows in the document body). */
@@ -168,8 +137,6 @@ const humanizers: Record<string, Humanizer> = {
   Glob: humanizeGlob,
   WebSearch: humanizeWebSearch,
   WebFetch: humanizeWebFetch,
-  read_page: humanizeReadPage,
-  search_wiki: humanizeSearchWiki,
   edit_visualization: humanizeEditVisualization,
 }
 

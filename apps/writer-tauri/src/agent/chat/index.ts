@@ -72,8 +72,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     model = DEFAULT_MODEL,
     effort: effortOverride,
     relayTools = [
-      'read_page',
-      'search_wiki',
       // Path A: operational edits restored. `propose_edit` /
       // `propose_multi_edit` let the model state exactly what changes
       // (old_string → new_string), so the host applies a surgical
@@ -154,7 +152,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // agents with no dedicated memory.
   if (agent.memoryType) await ensureAgentMemorySlug(agent.memoryType)
   const ctx = await assembleContext({
-    mode: 'chat',
     agentMemoryType: agent.memoryType ?? undefined,
   })
 
