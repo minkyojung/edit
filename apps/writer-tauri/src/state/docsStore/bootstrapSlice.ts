@@ -20,7 +20,32 @@
 import { scanVault } from '@/lib/scanVault'
 import { listVaultTreeRecursive } from '@/lib/vault'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
-import type { GetDocsState, SetDocsState } from './types'
+import { todayLocalDate } from '@/hooks/useDocMeta'
+import type { GetDocsState, KnownDoc, SetDocsState } from './types'
+
+/** Deterministic "first doc to open" when neither the restored URL
+ * nor a restored tab names one. Order: today's daily → most-recent
+ * daily → alphabetically-first live doc. System surfaces (`_system/*`,
+ * i.e. index.md / log.md) and archived docs are excluded — they're
+ * agent-owned and used to surface at random because scanVault returns
+ * files in filesystem order, so `scanned[0]` could be either of them.
+ * Mirrors RouteSyncBridge's self-heal target (today's daily) so the
+ * eager warm-up and the settled route agree. Null only when the vault
+ * holds nothing openable. */
+function pickDefaultSlug(scanned: KnownDoc[]): string | null {
+  const live = scanned.filter(
+    (d) => !d.archivedAt && !d.type.startsWith('system:'),
+  )
+  const today = todayLocalDate()
+  const todaysDaily = live.find((d) => d.type === 'daily' && d.date === today)
+  if (todaysDaily) return todaysDaily.slug
+  const recentDaily = live
+    .filter((d) => d.type === 'daily' && d.date)
+    .sort((a, b) => (a.date! < b.date! ? 1 : -1))[0]
+  if (recentDaily) return recentDaily.slug
+  const firstAlpha = [...live].sort((a, b) => a.slug.localeCompare(b.slug))[0]
+  return firstAlpha?.slug ?? null
+}
 
 export interface BootstrapSlice {
   /** Set during bootstrap; turns to false when initial restore is done. */
@@ -92,14 +117,15 @@ export const createBootstrapSlice = (
       // Eagerly connect the slug AppContent will render on first paint.
       // The URL is the source of truth: prefer its slug when it points
       // at a known doc (session restore from main.tsx or a live deep
-      // link), else fall back to a restored tab, else the first doc in
-      // the vault. Null only when the vault is empty — the app shows an
-      // empty state until the user creates / opens a note.
+      // link), else fall back to a restored tab, else a deterministic
+      // vault default (pickDefaultSlug — today's daily, never a stray
+      // `_system/*` page). Null only when the vault is empty — the app
+      // shows an empty state until the user creates / opens a note.
       const urlSlug = getActiveSlugFromHash()
       const slugToOpen =
         urlSlug && knownSlugs.has(urlSlug)
           ? urlSlug
-          : openSlugs[0] ?? scanned[0]?.slug ?? null
+          : openSlugs[0] ?? pickDefaultSlug(scanned)
       if (slugToOpen) {
         await get().ensureHandle(slugToOpen)
       }
