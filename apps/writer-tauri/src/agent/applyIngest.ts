@@ -27,6 +27,7 @@ import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { markSlugDirty } from '@/lib/docFileSync'
 import { looseReplace } from '@/lib/looseMatch'
 import { ensureLogWikiSlug } from '@/state/wikiService'
+import { appendToBackground } from '@/profile/markers'
 import type { IngestProposal } from '@/agent/ingest/types'
 
 /** Drain queued log entries into wiki:log. Called from
@@ -188,9 +189,19 @@ export async function appendMarkdownToWikiPage(
 ): Promise<boolean> {
   const trimmed = markdown.trim()
   if (trimmed.length === 0) return false
+  // The self-profile (`wiki:profile`) is zoned: derivation sections at
+  // the top, then `## Background` (the append target), then the user's
+  // `## Notes`. Facts about the user must land in Background — a raw
+  // end-of-file append would drop them after `## Notes` (the user's
+  // area) and outside any labelled zone. Every other page is a flat
+  // list of facts, so the plain end-append is correct there.
+  const isProfile =
+    useDocsStore.getState().knownDocs.find((d) => d.slug === slug)?.type ===
+    'wiki:profile'
   return applyToWikiPage(
     slug,
     (oldMd) => {
+      if (isProfile) return appendToBackground(oldMd, trimmed)
       const head = oldMd.trimEnd()
       const sep = head.length > 0 ? '\n\n' : ''
       return `${head}${sep}${trimmed}\n`

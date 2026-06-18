@@ -61,7 +61,7 @@ When in doubt, omit. A clean empty pass is better than noise.
 
 ## Routing self-facts to wiki:profile
 
-The INDEX includes \`[wiki:profile]\` — the user's own profile page (the person described in the SELF PROFILE block above). Route facts about the USER themselves there: career or role changes, location moves, new interests they're committing to, stable beliefs about themselves. Casual self-reports stay out per the filter above; mentions of other people go to those people's pages, not the profile.
+The INDEX includes \`[wiki:profile]\` — the user's own profile page (the person described in the SELF PROFILE block above). Route facts about the USER themselves there: career or role changes, location moves, new interests they're committing to, stable beliefs about themselves. Casual self-reports stay out per the filter above; mentions of other people go to those people's pages, not the profile. Behaviour preferences about how the assistant should act or format output (tone, length, language defaults) are NOT profile facts — skip them here; they belong in CLAUDE.md, which this pass cannot edit.
 
 ## Invariants (do not violate)
 

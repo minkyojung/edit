@@ -110,6 +110,42 @@ export function replaceZone(
   return before + zone + after
 }
 
+/** The ingest append target on the profile page. Not a derivation zone
+ * (those are voice/themes/about, keyed by ProfileSectionKey), so it's a
+ * plain literal heading rather than a PROFILE_SECTIONS entry. */
+const BACKGROUND_HEADING = '## Background'
+
+/** Append `block` into the `## Background` zone of a profile markdown,
+ * preserving every other zone verbatim — including the user-owned
+ * `## Notes`. This is the correct landing spot for ingest / chat facts
+ * about the user; the prior behaviour appended to the raw end of the
+ * file, which dropped content AFTER `## Notes`.
+ *
+ * When the profile has no `## Background` heading yet (a fresh page that
+ * never ran the derivation pipeline), the heading is created at the end
+ * so the content still lands in a labelled zone rather than loose at EOF.
+ * Returns the new full markdown. */
+export function appendToBackground(markdown: string, block: string): string {
+  const trimmed = block.trim()
+  if (!trimmed) return markdown
+
+  const start = findHeadingLine(markdown, BACKGROUND_HEADING)
+  if (start === null) {
+    const head = markdown.trimEnd()
+    const sep = head.length > 0 ? '\n\n' : ''
+    return `${head}${sep}${BACKGROUND_HEADING}\n\n${trimmed}\n`
+  }
+
+  const afterHeading = start + BACKGROUND_HEADING.length + 1 // +1 trailing newline
+  const nextHeadingAt = findNextH2(markdown, afterHeading)
+  const end = nextHeadingAt === null ? markdown.length : nextHeadingAt
+  const existing = markdown.slice(afterHeading, end).trim()
+  const before = markdown.slice(0, start)
+  const after = markdown.slice(end)
+  const body = existing ? `${existing}\n\n${trimmed}` : trimmed
+  return `${before}${BACKGROUND_HEADING}\n\n${body}\n\n${after}`
+}
+
 /** Read back the body of a single zone, without the heading line.
  * Returns null when the heading isn't found. */
 export function readZone(

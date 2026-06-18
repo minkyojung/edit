@@ -28,7 +28,7 @@ The CLAUDE.md schema above describes the vault layout and formatting; this block
 The wiki is the user's *personal* knowledge base, not an encyclopedia. Before routing a fact to wiki, decide whether it is worth keeping at all:
 
 - KEEP it when it is **substantive** (a concept, framework, mental model, method, or a specific non-obvious fact the user would look up later) OR **personal** (the user's own context, decision, opinion, experience, or synthesis).
-- SKIP it when it is **trivially general** (a one-line dictionary label for a well-known thing — the user and any reader already know it), a **passing mention** with no real substance, **promotional / ad** content, or boilerplate.
+- SKIP it when it is **trivially general** (a one-line dictionary label for a well-known thing — the user and any reader already know it), a **passing mention** with no real substance, **promotional / ad** content, or boilerplate. Also skip **behaviour preferences** about how the assistant should act or format output (tone, length, language defaults) — those are not wiki knowledge; they belong in CLAUDE.md, which this pass cannot edit.
 
 Bias toward KEEP. A slightly redundant note costs little; a lost insight costs a lot. But do not turn a substantive capture into a stub of obvious definitions — skip the trivia and keep the ideas.
 
