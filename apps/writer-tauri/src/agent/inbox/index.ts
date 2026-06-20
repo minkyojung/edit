@@ -14,7 +14,7 @@
 // Trigger (an inbox folder watcher) and dedup are layered on top in a
 // later step; this module is the headless run itself.
 
-import { runChat } from '@/agent/chat'
+import { runIntake } from '@/agent/intake'
 import type { RunChatResult } from '@/agent/chat/types'
 import { useDocsStore } from '@/state/docsStore'
 
@@ -42,27 +42,32 @@ export async function processInboxNote(slug: string): Promise<RunChatResult> {
   if (!known) throw new Error(`unknown inbox doc: ${slug}`)
   const relPath = known.relPath ?? `${slug}.md`
 
-  return runChat({
-    // Headless: no editor view (same shape the Read-Later queue uses).
-    view: null,
+  return runIntake({
     slug,
-    threadId: crypto.randomUUID(),
-    // The agent reads the note itself (Claude Code-native) — we just
-    // point it at the path. No document block to inject.
-    appendDocument: false,
-    prompt: `A new note just landed in the inbox at \`${relPath}\`. Read it, then route its content to the wiki and today's daily note per your instructions.`,
     systemPrompt: INBOX_PROMPT,
-    // Read/Glob/Grep come from the built-in preset; these are the
-    // write-side tools the agent proposes through.
-    relayTools: ['propose_edit', 'propose_multi_edit', 'propose_write'],
+    prompt: `A new note just landed in the inbox at \`${relPath}\`. Read it, then route its content to the wiki and today's daily note per your instructions.`,
   })
 }
 
-/** Dev-only console handle for tuning, mirroring `__route`/`__ingest`.
+/** List inbox captures (slug + title + relPath) — `useDocsStore` isn't a
+ * console global, so this is the easy way to grab a slug for __processInbox. */
+function listInboxNotes(): Array<{ slug: string; title?: string; relPath?: string }> {
+  return useDocsStore
+    .getState()
+    .knownDocs.filter((d) => d.relPath?.startsWith('inbox/'))
+    .map((d) => ({ slug: d.slug, title: d.title, relPath: d.relPath }))
+}
+
+/** Dev-only console handles for tuning the inbox intake runner:
  *
- *   await __processInbox('<inbox slug>')
+ *   __inbox()                       // list inbox notes → pick a slug
+ *   await __processInbox('<slug>')  // route that note (stages proposals)
  */
 if (import.meta.env.DEV) {
-  ;(window as unknown as { __processInbox: typeof processInboxNote }).__processInbox =
-    processInboxNote
+  const w = window as unknown as {
+    __processInbox: typeof processInboxNote
+    __inbox: typeof listInboxNotes
+  }
+  w.__processInbox = processInboxNote
+  w.__inbox = listInboxNotes
 }
