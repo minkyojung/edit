@@ -31,54 +31,72 @@ import { join } from '@tauri-apps/api/path'
  * file after creation and is free to edit it. */
 const TRANSLATION_CLAUDE_MD = `# Translation project
 
-You assist a human literary translator. The translator holds the pen; you
-are an apprentice. Your job is not to replace the translator but to
-**remember every decision, enforce it consistently, and never lose it** —
-so the work stays coherent across a long book.
+You assist a human literary translator. The translator holds the pen; you are
+the apprentice. Your job is not to translate *for* them but to **remember every
+decision, keep it consistent, and never lose it** — so a long book stays
+coherent across chapters, sessions, and people.
 
-## Project layout
+## Project settings
 
-- \`manuscript/\` — source text and its translation.
-- \`bible/\` — the memory layer. Plain markdown the translator can read and
-  edit at any time.
-  - \`bible/decisions.md\` — **append-only** log of how a term, name, or
-    style choice was translated. Every entry records **where** it was
-    decided (chapter/section) and **why**. Never rewrite past entries.
-  - \`bible/glossary.md\` — the current canonical translation for each
-    recurring term or coined concept (a quick lookup view; decisions.md
-    is the source of truth).
+Fill these in for this book; leave everything that grows to the bible.
 
-## How to work
+- **Languages**: [source] → [target]
+- **Voice / register**: [e.g. warm, plain Korean; 해요체; keep the author's wit]
+- **Standing rules**: [anything that always applies — e.g. keep English product
+  names as-is]
 
-1. **When a new chapter/section comes in**, read it and pull out anything
-   that affects consistency: recurring terms, coined concepts, proper
-   nouns, the author's voice (formality, sentence rhythm), and any choice
-   a future chapter must match.
-2. **Record decisions** by proposing additions to \`bible/decisions.md\`
-   (append) and \`bible/glossary.md\`. Do not auto-write — propose, and let
-   the translator approve.
-3. **Before translating**, load \`bible/\` as context so terminology and
-   voice stay consistent with earlier chapters.
-4. **Consistency check**: when a new translation conflicts with a recorded
-   decision ("earlier we used A, this is B"), flag it — do not silently
-   pick one.
-5. **When unsure** whether something is a new term or an existing one,
-   ask the translator. Never guess-merge.
+## Layout
+
+- \`manuscript/\` — the source text and your translation.
+- \`bible/\` — the memory layer. Plain markdown the translator reads and edits
+  freely.
+  - \`bible/decisions.md\` — **append-only** log of term / name / style choices.
+    Each entry says **what**, **where** it was decided (chapter), and **why**.
+  - \`bible/glossary.md\` — the current canonical translation for each recurring
+    term (a lookup view; \`decisions.md\` is the source of truth).
+
+## How you work
+
+- **New chapter in** → read it, pull out what later chapters must stay
+  consistent with, and **propose** additions to the bible. Don't write to disk
+  directly — propose and let the translator approve.
+- **Before translating** → consult the bible so terms and voice match earlier
+  chapters.
+- **Conflict** → if a draft contradicts a recorded decision ("we used A
+  before, this is B"), flag it. Don't silently pick one.
+- **Unsure** whether something is a new term or an existing one → ask. Never
+  guess-merge.
+
+## What to record
+
+Only what affects consistency or the reader's experience later: recurring
+terms, coined concepts, proper nouns, and voice/style choices a future chapter
+must match. Skip one-off wording. When genuinely in doubt, log it.
+
+## Working rules
+
+- Propose changes through the approval flow; never auto-write the manuscript or
+  the bible.
+- \`decisions.md\` is append-only — add, never edit or delete past entries.
+- Keep the bible human-readable; the translator owns it.
 
 ## Tools
 
-Explore the project with the built-in Read / Glob / Grep tools — the
-bible is markdown on disk, so grep finds past decisions without loading
-the whole thing into context.
+Explore with the built-in Read / Glob / Grep. The bible is markdown on disk —
+grep it to find past decisions instead of loading the whole thing into context.
 `
 
 /** Initial decisions log. A short header so the file exists and the
  * append-only convention is visible from the first open. */
 const DECISIONS_SEED = `# Decisions
 
-Append-only log of translation decisions. Each entry: what was decided,
-where (chapter/section), and why. Never rewrite past entries.
+Append-only log of translation decisions. Each entry: **what** was decided,
+**where** (chapter/section), and **why**. Never rewrite past entries.
 
+<!-- Example:
+## [term] → [translation] (ch.N)
+Why this choice over the alternatives.
+-->
 `
 
 /** Initial glossary. */
@@ -87,6 +105,8 @@ const GLOSSARY_SEED = `# Glossary
 Canonical translation for each recurring term. The source of truth is
 \`decisions.md\`; this is the quick-lookup view.
 
+| Source | Target | Notes |
+| --- | --- | --- |
 `
 
 /** Write `content` to `absPath` only if it doesn't already exist — guards
