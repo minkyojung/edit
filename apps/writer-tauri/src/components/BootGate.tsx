@@ -26,6 +26,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useDocsStore } from '@/state/docsStore'
 import { useThreadsStore } from '@/state/threadsStore'
 import { getActiveVaultPath } from '@/state/settingsStore'
+import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { VaultLauncher } from '@/components/VaultLauncher'
 import { exists, remove } from '@tauri-apps/plugin-fs'
 import { join } from '@tauri-apps/api/path'
@@ -45,11 +46,13 @@ export function BootGate({ children }: Props) {
   const bootstrapping = useDocsStore((s) => s.bootstrapping)
   const bootstrap = useDocsStore((s) => s.bootstrap)
   const [showLoader, setShowLoader] = useState(false)
-  // Vault selection is now a first-run launcher (VaultLauncher), not a silent
-  // OS dialog — so the user can choose "restore from GitHub" BEFORE the boot
-  // sequence fills an empty folder (the only point restore can run). The boot
-  // effect below waits until a vault is in place.
-  const [hasVault, setHasVault] = useState(() => !!getActiveVaultPath())
+  // Window-per-project model: a window boots a vault ONLY when it carries a
+  // `?root` param (a project window). A window without one is the launcher —
+  // it always shows the picker and never boots, regardless of any legacy
+  // single-vault path left in the shared, cross-window localStorage. The
+  // launcher spawns a separate window per project; getActiveVaultPath() in a
+  // project window returns its WINDOW_ROOT.
+  const [hasVault, setHasVault] = useState(() => WINDOW_ROOT !== null)
   // Whether the stored vault path has been verified to still exist on disk.
   // A path can be remembered across sessions but the folder later moved,
   // deleted, parked on an unmounted drive, or not-yet-synced (iCloud). We
@@ -198,11 +201,10 @@ export function BootGate({ children }: Props) {
   // flashing the launcher or booting into a folder that may be missing.
   if (!vaultChecked) return loadingView
 
-  // No vault yet (or the stored one is gone) → first-run launcher (pick a
-  // folder, or restore from GitHub). Sits ahead of git init / bootstrap so
-  // restore can clone into an empty folder before anything fills it.
+  // Launcher window (no `?root`) → project picker. It spawns a separate
+  // window per project and never boots a vault itself.
   if (!hasVault) {
-    return <VaultLauncher onReady={() => setHasVault(true)} />
+    return <VaultLauncher />
   }
 
   if (!bootstrapping) return <>{children}</>

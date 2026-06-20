@@ -12,7 +12,6 @@
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { exists, mkdir, readDir } from '@tauri-apps/plugin-fs'
 import { homeDir, join } from '@tauri-apps/api/path'
-import { useSettingsStore } from '@/state/settingsStore'
 import { VAULT_SUBDIRS } from '@/lib/vault'
 import { notify } from '@/lib/notify'
 
@@ -81,10 +80,11 @@ async function isAcceptableVaultFolder(path: string): Promise<boolean> {
  * Acceptable folder = empty, or already a Writer vault. See
  * {@link isAcceptableVaultFolder}.
  *
- * Side effect on success: settingsStore.setActiveVaultPath(path).
- * Tauri auto-adds the picked path to the fs scope for this session
- * (see plugin-dialog docs); subsequent app launches re-add via the
- * static fs:scope in capabilities/default.json. */
+ * No side effects: under the window-per-project model the caller decides
+ * what to do with the path (scaffold it, record it as recent, open it in a
+ * window). Tauri auto-adds the picked path to the fs scope for this session
+ * (see plugin-dialog docs); subsequent app launches re-add via the static
+ * fs:scope in capabilities/default.json. */
 export async function pickVault(): Promise<string | null> {
   // Pre-create the default vault folder so the picker opens INSIDE it
   // (the user can just click "Choose" without typing a folder name).
@@ -108,7 +108,6 @@ export async function pickVault(): Promise<string | null> {
     notify.vaultFolderNotAcceptable(result)
     return null
   }
-  useSettingsStore.getState().setActiveVaultPath(result)
   return result
 }
 

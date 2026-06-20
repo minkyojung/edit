@@ -1,26 +1,86 @@
-// First-run launcher (Obsidian-style "open vault" screen). Shown by BootGate when
-// no vault is selected yet. Opens a local folder as the vault.
+// First-run launcher / project picker. Rendered by BootGate in the
+// launcher window (a window with no `?root` param). Three ways in:
 //
-// Restore-from-GitHub was removed — versioning/backup is being redesigned as an
-// opt-in layer (GitHub login stays elsewhere). Local folder only for now.
+//   - Recent       — reopen a project from the persisted list
+//   - New translation project — scaffold a fresh translation folder
+//   - Open folder  — open any existing folder (wiki or translation)
 //
-// Calls `onReady` once a vault is in place so BootGate proceeds with the normal
-// boot sequence.
+// Window-per-project model: every entry point opens the project in its OWN
+// window via openProjectWindow(). The launcher itself never boots a vault —
+// it stays open as the hub. (Closing the launcher / reopening it when the
+// last project window closes is window-lifecycle polish for a later phase.)
 
-import { useCallback, type ReactNode } from 'react'
+import { useCallback, useEffect } from 'react'
+import { exists } from '@tauri-apps/plugin-fs'
 import { Button } from '@/components/ui/button'
 import { pickVault } from '@/lib/vaultPicker'
+import {
+  isTranslationProject,
+  scaffoldTranslationProject,
+} from '@/lib/translationProject'
+import { openProjectWindow } from '@/lib/projectWindow'
+import {
+  useSettingsStore,
+  type ProjectType,
+  type RecentProject,
+} from '@/state/settingsStore'
 
-interface Props {
-  /** Fired once a vault is ready so BootGate runs the normal boot sequence. */
-  onReady: () => void
-}
+export function VaultLauncher() {
+  const recentProjects = useSettingsStore((s) => s.recentProjects)
+  const addRecentProject = useSettingsStore((s) => s.addRecentProject)
+  const removeRecentProject = useSettingsStore((s) => s.removeRecentProject)
 
-export function VaultLauncher({ onReady }: Props) {
-  const handleLocal = useCallback(async () => {
+  // One-time migration: a legacy single-vault path (from before
+  // window-per-project) won't be in the recent list. Surface it as a recent
+  // so existing users can one-click reopen their old vault instead of
+  // hunting for it with "Open folder".
+  useEffect(() => {
+    const { vaultPaths, recentProjects: recents } = useSettingsStore.getState()
+    const legacy = vaultPaths[0]
+    if (!legacy || recents.some((p) => p.path === legacy)) return
+    void (async () => {
+      const type: ProjectType = (await isTranslationProject(legacy))
+        ? 'translation'
+        : 'wiki'
+      addRecentProject(legacy, type)
+    })()
+  }, [addRecentProject])
+
+  // Open any existing folder. pickVault validates; we detect the project
+  // type for the recent list, then open it in its own window.
+  const openExisting = useCallback(async () => {
     const path = await pickVault()
-    if (path) onReady()
-  }, [onReady])
+    if (!path) return
+    const type: ProjectType = (await isTranslationProject(path))
+      ? 'translation'
+      : 'wiki'
+    addRecentProject(path, type)
+    await openProjectWindow(path, folderName(path))
+  }, [addRecentProject])
+
+  // Create a new translation project: pick/create a folder, lay down the
+  // translation CLAUDE.md + bible/ skeleton, then open it in its own window.
+  const newTranslation = useCallback(async () => {
+    const path = await pickVault()
+    if (!path) return
+    await scaffoldTranslationProject(path)
+    addRecentProject(path, 'translation')
+    await openProjectWindow(path, folderName(path))
+  }, [addRecentProject])
+
+  // Reopen a recent project. Prune the entry if its folder is gone (moved,
+  // deleted, unmounted drive) so the list self-heals.
+  const openRecent = useCallback(
+    async (p: RecentProject) => {
+      if (!(await exists(p.path))) {
+        removeRecentProject(p.path)
+        return
+      }
+      addRecentProject(p.path, p.type) // refresh lastOpened + move to front
+      await openProjectWindow(p.path, folderName(p.path))
+    },
+    [addRecentProject, removeRecentProject],
+  )
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-background p-6">
@@ -29,37 +89,56 @@ export function VaultLauncher({ onReady }: Props) {
           Writer
         </h1>
         <p className="mb-6 text-center text-sm text-muted-foreground">
-          Open a folder on this computer as your vault.
+          Open a project to get started.
         </p>
 
-        <div className="rounded-xl border bg-card p-2">
-          <LauncherRow
-            title="Open folder / start fresh"
-            desc="Use a folder on this computer as your vault."
-            action={<Button onClick={() => void handleLocal()}>Open</Button>}
-          />
+        {recentProjects.length > 0 && (
+          <div className="mb-3 rounded-xl border bg-card p-2">
+            <div className="px-3 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Recent
+            </div>
+            {recentProjects.map((p) => (
+              <button
+                key={p.path}
+                type="button"
+                onClick={() => void openRecent(p)}
+                className="flex w-full items-center justify-between gap-4 rounded-lg p-3 text-left hover:bg-muted/40"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-foreground">
+                    {folderName(p.path)}
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {p.path}
+                  </div>
+                </div>
+                <span className="flex-none text-xs text-muted-foreground">
+                  {p.type === 'translation' ? 'Translation' : 'Wiki'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <Button className="flex-1" onClick={() => void newTranslation()}>
+            New translation project
+          </Button>
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={() => void openExisting()}
+          >
+            Open folder
+          </Button>
         </div>
       </div>
     </div>
   )
 }
 
-function LauncherRow({
-  title,
-  desc,
-  action,
-}: {
-  title: string
-  desc: string
-  action: ReactNode
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-lg p-3 hover:bg-muted/40">
-      <div className="min-w-0">
-        <div className="text-sm font-medium text-foreground">{title}</div>
-        <div className="text-xs text-muted-foreground">{desc}</div>
-      </div>
-      <div className="flex-none">{action}</div>
-    </div>
-  )
+/** Last path segment, for the project's display name. */
+function folderName(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? path
 }
