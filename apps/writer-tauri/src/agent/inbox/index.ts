@@ -22,7 +22,7 @@ import { useDocsStore } from '@/state/docsStore'
  * taxonomy but points the model at its own edit tools instead of a
  * structured-output contract. Kept local to this module so it doesn't
  * touch the shared chat / CLAUDE.md prompt surfaces. */
-const INBOX_PROMPT = `You are processing ONE note that just landed in the user's inbox — a saved article, a transcript, or a quick capture. Read it, then route its content fact by fact, proposing edits directly with your tools (propose_edit / propose_multi_edit / propose_write). The CLAUDE.md schema above governs vault layout and formatting; this block adds the routing decision.
+export const INBOX_PROMPT = `You are processing ONE note that just landed in the user's inbox — a saved article, a transcript, or a quick capture. Read it, then route its content fact by fact, proposing edits directly with your tools (propose_edit / propose_multi_edit / propose_write). The CLAUDE.md schema above governs vault layout and formatting; this block adds the routing decision.
 
 Three destinations, decided fact by fact:
 - **wiki** — durable, reusable knowledge: a concept, framework, method, or a specific non-obvious fact about an entity (a person, book, project, idea) the user will look up later. Find the entity's page first (read \`_system/index.md\`, then Glob/Grep \`wiki/\`); append to it with propose_edit, or propose_write a new \`wiki/<Title>.md\` when none fits. Never invent a page id; never rewrite existing lines (append only). Cross-reference with [[Page Title]] using exact index titles.

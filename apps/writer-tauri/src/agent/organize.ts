@@ -7,9 +7,10 @@
 // cost bounded and the approval queue readable.
 
 import { useDocsStore } from '@/state/docsStore'
-import { processInboxNote } from '@/agent/inbox'
-import { processDailyNote } from '@/agent/dailyIngest'
+import { processInboxNote, INBOX_PROMPT } from '@/agent/inbox'
+import { DAILY_INGEST_PROMPT } from '@/agent/dailyIngest'
 import { syncTodayManually } from '@/hooks/useIdleTrigger'
+import type { OrganizeRequest } from '@/state/pendingOrganizeStore'
 
 export interface OrganizeResult {
   /** Notes actually handed to the agent (skips gated-out / empty ones). */
@@ -52,14 +53,34 @@ export async function organizeTodayAndInbox(): Promise<OrganizeResult> {
   return { processed, proposals }
 }
 
-/** Organize a single note (the one open in the editor). A daily note routes
- * through the daily prompt (facts → wiki, never edits the daily itself); any
- * other note routes through the inbox prompt (facts → wiki, actions → daily). */
-export async function organizeNote(slug: string): Promise<number> {
+/** Build the organize request for a single note (the one open in the editor),
+ * so it can run as a *visible* chat thread instead of headless. A daily note
+ * routes through the daily prompt (facts → wiki, never edits the daily itself);
+ * any other note routes through the inbox prompt (facts → wiki, actions →
+ * daily). The kickoff mirrors the headless runners' (processDailyNote /
+ * processInboxNote) so the chat path and the bulk path read the same way.
+ * Returns null on an unknown slug. */
+export function buildOrganizeNoteRequest(
+  slug: string,
+): Omit<OrganizeRequest, 'threadId'> | null {
   const known = useDocsStore.getState().knownDocs.find((d) => d.slug === slug)
-  const result =
-    known?.type === 'daily'
-      ? await processDailyNote(slug)
-      : await processInboxNote(slug)
-  return result.editCount
+  if (!known) return null
+  const isDaily = known.type === 'daily'
+  const relPath =
+    known.relPath ??
+    (isDaily && known.date ? `daily/${known.date}.md` : `${slug}.md`)
+  const title = `Organize ${known.title || relPath}`
+
+  if (isDaily) {
+    return {
+      systemPrompt: DAILY_INGEST_PROMPT,
+      prompt: `Process the user's daily note at \`${relPath}\` — read it and file durable facts into the wiki per your instructions.`,
+      title,
+    }
+  }
+  return {
+    systemPrompt: INBOX_PROMPT,
+    prompt: `A new note just landed in the inbox at \`${relPath}\`. Read it, then route its content to the wiki and today's daily note per your instructions.`,
+    title,
+  }
 }

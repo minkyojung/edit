@@ -26,7 +26,8 @@ import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { buildViewUrl } from '@/lib/viewUrl'
-import { organizeTodayAndInbox, organizeNote } from '@/agent/organize'
+import { organizeTodayAndInbox, buildOrganizeNoteRequest } from '@/agent/organize'
+import { usePendingOrganize } from '@/state/pendingOrganizeStore'
 import { DocumentInfoDialog } from './DocumentInfoDialog'
 
 interface Props {
@@ -39,6 +40,7 @@ export function DocMenu({ editorView }: Props) {
     activeSlug ? s.knownDocs.find((d) => d.slug === activeSlug) : null,
   )
   const deleteToTrash = useDocsStore((s) => s.deleteToTrash)
+  const setOrganizeRequest = usePendingOrganize((s) => s.setRequest)
   const navigate = useNavigate()
   const [infoOpen, setInfoOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -67,19 +69,18 @@ export function DocMenu({ editorView }: Props) {
     }
   }
 
-  const organizeThis = async () => {
-    if (busy || !activeSlug) return
-    setBusy(true)
-    try {
-      const proposals = await organizeNote(activeSlug)
-      if (proposals === 0) toast.info('Nothing new to file from this note')
-      else toast.success(`${proposals} to review`)
-    } catch (err) {
-      console.warn('[organize] this note failed', err)
+  // "Organize this note" opens a visible chat thread instead of running
+  // headless: record the intent here, and the chat components (RightPanel +
+  // ChatPanel) create the thread and stream the run. The agent's reading /
+  // proposing is then watchable like any other conversation.
+  const organizeThis = () => {
+    if (!activeSlug) return
+    const req = buildOrganizeNoteRequest(activeSlug)
+    if (!req) {
       toast.error('Organize failed')
-    } finally {
-      setBusy(false)
+      return
     }
+    setOrganizeRequest(req)
   }
 
   return (
@@ -114,7 +115,7 @@ export function DocMenu({ editorView }: Props) {
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={busy || !activeSlug}
-            onSelect={() => void organizeThis()}
+            onSelect={() => organizeThis()}
           >
             Organize this note
           </DropdownMenuItem>

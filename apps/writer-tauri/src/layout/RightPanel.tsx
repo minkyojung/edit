@@ -11,10 +11,15 @@
 // When closed the column is width 0 but this component stays mounted, so
 // reopening shows the last-active mode without a re-mount flicker.
 
+import { useEffect, useRef } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useThreads, type UseThreadsResult } from '@/hooks/useThreads'
 import { useActiveThread } from '@/hooks/useActiveThread'
+import {
+  usePendingOrganize,
+  type OrganizeRequest,
+} from '@/state/pendingOrganizeStore'
 import { ThreadPicker } from '@/chat/ThreadPicker'
 import { notify } from '@/lib/notify'
 import { ChatPanel } from './ChatPanel'
@@ -32,6 +37,30 @@ export function RightPanel({ editorView, slug }: Props) {
   // mount point and the id flows down to ChatPanel as a prop.
   const threads = useThreads(slug)
   const { activeId, setActiveId } = useActiveThread(threads.active)
+
+  // "Organize this note" (DocMenu) records intent in the bridge store; this
+  // half of the hand-off owns thread creation + activation (which live here,
+  // not in ChatPanel). Create a fresh thread for the run, make it active, open
+  // the panel, then stamp its id back so ChatPanel can dispatch the run.
+  // Guard by request identity (a ref) so thread-list churn re-rendering this
+  // component can't double-create before attachThread lands.
+  const organizeReq = usePendingOrganize((s) => s.request)
+  const attachThread = usePendingOrganize((s) => s.attachThread)
+  const openInMode = useLayoutStore((s) => s.openRightPanelInMode)
+  const handledReqRef = useRef<OrganizeRequest | null>(null)
+  useEffect(() => {
+    if (!organizeReq || organizeReq.threadId) return
+    if (handledReqRef.current === organizeReq) return
+    handledReqRef.current = organizeReq
+    void (async () => {
+      const id = await threads.createThread(organizeReq.title)
+      if (!id) return
+      setActiveId(id)
+      openInMode('chat')
+      attachThread(id)
+    })()
+  }, [organizeReq, threads, setActiveId, openInMode, attachThread])
+
   return (
     <div className="relative flex h-full flex-col">
       <div className="min-h-0 flex-1">
