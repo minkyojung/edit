@@ -23,7 +23,7 @@
 import type { PendingChange, PendingEdit } from '@/state/pendingChangesStore'
 import type { KnownDoc } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
-import { createGenericNote } from '@/state/wikiService'
+import { createCustomWikiPage, createGenericNote } from '@/state/wikiService'
 import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { stripDuplicateTitleHeading } from '@/lib/markdownText'
 
@@ -133,12 +133,12 @@ export function mapChatEditToPendingChange(
 /** Create a brand-new generic note for a chat `propose_write` whose target path doesn't
  * resolve to an existing doc, then return a PendingChange staging its body for review.
  *
- * Placement is HOST-FORCED: the note lands in the user's configured default folder
- * (settings `defaultNoteFolder`, default 'inbox') REGARDLESS of the folder the model
- * put in `file_path` — only the filename is taken from the model. This is why notes no
- * longer scatter into wiki/ on a model whim: the LLM proposes a name + content, the
- * host owns where it goes. The note is born empty (so it exists in the catalog + sidebar
- * and can host a staged change); the body sits in the review queue until the user Keeps.
+ * Placement follows the FOLDER the model put in `file_path` (governed by CLAUDE.md):
+ * a `wiki/` path becomes a real wiki page (so it shows in the index and `[[links]]`
+ * resolve); any other folder is a generic note placed there; a bare filename falls back
+ * to the configured default folder (settings `defaultNoteFolder`, default 'inbox'). The
+ * note is born empty (so it exists in the catalog + sidebar and can host a staged
+ * change); the body sits in the review queue until the user Keeps.
  *
  * (Function name is legacy — kept so the caller in agent/chat/index.ts is untouched.)
  *
@@ -161,11 +161,14 @@ export async function materializeChatNewWikiPage(
   // creation (the pure mapper owns it). Guards against a duplicate.
   if (resolveSlugForVaultPath(filePath, ctx.knownDocs, ctx.vaultPath)) return null
 
-  // Take only the FILENAME from the model — its folder is discarded (host forces it).
-  const name = (relative.split('/').pop() ?? '').replace(/\.md$/, '').trim()
+  // Split the model's path into folder + filename. The folder is the model's
+  // routing decision (governed by CLAUDE.md); the filename is always its own.
+  const parts = relative.split('/')
+  const name = (parts.pop() ?? '').replace(/\.md$/, '').trim()
   if (!name) return null
+  const folder = parts.join('/')
 
-  // The note's title comes from its filename (createGenericNote sets it from `name`),
+  // The note's title comes from its filename (the create helpers set it from `name`),
   // decoupled from the body — so we DON'T keep a leading `# name` heading that would
   // render the title twice. Strip only that duplicate; a different leading heading is
   // real content.
@@ -173,8 +176,13 @@ export async function materializeChatNewWikiPage(
   if (removed) {
     console.log('[chat] dropped duplicate title heading from new note body', { name })
   }
-  // Host-forced placement: configured default folder (Obsidian-style; default 'inbox').
-  const slug = await createGenericNote(name, getDefaultNoteFolder())
+  // Route by the chosen folder: a `wiki/` path becomes a real wiki page (so it lands in
+  // the index and links resolve); any other folder is a generic note placed there; a
+  // bare filename falls back to the default folder.
+  const slug =
+    folder === 'wiki'
+      ? await createCustomWikiPage(name)
+      : await createGenericNote(name, folder || getDefaultNoteFolder())
   if (!slug) return null
 
   return {

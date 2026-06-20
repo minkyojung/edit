@@ -133,7 +133,7 @@ Do NOT read a wiki page when:
 - Use \`Edit\` with a unique \`old_string\`. **One issue per Edit call** — never bundle unrelated fixes into one \`new_string\`.
 - Widen \`old_string\` with surrounding context when the substring is not unique.
 - To append to a file, set \`new_string\` to the current last line followed by the new content.
-- Use \`Write\` only for brand-new files. A new synthesized page goes to \`wiki/<Title>.md\`. A general note the user asks you to create lands in \`inbox/\` — the host places every new note there regardless of the folder you put in the path, so only the filename you choose matters. Do not \`Write\` over an existing file unless the user explicitly asks for a full rewrite.
+- Use \`Write\` only for brand-new files. A new synthesized wiki page goes to \`wiki/<Title>.md\`; a general note goes to whichever folder fits (\`inbox/\` by default). The host honours the folder you choose in the path — route durable knowledge to \`wiki/\`, captures and quick notes to \`inbox/\`. Do not \`Write\` over an existing file unless the user explicitly asks for a full rewrite.
 - \`daily/*.md\` — edit only on explicit user request (typo fix, formatting). Otherwise treat as the user's own writing.
 - \`_system/index.md\` — keep it scannable, one line per wiki page. Update after wiki page lifecycle events.
 
