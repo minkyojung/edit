@@ -40,6 +40,7 @@ import { create } from 'zustand'
 import { rejectActiveCmChange } from '@/state/activeCmEditor'
 import { persist } from 'zustand/middleware'
 import { useDocsStore } from '@/state/docsStore'
+import { projectStorageKey } from '@/lib/windowRoot'
 
 /** A single line-level edit inside a PendingChange. One PendingChange
  * may carry several `edits` when a single intent (e.g. one ingest
@@ -391,7 +392,8 @@ export const usePendingChangesStore = create<PendingChangesState>()(
       },
     }),
     {
-      name: 'writer-tauri:pending-changes',
+      // Per-project: pending edits target a specific vault's files.
+      name: projectStorageKey('writer-tauri:pending-changes'),
       version: 2,
       // Persist the queue across reloads so a user who closes the
       // app mid-review doesn't lose pending changes. Only the data

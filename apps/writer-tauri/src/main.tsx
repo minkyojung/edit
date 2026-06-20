@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { App } from './App'
 import { LAST_PATH_STORAGE_KEY } from './hooks/usePersistLastPath'
+import { projectStorageKey } from './lib/windowRoot'
 import './index.css'
 
 // Session restore: if the WebView came up with an empty / root hash
@@ -19,7 +20,7 @@ import './index.css'
   try {
     const currentHash = window.location.hash.replace(/^#/, '')
     if (currentHash && currentHash !== '/') return
-    const saved = localStorage.getItem(LAST_PATH_STORAGE_KEY)
+    const saved = localStorage.getItem(projectStorageKey(LAST_PATH_STORAGE_KEY))
     if (!saved) return
     window.location.hash = saved
   } catch {

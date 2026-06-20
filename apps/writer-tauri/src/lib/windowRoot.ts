@@ -29,3 +29,26 @@ function readWindowRoot(): string | null {
 /** The folder this window is bound to, or `null` for the launcher window
  * (and during the pre-multi-window transition). Read once at load. */
 export const WINDOW_ROOT: string | null = readWindowRoot()
+
+/** Deterministic 32-bit hash of a path → base36. Used to derive both the
+ * project window label and per-project storage-key suffixes from the same
+ * root, so a window's label and its persisted state always agree. */
+export function hashPath(path: string): string {
+  let h = 5381
+  for (let i = 0; i < path.length; i++) {
+    h = ((h << 5) + h + path.charCodeAt(i)) | 0
+  }
+  return (h >>> 0).toString(36)
+}
+
+/** Namespace a localStorage / persist key to THIS window's project.
+ *
+ * localStorage is shared across all windows of the app, so a key that
+ * holds per-project state (the last-viewed doc, the active chat thread,
+ * the doc catalog cache, …) would leak between windows if left bare. We
+ * suffix it with the window's root hash so each project window reads and
+ * writes its own slot. The launcher window (no WINDOW_ROOT) keeps the bare
+ * key — it has no project state of its own. */
+export function projectStorageKey(base: string): string {
+  return WINDOW_ROOT ? `${base}::${hashPath(WINDOW_ROOT)}` : base
+}

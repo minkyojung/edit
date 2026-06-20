@@ -16,6 +16,7 @@ import {
   IconBookmarks,
   IconEdit,
   IconFileDescription,
+  IconFolderOpen,
   IconSettings,
 } from '@tabler/icons-react'
 import {
@@ -35,6 +36,7 @@ import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useSaveArticleDialogStore } from '@/state/saveArticleDialogStore'
 import { useCommandPaletteStore } from '@/state/commandPaletteStore'
 import { openSettings } from '@/settings/useSettingsDialog'
+import { focusLauncher } from '@/lib/projectWindow'
 import { buildViewUrl } from '@/lib/viewUrl'
 
 interface DocResult {
@@ -171,6 +173,16 @@ export function CommandPalette() {
           >
             <IconBookmarks size={16} stroke={1.75} />
             <span className="flex-1 truncate">Open Inbox</span>
+          </CommandItem>
+          <CommandItem
+            value="action:open-project switch project launcher open another vault"
+            onSelect={() => {
+              setOpen(false)
+              void focusLauncher()
+            }}
+          >
+            <IconFolderOpen size={16} stroke={1.75} />
+            <span className="flex-1 truncate">Open project…</span>
           </CommandItem>
           <CommandItem
             value="action:open-settings settings preferences theme font"

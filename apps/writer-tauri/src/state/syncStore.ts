@@ -5,6 +5,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { projectStorageKey } from '@/lib/windowRoot'
 
 export type SyncStatus =
   | 'idle'
@@ -71,7 +72,7 @@ export const useSyncStore = create<SyncStore>()(
       setError: (message) => set({ status: 'error', lastError: message }),
     }),
     {
-      name: 'writer-tauri:sync',
+      name: projectStorageKey('writer-tauri:sync'),
       version: 1,
       partialize: (s) => ({
         repoFullName: s.repoFullName,
