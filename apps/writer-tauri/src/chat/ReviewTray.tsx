@@ -126,11 +126,15 @@ export function ReviewTray() {
   }
 
   return (
-    // Match the in-transcript suggestion-card width: the transcript content is inset by
-    // `--surface-inset + 1rem` while this footer is only `--surface-inset`, so an extra
-    // 1rem (mx-4) each side lines the tray up with the cards above. Flat bottom
-    // (rounded-t-2xl) + no bottom margin so it sits flush on top of the composer.
-    <div className="mx-4 overflow-hidden rounded-t-2xl border border-border bg-background text-xs">
+    // Full footer width so the tray lines up with the composer (PromptInput) below it,
+    // which fills the same `--surface-inset`-padded footer.
+    //
+    // pb-6 extends the box 24px below its content (content stays top-aligned); -mb-6
+    // cancels that 24px from layout so nothing above shifts. Net: the tray's bottom
+    // tucks down behind the composer's rounded top (PromptInput is rounded-3xl = 24px
+    // radius and paints on top as the next sibling), so the two read as one connected
+    // panel instead of a flat seam.
+    <div className="-mb-6 overflow-hidden rounded-t-2xl border border-border bg-background pb-6 text-xs">
       {/* Summary — collapsed view. Left toggles the file list; right is the bulk decision. */}
       <div className="flex items-stretch">
         <button
