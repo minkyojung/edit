@@ -1,12 +1,13 @@
-// Doc-level action menu for the editor header. The `⋯` trigger sits
-// in the rightmost slot of EditorHeader and reveals a small dropdown
-// of doc-scoped actions: Document info (read-only stats) and Delete
-// (move to the OS trash, recoverable). Daily entries
-// disable Delete since they're the time-axis spine.
+// Editor-header action menu. The trigger sits in the rightmost slot of
+// EditorHeader and reveals a small dropdown. Top: "Organize" actions — file
+// content into the wiki/daily via the general intake agent (today + inbox, or
+// just the open note). Bottom: doc-scoped actions (Document info, Delete).
+// Daily entries disable Delete since they're the time-axis spine.
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { IconDots } from '@tabler/icons-react'
+import { IconSparkles, IconLoader2 } from '@tabler/icons-react'
+import { toast } from 'sonner'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { Button } from '@/components/ui/button'
 import {
@@ -18,12 +19,14 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { buildViewUrl } from '@/lib/viewUrl'
+import { organizeTodayAndInbox, organizeNote } from '@/agent/organize'
 import { DocumentInfoDialog } from './DocumentInfoDialog'
 
 interface Props {
@@ -38,12 +41,46 @@ export function DocMenu({ editorView }: Props) {
   const deleteToTrash = useDocsStore((s) => s.deleteToTrash)
   const navigate = useNavigate()
   const [infoOpen, setInfoOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
 
-  const disabled = !activeSlug
-  // Daily entries are the time-axis spine; deleting them would tear
-  // the breadcrumb anchor out from under their child notes. The
-  // store also refuses, but keep the menu honest.
+  // Daily entries are the time-axis spine; deleting them would tear the
+  // breadcrumb anchor out from under their child notes. The store also
+  // refuses, but keep the menu honest.
   const deleteDisabled = !activeDoc || activeDoc.type === 'daily'
+
+  const organizeAll = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const { processed, proposals } = await organizeTodayAndInbox()
+      if (processed === 0) toast.info('Nothing to organize')
+      else if (proposals === 0) toast.info('Organized — nothing new to file')
+      else
+        toast.success(
+          `Organized ${processed} note${processed === 1 ? '' : 's'} — ${proposals} to review`,
+        )
+    } catch (err) {
+      console.warn('[organize] today + inbox failed', err)
+      toast.error('Organize failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const organizeThis = async () => {
+    if (busy || !activeSlug) return
+    setBusy(true)
+    try {
+      const proposals = await organizeNote(activeSlug)
+      if (proposals === 0) toast.info('Nothing new to file from this note')
+      else toast.success(`${proposals} to review`)
+    } catch (err) {
+      console.warn('[organize] this note failed', err)
+      toast.error('Organize failed')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <>
@@ -54,24 +91,39 @@ export function DocMenu({ editorView }: Props) {
               <Button
                 variant="ghost"
                 size="icon-sm"
-                disabled={disabled}
-                aria-label="Document actions"
+                disabled={busy}
+                aria-label="Organize"
                 className={cn(
                   'cursor-pointer text-sidebar-foreground/60 hover:text-sidebar-foreground',
                 )}
               >
-                <IconDots size={16} stroke={1.75} />
+                {busy ? (
+                  <IconLoader2 size={16} stroke={1.75} className="animate-spin" />
+                ) : (
+                  <IconSparkles size={16} stroke={1.75} />
+                )}
               </Button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent side="bottom">More actions</TooltipContent>
+          <TooltipContent side="bottom">Organize</TooltipContent>
         </Tooltip>
 
-        <DropdownMenuContent align="end" sideOffset={6} className="w-52">
-          <DropdownMenuItem onSelect={() => setInfoOpen(true)}>
-            Document info
+        <DropdownMenuContent align="end" sideOffset={6} className="w-56">
+          <DropdownMenuItem disabled={busy} onSelect={() => void organizeAll()}>
+            Organize today + inbox
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={busy || !activeSlug}
+            onSelect={() => void organizeThis()}
+          >
+            Organize this note
           </DropdownMenuItem>
 
+          <DropdownMenuSeparator />
+
+          <DropdownMenuItem disabled={!activeSlug} onSelect={() => setInfoOpen(true)}>
+            Document info
+          </DropdownMenuItem>
           <DropdownMenuItem
             disabled={deleteDisabled}
             onSelect={() => {
