@@ -61,8 +61,8 @@ articles/                — saved read-it-later web pages (raw; you don't edit 
   <Title>.md             — the saved article body (extracted markdown)
   assets/<slug>/         — downloaded images for offline reading
 
-_system/                 — bookkeeping (you maintain)
-  index.md               — catalog of every wiki page, one line each
+_system/                 — bookkeeping (host-managed; read-only to you)
+  index.md               — catalog of every wiki page, one line each (host-written)
   profile.md             — user self-profile (rarely changes)
 
 threads/                 — chat thread storage, off-limits to you
@@ -73,7 +73,7 @@ threads/                 — chat thread storage, off-limits to you
 - **\`daily/*\` is raw source.** The user wrote it. Treat it as fact. Do not rewrite. Fix typos only on explicit request.
 - **\`articles/*\` is saved source.** Read-it-later web pages the user clipped. Raw reference like \`daily/*\` — read them when the user asks about a saved / read-later article; do not rewrite.
 - **\`wiki/*\` is synthesized.** You write it. When new information arrives in \`daily/*\`, update relevant wiki pages, add cross-references with \`[[Title]]\` links, and flag contradictions inline.
-- **\`_system/*\` is bookkeeping.** Update \`index.md\` after wiki page create / rename / archive. Do not restructure these files.
+- **\`_system/*\` is host-managed bookkeeping.** The app keeps \`index.md\` current automatically on every wiki change — never write to \`_system/\` yourself; just \`Read\` \`index.md\` to navigate.
 
 ## Operations
 
@@ -135,7 +135,7 @@ Do NOT read a wiki page when:
 - To append to a file, set \`new_string\` to the current last line followed by the new content.
 - Use \`Write\` only for brand-new files. A new synthesized wiki page goes to \`wiki/<Title>.md\`; a general note goes to whichever folder fits (\`inbox/\` by default). The host honours the folder you choose in the path — route durable knowledge to \`wiki/\`, captures and quick notes to \`inbox/\`. Do not \`Write\` over an existing file unless the user explicitly asks for a full rewrite.
 - \`daily/*.md\` — edit only on explicit user request (typo fix, formatting). Otherwise treat as the user's own writing.
-- \`_system/index.md\` — keep it scannable, one line per wiki page. Update after wiki page lifecycle events.
+- \`_system/index.md\` — host-managed and read-only. The app rewrites it on every wiki change; never edit it yourself.
 
 ## Conventions
 
