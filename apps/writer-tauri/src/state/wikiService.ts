@@ -28,10 +28,6 @@ import { splitFrontmatter } from '@/lib/frontmatter'
 // PROOF_BASE_URL removed (Phase 3.A.2). All wiki body reads go
 // through the local Y.Doc + Milkdown serializer now.
 
-/** The agent's append-only timeline. `system:*` prefix marks this
- * as agent meta surface — see KnownDoc.type doc. */
-const LOG_TYPE = 'system:log' as const
-
 /** System-owned summary index of every wiki page. Karpathy's
  * `index.md` pattern — one line per page, lets the ingest LLM see
  * "what targets exist" without having to dump every body into the
@@ -56,11 +52,6 @@ interface SystemPageConfig {
   initialBody: string
 }
 
-const SYSTEM_PAGE_LOG: SystemPageConfig = {
-  type: LOG_TYPE,
-  title: 'log',
-  initialBody: '',
-}
 const SYSTEM_PAGE_INDEX: SystemPageConfig = {
   type: INDEX_TYPE,
   title: 'index',
@@ -125,13 +116,6 @@ async function ensureSystemPage(
     }
   }
   return slug
-}
-
-/** Ensure `system:log` exists. The agent's append-only timeline —
- * created lazily on the first ingest pass that produces a log
- * entry. */
-export async function ensureLogWikiSlug(): Promise<string | null> {
-  return ensureSystemPage(SYSTEM_PAGE_LOG)
 }
 
 /** Ensure `system:index` exists. The page body is system-owned —

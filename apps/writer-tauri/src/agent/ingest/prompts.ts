@@ -92,9 +92,9 @@ Call \`submit_ingest_result\` exactly once with arguments shaped like:
   "logEntry": null
 }
 
-\`logEntry\` is now ignored — the host writes \`_system/log.md\` deterministically from the proposals you submitted. Always pass \`null\` for this field. (The field is kept in the schema for backward compat; it may be removed in a future revision.)
+\`logEntry\` is now ignored — always pass \`null\` for this field. (The field is kept in the schema for backward compat; it may be removed in a future revision.)
 
-If you found nothing worth filing, still call the tool — pass an empty array for proposals. The host suppresses empty passes entirely so they don't pile up in \`_system/log.md\`. A pass without a tool call is treated as malformed and discarded.`
+If you found nothing worth filing, still call the tool — pass an empty array for proposals. The host suppresses empty passes entirely. A pass without a tool call is treated as malformed and discarded.`
 
 /** Compose the system prompt as a cacheable string[] for the Agent
  * SDK. Block order matters for cache stability:

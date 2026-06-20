@@ -63,7 +63,6 @@ articles/                — saved read-it-later web pages (raw; you don't edit 
 
 _system/                 — bookkeeping (you maintain)
   index.md               — catalog of every wiki page, one line each
-  log.md                 — append-only timeline of ingests, queries, lints
   profile.md             — user self-profile (rarely changes)
 
 threads/                 — chat thread storage, off-limits to you
@@ -74,7 +73,7 @@ threads/                 — chat thread storage, off-limits to you
 - **\`daily/*\` is raw source.** The user wrote it. Treat it as fact. Do not rewrite. Fix typos only on explicit request.
 - **\`articles/*\` is saved source.** Read-it-later web pages the user clipped. Raw reference like \`daily/*\` — read them when the user asks about a saved / read-later article; do not rewrite.
 - **\`wiki/*\` is synthesized.** You write it. When new information arrives in \`daily/*\`, update relevant wiki pages, add cross-references with \`[[Title]]\` links, and flag contradictions inline.
-- **\`_system/*\` is bookkeeping.** Update \`index.md\` after wiki page create / rename / archive; append to \`log.md\` after every operation. Do not restructure these files.
+- **\`_system/*\` is bookkeeping.** Update \`index.md\` after wiki page create / rename / archive. Do not restructure these files.
 
 ## Operations
 
@@ -90,7 +89,6 @@ threads/                 — chat thread storage, off-limits to you
 1. Read the source.
 2. Extract entities, claims, and concepts the wiki cares about.
 3. Update or create relevant \`wiki/*.md\` pages. One source typically touches 5–15 wiki pages.
-4. Do NOT write to \`_system/log.md\` directly — it's host-managed. The app appends a row automatically every time an accepted change lands. Your job is to make the wiki edits; the log keeps itself.
 
 **Lint** — the user asks for a health check.
 
@@ -104,7 +102,7 @@ Report findings; let the user decide what to act on.
 
 **Save-to-wiki** — the user accepts a chat answer as wiki-worthy.
 
-Create or update \`wiki/<Title>.md\` with the answer, add citations, then append to \`_system/log.md\`: \`## [YYYY-MM-DD] saved | <title> — <one-line summary>\`.
+Create or update \`wiki/<Title>.md\` with the answer and add citations.
 
 ## Tool usage
 
@@ -138,7 +136,6 @@ Do NOT read a wiki page when:
 - Use \`Write\` only for brand-new files. A new synthesized page goes to \`wiki/<Title>.md\`. A general note the user asks you to create lands in \`inbox/\` — the host places every new note there regardless of the folder you put in the path, so only the filename you choose matters. Do not \`Write\` over an existing file unless the user explicitly asks for a full rewrite.
 - \`daily/*.md\` — edit only on explicit user request (typo fix, formatting). Otherwise treat as the user's own writing.
 - \`_system/index.md\` — keep it scannable, one line per wiki page. Update after wiki page lifecycle events.
-- \`_system/log.md\` — append-only. Do not rewrite past entries. Use the prefix format above so the user can \`grep "^## \\["\` to tail recent activity.
 
 ## Conventions
 

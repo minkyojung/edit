@@ -40,7 +40,6 @@ import {
   useLazyMaterialize,
   type LazyMaterializeConfig,
 } from '@/hooks/useLazyMaterialize'
-import { applyPendingLogsForView } from '@/agent/applyIngest'
 // Phase 4.A — dev-only side-effect imports. Each module registers
 // a `window.__X` handle so the picker / vault I/O is reachable from
 // DevTools before real UI wiring lands. Real callers (settings
@@ -108,14 +107,9 @@ startGitHubSync()
 // (configs.length must be constant; React enforces it for the
 // per-config hook calls inside).
 const SYSTEM_DRAIN_CONFIGS: LazyMaterializeConfig[] = [
-  {
-    matchType: 'system:log',
-    queueSelector: (s) => s.pendingLogs,
-    applyForView: applyPendingLogsForView,
-    signaturePrefix: 'log',
-  },
-  // system:index used to live here too — it now writes deterministically
-  // from state/wikiIndex.ts on every wiki change, no queue needed.
+  // The system:log drain lived here; the log surface was removed.
+  // system:index writes deterministically from state/wikiIndex.ts on
+  // every wiki change, no queue needed.
 ]
 
 export function App() {

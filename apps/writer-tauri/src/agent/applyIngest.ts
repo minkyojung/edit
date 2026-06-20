@@ -8,53 +8,16 @@
 //       PM-transaction path so the user sees the insertion live;
 //       inactive doc routes through the on-disk `.md` + a Y.Doc
 //       reload so any future open of the page shows fresh content.
-//   - appendToSystemLog(line)
-//       Sugar for "append to the system:log page", which is the
-//       agent's append-only timeline.
-//
-// Legacy: `applyPendingLogsForView` drained queued log entries when
-// the user navigated to wiki:log. With Phase 2.A's direct-write flow
-// the queue stays empty in practice, so this is a no-op safety net
-// kept for compatibility until Phase 3.A removes the queue itself.
 
-import type { EditorView } from '@milkdown/kit/prose/view'
-import { useIngestStore } from '@/state/ingestStore'
 import { useEditorViewStore } from '@/state/editorViewStore'
 import { applyMarkdownToActiveCmEditor } from '@/state/activeCmEditor'
 import { useDocsStore } from '@/state/docsStore'
-import { prepareMarkdownAppend } from '@/lib/markdownAppend'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { markSlugDirty } from '@/lib/docFileSync'
 import { looseReplace } from '@/lib/looseMatch'
-import { ensureLogWikiSlug } from '@/state/wikiService'
 import { appendToBackground } from '@/profile/markers'
 import type { IngestProposal } from '@/agent/ingest/types'
 
-/** Drain queued log entries into wiki:log. Called from
- * useApplyPendingLogs when the user navigates to the log page.
- * Each entry is a pre-formatted markdown line (`## [DATE] kind |
- * summary`) and goes through the shared markdown-append helper so
- * headings, links, and any other markdown render — they used to
- * land as literal text because the old appender skipped the
- * parser. */
-export function applyPendingLogsForView(view: EditorView): number {
-  const logs = useIngestStore.getState().pendingLogs
-  if (logs.length === 0) return 0
-  const applied: string[] = []
-  for (const entry of logs) {
-    const prep = prepareMarkdownAppend(view, entry.line)
-    if (!prep) {
-      console.warn('[ingest:log] markdown parse failed; leaving in queue', entry.line)
-      continue
-    }
-    view.dispatch(prep.tr)
-    applied.push(entry.id)
-  }
-  if (applied.length > 0) {
-    useIngestStore.getState().remove({ proposalIds: [], logIds: applied })
-  }
-  return applied.length
-}
 
 /** Single canonical "apply a markdown transformation to wiki page
  * `slug`" entry point. Phase J: replaces the per-function active /
@@ -266,84 +229,6 @@ export async function applyWriteWikiPage(
   return applyToWikiPage(slug, () => content, changeId)
 }
 
-/** Append a log row to the system:log page. Creates the page on
- * first use (idempotent via ensureLogWikiSlug).
- *
- * The page is a markdown table — `| Date | Kind | Source | Summary |`.
- * Callers pass a structured `LogEntry`; this helper formats it into
- * the row + bootstraps the header on the first write. The LLM never
- * sees the format — system:log is host-managed end-to-end (same
- * shape as system:index), so format drift between LLM emissions and
- * the page's table layout can't happen.
- *
- * Three cases handled per write:
- *   - empty page          → write header + separator + the row
- *   - has our header      → append the row underneath
- *   - has legacy prose    → leave the prose intact, add a blank
- *                           line, then bootstrap the table + the row
- *                           below it. Old entries stay readable;
- *                           new entries land in the table for
- *                           scannable columns. */
-const LOG_HEADER = '| Date | Kind | Source | Summary |'
-const LOG_SEPARATOR = '|------|------|--------|---------|'
-
-export interface LogEntry {
-  /** YYYY-MM-DD (host's local date when the change is applied). */
-  date: string
-  /** Coarse source of the change — typically `chat` or `ingest`. */
-  kind: string
-  /** Vault-relative path of the page the change targets
-   * (e.g. `wiki/Sera.md`). */
-  source: string
-  /** One-line human-readable summary. Newlines collapsed; pipes
-   * escaped, so cells never break the table. */
-  summary: string
-}
-
-export async function appendToSystemLog(entry: LogEntry): Promise<void> {
-  const row = formatLogRow(entry)
-  if (row === null) return
-  const slug = await ensureLogWikiSlug()
-  if (!slug) {
-    console.warn('[applyIngest] could not ensure system:log slug')
-    return
-  }
-  await applyToWikiPage(slug, (oldMd) => {
-    const head = oldMd.trimEnd()
-    if (head.length === 0) {
-      return `${LOG_HEADER}\n${LOG_SEPARATOR}\n${row}\n`
-    }
-    if (head.includes(LOG_HEADER)) {
-      // Table already present — just append the row. Table rows
-      // don't take blank-line separation (would break the table).
-      return `${head}\n${row}\n`
-    }
-    // Legacy prose log content. Preserve it; bootstrap the table
-    // underneath so new entries get the column layout while the
-    // user's history isn't lost.
-    return `${head}\n\n${LOG_HEADER}\n${LOG_SEPARATOR}\n${row}\n`
-  })
-}
-
-/** Format a `LogEntry` into a markdown table row. Returns null when
- * the entry has no useful summary (we skip empty rows rather than
- * filing whitespace). */
-function formatLogRow(entry: LogEntry): string | null {
-  const summary = escapeLogCell(entry.summary)
-  if (summary.length === 0) return null
-  return `| ${escapeLogCell(entry.date)} | ${escapeLogCell(entry.kind)} | ${escapeLogCell(entry.source)} | ${summary} |`
-}
-
-/** Sanitise a value for safe placement inside a markdown table cell.
- * Pipes → `\|`, newlines → spaces, trim. Cells stay single-line so
- * the row doesn't fragment the table. */
-function escapeLogCell(value: string): string {
-  return value
-    .replace(/\\/g, '\\\\')
-    .replace(/\|/g, '\\|')
-    .replace(/\r?\n/g, ' ')
-    .trim()
-}
 
 /** One row in the commit body — what the LLM proposed for a single
  * target page, with the source line that drove it. */

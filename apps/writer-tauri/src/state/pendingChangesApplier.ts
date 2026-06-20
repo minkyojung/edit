@@ -23,15 +23,12 @@ import {
   appendMarkdownToWikiPage,
   applyReplaceInWikiPage,
   applyWriteWikiPage,
-  appendToSystemLog,
 } from '@/agent/applyIngest'
 import { useDocsStore } from './docsStore'
 import { useEditorViewStore } from './editorViewStore'
 import { commitSuggestionInDoc } from '@/editor/markReconcile'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { flushDirty } from '@/lib/docFileSync'
-import { pathForDoc } from '@/lib/docPaths'
-import { todayLocalDate } from '@/hooks/useDocMeta'
 
 // HMR safety: vite's `import.meta.hot.dispose` fires right before
 // the module is replaced. That's the only hook that runs against
@@ -137,56 +134,6 @@ async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
     allOk = false
   }
   return allOk
-}
-
-/** Auto-emit a single system:log row for an accepted change. Pulls
- * date / source / target / summary from data the host already has —
- * never asks the LLM to format anything. Keeps system:log a host-
- * managed surface (same shape as system:index).
- *
- * Skipped sources:
- *   - ingest: wikiHandoff emits one batched row per pass already
- *
- * Summary derivation precedence:
- *   1. entry.context.rationale (ingest-style — usually a one-liner)
- *   2. derived "edited (+N -M chars)" from the edit diff sizes
- *   3. last-resort "edited" placeholder
- *
- * Errors are swallowed (logged) — logging is best-effort; a failure
- * here should never block the actual apply that just succeeded. */
-async function logAcceptedChange(change: PendingChange): Promise<void> {
-  try {
-    const knownDoc = useDocsStore
-      .getState()
-      .knownDocs.find((d) => d.slug === change.pageSlug)
-    if (!knownDoc) return
-    const getDoc = (slug: string) =>
-      useDocsStore.getState().knownDocs.find((d) => d.slug === slug)
-    const sourcePath = pathForDoc(knownDoc, getDoc) ?? change.pageSlug
-
-    let summary = change.context.rationale?.trim() ?? ''
-    if (!summary) {
-      let added = 0
-      let removed = 0
-      for (const e of change.edits) {
-        added += e.after?.length ?? 0
-        removed += e.before?.length ?? 0
-      }
-      summary =
-        added > 0 || removed > 0
-          ? `edited (+${added} -${removed} chars)`
-          : 'edited'
-    }
-
-    await appendToSystemLog({
-      date: todayLocalDate(),
-      kind: change.source,
-      source: sourcePath,
-      summary,
-    })
-  } catch (err) {
-    console.warn('[applier] auto-log failed', change.id, err)
-  }
 }
 
 /** Group-level commit coordinator, shared by chat and ingest. As the
@@ -323,14 +270,6 @@ export function startPendingChangesApplier(): void {
       handledIds.add(c.id)
       if (c.status === 'accepted') {
         void applyAcceptedChange(c).then((ok) => {
-          // Auto-log every accepted chat change to system:log. system:log
-          // is host-managed end-to-end — the LLM doesn't write to it.
-          // Ingest pass logs are emitted by wikiHandoff in a single
-          // batch row per pass, so we skip them here to avoid double
-          // entries.
-          if (ok && c.source === 'chat') {
-            void logAcceptedChange(c)
-          }
           if (!ok) {
             // The edit couldn't be placed — and since propose_edit now validates the
             // anchor at proposal time (sidecar) AND the editor flushes before the
