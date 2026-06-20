@@ -126,6 +126,10 @@ type MarkdownComponents = NonNullable<
 // per-render in the component below because it needs `isStreaming`.
 const STATIC_COMPONENTS: MarkdownComponents = {
   p: ({ children }) => <p className="leading-[1.6]">{children}</p>,
+  // The model leans on `---` dividers to separate sections; rendering
+  // them as literal rules makes the chat feel choppy. Swallow the <hr>
+  // and leave only the surrounding block spacing as the section break.
+  hr: () => null,
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
   code: ({ children }) => (
