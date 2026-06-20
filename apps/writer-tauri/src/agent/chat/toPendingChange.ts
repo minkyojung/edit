@@ -130,7 +130,24 @@ export function mapChatEditToPendingChange(
   }
 }
 
-/** Create a brand-new generic note for a chat `propose_write` whose target path doesn't
+/** The content to seed a brand-new file with, derived from whichever write-side
+ * tool the model used. `Write` carries the whole body in `content`; `Edit` /
+ * `MultiEdit` carry it in `new_string` (nothing to replace in a file that doesn't
+ * exist yet, so the new text IS the body). '' for other tools. */
+function newFileContentFor(toolName: string, input: Record<string, unknown>): string {
+  if (toolName === 'Write') return readString(input.content)
+  if (toolName === 'Edit') return readString(input.new_string)
+  if (toolName === 'MultiEdit') {
+    const edits = Array.isArray(input.edits) ? input.edits : []
+    return edits
+      .map((e) => readString((e as { new_string?: unknown }).new_string))
+      .filter(Boolean)
+      .join('\n')
+  }
+  return ''
+}
+
+/** Create a brand-new note for a chat write-side tool whose target path doesn't
  * resolve to an existing doc, then return a PendingChange staging its body for review.
  *
  * Placement follows the FOLDER the model put in `file_path` (governed by CLAUDE.md):
@@ -142,17 +159,18 @@ export function mapChatEditToPendingChange(
  *
  * (Function name is legacy — kept so the caller in agent/chat/index.ts is untouched.)
  *
- * Returns null when this isn't a new-note write — wrong tool (only whole-file
- * `propose_write`/`Write` creates notes), no body, an already-resolvable path, or when
- * note creation fails. The caller then logs the unmappable miss. */
+ * Handles any write-side tool whose path doesn't resolve — `Write` (body in
+ * `content`) and `Edit`/`MultiEdit` (body in `new_string`) — so an edit to a
+ * not-yet-created file is staged, not dropped. Returns null when there's no usable
+ * body, the path already resolves, or note creation fails. */
 export async function materializeChatNewWikiPage(
   payload: ChatEditPendingPayload,
   ctx: MapContext,
 ): Promise<Omit<PendingChange, 'status' | 'decidedAt' | 'viewedAt'> | null> {
-  if (payload.toolName !== 'Write') return null
   const filePath = readString(payload.input.file_path)
-  const content = readString(payload.input.content)
-  if (!filePath || !content.trim()) return null
+  if (!filePath) return null
+  const content = newFileContentFor(payload.toolName, payload.input)
+  if (!content.trim()) return null
 
   const relative = toVaultRelative(filePath, ctx.vaultPath)
   if (!relative.endsWith('.md')) return null
