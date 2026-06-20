@@ -965,7 +965,13 @@
      a true gray, keeping the same lightness (0.62). Scoped to
      .palette-graphite so plain dark mode is untouched; the invert
      tokens are the ones that apply because graphite also sets .dark
-     (the chat prose runs in prose-invert there). */
+     (the chat prose runs in prose-invert there).
+
+     The divider (hr) and blockquote border default to --border, a
+     translucent white — zero chroma itself, but the blue-hued graphite
+     bg shows through it and reads as faintly blue. An opaque neutral
+     gray covers the bg so no blue bleeds in. Lightness picked to match
+     the perceived weight of the translucent border on the dark bg. */
   .palette-graphite .prose {
     --tw-prose-bullets: oklch(0.62 0 0);
     --tw-prose-counters: oklch(0.62 0 0);
@@ -1074,6 +1080,31 @@
     border-bottom: 2px solid rgba(249, 115, 22, 0.6);
   }
 
+}
+
+/* ── Chat markdown rules (divider / blockquote bar / table borders) ──
+ * Unlayered on purpose, same reason as the list-item block below: the
+ * @tailwindcss/typography plugin emits its `prose` element styles into
+ * a higher layer than `@layer base`, so a base-layer `--tw-prose-*`
+ * override is stomped regardless of specificity (this is why earlier
+ * token overrides had no visible effect). Setting border-color directly
+ * from outside any layer wins over the plugin's layered rules.
+ *
+ * --border is a translucent white that reads as a bright line over the
+ * dark canvas. Replace with an opaque neutral gray just above the dark
+ * background lightness (~0.209 dark / ~0.225 graphite) so the rules are
+ * barely-there section hints, not hard lines. Scoped to .dark so it
+ * covers every dark palette and leaves light mode untouched. */
+.dark .prose :is(hr, blockquote, thead, tbody tr, tfoot, th, td) {
+  border-color: oklch(0.32 0 0);
+}
+
+/* hr's default prose margin is 3em (~45px at our 15px scale), dwarfing
+   the 1px rule. Unlayered for the same layer-precedence reason; applies
+   in every theme. ~1.75em reads as a section break, not a gap. */
+.prose hr {
+  margin-top: 1.75em;
+  margin-bottom: 1.75em;
 }
 
 /* ── Milkdown list-item-block (NodeView) ────────────────────────────
