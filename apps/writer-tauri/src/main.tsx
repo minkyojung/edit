@@ -47,6 +47,9 @@ if (import.meta.env.DEV) {
   // Same pattern: registers window.__route so the inbox→wiki/daily router
   // PoC can be eyeballed on real captures from the dev console.
   void import('./agent/ingestRouter')
+  // Same pattern: registers window.__processInbox so the Claude Code-native
+  // inbox intake runner can be exercised on real captures from the console.
+  void import('./agent/inbox')
   // Same pattern: registers window.__captureYoutube so the full capture
   // pipeline (fetch → create → frontmatter flush) can be run from the
   // dev console before the capture UI lands.

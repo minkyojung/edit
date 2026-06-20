@@ -26,7 +26,7 @@ const INBOX_PROMPT = `You are processing ONE note that just landed in the user's
 
 Three destinations, decided fact by fact:
 - **wiki** — durable, reusable knowledge: a concept, framework, method, or a specific non-obvious fact about an entity (a person, book, project, idea) the user will look up later. Find the entity's page first (read \`_system/index.md\`, then Glob/Grep \`wiki/\`); append to it with propose_edit, or propose_write a new \`wiki/<Title>.md\` when none fits. Never invent a page id; never rewrite existing lines (append only). Cross-reference with [[Page Title]] using exact index titles.
-- **daily** — what the user DID, an opinion or takeaway they expressed, or a dated event. Propose appending ONE short bullet, in the user's voice, to today's daily note. The daily journal is the user's own writing — append only, never edit existing lines.
+- **daily** — what the user DID, an opinion or takeaway they expressed, or a dated event. Add ONE short bullet (the user's voice) to today's daily note by APPENDING with \`propose_edit\` — anchor on the file's last line and put your bullet after it. NEVER use \`propose_write\` on the daily: it replaces the whole journal. The daily is the user's own writing — only ever add lines, never rewrite or remove existing ones.
 - **skip** — trivia, well-known labels, promotional / ad content, passing mentions, or behaviour preferences (those belong in CLAUDE.md, which you don't edit here). Propose nothing for these.
 
 A typical capture produces BOTH: a few durable ideas → wiki, plus a couple of "did / concluded" lines → daily. Bias toward keeping over skipping — a slightly redundant note costs little, a lost insight costs a lot — but don't store obvious definitions.

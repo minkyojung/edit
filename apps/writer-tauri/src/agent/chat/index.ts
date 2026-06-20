@@ -285,6 +285,20 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           toolName: e.payload.toolName,
           input: e.payload.input,
         }
+        // Ensure the target daily exists before we snapshot the catalog. The
+        // model routes inbox actions to `daily/<date>.md`; in a headless run
+        // that daily may not be in the catalog yet, so the path wouldn't
+        // resolve and we'd materialize a phantom note. openDaily is
+        // find-or-create — after it, the real daily resolves and the edit
+        // appends to it instead.
+        const writePath = (e.payload.input as { file_path?: unknown }).file_path
+        const dailyDate =
+          typeof writePath === 'string'
+            ? writePath.match(/(?:^|\/)daily\/(\d{4}-\d{2}-\d{2})\.md$/)?.[1]
+            : undefined
+        if (dailyDate) {
+          await useDocsStore.getState().openDaily(dailyDate)
+        }
         const ctx = {
           knownDocs: useDocsStore.getState().knownDocs,
           vaultPath: getActiveVaultPath(),
