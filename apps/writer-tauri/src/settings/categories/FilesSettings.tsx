@@ -4,6 +4,7 @@
 
 import { useDocsStore } from '@/state/docsStore'
 import { useSettingsStore } from '@/state/settingsStore'
+import { CHAT_MODELS, CHAT_MODEL_LABELS, type ChatModel } from '@/chat/types'
 import {
   Select,
   SelectContent,
@@ -17,6 +18,8 @@ export function FilesSettings() {
   const knownFolders = useDocsStore((s) => s.knownFolders)
   const defaultNoteFolder = useSettingsStore((s) => s.defaultNoteFolder)
   const setDefaultNoteFolder = useSettingsStore((s) => s.setDefaultNoteFolder)
+  const intakeModel = useSettingsStore((s) => s.intakeModel)
+  const setIntakeModel = useSettingsStore((s) => s.setIntakeModel)
   const vaultPath = useSettingsStore((s) => s.vaultPaths[s.activeVaultIndex] ?? '')
 
   // Options: every real folder, plus 'inbox' (the default landing zone) and the current
@@ -48,6 +51,23 @@ export function FilesSettings() {
             {options.map((f) => (
               <SelectItem key={f} value={f}>
                 {f}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </SettingRow>
+      <SettingRow
+        title="Organize model"
+        description="Model used when Organize files notes into the wiki/daily. Haiku is cheaper for bulk passes; Opus is highest quality."
+      >
+        <Select value={intakeModel} onValueChange={(v) => setIntakeModel(v as ChatModel)}>
+          <SelectTrigger className="w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {CHAT_MODELS.map((m) => (
+              <SelectItem key={m} value={m}>
+                {CHAT_MODEL_LABELS[m]}
               </SelectItem>
             ))}
           </SelectContent>

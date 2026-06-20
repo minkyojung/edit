@@ -16,6 +16,25 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { WINDOW_ROOT } from '@/lib/windowRoot'
+import { type ChatModel, DEFAULT_CHAT_MODEL } from '@/chat/types'
+
+/** What kind of project a folder holds. Drives the launcher label and,
+ * later, which CLAUDE.md scaffold a fresh folder gets. Detected from the
+ * folder contents when opening an existing folder (a `bible/` dir → a
+ * translation project), or set explicitly when scaffolding a new one. */
+export type ProjectType = 'wiki' | 'translation'
+
+/** One row in the launcher's "Recent" list. Shared across all windows
+ * (it's a global app preference, not per-window state), so it lives in
+ * the persisted settings store. */
+export interface RecentProject {
+  path: string
+  type: ProjectType
+  /** Epoch ms of the last time this project was opened. Sort key for
+   * the launcher list (most recent first). */
+  lastOpened: number
+}
 
 interface SettingsState {
   /** Selected vault folders. v1 enforces length ≤ 1; future multi-
@@ -38,6 +57,16 @@ interface SettingsState {
    * Finish / Skip. Idempotent. */
   markBootstrapCompleted: () => void
 
+  /** Projects shown in the launcher's "Recent" list, newest first.
+   * Global (cross-window) app preference. */
+  recentProjects: RecentProject[]
+  /** Record a project as just-opened: upsert by path (refresh its
+   * `lastOpened` + type) and move it to the front. */
+  addRecentProject: (path: string, type: ProjectType) => void
+  /** Drop a project from the recent list (e.g. user removes a stale
+   * entry whose folder is gone). */
+  removeRecentProject: (path: string) => void
+
   /** Folder new chat-created notes land in (Obsidian's "default location for
    * new notes"). Default 'inbox'. The host FORCES this folder — the LLM's
    * chosen path is ignored — so the model can't scatter notes into wiki/ on a
@@ -45,6 +74,13 @@ interface SettingsState {
   defaultNoteFolder: string
   /** Set the default new-note folder. Trims slashes; empty → 'inbox'. */
   setDefaultNoteFolder: (folder: string) => void
+
+  /** Model the Organize / intake agent runs on (filing notes into the
+   * wiki / daily). Default Sonnet; switch to Haiku to cut cost on bulk
+   * passes, or Opus for quality. User-changeable (settings modal). */
+  intakeModel: ChatModel
+  /** Set the Organize / intake model. */
+  setIntakeModel: (model: ChatModel) => void
 
   /** macOS sidebar vibrancy (frosted glass). Default on. When off, the window
    * canvas + sidebar paint opaque instead of letting the native effect show.
@@ -61,13 +97,27 @@ export const useSettingsStore = create<SettingsState>()(
       activeVaultIndex: 0,
       bootstrapCompleted: false,
       defaultNoteFolder: 'inbox',
+      intakeModel: DEFAULT_CHAT_MODEL,
       sidebarVibrancyEnabled: true,
+      recentProjects: [],
       setActiveVaultPath: (path) =>
         set({ vaultPaths: [path], activeVaultIndex: 0 }),
       clearVault: () => set({ vaultPaths: [], activeVaultIndex: 0 }),
       markBootstrapCompleted: () => set({ bootstrapCompleted: true }),
+      addRecentProject: (path, type) =>
+        set((s) => ({
+          recentProjects: [
+            { path, type, lastOpened: Date.now() },
+            ...s.recentProjects.filter((p) => p.path !== path),
+          ],
+        })),
+      removeRecentProject: (path) =>
+        set((s) => ({
+          recentProjects: s.recentProjects.filter((p) => p.path !== path),
+        })),
       setDefaultNoteFolder: (folder) =>
         set({ defaultNoteFolder: folder.trim().replace(/^\/+|\/+$/g, '') || 'inbox' }),
+      setIntakeModel: (model) => set({ intakeModel: model }),
       setSidebarVibrancy: (enabled) => set({ sidebarVibrancyEnabled: enabled }),
     }),
     {
@@ -78,15 +128,23 @@ export const useSettingsStore = create<SettingsState>()(
         activeVaultIndex: s.activeVaultIndex,
         bootstrapCompleted: s.bootstrapCompleted,
         defaultNoteFolder: s.defaultNoteFolder,
+        intakeModel: s.intakeModel,
         sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
+        recentProjects: s.recentProjects,
       }),
     },
   ),
 )
 
-/** Read the active vault path from the store. Returns null when no
- * vault has been selected yet — callers gate file I/O on this. */
+/** Read the active vault path. In a project window (window-per-project
+ * model) the root is fixed by the window's `?root=` param, so it wins —
+ * each window stays bound to its own folder regardless of the shared,
+ * cross-window localStorage settings. Falls back to the legacy
+ * single-vault store for the launcher window and the pre-multi-window
+ * flow. Returns null when no vault is selected — callers gate file I/O
+ * on this. */
 export function getActiveVaultPath(): string | null {
+  if (WINDOW_ROOT) return WINDOW_ROOT
   const { vaultPaths, activeVaultIndex } = useSettingsStore.getState()
   return vaultPaths[activeVaultIndex] ?? null
 }
@@ -95,4 +153,9 @@ export function getActiveVaultPath(): string | null {
  * chat materialiser (toPendingChange). */
 export function getDefaultNoteFolder(): string {
   return useSettingsStore.getState().defaultNoteFolder || 'inbox'
+}
+
+/** Model the Organize / intake agent runs on. Non-React read for runIntake. */
+export function getIntakeModel(): ChatModel {
+  return useSettingsStore.getState().intakeModel
 }

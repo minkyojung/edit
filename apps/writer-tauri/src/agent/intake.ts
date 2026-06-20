@@ -11,6 +11,7 @@
 
 import { runChat } from '@/agent/chat'
 import type { RunChatResult } from '@/agent/chat/types'
+import { getIntakeModel } from '@/state/settingsStore'
 
 export interface IntakeArgs {
   /** Doc slug to attribute the run to (proposals route through it). */
@@ -33,6 +34,8 @@ export async function runIntake(args: IntakeArgs): Promise<RunChatResult> {
     view: null,
     slug: args.slug,
     threadId: crypto.randomUUID(),
+    // User-configurable in settings (default Sonnet; Haiku for cheap bulk).
+    model: getIntakeModel(),
     // Inject raw content only when given; otherwise the agent reads the file.
     appendDocument: args.content != null,
     pageContextMarkdown: args.content,
