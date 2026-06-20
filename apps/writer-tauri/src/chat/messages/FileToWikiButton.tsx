@@ -33,12 +33,12 @@ export function FileToWikiButton({
         threadId,
         threadTitle,
       })
-      if (result.malformed) {
-        notify.chatHandoffMalformed()
-      } else if (result.enqueued === 0) {
+      // The agent proposes edits into the approval queue; nothing is written
+      // until the user Keeps. editCount is how many proposals it staged.
+      if (!result || result.editCount === 0) {
         notify.chatHandoffEmpty()
       } else {
-        notify.chatHandoffQueued({ count: result.enqueued })
+        notify.chatHandoffQueued({ count: result.editCount })
       }
     } catch (err) {
       console.warn('[wikiHandoff] failed', err)
