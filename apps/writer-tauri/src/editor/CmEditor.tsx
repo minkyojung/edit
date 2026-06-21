@@ -14,7 +14,7 @@
 // Stage 2/3. onViewReady is called with null because PM-view consumers can't use a CM
 // view; they degrade rather than break.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import type { EditorView as PMEditorView } from '@milkdown/kit/prose/view'
 import { EditorState, Prec, Annotation } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@codemirror/view'
@@ -28,8 +28,6 @@ import { useDocsStore } from '@/state/docsStore'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 import { registerCmEditor, unregisterCmEditor } from '@/state/activeCmEditor'
 import { markSlugDirty } from '@/lib/docFileSync'
-import { EditorFooter } from '@/components/EditorFooter'
-import type { DocStats } from '@/stores/editorFooter'
 import { cmPrototypeTheme } from '@/prototypes/cmTheme'
 import { livePreviewV2, taskCheckboxClick, wikilinkKnown } from '@/prototypes/v2/livePreview'
 import { blocksV2 } from '@/prototypes/v2/blocks'
@@ -77,20 +75,12 @@ const layoutReset = EditorView.theme({
 // dirty-tracking update listener ignores it — it's a load FROM disk, not a user edit.
 const externalBody = Annotation.define<boolean>()
 
-// Word/char count from the raw markdown. (Counts include markdown syntax chars —
-// good enough for a status-bar number; AI% needs proof marks, a Stage-3 concern.)
-const computeCmStats = (text: string): DocStats => ({
-  totalChars: text.length,
-  aiChars: 0,
-  wordCount: text.split(/\s+/).filter(Boolean).length,
-  lastAcceptedAt: null,
-})
-
-export function CmEditor({ handle, status, onViewReady, header }: Props) {
+// `status` is still accepted (callers pass it) but no longer rendered —
+// the connection-state readout lived in the now-removed footer.
+export function CmEditor({ handle, onViewReady, header }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const slug = handle?.slug ?? null
-  const [stats, setStats] = useState<DocStats>(() => computeCmStats(''))
 
   useEffect(() => {
     const parent = rootRef.current
@@ -186,10 +176,9 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
             // Save: mirror the doc text into the handle cache + flag dirty. The flush
             // loop (serializeDocToFiles → handle.bodyMarkdown) does the rest. A
             // programmatic body set (externalBody) is a load from disk — don't dirty
-            // it, but DO refresh the footer stats either way.
+            // it.
             EditorView.updateListener.of((u) => {
               if (!u.docChanged) return
-              setStats(computeCmStats(u.state.doc.toString()))
               if (u.transactions.some((t) => t.annotation(externalBody))) return
               const h = useDocsStore.getState().handles[handle.slug]
               if (h) h.bodyMarkdown = u.state.doc.toString()
@@ -210,7 +199,6 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
         const head = v.state.selection.main.head
         v.dispatch({ selection: { anchor: head, head } })
       })
-      setStats(computeCmStats(handle.bodyMarkdown))
       // Register so docsStore body-replace paths can push fresh markdown into this
       // view. An ACCEPT (changeId present) is dispatched as an UNDOABLE transaction
       // tagged with acceptEffect, so Cmd-Z reverts the doc AND reopens the change
@@ -271,28 +259,36 @@ export function CmEditor({ handle, status, onViewReady, header }: Props) {
 
   return (
     <div className="relative flex h-full w-full flex-col">
+      {/* Header gradient-blur glass band. A sibling of the scroll
+          content (not inside EditorHeader) so backdrop-filter can
+          sample the scrolled pixels. An explicit z-index is REQUIRED:
+          CM6's `.cm-editor` is `position: relative`, so as a z-auto
+          positioned element later in the DOM it paints OVER a z-auto
+          band — the 90% bg never even shows (text stays crisp). z-[5]
+          lifts the band into its own layer above CM, while staying
+          below the header chrome (EditorHeader, z-sticky = 10) so the
+          tabs/buttons keep painting on top. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute top-0 left-0 right-0 z-[5] bg-background/90"
+        style={{
+          height: 'calc(var(--header-h) + 2rem)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          maskImage:
+            'linear-gradient(to bottom, black 0, black calc(var(--header-h) * 0.7), transparent)',
+          WebkitMaskImage:
+            'linear-gradient(to bottom, black 0, black calc(var(--header-h) * 0.7), transparent)',
+        }}
+      />
       <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div
           className="mx-auto max-w-2xl px-8"
-          style={{ paddingTop: 'calc(var(--header-h) + 1.5rem)', paddingBottom: 'calc(var(--footer-h) + 3rem)' }}
+          style={{ paddingTop: 'calc(var(--header-h) + 1.5rem)', paddingBottom: '4rem' }}
         >
           {header}
           <div className="cm-prototype" ref={rootRef} />
         </div>
-      </div>
-      <div className="absolute bottom-0 left-0 right-0 z-sticky" style={{ height: 'var(--footer-h)' }}>
-        <div
-          aria-hidden
-          className="pointer-events-none absolute bottom-0 left-0 right-0 bg-background/90"
-          style={{
-            height: 'calc(var(--footer-h) + 2rem)',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
-            maskImage: 'linear-gradient(to top, black 0, black calc(var(--footer-h) * 0.7), transparent)',
-            WebkitMaskImage: 'linear-gradient(to top, black 0, black calc(var(--footer-h) * 0.7), transparent)',
-          }}
-        />
-        <EditorFooter view={null} parentSlug={slug} status={status} externalStats={stats} />
       </div>
       <CmHighlightBar viewRef={viewRef} slug={slug} />
     </div>
