@@ -22,6 +22,12 @@ import {
 } from '@/state/pendingOrganizeStore'
 import { ThreadPicker } from '@/chat/ThreadPicker'
 import { notify } from '@/lib/notify'
+import {
+  IconArrowsDiagonal,
+  IconArrowsDiagonalMinimize2,
+} from '@tabler/icons-react'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ChatPanel } from './ChatPanel'
 
 interface Props {
@@ -35,6 +41,7 @@ export function RightPanel({ editorView, slug }: Props) {
   // history view. useActiveThread holds a single useState — calling it
   // in two places would fork the active id — so it stays at this one
   // mount point and the id flows down to ChatPanel as a prop.
+  const maximized = useLayoutStore((s) => s.chatMaximized)
   const threads = useThreads(slug)
   const { activeId, setActiveId } = useActiveThread(threads.active)
 
@@ -62,7 +69,14 @@ export function RightPanel({ editorView, slug }: Props) {
   }, [organizeReq, threads, setActiveId, openInMode, attachThread])
 
   return (
-    <div className="relative flex h-full flex-col">
+    // When maximized the inspector spans the whole content area; cap the
+    // chat column at the editor body's measure (max-w-2xl) and centre it
+    // so the transcript sits at the same width/position as the document.
+    <div
+      className={`relative flex h-full flex-col ${
+        maximized ? 'mx-auto w-full max-w-2xl' : ''
+      }`}
+    >
       <div className="min-h-0 flex-1">
         {/* Review/history panel removed — versioning/backup is being redesigned
             as an opt-in layer. The right panel is chat-only for now. */}
@@ -112,6 +126,8 @@ function RightPanelHeader({
   setActiveId: (id: string | null) => void
 }) {
   const setMode = useLayoutStore((s) => s.setRightPanelMode)
+  const maximized = useLayoutStore((s) => s.chatMaximized)
+  const toggleMaximized = useLayoutStore((s) => s.toggleChatMaximized)
 
   return (
     <div
@@ -147,6 +163,27 @@ function RightPanelHeader({
           notify.threadLimitReached()
         }}
       />
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={toggleMaximized}
+            className="ml-auto cursor-pointer text-sidebar-foreground/60 transition-colors hover:text-sidebar-foreground"
+            aria-label={maximized ? 'Restore panel size' : 'Maximize panel'}
+            aria-pressed={maximized}
+          >
+            {maximized ? (
+              <IconArrowsDiagonalMinimize2 size={16} />
+            ) : (
+              <IconArrowsDiagonal size={16} />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {maximized ? 'Restore' : 'Maximize'}
+        </TooltipContent>
+      </Tooltip>
     </div>
   )
 }

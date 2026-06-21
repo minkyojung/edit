@@ -34,7 +34,11 @@ const SIDEBAR_DEFAULT_W = 260
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n))
 
 export function AppShell({ children, bottomLeft, collabHandle, collabStatus, editorView }: AppShellProps) {
-  const { sidebarOpen, contextPanelOpen, setSidebar, togglePanels } = useLayoutStore()
+  const { sidebarOpen, contextPanelOpen, chatMaximized, setSidebar, togglePanels } = useLayoutStore()
+  // Maximize only takes effect while the panel is actually open; the
+  // toggle lives in the panel header, but Cmd+. can close the panel
+  // while maximized is still set.
+  const maximized = chatMaximized && contextPanelOpen
   const navigate = useNavigate()
   const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_W)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_W)
@@ -186,7 +190,10 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
             flex-grow a frame late). Drag-to-resize is the only JS; window
             resizes touch no JS at all. */}
         <div className="flex h-full">
-          <div data-editor-panel className="relative flex h-full min-w-0 flex-1 flex-col bg-background">
+          <div
+            data-editor-panel
+            className={`relative h-full min-w-0 flex-1 flex-col bg-background ${maximized ? 'hidden' : 'flex'}`}
+          >
             <EditorHeader
               showSidebarTrigger={!sidebarOpen}
               editorView={editorView ?? null}
@@ -206,7 +213,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
               resize otherwise). after:top-[var(--header-h)] keeps the wider
               hit-area BELOW the header row so it doesn't swallow clicks on the
               editor header's ContextPanelTrigger. */}
-          {contextPanelOpen && (
+          {contextPanelOpen && !maximized && (
             <div
               role="separator"
               aria-orientation="vertical"
@@ -225,8 +232,10 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
               reopening doesn't re-mount RightPanel and flicker. overflow-hidden
               clips the content while collapsed. */}
           <div
-            className="relative h-full shrink-0 overflow-hidden border-l border-sidebar-border bg-background"
-            style={{ width: contextPanelOpen ? panelWidth : 0 }}
+            className={`relative h-full overflow-hidden bg-background ${
+              maximized ? 'flex-1' : 'shrink-0 border-l border-sidebar-border'
+            }`}
+            style={maximized ? undefined : { width: contextPanelOpen ? panelWidth : 0 }}
           >
             {/* Flush column, mirroring the left sidebar — no window gap, no
                 rounding. The seam is this border-l (the left sidebar's border-r
