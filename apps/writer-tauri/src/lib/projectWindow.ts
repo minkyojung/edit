@@ -10,7 +10,21 @@
 // a duplicate (the VS Code behaviour).
 
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { invoke } from '@tauri-apps/api/core'
 import { hashPath } from '@/lib/windowRoot'
+
+// Re-apply the native macOS toolbar chrome (larger corner radius + pinned
+// traffic-light Y) to a freshly-spawned window. The config-defined `main`
+// window gets this in Rust setup(); runtime-spawned windows must ask for it
+// explicitly or they fall back to the smaller titlebar radius with drifting
+// traffic lights. Best-effort: a failure here only costs the radius polish.
+async function applyWindowChrome(label: string): Promise<void> {
+  try {
+    await invoke('apply_window_chrome', { label })
+  } catch (e) {
+    console.warn('[projectWindow] apply_window_chrome failed', e)
+  }
+}
 
 /** The window label for a project at `path`. Stable for a given path.
  *
@@ -61,6 +75,7 @@ export async function openProjectWindow(
       reject(new Error(`Failed to open project window: ${String(e.payload)}`)),
     )
   })
+  await applyWindowChrome(label)
 }
 
 /** Label of the launcher window (the config-defined window with no
@@ -96,4 +111,5 @@ export async function focusLauncher(): Promise<void> {
       reject(new Error(`Failed to open launcher: ${String(e.payload)}`)),
     )
   })
+  await applyWindowChrome(LAUNCHER_LABEL)
 }

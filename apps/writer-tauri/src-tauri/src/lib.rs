@@ -118,6 +118,57 @@ fn get_traffic_light_y(window: tauri::WebviewWindow) -> f64 {
     }
 }
 
+/// Attach an empty NSToolbar so macOS Tahoe classifies the window as a
+/// "toolbar window" and applies the larger corner radius (~26pt vs the
+/// titlebar-only ~16pt). The toolbar carries no items and
+/// titleBarStyle=Overlay lets our HTML chrome render over it, so this adds
+/// no visible surface — it only flips the system's radius classifier.
+///
+/// toolbarStyle=Unified (=3) pins the toolbar height to the 52pt unified
+/// band. That locks the traffic lights' Y to a known value (center y = 26pt)
+/// so the HTML header can match it via --header-h. Without an explicit style,
+/// macOS picks Automatic and the lights drift.
+///
+/// Applied to the config-defined `main` window in `setup`, and to every
+/// runtime-spawned project window via the `apply_window_chrome` command —
+/// otherwise the per-project windows lose the radius + light alignment.
+#[cfg(target_os = "macos")]
+fn apply_toolbar_chrome(window: &tauri::WebviewWindow) {
+    let Ok(ns_window_ptr) = window.ns_window() else {
+        return;
+    };
+    use objc2::{class, msg_send, runtime::AnyObject};
+    let ns_window = ns_window_ptr as *mut AnyObject;
+    if ns_window.is_null() {
+        return;
+    }
+    unsafe {
+        let toolbar_class = class!(NSToolbar);
+        let toolbar: *mut AnyObject = msg_send![toolbar_class, alloc];
+        let toolbar: *mut AnyObject = msg_send![toolbar, init];
+        let _: () = msg_send![ns_window, setToolbar: toolbar];
+        // NSWindowToolbarStyle.unified raw value = 3
+        // (automatic=0, expanded=1, preference=2, unified=3, unifiedCompact=4)
+        let _: () = msg_send![ns_window, setToolbarStyle: 3isize];
+    }
+}
+
+/// Re-apply the native window chrome (NSToolbar corner radius + unified
+/// toolbar style) to the window with `label`. The frontend calls this after
+/// spawning a per-project window so it matches the config-defined `main`
+/// window's chrome. Resolves the target by label (a bare `WebviewWindow`
+/// argument would inject the *calling* window, not the new one). No-ops off
+/// macOS or when the label is unknown.
+#[tauri::command]
+fn apply_window_chrome(app: tauri::AppHandle, label: String) {
+    if let Some(window) = app.get_webview_window(&label) {
+        #[cfg(target_os = "macos")]
+        apply_toolbar_chrome(&window);
+        #[cfg(not(target_os = "macos"))]
+        let _ = window;
+    }
+}
+
 /// Hand control of the close decision to the frontend by emitting
 /// `app:close-requested`. If the emit itself fails we exit immediately to
 /// avoid stranding the user on a window they can't dismiss.
@@ -183,6 +234,7 @@ pub fn run() {
             vault_sync::vault_pull,
             app_quit,
             get_traffic_light_y,
+            apply_window_chrome,
         ])
         .setup(|app| {
             // Resolve the per-device app-data base once, up front: git history
@@ -259,36 +311,12 @@ pub fn run() {
                     }
                 });
 
-                // Attach an empty NSToolbar so macOS Tahoe classifies the
-                // window as a "toolbar window" and applies the larger
-                // corner radius (~26pt vs the titlebar-only ~16pt). The
-                // toolbar carries no items and titleBarStyle=Overlay lets
-                // our HTML chrome render over it, so this adds no visible
-                // surface — it only flips the system's radius classifier.
-                //
-                // toolbarStyle=Unified (=2) pins the toolbar height to the
-                // 52pt unified band. That locks the traffic lights' Y to a
-                // known value (center y = 26pt) so the HTML header can
-                // match it via --header-h. Without an explicit style, macOS
-                // picks Automatic and the lights drift.
+                // Native toolbar chrome (larger corner radius + pinned
+                // traffic-light Y). Shared with runtime-spawned project
+                // windows via the apply_window_chrome command — see
+                // apply_toolbar_chrome above.
                 if let Some(main_window) = app.get_webview_window("main") {
-                    if let Ok(ns_window_ptr) = main_window.ns_window() {
-                        use objc2::{class, msg_send, runtime::AnyObject};
-                        let ns_window = ns_window_ptr as *mut AnyObject;
-                        if !ns_window.is_null() {
-                            unsafe {
-                                let toolbar_class = class!(NSToolbar);
-                                let toolbar: *mut AnyObject =
-                                    msg_send![toolbar_class, alloc];
-                                let toolbar: *mut AnyObject = msg_send![toolbar, init];
-                                let _: () = msg_send![ns_window, setToolbar: toolbar];
-                                // NSWindowToolbarStyle.unified raw value = 3
-                                // (automatic=0, expanded=1, preference=2,
-                                //  unified=3, unifiedCompact=4)
-                                let _: () = msg_send![ns_window, setToolbarStyle: 3isize];
-                            }
-                        }
-                    }
+                    apply_toolbar_chrome(&main_window);
                 }
             }
 
