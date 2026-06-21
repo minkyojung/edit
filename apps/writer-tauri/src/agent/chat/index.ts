@@ -470,9 +470,12 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // OMITTED — the LLM uses the host-applies `propose_*` MCP
         // tools (in `relayTools` above) for any disk-changing
         // intent. Read-side / search / shell remain since the model
-        // needs them to discover context. Plan turns drop Bash via
-        // the caller-supplied `builtinTools`.
-        builtinTools: builtinTools ?? ['Read', 'Glob', 'Grep', 'Bash'],
+        // needs them to discover context. WebSearch / WebFetch let
+        // the model pull live information from the web (read-only, so
+        // they run freely under bypassPermissions — no canUseTool
+        // gate). Plan turns drop Bash via the caller-supplied
+        // `builtinTools`.
+        builtinTools: builtinTools ?? ['Read', 'Glob', 'Grep', 'Bash', 'WebSearch', 'WebFetch'],
         // Forwarded so sidecar's read_page / search_wiki handlers
         // can resolve vault-relative paths against the user's chosen
         // folder. Undefined when no vault selected — the sidecar

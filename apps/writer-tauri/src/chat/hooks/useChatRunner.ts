@@ -353,9 +353,12 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           // the finished plan for approval). Write is included so the model can
           // record its plan to the plan file (the canonical flow that lands a
           // clean plan in ExitPlanMode.plan); the sidecar gate confines Write
-          // to the plans directory, so the vault stays read-only.
+          // to the plans directory, so the vault stays read-only. WebSearch /
+          // WebFetch let the model research the web while planning — both are
+          // read-only, so they pass the plan-mode canUseTool gate and keep the
+          // source untouched.
           builtinTools: isPlan
-            ? ['Read', 'Glob', 'Grep', 'Write', 'AskUserQuestion', 'ExitPlanMode']
+            ? ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Write', 'AskUserQuestion', 'ExitPlanMode']
             : undefined,
           model: overrides?.model ?? activeThreadModel,
           effort: overrides?.effort ?? activeThreadEffort,
