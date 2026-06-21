@@ -42,6 +42,7 @@ import { mermaidCards } from '@/prototypes/mermaidCards'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
 import { cmProofReview, acceptEffect, rejectEffect, scrollOffsetForChange } from '@/editor/cmProofReview'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
+import { useSettingsStore } from '@/state/settingsStore'
 import {
   highlightRenderExtension,
   highlightSelectionNotifier,
@@ -65,10 +66,26 @@ interface Props {
   header?: React.ReactNode
 }
 
-// The page layout (header/footer overlays + max-w-2xl column) is owned by this
+// The page layout (header/footer overlays + centered 750px column) is owned by this
 // component's wrapper, so neutralise cmPrototypeTheme's own page padding / max-width.
+// `textAlign: justify` flushes prose to both edges; `hyphens: auto` lets the engine
+// break long words so it doesn't open large inter-word gaps ("rivers") on the narrow
+// column. WKWebView (macOS) needs the -webkit- prefix, and hyphenation only fires when
+// a `lang` is set on the content (see EditorView.contentAttributes below). Korean is
+// unaffected (CJK breaks per-character), so this mainly cleans up English prose.
 const layoutReset = EditorView.theme({
-  '.cm-content': { maxWidth: 'none', margin: '0', padding: '0' },
+  // Alignment + hyphenation read from CSS vars set on the React wrapper, so the
+  // Settings toggle changes them live without a Compartment reconfigure. Keeping
+  // the rule scoped to `.cm-content` (not inherited from an ancestor) preserves
+  // the specificity needed to beat cmPrototypeTheme's leaking `.cm-content` rule.
+  '.cm-content': {
+    maxWidth: 'none',
+    margin: '0',
+    padding: '0',
+    textAlign: 'var(--cm-text-align, justify)',
+    WebkitHyphens: 'var(--cm-hyphens, auto)',
+    hyphens: 'var(--cm-hyphens, auto)',
+  },
 })
 
 // Tags a programmatic whole-body replace (external reload / background rewrite) so the
@@ -81,6 +98,11 @@ export function CmEditor({ handle, onViewReady, header }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const slug = handle?.slug ?? null
+  // Column width + alignment are live settings (Settings → Editor). Changing them
+  // re-renders the wrapper (maxWidth / CSS vars); CM's resize observer re-wraps
+  // lines automatically — no editor remount.
+  const columnWidth = useSettingsStore((s) => s.editorColumnWidth)
+  const textAlign = useSettingsStore((s) => s.editorTextAlign)
 
   useEffect(() => {
     const parent = rootRef.current
@@ -134,6 +156,9 @@ export function CmEditor({ handle, onViewReady, header }: Props) {
             drawSelection(),
             dropCursor(),
             EditorView.lineWrapping,
+            // `lang` is required for `hyphens: auto` (layoutReset) to fire. Set 'en'
+            // so English prose hyphenates under justify; CJK is unaffected.
+            EditorView.contentAttributes.of({ lang: 'en' }),
             markdown({ extensions: [GFM], addKeymap: false }),
             autocompletion({ override: [cmWikilinkSource, slashSource], icons: true }), // [[ notes, / blocks
             placeholder('Start writing…'),
@@ -283,8 +308,21 @@ export function CmEditor({ handle, onViewReady, header }: Props) {
       />
       <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div
-          className="mx-auto max-w-2xl px-8"
-          style={{ paddingTop: 'calc(var(--header-h) + 1.5rem)', paddingBottom: '4rem' }}
+          className="px-8"
+          style={{
+            // Inline maxWidth/margin instead of Tailwind `max-w-*`: under Tailwind v4
+            // `max-w-2xl` compiles to `max-width: var(--container-2xl)`, and this project
+            // doesn't define those container vars, so the rule is dropped and the column
+            // loses its cap. A literal px value (from settings) is immune to that.
+            maxWidth: `${columnWidth}px`,
+            marginInline: 'auto',
+            paddingTop: 'calc(var(--header-h) + 1.5rem)',
+            paddingBottom: '4rem',
+            // Drive the .cm-content alignment/hyphens vars from the setting.
+            // Left-align uses 'manual' so words don't auto-hyphenate (ragged right).
+            '--cm-text-align': textAlign,
+            '--cm-hyphens': textAlign === 'justify' ? 'auto' : 'manual',
+          } as React.CSSProperties}
         >
           {header}
           <div className="cm-prototype" ref={rootRef} />

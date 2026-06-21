@@ -96,6 +96,18 @@ interface SettingsState {
   cmEditorEnabled: boolean
   /** Toggle the CodeMirror editor. */
   setCmEditorEnabled: (enabled: boolean) => void
+
+  /** Max width (px) of the CodeMirror editor's centered text column. Tuning
+   * knob in Settings → Editor; applied live (no reload). */
+  editorColumnWidth: number
+  /** Set the editor column width in px. */
+  setEditorColumnWidth: (px: number) => void
+
+  /** CodeMirror editor body alignment. 'justify' flushes both edges (with
+   * hyphenation); 'left' is ragged-right (no auto-hyphens). Applied live. */
+  editorTextAlign: 'justify' | 'left'
+  /** Set the editor body alignment. */
+  setEditorTextAlign: (align: 'justify' | 'left') => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -108,6 +120,8 @@ export const useSettingsStore = create<SettingsState>()(
       intakeModel: DEFAULT_CHAT_MODEL,
       sidebarVibrancyEnabled: true,
       cmEditorEnabled: false,
+      editorColumnWidth: 700,
+      editorTextAlign: 'justify',
       recentProjects: [],
       setActiveVaultPath: (path) =>
         set({ vaultPaths: [path], activeVaultIndex: 0 }),
@@ -129,6 +143,8 @@ export const useSettingsStore = create<SettingsState>()(
       setIntakeModel: (model) => set({ intakeModel: model }),
       setSidebarVibrancy: (enabled) => set({ sidebarVibrancyEnabled: enabled }),
       setCmEditorEnabled: (enabled) => set({ cmEditorEnabled: enabled }),
+      setEditorColumnWidth: (px) => set({ editorColumnWidth: px }),
+      setEditorTextAlign: (align) => set({ editorTextAlign: align }),
     }),
     {
       name: 'writer-tauri:settings',
@@ -141,6 +157,8 @@ export const useSettingsStore = create<SettingsState>()(
         intakeModel: s.intakeModel,
         sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
         cmEditorEnabled: s.cmEditorEnabled,
+        editorColumnWidth: s.editorColumnWidth,
+        editorTextAlign: s.editorTextAlign,
         recentProjects: s.recentProjects,
       }),
     },
