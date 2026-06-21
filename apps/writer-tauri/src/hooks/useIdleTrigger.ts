@@ -11,7 +11,6 @@
 // Mounted once at app root via useIdleTrigger() (name kept for the call site)
 // purely to sweep stale proposals on boot.
 
-import { useEffect } from 'react'
 import { processDailyNote } from '@/agent/dailyIngest'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
@@ -88,10 +87,10 @@ async function runIngestForSlug(slug: string, opts: RunOptions = {}): Promise<nu
     return -1
   }
 
-  // Note-level dedup: stamp the length we processed so an unedited note isn't
+  // Note-level dedup: stamp this note as ingested so an unedited note isn't
   // re-run. The agent staged any wiki edits into the pending-changes queue
   // itself — nothing to materialize here.
-  useIngestStore.getState().markIngested(slug, length)
+  useIngestStore.getState().markIngested(slug)
   return result.editCount
 }
 
@@ -118,13 +117,12 @@ export async function syncTodayManually(): Promise<number | null> {
   return runIngestForSlug(today.slug, { force: true })
 }
 
-/** Mounted once near the app root. Daily ingest is pull-only now, so this only
- * sweeps stale proposals on boot — the actual pass runs from the Sync button
- * (syncTodayManually). Name kept for the existing call site. */
+/** Mounted once near the app root. Daily ingest is pull-only now (the Sync
+ * button → syncTodayManually), so there is nothing to do on mount; the hook is
+ * kept as a no-op for the existing call site. */
 export function useIdleTrigger(): void {
-  useEffect(() => {
-    useIngestStore.getState().pruneDeadProposals()
-  }, [])
+  // No-op: the auto timer / boot catch-up were removed. Kept so App.tsx's
+  // call site stays valid; remove both together if desired.
 }
 
 // Dev-only console hooks. __triggerIdle / __syncToday both hit today's daily

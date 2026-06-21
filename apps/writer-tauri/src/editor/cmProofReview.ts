@@ -6,9 +6,11 @@
 //     text + ✓/✕ that call store.accept/reject
 //   • positions track edits via the field's map() while the doc is open
 //
-// Scope: inline `replace` (before→after), `delete` (before→∅), and `add` (insertion at
-// an anchor / append) — chat propose_edit + ingest proposals. Whole-file Write /
-// multi-line hunks are still Stage 3-2. Accept persists via the existing applier; the
+// Scope: ALL edit shapes — inline `replace` (before→after), `delete` (before→∅),
+// `add` (insertion / append), AND whole-file Write (no `before`). Every shape is
+// rendered the same way: apply the change's edits to a copy of the doc, diff the
+// result against the live doc (computeCmHunks), and strike removed lines / show
+// added lines as green widgets. Accept persists via the existing applier; the
 // live-doc refresh on accept is wired separately (the applyToWikiPage CM bridge).
 
 import { StateField, StateEffect, type EditorState, type Extension } from '@codemirror/state'
@@ -17,6 +19,7 @@ import { invertedEffects } from '@codemirror/commands'
 import { usePendingChangesStore, rejectPendingChange, type PendingChange } from '@/state/pendingChangesStore'
 import { looseFindRange } from '@/lib/looseMatch'
 import { renderInline } from '@/prototypes/widgets'
+import { computeCmHunks, resolveAddInsertion } from '@/editor/cmHunks'
 
 // Undo-link for accept: the accept's doc change (dispatched by the CM bridge) carries
 // `acceptEffect.of(changeId)`. invertedEffects makes its undo carry `reopenEffect`, so
@@ -72,15 +75,6 @@ type AnchoredEdit = {
 
 const setAnchored = StateEffect.define<AnchoredEdit[]>()
 
-/** Where an `add` lands: end of doc for the empty anchor (append), else just after the
- * LAST occurrence of the anchor text. Mirrors the applier's insertion rule so "a widget
- * shows" ⟺ "Keep inserts there". */
-function resolveAddInsertion(doc: string, anchor: string): number | null {
-  if (anchor.length === 0) return doc.length
-  const i = doc.lastIndexOf(anchor)
-  return i < 0 ? null : i + anchor.length
-}
-
 const anchoredField = StateField.define<AnchoredEdit[]>({
   create: () => [],
   update(value, tr) {
@@ -101,42 +95,22 @@ const anchoredField = StateField.define<AnchoredEdit[]>({
   },
 })
 
-/** Anchor each pending edit's `before` text in the doc using the SAME matcher the
- * applier uses (looseFindRange) — so "a mark shows" ⟺ "Keep will place it". Unfound
- * edits are dropped for now; the unplaced tray is Stage 3-1c. */
+/** Build the anchored hunks for every pending change on the page. Each change
+ * is diffed independently against the current doc text (computeCmHunks); the
+ * resulting hunks are tagged with their owning change so accept/reject route to
+ * the right id. `editId` is positional within the change — stable across
+ * recomputes for a given diff, and only used for widget `eq()` keying. */
 function anchorChanges(docText: string, changes: PendingChange[]): AnchoredEdit[] {
-  const out: AnchoredEdit[] = []
-  for (const c of changes) {
-    for (const e of c.edits) {
-      if ((e.kind === 'replace' || e.kind === 'delete') && e.before) {
-        const range = looseFindRange(docText, e.before)
-        if (!range) continue
-        out.push({
-          changeId: c.id,
-          editId: e.id,
-          from: range.start,
-          to: range.end,
-          after: e.kind === 'delete' ? '' : (e.after ?? ''),
-          kind: e.kind,
-        })
-      } else if (e.kind === 'add') {
-        // Insertion: anchor at the LAST occurrence of `anchorBefore` (empty → append at
-        // end of doc). No `before` range to strike — a pure insertion point (from === to).
-        const at = resolveAddInsertion(docText, e.anchorBefore)
-        if (at === null) continue
-        out.push({
-          changeId: c.id,
-          editId: e.id,
-          from: at,
-          to: at,
-          after: e.after ?? '',
-          kind: 'add',
-        })
-      }
-      // Whole-file 'replace' (no `before`) → hunk-shaped, still Stage 3-2.
-    }
-  }
-  return out
+  return changes.flatMap((c) =>
+    computeCmHunks(docText, c).map((h, i) => ({
+      changeId: c.id,
+      editId: `${c.id}:${i}`,
+      from: h.from,
+      to: h.to,
+      after: h.after,
+      kind: h.kind,
+    })),
+  )
 }
 
 /** Best doc offset to scroll to for a change — used when the user clicks a chat

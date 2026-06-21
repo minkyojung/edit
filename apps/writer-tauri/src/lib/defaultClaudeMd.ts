@@ -134,6 +134,7 @@ Do NOT read a wiki page when:
 - Widen \`old_string\` with surrounding context when the substring is not unique.
 - To append to a file, set \`new_string\` to the current last line followed by the new content.
 - Use \`Write\` only for brand-new files. A new synthesized wiki page goes to \`wiki/<Title>.md\`; a general note goes to whichever folder fits (\`inbox/\` by default). The host honours the folder you choose in the path — route durable knowledge to \`wiki/\`, captures and quick notes to \`inbox/\`. Do not \`Write\` over an existing file unless the user explicitly asks for a full rewrite.
+- The \`---\` frontmatter block (\`slug:\`, \`type:\`, \`createdAt:\`, …) is host-managed. NEVER write a \`---\` block or those fields into a file's body — not when creating a new file, not when rewriting one. Your content is the body only; the host attaches and maintains frontmatter. (When you \`Read\` a file you will see its frontmatter — that is the app's bookkeeping, not content to copy back.)
 - \`daily/*.md\` — edit only on explicit user request (typo fix, formatting). Otherwise treat as the user's own writing.
 - \`_system/index.md\` — host-managed and read-only. The app rewrites it on every wiki change; never edit it yourself.
 

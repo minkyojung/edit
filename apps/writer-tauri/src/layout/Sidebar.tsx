@@ -15,7 +15,6 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { FolderTree } from './FolderTree'
 import { WikiMetaRows } from './WikiMetaRows'
-import { IngestProposalCard } from './IngestProposalCard'
 import { useDocsStore } from '@/state/docsStore'
 import { useCommandPaletteStore } from '@/state/commandPaletteStore'
 import { useNewFolderStore } from '@/state/newFolderStore'
@@ -218,10 +217,6 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
-        {/* Karpathy Memories card — surfaces the queued ingest
-            proposals so they're easy to notice without crowding the
-            doc tree above. */}
-        <IngestProposalCard />
         <SidebarMenu>
           {/* Profile + Conventions: always-present, low-frequency wiki
               surfaces. */}

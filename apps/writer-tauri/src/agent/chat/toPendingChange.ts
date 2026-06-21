@@ -26,6 +26,7 @@ import { pathForDoc } from '@/lib/docPaths'
 import { createCustomWikiPage, createGenericNote } from '@/state/wikiService'
 import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { stripDuplicateTitleHeading } from '@/lib/markdownText'
+import { splitFrontmatter } from '@/lib/frontmatter'
 
 export interface ChatEditPendingPayload {
   runId: string
@@ -130,13 +131,33 @@ export function mapChatEditToPendingChange(
   }
 }
 
+/** Strip a leading YAML frontmatter block from AI-supplied whole-document
+ * content, keeping body only. The model reads notes via the built-in Read
+ * tool, which exposes the on-disk `---` block (slug/type/createdAt …), and
+ * often echoes it back into `propose_write` content. Those fields would
+ * otherwise render as literal body text AND get re-wrapped by the flush
+ * writer (double frontmatter on disk). The metadata is dropped, not merged:
+ * the catalog (`KnownDoc`) is the source of truth for slug/type, so an
+ * echoed block is at best redundant and at worst a slug clobber.
+ *
+ * No-op when there's no `---` block (splitFrontmatter returns body === raw).
+ * Apply ONLY to whole-document content (Write `content`, new-note body) —
+ * never to an Edit's `old_string` / `new_string` fragment, which carries no
+ * frontmatter and would be corrupted by a false match. */
+function normalizeAiBody(raw: string): string {
+  return splitFrontmatter(raw).body
+}
+
 /** The content to seed a brand-new file with, derived from whichever write-side
  * tool the model used. `Write` carries the whole body in `content`; `Edit` /
  * `MultiEdit` carry it in `new_string` (nothing to replace in a file that doesn't
- * exist yet, so the new text IS the body). '' for other tools. */
+ * exist yet, so the new text IS the body). '' for other tools.
+ *
+ * Frontmatter is stripped here (whole-document boundary) so an echoed `---`
+ * block never reaches the staged body — see {@link normalizeAiBody}. */
 function newFileContentFor(toolName: string, input: Record<string, unknown>): string {
-  if (toolName === 'Write') return readString(input.content)
-  if (toolName === 'Edit') return readString(input.new_string)
+  if (toolName === 'Write') return normalizeAiBody(readString(input.content))
+  if (toolName === 'Edit') return normalizeAiBody(readString(input.new_string))
   if (toolName === 'MultiEdit') {
     const edits = Array.isArray(input.edits) ? input.edits : []
     return edits
@@ -302,7 +323,9 @@ function buildEditsForTool(
     ]
   }
   if (toolName === 'Write') {
-    const content = readString(input.content)
+    // Whole-document boundary: strip any echoed frontmatter so the `---`
+    // block doesn't land in the body (preview + applied doc + disk).
+    const content = normalizeAiBody(readString(input.content))
     return [
       {
         id: crypto.randomUUID(),

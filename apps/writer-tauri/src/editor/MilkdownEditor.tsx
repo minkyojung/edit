@@ -494,13 +494,13 @@ export function MilkdownEditor({ handle, status, onMarkdownChange, onViewReady, 
 
   return (
     <div className="relative flex h-full w-full flex-col">
-      {/* Header gradient-blur glass band — mirrors EditorFooter's
-          pattern. Lives here (a sibling of the scroll content) rather
-          than inside EditorHeader so backdrop-filter can sample the
-          scroll content's pixels — WebKit can't sample across the
-          scroll container's composited layer boundary. The actual
-          header chrome (tabs/buttons) still renders in AppShell with
-          z-sticky and paints on top of this band. */}
+      {/* Header gradient-blur glass band. Lives here (a sibling of the
+          scroll content) rather than inside EditorHeader so
+          backdrop-filter can sample the scroll content's pixels —
+          WebKit can't sample across the scroll container's composited
+          layer boundary. The actual header chrome (tabs/buttons) still
+          renders in AppShell with z-sticky and paints on top of this
+          band. */}
       <div
         aria-hidden
         className="pointer-events-none absolute top-0 left-0 right-0 bg-background/90"

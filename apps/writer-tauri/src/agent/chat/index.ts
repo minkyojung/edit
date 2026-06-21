@@ -24,6 +24,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { toast } from 'sonner'
 import { parseVizSpec } from '@/viz/vizSpec'
 import { replaceVizById } from '@/editor/vizBlockOps'
+import { navigateToNoteBySlug } from '@/editor/cmNav'
 import { assembleContext } from '@/agent/contextPipeline'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
@@ -103,6 +104,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     onPart,
     onSessionStart,
     sessionStarted,
+    navigateToNewNotes = false,
   } = args
 
   // Effort default: Haiku is the copyeditor lane (short, latency-
@@ -311,11 +313,22 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // gets a slug) and stage its body. Anything still unmapped is a
         // genuine miss — logged, no decision surface.
         let mapped = mapChatEditToPendingChange(payload, ctx)
+        let createdNewNote = false
         if (!mapped) {
           mapped = await materializeChatNewWikiPage(payload, ctx)
+          createdNewNote = !!mapped
         }
         if (mapped) {
           usePendingChangesStore.getState().push(mapped)
+          // A brand-new note isn't open in any editor, so cmProofReview never
+          // mounts for it and the inline preview can't show. On interactive
+          // runs, open it — the editor mounts, subscribes to the pending store,
+          // and renders the staged body as a green preview. Existing-note edits
+          // are left alone (the suggestion card's click-to-jump handles those;
+          // auto-jumping on every edit would be intrusive).
+          if (createdNewNote && navigateToNewNotes) {
+            navigateToNoteBySlug(mapped.pageSlug)
+          }
         } else {
           console.warn(
             '[chat] edit-pending unmappable; no decision surface',

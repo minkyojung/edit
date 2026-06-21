@@ -364,6 +364,11 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           // fastMode request the SDK would ignore anyway.
           fastMode: activeThreadFastMode && modelSupportsFastMode(activeThreadModel),
           sessionStarted,
+          // Interactive surface: open notes the agent creates this run so their
+          // inline green/red preview is immediately visible. (Headless ingest
+          // leaves this off.) Queue turns can't create notes (no propose_*), so
+          // this never fires there.
+          navigateToNewNotes: true,
           onSessionStart: () => markSessionStarted(threadId),
           onPart: (part) => {
             buffer.upsert(part)

@@ -129,6 +129,13 @@ export interface RunChatArgs {
    * a resumable thread look brand-new and triggering a duplicate-create
    * crash inside the SDK. */
   sessionStarted?: boolean
+  /** When true, navigate the editor to a note the agent CREATES this run
+   * (a `propose_write` to a path that didn't exist yet) so its inline
+   * green/red preview is immediately visible. Interactive surfaces set this;
+   * headless ingest (runIntake) leaves it off so background runs don't hijack
+   * the user's current view. Only newly-created notes navigate — edits to
+   * existing notes keep the click-to-jump suggestion card. */
+  navigateToNewNotes?: boolean
 }
 
 export interface RunChatResult {

@@ -75,6 +75,19 @@ describe('materializeChatNewWikiPage (host-forced placement)', () => {
     expect(result!.edits[0].after).toBe('본문 첫 줄')
   })
 
+  it('strips echoed frontmatter from the staged body (Fix 1)', async () => {
+    // The model reads notes via Read (which exposes the `---` block) and may echo
+    // it back into propose_write content. It must never reach the body.
+    const result = await materializeChatNewWikiPage(
+      payload({
+        file_path: 'Foo.md',
+        content: '---\nslug: gv46mqpy\ntype: note\n---\n\n실제 본문 첫 줄',
+      }),
+      baseCtx,
+    )
+    expect(result!.edits[0].after).toBe('실제 본문 첫 줄')
+  })
+
   it('preserves a leading heading that is NOT the title (real section header)', async () => {
     const result = await materializeChatNewWikiPage(
       payload({ file_path: 'Foo.md', content: '# 배경\n내용' }),

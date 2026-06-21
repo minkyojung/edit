@@ -110,42 +110,6 @@ function buildSubmitProfileTool(runId, emit) {
   )
 }
 
-function buildSubmitIngestResultTool(runId, emit) {
-  return tool(
-    'submit_ingest_result',
-    'Submit the structured result of an ingest pass over a user note. Call this exactly once per run, after analyzing the note against the wiki. Include every proposal, index update, and log entry; if you found nothing, pass empty arrays and a null logEntry.',
-    {
-      proposals: z.array(
-        z.object({
-          target: z.string().optional(),
-          suggestNewPage: z.string().optional(),
-          suggestNewPageParent: z.string().optional(),
-          // Phase G: free-form markdown the host appends as-is. The
-          // LLM follows the vault-root CLAUDE.md formatting rules
-          // (no duplicate page-title heading, `[[Page]]` for wiki
-          // refs, `> "..."` for source citation, etc.) so the host
-          // no longer wraps the output. `sourceQuote` stays as the
-          // dedup + provenance handle.
-          markdownToAppend: z.string().min(1),
-          rationale: z.string().optional(),
-          sourceQuote: z.string().optional(),
-        }),
-      ),
-      indexUpdates: z.array(
-        z.object({
-          target: z.string(),
-          summary: z.string(),
-        }),
-      ),
-      logEntry: z.string().nullable(),
-    },
-    async (args) => {
-      emit(notification('ingest/result', { runId, input: args }))
-      return { content: [{ type: 'text', text: 'Ingest result recorded.' }] }
-    },
-  )
-}
-
 // E6 "host-applies" pattern: instead of letting the SDK's built-in
 // Edit / Write / MultiEdit tools touch disk themselves (gated through
 // `canUseTool` and then resolved by user via the host), we register
@@ -987,9 +951,7 @@ export class Server {
       : (this.mode === 'chat' ? [] : [])
     const relayDefs = []
     for (const name of enabledRelay) {
-      if (name === 'submit_ingest_result') {
-        relayDefs.push(buildSubmitIngestResultTool(runId, this.emit))
-      } else if (name === 'submit_profile') {
+      if (name === 'submit_profile') {
         relayDefs.push(buildSubmitProfileTool(runId, this.emit))
       } else if (name === 'propose_edit') {
         relayDefs.push(buildProposeEditTool(runId, this.emit, vaultPath))
