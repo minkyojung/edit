@@ -16,6 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { openSettings, useSettingsDialog } from './useSettingsDialog'
 import { SettingsNav } from './SettingsNav'
 import { AppearanceSettings } from './categories/AppearanceSettings'
+import { EditorSettings } from './categories/EditorSettings'
 import { FilesSettings } from './categories/FilesSettings'
 import { ConnectionsSettings } from './categories/ConnectionsSettings'
 
@@ -50,6 +51,7 @@ export function SettingsDialog() {
           <ScrollArea className="flex-1">
             <div className="px-6 py-5">
               {active === 'appearance' && <AppearanceSettings />}
+              {active === 'editor' && <EditorSettings />}
               {active === 'files' && <FilesSettings />}
               {active === 'connections' && <ConnectionsSettings />}
             </div>

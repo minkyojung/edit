@@ -88,6 +88,14 @@ interface SettingsState {
   sidebarVibrancyEnabled: boolean
   /** Toggle sidebar vibrancy. */
   setSidebarVibrancy: (enabled: boolean) => void
+
+  /** Use the experimental CodeMirror editor instead of Milkdown. Default off
+   * (Milkdown). Read by Page.tsx to pick the editor; a change takes effect on
+   * the next reload. Dogfooding gate while the ProseMirror→CodeMirror
+   * migration is evaluated — global (cross-window) preference. */
+  cmEditorEnabled: boolean
+  /** Toggle the CodeMirror editor. */
+  setCmEditorEnabled: (enabled: boolean) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -99,6 +107,7 @@ export const useSettingsStore = create<SettingsState>()(
       defaultNoteFolder: 'inbox',
       intakeModel: DEFAULT_CHAT_MODEL,
       sidebarVibrancyEnabled: true,
+      cmEditorEnabled: false,
       recentProjects: [],
       setActiveVaultPath: (path) =>
         set({ vaultPaths: [path], activeVaultIndex: 0 }),
@@ -119,6 +128,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ defaultNoteFolder: folder.trim().replace(/^\/+|\/+$/g, '') || 'inbox' }),
       setIntakeModel: (model) => set({ intakeModel: model }),
       setSidebarVibrancy: (enabled) => set({ sidebarVibrancyEnabled: enabled }),
+      setCmEditorEnabled: (enabled) => set({ cmEditorEnabled: enabled }),
     }),
     {
       name: 'writer-tauri:settings',
@@ -130,6 +140,7 @@ export const useSettingsStore = create<SettingsState>()(
         defaultNoteFolder: s.defaultNoteFolder,
         intakeModel: s.intakeModel,
         sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
+        cmEditorEnabled: s.cmEditorEnabled,
         recentProjects: s.recentProjects,
       }),
     },

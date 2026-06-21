@@ -17,6 +17,7 @@ import { lazy, Suspense } from 'react'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { MilkdownEditor } from '@/editor/MilkdownEditor'
+import { useSettingsStore } from '@/state/settingsStore'
 import { PageHeader } from './PageHeader'
 
 interface Props {
@@ -25,17 +26,16 @@ interface Props {
   onViewReady?: (view: EditorView | null) => void
 }
 
-// Stage-1 swap flag (DEV-only, reversible). Flip in the console:
-//   localStorage.setItem('writer.cmEditor', '1'); location.reload()
-// to mount the CodeMirror editor instead of Milkdown; remove it to revert.
-// Lazy so the CM editor + its prototype modules never enter the production bundle.
+// Editor engine is user-selectable (Settings → Editor, persisted as
+// `cmEditorEnabled`). Default off = Milkdown. When on, mount the experimental
+// CodeMirror editor instead. Lazy so the CM editor + its prototype modules
+// only load when the toggle is enabled — off by default, they cost nothing.
 const CmEditor = lazy(() => import('@/editor/CmEditor').then((m) => ({ default: m.CmEditor })))
-const useCmEditor = (): boolean =>
-  import.meta.env.DEV && typeof localStorage !== 'undefined' && localStorage.getItem('writer.cmEditor') === '1'
 
 export function Page({ handle, status, onViewReady }: Props) {
+  const cmEnabled = useSettingsStore((s) => s.cmEditorEnabled)
   const header = handle ? <PageHeader slug={handle.slug} /> : null
-  if (useCmEditor()) {
+  if (cmEnabled) {
     return (
       <Suspense fallback={null}>
         <CmEditor handle={handle} status={status} onViewReady={onViewReady} header={header} />
