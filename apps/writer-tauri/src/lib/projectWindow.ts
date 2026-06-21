@@ -94,7 +94,7 @@ export async function focusLauncher(): Promise<void> {
   }
   const win = new WebviewWindow(LAUNCHER_LABEL, {
     url: 'index.html',
-    title: 'Writer',
+    title: 'Octave',
     width: 1280,
     height: 800,
     minWidth: 800,

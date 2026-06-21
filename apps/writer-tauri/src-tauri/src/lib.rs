@@ -189,6 +189,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(oauth::PendingOAuth::default())
         .manage(github::PendingGitHubAuth::default())
         .invoke_handler(tauri::generate_handler![
@@ -255,7 +257,7 @@ pub fn run() {
 
                 // Custom items: emit app:close-requested so the frontend can
                 // confirm before actually exiting / closing the window.
-                let quit_item = MenuItemBuilder::new("Quit Writer")
+                let quit_item = MenuItemBuilder::new("Quit Octave")
                     .id("quit")
                     .accelerator("CmdOrCtrl+Q")
                     .build(app)?;
@@ -264,8 +266,8 @@ pub fn run() {
                     .accelerator("CmdOrCtrl+W")
                     .build(app)?;
 
-                // Writer (app menu)
-                let app_submenu = SubmenuBuilder::new(app, "Writer")
+                // Octave (app menu)
+                let app_submenu = SubmenuBuilder::new(app, "Octave")
                     .item(&PredefinedMenuItem::about(app, None, None)?)
                     .separator()
                     .item(&PredefinedMenuItem::hide(app, None)?)

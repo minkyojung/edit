@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { App } from './App'
 import { LAST_PATH_STORAGE_KEY } from './hooks/usePersistLastPath'
-import { projectStorageKey } from './lib/windowRoot'
+import { projectStorageKey, WINDOW_ROOT } from './lib/windowRoot'
 import './index.css'
 
 // Session restore: if the WebView came up with an empty / root hash
@@ -41,20 +41,25 @@ if (import.meta.env.DEV) {
     invoke,
     listen,
   }
-  // Side-effect import: registers window.__ingest so the ingest engine
-  // can be exercised from the dev console while we tune the prompt.
-  // Production builds skip this block entirely.
-  void import('./agent/ingest')
-  // Same pattern: registers window.__route so the inbox→wiki/daily router
-  // PoC can be eyeballed on real captures from the dev console.
-  void import('./agent/ingestRouter')
-  // Same pattern: registers window.__processInbox so the Claude Code-native
-  // inbox intake runner can be exercised on real captures from the console.
+  // Side-effect import: registers window.__inbox / window.__processInbox /
+  // window.__syncToday so the Claude Code-native intake runners can be
+  // exercised on real captures from the dev console. Production builds skip
+  // this block entirely.
   void import('./agent/inbox')
   // Same pattern: registers window.__captureYoutube so the full capture
   // pipeline (fetch → create → frontmatter flush) can be run from the
   // dev console before the capture UI lands.
   void import('./state/youtubeService')
+}
+
+// Auto-update: run the check loop only in the launcher window (no `root`
+// param), and only in production builds. All windows of the app share one
+// process and one app bundle, so a single checker is enough — gating to one
+// window avoids redundant downloads and concurrent installs replacing the
+// same .app. Dev builds skip it: there's no installed bundle to replace and
+// no release to find, so check() would just spam the network and warn.
+if (WINDOW_ROOT === null && import.meta.env.PROD) {
+  void import('./lib/updater').then(({ startAutoUpdate }) => startAutoUpdate())
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

@@ -87,7 +87,7 @@ export function VaultLauncher() {
     <div className="flex h-full w-full items-center justify-center bg-background p-6">
       <div className="w-full max-w-md">
         <h1 className="mb-1 text-center text-2xl font-semibold tracking-tight text-foreground">
-          Writer
+          Octave
         </h1>
         <p className="mb-6 text-center text-sm text-muted-foreground">
           Open a project to get started.
