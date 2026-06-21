@@ -21,7 +21,7 @@ import { type ChatModel, DEFAULT_CHAT_MODEL } from '@/chat/types'
 
 /** What kind of project a folder holds. Drives the launcher label and,
  * later, which CLAUDE.md scaffold a fresh folder gets. Detected from the
- * folder contents when opening an existing folder (a `bible/` dir → a
+ * folder contents when opening an existing folder (a `manuscript/` dir → a
  * translation project), or set explicitly when scaffolding a new one. */
 export type ProjectType = 'wiki' | 'translation'
 

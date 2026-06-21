@@ -40,7 +40,7 @@ import { isTranslationProject } from '@/lib/translationProject'
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
 /** Wiki-vault boot steps: one-time legacy cleanup + schema migrations that
- * only apply to wiki vaults. A translation project (a folder with `bible/`)
+ * only apply to wiki vaults. A translation project (a folder with `manuscript/`)
  * never had these layouts, so running them would just litter `.done`
  * sentinel files — the boot gates them out by project kind. Each step is
  * best-effort: a failure logs and the boot continues. */
@@ -161,7 +161,7 @@ export function BootGate({ children }: Props) {
       //
       // Project kind drives which boot steps run. The wiki-legacy cleanup +
       // schema migrations apply only to wiki vaults; a translation project
-      // (a folder with `bible/`) never had those layouts, so we skip them to
+      // (a folder with `manuscript/`) never had those layouts, so we skip them to
       // keep the project clean. bootstrap() below is generic and runs for
       // every kind. Unknown / fresh folders default to wiki (the legacy path).
       const vaultRoot = getActiveVaultPath()

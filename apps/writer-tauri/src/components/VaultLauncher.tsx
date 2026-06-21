@@ -59,7 +59,8 @@ export function VaultLauncher() {
   }, [addRecentProject])
 
   // Create a new translation project: pick/create a folder, lay down the
-  // translation CLAUDE.md + bible/ skeleton, then open it in its own window.
+  // translation CLAUDE.md + manuscript/ + reference/ skeleton, then open it in
+  // its own window.
   const newTranslation = useCallback(async () => {
     const path = await pickVault()
     if (!path) return
