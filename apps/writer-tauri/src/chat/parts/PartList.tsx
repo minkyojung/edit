@@ -5,6 +5,7 @@ import { ToolPart } from '@/chat/parts/ToolPart'
 import { ThinkingPill } from '@/chat/parts/ReasoningPart'
 import { ProcessGroup } from '@/chat/parts/ProcessGroup'
 import { QuestionActivity } from '@/chat/parts/QuestionActivity'
+import { TodoActivity } from '@/chat/parts/TodoActivity'
 import { isProposeEditTool } from '@/chat/parts/proposeChangeTool'
 import { InlineSuggestion } from '@/chat/suggestions/InlineSuggestion'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -40,6 +41,7 @@ export function PartList({
   const textNodes: ReactNode[] = []
   const editParts: ToolPartType[] = []
   const questionParts: ToolPartType[] = []
+  const todoParts: ToolPartType[] = []
   let toolCount = 0
   let messageCount = 0
 
@@ -72,7 +74,11 @@ export function PartList({
         break
       case 'tool':
         flushReasoning()
-        if (part.toolName === 'AskUserQuestion') {
+        if (part.toolName === 'TodoWrite') {
+          // The model re-issues the whole list each update; keep them all here
+          // and render only the latest below (one evolving checklist).
+          todoParts.push(part)
+        } else if (part.toolName === 'AskUserQuestion') {
           // Interactive Q&A — render visibly as its own row, not buried in the
           // collapsed process group, and don't count it as a generic tool call.
           questionParts.push(part)
@@ -107,8 +113,12 @@ export function PartList({
     (p) => isLiveEdit(p) || !liveFileKeys.has(editFileKey(p)),
   )
 
+  // Only the latest TodoWrite — the model updates the same list in place.
+  const latestTodo = todoParts.at(-1)
+
   return (
     <>
+      {latestTodo && <TodoActivity part={latestTodo} />}
       {processRows.length > 0 && (
         <ProcessGroup summary={summarizeProcess(toolCount, messageCount)}>
           {processRows}
