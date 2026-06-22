@@ -61,25 +61,51 @@ function humanizeEditDocument(input: unknown): HumanizedToolCall {
   return { label: `Replace "${quote}" → "${content}"` }
 }
 
-function humanizeRead(input: unknown): HumanizedToolCall {
+/** Pull plain text out of a tool result — a raw string, or the SDK's
+ * `[{type:'text', text}]` content-block array — so we can count lines. */
+function readOutputText(output: unknown): string | null {
+  if (typeof output === 'string') return output
+  if (Array.isArray(output)) {
+    const joined = output
+      .map((b) =>
+        b && typeof b === 'object' && 'text' in b
+          ? String((b as { text?: unknown }).text ?? '')
+          : '',
+      )
+      .join('')
+    return joined.length > 0 ? joined : null
+  }
+  return null
+}
+
+function countLines(output: unknown): number | null {
+  const text = readOutputText(output)
+  if (text == null) return null
+  return text.replace(/\n+$/, '').split('\n').length
+}
+
+function humanizeRead(input: unknown, output?: unknown): HumanizedToolCall {
   const i = (input ?? {}) as { file_path?: string }
   const name = basename(i.file_path)
-  if (!name) return { label: 'Reading' }
-  return { label: `Read ${name}`, chips: [{ kind: 'file', name }] }
+  // The file name rides in the chip, so the label carries the line count
+  // (once the result lands) rather than repeating the path.
+  const lines = countLines(output)
+  const label = lines != null ? `Read ${lines} lines` : name ? 'Read' : 'Reading'
+  return name ? { label, chips: [{ kind: 'file', name }] } : { label }
 }
 
 function humanizeEdit(input: unknown): HumanizedToolCall {
   const i = (input ?? {}) as { file_path?: string }
   const name = basename(i.file_path)
   if (!name) return { label: 'Editing' }
-  return { label: `Edit ${name}`, chips: [{ kind: 'file', name }] }
+  return { label: 'Edit', chips: [{ kind: 'file', name }] }
 }
 
 function humanizeWrite(input: unknown): HumanizedToolCall {
   const i = (input ?? {}) as { file_path?: string }
   const name = basename(i.file_path)
   if (!name) return { label: 'Writing' }
-  return { label: `Write ${name}`, chips: [{ kind: 'file', name }] }
+  return { label: 'Write', chips: [{ kind: 'file', name }] }
 }
 
 function humanizeGrep(input: unknown): HumanizedToolCall {
