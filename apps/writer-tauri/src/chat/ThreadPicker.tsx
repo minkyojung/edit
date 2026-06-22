@@ -1,16 +1,15 @@
-// Dropdown picker at the top of the chat panel. Replaces the horizontal
-// ThreadTabs strip: the chat panel is too narrow to comfortably show 5
-// tabs side-by-side, and rename/archive being hover-only hurt
-// discoverability. The picker shows only the active thread title in the
-// header row; clicking opens a DropdownMenu with active + archived in a
-// single list, plus a [+ New chat] action.
+// Dropdown picker at the top of the chat panel. Shows only the active thread
+// title in the header row; clicking opens a DropdownMenu listing the active
+// threads plus a [+ New chat] action. Archived threads live in their own
+// `ArchivedThreadsPopover` (the clock button beside this picker) so this menu
+// stays short and "switch / new" doesn't blur into "restore".
 //
-// Built on the shared DropdownMenu primitive so padding, radius,
-// separator, and icon stroke flow from the same tokens as the sidebar
-// account menu and other menus across the app. The active thread is
-// signalled by text color contrast (inactive rows use
-// `text-muted-foreground`, active stays at full `text-foreground`) —
-// no built-in check indicator competes with the row's archive button.
+// Built on the shared DropdownMenu primitive so padding, radius, separator, and
+// icon stroke flow from the same tokens as the sidebar account menu and other
+// menus across the app. The active thread is signalled by text color contrast
+// (inactive rows use `text-muted-foreground`, active stays at full
+// `text-foreground`) — no built-in check indicator competes with the row's
+// archive button.
 
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -18,7 +17,6 @@ import {
   IconMessageCircleFilled,
   IconPencil,
   IconPlus,
-  IconRestore,
   IconX,
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
@@ -26,8 +24,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -37,31 +33,24 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { formatRelative } from '@/lib/formatRelative'
 import { MAX_ACTIVE_THREADS, type ThreadMeta } from './types'
 
 interface Props {
   active: ThreadMeta[]
-  archived: ThreadMeta[]
   activeId: string | null
   onSelect: (id: string) => void
   onCreate: () => void
   onArchive: (id: string) => void
   onRename: (id: string, title: string) => void
-  onRestore: (id: string) => { ok: true } | { ok: false; reason: 'limit' | 'not-found' }
-  onRestoreLimitReached: () => void
 }
 
 export function ThreadPicker({
   active,
-  archived,
   activeId,
   onSelect,
   onCreate,
   onArchive,
   onRename,
-  onRestore,
-  onRestoreLimitReached,
 }: Props) {
   const [open, setOpen] = useState(false)
   const atLimit = active.length >= MAX_ACTIVE_THREADS
@@ -78,15 +67,6 @@ export function ThreadPicker({
     setOpen(false)
   }
 
-  const handleRestore = (id: string) => {
-    const result = onRestore(id)
-    if (!result.ok && result.reason === 'limit') {
-      onRestoreLimitReached()
-      return
-    }
-    if (result.ok) setOpen(false)
-  }
-
   return (
     <TooltipProvider>
       <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -94,15 +74,13 @@ export function ThreadPicker({
           <Button
             variant="ghost"
             size="sm"
-            // min-w-0 lets the trigger shrink inside its flex parent so the
-            // title span's `truncate` actually engages — without it the
-            // button falls back to min-content width and a long title
-            // pushes the chevron out of the panel.
-            className="min-w-0 flex-1 justify-start self-center px-2"
+            // Hugs the title (content-width, not the full header) with only a
+            // hover highlight — no resting background. `max-w` + `truncate` cap
+            // a long title so the chevron never gets pushed out of the panel.
+            className="min-w-0 max-w-[220px] justify-start gap-1.5 self-center rounded-md px-2"
             aria-label="Switch chat"
           >
-            <IconMessageCircleFilled size={16} stroke={1.5} className="shrink-0" />
-            <span className="min-w-0 flex-1 truncate text-left">
+            <span className="min-w-0 truncate text-left">
               {activeThread?.title || 'New chat'}
             </span>
             <IconChevronDown
@@ -141,35 +119,6 @@ export function ThreadPicker({
               </TooltipContent>
             )}
           </Tooltip>
-
-          {archived.length > 0 && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-                Archived
-              </DropdownMenuLabel>
-              {archived.map((t) => (
-                <DropdownMenuItem
-                  key={t.id}
-                  onSelect={() => handleRestore(t.id)}
-                  disabled={atLimit}
-                >
-                  <span className="min-w-0 flex-1 truncate">
-                    {t.title || 'New chat'}
-                  </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {formatRelative(t.archivedAt ?? t.updatedAt)}
-                  </span>
-                  <IconRestore size={16} stroke={1.5} className="text-muted-foreground" />
-                </DropdownMenuItem>
-              ))}
-              {atLimit && (
-                <div className="px-3 py-1.5 text-xs text-muted-foreground">
-                  Already at {MAX_ACTIVE_THREADS} active chats. Archive one to restore.
-                </div>
-              )}
-            </>
-          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </TooltipProvider>

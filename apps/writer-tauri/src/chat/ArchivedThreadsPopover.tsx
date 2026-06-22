@@ -52,10 +52,10 @@ export function ArchivedThreadsPopover({
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="flex size-7 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30"
+                className="flex size-8 shrink-0 items-center justify-center self-center rounded-sm text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30"
                 aria-label="Archived chats"
               >
-                <IconHistory size={14} stroke={1.75} />
+                <IconHistory size={16} stroke={1.75} />
               </button>
             </PopoverTrigger>
           </TooltipTrigger>
@@ -67,7 +67,7 @@ export function ArchivedThreadsPopover({
           sideOffset={6}
           className="w-80 gap-0 rounded-2xl p-1.5"
         >
-          <ul className="flex flex-col gap-0.5">
+          <ul className="flex max-h-[60vh] flex-col gap-0.5 overflow-y-auto">
             {archived.map((t) => (
               <li key={t.id}>
                 <button

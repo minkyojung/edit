@@ -21,6 +21,7 @@ import {
   type OrganizeRequest,
 } from '@/state/pendingOrganizeStore'
 import { ThreadPicker } from '@/chat/ThreadPicker'
+import { ArchivedThreadsPopover } from '@/chat/ArchivedThreadsPopover'
 import { notify } from '@/lib/notify'
 import {
   IconArrowsDiagonal,
@@ -131,12 +132,14 @@ function RightPanelHeader({
 
   return (
     <div
-      className="flex items-center gap-0.5 bg-transparent px-1.5"
+      // Horizontal inset = the vertical centering gap ((header-h − button
+      // 2rem) / 2), derived from the same --header-h, so the icon buttons sit
+      // equidistant from the top and the side — a balanced corner.
+      className="flex items-center gap-0.5 bg-transparent px-[calc((var(--header-h)_-_2rem)/2)]"
       style={{ height: 'var(--header-h)' }}
     >
       <ThreadPicker
         active={threads.active}
-        archived={threads.archived}
         activeId={activeId}
         onSelect={(id) => {
           setActiveId(id)
@@ -154,36 +157,44 @@ function RightPanelHeader({
           // Active thread reconciles in useActiveThread when active list shifts.
         }}
         onRename={threads.renameThread}
-        onRestore={(id) => {
-          const r = threads.restoreThread(id)
-          if (r.ok) setActiveId(id)
-          return r
-        }}
-        onRestoreLimitReached={() => {
-          notify.threadLimitReached()
-        }}
       />
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={toggleMaximized}
-            className="ml-auto cursor-pointer text-sidebar-foreground/60 transition-colors hover:text-sidebar-foreground"
-            aria-label={maximized ? 'Restore panel size' : 'Maximize panel'}
-            aria-pressed={maximized}
-          >
-            {maximized ? (
-              <IconArrowsDiagonalMinimize2 size={16} />
-            ) : (
-              <IconArrowsDiagonal size={16} />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          {maximized ? 'Restore' : 'Maximize'}
-        </TooltipContent>
-      </Tooltip>
+      {/* Panel controls grouped on the right; the title pill sits content-width
+          on the left. */}
+      <div className="ml-auto flex items-center gap-0.5">
+        <ArchivedThreadsPopover
+          archived={threads.archived}
+          activeCount={threads.active.length}
+          onRestore={(id) => {
+            const r = threads.restoreThread(id)
+            if (r.ok) setActiveId(id)
+            return r
+          }}
+          onLimitReached={() => {
+            notify.threadLimitReached()
+          }}
+        />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={toggleMaximized}
+              className="cursor-pointer text-sidebar-foreground/60 transition-colors hover:text-sidebar-foreground"
+              aria-label={maximized ? 'Restore panel size' : 'Maximize panel'}
+              aria-pressed={maximized}
+            >
+              {maximized ? (
+                <IconArrowsDiagonalMinimize2 size={16} />
+              ) : (
+                <IconArrowsDiagonal size={16} />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            {maximized ? 'Restore' : 'Maximize'}
+          </TooltipContent>
+        </Tooltip>
+      </div>
     </div>
   )
 }
