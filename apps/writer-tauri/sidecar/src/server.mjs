@@ -1007,9 +1007,20 @@ export class Server {
       // arrive, and `for await` blocks forever. We watch wall-clock gap
       // between events and abort if it exceeds IDLE_MS — that kills the
       // subprocess and surfaces the failure through the normal error path.
-      // 45s is comfortably above realistic reasoning pauses but well below
-      // the OS-level TCP keepalive window.
-      const IDLE_MS = 45_000
+      //
+      // This is a *snappier* safety net layered on top of the Anthropic
+      // client's own 10-minute request timeout (DEFAULT_TIMEOUT=600000), so it
+      // must sit comfortably ABOVE realistic model pauses and well BELOW that
+      // backstop. The first content token of a large tool input (e.g.
+      // propose_write of a full manuscript chapter) can lag the rest of the
+      // stream — measured gaps reached ~50s before the model starts emitting
+      // the `content` field. 45s sat *inside* that window and was killing live
+      // turns mid-generation (surfacing as a spurious "red line"). 180s clears
+      // the observed worst case with generous margin (this user writes long
+      // files / high effort, whose pre-content gap can run longer) while still
+      // erroring 3× faster than the SDK's backstop; the user can cancel sooner
+      // manually either way.
+      const IDLE_MS = 180_000
       let idleTimedOut = false
       let lastEventAt = Date.now()
       const watchdog = setInterval(() => {
