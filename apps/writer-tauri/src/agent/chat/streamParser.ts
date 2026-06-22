@@ -146,6 +146,13 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
             blockIndexToPartId.set(idx, partId)
             toolInputFragments.set(partId, '')
             upsertPart(part)
+          } else if (block.type === 'redacted_thinking') {
+            // The model produced reasoning that the safety layer encrypted —
+            // its `data` is opaque, so there is nothing readable to show.
+            // We INTENTIONALLY skip it (no part registered): a "[redacted]"
+            // placeholder would be pure noise. This branch exists so the drop
+            // is deliberate, not a silently-unhandled block type. (No deltas
+            // follow a redacted_thinking block.)
           }
           return
         }
@@ -192,6 +199,21 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
           }
           return
         }
+        return
+      }
+
+      // 1b) Context compaction — the SDK summarized earlier turns to stay
+      // under the window. Drop a divider part into the timeline at this point.
+      if (ev?.type === 'system' && ev.subtype === 'compact_boundary') {
+        const m = ev.compact_metadata ?? {}
+        upsertPart({
+          id: crypto.randomUUID(),
+          ts: Date.now(),
+          type: 'compact',
+          trigger: m.trigger === 'manual' ? 'manual' : 'auto',
+          preTokens: typeof m.pre_tokens === 'number' ? m.pre_tokens : undefined,
+          postTokens: typeof m.post_tokens === 'number' ? m.post_tokens : undefined,
+        })
         return
       }
 

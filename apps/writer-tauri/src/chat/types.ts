@@ -285,6 +285,7 @@ export type MessagePart =
   | ReasoningPart
   | ToolPart
   | StepStartPart
+  | CompactPart
 
 export interface TextPart {
   id: string
@@ -337,6 +338,18 @@ export interface StepStartPart {
   id: string
   ts: number
   type: 'step-start'
+}
+
+/** A context-compaction boundary (`compact_boundary`): the SDK summarized the
+ * earlier conversation to stay under the window. Rendered as a thin transcript
+ * divider so the user knows older turns were condensed. */
+export interface CompactPart {
+  id: string
+  ts: number
+  type: 'compact'
+  trigger: 'manual' | 'auto'
+  preTokens?: number
+  postTokens?: number
 }
 
 export type Attachment =

@@ -6,6 +6,7 @@ import { ThinkingPill } from '@/chat/parts/ReasoningPart'
 import { ProcessGroup } from '@/chat/parts/ProcessGroup'
 import { QuestionActivity } from '@/chat/parts/QuestionActivity'
 import { TodoActivity } from '@/chat/parts/TodoActivity'
+import { CompactDivider } from '@/chat/parts/CompactDivider'
 import { isProposeEditTool } from '@/chat/parts/proposeChangeTool'
 import { InlineSuggestion } from '@/chat/suggestions/InlineSuggestion'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -37,6 +38,7 @@ export function PartList({
   // land in / leave the store.
   const changesById = usePendingChangesStore((s) => s.byId)
 
+  const compactNodes: ReactNode[] = []
   const processRows: ReactNode[] = []
   const textNodes: ReactNode[] = []
   const editParts: ToolPartType[] = []
@@ -95,6 +97,10 @@ export function PartList({
           textNodes.push(<TextPart key={part.id} part={part} isStreaming={isStreaming} />)
         }
         break
+      case 'compact':
+        flushReasoning()
+        compactNodes.push(<CompactDivider key={part.id} part={part} />)
+        break
       case 'step-start':
         break
     }
@@ -118,6 +124,7 @@ export function PartList({
 
   return (
     <>
+      {compactNodes}
       {latestTodo && <TodoActivity part={latestTodo} />}
       {processRows.length > 0 && (
         <ProcessGroup summary={summarizeProcess(toolCount, messageCount)}>

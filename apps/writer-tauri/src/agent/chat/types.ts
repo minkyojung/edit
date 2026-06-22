@@ -177,6 +177,14 @@ export interface ChatEvent {
   runId: string
   event: {
     type?: string
+    // system messages carry a subtype (e.g. 'compact_boundary')
+    subtype?: string
+    // compact_boundary — the SDK summarized earlier turns to fit the window
+    compact_metadata?: {
+      trigger?: 'manual' | 'auto'
+      pre_tokens?: number
+      post_tokens?: number
+    }
     // assistant / user — message.content is an array of content blocks
     message?: {
       content?: Array<{
