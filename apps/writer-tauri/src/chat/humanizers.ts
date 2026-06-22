@@ -62,8 +62,9 @@ function humanizeEditDocument(input: unknown): HumanizedToolCall {
 }
 
 /** Pull plain text out of a tool result — a raw string, or the SDK's
- * `[{type:'text', text}]` content-block array — so we can count lines. */
-function readOutputText(output: unknown): string | null {
+ * `[{type:'text', text}]` content-block array — so we can count lines or
+ * render the read content. */
+export function readOutputText(output: unknown): string | null {
   if (typeof output === 'string') return output
   if (Array.isArray(output)) {
     const joined = output
@@ -153,8 +154,28 @@ function humanizeEditVisualization(): HumanizedToolCall {
   return { label: 'Updating the visualization' }
 }
 
+/** Our write-side MCP relay tools (propose_edit / write / multi_edit). The
+ * model's intent is an edit proposal; the file rides in a chip and the label
+ * is just the verb — keyed by short name (humanizeToolCall strips the
+ * mcp__writer-relay__ prefix before lookup). Registering these stops the
+ * fallback "Using propose_edit" string from leaking into the activity line. */
+function humanizeProposeEdit(input: unknown): HumanizedToolCall {
+  const i = (input ?? {}) as { file_path?: string }
+  const name = basename(i.file_path)
+  return name ? { label: 'Edit', chips: [{ kind: 'file', name }] } : { label: 'Edit' }
+}
+
+function humanizeProposeWrite(input: unknown): HumanizedToolCall {
+  const i = (input ?? {}) as { file_path?: string }
+  const name = basename(i.file_path)
+  return name ? { label: 'Write', chips: [{ kind: 'file', name }] } : { label: 'Write' }
+}
+
 const humanizers: Record<string, Humanizer> = {
   [EDIT_DOCUMENT_TOOL]: humanizeEditDocument,
+  propose_edit: humanizeProposeEdit,
+  propose_write: humanizeProposeWrite,
+  propose_multi_edit: humanizeProposeEdit,
   Read: humanizeRead,
   Edit: humanizeEdit,
   Write: humanizeWrite,

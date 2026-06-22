@@ -6,6 +6,7 @@ import { ThinkingPill } from '@/chat/parts/ReasoningPart'
 import { ProcessGroup } from '@/chat/parts/ProcessGroup'
 import { isProposeEditTool } from '@/chat/parts/proposeChangeTool'
 import { InlineSuggestion } from '@/chat/suggestions/InlineSuggestion'
+import { usePendingChangesStore } from '@/state/pendingChangesStore'
 
 /** Walks an assistant turn's timeline and reshapes it for rendering:
  *  - reasoning + non-edit tool calls form the turn's "process". They render as
@@ -15,9 +16,9 @@ import { InlineSuggestion } from '@/chat/suggestions/InlineSuggestion'
  *    (Anthropic re-opens the thinking block between tool rounds).
  *  - text parts render below the group as the answer body — the white primary
  *    content, the focus of the turn.
- *  - edit-tool parts (propose_edit / write / multi_edit) render as inline
- *    suggestion cards at the very end, kept OUT of the collapsed group because
- *    they carry interactive Keep / Reject affordances the user must see.
+ *  - edit-tool parts (propose_edit / write / multi_edit) render as expanded
+ *    edit rows (ActivityRow header + diff) at the very end, kept OUT of the
+ *    collapsed group so the proposed change stays visible for review.
  * step-start parts are no-ops (sidecar never emits them today). */
 export function PartList({
   parts,
@@ -30,6 +31,10 @@ export function PartList({
    * the approval card, so the (often redundant) answer text isn't shown twice. */
   hideText?: boolean
 }) {
+  // Subscribed so the duplicate-shell filter below re-evaluates as proposals
+  // land in / leave the store.
+  const changesById = usePendingChangesStore((s) => s.byId)
+
   const processRows: ReactNode[] = []
   const textNodes: ReactNode[] = []
   const editParts: ToolPartType[] = []
@@ -84,6 +89,18 @@ export function PartList({
   }
   flushReasoning()
 
+  // De-dupe edit rows. A turn that creates a note AND edits it fires two
+  // proposals for the same file; only one resolves to a live store change
+  // (the other is dropped → a non-actionable read-only "shell"). When a live
+  // edit exists for a file, hide the shells for that same file so the user
+  // sees one actionable row instead of two identical-looking ones. A lone
+  // shell (no live sibling) still renders so past edits stay visible.
+  const isLiveEdit = (p: ToolPartType) => !!(p.pendingId && changesById[p.pendingId])
+  const liveFileKeys = new Set(editParts.filter(isLiveEdit).map(editFileKey))
+  const visibleEdits = editParts.filter(
+    (p) => isLiveEdit(p) || !liveFileKeys.has(editFileKey(p)),
+  )
+
   return (
     <>
       {processRows.length > 0 && (
@@ -92,11 +109,21 @@ export function PartList({
         </ProcessGroup>
       )}
       {textNodes}
-      {editParts.map((part) => (
+      {visibleEdits.map((part) => (
         <InlineSuggestion key={part.id} part={part} />
       ))}
     </>
   )
+}
+
+/** Group key for de-duping edit rows: the target file's name (both the live
+ * write and the dropped edit carry the same file_path). Falls back to the
+ * part id so a path-less part is never collapsed into another. */
+function editFileKey(part: ToolPartType): string {
+  const fp = (part.input as { file_path?: string } | null | undefined)?.file_path
+  if (!fp) return part.id
+  const idx = Math.max(fp.lastIndexOf('/'), fp.lastIndexOf('\\'))
+  return idx >= 0 ? fp.slice(idx + 1) : fp
 }
 
 /** "N tool calls, M messages" — counts only what the collapsed group hides

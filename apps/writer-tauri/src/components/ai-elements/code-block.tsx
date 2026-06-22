@@ -112,6 +112,9 @@ type CodeBlockProps = HTMLAttributes<HTMLDivElement> & {
   code: string;
   language: BundledLanguage;
   showLineNumbers?: boolean;
+  /** First line's number when showLineNumbers is on (default 1). Lets a
+   * partial file read display its real file line numbers. */
+  startLineNumber?: number;
 };
 
 interface TokenizedCode {
@@ -249,10 +252,12 @@ const CodeBlockBody = memo(
   ({
     tokenized,
     showLineNumbers,
+    startLineNumber = 1,
     className,
   }: {
     tokenized: TokenizedCode;
     showLineNumbers: boolean;
+    startLineNumber?: number;
     className?: string;
   }) => {
     const preStyle = useMemo(
@@ -281,6 +286,13 @@ const CodeBlockBody = memo(
             "font-mono text-sm",
             showLineNumbers && "[counter-increment:line_0] [counter-reset:line]"
           )}
+          // Inline counter-reset wins over the class so numbering can start at
+          // the read's real first line rather than 1.
+          style={
+            showLineNumbers
+              ? { counterReset: `line ${startLineNumber - 1}` }
+              : undefined
+          }
         >
           {keyedLines.map((keyedLine) => (
             <LineSpan
@@ -296,6 +308,7 @@ const CodeBlockBody = memo(
   (prevProps, nextProps) =>
     prevProps.tokenized === nextProps.tokenized &&
     prevProps.showLineNumbers === nextProps.showLineNumbers &&
+    prevProps.startLineNumber === nextProps.startLineNumber &&
     prevProps.className === nextProps.className
 );
 
@@ -375,10 +388,12 @@ export const CodeBlockContent = ({
   code,
   language,
   showLineNumbers = false,
+  startLineNumber = 1,
 }: {
   code: string;
   language: BundledLanguage;
   showLineNumbers?: boolean;
+  startLineNumber?: number;
 }) => {
   // Memoized raw tokens for immediate display
   const rawTokens = useMemo(() => createRawTokens(code), [code]);
@@ -420,7 +435,11 @@ export const CodeBlockContent = ({
 
   return (
     <div className="relative overflow-auto">
-      <CodeBlockBody showLineNumbers={showLineNumbers} tokenized={tokenized} />
+      <CodeBlockBody
+        showLineNumbers={showLineNumbers}
+        startLineNumber={startLineNumber}
+        tokenized={tokenized}
+      />
     </div>
   );
 };
@@ -429,6 +448,7 @@ export const CodeBlock = ({
   code,
   language,
   showLineNumbers = false,
+  startLineNumber = 1,
   className,
   children,
   ...props
@@ -443,6 +463,7 @@ export const CodeBlock = ({
           code={code}
           language={language}
           showLineNumbers={showLineNumbers}
+          startLineNumber={startLineNumber}
         />
       </CodeBlockContainer>
     </CodeBlockContext.Provider>

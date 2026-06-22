@@ -15,6 +15,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { markSlugDirty } from '@/lib/docFileSync'
 import { looseReplace } from '@/lib/looseMatch'
+import { splitFrontmatter } from '@/lib/frontmatter'
 import { appendToBackground } from '@/profile/markers'
 
 
@@ -195,9 +196,33 @@ export async function applyReplaceInWikiPage(
       // space) still resolves instead of failing the edit — the failure
       // mode that made `propose_edit` get disabled in the first place.
       const replaced = looseReplace(oldMd, before, after)
-      if (replaced === null) return oldMd
-      foundMatch = true
-      return replaced
+      if (replaced !== null) {
+        foundMatch = true
+        return replaced
+      }
+      // Frontmatter fallback. The model reads the WHOLE file (frontmatter +
+      // body) via Read, but `oldMd` here is body-only — the handle strips
+      // frontmatter (handlesSlice). So a `before` that quotes the file's
+      // frontmatter (commonly the model wrapping new content as
+      // `---…--- + body`) never matches. Strip the frontmatter off both
+      // sides and retry against the body; if nothing's left to match, the
+      // net intent is "add this body", so append it.
+      const beforeBody = splitFrontmatter(before).body
+      if (beforeBody !== before) {
+        const afterBody = splitFrontmatter(after).body
+        if (beforeBody.trim().length === 0) {
+          const head = oldMd.trimEnd()
+          const sep = head.length > 0 ? '\n\n' : ''
+          foundMatch = true
+          return `${head}${sep}${afterBody.trim()}\n`
+        }
+        const r2 = looseReplace(oldMd, beforeBody, afterBody)
+        if (r2 !== null) {
+          foundMatch = true
+          return r2
+        }
+      }
+      return oldMd
     },
     changeId,
   )

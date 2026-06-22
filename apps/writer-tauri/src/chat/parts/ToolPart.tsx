@@ -1,10 +1,7 @@
 import { useMemo } from 'react'
 import {
   IconAlertTriangle,
-  IconBrandReact,
   IconExternalLink,
-  IconFile,
-  IconFileCode,
   IconFileText,
   IconLoader2,
   IconSearch,
@@ -16,8 +13,9 @@ import type { Icon } from '@tabler/icons-react'
 import type { BundledLanguage } from 'shiki'
 import type { ToolPart as ToolPartType } from '@/chat/types'
 import { ActivityRow } from '@/chat/parts/ActivityRow'
+import { FileChip } from '@/chat/parts/FileChip'
 import { CodeBlock } from '@/components/ai-elements/code-block'
-import { humanizeToolCall } from '@/chat/humanizers'
+import { humanizeToolCall, readOutputText } from '@/chat/humanizers'
 import { useDocsStore } from '@/state/docsStore'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { pathToKnownSlug } from '@/lib/docPaths'
@@ -39,19 +37,39 @@ export function ToolPart({ part }: { part: ToolPartType }) {
   const { label, chips } = humanizeToolCall(part.toolName, part.input, part.output)
   const Icon = iconForTool(part.toolName)
 
-  // Detail is just the call's input as a syntax-highlighted code block — no
-  // "input" / "output" labels, and the (often huge) success output is never
-  // dumped. Errors are the exception so a failed call still says why.
-  const inputCode = formatInput(part.input)
+  // Detail is a single syntax-highlighted code block — no "input" / "output"
+  // labels. For Read we show the actual lines read, with their real file line
+  // numbers in the gutter (the point of the call), highlighted by the file's
+  // language; for every other tool we show the input params and never dump the
+  // (often huge) success output — a web search would flood the turn, and the
+  // answer already carries the result. Errors are always surfaced.
   const isError = part.state === 'output-error'
+  const filePath = (part.input as { file_path?: string } | null | undefined)?.file_path ?? ''
+  const read = part.toolName === 'Read' && !isError ? parseReadContent(readOutputText(part.output)) : null
+  const inputCode = formatInput(part.input)
+  // Tighten the shared CodeBlock's generous p-4 so the numbered content fills
+  // the box. (Only the <pre> padding — overriding the line-number gutter would
+  // also hit every token span's ::before and wreck inline spacing.)
+  const codeClass = 'max-h-80 [&_pre]:px-3 [&_pre]:py-2.5'
   const detail =
-    inputCode || isError ? (
+    read?.code || inputCode || isError ? (
       <>
-        {inputCode && <CodeBlock code={inputCode} language="json" />}
+        {read?.code ? (
+          <CodeBlock
+            code={read.code}
+            language={languageForPath(filePath)}
+            showLineNumbers
+            startLineNumber={read.startLine}
+            className={codeClass}
+          />
+        ) : (
+          inputCode && <CodeBlock code={inputCode} language="json" className={codeClass} />
+        )}
         {isError && (
           <CodeBlock
             code={String(part.errorText ?? part.output ?? '')}
             language={'text' as BundledLanguage}
+            className={codeClass}
           />
         )}
       </>
@@ -107,44 +125,43 @@ export function ToolPart({ part }: { part: ToolPartType }) {
   )
 }
 
-/** A file reference rendered as a bordered chip — a file-type icon + the
- * basename — shown next to the tool label (e.g. `Read 563 lines [⚛ App.tsx]`).
- * The name truncates so a long file name never blows out the row. */
-function FileChip({ name }: { name: string }) {
-  const Icon = iconForFile(name)
-  return (
-    <span className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[13px] text-muted-foreground">
-      <Icon size={13} className="shrink-0" />
-      <span className="truncate">{name}</span>
-    </span>
-  )
+/** Map a file path's extension to a shiki language for the read-content block.
+ * Unknown extensions fall back to plain text (shiki highlights nothing). */
+function languageForPath(path: string): BundledLanguage {
+  const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase()
+  const map: Record<string, string> = {
+    ts: 'ts', tsx: 'tsx', js: 'js', jsx: 'jsx', mjs: 'js', cjs: 'js',
+    json: 'json', md: 'markdown', mdx: 'markdown', txt: 'text',
+    py: 'python', rs: 'rust', go: 'go', rb: 'ruby', java: 'java',
+    sh: 'bash', bash: 'bash', zsh: 'bash', css: 'css', scss: 'scss',
+    html: 'html', yaml: 'yaml', yml: 'yaml', toml: 'toml', sql: 'sql',
+  }
+  return (map[ext] ?? 'text') as BundledLanguage
 }
 
-/** Map a file name's extension to a type icon for its chip. */
-function iconForFile(name: string): Icon {
-  const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
-  switch (ext) {
-    case 'tsx':
-    case 'jsx':
-      return IconBrandReact
-    case 'ts':
-    case 'js':
-    case 'mjs':
-    case 'cjs':
-    case 'json':
-    case 'css':
-    case 'html':
-    case 'py':
-    case 'rs':
-    case 'go':
-      return IconFileCode
-    case 'md':
-    case 'mdx':
-    case 'txt':
-      return IconFileText
-    default:
-      return IconFile
+/** The SDK's Read returns content in `cat -n` form: each line is
+ * `   <n>\t<content>`. Parse out the real first line number and the bare
+ * content so we can render a proper line-number gutter starting at <n>.
+ * Only treated as guttered when EVERY non-empty line carries it (so real
+ * content that merely starts with a number is left untouched). */
+function parseReadContent(text: string | null): { code: string; startLine: number } | null {
+  if (!text) return null
+  const lines = text.split('\n')
+  const nonEmpty = lines.filter((l) => l.length > 0)
+  const gutter = /^\s*(\d+)\t(.*)$/
+  if (nonEmpty.length === 0 || !nonEmpty.every((l) => /^\s*\d+\t/.test(l))) {
+    return { code: text, startLine: 1 }
   }
+  let startLine: number | null = null
+  const code = lines
+    .map((l) => {
+      const m = gutter.exec(l)
+      if (!m) return l
+      if (startLine === null) startLine = Number(m[1])
+      return m[2]
+    })
+    .join('\n')
+  return { code, startLine: startLine ?? 1 }
 }
 
 /** Format a tool's input for the code block — pretty JSON for objects, the raw

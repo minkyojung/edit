@@ -51,34 +51,55 @@ export function ActivityRow({
       disabled={!hasDetail}
       className="group/row my-1 text-[15px]"
     >
-      <CollapsibleTrigger
+      {/* The whole row toggles, but `trailing` may carry real buttons (jump /
+          open), so it must sit OUTSIDE the trigger <button> — a button nested
+          in a button is invalid HTML and breaks React's event handling. The
+          trigger is the label area + a separate chevron button; trailing is a
+          sibling between them. */}
+      <div
         className={cn(
-          '-mx-2 flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-muted-foreground',
-          hasDetail && 'cursor-pointer hover:bg-muted/50',
+          '-mx-2 flex items-center gap-2 rounded-md px-2 py-1 text-muted-foreground',
+          hasDetail && 'hover:bg-muted/50',
         )}
       >
-        <span className="shrink-0">{icon}</span>
-        {/* With a preview or accessory the label keeps its natural width (those
-            carry the variable-length content); a bare tool row lets the label
-            itself flex and truncate so a long name ellipses, not overflows. */}
-        <span className={cn('truncate', preview || accessory ? 'shrink-0' : 'min-w-0 flex-1')}>
-          {label}
-        </span>
-        {accessory && (
-          <span className="flex min-w-0 shrink items-center gap-1.5">{accessory}</span>
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              'flex min-w-0 flex-1 items-center gap-2 text-left',
+              hasDetail ? 'cursor-pointer' : 'cursor-default',
+            )}
+          >
+            <span className="shrink-0">{icon}</span>
+            {/* With a preview or accessory the label keeps its natural width
+                (those carry the variable-length content); a bare tool row lets
+                the label itself flex and truncate so a long name ellipses. */}
+            <span className={cn('truncate', preview || accessory ? 'shrink-0' : 'min-w-0 flex-1')}>
+              {label}
+            </span>
+            {accessory && (
+              <span className="flex min-w-0 shrink items-center gap-1.5">{accessory}</span>
+            )}
+            {preview && (
+              <span className="min-w-0 flex-1 truncate text-muted-foreground/50 group-data-[state=open]/row:hidden">
+                {preview}
+              </span>
+            )}
+          </button>
+        </CollapsibleTrigger>
+        {trailing && <span className="flex shrink-0 items-center gap-2">{trailing}</span>}
+        {hasDetail && (
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              aria-label="Toggle details"
+              className="shrink-0 cursor-pointer text-muted-foreground"
+            >
+              <ChevronDownIcon className="size-3.5 transition-transform group-data-[state=open]/row:rotate-180" />
+            </button>
+          </CollapsibleTrigger>
         )}
-        {preview && (
-          <span className="min-w-0 flex-1 truncate text-muted-foreground/50 group-data-[state=open]/row:hidden">
-            {preview}
-          </span>
-        )}
-        <span className="ml-auto flex shrink-0 items-center gap-2 pl-2">
-          {trailing}
-          {hasDetail && (
-            <ChevronDownIcon className="size-3.5 transition-transform group-data-[state=open]/row:rotate-180" />
-          )}
-        </span>
-      </CollapsibleTrigger>
+      </div>
       {hasDetail && (
         <CollapsibleContent className="space-y-2 pt-1 pb-1 text-muted-foreground data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=open]:animate-in">
           {detail}
