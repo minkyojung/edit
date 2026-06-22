@@ -332,6 +332,13 @@ export interface ToolPart {
    * selection). Lets the question render its Q&A inline as an activity row
    * instead of a separate synthetic user bubble. */
   answer?: string
+  /** For the Task tool: live subagent progress from `task_progress` system
+   * messages (the subagent runs out-of-band; this is the heartbeat). */
+  task?: {
+    toolUses?: number
+    totalTokens?: number
+    lastTool?: string
+  }
 }
 
 export interface StepStartPart {

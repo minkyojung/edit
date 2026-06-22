@@ -217,6 +217,32 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
         return
       }
 
+      // 1c) Subagent heartbeat — task_started / task_progress carry the running
+      // subagent's tool/token counts. Stamp them onto the parent Task tool part
+      // (matched by tool_use_id) so its row shows live progress.
+      if (
+        ev?.type === 'system' &&
+        (ev.subtype === 'task_progress' || ev.subtype === 'task_started')
+      ) {
+        const tid = ev.tool_use_id
+        const part = tid ? findToolPartByCallId(tid) : undefined
+        if (part) {
+          const u = ev.usage ?? {}
+          upsertPart({
+            ...part,
+            task: {
+              toolUses:
+                typeof u.tool_uses === 'number' ? u.tool_uses : part.task?.toolUses,
+              totalTokens:
+                typeof u.total_tokens === 'number' ? u.total_tokens : part.task?.totalTokens,
+              lastTool:
+                typeof ev.last_tool_name === 'string' ? ev.last_tool_name : part.task?.lastTool,
+            },
+          })
+        }
+        return
+      }
+
       // 2) Final assistant message — already covered by stream_event.
       if (ev?.type === 'assistant') return
 

@@ -177,7 +177,7 @@ export interface ChatEvent {
   runId: string
   event: {
     type?: string
-    // system messages carry a subtype (e.g. 'compact_boundary')
+    // system messages carry a subtype (e.g. 'compact_boundary', 'task_progress')
     subtype?: string
     // compact_boundary — the SDK summarized earlier turns to fit the window
     compact_metadata?: {
@@ -185,6 +185,18 @@ export interface ChatEvent {
       pre_tokens?: number
       post_tokens?: number
     }
+    // task_started / task_progress — subagent heartbeat. `tool_use_id` links
+    // back to the Task tool_use part this progress belongs to.
+    tool_use_id?: string
+    description?: string
+    last_tool_name?: string
+    usage?: {
+      total_tokens?: number
+      tool_uses?: number
+      duration_ms?: number
+    }
+    // subagent events carry the parent Task's tool_use id (null on main thread)
+    parent_tool_use_id?: string | null
     // assistant / user — message.content is an array of content blocks
     message?: {
       content?: Array<{

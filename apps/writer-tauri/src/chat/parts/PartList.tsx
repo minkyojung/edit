@@ -6,6 +6,7 @@ import { ThinkingPill } from '@/chat/parts/ReasoningPart'
 import { ProcessGroup } from '@/chat/parts/ProcessGroup'
 import { QuestionActivity } from '@/chat/parts/QuestionActivity'
 import { TodoActivity } from '@/chat/parts/TodoActivity'
+import { TaskActivity } from '@/chat/parts/TaskActivity'
 import { CompactDivider } from '@/chat/parts/CompactDivider'
 import { isProposeEditTool } from '@/chat/parts/proposeChangeTool'
 import { InlineSuggestion } from '@/chat/suggestions/InlineSuggestion'
@@ -76,7 +77,14 @@ export function PartList({
         break
       case 'tool':
         flushReasoning()
-        if (part.toolName === 'TodoWrite') {
+        if (part.toolName === 'Agent' || part.toolName === 'Task') {
+          // Delegated subagent — it's a tool the model used, so it lives in the
+          // process group with the other tool calls (just rendered as its own
+          // Agent row). The SDK names this tool 'Agent'; 'Task' is a defensive
+          // alias.
+          processRows.push(<TaskActivity key={part.id} part={part} />)
+          toolCount++
+        } else if (part.toolName === 'TodoWrite') {
           // The model re-issues the whole list each update; keep them all here
           // and render only the latest below (one evolving checklist).
           todoParts.push(part)
@@ -119,13 +127,18 @@ export function PartList({
     (p) => isLiveEdit(p) || !liveFileKeys.has(editFileKey(p)),
   )
 
-  // Only the latest TodoWrite — the model updates the same list in place.
+  // Only the latest TodoWrite (the model updates the same list in place),
+  // rendered at the top of the process group — the plan is part of the model's
+  // process, so it lives in the dropdown with the rest.
   const latestTodo = todoParts.at(-1)
+  if (latestTodo) {
+    processRows.unshift(<TodoActivity key={latestTodo.id} part={latestTodo} />)
+    toolCount++
+  }
 
   return (
     <>
       {compactNodes}
-      {latestTodo && <TodoActivity part={latestTodo} />}
       {processRows.length > 0 && (
         <ProcessGroup summary={summarizeProcess(toolCount, messageCount)}>
           {processRows}

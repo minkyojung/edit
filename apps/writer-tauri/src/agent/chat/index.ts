@@ -477,7 +477,17 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // `builtinTools`.
         builtinTools:
           builtinTools ??
-          ['Read', 'Glob', 'Grep', 'Bash', 'WebSearch', 'WebFetch', 'AskUserQuestion', 'TodoWrite'],
+          [
+            'Read',
+            'Glob',
+            'Grep',
+            'Bash',
+            'WebSearch',
+            'WebFetch',
+            'AskUserQuestion',
+            'TodoWrite',
+            'Task',
+          ],
         // Forwarded so sidecar's read_page / search_wiki handlers
         // can resolve vault-relative paths against the user's chosen
         // folder. Undefined when no vault selected — the sidecar
