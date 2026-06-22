@@ -58,9 +58,9 @@ export function FileToWikiButton({
       className="inline-flex items-center rounded p-0.5 text-muted-foreground/70 transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted-foreground/70"
     >
       {busy ? (
-        <IconLoader2 size={13} className="animate-spin" />
+        <IconLoader2 size={14} className="animate-spin" />
       ) : (
-        <IconBook2 size={13} />
+        <IconBook2 size={14} />
       )}
     </button>
   )

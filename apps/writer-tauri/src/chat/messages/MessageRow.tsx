@@ -1,8 +1,8 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import type { ChatTurn } from '@/chat/types'
 import { formatDuration } from '@/chat/utils/formatDuration'
 import { describeStopReason } from '@/chat/utils/errorMessage'
-import { ActivityStatus, activityLabel } from '@/chat/parts/ActivityStatus'
+import { ChatRunningIcon } from '@/components/icons/ChatRunningIcon'
 import { PartList } from '@/chat/parts/PartList'
 import { ThinkingPanel } from '@/chat/parts/ReasoningPart'
 import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
@@ -54,32 +54,16 @@ export const MessageRow = React.memo(function MessageRow({
   const isStopped = turn.status === 'stopped'
   const isError = turn.status === 'error'
 
-  // The activity line stays up until the user-facing text answer starts —
-  // its label changes (Thinking… → Suggesting an edit… → …) as tools fire,
-  // but it always sits in the same slot. We suppress it when the only
-  // active label would be "Thinking…" AND the reasoning panel is already
-  // visible (which has its own Thinking… spinner) — otherwise the user
-  // sees two identical indicators stacked.
-  const hasTextAnswer = turn.parts
-    ? turn.parts.some((p) => p.type === 'text' && p.text.length > 0)
-    : hasText
-  const reasoningVisible =
-    turn.parts?.some((p) => p.type === 'reasoning' && p.text.length > 0) ?? false
-  const activityCurrentLabel = activityLabel(turn.parts)
-  const showActivity =
-    isStreaming &&
-    !hasTextAnswer &&
-    !(reasoningVisible && activityCurrentLabel === 'Thinking…')
-
   // Two render paths:
   // - Legacy turns (no `parts`): keep the original text+thinking layout.
-  // - Parts-aware turns: walk the timeline so tool calls / reasoning blocks
-  //   appear inline at the moment they happened.
+  // - Parts-aware turns (and ANY streaming turn): walk the timeline so the
+  //   process group / tool / reasoning rows appear inline as they happen. The
+  //   group's own header carries the live "working" status now, so there's no
+  //   separate activity line.
   const body = (
     <div className="text-[15px] text-foreground leading-relaxed">
-      {showActivity && <ActivityStatus parts={turn.parts} />}
-      {turn.parts && turn.parts.length > 0 ? (
-        <PartList parts={turn.parts} isStreaming={isStreaming} hideText={hideText} />
+      {(turn.parts && turn.parts.length > 0) || isStreaming ? (
+        <PartList parts={turn.parts ?? []} isStreaming={isStreaming} hideText={hideText} />
       ) : (
         <>
           {hasThinking && (
@@ -135,16 +119,41 @@ export const MessageRow = React.memo(function MessageRow({
   return (
     <>
       {body}
-      <MessageFooter
-        turn={turn}
-        durationLabel={durationLabel}
-        stopReasonLabel={stopReasonLabel}
-        canCopy={canCopy}
-        canRegenerate={canRegenerate}
-        onRegenerate={onRegenerate}
-        threadId={threadId}
-        threadTitle={threadTitle}
-      />
+      {/* While streaming, the bottom of the turn shows a live elapsed timer;
+          when it settles, that slot becomes the footer (final duration +
+          actions). */}
+      {isStreaming ? (
+        <StreamingTimer startedAt={turn.ts} />
+      ) : (
+        <MessageFooter
+          turn={turn}
+          durationLabel={durationLabel}
+          stopReasonLabel={stopReasonLabel}
+          canCopy={canCopy}
+          canRegenerate={canRegenerate}
+          onRegenerate={onRegenerate}
+          threadId={threadId}
+          threadTitle={threadTitle}
+        />
+      )}
     </>
   )
 })
+
+/** Live elapsed-time readout at the bottom of a streaming turn — ticks in
+ * tenths; once the turn settles, the MessageFooter takes this slot with the
+ * final whole-second duration + actions. */
+function StreamingTimer({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 100)
+    return () => clearInterval(id)
+  }, [])
+  const elapsed = Math.max(0, (now - startedAt) / 1000)
+  return (
+    <div className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+      <ChatRunningIcon size={14} className="shrink-0" />
+      <span className="tabular-nums text-muted-foreground/70">{elapsed.toFixed(1)}s</span>
+    </div>
+  )
+}

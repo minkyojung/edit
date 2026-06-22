@@ -44,7 +44,14 @@ export function PartList({
   const textNodes: ReactNode[] = []
   const editParts: ToolPartType[] = []
   const questionParts: ToolPartType[] = []
-  const todoParts: ToolPartType[] = []
+  // The model re-issues the whole TodoWrite list each update. Render the LATEST
+  // content at the FIRST call's timeline position (in-place update, matching
+  // Claude Code) and skip the rest.
+  const todoWriteParts = parts.filter(
+    (p): p is ToolPartType => p.type === 'tool' && p.toolName === 'TodoWrite',
+  )
+  const latestTodo = todoWriteParts.at(-1)
+  const firstTodoId = todoWriteParts[0]?.id
   let toolCount = 0
   let messageCount = 0
 
@@ -85,9 +92,11 @@ export function PartList({
           processRows.push(<TaskActivity key={part.id} part={part} />)
           toolCount++
         } else if (part.toolName === 'TodoWrite') {
-          // The model re-issues the whole list each update; keep them all here
-          // and render only the latest below (one evolving checklist).
-          todoParts.push(part)
+          // Render the latest list at the first call's spot; later updates skip.
+          if (part.id === firstTodoId && latestTodo) {
+            processRows.push(<TodoActivity key="todo" part={latestTodo} />)
+            toolCount++
+          }
         } else if (part.toolName === 'AskUserQuestion') {
           // Interactive Q&A — render visibly as its own row, not buried in the
           // collapsed process group, and don't count it as a generic tool call.
@@ -127,20 +136,14 @@ export function PartList({
     (p) => isLiveEdit(p) || !liveFileKeys.has(editFileKey(p)),
   )
 
-  // Only the latest TodoWrite (the model updates the same list in place),
-  // rendered at the top of the process group — the plan is part of the model's
-  // process, so it lives in the dropdown with the rest.
-  const latestTodo = todoParts.at(-1)
-  if (latestTodo) {
-    processRows.unshift(<TodoActivity key={latestTodo.id} part={latestTodo} />)
-    toolCount++
-  }
-
   return (
     <>
       {compactNodes}
-      {processRows.length > 0 && (
-        <ProcessGroup summary={summarizeProcess(toolCount, messageCount)}>
+      {(processRows.length > 0 || isStreaming) && (
+        <ProcessGroup
+          summary={summarizeProcess(toolCount, messageCount)}
+          isStreaming={isStreaming}
+        >
           {processRows}
         </ProcessGroup>
       )}

@@ -12,7 +12,7 @@ export function RegenerateButton({ onClick }: { onClick: () => void }) {
       title="Regenerate"
       className="inline-flex items-center rounded p-0.5 text-muted-foreground/70 transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
     >
-      <IconRefresh size={13} />
+      <IconRefresh size={14} />
     </button>
   )
 }
