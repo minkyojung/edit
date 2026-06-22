@@ -475,7 +475,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // they run freely under bypassPermissions — no canUseTool
         // gate). Plan turns drop Bash via the caller-supplied
         // `builtinTools`.
-        builtinTools: builtinTools ?? ['Read', 'Glob', 'Grep', 'Bash', 'WebSearch', 'WebFetch'],
+        builtinTools:
+          builtinTools ??
+          ['Read', 'Glob', 'Grep', 'Bash', 'WebSearch', 'WebFetch', 'AskUserQuestion'],
         // Forwarded so sidecar's read_page / search_wiki handlers
         // can resolve vault-relative paths against the user's chosen
         // folder. Undefined when no vault selected — the sidecar

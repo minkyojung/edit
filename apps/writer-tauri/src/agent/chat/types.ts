@@ -76,11 +76,14 @@ export interface RunChatArgs {
    * inline mark editing. Slash commands pass an empty list (or a kind-
    * specific list) to scope the toolset. */
   relayTools?: string[]
-  /** Permission mode forwarded to the SDK. Omit for normal edit chat
-   * (sidecar defaults to bypassPermissions). Set to `'plan'` for a
-   * read-only planning turn — the SDK blocks tool execution and the
-   * caller also drops the propose_* relays + Bash. */
-  permissionMode?: 'plan'
+  /** Permission mode forwarded to the SDK.
+   * - `'default'` — normal chat: the sidecar's canUseTool gate fires so the
+   *   model can pause on AskUserQuestion; every other tool passes through.
+   * - `'plan'` — read-only planning turn; the SDK blocks tool execution and
+   *   the caller also drops the propose_* relays + Bash.
+   * Omit only for non-chat callers (e.g. ingest) that want the sidecar's
+   * bypassPermissions default. */
+  permissionMode?: 'plan' | 'default'
   /** Built-in SDK tool names to expose. Omit for the edit default
    * (Read/Glob/Grep/Bash). Plan turns pass ['Read','Glob','Grep']. */
   builtinTools?: string[]

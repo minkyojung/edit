@@ -4,6 +4,7 @@ import { TextPart } from '@/chat/parts/TextPart'
 import { ToolPart } from '@/chat/parts/ToolPart'
 import { ThinkingPill } from '@/chat/parts/ReasoningPart'
 import { ProcessGroup } from '@/chat/parts/ProcessGroup'
+import { QuestionActivity } from '@/chat/parts/QuestionActivity'
 import { isProposeEditTool } from '@/chat/parts/proposeChangeTool'
 import { InlineSuggestion } from '@/chat/suggestions/InlineSuggestion'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -38,6 +39,7 @@ export function PartList({
   const processRows: ReactNode[] = []
   const textNodes: ReactNode[] = []
   const editParts: ToolPartType[] = []
+  const questionParts: ToolPartType[] = []
   let toolCount = 0
   let messageCount = 0
 
@@ -70,7 +72,11 @@ export function PartList({
         break
       case 'tool':
         flushReasoning()
-        if (isProposeEditTool(part.toolName)) {
+        if (part.toolName === 'AskUserQuestion') {
+          // Interactive Q&A — render visibly as its own row, not buried in the
+          // collapsed process group, and don't count it as a generic tool call.
+          questionParts.push(part)
+        } else if (isProposeEditTool(part.toolName)) {
           editParts.push(part)
         } else {
           processRows.push(<ToolPart key={part.id} part={part} />)
@@ -109,6 +115,9 @@ export function PartList({
         </ProcessGroup>
       )}
       {textNodes}
+      {questionParts.map((part) => (
+        <QuestionActivity key={part.id} part={part} />
+      ))}
       {visibleEdits.map((part) => (
         <InlineSuggestion key={part.id} part={part} />
       ))}

@@ -249,26 +249,27 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       // The SDK delivers the answer as the AskUserQuestion tool result, which
       // arrives BEFORE the model streams its continuation — so at this instant
       // the buffer holds exactly the pre-question content. We:
-      //   1. commit that as a finished assistant turn (unless it's only the
-      //      question itself, which already lived in the footer panel),
-      //   2. append the user's answer as a display-only `synthetic` bubble,
-      //   3. start a fresh streaming turn + buffer for the continuation,
-      // yielding the canonical [assistant] → [you answered] → [assistant]
-      // ordering instead of one merged block.
+      //   1. stamp the chosen answer onto the AskUserQuestion part (the SDK
+      //      output echoes only the options, not the selection),
+      //   2. commit that as a finished assistant turn — the answered question
+      //      now renders inline as a QuestionActivity row, so there is no
+      //      separate synthetic "you answered" bubble,
+      //   3. start a fresh streaming turn + buffer for the continuation.
       const rotateForAnswer = (qaText: string) => {
         flusher.cancel()
-        const parts = buffer.buildParts()
+        const parts = buffer.buildParts().map((p) =>
+          p.type === 'tool' && p.toolName === 'AskUserQuestion' && !p.answer
+            ? { ...p, answer: qaText }
+            : p,
+        )
         const content = buffer.joinByType('text')
         const thinking = buffer.joinByType('reasoning')
-        // Drop a pre-question turn that carries nothing the footer didn't
-        // already show — i.e. only the AskUserQuestion call, no prose/reasoning
-        // and no other tool work.
-        const meaningful =
-          content.trim().length > 0 ||
-          thinking.trim().length > 0 ||
-          parts.some((p) => p.type === 'tool' && p.toolName !== 'AskUserQuestion')
+        // Commit whenever there's anything to show. The answered question lives
+        // in `parts` now, so a question-only turn is worth keeping.
+        const hasContent =
+          content.trim().length > 0 || thinking.trim().length > 0 || parts.length > 0
         const toAppend: ChatTurn[] = []
-        if (meaningful) {
+        if (hasContent) {
           toAppend.push({
             id: assistantId,
             role: 'assistant',
@@ -281,14 +282,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
             stopReason: null,
           })
         }
-        toAppend.push({
-          id: crypto.randomUUID(),
-          role: 'user',
-          content: qaText,
-          ts: Date.now(),
-          status: 'done',
-          synthetic: true,
-        })
         // Swap to a fresh streaming turn + buffer BEFORE persisting, so any
         // continuation part that races in lands on the new turn (it's post-
         // answer content), never back on the committed pre-question turn.
@@ -298,9 +291,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           threadId,
           turn: { id: assistantId, role: 'assistant', content: '', ts: Date.now(), status: 'streaming' },
         })
-        // One atomic append for the committed turn + answer bubble — separate
-        // appendTurn calls would race on appendVaultFile's read-modify-write
-        // and could reorder or drop one.
         void useThreadsStore.getState().appendTurns(threadId, toAppend)
       }
 
@@ -347,7 +337,11 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
             : isQueue
               ? []
               : overrides?.relayTools,
-          permissionMode: isPlan ? 'plan' : undefined,
+          // 'default' (not bypass) so the sidecar's canUseTool gate fires and
+          // the model can pause on AskUserQuestion mid-chat; the gate passes
+          // every other tool straight through, so this matches the old bypass
+          // behaviour otherwise. (Plan turns keep 'plan'.)
+          permissionMode: isPlan ? 'plan' : 'default',
           // Interactive plan tools must be in the list or the SDK never offers
           // them: AskUserQuestion (ask before planning), ExitPlanMode (propose
           // the finished plan for approval). Write is included so the model can

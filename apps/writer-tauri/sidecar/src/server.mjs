@@ -716,48 +716,60 @@ export class Server {
       options.pathToClaudeCodeExecutable = process.env.CLAUDE_CODE_CLI_PATH
     }
 
-    // Plan mode routes through the SDK's canUseTool gate so interactive tools
-    // pause for the user. Attached ONLY for 'plan' — edit turns run under
-    // bypassPermissions, which never consults canUseTool, so this is dormant
-    // there (matching the pre-existing behaviour). Routing:
-    //   ExitPlanMode / AskUserQuestion → ask the host (chat/permission →
-    //     user → chat/decision), park until the user decides.
-    //   propose_* writes → denied while planning (read-only). On plan
-    //     approval the mode flips to bypassPermissions and this gate is no
-    //     longer consulted, so the post-approval edits run normally.
-    //   reads (built-in + read_page/search_wiki) → pass through.
+    // The SDK consults `canUseTool` under 'plan' and 'default' modes, but NOT
+    // 'bypassPermissions' (which short-circuits every check). So the gate is
+    // attached for both interactive modes:
+    //   - 'default' (normal chat): pause ONLY on AskUserQuestion so the model
+    //     can ask the user mid-turn; every other tool passes straight through
+    //     (read / web / propose_* all run as before).
+    //   - 'plan': additionally enforce read-only — deny propose_* and vault
+    //     writes until ExitPlanMode is approved (then `planApproved` opens them
+    //     and the mode flips to 'default').
+    // AskUserQuestion / ExitPlanMode park on the user via #requestDecision
+    // (chat/permission → user → chat/decision).
     if (permissionMode === 'plan') {
       // The full plan lands in ExitPlanMode's `plan` argument — the single
       // source the host renders — because PLAN_MODE_INSTRUCTIONS steers the
       // model to put it there (prose, no diff blocks) and the SDK wraps those
       // instructions with its own read-only + ExitPlanMode protocol.
-      // We deliberately do NOT set plansDirectory: it's a `Settings` member the
-      // SDK ignores when assigned on `Options`, and nothing reads the plan file
-      // from disk anyway — the host renders ExitPlanMode.input.plan, not a file.
       options.planModeInstructions = PLAN_MODE_INSTRUCTIONS
+    }
+    if (permissionMode === 'plan' || permissionMode === 'default') {
       options.canUseTool = async (toolName, input) => {
-        if (toolName === 'ExitPlanMode' || toolName === 'AskUserQuestion') {
+        // AskUserQuestion — pause for the user in BOTH plan and chat, then
+        // inject the answer. `answers` = per-question choices; `response` = a
+        // free-form reply the user typed instead ("Or reply directly…"); when
+        // set the model receives "The user responded: …" rather than the
+        // structured answers.
+        if (toolName === 'AskUserQuestion') {
           awaitingDecision++
           try {
             const decision = await this.#requestDecision(runId, toolName, input, controller)
-            if (toolName === 'AskUserQuestion') {
-              // `answers` = per-question choices; `response` = a free-form
-              // reply the user typed instead ("Or reply directly…"). The SDK
-              // forwards either; when `response` is set the model receives
-              // "The user responded: …" rather than the structured answers.
-              const updatedInput = {
-                questions: input.questions,
-                answers: decision?.answers ?? {},
-              }
-              if (decision?.response) updatedInput.response = decision.response
-              return { behavior: 'allow', updatedInput }
+            const updatedInput = {
+              questions: input.questions,
+              answers: decision?.answers ?? {},
             }
-            // ExitPlanMode: approve → leave plan mode (switch to 'default')
-            // and flip planApproved so the propose_* relays are allowed below.
-            // We use 'default' rather than 'bypassPermissions' because the
-            // latter requires launching with --dangerously-skip-permissions;
-            // 'default' keeps every post-plan tool under this same gate.
-            // Reject → feed the message back so the model revises the plan.
+            if (decision?.response) updatedInput.response = decision.response
+            return { behavior: 'allow', updatedInput }
+          } finally {
+            awaitingDecision--
+          }
+        }
+
+        // Normal chat: every other tool runs unchanged (this is the allow-all
+        // catch-all that keeps 'default' behaving like the old bypass path).
+        if (permissionMode !== 'plan') {
+          return { behavior: 'allow', updatedInput: input }
+        }
+
+        // ── Plan-mode read-only enforcement below ──
+        if (toolName === 'ExitPlanMode') {
+          awaitingDecision++
+          try {
+            const decision = await this.#requestDecision(runId, toolName, input, controller)
+            // Approve → leave plan mode (switch to 'default') and flip
+            // planApproved so the propose_* relays are allowed below. Reject →
+            // feed the message back so the model revises the plan.
             if (decision?.type === 'approve') {
               planApproved = true
               if (activeStream) {

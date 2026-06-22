@@ -171,8 +171,15 @@ function humanizeProposeWrite(input: unknown): HumanizedToolCall {
   return name ? { label: 'Write', chips: [{ kind: 'file', name }] } : { label: 'Write' }
 }
 
+function humanizeAskUserQuestion(input: unknown): HumanizedToolCall {
+  const i = (input ?? {}) as { questions?: Array<{ question?: string }> }
+  const q = i.questions?.[0]?.question
+  return { label: q ? `Asked: ${truncate(q, 48)}` : 'Asked a question' }
+}
+
 const humanizers: Record<string, Humanizer> = {
   [EDIT_DOCUMENT_TOOL]: humanizeEditDocument,
+  AskUserQuestion: humanizeAskUserQuestion,
   propose_edit: humanizeProposeEdit,
   propose_write: humanizeProposeWrite,
   propose_multi_edit: humanizeProposeEdit,

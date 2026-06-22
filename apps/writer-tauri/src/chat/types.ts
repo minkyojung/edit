@@ -326,6 +326,11 @@ export interface ToolPart {
    * inline suggestion card can render the diff and drive Keep / Reject.
    * Undefined until the tool_result lands (and for non-edit tools). */
   pendingId?: string
+  /** For AskUserQuestion: the user's chosen answer, stamped onto the part when
+   * the turn rotates (the SDK's tool output only echoes the options, not the
+   * selection). Lets the question render its Q&A inline as an activity row
+   * instead of a separate synthetic user bubble. */
+  answer?: string
 }
 
 export interface StepStartPart {
