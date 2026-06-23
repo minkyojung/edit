@@ -48,7 +48,6 @@ import {
 import '@/lib/vaultPicker'
 import '@/lib/vault'
 import '@/lib/scanVault'
-import '@/lib/caretDebug'
 import { startAutoFlush } from '@/lib/docFileSync'
 import { startVaultWatcher } from '@/lib/vaultWatcher'
 import { startPendingChangesApplier } from '@/state/pendingChangesApplier'

@@ -19,7 +19,6 @@
 
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
-import { useEditorViewStore } from '@/state/editorViewStore'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
 import { hasExternalConflict } from '@/state/externalConflictStore'
 import {
@@ -607,19 +606,14 @@ if (import.meta.env.DEV) {
   }).__replaceActive = replaceActive
   // Diagnostics for the active-doc body rewrite path. Prints whatever
   // `replaceDocBody` would see right now, so a confused test result
-  // can be traced back to "view missing" vs "slug mismatch" vs
-  // "parser missing" without sprinkling console.logs into the slice.
+  // can be traced back to "slug mismatch" vs "no handle" without
+  // sprinkling console.logs into the slice.
   const diagnose = () => {
     const slug = getActiveSlugFromHash()
-    const view = useEditorViewStore.getState().view
-    const parser = useEditorViewStore.getState().parser
     const handle = slug ? useDocsStore.getState().handles[slug] : null
     const out = {
       activeSlug: slug,
-      hasView: Boolean(view),
-      hasParser: Boolean(parser),
       hasHandle: Boolean(handle),
-      docSize: view?.state.doc.content.size ?? null,
       bodyMarkdownLength: handle?.bodyMarkdown?.length ?? null,
       bodyMarkdownPreview:
         handle?.bodyMarkdown?.slice(0, 120) ?? null,
