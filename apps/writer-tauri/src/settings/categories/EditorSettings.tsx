@@ -1,18 +1,13 @@
-// "Editor" settings panel — pick the editor engine + tune the CodeMirror
-// editor's text column width. The engine choice (cmEditorEnabled) is a
-// dogfooding gate while the ProseMirror→CodeMirror migration is evaluated and
-// takes effect on reload; the column width applies live (no reload).
+// "Editor" settings panel — tune the editor's text column width + alignment.
+// (The engine toggle was retired: CodeMirror is now the only editor.)
 
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { useSettingsStore } from '@/state/settingsStore'
 import { SettingRow } from '../SettingRow'
 
 const COLUMN_WIDTHS = [650, 680, 700, 720] as const
 
 export function EditorSettings() {
-  const cmEnabled = useSettingsStore((s) => s.cmEditorEnabled)
-  const setCmEnabled = useSettingsStore((s) => s.setCmEditorEnabled)
   const columnWidth = useSettingsStore((s) => s.editorColumnWidth)
   const setColumnWidth = useSettingsStore((s) => s.setEditorColumnWidth)
   const textAlign = useSettingsStore((s) => s.editorTextAlign)
@@ -21,19 +16,6 @@ export function EditorSettings() {
   return (
     <section>
       <h2 className="mb-2 text-base font-semibold text-foreground">Editor</h2>
-      <SettingRow
-        title="CodeMirror 에디터"
-        description="기본 에디터입니다. 끄면 레거시 Milkdown 에디터로 돌아갑니다. 변경하면 앱이 새로고침됩니다."
-      >
-        <Switch
-          checked={cmEnabled}
-          onCheckedChange={(v) => {
-            setCmEnabled(v)
-            location.reload()
-          }}
-          aria-label="Toggle CodeMirror editor"
-        />
-      </SettingRow>
       <SettingRow
         title="본문 너비"
         description="CodeMirror 에디터 본문 컬럼의 최대 너비(px). 클릭하면 바로 적용됩니다."
