@@ -8,7 +8,7 @@ export function DocStatsPanel() {
   const stats = useDocStatsStore((s) => s.stats)
   if (!stats) return null
   return (
-    <div className="pointer-events-none absolute bottom-3 right-3 z-10 select-none rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-xs tabular-nums text-muted-foreground shadow-sm backdrop-blur">
+    <div className="pointer-events-none absolute bottom-3 right-3 z-10 select-none rounded-md border border-border/60 bg-background/80 px-2.5 py-1 text-xs tabular-nums text-muted-foreground shadow-sm backdrop-blur">
       <span>{stats.words.toLocaleString()} words</span>
       <span className="mx-1.5 opacity-40">·</span>
       <span>{stats.chars.toLocaleString()} characters</span>
