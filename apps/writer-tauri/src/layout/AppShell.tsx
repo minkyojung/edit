@@ -196,7 +196,6 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
           >
             <EditorHeader
               showSidebarTrigger={!sidebarOpen}
-              editorView={editorView ?? null}
               collabStatus={collabStatus}
             />
             <div className="relative min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

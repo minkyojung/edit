@@ -3,8 +3,8 @@
 // size + creation date.
 //
 // Sources:
-// - word/char count: editorView.state.doc.textBetween (whatever's
-//   currently rendered, including unsaved keystrokes)
+// - word/char count: docStatsStore, published live by the active CM editor
+//   (whatever's currently in the doc, including unsaved keystrokes)
 // - createdAt: KnownDoc.createdAt (the `.meta.json` sidecar). Phase
 //   5b of the Yjs-removal migration moved this off the Y.Map and
 //   onto the catalog; Phase 5c retired the Y.Map fallback the
@@ -20,8 +20,6 @@
 // Read-only — no setters here. Recomputes on open via a single
 // snapshot, so dialog stays cheap while the editor keeps streaming.
 
-import { useEffect, useState } from 'react'
-import type { EditorView } from '@milkdown/kit/prose/view'
 import {
   Dialog,
   DialogContent,
@@ -31,33 +29,20 @@ import {
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useDocsStore } from '@/state/docsStore'
+import { useDocStatsStore } from '@/state/docStatsStore'
 
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
-  editorView: EditorView | null
 }
 
-interface Stats {
-  words: number
-  chars: number
-}
-
-export function DocumentInfoDialog({ open, onOpenChange, editorView }: Props) {
+export function DocumentInfoDialog({ open, onOpenChange }: Props) {
   const activeSlug = useActiveSlug()
   const label = useDocLabel(activeSlug)
   const createdAt = useDocsStore((s) =>
     activeSlug ? s.knownDocs.find((d) => d.slug === activeSlug)?.createdAt : undefined,
   )
-
-  // Snapshot stats when the dialog opens. Don't subscribe — these are
-  // a glance-and-close kind of fact, and live updates would compete
-  // with the editor for cycles for no real benefit.
-  const [stats, setStats] = useState<Stats | null>(null)
-  useEffect(() => {
-    if (!open) return
-    setStats(computeStats(editorView))
-  }, [open, editorView])
+  const stats = useDocStatsStore((s) => s.stats)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -114,12 +99,4 @@ function fmtDate(iso: string): string {
     month: 'short',
     day: 'numeric',
   })
-}
-
-function computeStats(view: EditorView | null): Stats {
-  if (!view) return { words: 0, chars: 0 }
-  const text = view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
-  const chars = text.length
-  const words = text.trim().length === 0 ? 0 : text.trim().split(/\s+/).length
-  return { words, chars }
 }

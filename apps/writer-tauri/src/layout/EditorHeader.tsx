@@ -26,7 +26,6 @@
 
 import { IconLayoutSidebarRightFilled } from '@tabler/icons-react'
 import { useMatch } from 'react-router-dom'
-import type { EditorView } from '@milkdown/kit/prose/view'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Button } from '@/components/ui/button'
 import { NavHistoryButtons } from './NavHistoryButtons'
@@ -45,7 +44,6 @@ import { FileViewerHeaderTitle } from './FileViewer'
 
 interface EditorHeaderProps {
   showSidebarTrigger: boolean
-  editorView: EditorView | null
   /** Collab status surfaced next to the actions cluster. Connected
    * docs render no label so a healthy connection reads as a clean
    * header. */
@@ -66,7 +64,6 @@ const STATUS_LABEL: Record<CollabStatus, string | null> = {
 
 export function EditorHeader({
   showSidebarTrigger,
-  editorView,
   collabStatus,
 }: EditorHeaderProps) {
   const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
@@ -128,7 +125,7 @@ export function EditorHeader({
             {statusLabel}
           </span>
         )}
-        <DocMenu editorView={editorView} />
+        <DocMenu />
         <ContextPanelTrigger />
       </div>
     </div>

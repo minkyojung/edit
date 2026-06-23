@@ -8,7 +8,6 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IconSparkles, IconLoader2 } from '@tabler/icons-react'
 import { toast } from 'sonner'
-import type { EditorView } from '@milkdown/kit/prose/view'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -30,11 +29,7 @@ import { organizeTodayAndInbox, buildOrganizeNoteRequest } from '@/agent/organiz
 import { usePendingOrganize } from '@/state/pendingOrganizeStore'
 import { DocumentInfoDialog } from './DocumentInfoDialog'
 
-interface Props {
-  editorView: EditorView | null
-}
-
-export function DocMenu({ editorView }: Props) {
+export function DocMenu() {
   const activeSlug = useActiveSlug()
   const activeDoc = useDocsStore((s) =>
     activeSlug ? s.knownDocs.find((d) => d.slug === activeSlug) : null,
@@ -150,11 +145,7 @@ export function DocMenu({ editorView }: Props) {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <DocumentInfoDialog
-        open={infoOpen}
-        onOpenChange={setInfoOpen}
-        editorView={editorView}
-      />
+      <DocumentInfoDialog open={infoOpen} onOpenChange={setInfoOpen} />
     </>
   )
 }
