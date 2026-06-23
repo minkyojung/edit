@@ -119,7 +119,11 @@ export const useSettingsStore = create<SettingsState>()(
       defaultNoteFolder: 'inbox',
       intakeModel: DEFAULT_CHAT_MODEL,
       sidebarVibrancyEnabled: true,
-      cmEditorEnabled: false,
+      // CodeMirror is the default editor; Milkdown is the legacy fallback,
+      // reachable by toggling this off in Settings → Editor (kept for rollback
+      // until the PM dependency removal lands). Existing users keep their
+      // persisted choice.
+      cmEditorEnabled: true,
       editorColumnWidth: 700,
       editorTextAlign: 'justify',
       recentProjects: [],

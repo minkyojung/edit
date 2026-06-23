@@ -22,8 +22,8 @@ export function EditorSettings() {
     <section>
       <h2 className="mb-2 text-base font-semibold text-foreground">Editor</h2>
       <SettingRow
-        title="CodeMirror 에디터 (실험)"
-        description="켜면 새 CodeMirror 에디터를 사용합니다. 변경하면 앱이 새로고침됩니다."
+        title="CodeMirror 에디터"
+        description="기본 에디터입니다. 끄면 레거시 Milkdown 에디터로 돌아갑니다. 변경하면 앱이 새로고침됩니다."
       >
         <Switch
           checked={cmEnabled}

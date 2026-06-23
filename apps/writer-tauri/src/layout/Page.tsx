@@ -27,9 +27,9 @@ interface Props {
 }
 
 // Editor engine is user-selectable (Settings → Editor, persisted as
-// `cmEditorEnabled`). Default off = Milkdown. When on, mount the experimental
-// CodeMirror editor instead. Lazy so the CM editor + its prototype modules
-// only load when the toggle is enabled — off by default, they cost nothing.
+// `cmEditorEnabled`). Default ON = CodeMirror (the daily driver); toggle off
+// to fall back to the legacy Milkdown editor. Lazy-loaded so the (large) CM
+// module is only pulled when actually used.
 const CmEditor = lazy(() => import('@/editor/CmEditor').then((m) => ({ default: m.CmEditor })))
 
 export function Page({ handle, status, onViewReady }: Props) {
