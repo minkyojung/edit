@@ -8,6 +8,7 @@ import { QuestionActivity } from '@/chat/parts/QuestionActivity'
 import { TodoActivity } from '@/chat/parts/TodoActivity'
 import { TaskActivity } from '@/chat/parts/TaskActivity'
 import { CompactDivider } from '@/chat/parts/CompactDivider'
+import { RetryRow } from '@/chat/parts/RetryRow'
 import { isProposeEditTool } from '@/chat/parts/proposeChangeTool'
 import { InlineSuggestion } from '@/chat/suggestions/InlineSuggestion'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -117,6 +118,12 @@ export function PartList({
       case 'compact':
         flushReasoning()
         compactNodes.push(<CompactDivider key={part.id} part={part} />)
+        break
+      case 'retry':
+        // Lives in the live process flow (not counted as a tool call): visible
+        // while streaming, collapses into the process summary once settled.
+        flushReasoning()
+        processRows.push(<RetryRow key={part.id} part={part} />)
         break
       case 'step-start':
         break

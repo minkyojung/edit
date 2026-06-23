@@ -8,7 +8,15 @@
 // Step 1 ships Foundations → Color only; later steps append sections.
 
 import type { ReactNode } from 'react'
-import { IconPlus } from '@tabler/icons-react'
+import { IconPlus, IconBrain, IconFileText } from '@tabler/icons-react'
+import type { ChatTurn, MessagePart } from '@/chat/types'
+import { MessageRow } from '@/chat/messages/MessageRow'
+import { ActivityRow } from '@/chat/parts/ActivityRow'
+import { CompactDivider } from '@/chat/parts/CompactDivider'
+import { RetryRow } from '@/chat/parts/RetryRow'
+import { StoppedCard } from '@/chat/messages/StoppedCard'
+import { ErrorCard } from '@/chat/messages/ErrorCard'
+import { humanizeError } from '@/chat/utils/errorMessage'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -295,6 +303,92 @@ const DIFF_DEMO: DiffLine[] = [
 ]
 
 // A labeled row of demo items (reused across primitive subgroups).
+// ── Chat-states fixtures ───────────────────────────────────────────────
+// Mock data so the real chat components render in isolation, per scenario.
+const noop = () => {}
+let mockTurnSeq = 0
+function mockTurn(over: Partial<ChatTurn>): ChatTurn {
+  return { id: `gallery-${mockTurnSeq++}`, role: 'assistant', content: '', ts: Date.now(), ...over }
+}
+const SampleBody = (
+  <div className="text-sm leading-relaxed text-foreground">
+    Here&rsquo;s the draft intro you asked for — two sentences, matched to the
+    manuscript&rsquo;s voice.
+  </div>
+)
+// One ErrorCard per code; `humanizeError` gives the production copy so the
+// gallery can never drift from the real strings.
+const ERROR_CASES: {
+  code: string
+  detail?: string
+  retryable?: boolean
+  rate?: boolean
+}[] = [
+  { code: 'SERVER', retryable: true },
+  { code: 'MAX_TURNS', retryable: true },
+  { code: 'RATE_LIMIT', retryable: true, rate: true },
+  { code: 'AUTH', retryable: false },
+  { code: 'BILLING', retryable: false },
+  { code: 'TRUNCATED', retryable: true },
+  { code: 'EXEC', detail: 'spawn failed: ENOENT', retryable: true },
+  { code: 'INVALID', retryable: false },
+  { code: 'FORMAT', retryable: true },
+]
+
+// Part fixtures for full-turn scenarios (rendered through the real MessageRow).
+const reasoningPart = (text: string): MessagePart => ({
+  id: `p-${mockTurnSeq++}`,
+  ts: 0,
+  type: 'reasoning',
+  text,
+})
+const textPart = (text: string): MessagePart => ({
+  id: `p-${mockTurnSeq++}`,
+  ts: 0,
+  type: 'text',
+  text,
+})
+const toolPartFx = (toolName: string, input: unknown): MessagePart => ({
+  id: `p-${mockTurnSeq++}`,
+  ts: 0,
+  type: 'tool',
+  toolName,
+  toolCallId: `tc-${mockTurnSeq}`,
+  input,
+  state: 'output-available',
+  output: 'ok',
+})
+const retryPartFx = (attempt: number, maxRetries: number, error: string): MessagePart => ({
+  id: `p-${mockTurnSeq++}`,
+  ts: 0,
+  type: 'retry',
+  attempt,
+  maxRetries,
+  error,
+})
+const userTurn = (content: string): ChatTurn => mockTurn({ role: 'user', content })
+
+/** Renders a sequence of turns through the real MessageRow — user bubble,
+ * assistant process (activity rows), and the terminal outcome — so a whole
+ * conversation moment can be eyeballed, not just isolated cards. */
+function Scenario({ title, turns }: { title: string; turns: ChatTurn[] }) {
+  return (
+    <div className="w-full max-w-xl">
+      <div className="mb-1.5 text-xs text-muted-foreground">{title}</div>
+      <div className="flex flex-col gap-4 rounded-xl border border-border/60 bg-background p-4">
+        {turns.map((t, i) => (
+          <MessageRow
+            key={t.id}
+            turn={t}
+            threadId={null}
+            onRegenerate={t.role === 'assistant' && i === turns.length - 1 ? noop : undefined}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function Subgroup({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div>
@@ -343,6 +437,7 @@ const NAV: { group: string; titles: string[] }[] = [
     ],
   },
   { group: 'Compositions', titles: ['Compositions'] },
+  { group: 'Surfaces', titles: ['Surfaces · Chat states'] },
   { group: 'Consistency', titles: ['Consistency · Controls', 'Consistency · Panels'] },
 ]
 
@@ -701,6 +796,169 @@ export function GalleryPage() {
           </Select>
         </div>
         <Textarea className="max-w-md" placeholder="Textarea" />
+      </Section>
+
+      <Section title="Surfaces · Chat states">
+        <p className="text-[13px] text-muted-foreground">
+          Every in-turn activity and turn outcome, rendered from the real chat
+          components with mock data — so tone, icon, and actions can be compared
+          side by side. Activity rows share the <code>ActivityRow</code> base;
+          terminal cards share <code>InlineCard</code>.
+        </p>
+
+        <Subgroup title="Activity rows — steps inside a turn (ActivityRow base)">
+          <div className="w-full max-w-xl divide-y divide-border/40 rounded-xl border border-border/60 px-1">
+            <ActivityRow icon={<IconBrain size={14} />} label="Thinking" />
+            <ActivityRow
+              icon={<IconFileText size={14} />}
+              label="Read part1.md"
+              preview="7 lines"
+            />
+            <RetryRow
+              part={{
+                id: 'r1',
+                ts: 0,
+                type: 'retry',
+                attempt: 1,
+                maxRetries: 3,
+                error: 'server_error',
+              }}
+            />
+            <RetryRow
+              part={{
+                id: 'r2',
+                ts: 0,
+                type: 'retry',
+                attempt: 3,
+                maxRetries: 3,
+                error: 'rate_limit',
+              }}
+            />
+            <CompactDivider
+              part={{
+                id: 'c',
+                ts: 0,
+                type: 'compact',
+                trigger: 'auto',
+                preTokens: 120000,
+                postTokens: 40000,
+              }}
+            />
+          </div>
+        </Subgroup>
+
+        <Subgroup title="Turn endings — terminal cards (InlineCard base)">
+          <div className="flex w-full max-w-xl flex-col gap-3">
+            <StoppedCard
+              turn={mockTurn({ status: 'stopped', content: 'partial draft…' })}
+              body={SampleBody}
+              hasText
+              durationLabel="8.4s"
+              onRegenerate={noop}
+            />
+            {ERROR_CASES.map((c) => (
+              <ErrorCard
+                key={c.code}
+                turn={mockTurn({
+                  status: 'error',
+                  errorCode: c.code,
+                  errorText: humanizeError(`${c.code}: ${c.detail ?? ''}`),
+                  retryable: c.retryable,
+                  resetsAt: c.rate ? Date.now() + 90_000 : undefined,
+                  rateLimitType: c.rate ? 'five_hour' : undefined,
+                })}
+                // Structured errors usually have no streamed body — show the
+                // error-led card (with one bodied example to compare).
+                body={c.code === 'EXEC' ? SampleBody : null}
+                hasText={c.code === 'EXEC'}
+                hasThinking={false}
+                durationLabel="2.1s"
+                onRegenerate={noop}
+              />
+            ))}
+          </div>
+        </Subgroup>
+
+        <Subgroup title="Scenarios — bubble + activity rows + outcome (real MessageRow)">
+          <Scenario
+            title="Streaming — thinking, tool, and a retry, live"
+            turns={[
+              userTurn('Draft the chapter 1 intro into part1.md.'),
+              mockTurn({
+                status: 'streaming',
+                parts: [
+                  reasoningPart('Reading the outline to match the manuscript voice…'),
+                  toolPartFx('Grep', { pattern: 'voice', path: 'manuscript/ch01' }),
+                  retryPartFx(2, 3, 'server_error'),
+                ],
+              }),
+            ]}
+          />
+          <Scenario
+            title="Failed — server error after a retry"
+            turns={[
+              userTurn('Draft the chapter 1 intro into part1.md.'),
+              mockTurn({
+                status: 'error',
+                durationMs: 4100,
+                errorCode: 'SERVER',
+                errorText: humanizeError('SERVER: '),
+                retryable: true,
+                parts: [
+                  reasoningPart('Reading the outline to match the manuscript voice…'),
+                  toolPartFx('Grep', { pattern: 'voice', path: 'manuscript/ch01' }),
+                  retryPartFx(3, 3, 'server_error'),
+                ],
+              }),
+            ]}
+          />
+          <Scenario
+            title="Failed — rate limited, with live countdown"
+            turns={[
+              userTurn('Translate the selected paragraph into Korean.'),
+              mockTurn({
+                status: 'error',
+                durationMs: 1200,
+                errorCode: 'RATE_LIMIT',
+                errorText: humanizeError('RATE_LIMIT: '),
+                retryable: true,
+                resetsAt: Date.now() + 45_000,
+                rateLimitType: 'five_hour',
+                parts: [reasoningPart('Preparing the translation…')],
+              }),
+            ]}
+          />
+          <Scenario
+            title="Stopped — user pressed Stop mid-answer"
+            turns={[
+              userTurn('Write a 500-word essay on solitude.'),
+              mockTurn({
+                status: 'stopped',
+                durationMs: 8400,
+                content: 'Solitude is not the same as loneliness…',
+                parts: [
+                  reasoningPart('Outlining three movements…'),
+                  textPart(
+                    'Solitude is not the same as loneliness. Where loneliness is an ache for what is absent, solitude is a chosen room…',
+                  ),
+                ],
+              }),
+            ]}
+          />
+          <Scenario
+            title="Done — normal completion"
+            turns={[
+              userTurn('Summarize this note in one line.'),
+              mockTurn({
+                status: 'done',
+                durationMs: 2300,
+                stopReason: 'end_turn',
+                content: 'A short manifesto on sovereign individuality.',
+                parts: [textPart('A short manifesto on sovereign individuality.')],
+              }),
+            ]}
+          />
+        </Subgroup>
       </Section>
 
       <Section title="Consistency · Panels">

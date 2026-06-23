@@ -624,7 +624,16 @@ export class Server {
     // path picks up rotated tokens automatically.
 
     const controller = new AbortController()
-    this.activeChats.set(runId, controller)
+    // Run record: the AbortController plus, filled in once #runChat starts,
+    // the live query handle (for graceful interrupt()), a predicate for
+    // whether the model is parked on a user decision, and a cancel-intent
+    // flag so a graceful interrupt still settles as CANCELLED.
+    this.activeChats.set(runId, {
+      controller,
+      stream: null,
+      isAwaiting: () => false,
+      cancelRequested: false,
+    })
 
     // Acknowledge acceptance before we start streaming.
     this.emit(response(id, { runId, accepted: true }))
@@ -658,6 +667,11 @@ export class Server {
     // attempt loop so the gate can call setPermissionMode on plan approval.
     let awaitingDecision = 0
     let activeStream = null
+    // The cancel handler reads this run's record to decide interrupt vs abort.
+    // Wire the awaiting-decision predicate now (closes over awaitingDecision);
+    // `stream` is set after each query() below.
+    const cancelRec = this.activeChats.get(runId)
+    if (cancelRec) cancelRec.isAwaiting = () => awaitingDecision > 0
     // Flipped true once the user approves an ExitPlanMode plan — after which
     // the gate stops denying the propose_* write relays so the model can
     // execute the approved plan.
@@ -999,6 +1013,9 @@ export class Server {
       }
 
       let streamError = null
+      // Most specific API-level error seen this attempt (SDKAssistantMessageError);
+      // refines a generic execution-error result subtype at settle time.
+      let lastAssistantError = null
       lastResult = null
       lastContextUsage = null
       // Inactivity watchdog. The Claude Agent SDK delegates the actual HTTPS
@@ -1061,10 +1078,16 @@ export class Server {
       }
       try {
         activeStream = query({ prompt: makeInput(), options })
+        if (cancelRec) cancelRec.stream = activeStream // for graceful interrupt()
         for await (const event of activeStream) {
           if (controller.signal.aborted) break
           lastEventAt = Date.now()
           this.emit(notification('chat/event', { runId, event }))
+          // SDKAssistantMessage may carry a structured `error` (rate_limit,
+          // server_error, …) mid-turn — capture the latest for settle-time mapping.
+          if (event?.type === 'assistant' && event.error) {
+            lastAssistantError = event.error
+          }
           if (event?.type === 'result') {
             lastResult = event
             // Fetch the per-category context breakdown while the input is
@@ -1110,6 +1133,15 @@ export class Server {
         return
       }
 
+      // A graceful interrupt() can let a clean `result` land before the
+      // backstop abort fires — but the user pressed Stop, so settle as
+      // CANCELLED regardless of what arrived.
+      if (cancelRec?.cancelRequested) {
+        this.#emitChatError(runId, 'CANCELLED', 'cancelled by client', false)
+        this.activeChats.delete(runId)
+        return
+      }
+
       if (streamError) {
         const code = classifyError(streamError)
         logErrorContext('stream-error', runId, streamError, {
@@ -1132,8 +1164,26 @@ export class Server {
           runId,
           code,
           streamError?.message ?? String(streamError),
-          code !== 'AUTH',
+          !NON_RETRYABLE_CODES.has(code),
         )
+        this.activeChats.delete(runId)
+        return
+      }
+
+      // Structured error result (G1/G2): the SDK delivered a `result` whose
+      // `is_error`/`subtype` marks failure. Surface it as a typed chat/error
+      // instead of treating the turn as done (which rendered as an "empty
+      // turn"). `lastAssistantError` refines a generic execution-error subtype.
+      if (
+        lastResult &&
+        (lastResult.is_error || String(lastResult.subtype ?? '').startsWith('error_'))
+      ) {
+        const { code, message, retryable } = mapSdkError({
+          subtype: lastResult.subtype,
+          assistantError: lastAssistantError,
+          errors: lastResult.errors,
+        })
+        this.#emitChatError(runId, code, message, retryable)
         this.activeChats.delete(runId)
         return
       }
@@ -1204,25 +1254,106 @@ export class Server {
   #handleCancel(params) {
     const runId = params?.runId
     if (typeof runId !== 'string') return
-    const controller = this.activeChats.get(runId)
-    if (!controller) return
-    controller.abort()
-    // Aborting the run also unparks any canUseTool waiters keyed to
-    // this run via the controller.signal listener installed inside
-    // canUseTool — no explicit drain needed here.
-    // The runChat loop will emit CANCELLED and clear the entry.
+    const rec = this.activeChats.get(runId)
+    if (!rec) return
+    // Mark intent so a graceful interrupt that still lands a result settles as
+    // CANCELLED (see the cancelRequested check in #runChat).
+    rec.cancelRequested = true
+
+    // Parked on a user decision → the model isn't generating; interrupt() is a
+    // no-op. Only aborting the controller unparks the canUseTool waiter (via
+    // the controller.signal listener installed in #requestDecision).
+    if (rec.isAwaiting?.()) {
+      rec.controller.abort()
+      return
+    }
+
+    // Generating → ask the SDK to stop gracefully at a safe boundary (keeps the
+    // session intact). Guarantee termination with a hard abort if the graceful
+    // stop fails or doesn't settle the run within the grace window (e.g. a
+    // wedged stream where interrupt() can't round-trip).
+    const stream = rec.stream
+    if (stream && typeof stream.interrupt === 'function') {
+      Promise.resolve()
+        .then(() => stream.interrupt())
+        .catch((err) => {
+          logErrorContext('interrupt', runId, err, { mode: this.mode })
+          if (this.activeChats.has(runId)) rec.controller.abort()
+        })
+      setTimeout(() => {
+        if (this.activeChats.has(runId)) rec.controller.abort()
+      }, INTERRUPT_GRACE_MS)
+    } else {
+      rec.controller.abort()
+    }
   }
 
   async #handleShutdown(id) {
     this.shuttingDown = true
-    for (const [, controller] of this.activeChats) controller.abort()
+    for (const [, rec] of this.activeChats) rec.controller.abort()
     if (id !== undefined) this.emit(response(id, null))
     // Give in-flight chats a moment to flush their CANCELLED notifications.
     setTimeout(() => process.exit(0), 250)
   }
 }
 
+// How long a graceful interrupt() gets to settle the run before the cancel
+// handler forces a hard abort. Short enough to feel instant, long enough for
+// the model to reach a safe boundary.
+const INTERRUPT_GRACE_MS = 1500
+
+// Codes the user can't fix by retrying the same request. Used to set the
+// `retryable` flag (host hides the Retry button for these).
+const NON_RETRYABLE_CODES = new Set(['AUTH', 'INVALID', 'BILLING', 'BUDGET'])
+
+// Map a structured SDK error — the result `subtype` and/or the mid-turn
+// SDKAssistantMessageError — to a host error code, an English fallback
+// message, and retryability. The host owns the final user-facing copy
+// (humanizeError) for every code except EXEC, which forwards the SDK's own
+// `errors[0]` detail. `assistantError` is more specific than a generic
+// `error_during_execution` subtype, so it wins when both are present.
+function mapSdkError({ subtype, assistantError, errors }) {
+  switch (assistantError) {
+    case 'authentication_failed':
+      return { code: 'AUTH', message: 'authentication failed', retryable: false }
+    case 'rate_limit':
+      return { code: 'RATE_LIMIT', message: 'rate limited', retryable: true }
+    case 'billing_error':
+      return { code: 'BILLING', message: 'credit balance too low', retryable: false }
+    case 'server_error':
+      return { code: 'SERVER', message: 'service is busy', retryable: true }
+    case 'invalid_request':
+      return { code: 'INVALID', message: 'invalid request', retryable: false }
+    case 'max_output_tokens':
+      return { code: 'TRUNCATED', message: 'response was cut off', retryable: true }
+    default:
+      break
+  }
+  switch (subtype) {
+    case 'error_max_turns':
+      return { code: 'MAX_TURNS', message: 'stopped after too many tool steps', retryable: true }
+    case 'error_max_budget_usd':
+      return { code: 'BUDGET', message: 'hit the cost limit', retryable: false }
+    case 'error_max_structured_output_retries':
+      return { code: 'FORMAT', message: 'could not produce a valid result format', retryable: true }
+    case 'error_during_execution':
+    default: {
+      // Forward the SDK's own `errors[0]` detail (may be empty); the host
+      // composes the final "Stopped on an error[: detail]" copy.
+      const detail = Array.isArray(errors) && errors.length > 0 ? String(errors[0]) : ''
+      return { code: 'EXEC', message: detail, retryable: true }
+    }
+  }
+}
+
 function classifyError(err) {
+  // Prefer a structured HTTP status when the thrown error carries one
+  // (Anthropic SDK errors expose `.status`); fall back to message regex.
+  const status = typeof err?.status === 'number' ? err.status : undefined
+  if (status === 401 || status === 403) return 'AUTH'
+  if (status === 429) return 'RATE_LIMIT'
+  if (status === 400) return 'INVALID'
+  if (status === 500 || status === 529) return 'SERVER'
   const msg = err?.message ? String(err.message) : String(err)
   if (/401|unauthor|invalid[_ ]?token/i.test(msg)) return 'AUTH'
   if (/429|rate[_ ]?limit/i.test(msg)) return 'RATE_LIMIT'

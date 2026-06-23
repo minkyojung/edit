@@ -211,6 +211,8 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         errorText: string | null = null,
         errorCode: string | undefined = undefined,
         resetsAt: number | undefined = undefined,
+        rateLimitType: string | undefined = undefined,
+        retryable: boolean | undefined = undefined,
       ) => {
         flusher.cancel()
         const parts = buffer.buildParts()
@@ -237,6 +239,8 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           errorText: errorText ?? undefined,
           errorCode,
           resetsAt,
+          rateLimitType,
+          retryable,
         })
         setStreaming(null)
       }
@@ -403,7 +407,15 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         // that keeps prompt history (`buildPrompt`) and Copy output clean,
         // and lets the renderer surface the failure with proper error chrome.
         const outcome = classifyRunError(e, { offlineAborted: offline.aborted })
-        commit(outcome.terminal, null, outcome.errorText, outcome.errorCode, outcome.resetsAt)
+        commit(
+          outcome.terminal,
+          null,
+          outcome.errorText,
+          outcome.errorCode,
+          outcome.resetsAt,
+          outcome.rateLimitType,
+          outcome.retryable,
+        )
         setStatus(outcome.chatStatus)
       } finally {
         offline.dispose()

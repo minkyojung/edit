@@ -243,6 +243,22 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
         return
       }
 
+      // 1d) API auto-retry — the SDK hit a transient error (429 / 5xx) and is
+      // retrying after a back-off, staying silent meanwhile. Coalesce into a
+      // single updating row (constant id) so the pause reads as "recovering",
+      // not "hung". Superseded into the process summary once events resume.
+      if (ev?.type === 'system' && ev.subtype === 'api_retry') {
+        upsertPart({
+          id: 'api-retry',
+          ts: Date.now(),
+          type: 'retry',
+          attempt: typeof ev.attempt === 'number' ? ev.attempt : undefined,
+          maxRetries: typeof ev.max_retries === 'number' ? ev.max_retries : undefined,
+          error: typeof ev.error === 'string' ? ev.error : undefined,
+        })
+        return
+      }
+
       // 2) Final assistant message — already covered by stream_event.
       if (ev?.type === 'assistant') return
 

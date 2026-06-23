@@ -247,6 +247,12 @@ export interface ChatTurn {
    * countdown shown in the error card. Absent when the SDK didn't emit a
    * snapshot before the failure. */
   resetsAt?: number
+  /** For `errorCode === 'RATE_LIMIT'` only: which window was hit
+   * (e.g. 'five_hour', 'seven_day_opus'); the card turns it into a label. */
+  rateLimitType?: string
+  /** Whether retrying could succeed. `false` for AUTH/BILLING/INVALID/BUDGET —
+   * the card hides Retry. Absent → treated as retryable. */
+  retryable?: boolean
   /** Set on a user turn when the message originated as a slash command
    * (e.g. `/proofread`). Lets handleRegenerate route the rerun back through
    * executeCommand's path — same system prompt, same relayTools, same
@@ -286,6 +292,7 @@ export type MessagePart =
   | ToolPart
   | StepStartPart
   | CompactPart
+  | RetryPart
 
 export interface TextPart {
   id: string
@@ -357,6 +364,22 @@ export interface CompactPart {
   trigger: 'manual' | 'auto'
   preTokens?: number
   postTokens?: number
+}
+
+/** An `api_retry` indicator — the SDK hit a transient API error (429 / 5xx)
+ * and is retrying after a back-off, during which no other events flow. A
+ * single coalescing row (constant id) so the otherwise-silent pause reads as
+ * "recovering", not "hung". Naturally collapses into the process summary once
+ * real events resume. */
+export interface RetryPart {
+  id: string
+  ts: number
+  type: 'retry'
+  /** Which attempt is starting (1-based) and the ceiling, when reported. */
+  attempt?: number
+  maxRetries?: number
+  /** The structured error label that triggered the retry (e.g. 'server_error'). */
+  error?: string
 }
 
 export type Attachment =

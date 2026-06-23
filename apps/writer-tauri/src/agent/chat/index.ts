@@ -398,6 +398,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           settleErr(new DOMException(e.payload.message, 'AbortError'))
         } else {
           const err = new Error(`${e.payload.code}: ${e.payload.message}`)
+          // Retryability decided by the sidecar from the structured error
+          // code (absent → retryable). Drives whether ErrorCard shows Retry.
+          ;(err as Error & { retryable?: boolean }).retryable = e.payload.retryable
           // For rate-limit failures, attach the most recent SDK
           // rate_limit snapshot so the renderer can drive a precise
           // countdown. The info travels as a non-enumerable

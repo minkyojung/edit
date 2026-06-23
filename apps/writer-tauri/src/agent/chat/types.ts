@@ -197,6 +197,15 @@ export interface ChatEvent {
     }
     // subagent events carry the parent Task's tool_use id (null on main thread)
     parent_tool_use_id?: string | null
+    // assistant messages may carry a structured API-level error
+    // (SDKAssistantMessageError) — the sidecar maps it to a chat/error code.
+    // Also reused by system/api_retry as the triggering error label.
+    error?: string
+    // system/api_retry — the SDK auto-retries a transient error (429/5xx)
+    // after a back-off; surfaced as a transient "Retrying…" row.
+    attempt?: number
+    max_retries?: number
+    retry_delay_ms?: number
     // assistant / user — message.content is an array of content blocks
     message?: {
       content?: Array<{
@@ -282,4 +291,7 @@ export interface ErrorEvent {
   runId: string
   code: string
   message: string
+  /** Whether retrying the same request could succeed. Drives whether the
+   * error card shows a Retry button. Absent → treated as retryable. */
+  retryable?: boolean
 }
