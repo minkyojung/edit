@@ -21,7 +21,6 @@ import { SettingsDialog } from '@/settings/SettingsDialog'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore, getActiveVaultPath } from '@/state/settingsStore'
-import { useEditorViewStore } from '@/state/editorViewStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
 import { useRouteSync } from '@/hooks/useRouteSync'
@@ -344,15 +343,7 @@ function AppContent() {
       key={activeSlug ?? 'no-doc'}
       handle={activeHandle}
       status={activeStatus}
-      onViewReady={(v) => {
-        // Mirror into the global store so non-React
-        // consumers (future palette commands) can reach
-        // the live view without prop drilling. Local
-        // state stays the source of truth for sibling
-        // renders below.
-        setView(v)
-        useEditorViewStore.getState().setView(v)
-      }}
+      onViewReady={setView}
     />
   )
 
