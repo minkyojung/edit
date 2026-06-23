@@ -18,8 +18,6 @@ import {
   installDocSync,
   markSlugDirty,
 } from '@/lib/docFileSync'
-import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
-import { useEditorViewStore } from '@/state/editorViewStore'
 import { applyMarkdownToActiveCmEditor } from '@/state/activeCmEditor'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { pathForDoc, usesFrontmatter } from '@/lib/docPaths'
@@ -127,37 +125,10 @@ export const createHandlesSlice = (
     handle.bodyMarkdown = refreshedMarkdown
     clearDirty(slug)
     const activeSlug = getActiveSlugFromHash()
-    if (activeSlug === slug && !applyMarkdownToActiveCmEditor(slug, refreshedMarkdown)) {
-      const view = useEditorViewStore.getState().view
-      const parser = useEditorViewStore.getState().parser
-      if (view && parser) {
-        try {
-          // `applyMarkdownToEditor` strips `<br />` noise, runs the
-          // schema rehydrate, and dispatches with
-          // `addToHistory: false` — shared with the mount-time
-          // hydrate. Returns false when the (post-strip) markdown
-          // is empty, which we treat as "user emptied the file
-          // externally" and clear PM to match.
-          const applied = applyMarkdownToEditor(
-            view,
-            refreshedMarkdown,
-            parser,
-          )
-          if (!applied) {
-            view.dispatch(
-              view.state.tr
-                .delete(0, view.state.doc.content.size)
-                .setMeta('addToHistory', false),
-            )
-          }
-        } catch (err) {
-          console.warn(
-            '[vault:reload] PM dispatch failed for',
-            slug,
-            err,
-          )
-        }
-      }
+    if (activeSlug === slug) {
+      // Push the external edit into the live CodeMirror editor (no-op if this
+      // slug isn't the mounted view).
+      applyMarkdownToActiveCmEditor(slug, refreshedMarkdown)
     }
     console.log(`[vault:reload] ${slug} hydrated from external edit`)
   },

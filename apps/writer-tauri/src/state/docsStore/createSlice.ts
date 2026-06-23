@@ -22,13 +22,10 @@
 
 import { generateClientSlug } from '@/lib/slug'
 import { todayLocalDate } from '@/hooks/useDocMeta'
-import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
 import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
 import { createVaultFolder, readVaultFile } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
-import { useEditorViewStore } from '../editorViewStore'
 import { applyMarkdownToActiveCmEditor } from '../activeCmEditor'
-import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
 export interface CreateSlice {
@@ -317,24 +314,14 @@ export const createCreateSlice = (
     // real text. Brand-new docs (cache is empty after contentReady)
     // proceed to the seed.
     if (handle.bodyMarkdown.trim().length > 0) return false
-    // Active-editor branch: when the slug we're seeding is the doc
-    // the user is currently viewing, write to PM directly so the
-    // seed lands in the live editor. Inactive slugs only update the
-    // cache — the next mount picks it up via the mount-time hydrate,
-    // and markSlugDirty kicks the flush tick so the seed reaches
-    // disk regardless of whether the user opens the doc.
+    // Active-editor branch: when the slug we're seeding is the doc the user is
+    // currently viewing, push it into the live CodeMirror editor so the seed
+    // lands immediately. Inactive slugs only update the cache — the next mount
+    // hydrates it, and markSlugDirty kicks the flush so the seed reaches disk
+    // regardless of whether the user opens the doc.
     handle.bodyMarkdown = markdown
     markSlugDirty(slug)
-    if (applyMarkdownToActiveCmEditor(slug, markdown)) return true
-    const activeView = activeViewForSlug(slug)
-    if (activeView) {
-      const parser = useEditorViewStore.getState().parser
-      if (!parser) {
-        console.warn('[docs] seedDocBody: parser not ready, skipping', slug)
-        return false
-      }
-      return applyMarkdownToEditor(activeView, markdown, parser)
-    }
+    applyMarkdownToActiveCmEditor(slug, markdown)
     return true
   },
 
@@ -347,33 +334,13 @@ export const createCreateSlice = (
     // hydration otherwise and the replace can land mid-load, leaving
     // the page in a mixed state on next render.
     await handle.contentReady
-    // Active-editor branch — same rationale as seedDocBody above.
-    // Profile rebuilds and wiki ingest rewrites that target the
-    // user's current view land via PM dispatch; everything else
-    // updates the cache for the next mount + kicks the flush.
+    // Active-editor branch — same rationale as seedDocBody above. Profile
+    // rebuilds and wiki ingest rewrites that target the current view land in
+    // the live CM editor; everything else updates the cache + kicks the flush.
     handle.bodyMarkdown = markdown
     markSlugDirty(slug)
-    if (applyMarkdownToActiveCmEditor(slug, markdown)) return true
-    const activeView = activeViewForSlug(slug)
-    if (activeView) {
-      const parser = useEditorViewStore.getState().parser
-      if (!parser) {
-        console.warn('[docs] replaceDocBody: parser not ready, skipping', slug)
-        return false
-      }
-      return applyMarkdownToEditor(activeView, markdown, parser)
-    }
+    applyMarkdownToActiveCmEditor(slug, markdown)
     return true
   },
 })
 
-/** Returns the live PM EditorView when, and only when, it belongs to
- * `slug`. The view in `editorViewStore` is whichever doc is currently
- * mounted; comparing against the URL-derived active slug is the
- * cheapest way to make sure a background-ingest write doesn't land
- * in a foreground editor for a different doc. Returns null whenever
- * the slug isn't active or no editor is mounted. */
-function activeViewForSlug(slug: string) {
-  if (getActiveSlugFromHash() !== slug) return null
-  return useEditorViewStore.getState().view
-}
