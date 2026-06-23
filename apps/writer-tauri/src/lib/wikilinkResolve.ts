@@ -25,7 +25,10 @@
 // brackets.
 
 import { useDocsStore } from '@/state/docsStore'
-import { WIKILINK_HREF_PREFIX } from '@/editor/wikilinkPalettePlugin'
+
+/** Href scheme for an internal wiki link — `[Title](note:<slug>)`. Decoupled
+ * from any editor: the renderer/click handlers match on this prefix. */
+export const WIKILINK_HREF_PREFIX = 'note:'
 
 /** Convert every `[[Title]]` in `md` to `[Title](note:<slug>)`
  * where Title matches a live (non-archived) doc's title.
