@@ -9,10 +9,8 @@
 //       inactive doc routes through the on-disk `.md` + a Y.Doc
 //       reload so any future open of the page shows fresh content.
 
-import { useEditorViewStore } from '@/state/editorViewStore'
 import { applyMarkdownToActiveCmEditor } from '@/state/activeCmEditor'
 import { useDocsStore } from '@/state/docsStore'
-import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { markSlugDirty } from '@/lib/docFileSync'
 import { looseReplace } from '@/lib/looseMatch'
 import { splitFrontmatter } from '@/lib/frontmatter'
@@ -92,44 +90,9 @@ export async function applyToWikiPage(
     return true
   }
 
-  const view = useEditorViewStore.getState().view
-  const activeSlug = getActiveSlugFromHash()
-  const isActive = !!view && activeSlug === slug
-
-  if (isActive) {
-    const parser = useEditorViewStore.getState().parser
-    if (!parser) {
-      console.warn('[apply] active doc but parser unavailable', slug)
-      // bodyMarkdown is updated; the dispatch fallback is just for
-      // visual immediacy. Mark dirty so flushDirty still writes.
-      markSlugDirty(slug)
-      return true
-    }
-    const parsed = parser(newMd)
-    if (!parsed) {
-      console.warn('[apply] parse failed for', slug)
-      markSlugDirty(slug)
-      return true
-    }
-    const tr = view.state.tr.replaceWith(
-      0,
-      view.state.doc.content.size,
-      parsed.content,
-    )
-    // `addToHistory: false` so the user's Cmd+Z stack doesn't pick
-    // up this AI-driven swap. Reversing an Accept lives on the
-    // inline Reject button, not the undo stack — undoing here would
-    // wipe the new body without re-surfacing the widget.
-    view.dispatch(tr.setMeta('addToHistory', false))
-    // dirtyTrackerPlugin (Phase I) marks dirty + re-syncs
-    // bodyMarkdown from the PM doc as a side-effect of the dispatch
-    // above. No explicit markSlugDirty needed.
-  } else {
-    // No PM editor for this slug — manually mark dirty since the
-    // dirtyTrackerPlugin only sees the active doc's transactions.
-    markSlugDirty(slug)
-  }
-
+  // Not the active CM doc (applyMarkdownToActiveCmEditor returned false) —
+  // bodyMarkdown is already updated; mark dirty so flushDirty writes it.
+  markSlugDirty(slug)
   return true
 }
 

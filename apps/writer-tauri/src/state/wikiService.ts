@@ -20,8 +20,6 @@ import {
   useDocsStore,
   type KnownDoc,
 } from './docsStore'
-import { useEditorViewStore } from './editorViewStore'
-import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
 
@@ -320,20 +318,6 @@ export function readWikiMarkdown(slug: string | null): string {
   const docs = useDocsStore.getState()
   const handle = docs.handles[slug]
   if (!handle) return ''
-
-  if (getActiveSlugFromHash() === slug) {
-    const view = useEditorViewStore.getState().view
-    const serializer = useEditorViewStore.getState().serializer
-    if (view && serializer) {
-      try {
-        const md = serializer(view.state.doc).trim()
-        if (isEffectivelyEmpty(md)) return ''
-        return md
-      } catch {
-        // fall through to fragment fallback
-      }
-    }
-  }
 
   // Phase 5a of the Yjs-removal migration: read `handle.bodyMarkdown`
   // instead of the Y.Doc fragment. The cache survives schema

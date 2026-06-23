@@ -13,8 +13,6 @@
 
 import { processDailyNote } from '@/agent/dailyIngest'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
-import { getActiveSlugFromHash } from '@/lib/viewUrl'
-import { useEditorViewStore } from '@/state/editorViewStore'
 import { useIngestStore } from '@/state/ingestStore'
 import { effectiveLength } from '@/lib/markdownText'
 import { todayLocalDate } from '@/hooks/useDocMeta'
@@ -28,17 +26,12 @@ interface RunOptions {
   force?: boolean
 }
 
-/** Effective length of the doc's body, client-side. Reads from the live PM doc
- * when the slug is active, otherwise from the `bodyMarkdown` cache. Returns 0
- * when no handle exists (treated as "nothing to ingest"). */
+/** Effective length of the doc's body, client-side, from the `bodyMarkdown`
+ * cache. Returns 0 when no handle exists (treated as "nothing to ingest"). */
 function readDocLength(slug: string): number {
   const docs = useDocsStore.getState()
   const handle = docs.handles[slug]
   if (!handle) return 0
-  if (getActiveSlugFromHash() === slug) {
-    const view = useEditorViewStore.getState().view
-    if (view) return effectiveLength(view.state.doc.textContent)
-  }
   return effectiveLength(handle.bodyMarkdown)
 }
 
