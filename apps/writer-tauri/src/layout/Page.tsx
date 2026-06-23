@@ -11,25 +11,23 @@
  */
 
 import { lazy, Suspense } from 'react'
-import type { EditorView } from '@milkdown/kit/prose/view'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { PageHeader } from './PageHeader'
 
 interface Props {
   handle: CollabHandle | null
   status: CollabStatus
-  onViewReady?: (view: EditorView | null) => void
 }
 
 // CodeMirror is the editor. (Milkdown was retired — see the CM migration plan.)
 // Lazy-loaded so the large CM module is split out of the initial bundle.
 const CmEditor = lazy(() => import('@/editor/CmEditor').then((m) => ({ default: m.CmEditor })))
 
-export function Page({ handle, status, onViewReady }: Props) {
+export function Page({ handle, status }: Props) {
   const header = handle ? <PageHeader slug={handle.slug} /> : null
   return (
     <Suspense fallback={null}>
-      <CmEditor handle={handle} status={status} onViewReady={onViewReady} header={header} />
+      <CmEditor handle={handle} status={status} header={header} />
     </Suspense>
   )
 }

@@ -11,11 +11,9 @@
 //   • render: the verified prototype stack (live-preview + blocks + arrow nav).
 // NOT in Stage 1: proof/AI marks, slash menu, wikilink palette, link/footer chrome,
 // external live-reload into CM (reloadFromVault only dispatches into a PM view) — all
-// Stage 2/3. onViewReady is called with null because PM-view consumers can't use a CM
-// view; they degrade rather than break.
+// Stage 2/3.
 
 import { useEffect, useRef } from 'react'
-import type { EditorView as PMEditorView } from '@milkdown/kit/prose/view'
 import { EditorState, Prec, Annotation } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands'
@@ -66,7 +64,6 @@ import { importMediaToVault } from '@/editor/cmMedia'
 interface Props {
   handle: CollabHandle | null
   status: CollabStatus
-  onViewReady?: (view: PMEditorView | null) => void
   header?: React.ReactNode
 }
 
@@ -98,7 +95,7 @@ const externalBody = Annotation.define<boolean>()
 
 // `status` is still accepted (callers pass it) but no longer rendered —
 // the connection-state readout lived in the now-removed footer.
-export function CmEditor({ handle, onViewReady, header }: Props) {
+export function CmEditor({ handle, header }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const slug = handle?.slug ?? null
@@ -233,7 +230,6 @@ export function CmEditor({ handle, onViewReady, header }: Props) {
       viewRef.current = view // expose for the highlight sync + floating menu
       // Seed the stats panel before the first edit fires a docChanged update.
       useDocStatsStore.getState().setStats(computeDocStats(handle.bodyMarkdown))
-      onViewReady?.(null) // no PM view — PM-view consumers degrade, not break
       // Let the chat's selection-chip X collapse this view's selection
       // without the chat holding an editor reference.
       useEditorSelectionStore.getState().setCollapse(() => {
