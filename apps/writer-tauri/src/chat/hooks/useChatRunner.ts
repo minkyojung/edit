@@ -306,9 +306,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         // explores with Read/Glob/Grep and writes a plan instead of editing.
         const isPlan = activeThreadMode === 'plan'
         const result = await runChat({
-          // CodeMirror publishes no PM view — runChat reads the page markdown
-          // (pageContextMarkdown / bodyMarkdown) instead of editor text.
-          view: null,
           // Queue turns have no doc; a synthetic slug keeps run-registry
           // bookkeeping happy. Edits never target it (read-only Q&A).
           slug: slug ?? QUEUE_SLUG,

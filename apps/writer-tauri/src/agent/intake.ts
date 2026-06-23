@@ -30,8 +30,6 @@ export interface IntakeArgs {
  * in the pending-changes queue for the user to approve. */
 export async function runIntake(args: IntakeArgs): Promise<RunChatResult> {
   return runChat({
-    // Headless: no editor view (same shape the Read-Later queue uses).
-    view: null,
     slug: args.slug,
     threadId: crypto.randomUUID(),
     // User-configurable in settings (default Sonnet; Haiku for cheap bulk).

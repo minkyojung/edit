@@ -21,9 +21,6 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { toast } from 'sonner'
-import { parseVizSpec } from '@/viz/vizSpec'
-import { replaceVizById } from '@/editor/vizBlockOps'
 import { navigateToNoteBySlug } from '@/editor/cmNav'
 import { assembleContext } from '@/agent/contextPipeline'
 import { getActiveVaultPath } from '@/state/settingsStore'
@@ -62,7 +59,6 @@ import { createStreamParser } from './streamParser'
 
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const {
-    view,
     pageContextMarkdown,
     slug,
     threadId,
@@ -121,16 +117,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     .find((t) => t.role === 'user' && !t.synthetic)
     ?.content?.trim()
 
-  // No `view` (the Read Later queue route, OR the CodeMirror editor — which never
-  // publishes a PM view) → fall back to the caller-supplied page markdown, else the
-  // open doc's bodyMarkdown cache (the editor-agnostic single source of truth, kept
-  // current on every keystroke). Without this, chat over a CM-edited note saw an
-  // empty document.
-  const docText = view
-    ? view.state.doc.textBetween(0, view.state.doc.content.size, '\n', '\n')
-    : (pageContextMarkdown ??
-      (slug ? useDocsStore.getState().handles[slug]?.bodyMarkdown : undefined) ??
-      '')
+  // "Current page" text: the caller-supplied page markdown (the Read Later
+  // queue passes a generated article list), else the open doc's bodyMarkdown
+  // cache — the editor-agnostic single source of truth, kept current on every
+  // keystroke by the CM editor.
+  const docText =
+    pageContextMarkdown ??
+    (slug ? useDocsStore.getState().handles[slug]?.bodyMarkdown : undefined) ??
+    ''
   const docForPrompt = truncateDocForPrompt(docText)
   // Resolve this thread's agent (role) — the prompt body + memory
   // namespace come from here. Currently always the built-in default,
@@ -361,29 +355,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           updates: e.payload.updates ?? null,
         })
       }),
-      // edit_visualization tool fired (see sidecar buildEditVisualizationTool).
-      // Apply the new spec to the target block by id, on the view this run was
-      // started against. Re-validate first — the tool schema guides the model
-      // but isn't enforced server-side, so a malformed tree is rejected (toast)
-      // rather than written. Immediate apply (no Keep/Reject); Cmd+Z undoes.
-      listen<{ runId: string; chartId: string; root: unknown }>(
-        'claude:viz-apply',
-        (e) => {
-          if (e.payload.runId !== runId) return
-          if (!view) {
-            toast.error('열린 문서가 없어 차트를 수정하지 못했어요')
-            return
-          }
-          const node = parseVizSpec(JSON.stringify(e.payload.root))
-          if (!node) {
-            toast.error('차트 수정 결과가 올바르지 않아 적용하지 못했어요')
-            return
-          }
-          const ok = replaceVizById(view, e.payload.chartId, JSON.stringify(node, null, 2))
-          if (ok) toast.success('차트를 수정했어요')
-          else toast.error('수정할 차트를 찾지 못했어요 (id 불일치)')
-        },
-      ),
       listen<DoneEvent>('claude:done', (e) => {
         if (e.payload.runId !== runId) return
         recordContextUsage(threadId, model, e.payload.usage, e.payload.contextUsage)
