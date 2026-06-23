@@ -946,6 +946,20 @@ export function GalleryPage() {
             ]}
           />
           <Scenario
+            title="Stopped — before any output (empty turn)"
+            turns={[
+              userTurn('안녕'),
+              mockTurn({ status: 'stopped', durationMs: 600, content: '', parts: [] }),
+            ]}
+          />
+          <Scenario
+            title="Done — but empty (model returned nothing)"
+            turns={[
+              userTurn('뭐라고?'),
+              mockTurn({ status: 'done', durationMs: 900, stopReason: 'end_turn', content: '', parts: [] }),
+            ]}
+          />
+          <Scenario
             title="Done — normal completion"
             turns={[
               userTurn('Summarize this note in one line.'),

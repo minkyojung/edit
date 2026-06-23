@@ -158,18 +158,31 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
 
   appendTurn: async (id, turn) => {
     if (!get().threads[id]) return
-    await appendThreadTurn(id, turn)
+    // Optimistic: reflect in memory first so the turn renders immediately,
+    // then persist. Persisting first gated the render on disk I/O — and the
+    // streaming view is cleared synchronously at commit — so on a slow vault a
+    // just-committed turn briefly vanished (read as a blank turn). Keep the
+    // in-memory turn even if the disk write fails; just surface the failure.
     set((s) => ({
       turns: { ...s.turns, [id]: [...(s.turns[id] ?? []), turn] },
     }))
+    try {
+      await appendThreadTurn(id, turn)
+    } catch (e) {
+      console.error('[threadsStore] appendTurn persist failed', e)
+    }
   },
 
   appendTurns: async (id, turns) => {
     if (!get().threads[id] || turns.length === 0) return
-    await appendThreadTurns(id, turns)
     set((s) => ({
       turns: { ...s.turns, [id]: [...(s.turns[id] ?? []), ...turns] },
     }))
+    try {
+      await appendThreadTurns(id, turns)
+    } catch (e) {
+      console.error('[threadsStore] appendTurns persist failed', e)
+    }
   },
 
   rewriteTurns: async (id, nextTurns) => {

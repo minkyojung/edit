@@ -27,16 +27,35 @@ export function StoppedCard({
   // simpler "do we have text" / "did the parent give us a handler".
   const canCopy = hasText
   const canRegenerate = !!onRegenerate
+  // Stopping before anything streamed leaves an empty turn — render just the
+  // "Stopped" line (no empty body box, no spurious divider) so it reads as a
+  // tidy confirmation instead of a broken card.
+  const hasBody =
+    (turn.parts && turn.parts.length > 0) ||
+    hasText ||
+    (!!turn.thinking && turn.thinking.trim().length > 0)
+  const stoppedRow = (
+    <>
+      <IconPlayerStopFilled size={12} stroke={0} className="opacity-70" />
+      <span>Stopped</span>
+      {durationLabel && <span className="opacity-70">· {durationLabel}</span>}
+      {canCopy && <CopyButton text={turn.content} />}
+      {canRegenerate && <RegenerateButton onClick={() => onRegenerate!(turn.id)} />}
+    </>
+  )
+  if (!hasBody) {
+    return (
+      <InlineCard>
+        <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground">
+          {stoppedRow}
+        </div>
+      </InlineCard>
+    )
+  }
   return (
     <InlineCard>
       <div className="px-3 py-2">{body}</div>
-      <InlineCardFooter>
-        <IconPlayerStopFilled size={12} stroke={0} className="opacity-70" />
-        <span>Stopped</span>
-        {durationLabel && <span className="opacity-70">· {durationLabel}</span>}
-        {canCopy && <CopyButton text={turn.content} />}
-        {canRegenerate && <RegenerateButton onClick={() => onRegenerate!(turn.id)} />}
-      </InlineCardFooter>
+      <InlineCardFooter>{stoppedRow}</InlineCardFooter>
     </InlineCard>
   )
 }

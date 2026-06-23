@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { IconBan } from '@tabler/icons-react'
 import type { ChatTurn } from '@/chat/types'
 import { formatDuration } from '@/chat/utils/formatDuration'
 import { describeStopReason } from '@/chat/utils/errorMessage'
@@ -9,6 +10,7 @@ import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
 import { StoppedCard } from '@/chat/messages/StoppedCard'
 import { ErrorCard } from '@/chat/messages/ErrorCard'
 import { MessageFooter } from '@/chat/messages/MessageFooter'
+import { RegenerateButton } from '@/chat/messages/RegenerateButton'
 
 export const MessageRow = React.memo(function MessageRow({
   turn,
@@ -90,6 +92,17 @@ export const MessageRow = React.memo(function MessageRow({
   // streaming — copying mid-stream would clip the answer.
   const canCopy = !isStreaming && hasText
   const canRegenerate = !isStreaming && !!onRegenerate
+  // A settled, non-error/stopped turn that produced nothing — no text, no
+  // thinking, no parts. Without an explicit marker it renders as a blank gap
+  // (the body div collapses and MessageFooter has nothing to show), which
+  // reads as a broken turn. Surface it as "No response" + Regenerate.
+  const isEmptyDone =
+    !isStreaming &&
+    !isError &&
+    !isStopped &&
+    !hasText &&
+    !hasThinking &&
+    !(turn.parts && turn.parts.length > 0)
 
   if (isStopped) {
     return (
@@ -124,6 +137,13 @@ export const MessageRow = React.memo(function MessageRow({
           actions). */}
       {isStreaming ? (
         <StreamingTimer startedAt={turn.ts} />
+      ) : isEmptyDone ? (
+        <div className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+          <IconBan size={14} className="opacity-70" />
+          <span>No response</span>
+          {durationLabel && <span className="opacity-70">· {durationLabel}</span>}
+          {canRegenerate && <RegenerateButton onClick={() => onRegenerate?.(turn.id)} />}
+        </div>
       ) : (
         <MessageFooter
           turn={turn}
