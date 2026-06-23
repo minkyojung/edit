@@ -1,9 +1,51 @@
 # Milkdown(ProseMirror) → CodeMirror 6 안전 이관 계획
 
-> 목적: 에디터 이관 시 엣지케이스 버그를 최소화하며 옮긴다. 핵심 동기 중
-> 하나는 **노드마다 프레임워크 컴포넌트를 mount하는 무거운 NodeView**
-> (리스트 마커 = Vue `createApp` per item, 카드/시각화 = React `createRoot`
-> per node)의 비용을 CM의 가벼운 decoration/widget으로 제거하는 것.
+> **현실(2026-06): CM이 이미 기본 에디터다.** `cmEditorEnabled` 설정이 켜져
+> 있고(`Page.tsx`가 그 값으로 분기), 데일리 드라이버가 CM(`CmEditor` +
+> `prototypes/v2/livePreview` 등). Milkdown(`MilkdownEditor`)은 **폴백/레거시**.
+> 따라서 이 문서는 "옮기는 계획"이 아니라 **"CM을 정식 기본으로 굳히고 PM을
+> 안전하게 제거하는 계획"** 이다.
+>
+> 단, 설정 *기본값*은 아직 `cmEditorEnabled: false`(=Milkdown) — **기본값과
+> 실사용이 어긋난 상태**. 1순위는 이 간극을 닫는 것(아래 "정식 승격").
+>
+> 동기: 무거운 NodeView(리스트 마커 = Vue per item, 카드/시각화 = React
+> `createRoot` per node)를 CM의 가벼운 decoration/widget으로 대체 → 이미
+> 리스트/체크박스 즉시 전환은 적용 완료.
+
+## 정식 승격 + PM 제거 게이트 (이 문서의 1순위)
+
+PM을 지우기 전에 **CM이 PM의 모든 산출을 대체하는지** 확인해야 한다. 순서:
+
+1. **기본값 전환**: `cmEditorEnabled` 기본 true (또는 토글 자체 제거).
+   전제 = 아래 패리티/의존성 점검 통과.
+2. **PM 전용 의존성 인벤토리**: 아직 PM(Milkdown)만 처리하고 CM엔 없는 기능을
+   전수 확인 — 시각화 NodeView, propose-edit/AI 마크 앵커, 마크다운 parser/
+   serializer 단일 진실, frontmatter, 기타 플러그인. 하나라도 CM에 공백이면
+   제거 보류.
+3. **참조 제거**: `MilkdownEditor` + `@milkdown/*` import, PM 전용 플러그인/
+   schema/NodeView, 토글 UI를 단계적으로 삭제. 각 삭제마다 빌드/테스트 그린.
+4. **안전망**: 삭제 전 §2(차등 하베스트)로 CM 단독 회귀 확인.
+
+### 실측: PM 결합도 (2026-06)
+
+`@milkdown`을 **83파일이 import** — 59는 `src/editor/`, **24는 에디터 밖**.
+즉 PM은 폴백 에디터가 아니라 앱 전역에 박혀 있어 "삭제"가 아니라 "디커플
+서브프로젝트"다.
+
+에디터 밖 24개 분류:
+- **공유 마크다운 로직 (lib/, 높음)**: `markdownAppend` · `markdownBlockMap`
+  · `computePendingHunks` · `stripPendingFromDoc` · `seedMarkdown` ·
+  `docTitle` · `stripTrailingEmptyParagraphs` · `cleanupYdocV2` — PM 스키마
+  기반 변환 → Lezer/문자열 기반으로 교체해야 함.
+- **마크다운 단일진실 (높음)**: `state/editorViewStore` (Milkdown이 parser/
+  serializer publish).
+- **챗 AI 편집 적용 (중)**: `chat/useChatRunner` · `agent/chat/types`.
+- **에디터 plumbing (낮음)**: `AppShell`/`ChatPanel`/`RightPanel`/`EditorHeader`
+  /`DocMenu`/`Page` 등 — PM `EditorView` 타입/뷰 전달. Milkdown 제거 시 정리.
+
+제거 순서: 인벤토리 확정 → lib 마크다운 변환 CM화 → 챗 적용 CM 단일화 →
+EditorView 타입 통일 → `MilkdownEditor`+`@milkdown/*` 삭제. 각 단계 차등 게이트.
 
 ## 0. 왜 CM6 구조가 안전에 유리한가
 
