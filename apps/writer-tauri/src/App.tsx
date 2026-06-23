@@ -36,10 +36,6 @@ import {
   buildWeekUrl,
   parseSlugFromPath,
 } from '@/lib/viewUrl'
-import {
-  useLazyMaterialize,
-  type LazyMaterializeConfig,
-} from '@/hooks/useLazyMaterialize'
 // Phase 4.A — dev-only side-effect imports. Each module registers
 // a `window.__X` handle so the picker / vault I/O is reachable from
 // DevTools before real UI wiring lands. Real callers (settings
@@ -100,16 +96,6 @@ startPendingChangesApplier()
 // active vault + a connected token inside, so it no-ops until both
 // exist. Launch-time and connect-time immediate syncs fire separately.
 startGitHubSync()
-
-// Module-scope so the configs array reference is stable across
-// renders — required by useLazyMaterialize's caller contract
-// (configs.length must be constant; React enforces it for the
-// per-config hook calls inside).
-const SYSTEM_DRAIN_CONFIGS: LazyMaterializeConfig[] = [
-  // The system:log drain lived here; the log surface was removed.
-  // system:index writes deterministically from state/wikiIndex.ts on
-  // every wiki change, no queue needed.
-]
 
 export function App() {
   // HashRouter sits above BootGate so anything router-aware (useActiveSlug,
@@ -336,13 +322,6 @@ function AppContent() {
     if (!activeSlug) return
     usePendingChangesStore.getState().markPageViewed(activeSlug)
   }, [activeSlug])
-  // Drains queued log entries / index updates into their respective
-  // system pages when the user navigates there. One hook, one
-  // configs table — adding system:about or system:lint later is a
-  // single config row above. Wiki proposal review (the third
-  // ingest output) stays on the in-page banner surface, not in
-  // this lazy-drain pipeline.
-  useLazyMaterialize(SYSTEM_DRAIN_CONFIGS)
 
   // First-run onboarding trigger. We read bootstrapCompleted from the
   // persisted settings store as the initial value so a returning user
