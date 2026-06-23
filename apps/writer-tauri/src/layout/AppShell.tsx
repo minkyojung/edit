@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from 'react-error-boundary'
-import type { EditorView } from '@milkdown/kit/prose/view'
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
 import { PanelErrorFallback } from '@/components/ErrorFallback'
 import { AppSidebar } from './Sidebar'
@@ -18,7 +17,6 @@ interface AppShellProps {
   oauthStatus?: 'authenticated' | 'unauthenticated' | 'checking'
   collabHandle?: CollabHandle | null
   collabStatus?: CollabStatus
-  editorView?: EditorView | null
 }
 
 // Inspector (right panel) width bounds, in px. Fixed-width column — the
@@ -33,7 +31,7 @@ const SIDEBAR_MAX_W = 360
 const SIDEBAR_DEFAULT_W = 260
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n))
 
-export function AppShell({ children, bottomLeft, collabHandle, collabStatus, editorView }: AppShellProps) {
+export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: AppShellProps) {
   const { sidebarOpen, contextPanelOpen, chatMaximized, setSidebar, togglePanels } = useLayoutStore()
   // Maximize only takes effect while the panel is actually open; the
   // toggle lives in the panel header, but Cmd+. can close the panel
@@ -246,10 +244,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus, edi
               FallbackComponent={PanelErrorFallback}
               onError={(error, info) => console.error('[right-panel] error', error, info)}
             >
-              <RightPanel
-                editorView={editorView ?? null}
-                slug={collabHandle?.slug ?? null}
-              />
+              <RightPanel slug={collabHandle?.slug ?? null} />
             </ErrorBoundary>
           </div>
         </div>

@@ -12,11 +12,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { parseFilePathFromPath } from '@/lib/viewUrl'
-import type { EditorView } from '@milkdown/kit/prose/view'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
-import { getFrozenRange } from '@/editor/frozenSelectionPlugin'
-import { getVizSourceById } from '@/editor/vizBlockOps'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
+import { useDocsStore } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
@@ -64,7 +62,6 @@ function parseSlashInvocation(text: string): { name: string; args: string } | nu
 }
 
 interface Props {
-  editorView: EditorView | null
   slug: string | null
   // Threads + active id are owned by RightPanel (so the picker can sit
   // in the shared top bar) and passed down here. `slug` is still passed
@@ -74,7 +71,7 @@ interface Props {
   activeId: string | null
 }
 
-export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
+export function ChatPanel({ slug, threads, activeId }: Props) {
   // Read Later queue route: no editor document, so chat runs read-only with
   // a generated article-list page context (see useChatRunner / runChat).
   const pathname = useLocation().pathname
@@ -178,7 +175,6 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   // executeCommand) just call `runner.run(...)` instead of duplicating the
   // run lifecycle.
   const runner = useChatRunner({
-    editorView,
     isQueue,
     slug,
     viewingFilePath,
@@ -264,14 +260,12 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     })
   }, [turnsHook.turns, streaming, pinned])
 
-  // Chat works without a (ProseMirror) editorView: the queue route is read-only
-  // Q&A, and the CodeMirror editor doesn't publish a PM view at all — in both cases
-  // an open doc (`slug`) is enough, since edits flow through pendingChangesStore, not
-  // the live view. The FileViewer route has neither a view nor a slug, but it's still
-  // a valid chat surface — so gate on being ON that route (`routeFilePath`), NOT on
-  // `viewingFilePath`: detaching the file chip must not disable the input, since
-  // general questions are still fine there.
-  const ready = !!activeId && (!!editorView || isQueue || !!slug || !!routeFilePath)
+  // An open doc (`slug`) is enough — edits flow through pendingChangesStore, not
+  // a live editor view. The queue route is read-only Q&A; the FileViewer route
+  // has neither a view nor a slug but is still a valid chat surface, so gate on
+  // being ON that route (`routeFilePath`), NOT on `viewingFilePath`: detaching
+  // the file chip must not disable the input — general questions are fine there.
+  const ready = !!activeId && (isQueue || !!slug || !!routeFilePath)
 
   // Whether the editor has a non-empty selection — gates selection-scoped
   // slash commands (validatePrompt). Sourced from the same editor-agnostic
@@ -350,24 +344,18 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   ) {
     let systemPrompt: string
     try {
-      const ev = editorView!
-      const docText = ev.state.doc.textBetween(0, ev.state.doc.content.size, '\n', '\n')
-      // Pull selection text from either the live selection or, if the user
-      // has clicked into the chat input and collapsed it, the frozen range
-      // snapshot left behind by frozenSelectionPlugin. render.ts still
-      // throws CommandRenderError when scope is "selection" and both are
-      // empty — we surface that as an inline error turn below.
-      const sel = ev.state.selection
-      let selection = ''
-      if (!sel.empty) {
-        selection = ev.state.doc.textBetween(sel.from, sel.to, '\n', '\n')
-      } else {
-        const frozen = getFrozenRange(ev)
-        if (frozen) {
-          selection = ev.state.doc.textBetween(frozen.from, frozen.to, '\n', '\n')
-        }
-      }
-      systemPrompt = renderBody(cmd, { document: docText, selection, args })
+      // Document + selection from the editor-agnostic sources CM publishes: the
+      // open doc's bodyMarkdown cache and the live selection store (the same one
+      // the chip reads). render.ts throws CommandRenderError when scope is
+      // "selection" and nothing is selected — surfaced as an inline error below.
+      const docText = slug
+        ? (useDocsStore.getState().handles[slug]?.bodyMarkdown ?? '')
+        : ''
+      systemPrompt = renderBody(cmd, {
+        document: docText,
+        selection: selectionText ?? '',
+        args,
+      })
     } catch (e) {
       const msg = e instanceof CommandRenderError ? e.message : String(e)
       appendInlineError(threadId, userTurn.content, msg, /* alreadyAppendedUser */ true)
@@ -475,17 +463,9 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
         return
       }
 
-      // "Edit with AI" was armed from a viz toolbar → this message is an edit
-      // instruction for that block. We stay in the SAME chat session: hand the
-      // agent the target block's id + current spec, and the run enables the
-      // edit_visualization tool, which applies the change in place. No separate
-      // pipeline, no synthetic transcript.
-      let vizEditTarget: { id: string; source: string } | undefined
-      if (editingVizRef.current && editorView) {
-        const id = editingVizRef.current
-        const source = getVizSourceById(editorView.state, id)
-        if (source != null) vizEditTarget = { id, source }
-      }
+      // Viz "Edit with AI" read the target block's source from the PM view to
+      // hand the agent its current spec; that path doesn't exist on CM. Clear
+      // any stale arm so it can't leak into this send.
       editingVizRef.current = null
 
       const userTurn: ChatTurn = {
@@ -512,7 +492,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
       // The user's turn is finished text — push to Yjs once and let it sync.
       turnsHook.appendTurn(userTurn)
 
-      await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, vizEditTarget)
+      await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, undefined)
     } finally {
       sendInFlightRef.current = false
     }

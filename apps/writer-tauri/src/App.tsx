@@ -1,7 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from 'react-error-boundary'
-import type { EditorView } from '@milkdown/kit/prose/view'
 import { ThemeProvider } from '@/components/theme-provider'
 import { FontProvider } from '@/components/font-provider'
 import { AppToaster } from '@/components/AppToaster'
@@ -299,7 +298,6 @@ function AppContent() {
   const activeSlug = useActiveSlug()
   const handles = useDocsStore((s) => s.handles)
   const statusMap = useDocsStore((s) => s.status)
-  const [view, setView] = useState<EditorView | null>(null)
 
   // Karpathy "Memories" ingest — fires in the background when the
   // user navigates away from a daily, or when the local date rolls
@@ -339,12 +337,7 @@ function AppContent() {
   // pure mapping from path → same surface, so adding a new view
   // route later is a one-line addition rather than a copy of the JSX.
   const notesElement = (
-    <Page
-      key={activeSlug ?? 'no-doc'}
-      handle={activeHandle}
-      status={activeStatus}
-      onViewReady={setView}
-    />
+    <Page key={activeSlug ?? 'no-doc'} handle={activeHandle} status={activeStatus} />
   )
 
   return (
@@ -358,7 +351,6 @@ function AppContent() {
           oauthStatus="unauthenticated"
           collabHandle={activeHandle}
           collabStatus={activeStatus}
-          editorView={view}
         >
           <Routes>
             {/* Root + legacy /notes both redirect to today's Day view.

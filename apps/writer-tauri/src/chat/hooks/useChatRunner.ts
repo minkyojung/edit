@@ -1,5 +1,4 @@
 import { useState, useCallback } from 'react'
-import type { EditorView } from '@milkdown/kit/prose/view'
 import { runChat } from '@/agent/chat/index'
 import { flushDirty } from '@/lib/docFileSync'
 import { useChatActivity } from '@/stores/chatActivity'
@@ -41,7 +40,6 @@ export type RunOverrides = {
 }
 
 interface UseChatRunnerDeps {
-  editorView: EditorView | null
   /** True when the chat is running on the Read Later queue route (no
    * document mounted). Turns run read-only with a generated article-list
    * page context instead of editor text. */
@@ -102,7 +100,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
   const endActivity = useChatActivity((s) => s.end)
 
   const {
-    editorView,
     isQueue,
     slug,
     viewingFilePath,
@@ -309,9 +306,9 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         // explores with Read/Glob/Grep and writes a plan instead of editing.
         const isPlan = activeThreadMode === 'plan'
         const result = await runChat({
-          // Null on the queue route — runChat falls back to the page
-          // markdown below instead of reading editor text.
-          view: editorView,
+          // CodeMirror publishes no PM view — runChat reads the page markdown
+          // (pageContextMarkdown / bodyMarkdown) instead of editor text.
+          view: null,
           // Queue turns have no doc; a synthetic slug keeps run-registry
           // bookkeeping happy. Edits never target it (read-only Q&A).
           slug: slug ?? QUEUE_SLUG,
@@ -422,7 +419,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [editorView, isQueue, slug, viewingFilePath, selectionText, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
+    [isQueue, slug, viewingFilePath, selectionText, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
   return { status, streaming, run }

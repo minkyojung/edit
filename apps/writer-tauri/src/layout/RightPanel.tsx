@@ -12,7 +12,6 @@
 // reopening shows the last-active mode without a re-mount flicker.
 
 import { useEffect, useRef } from 'react'
-import type { EditorView } from '@milkdown/kit/prose/view'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useThreads, type UseThreadsResult } from '@/hooks/useThreads'
 import { useActiveThread } from '@/hooks/useActiveThread'
@@ -32,11 +31,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ChatPanel } from './ChatPanel'
 
 interface Props {
-  editorView: EditorView | null
   slug: string | null
 }
 
-export function RightPanel({ editorView, slug }: Props) {
+export function RightPanel({ slug }: Props) {
   // Threads are owned here, not in ChatPanel, so the picker can live in
   // the shared top bar that sits above BOTH the chat transcript and the
   // history view. useActiveThread holds a single useState — calling it
@@ -81,12 +79,7 @@ export function RightPanel({ editorView, slug }: Props) {
       <div className="min-h-0 flex-1">
         {/* Review/history panel removed — versioning/backup is being redesigned
             as an opt-in layer. The right panel is chat-only for now. */}
-        <ChatPanel
-          editorView={editorView}
-          slug={slug}
-          threads={threads}
-          activeId={activeId}
-        />
+        <ChatPanel slug={slug} threads={threads} activeId={activeId} />
       </div>
       {/* Glass fade band: content dissolves UNDER the header instead of being
           cut by a divider — the same treatment as the editor header and the
