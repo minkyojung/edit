@@ -68,6 +68,10 @@ function buildDecos(
   revealAll?: boolean,
 ): Range<Decoration>[] {
   const out: Range<Decoration>[] = []
+  // Lines whose list marker the Lezer `ListMark` branch already styled, so the
+  // immediate-marker fallback (after the tree walk) doesn't double-decorate once
+  // the parser catches up a keystroke later.
+  const listLinesDone = new Set<number>()
   const tree = syntaxTree(state)
   const mark = (from: number, to: number, cls: string) => {
     if (to > from) out.push(Decoration.mark({ class: cls }).range(from, to))
@@ -227,6 +231,7 @@ function buildDecos(
           }
           const level = Math.max(0, depth - 1)
           const line = state.doc.lineAt(nf)
+          listLinesDone.add(line.from)
           out.push(
             Decoration.line({
               attributes: {
@@ -303,6 +308,61 @@ function buildDecos(
         // rendered → hide the brackets entirely (just the styled title shows).
         hide(start, innerFrom)
         hide(innerTo, end)
+      }
+    }
+
+    // Immediate list markers — the Lezer `ListMark`/`BulletList` node only forms
+    // once the item has content, so a just-typed `- ` / `1. ` stays raw until the
+    // parser catches up a keystroke later (its own comment notes this for tasks).
+    // Decorate any list-shaped line the tree walk didn't already cover, so the
+    // bullet / number appears on the keystroke — mirrors the task-marker regex
+    // trick above. Marks only (no replace) → IME-safe, same as the Lezer path.
+    if (!inlineOnly) {
+      const firstLine = state.doc.lineAt(from).number
+      const lastLine = state.doc.lineAt(Math.min(to, state.doc.length)).number
+      for (let ln = firstLine; ln <= lastLine; ln++) {
+        const line = state.doc.line(ln)
+        if (listLinesDone.has(line.from)) continue // Lezer already styled this line
+        const lm = /^(\s*)([-*+]|\d+[.)])\s/.exec(line.text)
+        if (!lm) continue
+        if (/^[-*_ ]+$/.test(line.text.trim())) continue // `---` / `* * *` = rule, not list
+        if (inCodeContext(state, line.from)) continue // `- ` inside a code fence is literal
+        const indent = lm[1].length
+        const markerFrom = line.from + indent
+        const markerTo = markerFrom + lm[2].length
+        const isNum = /\d/.test(lm[2])
+        // Hanging indent — match the ListMark branch so the body doesn't shift when
+        // Lezer catches up. Depth from indentation (exact for top level; transient).
+        const level = Math.floor(indent / 2)
+        out.push(
+          Decoration.line({
+            attributes: {
+              style: `padding-left:${(level + 1) * LIST_INDENT}em;text-indent:-${LIST_INDENT}em`,
+            },
+          }).range(line.from),
+        )
+        const tm = isNum ? null : /^ \[([ xX])\]/.exec(state.doc.sliceString(markerTo, markerTo + 4))
+        if (tm) {
+          const taskTo = markerTo + 4
+          const checked = /[xX]/.test(tm[1])
+          mark(
+            markerFrom,
+            taskTo,
+            cursorInRange(state, markerFrom, taskTo)
+              ? 'cm-list-marker'
+              : `cm-list-marker cm-task-marker${checked ? ' cm-task-marker-checked' : ''}`,
+          )
+        } else if (isNum) {
+          mark(markerFrom, markerTo, 'cm-list-marker cm-list-num')
+        } else {
+          mark(
+            markerFrom,
+            markerTo,
+            cursorInRange(state, markerFrom, markerTo)
+              ? 'cm-list-marker'
+              : 'cm-list-marker cm-list-bullet',
+          )
+        }
       }
     }
   }
