@@ -16,7 +16,6 @@ import { SkillsPage } from '@/layout/SkillsPage'
 import { GalleryPage } from '@/layout/GalleryPage'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
-import { ImageAltDialog } from '@/editor/ImageAltDialog'
 import { SaveArticleDialog } from '@/components/SaveArticleDialog'
 import { SettingsDialog } from '@/settings/SettingsDialog'
 import { useDocsStore } from '@/state/docsStore'
@@ -395,7 +394,6 @@ function AppContent() {
           open={onboardingOpen}
           onClose={() => setOnboardingOpen(false)}
         />
-        <ImageAltDialog />
         <SaveArticleDialog />
         <SettingsDialog />
       </>
