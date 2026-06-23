@@ -26,6 +26,7 @@ import { GFM } from '@lezer/markdown'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
+import { useDocStatsStore, computeDocStats } from '@/state/docStatsStore'
 import { registerCmEditor, unregisterCmEditor } from '@/state/activeCmEditor'
 import { markSlugDirty } from '@/lib/docFileSync'
 import { cmPrototypeTheme } from '@/prototypes/cmTheme'
@@ -51,11 +52,14 @@ import {
   highlightsSyncEffect,
 } from '@/editor/cmHighlights'
 import { CmHighlightBar } from '@/editor/CmHighlightBar'
+import { DocStatsPanel } from '@/editor/DocStatsPanel'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 import { slashSource } from '@/prototypes/slashCommands'
 import { smartEnter } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
+import { clearTopLevelMarkerBackward } from '@/prototypes/listBackspace'
+import { listDebugLog } from '@/prototypes/listDebugLog'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
 import { importMediaToVault } from '@/editor/cmMedia'
 
@@ -135,6 +139,10 @@ export function CmEditor({ handle, onViewReady, header }: Props) {
           doc: handle.bodyMarkdown,
           extensions: [
             history(),
+            // DEV diagnostic: read-only logger for list/Enter/IME edits. Prints
+            // `🟦LIST` lines; run copyListLog() in the console to grab the JSON.
+            // Remove this line to disable. Cannot affect editing (observes only).
+            ...(import.meta.env.DEV ? [listDebugLog] : []),
             // Safari/WKWebView drops the Enter that confirms an IME composition, so a
             // Korean list item + Enter wouldn't continue the list. Recover it from the
             // browser's own beforeinput (insertParagraph/insertLineBreak) signal.
@@ -148,6 +156,10 @@ export function CmEditor({ handle, onViewReady, header }: Props) {
             // (link) is intentionally omitted: it opens the command palette.
             inlineFormatKeymapNoLink,
             keymap.of([
+              // Top-level bullet Backspace → clean delete (no ghost "  "). Runs
+              // BEFORE deleteMarkupBackward; returns false for nested / code /
+              // mid-content so CM's indentation-preserving delete stays intact.
+              { key: 'Backspace', run: clearTopLevelMarkerBackward },
               { key: 'Backspace', run: deleteMarkupBackward },
               indentWithTab,
               ...defaultKeymap,
@@ -204,9 +216,13 @@ export function CmEditor({ handle, onViewReady, header }: Props) {
             // it.
             EditorView.updateListener.of((u) => {
               if (!u.docChanged) return
+              const text = u.state.doc.toString()
+              // Publish live word/char counts for the floating stats panel —
+              // on every doc change, including programmatic loads.
+              useDocStatsStore.getState().setStats(computeDocStats(text))
               if (u.transactions.some((t) => t.annotation(externalBody))) return
               const h = useDocsStore.getState().handles[handle.slug]
-              if (h) h.bodyMarkdown = u.state.doc.toString()
+              if (h) h.bodyMarkdown = text
               markSlugDirty(handle.slug)
             }),
             Prec.lowest(cmPrototypeTheme),
@@ -215,6 +231,8 @@ export function CmEditor({ handle, onViewReady, header }: Props) {
         }),
       })
       viewRef.current = view // expose for the highlight sync + floating menu
+      // Seed the stats panel before the first edit fires a docChanged update.
+      useDocStatsStore.getState().setStats(computeDocStats(handle.bodyMarkdown))
       onViewReady?.(null) // no PM view — PM-view consumers degrade, not break
       // Let the chat's selection-chip X collapse this view's selection
       // without the chat holding an editor reference.
@@ -263,6 +281,7 @@ export function CmEditor({ handle, onViewReady, header }: Props) {
       if (handle) unregisterCmEditor(handle.slug)
       useEditorSelectionStore.getState().setSelection(null)
       useEditorSelectionStore.getState().setCollapse(null)
+      useDocStatsStore.getState().setStats(null)
       view?.destroy()
       view = null
       viewRef.current = null
@@ -329,6 +348,7 @@ export function CmEditor({ handle, onViewReady, header }: Props) {
         </div>
       </div>
       <CmHighlightBar viewRef={viewRef} slug={slug} />
+      <DocStatsPanel />
     </div>
   )
 }
