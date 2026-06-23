@@ -47,6 +47,38 @@ PM을 지우기 전에 **CM이 PM의 모든 산출을 대체하는지** 확인�
 제거 순서: 인벤토리 확정 → lib 마크다운 변환 CM화 → 챗 적용 CM 단일화 →
 EditorView 타입 통일 → `MilkdownEditor`+`@milkdown/*` 삭제. 각 단계 차등 게이트.
 
+### 인벤토리 실측 결과 (2026-06): "재작성 0, 삭제 캐스케이드"
+
+lib/ 마크다운 유틸 8개를 전수 확인한 결과 **CM용으로 새로 짤 건 없음**. CM은
+문서=마크다운이라 변환기가 불필요(`CmEditor`가 `handle.bodyMarkdown`을 그대로
+로드/저장). 8개 모두 PM 경로 전용:
+
+| 유틸 | 호출처 | 판정 |
+|---|---|---|
+| `markdownAppend` | (없음) | 죽은 코드 → 삭제 |
+| `markdownBlockMap` | `computePendingHunks` | PM 전용 |
+| `computePendingHunks` | `editor/inlineReviewPlugin`(PM) | PM 전용 |
+| `stripPendingFromDoc` | `editor/dirtyTrackerPlugin`·`markReconcile`(PM) | PM 전용 |
+| `docTitle` | `editor/dailyGuardPlugin`(PM) | PM 전용 |
+| `stripTrailingEmptyParagraphs` | `editor/dirtyTrackerPlugin`(PM) | PM 전용 |
+| `seedMarkdown` | `docsStore` — `if (view && parser)` 가드 → CM에선 no-op | PM 전용 |
+| `cleanupYdocV2` | `BootGate`(부팅 yjs 청소) | 에디터 무관, 별건 |
+
+→ PM 제거 = "다시 만들기"가 아니라 **"Milkdown을 지우면 줄줄이 미아가 되는
+삭제"**.
+
+### 삭제 단계 (안전 순서, 각 단계 빌드+테스트+차등 그린)
+
+1. **죽은 `markdownAppend` 삭제** (워밍업, 무위험).
+2. **Milkdown 에디터 + PM 전용 플러그인 + 딸린 유틸 삭제**: `MilkdownEditor`,
+   `editor/`의 PM 전용 플러그인/schema/NodeView, 위 PM-전용 유틸 6개,
+   `editorViewStore`, `docsStore`의 `if (view && parser)` PM-경로 블록.
+3. **EditorView 타입 통일**: 레이아웃/챗이 넘기는 PM `EditorView`(`@milkdown/
+   kit/prose/view`) → CM `EditorView`(`@codemirror/view`) 또는 중립 타입.
+4. **`@milkdown/*` 의존성 + 토글/폴백 제거**, `cleanupYdocV2`는 별도 판단.
+
+전제: 토글(`cmEditorEnabled`)은 마지막까지 폴백으로 유지 → 단계별 롤백 가능.
+
 ## 0. 왜 CM6 구조가 안전에 유리한가
 
 | CM6 개념 | API | 안전 효과 |
