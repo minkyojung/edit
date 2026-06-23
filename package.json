@@ -6,14 +6,6 @@
     "build": "pnpm --filter writer-tauri tauri build"
   },
   "dependencies": {
-    "@milkdown/core": "^7.20.0",
-    "@milkdown/plugin-clipboard": "^7.20.0",
-    "@milkdown/plugin-cursor": "^7.20.0",
-    "@milkdown/plugin-history": "^7.20.0",
-    "@milkdown/plugin-listener": "^7.20.0",
-    "@milkdown/preset-commonmark": "^7.20.0",
-    "@milkdown/preset-gfm": "^7.20.0",
-    "@milkdown/prose": "^7.20.0",
     "proof-sdk": "link:../proof-sdk"
   },
   "pnpm": {
