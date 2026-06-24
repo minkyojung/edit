@@ -387,6 +387,7 @@ export interface RetryPart {
 
 export type Attachment =
   | { type: 'selection'; from: number; to: number; preview: string }
+  | { type: 'file'; name: string; mediaType: string }
 
 /** A file the user attached to a chat turn for the model to read.
  * `dataUrl` carries the full base64-encoded content; it is NOT stored

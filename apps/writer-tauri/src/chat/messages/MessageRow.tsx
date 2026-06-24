@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { IconBan } from '@tabler/icons-react'
-import type { ChatTurn } from '@/chat/types'
+import { IconBan, IconFile, IconFileText, IconFileTypePdf, IconPhoto } from '@tabler/icons-react'
+import type { Attachment, ChatTurn } from '@/chat/types'
 import { formatDuration } from '@/chat/utils/formatDuration'
 import { describeStopReason } from '@/chat/utils/errorMessage'
 import { ChatRunningIcon } from '@/components/icons/ChatRunningIcon'
@@ -35,6 +35,9 @@ export const MessageRow = React.memo(function MessageRow({
   hideText?: boolean
 }) {
   if (turn.role === 'user') {
+    const fileAtts = (turn.attachments ?? []).filter(
+      (a): a is Extract<Attachment, { type: 'file' }> => a.type === 'file',
+    )
     return (
       <div className="flex justify-end">
         {/* `synthetic` answer bubbles carry a multi-line "Q:/A:" summary —
@@ -45,6 +48,13 @@ export const MessageRow = React.memo(function MessageRow({
             turn.synthetic ? ' whitespace-pre-line' : ''
           }`}
         >
+          {fileAtts.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {fileAtts.map((att, i) => (
+                <FileChip key={i} name={att.name} mediaType={att.mediaType} />
+              ))}
+            </div>
+          )}
           {turn.content}
         </div>
       </div>
@@ -159,6 +169,22 @@ export const MessageRow = React.memo(function MessageRow({
     </>
   )
 })
+
+function FileChip({ name, mediaType }: { name: string; mediaType: string }) {
+  const Icon = mediaType.startsWith('image/')
+    ? IconPhoto
+    : mediaType === 'application/pdf'
+      ? IconFileTypePdf
+      : mediaType.startsWith('text/')
+        ? IconFileText
+        : IconFile
+  return (
+    <div className="flex items-center gap-1 rounded-md bg-background/50 px-2 py-1 text-xs text-muted-foreground">
+      <Icon size={12} stroke={1.5} className="shrink-0" />
+      <span className="max-w-[140px] truncate">{name}</span>
+    </div>
+  )
+}
 
 /** Live elapsed-time readout at the bottom of a streaming turn — ticks in
  * tenths; once the turn settles, the MessageFooter takes this slot with the

@@ -474,6 +474,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         role: 'user',
         content: text,
         ts: Date.now(),
+        attachments: attachments.length > 0
+          ? attachments.map(f => ({ type: 'file' as const, name: f.name, mediaType: f.mediaType }))
+          : undefined,
       }
 
       // First user message in an untitled thread → kick off background title
