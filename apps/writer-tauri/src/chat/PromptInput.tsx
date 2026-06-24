@@ -438,7 +438,6 @@ export function PromptInput({
           key={pt.id}
           icon={IconClipboard}
           label={chipLabel(pt.preview)}
-          tooltip={pt.content.length > 200 ? pt.content.slice(0, 200) + '…' : pt.content}
           onRemove={() => removePastedText(pt.id)}
           removeLabel="Remove pasted text"
         />
