@@ -12,6 +12,7 @@ import { useCallback, useMemo, useRef, useState, type ChangeEvent, type Clipboar
 import { notify } from '@/lib/notify'
 import {
   IconArrowUp,
+  IconClipboard,
   IconFile,
   IconFileText,
   IconFileTypePdf,
@@ -51,6 +52,7 @@ const SLASH_RE = /^\/([a-z][a-z0-9-]*)?$/
 
 const MAX_FILES = 5
 const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB — Claude API image limit
+const PASTE_AS_CHIP_THRESHOLD = 500 // chars; long pasted text becomes a context chip
 
 // Detect Mac so we render the correct modifier glyph in shortcut hints.
 // navigator.platform is deprecated but still the most reliable signal in
@@ -166,6 +168,7 @@ export function PromptInput({
   const [isComposing, setIsComposing] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [attachments, setAttachments] = useState<FileAttachment[]>([])
+  const [pastedTexts, setPastedTexts] = useState<Array<{ id: string; preview: string; content: string }>>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounterRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -220,6 +223,10 @@ export function PromptInput({
     setAttachments((prev) => prev.filter((a) => a.id !== id))
   }
 
+  function removePastedText(id: string) {
+    setPastedTexts((prev) => prev.filter((t) => t.id !== id))
+  }
+
   function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
     const files = Array.from(e.clipboardData?.items ?? [])
       .filter((item) => item.kind === 'file')
@@ -228,6 +235,16 @@ export function PromptInput({
     if (files.length > 0) {
       e.preventDefault()
       void addFiles(files)
+      return
+    }
+    const text = e.clipboardData?.getData('text') ?? ''
+    if (text.length > PASTE_AS_CHIP_THRESHOLD) {
+      e.preventDefault()
+      const preview = text.replace(/\s+/g, ' ').trim().slice(0, 60)
+      setPastedTexts((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), preview, content: text },
+      ])
     }
   }
 
@@ -269,7 +286,7 @@ export function PromptInput({
     [validate, trimmed],
   )
   const canSubmit =
-    !disabled && !isStreaming && trimmed.length > 0 && validation.ok
+    !disabled && !isStreaming && (trimmed.length > 0 || pastedTexts.length > 0) && validation.ok
 
   // Palette opens while the user is typing the command name itself —
   // before any space. Filter is the partial name (everything after `/`).
@@ -298,9 +315,12 @@ export function PromptInput({
 
   function submit() {
     if (!canSubmit) return
-    onSubmit(trimmed, attachments)
+    const context = pastedTexts.map((t) => t.content).join('\n\n')
+    const finalText = context && trimmed ? `${context}\n\n${trimmed}` : context || trimmed
+    onSubmit(finalText, attachments)
     setValue('')
     setAttachments([])
+    setPastedTexts([])
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -396,7 +416,7 @@ export function PromptInput({
           row that scrolls sideways when they overflow — the modern chip-bar
           pattern — instead of stacking vertically and growing the composer.
           Each chip is shrink-0 so it keeps its size and the row scrolls. */}
-      {(viewingFilePath || selectionText || attachments.length > 0) && (
+      {(viewingFilePath || selectionText || attachments.length > 0 || pastedTexts.length > 0) && (
         <div
           className={cn(
             'flex items-center gap-1.5 overflow-x-auto',
@@ -411,6 +431,16 @@ export function PromptInput({
           tooltip={att.name}
           onRemove={() => removeAttachment(att.id)}
           removeLabel={`Remove ${att.name}`}
+        />
+      ))}
+      {pastedTexts.map((pt) => (
+        <ContextChip
+          key={pt.id}
+          icon={IconClipboard}
+          label={chipLabel(pt.preview)}
+          tooltip={pt.content.length > 200 ? pt.content.slice(0, 200) + '…' : pt.content}
+          onRemove={() => removePastedText(pt.id)}
+          removeLabel="Remove pasted text"
         />
       ))}
       {viewingFilePath && (
