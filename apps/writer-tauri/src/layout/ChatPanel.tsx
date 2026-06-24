@@ -215,7 +215,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     void runner.run(organizeReq.threadId, [userTurn], {
       systemPrompt: organizeReq.systemPrompt,
       prompt: organizeReq.prompt,
-      relayTools: ['propose_edit', 'propose_multi_edit', 'propose_write'],
+      relayTools: ['propose_edit', 'propose_write'],
     })
     clearOrganize()
   }, [organizeReq, activeId, turnsHook, runner, clearOrganize])

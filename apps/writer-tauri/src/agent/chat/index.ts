@@ -68,22 +68,18 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     model = DEFAULT_MODEL,
     effort: effortOverride,
     relayTools = [
-      // Path A: operational edits restored. `propose_edit` /
-      // `propose_multi_edit` let the model state exactly what changes
-      // (old_string → new_string), so the host applies a surgical
-      // in-place edit instead of diffing a whole-body blob to *guess*
-      // what changed. That guessing (Phase F's declarative-only model)
-      // was the shared root of the misplaced-insert, stray-cursor, and
-      // empty-panel bugs — the host can't reconstruct intent the model
-      // never sent. The historical reason this was disabled — the
-      // "couldn't find old_string" failure — is mitigated by the
-      // tolerant matcher on the apply path (lib/looseMatch: exact →
-      // normalized-line, so a benign bullet/spacing drift still
-      // resolves). `propose_write` stays for brand-new pages and
-      // explicit full rewrites only; the CLAUDE.md editing rules
-      // already steer the model to Edit-first for existing files.
+      // Path A: operational edits. `propose_edit` lets the model state exactly
+      // what changes (old_string → new_string), so the host applies a surgical
+      // in-place edit instead of diffing a whole-body blob to *guess* what
+      // changed. The historical "couldn't find old_string" failure is mitigated
+      // by the tolerant matcher on the apply path (lib/looseMatch). `propose_write`
+      // stays for brand-new pages and explicit full rewrites only.
+      //
+      // `propose_multi_edit` was dropped: the in-buffer review now renders several
+      // pending proposals at once, so N separate `propose_edit` calls give the same
+      // "many edits to one file" outcome — each individually reviewable — without a
+      // third tool the model has to choose between.
       'propose_edit',
-      'propose_multi_edit',
       'propose_write',
       'propose_skill',
     ],

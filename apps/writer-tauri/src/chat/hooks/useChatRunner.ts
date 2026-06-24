@@ -336,7 +336,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           // Queue turns are read-only: no propose_* (there's no doc to edit);
           // the model reads article bodies via the built-in Read/Glob/Grep.
           relayTools: isPlan
-            ? ['propose_edit', 'propose_multi_edit', 'propose_write']
+            ? ['propose_edit', 'propose_write']
             : isQueue
               ? []
               : overrides?.relayTools,
