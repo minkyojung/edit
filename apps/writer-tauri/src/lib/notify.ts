@@ -323,6 +323,18 @@ export const notify = {
       description: 'No new facts to extract',
     })
   },
+
+  // ── Attachments ───────────────────────────────────────────────
+  attachmentTooLarge(name: string) {
+    toast.error(`${name} is too large`, {
+      description: 'Maximum file size is 20 MB',
+    })
+  },
+  attachmentLimitReached() {
+    toast.error('Maximum 5 files per message', {
+      description: 'Remove an attachment to add another',
+    })
+  },
 }
 
 // Dev-only console handle so smoke testing can fire each toast without

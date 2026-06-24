@@ -8,7 +8,8 @@
 //   error       → last send errored. Same as idle but rendered with an error
 //                 icon hint; the actual error message lives in the turn.
 
-import { useCallback, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { notify } from '@/lib/notify'
 import {
   IconArrowUp,
   IconFile,
@@ -47,6 +48,9 @@ import { cn } from '@/lib/utils'
 // kebab-case name, with no whitespace yet. As soon as the user types a
 // space the palette closes and we treat the rest as args.
 const SLASH_RE = /^\/([a-z][a-z0-9-]*)?$/
+
+const MAX_FILES = 5
+const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB — Claude API image limit
 
 // Detect Mac so we render the correct modifier glyph in shortcut hints.
 // navigator.platform is deprecated but still the most reliable signal in
@@ -167,9 +171,30 @@ export function PromptInput({
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const addFiles = useCallback(async (fileList: FileList | File[]) => {
-    const files = Array.from(fileList)
+    setAttachments((prev) => {
+      const slots = MAX_FILES - prev.length
+      if (slots <= 0) {
+        notify.attachmentLimitReached()
+        return prev
+      }
+      return prev // proceed; actual append happens after async read below
+    })
+
+    const incoming = Array.from(fileList)
+
+    // Validate synchronously before doing any async work.
+    const valid: File[] = []
+    for (const file of incoming) {
+      if (file.size > MAX_FILE_SIZE) {
+        notify.attachmentTooLarge(file.name)
+        continue
+      }
+      valid.push(file)
+    }
+    if (valid.length === 0) return
+
     const results = await Promise.all(
-      files.map((file) =>
+      valid.map((file) =>
         new Promise<FileAttachment>((resolve) => {
           const reader = new FileReader()
           reader.onload = () =>
@@ -183,11 +208,27 @@ export function PromptInput({
         }),
       ),
     )
-    setAttachments((prev) => [...prev, ...results])
+
+    setAttachments((prev) => {
+      const slots = MAX_FILES - prev.length
+      if (slots <= 0) return prev
+      return [...prev, ...results.slice(0, slots)]
+    })
   }, [])
 
   function removeAttachment(id: string) {
     setAttachments((prev) => prev.filter((a) => a.id !== id))
+  }
+
+  function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(e.clipboardData?.items ?? [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => f !== null)
+    if (files.length > 0) {
+      e.preventDefault()
+      void addFiles(files)
+    }
   }
 
   function handleFileInputChange(e: ChangeEvent<HTMLInputElement>) {
@@ -400,6 +441,7 @@ export function PromptInput({
         onKeyDown={handleKeyDown}
         onCompositionStart={() => setIsComposing(true)}
         onCompositionEnd={() => setIsComposing(false)}
+        onPaste={handlePaste}
         placeholder={placeholder}
         disabled={disabled}
         rows={1}
