@@ -8,8 +8,7 @@
 //   error       → last send errored. Same as idle but rendered with an error
 //                 icon hint; the actual error message lives in the turn.
 
-import { useCallback, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { pickAttachments } from '@/lib/filePicker'
+import { useCallback, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import {
   IconArrowUp,
   IconFile,
@@ -165,6 +164,7 @@ export function PromptInput({
   const [attachments, setAttachments] = useState<FileAttachment[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounterRef = useRef(0)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const addFiles = useCallback(async (fileList: FileList | File[]) => {
     const files = Array.from(fileList)
@@ -188,6 +188,13 @@ export function PromptInput({
 
   function removeAttachment(id: string) {
     setAttachments((prev) => prev.filter((a) => a.id !== id))
+  }
+
+  function handleFileInputChange(e: ChangeEvent<HTMLInputElement>) {
+    if (e.currentTarget.files && e.currentTarget.files.length > 0) {
+      void addFiles(e.currentTarget.files)
+      e.currentTarget.value = ''
+    }
   }
 
   function handleDragEnter(e: DragEvent<HTMLDivElement>) {
@@ -327,6 +334,15 @@ export function PromptInput({
           <span className="text-sm font-medium text-foreground/60">Drop files to attach</span>
         </div>
       )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain,text/csv,text/html,text/markdown,.md"
+        className="hidden"
+        onChange={handleFileInputChange}
+        aria-label="Attach files"
+      />
       {paletteOpen && (
         <SlashPalette
           commands={filteredCommands}
@@ -400,7 +416,7 @@ export function PromptInput({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                onClick={() => { void pickAttachments().then(files => { if (files.length > 0) setAttachments(prev => [...prev, ...files]) }) }}
+                onClick={() => fileInputRef.current?.click()}
                 disabled={disabled}
                 aria-label="Attach file"
                 className={cn(
