@@ -18,7 +18,7 @@ import { invertedEffects } from '@codemirror/commands'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { proofRawRangeProvider, type RawRange } from '@/editor/proofRawRanges'
 import {
-  planProposals,
+  planAdditional,
   greenRangesOf,
   redRangesOf,
   stripRanges,
@@ -254,19 +254,21 @@ export function cmInBufferReview(slug: string): Extension {
       return
     }
 
-    // 2) INSERT — one batch at a time; only when nothing is materialized (clean
-    //    doc) AND the change was never inserted before (the re-insert guard).
-    if (mats.length) return
+    // 2) INSERT — materialize fresh proposals, even ALONGSIDE already-materialized
+    //    ones: plan against the clean doc (real minus existing green) and translate
+    //    the positions back into the real doc. `everInserted` keeps each change to
+    //    exactly one insertion (an undo-reopen can't re-insert it).
     const fresh = store.pendingForPage(slug).filter((c) => !everInserted.has(c.id))
     if (!fresh.length) return
-    const plan = planProposals(view.state.doc.toString(), fresh)
+    const plan = planAdditional(view.state.doc.toString(), greenRangesOf(mats), fresh)
     if (!plan.mats.length) return
     fresh.forEach((c) => everInserted.add(c.id))
     // Materializing is a SYSTEM action — keep it OUT of undo history so Cmd-Z hits
     // the user's own last edit, not "remove the proposal that just appeared".
+    // addMat (not setMat) so existing proposals are preserved + position-mapped.
     view.dispatch({
       changes: plan.insertions,
-      effects: [setMat.of(plan.mats)],
+      effects: plan.mats.map((m) => addMat.of(m)),
       annotations: Transaction.addToHistory.of(false),
     })
   }
