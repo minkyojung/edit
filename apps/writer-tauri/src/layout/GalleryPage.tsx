@@ -913,7 +913,7 @@ export function GalleryPage() {
             ]}
           />
           <Scenario
-            title="Failed — rate limited, with live countdown"
+            title="Failed — rate limited (5-hour), with live countdown"
             turns={[
               userTurn('Translate the selected paragraph into Korean.'),
               mockTurn({
@@ -925,6 +925,53 @@ export function GalleryPage() {
                 resetsAt: Date.now() + 45_000,
                 rateLimitType: 'five_hour',
                 parts: [reasoningPart('Preparing the translation…')],
+              }),
+            ]}
+          />
+          <Scenario
+            title="Failed — weekly cap reached (resets shown as a date, Retry gated)"
+            turns={[
+              userTurn('Summarize the whole document.'),
+              mockTurn({
+                status: 'error',
+                durationMs: 900,
+                errorCode: 'RATE_LIMIT',
+                errorText: humanizeError('RATE_LIMIT: '),
+                retryable: true,
+                resetsAt: Date.now() + 3 * 24 * 60 * 60 * 1000,
+                rateLimitType: 'seven_day_opus',
+                parts: [reasoningPart('Reading the document…')],
+              }),
+            ]}
+          />
+          <Scenario
+            title="Failed — out of credits"
+            turns={[
+              userTurn('Draft a reply to this thread.'),
+              mockTurn({
+                status: 'error',
+                durationMs: 700,
+                errorCode: 'RATE_LIMIT',
+                errorText: humanizeError('RATE_LIMIT: '),
+                retryable: true,
+                rateLimitType: 'overage',
+                overageDisabledReason: 'out_of_credits',
+              }),
+            ]}
+          />
+          <Scenario
+            title="Failed — rate-limit truth wins (RATE_LIMIT card after 429 retries, not 'service busy')"
+            turns={[
+              userTurn('Explain what this file is.'),
+              mockTurn({
+                status: 'error',
+                durationMs: 199_000,
+                errorCode: 'RATE_LIMIT',
+                errorText: humanizeError('RATE_LIMIT: '),
+                retryable: true,
+                resetsAt: Date.now() + 50_000,
+                rateLimitType: 'five_hour',
+                parts: [retryPartFx(10, 10, 'rate_limit')],
               }),
             ]}
           />
