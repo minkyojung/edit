@@ -16,6 +16,7 @@ import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate
 import { Facet, type EditorState, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
 import { isKnownNote } from '../wikilinkComplete'
+import { inProofRawRange } from '@/editor/proofRawRanges'
 
 const HIDE = Decoration.replace({})
 
@@ -92,6 +93,10 @@ function buildDecos(
         const { name } = node
         const nf = node.from
         const nt = node.to
+
+        // Pending AI proposal (Option B): leave it RAW so proposal ≠ content and
+        // it edits natively. Skip the node + its children.
+        if (inProofRawRange(state, nf)) return false
 
         // INLINE-ONLY mode (table cells): a GFM table cell holds inline content
         // only — there are no real headings/lists/quotes/rules/code-blocks in a

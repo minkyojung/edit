@@ -29,6 +29,7 @@ import {
 import { ImageWidget } from '../widgets'
 import { EditableTableWidget } from './editableTable'
 import { MediaWidget, detectMedia } from '../mediaCards'
+import { inProofRawRange } from '@/editor/proofRawRanges'
 
 function cursorInRange(state: EditorState, from: number, to: number): boolean {
   for (const r of state.selection.ranges) if (r.from <= to && from <= r.to) return true
@@ -39,6 +40,9 @@ function build(state: EditorState): DecorationSet {
   const out: Range<Decoration>[] = []
   syntaxTree(state).iterate({
     enter: (node) => {
+      // Pending AI proposal (Option B): keep it RAW — don't render its table /
+      // image as a widget, so the proposal stays distinguishable + editable.
+      if (inProofRawRange(state, node.from)) return false
       // Image — same model as the media card. Two modes:
       //  • editing (cursor OR selection touching it) → KEEP the raw `![...](...)`
       //    source visible AND show the image preview as a block right below it

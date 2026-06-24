@@ -39,7 +39,15 @@ import { timestampSeekClick } from '@/editor/cmTimestampSeek'
 import { youtubeCards } from '@/prototypes/youtubeCards'
 import { mermaidCards } from '@/prototypes/mermaidCards'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
-import { cmProofReview, acceptEffect, rejectEffect, scrollOffsetForChange } from '@/editor/cmProofReview'
+import { scrollOffsetForChange } from '@/editor/cmProofReview'
+import {
+  cmInBufferReview,
+  acceptEffect,
+  rejectEffect,
+  greenRangesForSave,
+  isMaterialized,
+} from '@/editor/cmInBufferReview'
+import { stripRanges } from '@/editor/proposalPlan'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore } from '@/state/settingsStore'
 import {
@@ -201,7 +209,7 @@ export function CmEditor({ handle, header }: Props) {
             timestampSeekClick, // plain-click a YouTube timestamp → seek the embed
             linkClick(openLinkSafely), // Cmd/Ctrl-click [text](url) → open (safe schemes)
             mediaDropPaste(importMediaToVault), // drop/paste media → vault + insert
-            cmProofReview(handle.slug), // AI suggestions from pendingChangesStore → inline marks
+            cmInBufferReview(handle.slug), // AI suggestions → in-buffer red/green (Option B)
             // Save: mirror the doc text into the handle cache + flag dirty. The flush
             // loop (serializeDocToFiles → handle.bodyMarkdown) does the rest. A
             // programmatic body set (externalBody) is a load from disk — don't dirty
@@ -214,7 +222,9 @@ export function CmEditor({ handle, header }: Props) {
               useDocStatsStore.getState().setStats(computeDocStats(text))
               if (u.transactions.some((t) => t.annotation(externalBody))) return
               const h = useDocsStore.getState().handles[handle.slug]
-              if (h) h.bodyMarkdown = text
+              // Exclude pending green (proposal) text from the saved body — disk
+              // only ever holds accepted content (Option B in-buffer review).
+              if (h) h.bodyMarkdown = stripRanges(text, greenRangesForSave(u.state))
               markSlugDirty(handle.slug)
             }),
             Prec.lowest(cmPrototypeTheme),
@@ -243,6 +253,11 @@ export function CmEditor({ handle, header }: Props) {
         (md, changeId) => {
           const v = view
           if (!v) return
+          // If this change is showing as an in-buffer proposal, the in-buffer review
+          // OWNS the buffer (its reconcile deletes the red on accept). The legacy
+          // whole-doc replace would FIGHT that, so skip it here — do nothing and let
+          // the review handle it. (The dual path was what duplicated on undo.)
+          if (changeId && isMaterialized(v.state, changeId)) return
           const changes = { from: 0, to: v.state.doc.length, insert: md }
           v.dispatch(
             changeId
