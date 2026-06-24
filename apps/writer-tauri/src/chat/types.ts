@@ -250,6 +250,9 @@ export interface ChatTurn {
   /** For `errorCode === 'RATE_LIMIT'` only: which window was hit
    * (e.g. 'five_hour', 'seven_day_opus'); the card turns it into a label. */
   rateLimitType?: string
+  /** For `errorCode === 'RATE_LIMIT'` only: why overage/paid usage is
+   * unavailable (e.g. 'out_of_credits'); lets the card say "Out of credits". */
+  overageDisabledReason?: string
   /** Whether retrying could succeed. `false` for AUTH/BILLING/INVALID/BUDGET —
    * the card hides Retry. Absent → treated as retryable. */
   retryable?: boolean

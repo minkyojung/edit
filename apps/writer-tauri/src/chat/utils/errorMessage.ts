@@ -73,6 +73,9 @@ export type RunOutcome = {
   /** Which rate-limit window was hit (e.g. 'five_hour') — only for RATE_LIMIT.
    * Lets the card label the limit. */
   rateLimitType: string | undefined
+  /** Why overage/paid usage is unavailable (e.g. 'out_of_credits') — only for
+   * RATE_LIMIT. Lets the card say "Out of credits" vs a plain windowed limit. */
+  overageDisabledReason: string | undefined
   /** Whether retrying could succeed; `false` for AUTH/BILLING/INVALID/BUDGET.
    * Undefined (legacy / abort paths) is treated as retryable by the card. */
   retryable: boolean | undefined
@@ -103,11 +106,14 @@ export function classifyRunError(
   // attached by `runChat` from the SDK's most recent rate_limit_event. The
   // error card uses them to drive a labelled countdown and gate Retry.
   const rateLimit = (
-    error as Error & { rateLimit?: { resetsAt?: number; rateLimitType?: string } }
+    error as Error & {
+      rateLimit?: { resetsAt?: number; rateLimitType?: string; overageDisabledReason?: string }
+    }
   )?.rateLimit
   const isRateLimit = errorCode === 'RATE_LIMIT'
   const resetsAt = isRateLimit ? rateLimit?.resetsAt : undefined
   const rateLimitType = isRateLimit ? rateLimit?.rateLimitType : undefined
+  const overageDisabledReason = isRateLimit ? rateLimit?.overageDisabledReason : undefined
   // Retryability flag set by the sidecar (absent on abort/legacy paths →
   // undefined, which the card treats as retryable).
   const retryable = (error as Error & { retryable?: boolean })?.retryable
@@ -118,6 +124,7 @@ export function classifyRunError(
     errorCode,
     resetsAt,
     rateLimitType,
+    overageDisabledReason,
     retryable,
   }
 }

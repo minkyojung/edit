@@ -149,8 +149,12 @@ export interface RunChatResult {
  * when the chat fails with code `RATE_LIMIT`, so the UI can render a
  * precise "retry in Ns" countdown instead of a vague "try again". */
 export interface ChatErrorRateLimit {
+  /** ms-epoch when the limit resets (normalized from the SDK's seconds). */
   resetsAt?: number
   rateLimitType?: string
+  /** Why overage/paid usage is unavailable — e.g. 'out_of_credits'. Lets the
+   * card distinguish "out of credits" from a plain windowed rate limit. */
+  overageDisabledReason?: string
 }
 
 // ── Sidecar event payloads ─────────────────────────────────────
@@ -289,4 +293,12 @@ export interface ErrorEvent {
   /** Whether retrying the same request could succeed. Drives whether the
    * error card shows a Retry button. Absent → treated as retryable. */
   retryable?: boolean
+  /** For `code === 'RATE_LIMIT'`: the SDK's reset info, sourced sidecar-side
+   * from `rate_limit_event`. `resetsAt` is SECONDS since epoch (normalized to
+   * ms at the host boundary). Lets the card show the right window + countdown. */
+  rateLimit?: {
+    resetsAt?: number
+    rateLimitType?: string
+    overageDisabledReason?: string
+  }
 }

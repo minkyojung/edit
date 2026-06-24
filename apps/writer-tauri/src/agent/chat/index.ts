@@ -372,19 +372,21 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           // Retryability decided by the sidecar from the structured error
           // code (absent → retryable). Drives whether ErrorCard shows Retry.
           ;(err as Error & { retryable?: boolean }).retryable = e.payload.retryable
-          // For rate-limit failures, attach the most recent SDK
-          // rate_limit snapshot so the renderer can drive a precise
-          // countdown. The info travels as a non-enumerable
-          // property to keep `Error` serialization predictable.
-          const rateLimitInfo = parser.rateLimitInfo()
-          if (e.payload.code === 'RATE_LIMIT' && rateLimitInfo) {
-            // SDK reports `resetsAt` in seconds since epoch. The UI
-            // side works in ms (Date.now() math) so we normalize at
-            // the boundary.
-            const resetsAtSec = rateLimitInfo.resetsAt
+          // For rate-limit failures, attach the SDK's reset info so the card
+          // can show the right window + countdown. The sidecar now carries it on
+          // the error payload (single source, observed from `rate_limit_event`);
+          // fall back to the parser's most-recent snapshot. Travels as a
+          // non-enumerable property to keep `Error` serialization predictable.
+          const payloadRl = e.payload.rateLimit
+          const snapshotRl = parser.rateLimitInfo()
+          if (e.payload.code === 'RATE_LIMIT' && (payloadRl || snapshotRl)) {
+            // SDK reports `resetsAt` in seconds since epoch. The UI works in ms
+            // (Date.now() math) so we normalize at the boundary.
+            const resetsAtSec = payloadRl?.resetsAt ?? snapshotRl?.resetsAt
             ;(err as Error & { rateLimit?: ChatErrorRateLimit }).rateLimit = {
               resetsAt: typeof resetsAtSec === 'number' ? resetsAtSec * 1000 : undefined,
-              rateLimitType: rateLimitInfo.rateLimitType,
+              rateLimitType: payloadRl?.rateLimitType ?? snapshotRl?.rateLimitType,
+              overageDisabledReason: payloadRl?.overageDisabledReason,
             }
           }
           settleErr(err)

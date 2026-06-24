@@ -1016,6 +1016,15 @@ export class Server {
       // Most specific API-level error seen this attempt (SDKAssistantMessageError);
       // refines a generic execution-error result subtype at settle time.
       let lastAssistantError = null
+      // Rate-limit signal observed this attempt. `lastRateLimitInfo` is the SDK's
+      // rich `rate_limit_event.rate_limit_info` (status / resetsAt / rateLimitType
+      // / overage); `sawRateLimitRetry` records that the SDK auto-retried a 429 —
+      // together they let us classify a rate-limit-driven failure as RATE_LIMIT
+      // even when the final thrown error is a 5xx. `rateLimitRejected` flags a hard
+      // quota rejection we fail-fast on (see the event loop).
+      let lastRateLimitInfo = null
+      let sawRateLimitRetry = false
+      let rateLimitRejected = false
       lastResult = null
       lastContextUsage = null
       // Inactivity watchdog. The Claude Agent SDK delegates the actual HTTPS
@@ -1088,6 +1097,29 @@ export class Server {
           if (event?.type === 'assistant' && event.error) {
             lastAssistantError = event.error
           }
+          // The SDK auto-retried a 429 — remember that the failure was
+          // rate-limit-driven even if a later attempt fails with a 5xx.
+          if (
+            event?.type === 'system' &&
+            event.subtype === 'api_retry' &&
+            event.error === 'rate_limit'
+          ) {
+            sawRateLimitRetry = true
+          }
+          // Subscription rate-limit signal (claude.ai). Carries status / resetsAt
+          // / rateLimitType. A `rejected` status is a hard quota cap that won't
+          // clear within the SDK's retry window (~10 attempts over minutes), so
+          // fail fast: abort now and surface the reset time instead of grinding
+          // futile retries. A non-rejected event (allowed_warning) is just a
+          // heads-up — keep it for settle-time but don't abort.
+          if (event?.type === 'rate_limit_event' && event.rate_limit_info) {
+            lastRateLimitInfo = event.rate_limit_info
+            if (event.rate_limit_info.status === 'rejected') {
+              rateLimitRejected = true
+              controller.abort()
+              break
+            }
+          }
           if (event?.type === 'result') {
             lastResult = event
             // Fetch the per-category context breakdown while the input is
@@ -1112,6 +1144,22 @@ export class Server {
       } finally {
         clearInterval(watchdog)
         releaseInput() // never leave the input generator parked
+      }
+
+      // Fail-fast on a hard rate-limit rejection (see the event loop). We aborted
+      // the controller, so without this the generic-abort branch below would
+      // mislabel it CANCELLED. Surface RATE_LIMIT with the SDK's reset info so the
+      // card shows when the quota resets instead of grinding ~10 futile retries.
+      if (rateLimitRejected) {
+        this.#emitChatError(
+          runId,
+          'RATE_LIMIT',
+          'rate limited',
+          true,
+          rateLimitPayload(lastRateLimitInfo),
+        )
+        this.activeChats.delete(runId)
+        return
       }
 
       // A result already in hand means the turn completed — prefer it over an
@@ -1143,7 +1191,18 @@ export class Server {
       }
 
       if (streamError) {
-        const code = classifyError(streamError)
+        let code = classifyError(streamError)
+        // The final thrown error can be a 5xx even though rate limiting is what
+        // actually blocked the run (the SDK retried 429s; the last attempt just
+        // happened to fail with a 529). Prefer RATE_LIMIT when the run's
+        // rate-limit history says so, so we don't surface a misleading
+        // "service is busy" with no reset countdown.
+        if (
+          code !== 'RATE_LIMIT' &&
+          (lastRateLimitInfo?.status === 'rejected' || sawRateLimitRetry)
+        ) {
+          code = 'RATE_LIMIT'
+        }
         logErrorContext('stream-error', runId, streamError, {
           attempt,
           code,
@@ -1165,6 +1224,7 @@ export class Server {
           code,
           streamError?.message ?? String(streamError),
           !NON_RETRYABLE_CODES.has(code),
+          code === 'RATE_LIMIT' ? rateLimitPayload(lastRateLimitInfo) : undefined,
         )
         this.activeChats.delete(runId)
         return
@@ -1178,12 +1238,27 @@ export class Server {
         lastResult &&
         (lastResult.is_error || String(lastResult.subtype ?? '').startsWith('error_'))
       ) {
-        const { code, message, retryable } = mapSdkError({
+        let { code, message, retryable } = mapSdkError({
           subtype: lastResult.subtype,
           assistantError: lastAssistantError,
           errors: lastResult.errors,
         })
-        this.#emitChatError(runId, code, message, retryable)
+        // Same rate-limit-truth preference as the streamError path.
+        if (
+          code !== 'RATE_LIMIT' &&
+          (lastRateLimitInfo?.status === 'rejected' || sawRateLimitRetry)
+        ) {
+          code = 'RATE_LIMIT'
+          message = 'rate limited'
+          retryable = true
+        }
+        this.#emitChatError(
+          runId,
+          code,
+          message,
+          retryable,
+          code === 'RATE_LIMIT' ? rateLimitPayload(lastRateLimitInfo) : undefined,
+        )
         this.activeChats.delete(runId)
         return
       }
@@ -1209,8 +1284,10 @@ export class Server {
     this.activeChats.delete(runId)
   }
 
-  #emitChatError(runId, code, message, retryable) {
-    this.emit(notification('chat/error', { runId, code, message, retryable }))
+  #emitChatError(runId, code, message, retryable, rateLimit) {
+    this.emit(
+      notification('chat/error', { runId, code, message, retryable, rateLimit }),
+    )
   }
 
   // Park a canUseTool gate: emit a `chat/permission` notification carrying the
@@ -1305,6 +1382,19 @@ const INTERRUPT_GRACE_MS = 1500
 // Codes the user can't fix by retrying the same request. Used to set the
 // `retryable` flag (host hides the Retry button for these).
 const NON_RETRYABLE_CODES = new Set(['AUTH', 'INVALID', 'BILLING', 'BUDGET'])
+
+// Shape the SDK's `rate_limit_info` into the compact reset payload the host
+// attaches to a RATE_LIMIT error (resetsAt drives the countdown / date;
+// rateLimitType + overageDisabledReason pick the distinct copy). Returns
+// undefined when there's nothing to carry so the field is simply absent.
+function rateLimitPayload(info) {
+  if (!info) return undefined
+  return {
+    resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt : undefined,
+    rateLimitType: info.rateLimitType,
+    overageDisabledReason: info.overageDisabledReason,
+  }
+}
 
 // Map a structured SDK error — the result `subtype` and/or the mid-turn
 // SDKAssistantMessageError — to a host error code, an English fallback

@@ -210,6 +210,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         resetsAt: number | undefined = undefined,
         rateLimitType: string | undefined = undefined,
         retryable: boolean | undefined = undefined,
+        overageDisabledReason: string | undefined = undefined,
       ) => {
         flusher.cancel()
         const parts = buffer.buildParts()
@@ -237,6 +238,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           errorCode,
           resetsAt,
           rateLimitType,
+          overageDisabledReason,
           retryable,
         })
         setStreaming(null)
@@ -409,6 +411,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           outcome.resetsAt,
           outcome.rateLimitType,
           outcome.retryable,
+          outcome.overageDisabledReason,
         )
         setStatus(outcome.chatStatus)
       } finally {

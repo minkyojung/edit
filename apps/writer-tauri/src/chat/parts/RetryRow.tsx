@@ -17,9 +17,11 @@ export function RetryRow({ part }: { part: RetryPart }) {
   )
 }
 
-/** SDKAssistantMessageError label → short human phrase for the retry row. */
+/** SDKAssistantMessageError label → short human phrase for the retry row.
+ * (The SDK's error union is authentication_failed | billing_error | rate_limit
+ * | invalid_request | server_error | unknown | max_output_tokens — only the
+ * transient ones reach here; anything unmapped falls back to the raw label.) */
 const RETRY_REASONS: Record<string, string> = {
   server_error: 'a server error',
   rate_limit: 'a rate limit',
-  overloaded_error: 'an overload',
 }

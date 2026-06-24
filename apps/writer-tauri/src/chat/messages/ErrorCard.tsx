@@ -6,6 +6,17 @@ import { ReconnectButton } from '@/chat/messages/ReconnectButton'
 import { useCountdown } from '@/chat/utils/useCountdown'
 import { formatCountdown } from '@/chat/utils/formatCountdown'
 
+/** A far-out reset (weekly cap) shown as an absolute local date/time —
+ * "Jun 30, 2:00 PM" — instead of a seconds countdown that would read as days. */
+function formatResetDate(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
 /** SDK `rate_limit_event.rateLimitType` → short human label for the card. */
 const RATE_LIMIT_WINDOWS: Record<string, string> = {
   five_hour: '5-hour limit',
@@ -37,22 +48,40 @@ export function ErrorCard({
 }) {
   const isAuthError = turn.errorCode === 'AUTH'
   const isRateLimited = turn.errorCode === 'RATE_LIMIT'
-  // Which quota window was hit, as a short label — appended to the
-  // rate-limit message so the user knows whether it's the 5-hour or a
-  // weekly cap. Absent for non-subscription rate limits.
+  // Which quota window was hit, as a short label. Absent for non-subscription
+  // rate limits.
   const windowLabel = isRateLimited ? RATE_LIMIT_WINDOWS[turn.rateLimitType ?? ''] : undefined
-  // Only feed the countdown a target when this card is RATE_LIMIT and we
-  // actually have a reset timestamp — otherwise the hook's interval would
-  // run for non-rate-limit cards too.
-  const remaining = useCountdown(isRateLimited ? turn.resetsAt : undefined)
-  const retryDisabled = remaining > 0
-  // While the countdown ticks, swap the static error message for a live
-  // "retry in 28s" label. Once it hits zero we fall back to the original
-  // (the SDK's own message) so the user can still copy/inspect it.
-  const message =
-    isRateLimited && remaining > 0
-      ? `Rate limited${windowLabel ? ` (${windowLabel})` : ''} — retry in ${formatCountdown(remaining)}`
-      : turn.errorText ?? "Couldn't complete response"
+  // Distinguish the three rate-limit shapes — each gets different copy:
+  //  • out of credits  → won't clear on its own; no countdown.
+  //  • weekly / far reset → resets days out, so show a DATE not a seconds tick.
+  //  • short (5-hour)  → a live "retry in mm:ss" countdown.
+  const isOutOfCredits = isRateLimited && turn.overageDisabledReason === 'out_of_credits'
+  const farReset =
+    turn.resetsAt != null && turn.resetsAt - Date.now() > 6 * 60 * 60 * 1000
+  const isLongWindow =
+    isRateLimited &&
+    !isOutOfCredits &&
+    (/^seven_day/.test(turn.rateLimitType ?? '') || farReset)
+  // Only run the live countdown for a short window with a reset time —
+  // otherwise the hook's interval would tick for cards that don't need it.
+  const useLiveCountdown = isRateLimited && !isOutOfCredits && !isLongWindow
+  const remaining = useCountdown(useLiveCountdown ? turn.resetsAt : undefined)
+  const retryDisabled =
+    isOutOfCredits ||
+    (isLongWindow && turn.resetsAt != null && turn.resetsAt > Date.now()) ||
+    remaining > 0
+  // Distinct copy per shape; fall back to the SDK's own message once a short
+  // countdown elapses (so the user can still copy/inspect it).
+  const weeklyLabel = windowLabel
+    ? windowLabel[0].toUpperCase() + windowLabel.slice(1)
+    : 'Weekly limit'
+  const message = isOutOfCredits
+    ? 'Out of credits — add credits to continue'
+    : isLongWindow
+      ? `${weeklyLabel} reached${turn.resetsAt ? ` — resets ${formatResetDate(turn.resetsAt)}` : ''}`
+      : useLiveCountdown && remaining > 0
+        ? `Rate limited${windowLabel ? ` (${windowLabel})` : ''} — retry in ${formatCountdown(remaining)}`
+        : turn.errorText ?? "Couldn't complete response"
   const hasBody = (turn.parts && turn.parts.length > 0) || hasText || hasThinking
   return (
     <InlineCard tone="destructive">
