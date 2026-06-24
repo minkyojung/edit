@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from 'react-error-boundary'
 import { ThemeProvider } from '@/components/theme-provider'
@@ -46,23 +46,6 @@ import { startVaultWatcher } from '@/lib/vaultWatcher'
 import { startPendingChangesApplier } from '@/state/pendingChangesApplier'
 import { startGitHubSync } from '@/lib/githubSync'
 
-// DEV-only CodeMirror WYSIWYG spike (lazy so it stays out of prod bundles).
-const CodeMirrorPreview = lazy(() => import('@/prototypes/CodeMirrorPreview'))
-// DEV-only clean rewrite of the CM core (built minimally from the docs).
-const CmCore = lazy(() => import('@/prototypes/v2/CmCore'))
-// DEV-only spike: Obsidian-style in-place contenteditable table cells.
-const TableCellSpike = lazy(() => import('@/prototypes/v2/TableCellSpike'))
-// DEV-only spike: nested CodeMirror EditorView inside a cell (rich-cell IME test).
-const NestedCellSpike = lazy(() => import('@/prototypes/v2/NestedCellSpike'))
-// DEV-only spike: CM-native proof/suggestion mark system (AI-collaboration port).
-const ProofMarkSpike = lazy(() => import('@/prototypes/v2/ProofMarkSpike'))
-// DEV-only spike: proof marks layered over the FULL markdown live-preview.
-const ProofRichSpike = lazy(() => import('@/prototypes/v2/ProofRichSpike'))
-// DEV-only spike: structural anchor resolution (text-search vs syntax-tree).
-const ProofAnchorSpike = lazy(() => import('@/prototypes/v2/ProofAnchorSpike'))
-// DEV-only spike: suggestion lifecycle (alive/stale/unplaced + reload re-anchor).
-const AnchorLifecycleSpike = lazy(() => import('@/prototypes/v2/AnchorLifecycleSpike'))
-
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
 // that might also start it.
@@ -106,94 +89,6 @@ export function App() {
         <TooltipProvider delayDuration={200}>
           <HashRouter>
             <Routes>
-              {import.meta.env.DEV && (
-                // DEV-only WYSIWYG spikes. Wrapped in BootGate so the vault is
-                // bootstrapped (docsStore populated) for the real-data E-step,
-                // but OUTSIDE AppShell so they still render full-screen in
-                // isolation.
-                <>
-                  <Route
-                    path="/dev/cm-prototype"
-                    element={
-                      <BootGate>
-                        <Suspense fallback={null}>
-                          <CodeMirrorPreview />
-                        </Suspense>
-                      </BootGate>
-                    }
-                  />
-                  <Route
-                    path="/dev/cm2"
-                    element={
-                      <BootGate>
-                        <Suspense fallback={null}>
-                          <CmCore />
-                        </Suspense>
-                      </BootGate>
-                    }
-                  />
-                  <Route
-                    path="/dev/celledit"
-                    element={
-                      <BootGate>
-                        <Suspense fallback={null}>
-                          <TableCellSpike />
-                        </Suspense>
-                      </BootGate>
-                    }
-                  />
-                  <Route
-                    path="/dev/nestedcell"
-                    element={
-                      <BootGate>
-                        <Suspense fallback={null}>
-                          <NestedCellSpike />
-                        </Suspense>
-                      </BootGate>
-                    }
-                  />
-                  <Route
-                    path="/dev/proofmark"
-                    element={
-                      <BootGate>
-                        <Suspense fallback={null}>
-                          <ProofMarkSpike />
-                        </Suspense>
-                      </BootGate>
-                    }
-                  />
-                  <Route
-                    path="/dev/proofrich"
-                    element={
-                      <BootGate>
-                        <Suspense fallback={null}>
-                          <ProofRichSpike />
-                        </Suspense>
-                      </BootGate>
-                    }
-                  />
-                  <Route
-                    path="/dev/proofanchor"
-                    element={
-                      <BootGate>
-                        <Suspense fallback={null}>
-                          <ProofAnchorSpike />
-                        </Suspense>
-                      </BootGate>
-                    }
-                  />
-                  <Route
-                    path="/dev/anchorlife"
-                    element={
-                      <BootGate>
-                        <Suspense fallback={null}>
-                          <AnchorLifecycleSpike />
-                        </Suspense>
-                      </BootGate>
-                    }
-                  />
-                </>
-              )}
               <Route
                 path="*"
                 element={
