@@ -39,7 +39,7 @@ import { timestampSeekClick } from '@/editor/cmTimestampSeek'
 import { youtubeCards } from '@/prototypes/youtubeCards'
 import { mermaidCards } from '@/prototypes/mermaidCards'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
-import { scrollOffsetForChange } from '@/editor/cmProofReview'
+import { scrollOffsetForChange } from '@/editor/cmHunks'
 import {
   cmInBufferReview,
   acceptEffect,

@@ -327,4 +327,5 @@ export {
   rejectEffect as _rejectEffect,
   acceptEffect as _acceptEffect,
   reviewUndoLink as _reviewUndoLink,
+  freezeOldText as _freezeOldText,
 }

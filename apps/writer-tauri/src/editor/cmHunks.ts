@@ -9,7 +9,7 @@
 // whole-file Write — collapses to the same red(removed)/green(added) hunks.
 
 import { diffLines } from 'diff'
-import { looseReplace } from '@/lib/looseMatch'
+import { looseReplace, looseFindRange } from '@/lib/looseMatch'
 import type { PendingChange } from '@/state/pendingChangesStore'
 
 export type CmHunk = {
@@ -29,6 +29,28 @@ export function resolveAddInsertion(doc: string, anchor: string): number | null 
   if (anchor.length === 0) return doc.length
   const i = doc.lastIndexOf(anchor)
   return i < 0 ? null : i + anchor.length
+}
+
+/** Best doc offset to scroll to for a change — used when the user clicks a chat
+ * suggestion card to jump to the spot in the note. Prefers the `before` anchor
+ * (the text actually in the doc while pending), then `after`, then an `add`'s
+ * insertion point. Null when nothing resolves (e.g. a rejected change). */
+export function scrollOffsetForChange(docText: string, change: PendingChange): number | null {
+  for (const e of change.edits) {
+    if (e.before) {
+      const r = looseFindRange(docText, e.before)
+      if (r) return r.start
+    }
+    if (e.after) {
+      const r = looseFindRange(docText, e.after)
+      if (r) return r.start
+    }
+    if (e.kind === 'add') {
+      const at = resolveAddInsertion(docText, e.anchorBefore)
+      if (at !== null) return at
+    }
+  }
+  return null
 }
 
 /** Apply a change's edits to `docText` and return the resulting document text —
