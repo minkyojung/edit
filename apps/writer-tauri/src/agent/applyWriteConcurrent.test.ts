@@ -1,9 +1,17 @@
-// Reproduces R1: accepting a whole-file `propose_write` overwrites edits the
-// user made AFTER the proposal (between proposal and Keep). applyWriteWikiPage
-// uses transform = () => content, ignoring the live bodyMarkdown entirely.
+// applyWriteWikiPage is a WHOLESALE overwrite (transform = () => content) — by
+// design. The original R1 hazard ("a whole-file Write accept clobbers edits the
+// user made after the proposal") is NOT prevented inside this function; it's
+// prevented one layer up:
+//   • the in-buffer review (Cursor-style) owns mounted-editor accepts — Keep
+//     deletes only the RED span, so the user's edits OUTSIDE it survive, and
+//   • the applier SKIPS in-buffer-materialized changes (isChangeMaterializedInActiveCm),
+//     so this wholesale path isn't even reached when an editor is showing the
+//     proposal. The fallback path it remains used for (note not open in any editor)
+//     can't have concurrent in-editor edits to lose.
+// This test pins that contract: the function itself overwrites; the safety is
+// architectural, not here. (It replaces the old `it.fails` R1 reproduction.)
 import { describe, it, expect, vi } from 'vitest'
 
-// Shared mutable handle, hoisted so the vi.mock factories can close over it.
 const { handle } = vi.hoisted(() => ({ handle: { bodyMarkdown: '' } }))
 
 vi.mock('@/state/activeCmEditor', () => ({
@@ -22,21 +30,13 @@ vi.mock('@/state/docsStore', () => ({
 
 import { applyWriteWikiPage } from './applyIngest'
 
-describe('propose_write accept vs concurrent user edit', () => {
-  // KNOWN BUG (R1) — still open until the Cursor-style review lands (Stage 3:
-  // whole-file Write rendered as frozen-old + editable-green, accept applies the
-  // edited green). `it.fails` documents the data-loss and will flip to FAILING
-  // the moment it's fixed, prompting us to switch this back to `it`.
-  it.fails('PRESERVES the line the user edited after the proposal', async () => {
-    // AI's whole-file Write proposal: only line 1 changes; line 2 is ORIGINAL.
+describe('applyWriteWikiPage — wholesale overwrite (fallback path)', () => {
+  it('replaces the body with the proposal content verbatim', async () => {
     const aiContent = '사과는 빨갛게 익었다.\n바나나는 노랗다.'
-
-    // User edits line 2 ("고 달다") AFTER the proposal, before pressing Keep.
-    handle.bodyMarkdown = '사과는 빨갛다.\n바나나는 노랗고 달다.'
+    handle.bodyMarkdown = '사과는 빨갛다.\n바나나는 노랗다.'
 
     await applyWriteWikiPage('note', aiContent)
 
-    // Correct system: the user's interim edit survives.
-    expect(handle.bodyMarkdown).toContain('달다')
+    expect(handle.bodyMarkdown).toBe(aiContent) // whole body = the proposal
   })
 })
