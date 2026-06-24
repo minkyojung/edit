@@ -20,6 +20,10 @@ import { useDocsStore } from '@/state/docsStore'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { pathToKnownSlug } from '@/lib/docPaths'
 
+// Cap the success-output text so a giant result (a long Bash log, a big search)
+// can't build a huge DOM node even when expanded. Height is also capped by CSS.
+const OUTPUT_CHAR_CAP = 4000
+
 /** Compact tool invocation row (Read / Bash / Grep / WebSearch / …). Renders
  * through the shared `ActivityRow` so it sits in the same visual column as the
  * thinking pills — a context icon + humanized label + a quiet state marker.
@@ -37,22 +41,28 @@ export function ToolPart({ part }: { part: ToolPartType }) {
   const { label, chips } = humanizeToolCall(part.toolName, part.input, part.output)
   const Icon = iconForTool(part.toolName)
 
-  // Detail is a single syntax-highlighted code block — no "input" / "output"
-  // labels. For Read we show the actual lines read, with their real file line
-  // numbers in the gutter (the point of the call), highlighted by the file's
-  // language; for every other tool we show the input params and never dump the
-  // (often huge) success output — a web search would flood the turn, and the
-  // answer already carries the result. Errors are always surfaced.
+  // Detail (shown only on expand). For Read we render the actual lines read, with
+  // their real file line numbers in the gutter. For every other tool we show the
+  // input params AND the success output (Bash stdout, Grep matches, a search's
+  // results) — the "receipt" of what the call actually returned, so you can verify
+  // the model didn't act on a hallucination. It's behind the expand + height-capped
+  // + length-truncated, so even a huge result never floods the turn. Errors always
+  // show their error text.
   const isError = part.state === 'output-error'
   const filePath = (part.input as { file_path?: string } | null | undefined)?.file_path ?? ''
   const read = part.toolName === 'Read' && !isError ? parseReadContent(readOutputText(part.output)) : null
   const inputCode = formatInput(part.input)
+  // Success output for non-Read tools (Read renders its content via `read` above).
+  const rawOutput = !isError && !read ? readOutputText(part.output) : null
+  const outputCode = rawOutput && rawOutput.length > OUTPUT_CHAR_CAP
+    ? rawOutput.slice(0, OUTPUT_CHAR_CAP) + '\n… (truncated)'
+    : rawOutput
   // Tighten the shared CodeBlock's generous p-4 so the numbered content fills
   // the box. (Only the <pre> padding — overriding the line-number gutter would
   // also hit every token span's ::before and wreck inline spacing.)
   const codeClass = 'max-h-80 [&_pre]:px-3 [&_pre]:py-2.5'
   const detail =
-    read?.code || inputCode || isError ? (
+    read?.code || inputCode || outputCode || isError ? (
       <>
         {read?.code ? (
           <CodeBlock
@@ -64,6 +74,9 @@ export function ToolPart({ part }: { part: ToolPartType }) {
           />
         ) : (
           inputCode && <CodeBlock code={inputCode} language="json" className={codeClass} />
+        )}
+        {outputCode && (
+          <CodeBlock code={outputCode} language={'text' as BundledLanguage} className={codeClass} />
         )}
         {isError && (
           <CodeBlock
