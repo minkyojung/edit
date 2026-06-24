@@ -278,6 +278,9 @@ export function CmEditor({ handle, header }: Props) {
           if (at === null) return
           v.dispatch({ selection: { anchor: Math.min(at, v.state.doc.length) }, scrollIntoView: true })
         },
+        // Materialized query: is this change showing as an in-buffer proposal? The
+        // applier asks before applying, so it skips changes the review already owns.
+        (changeId) => (view ? isMaterialized(view.state, changeId) : false),
       )
     })
 

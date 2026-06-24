@@ -18,12 +18,17 @@ type CmRejecter = (changeId: string) => void
 // Scroll the editor to a pending change's location (chat suggestion card → "jump to
 // this change in the note"). The editor resolves the offset from the change's anchor.
 type CmScroller = (changeId: string) => void
+// Is `changeId` currently shown as an in-buffer proposal in this editor? The legacy
+// applier asks this so it doesn't ALSO try to apply a change the in-buffer review
+// already owns (which only logged a harmless "outdated" warning).
+type CmMaterializedQuery = (changeId: string) => boolean
 
 let active: {
   slug: string
   setBody: CmBodySetter
   rejectChange: CmRejecter
   scrollToChange: CmScroller
+  isMaterialized: CmMaterializedQuery
 } | null = null
 
 // A scroll request that arrived before its target editor mounted — the cross-note jump
@@ -36,8 +41,9 @@ export function registerCmEditor(
   setBody: CmBodySetter,
   rejectChange: CmRejecter,
   scrollToChange: CmScroller,
+  isMaterialized: CmMaterializedQuery,
 ): void {
-  active = { slug, setBody, rejectChange, scrollToChange }
+  active = { slug, setBody, rejectChange, scrollToChange, isMaterialized }
   if (pendingScroll?.slug === slug) {
     const { changeId } = pendingScroll
     pendingScroll = null
@@ -76,4 +82,11 @@ export function rejectActiveCmChange(slug: string, changeId: string): boolean {
   if (!active || active.slug !== slug) return false
   active.rejectChange(changeId)
   return true
+}
+
+/** True when `changeId` is showing as an in-buffer proposal in the mounted editor
+ * for `slug`. The applier skips its own apply for these — the in-buffer review owns
+ * the buffer + the save mirror, so a second apply would be redundant (and noisy). */
+export function isChangeMaterializedInActiveCm(slug: string, changeId: string): boolean {
+  return active?.slug === slug ? active.isMaterialized(changeId) : false
 }

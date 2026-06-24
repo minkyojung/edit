@@ -25,6 +25,7 @@ import {
   applyWriteWikiPage,
 } from '@/agent/applyIngest'
 import { useDocsStore } from './docsStore'
+import { isChangeMaterializedInActiveCm } from './activeCmEditor'
 import { flushDirty } from '@/lib/docFileSync'
 
 // HMR safety: vite's `import.meta.hot.dispose` fires right before
@@ -59,6 +60,13 @@ const PRUNE_INTERVAL_MS = 60_000
  * immediately without parking a Promise). One write path,
  * observable from inside the host. */
 async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
+  // In-buffer review (Cursor-style) OWNS the buffer + the save mirror for changes
+  // it's showing: on Keep it deletes the red and the editor writes bodyMarkdown
+  // itself. So the applier must NOT also try to place the edit here — its anchor
+  // would no longer match (the proposal text is already in the buffer), which only
+  // logged a harmless "outdated" warning. Treat as handled.
+  if (isChangeMaterializedInActiveCm(change.pageSlug, change.id)) return true
+
   // Apply each edit to the wiki page's markdown directly — engine-agnostic
   // string ops on the stored body. (CodeMirror loads the body as markdown,
   // so there's no in-editor PM transaction to commit; the former PM "fast
