@@ -82,6 +82,13 @@ export interface SystemBlocksArgs {
     selfProfile: string
     claudeMd: string
   }
+  /** Absolute path of the vault root. The model's file tools (Read/Glob/Grep/the
+   * propose_* edit tools) take absolute paths, but a custom string systemPrompt
+   * doesn't carry the SDK preset's working-directory `<env>` block — so without
+   * this the model GUESSES the root on its first Read (`/Users/.../second-brain/…`)
+   * and fails until the tool error reveals the real cwd. Pinned in the STATIC,
+   * cacheable prefix (it's stable for the whole session, so it never busts cache). */
+  vaultRoot?: string | null
   /** When true (default for free chat) the document body is appended
    * past the SDK's cache boundary so it doesn't poison the cache key.
    * Slash commands that already embed `{{document}}` in their body
@@ -140,6 +147,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     docForPrompt,
     systemBody,
     ctx,
+    vaultRoot,
     appendDocument,
     currentFilePath,
     viewingFilePath,
@@ -153,6 +161,16 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   }
   if (ctx.claudeMd) prefix.push(ctx.claudeMd)
   prefix.push(systemBody)
+  // Ground the model's file tools in the real vault root (stable → stays in the
+  // cacheable prefix). Without it the first Read guesses a wrong absolute path.
+  if (vaultRoot) {
+    prefix.push(
+      `--- WORKSPACE ---\n` +
+        `The vault root is \`${vaultRoot}\`. Every note lives under it; build absolute ` +
+        `file paths from this root (e.g. \`${vaultRoot}/inbox/Note.md\`). Do NOT guess a ` +
+        `different base directory.`,
+    )
+  }
 
   // Dynamic suffix — pinned past the SDK cache boundary because it changes
   // per turn. The viz-edit block comes before the document so it reads as the

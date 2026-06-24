@@ -159,6 +159,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     docForPrompt,
     systemBody,
     ctx,
+    // Ground the model's file tools in the real vault root (stable → cached prefix),
+    // so the first Read doesn't guess a wrong absolute path.
+    vaultRoot: getActiveVaultPath(),
     // Viewing a non-markdown file (PDF/image/…) → there's no doc body to
     // pin, and `view` may still hold the previously-open note's text, so
     // suppress the DOCUMENT block to avoid feeding stale, wrong context.
