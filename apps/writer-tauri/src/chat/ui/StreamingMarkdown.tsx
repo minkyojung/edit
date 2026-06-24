@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { BundledLanguage } from 'shiki'
 import { remarkWikilink } from './remarkWikilink'
+import { usePacedText } from './usePacedText'
 import { WikiLink } from './WikiLink'
 import { CodeBlock } from '@/components/ai-elements/code-block'
 import { MermaidBlock } from '@/viz/MermaidBlock'
@@ -179,6 +180,10 @@ export function StreamingMarkdown({
   content: string
   isStreaming: boolean
 }) {
+  // Smooth out the ~120ms burst commits: reveal `content` on an rAF pacer while
+  // streaming (grapheme-safe), full immediately once settled.
+  const shown = usePacedText(content, isStreaming)
+
   // Fenced code blocks. react-markdown nests <code> inside <pre>; overriding
   // <pre> hands us the wrapper. A `mermaid` fence routes to MermaidBlock and an
   // `artifact` fence to ArtifactBlock (both wait for the fence to settle before
@@ -219,7 +224,7 @@ export function StreamingMarkdown({
         remarkPlugins={REMARK_PLUGINS}
         components={components}
       >
-        {content}
+        {shown}
       </ReactMarkdown>
     </div>
   )
