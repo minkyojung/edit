@@ -470,7 +470,7 @@ export function PromptInput({
                 <IconPaperclip size={18} stroke={1.5} />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="top">Attach file</TooltipContent>
+            <TooltipContent side="top">Attach file · max 20 MB</TooltipContent>
           </Tooltip>
           <EffortButton
             value={effort}
