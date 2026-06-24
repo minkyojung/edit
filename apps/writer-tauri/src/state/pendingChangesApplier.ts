@@ -64,6 +64,14 @@ async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
   // so there's no in-editor PM transaction to commit; the former PM "fast
   // path" that dispatched suggestion-mark commits into a live ProseMirror
   // view is gone with the PM editor.)
+  // In-editor Keep with an edited green proposal (Cursor-style): the review
+  // already computed the final merged document (current doc + edited green,
+  // user's outside edits preserved). Apply it verbatim instead of re-deriving
+  // from `edits` — that's the whole point, the edited text wouldn't match.
+  if (change.resolvedResult != null) {
+    return applyWriteWikiPage(change.pageSlug, change.resolvedResult, change.id)
+  }
+
   let allOk = true
   for (const edit of change.edits) {
     if (edit.kind === 'add') {

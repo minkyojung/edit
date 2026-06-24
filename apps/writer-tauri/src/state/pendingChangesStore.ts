@@ -95,6 +95,12 @@ export interface PendingChange {
    * produce one or two; chat Edit calls produce one; chat Write
    * produces one against an empty target. */
   edits: PendingEdit[]
+  /** Set at Keep time by the in-editor review when the user edited the green
+   * proposal (Cursor-style). The final, merged document text — applied verbatim
+   * (whole-doc write) instead of re-deriving from `edits`, so the user's tweak
+   * AND their concurrent edits outside the frozen old spans both survive. Unset
+   * for chat-panel/ingest accepts, which fall back to the per-edit apply. */
+  resolvedResult?: string
   /** Provenance + reasoning, surfaced in the inline review chip and
    * in the Review Panel timeline. */
   context: {
@@ -163,7 +169,7 @@ interface PendingChangesState {
    * apply path (a subscriber to this store) reads the accepted
    * change and writes to disk. No-op if the change is already
    * decided. */
-  accept: (id: string) => void
+  accept: (id: string, resolvedResult?: string) => void
 
   /** User clicked Reject on one change. Same lifecycle as accept,
    * but the apply path skips the disk write. */
@@ -258,14 +264,14 @@ export const usePendingChangesStore = create<PendingChangesState>()(
         })
       },
 
-      accept: (id) => {
+      accept: (id, resolvedResult) => {
         set((s) => {
           const existing = s.byId[id]
           if (!existing || existing.status !== 'pending') return s
           return {
             byId: {
               ...s.byId,
-              [id]: { ...existing, status: 'accepted', decidedAt: Date.now() },
+              [id]: { ...existing, status: 'accepted', decidedAt: Date.now(), resolvedResult },
             },
           }
         })
@@ -293,7 +299,7 @@ export const usePendingChangesStore = create<PendingChangesState>()(
           return {
             byId: {
               ...s.byId,
-              [id]: { ...existing, status: 'pending', decidedAt: null },
+              [id]: { ...existing, status: 'pending', decidedAt: null, resolvedResult: undefined },
             },
           }
         })

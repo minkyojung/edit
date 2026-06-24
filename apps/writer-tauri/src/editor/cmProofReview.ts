@@ -18,8 +18,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } fr
 import { invertedEffects } from '@codemirror/commands'
 import { usePendingChangesStore, rejectPendingChange, type PendingChange } from '@/state/pendingChangesStore'
 import { looseFindRange } from '@/lib/looseMatch'
-import { renderInline } from '@/prototypes/widgets'
-import { computeCmHunks, resolveAddInsertion } from '@/editor/cmHunks'
+import { computeCmHunks, resolveAddInsertion, applyHunks } from '@/editor/cmHunks'
 
 // Undo-link for accept: the accept's doc change (dispatched by the CM bridge) carries
 // `acceptEffect.of(changeId)`. invertedEffects makes its undo carry `reopenEffect`, so
@@ -161,7 +160,23 @@ export function scrollOffsetForChange(docText: string, change: PendingChange): n
   return null
 }
 
-const accept = (id: string) => usePendingChangesStore.getState().accept(id)
+// Keep (Cursor-style): land this change onto the CURRENT doc using its hunks'
+// (possibly user-edited) green text, then accept with that merged result. The old
+// spans were frozen, so the user's own edits only live OUTSIDE the hunks and are
+// preserved; the green tweak is read live from each editable widget. Reads fresh
+// state (not the widget's captured `a`), so it's correct even after re-anchoring.
+function keep(view: EditorView, changeId: string) {
+  const hunks = view.state.field(anchoredField).filter((a) => a.changeId === changeId)
+  const merged = applyHunks(
+    view.state.doc.toString(),
+    hunks.map((h) => {
+      const el = view.dom.querySelector(`[data-proof-edit="${h.editId}"]`) as HTMLElement | null
+      // innerText (not textContent) so multi-line green keeps its line breaks.
+      return { from: h.from, to: h.to, after: el ? el.innerText : h.after }
+    }),
+  )
+  usePendingChangesStore.getState().accept(changeId, merged)
+}
 
 const proofBtn = (label: string, cls: string, fn: () => void): HTMLButtonElement => {
   const b = document.createElement('button')
@@ -184,20 +199,25 @@ class ReviewWidget extends WidgetType {
   eq(o: ReviewWidget) {
     return o.a.changeId === this.a.changeId && o.a.editId === this.a.editId && o.a.after === this.a.after
   }
-  toDOM() {
+  toDOM(view: EditorView) {
     const box = document.createElement('span')
     box.className = 'cm-proof-review'
     if ((this.a.kind === 'replace' || this.a.kind === 'add') && this.a.after) {
       const ins = document.createElement('span')
       ins.className = 'cm-proof-new'
-      // Render INLINE markdown (bold/italic/code/strike/link) inside the green
-      // highlight; block markers (##, -) in a large insertion stay literal — inline
-      // by design. `white-space: pre-wrap` (theme) keeps line breaks + wraps.
-      ins.append(...renderInline(this.a.after))
+      // EDITABLE green proposal (Cursor-style). Raw text in a contenteditable so
+      // the user can tweak it — Korean IME composes here (verified). The edited
+      // text is read live by `keep()` via this `data-proof-edit` handle; we never
+      // push it into the store mid-edit, so `eq()` stays stable and the DOM (with
+      // its in-progress composition) is never rebuilt.
+      ins.contentEditable = 'true'
+      ins.spellcheck = false
+      ins.dataset.proofEdit = this.a.editId
+      ins.textContent = this.a.after
       box.append(ins)
     }
     box.append(
-      proofBtn('✓', 'cm-proof-keep', () => accept(this.a.changeId)),
+      proofBtn('✓', 'cm-proof-keep', () => keep(view, this.a.changeId)),
       // Same shared path the chat panel uses → undoable when this doc is open.
       proofBtn('✕', 'cm-proof-reject', () => rejectPendingChange(this.a.changeId)),
     )
@@ -237,6 +257,18 @@ const proofTheme = EditorView.theme({
     // Wrap within the editor column (no nowrap) and keep the insertion's own line
     // breaks instead of collapsing them to spaces.
     whiteSpace: 'pre-wrap',
+    // The green is a SEPARATE contenteditable (outside CM's drawSelection), so it
+    // shows the native caret + focus chrome. Match the editor: kill the default
+    // focus outline (replaced by a subtle ring), tint the caret like body text,
+    // and inherit line metrics so the caret height matches the surrounding line.
+    outline: 'none',
+    caretColor: 'var(--foreground)',
+    lineHeight: 'inherit',
+    verticalAlign: 'baseline',
+  },
+  '.cm-proof-new:focus': {
+    // A ring via box-shadow (not border) so focusing doesn't shift layout.
+    boxShadow: '0 0 0 1.5px color-mix(in oklch, #2ecc71 55%, transparent)',
   },
   '.cm-proof-keep, .cm-proof-reject': {
     fontSize: '11px',

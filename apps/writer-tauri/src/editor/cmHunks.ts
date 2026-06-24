@@ -53,6 +53,24 @@ export function applyEditsToText(docText: string, change: PendingChange): string
   return text
 }
 
+/** Apply hunks back onto `docText` — the inverse direction of computeCmHunks,
+ * used at Keep time to land the (possibly user-edited) green text. Each hunk's
+ * [from, to) is replaced by its `after`. Applied right-to-left so earlier offsets
+ * stay valid. Because the old (red) spans are frozen while pending, the user's
+ * own edits only ever live OUTSIDE these ranges — so applying the hunks to the
+ * CURRENT doc preserves those edits AND lands the proposal (the Cursor-style
+ * merge, with no diff3). */
+export function applyHunks(
+  docText: string,
+  hunks: readonly { from: number; to: number; after: string }[],
+): string {
+  let text = docText
+  for (const h of [...hunks].sort((a, b) => b.from - a.from)) {
+    text = text.slice(0, h.from) + h.after + text.slice(h.to)
+  }
+  return text
+}
+
 /** Diff `docText` against the change's applied result and fold the line-level
  * diff into hunks (char offsets into `docText`):
  *   - a removed run followed by an added run → one 'replace' hunk
