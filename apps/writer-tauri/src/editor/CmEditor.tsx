@@ -57,7 +57,6 @@ import { slashSource } from '@/prototypes/slashCommands'
 import { smartEnter } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
 import { clearTopLevelMarkerBackward } from '@/prototypes/listBackspace'
-import { listDebugLog } from '@/prototypes/listDebugLog'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
 import { importMediaToVault } from '@/editor/cmMedia'
 
@@ -136,10 +135,6 @@ export function CmEditor({ handle, header }: Props) {
           doc: handle.bodyMarkdown,
           extensions: [
             history(),
-            // DEV diagnostic: read-only logger for list/Enter/IME edits. Prints
-            // `🟦LIST` lines; run copyListLog() in the console to grab the JSON.
-            // Remove this line to disable. Cannot affect editing (observes only).
-            ...(import.meta.env.DEV ? [listDebugLog] : []),
             // Safari/WKWebView drops the Enter that confirms an IME composition, so a
             // Korean list item + Enter wouldn't continue the list. Recover it from the
             // browser's own beforeinput (insertParagraph/insertLineBreak) signal.
