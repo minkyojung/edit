@@ -6,7 +6,7 @@
 // Read/Glob/Grep and writes a plan instead of editing. Disabled while a
 // turn streams (switching mid-flight wouldn't apply until the next send).
 
-import { IconCompass } from '@tabler/icons-react'
+import { IconMap } from '@tabler/icons-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ChatMode } from '@/chat/types'
 import { cn } from '@/lib/utils'
@@ -38,7 +38,7 @@ export function ModeToggle({ value, onChange, disabled }: Props) {
           )}
         >
           {/* One fixed icon for both states; only the label + highlight change. */}
-          <IconCompass size={18} stroke={1.5} />
+          <IconMap size={18} stroke={1.5} />
           {isPlan && <span>Plan</span>}
         </button>
       </TooltipTrigger>

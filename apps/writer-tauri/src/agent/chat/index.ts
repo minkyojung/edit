@@ -50,7 +50,7 @@ import {
 } from './types'
 import { resolveAgent } from '../agents'
 import {
-  buildUserPrompt,
+  buildUserContent,
   composeSystemBlocks,
   shouldResumeSession,
   truncateDocForPrompt,
@@ -94,6 +94,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     permissionMode,
     builtinTools,
     fastMode,
+    attachments,
     signal,
     onTextDelta,
     onThinkingDelta,
@@ -131,7 +132,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // so behaviour is unchanged; the seam lets roles plug in later.
   const agent = resolveAgent(useThreadsStore.getState().threads[threadId]?.agentId)
   const systemBody = systemPrompt ?? agent.systemPrompt
-  const prompt = promptOverride ?? buildUserPrompt(history ?? [])
+  const prompt = promptOverride ?? buildUserContent(history ?? [], attachments)
 
   // Chat mode — Karpathy / Claude Code shape: only the always-on
   // schema (CLAUDE.md + profile) lands in the system prompt. The wiki

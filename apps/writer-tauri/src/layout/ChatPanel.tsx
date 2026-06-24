@@ -43,6 +43,7 @@ import {
   clampEffort,
   normalizeModel,
   type ChatTurn,
+  type FileAttachment,
 } from '@/chat/types'
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
 import { usePendingOrganize } from '@/state/pendingOrganizeStore'
@@ -439,7 +440,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     })
   }
 
-  async function handleSend(text: string) {
+  async function handleSend(text: string, attachments: FileAttachment[] = []) {
     if (!ready || chatStatus === 'streaming') return
     // Latch BEFORE any await / state set so a fast double-Enter can't
     // smuggle a duplicate request through while React is still committing
@@ -492,7 +493,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       // The user's turn is finished text — push to Yjs once and let it sync.
       turnsHook.appendTurn(userTurn)
 
-      await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, undefined)
+      await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, undefined, attachments)
     } finally {
       sendInFlightRef.current = false
     }

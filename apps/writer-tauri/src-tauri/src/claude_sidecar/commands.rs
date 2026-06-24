@@ -19,7 +19,10 @@ use super::manager::SidecarManager;
 pub struct ChatStartArgs {
     pub run_id: String,
     pub model: String,
-    pub prompt: String,
+    /// Either a plain string or a ContentBlock array (when the user attached
+    /// files). Passed through verbatim; the SDK's MessageParam accepts both
+    /// forms for `content`.
+    pub prompt: Value,
     /// Either a single string or an array of strings (with
     /// SYSTEM_PROMPT_DYNAMIC_BOUNDARY sentinel). The frontend chooses
     /// the shape; we pass it through to the SDK verbatim, which

@@ -388,6 +388,17 @@ export interface RetryPart {
 export type Attachment =
   | { type: 'selection'; from: number; to: number; preview: string }
 
+/** A file the user attached to a chat turn for the model to read.
+ * `dataUrl` carries the full base64-encoded content; it is NOT stored
+ * in the ChatTurn (too large for JSONL) — it flows only through the
+ * live run path (PromptInput → useChatRunner → runChat → sidecar). */
+export interface FileAttachment {
+  id: string
+  name: string
+  mediaType: string
+  dataUrl: string
+}
+
 export interface ToolCall {
   id: string                       // Anthropic tool_use_id
   name: string

@@ -9,6 +9,7 @@
 
 import type {
   ChatTurn,
+  FileAttachment,
   MessagePart,
 } from '@/chat/types'
 
@@ -53,6 +54,11 @@ export interface RunChatArgs {
    * instructions like "Begin your review." that don't derive from a chat
    * transcript. */
   prompt?: string
+  /** Files the user attached to this turn. Converted to Anthropic
+   * ContentBlock[] alongside the text prompt in buildUserContent().
+   * Not stored in ChatTurn (too large for JSONL); lives only in the
+   * live run path. Ignored when `prompt` is set directly (slash cmds). */
+  attachments?: FileAttachment[]
   /** System prompt body. The current document text is appended automatically.
    * Defaults to FREE_CHAT_PROMPT. */
   systemPrompt?: string

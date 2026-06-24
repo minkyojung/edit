@@ -4,7 +4,7 @@ import { flushDirty } from '@/lib/docFileSync'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import { modelSupportsFastMode } from '@/chat/types'
-import type { ChatEffort, ChatMode, ChatModel, ChatTurn } from '@/chat/types'
+import type { ChatEffort, ChatMode, ChatModel, ChatTurn, FileAttachment } from '@/chat/types'
 import type { VizEditTarget } from '@/agent/chat/types'
 import type { PromptStatus } from '@/chat/PromptInput'
 import { classifyRunError } from '@/chat/utils/errorMessage'
@@ -84,6 +84,7 @@ export interface ChatRunner {
     history: ChatTurn[],
     overrides?: RunOverrides,
     vizEditTarget?: VizEditTarget,
+    attachments?: FileAttachment[],
   ) => Promise<void>
 }
 
@@ -127,6 +128,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       history: ChatTurn[],
       overrides?: RunOverrides,
       vizEditTarget?: VizEditTarget,
+      attachments?: FileAttachment[],
     ) => {
       const startedAt = Date.now()
       // Discard any answer summary left over from a prior run (e.g. one whose
@@ -323,6 +325,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           prompt: overrides?.prompt,
           systemPrompt: overrides?.systemPrompt,
           appendDocument: overrides ? false : undefined,
+          attachments: overrides ? undefined : attachments,
           // Editing a specific viz block: runChat adds the edit_visualization
           // relay tool + injects the target's id/spec into the system prompt.
           vizEditTarget,

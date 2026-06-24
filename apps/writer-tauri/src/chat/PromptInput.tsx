@@ -8,7 +8,7 @@
 //   error       → last send errored. Same as idle but rendered with an error
 //                 icon hint; the actual error message lives in the turn.
 
-import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import {
   IconArrowUp,
   IconFile,
@@ -16,6 +16,7 @@ import {
   IconFileTypePdf,
   IconMovie,
   IconMusic,
+  IconPaperclip,
   IconPhoto,
   IconPlayerStop,
   IconQuote,
@@ -38,6 +39,7 @@ import {
   type ChatModel,
   type ContextSnapshot,
   type FastModeState,
+  type FileAttachment,
 } from '@/chat/types'
 import { cn } from '@/lib/utils'
 
@@ -67,7 +69,7 @@ interface Props {
   status: PromptStatus
   disabled?: boolean
   placeholder?: string
-  onSubmit: (text: string) => void
+  onSubmit: (text: string, attachments: FileAttachment[]) => void
   onStop?: () => void
   model: ChatModel
   onModelChange: (model: ChatModel) => void
@@ -113,6 +115,15 @@ function chipLabel(text: string): string {
   return flat.slice(0, CHIP_MAX).trimEnd() + '…'
 }
 
+function mediaTypeToKind(mediaType: string): AssetKind {
+  if (mediaType.startsWith('image/')) return 'image'
+  if (mediaType === 'application/pdf') return 'pdf'
+  if (mediaType.startsWith('audio/')) return 'audio'
+  if (mediaType.startsWith('video/')) return 'video'
+  if (mediaType.startsWith('text/')) return 'text'
+  return 'other'
+}
+
 // Per-kind glyph for the viewed-file chip, so a PDF reads as a PDF and an
 // image as an image at a glance (classifyAsset maps the extension).
 const FILE_KIND_ICON: Record<AssetKind, typeof IconFile> = {
@@ -150,6 +161,65 @@ export function PromptInput({
   const [value, setValue] = useState('')
   const [isComposing, setIsComposing] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [attachments, setAttachments] = useState<FileAttachment[]>([])
+  const [isDragOver, setIsDragOver] = useState(false)
+  const dragCounterRef = useRef(0)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const addFiles = useCallback(async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList)
+    const results = await Promise.all(
+      files.map((file) =>
+        new Promise<FileAttachment>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () =>
+            resolve({
+              id: crypto.randomUUID(),
+              name: file.name,
+              mediaType: file.type || 'application/octet-stream',
+              dataUrl: reader.result as string,
+            })
+          reader.readAsDataURL(file)
+        }),
+      ),
+    )
+    setAttachments((prev) => [...prev, ...results])
+  }, [])
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => prev.filter((a) => a.id !== id))
+  }
+
+  function handleFileInputChange(e: ChangeEvent<HTMLInputElement>) {
+    if (e.currentTarget.files && e.currentTarget.files.length > 0) {
+      void addFiles(e.currentTarget.files)
+      e.currentTarget.value = ''
+    }
+  }
+
+  function handleDragEnter(e: DragEvent<HTMLDivElement>) {
+    if (!e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    dragCounterRef.current += 1
+    if (dragCounterRef.current === 1) setIsDragOver(true)
+  }
+
+  function handleDragLeave(e: DragEvent<HTMLDivElement>) {
+    if (!e.dataTransfer.types.includes('Files')) return
+    dragCounterRef.current -= 1
+    if (dragCounterRef.current === 0) setIsDragOver(false)
+  }
+
+  function handleDragOver(e: DragEvent<HTMLDivElement>) {
+    if (e.dataTransfer.types.includes('Files')) e.preventDefault()
+  }
+
+  function handleDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    dragCounterRef.current = 0
+    setIsDragOver(false)
+    if (e.dataTransfer.files.length > 0) void addFiles(e.dataTransfer.files)
+  }
 
   const isStreaming = status === 'streaming'
   const trimmed = value.trim()
@@ -187,8 +257,9 @@ export function PromptInput({
 
   function submit() {
     if (!canSubmit) return
-    onSubmit(trimmed)
+    onSubmit(trimmed, attachments)
     setValue('')
+    setAttachments([])
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -249,10 +320,29 @@ export function PromptInput({
   return (
     <div
       className={cn(
-        'relative flex flex-col gap-1.5 rounded-3xl bg-muted p-2.5 transition-colors',
+        'relative flex flex-col gap-1.5 rounded-3xl border-[0.5px] border-border bg-muted dark:bg-[color-mix(in_oklch,var(--muted),black_10%)] p-2.5 transition-colors',
         disabled && 'opacity-60',
       )}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
     >
+      {isDragOver && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-3xl border-2 border-dashed border-foreground/30 bg-muted/90 backdrop-blur-sm">
+          <IconPaperclip size={28} stroke={1.5} className="text-foreground/50" />
+          <span className="text-sm font-medium text-foreground/60">Drop files to attach</span>
+        </div>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain,text/csv,text/html,text/markdown,.md"
+        className="hidden"
+        onChange={handleFileInputChange}
+        aria-label="Attach files"
+      />
       {paletteOpen && (
         <SlashPalette
           commands={filteredCommands}
@@ -265,13 +355,23 @@ export function PromptInput({
           row that scrolls sideways when they overflow — the modern chip-bar
           pattern — instead of stacking vertically and growing the composer.
           Each chip is shrink-0 so it keeps its size and the row scrolls. */}
-      {(viewingFilePath || selectionText) && (
+      {(viewingFilePath || selectionText || attachments.length > 0) && (
         <div
           className={cn(
             'flex items-center gap-1.5 overflow-x-auto',
             '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
           )}
         >
+      {attachments.map((att) => (
+        <ContextChip
+          key={att.id}
+          icon={FILE_KIND_ICON[mediaTypeToKind(att.mediaType)]}
+          label={att.name.length > CHIP_MAX ? att.name.slice(0, CHIP_MAX) + '…' : att.name}
+          tooltip={att.name}
+          onRemove={() => removeAttachment(att.id)}
+          removeLabel={`Remove ${att.name}`}
+        />
+      ))}
       {viewingFilePath && (
         <ContextChip
           icon={FILE_KIND_ICON[classifyAsset(viewingFilePath)]}
@@ -304,7 +404,7 @@ export function PromptInput({
         disabled={disabled}
         rows={1}
         className={cn(
-          'w-full resize-none bg-transparent px-1.5 py-1.5 text-[15px] leading-relaxed text-foreground outline-none',
+          'w-full resize-none bg-transparent px-2.5 py-1.5 text-[15px] leading-relaxed text-foreground outline-none',
           'placeholder:text-muted-foreground',
           'field-sizing-content max-h-48 min-h-28',
           '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
@@ -312,6 +412,24 @@ export function PromptInput({
       />
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled}
+                aria-label="Attach file"
+                className={cn(
+                  'flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors',
+                  'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
+                  'hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50',
+                )}
+              >
+                <IconPaperclip size={18} stroke={1.5} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Attach file</TooltipContent>
+          </Tooltip>
           <EffortButton
             value={effort}
             efforts={effortsForModel(model)}
