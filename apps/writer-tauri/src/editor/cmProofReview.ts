@@ -13,7 +13,7 @@
 // added lines as green widgets. Accept persists via the existing applier; the
 // live-doc refresh on accept is wired separately (the applyToWikiPage CM bridge).
 
-import { StateField, StateEffect, type EditorState, type Extension } from '@codemirror/state'
+import { StateField, StateEffect, EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
 import { invertedEffects } from '@codemirror/commands'
 import { usePendingChangesStore, rejectPendingChange, type PendingChange } from '@/state/pendingChangesStore'
@@ -93,6 +93,27 @@ const anchoredField = StateField.define<AnchoredEdit[]>({
     for (const e of tr.effects) if (e.is(setAnchored)) next = e.value
     return next
   },
+})
+
+// Stage 1 — FREEZE the old (to-be-replaced) text while a suggestion is pending.
+// A genuine user edit (typing / deleting) that touches a pending replace/delete
+// span is dropped, so the user can't alter text that's about to be replaced — the
+// source of accept-time drift / lost edits. Cursor's model: the red side is
+// read-only; you edit the green proposal instead (Stage 2). Programmatic
+// transactions — the accept apply, external reload, re-anchor (none carry an
+// input/delete userEvent) — and undo/redo pass untouched. An 'add' is a pure
+// insertion point with no old text, so nothing is protected there.
+const freezeOldText = EditorState.changeFilter.of((tr) => {
+  if (!(tr.isUserEvent('input') || tr.isUserEvent('delete'))) return true
+  const anchored = tr.startState.field(anchoredField, false)
+  if (!anchored?.length) return true
+  const pairs: Array<[number, number]> = []
+  for (const a of anchored) if (a.kind !== 'add' && a.to > a.from) pairs.push([a.from, a.to])
+  if (!pairs.length) return true
+  pairs.sort((x, y) => x[0] - y[0])
+  // A flat [from, to, from, to, …] list of protected ranges: CM drops the parts of
+  // this transaction's changes that touch them and keeps the rest.
+  return pairs.flat()
 })
 
 /** Build the anchored hunks for every pending change on the page. Each change
@@ -262,6 +283,7 @@ export function cmProofReview(slug: string): Extension {
   )
   return [
     anchoredField,
+    freezeOldText,
     EditorView.decorations.compute([anchoredField], build),
     proofTheme,
     sub,
@@ -269,3 +291,7 @@ export function cmProofReview(slug: string): Extension {
     acceptUndoWatcher,
   ]
 }
+
+// Test-only: seed/inspect the frozen old-text spans headlessly (the ViewPlugin's
+// store subscription needs a real browser).
+export { anchoredField as _anchoredField, setAnchored as _setAnchored, freezeOldText as _freezeOldText }
