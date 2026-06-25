@@ -122,10 +122,23 @@ function Segment({ meta, isActive, onSelect, onClose }: SegmentProps) {
   return (
     <div
       data-state={isActive ? 'active' : 'inactive'}
+      // The whole segment is the hit target (not just the title) — click or
+      // Enter/Space anywhere selects. It can't be a <button> because it holds
+      // the close <button>, so it's a role="tab" with keyboard handling.
+      role="tab"
+      aria-selected={isActive}
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect()
+        }
+      }}
       className={cn(
         // Equal width (flex-1). Transparent border reserves the active
         // pill's 1px border so widths/heights never jump on selection.
-        'group relative flex h-full min-w-0 flex-1 items-center justify-center gap-2.5 rounded-full border border-transparent px-2 text-[12px] transition-all',
+        'group relative flex h-full min-w-0 flex-1 cursor-pointer items-center justify-center gap-2.5 rounded-full border border-transparent px-2 text-[12px] outline-none transition-all',
         'text-muted-foreground hover:text-foreground',
         // Focus = a solid background swap (not a raised pill): the active
         // segment fills with the body colour, a clear step from the lighter
@@ -142,17 +155,11 @@ function Segment({ meta, isActive, onSelect, onClose }: SegmentProps) {
         )}
       />
 
-      <button
-        type="button"
-        onClick={onSelect}
-        aria-current={isActive ? 'page' : undefined}
-        className="min-w-0 truncate text-left outline-none"
-      >
-        {meta.title || 'New chat'}
-      </button>
+      <span className="min-w-0 truncate">{meta.title || 'New chat'}</span>
 
       {/* Close = archive. Active segment only; revealed on hover. Absolutely
-          placed so it doesn't shift the centred title. */}
+          placed so it doesn't shift the centred title. stopPropagation so the
+          segment's onClick (select) doesn't also fire. */}
       {isActive && (
         <button
           type="button"
