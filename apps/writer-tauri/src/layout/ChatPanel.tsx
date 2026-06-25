@@ -318,6 +318,10 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         // synthetic user turn, so re-running resumes past the already-answered
         // question with mismatched semantics.
         if (turnsHook.turns[i - 1]?.synthetic) return null
+        // A refusal won't change on a re-run of the same prompt — offering
+        // Regenerate is a dead button. Suppress it; the user can still edit
+        // the prompt and send a fresh message.
+        if (turnsHook.turns[i].stopReason === 'refusal') return null
         return turnsHook.turns[i].id
       }
       // Stop at the first non-assistant from the end — only the trailing

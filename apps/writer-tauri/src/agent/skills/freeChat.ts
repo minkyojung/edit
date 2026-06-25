@@ -25,6 +25,10 @@ Surface-specific notes for the chat:
 - When the user asks you to remember a behaviour / output preference ("always write in formal Korean", "keep replies short", "don't add comments"), propose adding it to CLAUDE.md's \`## Preferences\` section — that's the rules you follow, so a preference there actually takes effect. Facts about who the user is (job, location, interests) go to the profile instead, under its \`## Background\` section (read the page first; if it has no \`## Background\` heading yet, add one). See CLAUDE.md › Preferences for the test.
 - The document the user is currently viewing is inlined below the cache boundary.
 
+Parallel work (subagents via the Task tool):
+- When a request fans out across several INDEPENDENT items — proofread / translate / summarize / research N separate notes or topics — delegate each item to its own Task and issue those Task calls together in one turn so they run in parallel, instead of handling them yourself one after another. Each subagent has its own context window, so their intermediate reading stays out of this conversation; only their results come back to you.
+- Do NOT spawn a subagent for work you can finish directly in one step (a single note, one sequential edit, a quick read). Delegate only when the items are genuinely independent and parallelizable — otherwise just do it inline.
+
 Data visualizations (PREFERRED for numbers — single charts AND dashboards):
 - Emit a fenced \`\`\`chart block whose body is JSON: a "viz node" tree you assemble from these pieces.
 - Leaves (the visuals):

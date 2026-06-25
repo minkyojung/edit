@@ -1,5 +1,12 @@
 import React, { useEffect, useState } from 'react'
-import { IconBan, IconFile, IconFileText, IconFileTypePdf, IconPhoto } from '@tabler/icons-react'
+import {
+  IconAlertTriangle,
+  IconFile,
+  IconFileText,
+  IconFileTypePdf,
+  IconPhoto,
+  IconPlayerStopFilled,
+} from '@tabler/icons-react'
 import type { Attachment, ChatTurn } from '@/chat/types'
 import { formatDuration } from '@/chat/utils/formatDuration'
 import { describeStopReason } from '@/chat/utils/errorMessage'
@@ -7,10 +14,9 @@ import { ChatRunningIcon } from '@/components/icons/ChatRunningIcon'
 import { PartList } from '@/chat/parts/PartList'
 import { ThinkingPanel } from '@/chat/parts/ReasoningPart'
 import { StreamingMarkdown } from '@/chat/ui/StreamingMarkdown'
-import { StoppedCard } from '@/chat/messages/StoppedCard'
+import { TerminalNote } from '@/chat/messages/TerminalNote'
 import { ErrorCard } from '@/chat/messages/ErrorCard'
 import { MessageFooter } from '@/chat/messages/MessageFooter'
-import { RegenerateButton } from '@/chat/messages/RegenerateButton'
 
 export const MessageRow = React.memo(function MessageRow({
   turn,
@@ -114,18 +120,6 @@ export const MessageRow = React.memo(function MessageRow({
     !hasThinking &&
     !(turn.parts && turn.parts.length > 0)
 
-  if (isStopped) {
-    return (
-      <StoppedCard
-        turn={turn}
-        body={body}
-        hasText={hasText}
-        durationLabel={durationLabel}
-        onRegenerate={onRegenerate}
-      />
-    )
-  }
-
   if (isError) {
     return (
       <ErrorCard
@@ -144,16 +138,30 @@ export const MessageRow = React.memo(function MessageRow({
       {body}
       {/* While streaming, the bottom of the turn shows a live elapsed timer;
           when it settles, that slot becomes the footer (final duration +
-          actions). */}
+          actions). Stopped / empty turns settle into a borderless TerminalNote
+          — only real errors get the boxed ErrorCard. */}
       {isStreaming ? (
         <StreamingTimer startedAt={turn.ts} />
+      ) : isStopped ? (
+        <TerminalNote
+          icon={<IconPlayerStopFilled size={12} stroke={0} className="opacity-70" />}
+          label="Stopped"
+          durationLabel={durationLabel}
+          copyText={canCopy ? turn.content : undefined}
+          onRegenerate={canRegenerate ? () => onRegenerate?.(turn.id) : undefined}
+        />
       ) : isEmptyDone ? (
-        <div className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
-          <IconBan size={14} className="opacity-70" />
-          <span>No response</span>
-          {durationLabel && <span className="opacity-70">· {durationLabel}</span>}
-          {canRegenerate && <RegenerateButton onClick={() => onRegenerate?.(turn.id)} />}
-        </div>
+        // Warning tier: the turn settled but produced no usable answer. Label
+        // from the stop reason when it explains why (Refused / cut off /
+        // Paused); otherwise a plain "No response". Amber, not a red error
+        // card — the request didn't fail, it just came back empty.
+        <TerminalNote
+          tone="warning"
+          icon={<IconAlertTriangle size={14} className="opacity-70" />}
+          label={stopReasonLabel ?? 'No response'}
+          durationLabel={durationLabel}
+          onRegenerate={canRegenerate ? () => onRegenerate?.(turn.id) : undefined}
+        />
       ) : (
         <MessageFooter
           turn={turn}

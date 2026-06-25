@@ -8,13 +8,13 @@
 // Step 1 ships Foundations → Color only; later steps append sections.
 
 import type { ReactNode } from 'react'
-import { IconPlus, IconBrain, IconFileText } from '@tabler/icons-react'
+import { IconPlus, IconBrain, IconFileText, IconAlertTriangle, IconPlayerStopFilled } from '@tabler/icons-react'
 import type { ChatTurn, MessagePart } from '@/chat/types'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ActivityRow } from '@/chat/parts/ActivityRow'
 import { CompactDivider } from '@/chat/parts/CompactDivider'
 import { RetryRow } from '@/chat/parts/RetryRow'
-import { StoppedCard } from '@/chat/messages/StoppedCard'
+import { TerminalNote } from '@/chat/messages/TerminalNote'
 import { ErrorCard } from '@/chat/messages/ErrorCard'
 import { humanizeError } from '@/chat/utils/errorMessage'
 import { Button } from '@/components/ui/button'
@@ -437,7 +437,7 @@ const NAV: { group: string; titles: string[] }[] = [
     ],
   },
   { group: 'Compositions', titles: ['Compositions'] },
-  { group: 'Surfaces', titles: ['Surfaces · Chat states'] },
+  { group: 'Surfaces', titles: ['Surfaces · Chat states', 'Surfaces · Turn outcomes'] },
   { group: 'Consistency', titles: ['Consistency · Controls', 'Consistency · Panels'] },
 ]
 
@@ -802,8 +802,12 @@ export function GalleryPage() {
         <p className="text-[13px] text-muted-foreground">
           Every in-turn activity and turn outcome, rendered from the real chat
           components with mock data — so tone, icon, and actions can be compared
-          side by side. Activity rows share the <code>ActivityRow</code> base;
-          terminal cards share <code>InlineCard</code>.
+          side by side. Activity rows share the <code>ActivityRow</code> base.
+          Endings fall into three tiers: <strong>neutral</strong> (grey
+          <code>TerminalNote</code> — Stopped) · <strong>warning</strong> (amber
+          <code>TerminalNote</code> — no response / refused / cut off) ·{' '}
+          <strong>error</strong> (boxed <code>ErrorCard</code> — the only framed
+          tier, reserved for real failures).
         </p>
 
         <Subgroup title="Activity rows — steps inside a turn (ActivityRow base)">
@@ -847,15 +851,35 @@ export function GalleryPage() {
           </div>
         </Subgroup>
 
-        <Subgroup title="Turn endings — terminal cards (InlineCard base)">
+        <Subgroup title="Turn endings — three tiers: neutral · warning · error">
           <div className="flex w-full max-w-xl flex-col gap-3">
-            <StoppedCard
-              turn={mockTurn({ status: 'stopped', content: 'partial draft…' })}
-              body={SampleBody}
-              hasText
+            {/* Tier 1 — neutral (grey TerminalNote): a benign ending the user
+                caused, e.g. pressing Stop. */}
+            <TerminalNote
+              icon={<IconPlayerStopFilled size={12} stroke={0} className="opacity-70" />}
+              label="Stopped"
               durationLabel="8.4s"
+              copyText="partial draft…"
               onRegenerate={noop}
             />
+            {/* Tier 2 — warning (amber TerminalNote): settled but no usable
+                answer (no response / refused / cut off). Not a system error. */}
+            <TerminalNote
+              tone="warning"
+              icon={<IconAlertTriangle size={14} className="opacity-70" />}
+              label="No response"
+              durationLabel="0.9s"
+              onRegenerate={noop}
+            />
+            <TerminalNote
+              tone="warning"
+              icon={<IconAlertTriangle size={14} className="opacity-70" />}
+              label="Refused"
+              durationLabel="0.7s"
+              onRegenerate={noop}
+            />
+            {/* Tier 3 — error (boxed ErrorCard): a real failure thrown as an
+                exception. The only tier that gets a frame. */}
             {ERROR_CASES.map((c) => (
               <ErrorCard
                 key={c.code}
@@ -879,21 +903,7 @@ export function GalleryPage() {
           </div>
         </Subgroup>
 
-        <Subgroup title="Scenarios — bubble + activity rows + outcome (real MessageRow)">
-          <Scenario
-            title="Streaming — thinking, tool, and a retry, live"
-            turns={[
-              userTurn('Draft the chapter 1 intro into part1.md.'),
-              mockTurn({
-                status: 'streaming',
-                parts: [
-                  reasoningPart('Reading the outline to match the manuscript voice…'),
-                  toolPartFx('Grep', { pattern: 'voice', path: 'manuscript/ch01' }),
-                  retryPartFx(2, 3, 'server_error'),
-                ],
-              }),
-            ]}
-          />
+        <Subgroup title="Error scenarios — full turn (real MessageRow)">
           <Scenario
             title="Failed — server error after a retry"
             turns={[
@@ -975,51 +985,114 @@ export function GalleryPage() {
               }),
             ]}
           />
-          <Scenario
-            title="Stopped — user pressed Stop mid-answer"
-            turns={[
-              userTurn('Write a 500-word essay on solitude.'),
-              mockTurn({
-                status: 'stopped',
-                durationMs: 8400,
-                content: 'Solitude is not the same as loneliness…',
-                parts: [
-                  reasoningPart('Outlining three movements…'),
-                  textPart(
-                    'Solitude is not the same as loneliness. Where loneliness is an ache for what is absent, solitude is a chosen room…',
-                  ),
-                ],
-              }),
-            ]}
-          />
-          <Scenario
-            title="Stopped — before any output (empty turn)"
-            turns={[
-              userTurn('안녕'),
-              mockTurn({ status: 'stopped', durationMs: 600, content: '', parts: [] }),
-            ]}
-          />
-          <Scenario
-            title="Done — but empty (model returned nothing)"
-            turns={[
-              userTurn('뭐라고?'),
-              mockTurn({ status: 'done', durationMs: 900, stopReason: 'end_turn', content: '', parts: [] }),
-            ]}
-          />
-          <Scenario
-            title="Done — normal completion"
-            turns={[
-              userTurn('Summarize this note in one line.'),
-              mockTurn({
-                status: 'done',
-                durationMs: 2300,
-                stopReason: 'end_turn',
-                content: 'A short manifesto on sovereign individuality.',
-                parts: [textPart('A short manifesto on sovereign individuality.')],
-              }),
-            ]}
-          />
         </Subgroup>
+      </Section>
+
+      <Section title="Surfaces · Turn outcomes">
+        <p className="text-[13px] text-muted-foreground">
+          The full set of ways a single turn can end — the 경우의 수, in order.
+          Design rule, three tiers: <strong>neutral</strong> grey line (stopped,
+          normal) · <strong>warning</strong> amber line (no response, refused,
+          token cut-off — settled but no usable answer) ·{' '}
+          <strong>error</strong> red box (only a real failure thrown as an
+          exception). Mirrors how the SDK itself splits the signal: a normal{' '}
+          <code>stop_reason</code> (incl. <code>max_tokens</code>) and{' '}
+          <code>refusal</code> are not errors — only thrown exceptions are. Each
+          case below is the real <code>MessageRow</code> with mock data.
+        </p>
+
+        <Scenario
+          title="1. Streaming — live, with a thinking pill, a tool call, and a retry"
+          turns={[
+            userTurn('Draft the chapter 1 intro into part1.md.'),
+            mockTurn({
+              status: 'streaming',
+              parts: [
+                reasoningPart('Reading the outline to match the manuscript voice…'),
+                toolPartFx('Grep', { pattern: 'voice', path: 'manuscript/ch01' }),
+                retryPartFx(2, 3, 'server_error'),
+              ],
+            }),
+          ]}
+        />
+        <Scenario
+          title="2. Done — normal completion (answer + duration footer)"
+          turns={[
+            userTurn('Summarize this note in one line.'),
+            mockTurn({
+              status: 'done',
+              durationMs: 2300,
+              stopReason: 'end_turn',
+              content: 'A short manifesto on sovereign individuality.',
+              parts: [textPart('A short manifesto on sovereign individuality.')],
+            }),
+          ]}
+        />
+        <Scenario
+          title="3. Done — but empty (model returned nothing → amber 'No response' line)"
+          turns={[
+            userTurn('뭐라고?'),
+            mockTurn({ status: 'done', durationMs: 900, stopReason: 'end_turn', content: '', parts: [] }),
+          ]}
+        />
+        <Scenario
+          title="4. Stopped — user pressed Stop mid-answer (partial kept + borderless 'Stopped')"
+          turns={[
+            userTurn('Write a 500-word essay on solitude.'),
+            mockTurn({
+              status: 'stopped',
+              durationMs: 8400,
+              content: 'Solitude is not the same as loneliness…',
+              parts: [
+                reasoningPart('Outlining three movements…'),
+                textPart(
+                  'Solitude is not the same as loneliness. Where loneliness is an ache for what is absent, solitude is a chosen room…',
+                ),
+              ],
+            }),
+          ]}
+        />
+        <Scenario
+          title="5. Stopped — before any output (empty turn → just the 'Stopped' line)"
+          turns={[
+            userTurn('안녕'),
+            mockTurn({ status: 'stopped', durationMs: 600, content: '', parts: [] }),
+          ]}
+        />
+        <Scenario
+          title="6. Done — but cut off by the token limit (answer + warning footer)"
+          turns={[
+            userTurn('Write the full chapter.'),
+            mockTurn({
+              status: 'done',
+              durationMs: 12000,
+              stopReason: 'max_tokens',
+              content: 'Chapter one opens on a grey harbour, the kind that…',
+              parts: [textPart('Chapter one opens on a grey harbour, the kind that…')],
+            }),
+          ]}
+        />
+        <Scenario
+          title="7. Done — refused (amber 'Refused' line, no answer body)"
+          turns={[
+            userTurn('Do something disallowed.'),
+            mockTurn({ status: 'done', durationMs: 700, stopReason: 'refusal', content: '', parts: [] }),
+          ]}
+        />
+        <Scenario
+          title="8. Error — the ONLY boxed ending (full variations under Chat states)"
+          turns={[
+            userTurn('Draft a reply to this thread.'),
+            mockTurn({
+              status: 'error',
+              durationMs: 4100,
+              errorCode: 'SERVER',
+              errorText: humanizeError('SERVER: '),
+              retryable: true,
+              parts: [reasoningPart('Composing the reply…')],
+            }),
+          ]}
+        />
       </Section>
 
       <Section title="Consistency · Panels">
