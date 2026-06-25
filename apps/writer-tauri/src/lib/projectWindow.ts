@@ -76,6 +76,11 @@ export async function openProjectWindow(
     )
   })
   await applyWindowChrome(label)
+  // Hide the launcher — opening a project window is the implicit "I'm done
+  // with the picker" signal. Best-effort: a missing label just means the
+  // launcher was already closed or never existed.
+  const launcher = await WebviewWindow.getByLabel(LAUNCHER_LABEL)
+  await launcher?.hide()
 }
 
 /** Label of the launcher window (the config-defined window with no
