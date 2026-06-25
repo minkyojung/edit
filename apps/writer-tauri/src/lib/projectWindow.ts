@@ -9,7 +9,7 @@
 // an already-open project focuses the existing window instead of spawning
 // a duplicate (the VS Code behaviour).
 
-import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { invoke } from '@tauri-apps/api/core'
 import { hashPath } from '@/lib/windowRoot'
 
@@ -49,6 +49,8 @@ export async function openProjectWindow(
   const existing = await WebviewWindow.getByLabel(label)
   if (existing) {
     await existing.setFocus()
+    const current = getCurrentWebviewWindow()
+    if (current.label === LAUNCHER_LABEL) await current.hide()
     return
   }
 
@@ -76,11 +78,13 @@ export async function openProjectWindow(
     )
   })
   await applyWindowChrome(label)
-  // Hide the launcher — opening a project window is the implicit "I'm done
-  // with the picker" signal. Best-effort: a missing label just means the
-  // launcher was already closed or never existed.
-  const launcher = await WebviewWindow.getByLabel(LAUNCHER_LABEL)
-  await launcher?.hide()
+  // Hide the launcher. openProjectWindow() is always called from launcher
+  // window context (VaultLauncher), so getCurrentWebviewWindow() is the
+  // launcher itself — direct hide is more reliable than cross-window getByLabel.
+  const current = getCurrentWebviewWindow()
+  if (current.label === LAUNCHER_LABEL) {
+    await current.hide()
+  }
 }
 
 /** Label of the launcher window (the config-defined window with no
