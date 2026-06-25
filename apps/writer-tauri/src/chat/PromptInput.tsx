@@ -483,6 +483,20 @@ export function PromptInput({
       />
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1">
+          <EffortButton
+            value={effort}
+            efforts={effortsForModel(model)}
+            onChange={onEffortChange}
+            disabled={isStreaming}
+          />
+          {modelSupportsFastMode(model) && (
+            <FastToggle
+              value={fastMode}
+              onChange={onFastModeChange}
+              state={fastModeState}
+              disabled={isStreaming}
+            />
+          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -501,20 +515,6 @@ export function PromptInput({
             </TooltipTrigger>
             <TooltipContent side="top">Attach file · max 20 MB</TooltipContent>
           </Tooltip>
-          <EffortButton
-            value={effort}
-            efforts={effortsForModel(model)}
-            onChange={onEffortChange}
-            disabled={isStreaming}
-          />
-          {modelSupportsFastMode(model) && (
-            <FastToggle
-              value={fastMode}
-              onChange={onFastModeChange}
-              state={fastModeState}
-              disabled={isStreaming}
-            />
-          )}
           <ModeToggle value={mode} onChange={onModeChange} disabled={isStreaming} />
         </div>
         <div className="flex items-center gap-1">
