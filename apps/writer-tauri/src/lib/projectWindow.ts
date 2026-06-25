@@ -76,12 +76,15 @@ export async function openProjectWindow(
     )
   })
   await applyWindowChrome(label)
+  // Hide the launcher now that a project window is open.
+  const launcher = await WebviewWindow.getByLabel(LAUNCHER_LABEL)
+  await launcher?.hide()
 }
 
 /** Label of the launcher window (the config-defined window with no
  * `?root`). Closing it runs the app-close flow, so it stays alive
  * alongside project windows. */
-const LAUNCHER_LABEL = 'main'
+export const LAUNCHER_LABEL = 'main'
 
 /** Bring the launcher (project picker) to the front so the user can open
  * another project from within a project window. Recreates it defensively
