@@ -15,11 +15,6 @@ interface LayoutState {
    * matches the pre-Phase-1 behaviour where the panel was always
    * chat-only. */
   rightPanelMode: RightPanelMode
-  /** IDE-style "maximize": the right panel takes the whole content area
-   * and the editor pane is hidden. Transient (not persisted) so the app
-   * never reopens in a surprising full-chat state. Only meaningful while
-   * the panel is open; AppShell gates the effect on contextPanelOpen. */
-  chatMaximized: boolean
   toggleSidebar: () => void
   toggleContextPanel: () => void
   // Toggle both panels together. If either side is open, both close.
@@ -37,10 +32,6 @@ interface LayoutState {
    * common path from a header button (e.g. clicking the Review badge
    * while the panel is closed). */
   openRightPanelInMode: (mode: RightPanelMode) => void
-  /** Toggle the maximized view. Turning it on also ensures the panel is
-   * open so the button (which lives in the panel header) always has a
-   * visible surface to act on. */
-  toggleChatMaximized: () => void
 }
 
 export const useLayoutStore = create<LayoutState>()(
@@ -49,7 +40,6 @@ export const useLayoutStore = create<LayoutState>()(
       sidebarOpen: true,
       contextPanelOpen: false,
       rightPanelMode: 'chat',
-      chatMaximized: false,
       toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
       toggleContextPanel: () => set((s) => ({ contextPanelOpen: !s.contextPanelOpen })),
       togglePanels: () =>
@@ -64,11 +54,6 @@ export const useLayoutStore = create<LayoutState>()(
       setRightPanelMode: (mode) => set({ rightPanelMode: mode }),
       openRightPanelInMode: (mode) =>
         set({ contextPanelOpen: true, rightPanelMode: mode }),
-      toggleChatMaximized: () =>
-        set((s) => ({
-          chatMaximized: !s.chatMaximized,
-          contextPanelOpen: s.chatMaximized ? s.contextPanelOpen : true,
-        })),
     }),
     {
       name: 'layout-state',
