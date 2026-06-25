@@ -5,9 +5,6 @@
     "dev": "pnpm --filter writer-tauri tauri dev",
     "build": "pnpm --filter writer-tauri tauri build"
   },
-  "dependencies": {
-    "proof-sdk": "link:../proof-sdk"
-  },
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"

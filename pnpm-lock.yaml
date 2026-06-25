@@ -7,10 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      proof-sdk:
-        specifier: link:../proof-sdk
-        version: link:../proof-sdk
     devDependencies:
       '@tauri-apps/cli':
         specifier: ^2.10.1
