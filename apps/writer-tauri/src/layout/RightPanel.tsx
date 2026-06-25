@@ -15,6 +15,8 @@ import { useEffect, useRef } from 'react'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useThreads, type UseThreadsResult } from '@/hooks/useThreads'
 import { useActiveThread } from '@/hooks/useActiveThread'
+import { useThreadsStore } from '@/state/threadsStore'
+import { useSeenThreads } from '@/state/seenThreadsStore'
 import {
   usePendingOrganize,
   type OrganizeRequest,
@@ -36,6 +38,19 @@ export function RightPanel({ slug }: Props) {
   // mount point and the id flows down to ChatPanel as a prop.
   const threads = useThreads(slug)
   const { activeId, setActiveId } = useActiveThread(threads.active)
+
+  // Read/unread: stamp the focused thread's current turn count as "seen"
+  // whenever it's selected or grows new turns while focused. Threads you're
+  // NOT looking at keep their old count, so background activity makes their
+  // tab dot go unread. Marking on count change also covers app-load (the
+  // active thread starts seen) and brand-new threads (count 0 → seen).
+  const activeTurnCount = useThreadsStore((s) =>
+    activeId ? s.turns[activeId]?.length ?? 0 : 0,
+  )
+  const markSeen = useSeenThreads((s) => s.markSeen)
+  useEffect(() => {
+    if (activeId) markSeen(activeId, activeTurnCount)
+  }, [activeId, activeTurnCount, markSeen])
 
   // "Organize this note" (DocMenu) records intent in the bridge store; this
   // half of the hand-off owns thread creation + activation (which live here,

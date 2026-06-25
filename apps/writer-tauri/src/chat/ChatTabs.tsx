@@ -3,16 +3,15 @@
 // segment; the focused one is a raised pill. All segments stay visible
 // (no overflow/scroll), titles truncate with "…".
 //
-// Status comes FIRST. A glyph in the favicon slot encodes each session's
-// state so a glance reads the whole fleet without reading titles:
-//   • running        → the app's dot-matrix loader, calm --success tint
-//   • waiting for you → a LOUD pulsing --warning dot (the bottleneck:
-//                       the agent is parked on a permission / question)
-//   • idle / done     → a faint neutral dot
-// Title is the secondary label — it can truncate freely.
+// The dot in the favicon slot is a KakaoTalk-style read/unread mark:
+//   • solid (bg-foreground) → UNREAD: new turns arrived since you last
+//                             opened this session
+//   • faint               → read: you've looked since its last activity
+// "Last activity" = the turn count (thread.updatedAt doesn't move on new
+// messages); the focused thread is always read (RightPanel stamps it).
 //
-// Pure render of existing stores (threadsStore via props, chatRuns,
-// pendingPermissions) — no new backend. Replaces the ThreadPicker dropdown.
+// Pure render of existing stores (threadsStore turns + seenThreadsStore)
+// — no new backend. Replaces the ThreadPicker dropdown.
 
 import { Fragment, useMemo } from 'react'
 import { IconPlus, IconX } from '@tabler/icons-react'
@@ -23,26 +22,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { ChatRunningIcon } from '@/components/icons/ChatRunningIcon'
-import { useChatRuns } from '@/stores/chatRuns'
-import { usePendingPermissions } from '@/state/pendingPermissionsStore'
+import { useThreadsStore } from '@/state/threadsStore'
+import { useSeenThreads } from '@/state/seenThreadsStore'
 import { cn } from '@/lib/utils'
 import { MAX_ACTIVE_THREADS, type ThreadMeta } from './types'
-
-type ThreadStatus = 'waiting' | 'running' | 'idle'
-
-/** Per-thread live status. Waiting (a parked permission / question) wins
- * over running — it's the state that needs the human. */
-function useThreadStatus(threadId: string): ThreadStatus {
-  const waiting = usePendingPermissions((s) =>
-    Object.values(s.byRun).some((p) => p.threadId === threadId),
-  )
-  const running = useChatRuns((s) => {
-    for (const r of s.runs.values()) if (r.threadId === threadId) return true
-    return false
-  })
-  return waiting ? 'waiting' : running ? 'running' : 'idle'
-}
 
 interface Props {
   active: ThreadMeta[]
@@ -121,30 +104,6 @@ export function ChatTabs({
   )
 }
 
-function StatusGlyph({ status }: { status: ThreadStatus }) {
-  if (status === 'running')
-    return (
-      <ChatRunningIcon
-        size={13}
-        className="shrink-0 text-[var(--success)]"
-      />
-    )
-  if (status === 'waiting')
-    return (
-      <span
-        // Loud: the agent is waiting on you. Pulse pulls the eye.
-        className="size-2 shrink-0 animate-pulse rounded-full bg-[var(--warning)]"
-        aria-label="Waiting for you"
-      />
-    )
-  return (
-    <span
-      aria-hidden
-      className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
-    />
-  )
-}
-
 interface SegmentProps {
   meta: ThreadMeta
   isActive: boolean
@@ -153,7 +112,12 @@ interface SegmentProps {
 }
 
 function Segment({ meta, isActive, onSelect, onClose }: SegmentProps) {
-  const status = useThreadStatus(meta.id)
+  // Unread = new turns since last viewed. The active (focused) segment is
+  // always read — RightPanel stamps its seen-count — and we guard on
+  // isActive so it never flashes unread between a new turn and that stamp.
+  const turnCount = useThreadsStore((s) => s.turns[meta.id]?.length ?? 0)
+  const lastSeen = useSeenThreads((s) => s.lastSeenCount[meta.id] ?? 0)
+  const unread = !isActive && turnCount > lastSeen
 
   return (
     <div
@@ -167,11 +131,16 @@ function Segment({ meta, isActive, onSelect, onClose }: SegmentProps) {
         // segment fills with the body colour, a clear step from the lighter
         // bg-muted track.
         'data-[state=active]:bg-background data-[state=active]:text-foreground',
-        // Waiting tints the whole segment so it reads even unfocused.
-        status === 'waiting' && 'text-[var(--warning)]',
       )}
     >
-      <StatusGlyph status={status} />
+      <span
+        aria-label={unread ? 'Unread' : undefined}
+        className={cn(
+          'size-1.5 shrink-0 rounded-full transition-colors',
+          // Unread → solid; read/idle → faint.
+          unread ? 'bg-foreground' : 'bg-muted-foreground/30',
+        )}
+      />
 
       <button
         type="button"
