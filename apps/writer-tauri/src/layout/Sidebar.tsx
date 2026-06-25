@@ -128,7 +128,7 @@ export function AppSidebar() {
     <Sidebar className="[border-right-color:var(--sidebar)]">
       <SidebarHeader
         data-tauri-drag-region
-        className="flex flex-row items-center p-0 pr-3"
+        className="flex flex-row items-center gap-1 p-0 pr-3"
         style={{ height: 'var(--header-h)' }}
       >
         {/* Reserve the macOS traffic-light area as a drag region so
@@ -149,9 +149,9 @@ export function AppSidebar() {
           aria-label="Search"
           title="Search (⌘K)"
           onClick={() => openPalette()}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
+          className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
         >
-          <IconSearch size={16} stroke={1.75} />
+          <IconSearch size={18} stroke={1.75} />
         </button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -159,9 +159,9 @@ export function AppSidebar() {
               type="button"
               aria-label="Sort"
               title="Sort"
-              className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
             >
-              <IconArrowsSort size={16} stroke={1.75} />
+              <IconArrowsSort size={18} stroke={1.75} />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
@@ -182,18 +182,18 @@ export function AppSidebar() {
           aria-label="New folder"
           title="New folder"
           onClick={startNewFolder}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
+          className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
         >
-          <IconFolderPlus size={16} stroke={1.75} />
+          <IconFolderPlus size={18} stroke={1.75} />
         </button>
         <button
           type="button"
           aria-label="New note"
           title="New note (⌘N)"
           onClick={handleCreateNew}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
+          className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
         >
-          <IconEdit size={16} stroke={1.75} />
+          <IconEdit size={18} stroke={1.75} />
         </button>
       </SidebarHeader>
 

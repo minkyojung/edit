@@ -117,7 +117,7 @@ function RenameInput({
         }
       }}
       onBlur={commit}
-      className="mx-2 h-6 min-w-0 flex-1 rounded-sm border border-sidebar-border bg-sidebar px-1 text-sm text-sidebar-foreground outline-hidden focus-visible:ring-1 focus-visible:ring-sidebar-ring/40"
+      className="mx-2 h-7 min-w-0 flex-1 rounded-sm border border-sidebar-border bg-sidebar px-1 text-[15px] text-sidebar-foreground outline-hidden focus-visible:ring-1 focus-visible:ring-sidebar-ring/40"
     />
   )
 }

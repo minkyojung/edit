@@ -54,8 +54,8 @@ function TreeRow({ active, className, ...props }: TreeRowProps) {
       data-slot="tree-row"
       data-active={active || undefined}
       className={cn(
-        'group/tree-row relative flex h-8 w-full items-center',
-        'text-sm font-medium',
+        'group/tree-row relative flex h-9 w-full items-center',
+        'text-[15px] font-normal',
         // Shared row skin (radius + hover + selected) so tree rows match
         // the footer menu buttons exactly — see sidebarRow.ts.
         SIDEBAR_ROW_INTERACTION,
@@ -85,10 +85,10 @@ function TreeRowLead({
       data-slot="tree-row-lead"
       {...(!asChild && { type: 'button' as const })}
       className={cn(
-        'ml-2 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
+        'ml-2 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-sm',
         'text-inherit',
         'outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
-        '[&_svg]:size-4 [&_svg]:shrink-0',
+        '[&_svg]:size-[18px] [&_svg]:shrink-0',
         className,
       )}
       {...props}
@@ -148,10 +148,10 @@ function TreeRowTrail({
       data-slot="tree-row-trail"
       {...(!asChild && { type: 'button' as const })}
       className={cn(
-        'mr-1 flex aspect-square w-5 shrink-0 items-center justify-center rounded-xl',
+        'mr-1 flex aspect-square w-6 shrink-0 items-center justify-center rounded-xl',
         'text-inherit transition-opacity',
         'outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
-        '[&>svg]:size-4 [&>svg]:shrink-0',
+        '[&>svg]:size-[18px] [&>svg]:shrink-0',
         showOnHover &&
           'opacity-0 group-hover/tree-row:opacity-100 group-focus-within/tree-row:opacity-100',
         className,

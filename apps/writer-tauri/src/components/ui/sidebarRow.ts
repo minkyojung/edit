@@ -17,7 +17,7 @@
 // focus fill so the two states read as a clear hierarchy (faint hint on hover,
 // settled fill when focused).
 export const SIDEBAR_ROW_INTERACTION =
-  'rounded-sm text-sidebar-foreground/60 ' +
+  'rounded-sm border border-transparent text-sidebar-foreground/60 ' +
   'hover:bg-foreground/6 hover:text-sidebar-foreground ' +
-  'data-active:bg-[color-mix(in_oklch,var(--foreground)_22%,var(--sidebar))]/80 data-active:text-sidebar-foreground ' +
-  'focus-visible:bg-[color-mix(in_oklch,var(--foreground)_22%,var(--sidebar))]/80 focus-visible:text-sidebar-foreground'
+  'data-active:border-sidebar-border data-active:bg-[color-mix(in_oklch,var(--foreground)_18%,var(--sidebar))]/80 data-active:text-sidebar-foreground ' +
+  'focus-visible:border-sidebar-border focus-visible:bg-[color-mix(in_oklch,var(--foreground)_18%,var(--sidebar))]/80 focus-visible:text-sidebar-foreground'

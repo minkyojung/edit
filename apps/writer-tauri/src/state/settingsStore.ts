@@ -25,6 +25,10 @@ import { type ChatModel, DEFAULT_CHAT_MODEL } from '@/chat/types'
  * translation project), or set explicitly when scaffolding a new one. */
 export type ProjectType = 'wiki' | 'translation'
 
+/** macOS system sound played when a background chat job finishes (file names in
+ * /System/Library/Sounds). 'None' silences the completion ping. */
+export type NotificationSound = 'None' | 'Glass' | 'Ping' | 'Hero' | 'Submarine' | 'Tink'
+
 /** One row in the launcher's "Recent" list. Shared across all windows
  * (it's a global app preference, not per-window state), so it lives in
  * the persisted settings store. */
@@ -108,6 +112,11 @@ interface SettingsState {
   editorTextAlign: 'justify' | 'left'
   /** Set the editor body alignment. */
   setEditorTextAlign: (align: 'justify' | 'left') => void
+
+  /** Sound for the background-job completion notification. 'None' = silent. */
+  notificationSound: NotificationSound
+  /** Set the completion-notification sound. */
+  setNotificationSound: (sound: NotificationSound) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -126,6 +135,8 @@ export const useSettingsStore = create<SettingsState>()(
       cmEditorEnabled: true,
       editorColumnWidth: 700,
       editorTextAlign: 'justify',
+      notificationSound: 'Glass',
+      setNotificationSound: (sound) => set({ notificationSound: sound }),
       recentProjects: [],
       setActiveVaultPath: (path) =>
         set({ vaultPaths: [path], activeVaultIndex: 0 }),

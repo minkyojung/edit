@@ -11,6 +11,7 @@ import { classifyRunError } from '@/chat/utils/errorMessage'
 import { createStreamingBuffer } from '@/chat/utils/streamingBuffer'
 import { createThrottledFlusher } from '@/chat/utils/throttledFlusher'
 import { watchOffline } from '@/chat/utils/watchOffline'
+import { notifyJobDone } from '@/lib/notifyOs'
 import { useAnsweredQuestions } from '@/state/answeredQuestionsStore'
 import { useThreadsStore } from '@/state/threadsStore'
 import { buildQueueContextMarkdown } from '@/agent/chat/buildQueueContext'
@@ -131,6 +132,13 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       attachments?: FileAttachment[],
     ) => {
       const startedAt = Date.now()
+      // Label for the OS completion ping — the user's request, truncated.
+      const jobTitle =
+        [...(history ?? [])]
+          .reverse()
+          .find((t) => t.role === 'user' && !t.synthetic)
+          ?.content?.trim()
+          .slice(0, 60) || 'Chat finished'
       // Discard any answer summary left over from a prior run (e.g. one whose
       // tool result never arrived because the turn was aborted) so this run's
       // questions can't inherit a stale bubble.
@@ -406,6 +414,12 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         appliedCount = result.editCount
         commit('done', result.stopReason)
         setStatus('idle')
+        // Completion ping — only fires while the app is unfocused (the user
+        // walked away). Best-effort; never blocks the run.
+        void notifyJobDone(
+          jobTitle,
+          result.editCount > 0 ? `${result.editCount} change(s) proposed` : undefined,
+        )
       } catch (e) {
         // Errors live on a dedicated turn field, not in the parts timeline —
         // that keeps prompt history (`buildPrompt`) and Copy output clean,
@@ -422,6 +436,11 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           outcome.overageDisabledReason,
         )
         setStatus(outcome.chatStatus)
+        // Ping on a real failure too (not a user-pressed Stop) so a background
+        // job that died while you were away doesn't go unnoticed.
+        if (outcome.terminal === 'error') {
+          void notifyJobDone(jobTitle, outcome.errorText ?? 'Failed')
+        }
       } finally {
         offline.dispose()
         endActivity()

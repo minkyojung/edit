@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { useSettingsStore } from '@/state/settingsStore'
+import { useSettingsStore, type NotificationSound } from '@/state/settingsStore'
 import { SettingRow } from '../SettingRow'
 
 // Vibrancy is a macOS-only window effect; hide the toggle elsewhere.
@@ -43,6 +43,17 @@ const FONT_OPTIONS: FontOptionDef[] = [
   { value: 'nunito', label: 'Nunito Sans', preview: "'Nunito Sans Variable', sans-serif" },
 ]
 
+// Completion-notification sounds — macOS system sound names, plus a silent
+// option. 'Glass' is the default familiar chime.
+const SOUND_OPTIONS: { value: NotificationSound; label: string }[] = [
+  { value: 'Glass', label: 'Glass' },
+  { value: 'Ping', label: 'Ping' },
+  { value: 'Hero', label: 'Hero' },
+  { value: 'Submarine', label: 'Submarine' },
+  { value: 'Tink', label: 'Tink' },
+  { value: 'None', label: 'None (silent)' },
+]
+
 function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
   return (
     <span
@@ -60,6 +71,8 @@ export function AppearanceSettings() {
   const { font, setFont } = useFont()
   const vibrancy = useSettingsStore((s) => s.sidebarVibrancyEnabled)
   const setVibrancy = useSettingsStore((s) => s.setSidebarVibrancy)
+  const notifSound = useSettingsStore((s) => s.notificationSound)
+  const setNotifSound = useSettingsStore((s) => s.setNotificationSound)
 
   return (
     <section>
@@ -105,6 +118,28 @@ export function AppearanceSettings() {
             onCheckedChange={setVibrancy}
             aria-label="Toggle sidebar vibrancy"
           />
+        </SettingRow>
+      )}
+      {IS_MAC && (
+        <SettingRow
+          title="Completion sound"
+          description="Sound played when a background chat job finishes (only while the app is unfocused)."
+        >
+          <Select
+            value={notifSound}
+            onValueChange={(v) => setNotifSound(v as NotificationSound)}
+          >
+            <SelectTrigger className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SOUND_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </SettingRow>
       )}
     </section>
