@@ -88,6 +88,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     selectionText,
     vizEditTarget,
     permissionMode,
+    autoAcceptEdits = false,
     builtinTools,
     fastMode,
     attachments,
@@ -314,6 +315,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         }
         if (mapped) {
           usePendingChangesStore.getState().push(mapped)
+          // acceptEdits mode: apply immediately instead of parking for review.
+          // The change is rendered (diff preview) and then auto-accepted, so the
+          // applier writes it to disk without a manual Keep — same accept path
+          // the Keep button drives, just triggered automatically. Undo still
+          // flows through the editor (Cmd-Z → reopen).
+          if (autoAcceptEdits) {
+            usePendingChangesStore.getState().accept(mapped.id)
+          }
           // A brand-new note isn't open in any editor, so cmProofReview never
           // mounts for it and the inline preview can't show. On interactive
           // runs, open it — the editor mounts, subscribes to the pending store,

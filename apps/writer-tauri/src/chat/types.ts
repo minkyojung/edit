@@ -118,12 +118,21 @@ export const CHAT_EFFORT_LABELS: Record<ChatEffort, string> = {
 
 export const DEFAULT_CHAT_EFFORT: ChatEffort = 'medium'
 
-/** Chat interaction mode. `edit` (default) lets the model propose changes;
- * `plan` is read-only — the model explores and writes a plan but cannot
- * propose or apply edits (enforced by permissionMode 'plan' + dropping the
- * propose_* relay tools and Bash for the turn). */
-export type ChatMode = 'edit' | 'plan'
-export const DEFAULT_CHAT_MODE: ChatMode = 'edit'
+/** Chat interaction mode — our surface of the SDK's permission modes.
+ * - `edit` (default): the model proposes changes via the propose_* tools; each
+ *   lands as a pending change the user reviews (Keep/Reject). SDK permissionMode
+ *   'default'.
+ * - `acceptEdits`: same proposal flow, but each change is auto-accepted the
+ *   moment it lands — applied without a manual Keep (the diff still renders, now
+ *   already-applied). Mirrors the SDK's 'acceptEdits' mode: edits apply
+ *   automatically. For fast, trusted runs.
+ * - `plan`: read-only — the model explores and writes a plan but cannot propose
+ *   or apply edits (permissionMode 'plan' + propose_* relays and Bash dropped). */
+export type ChatMode = 'edit' | 'acceptEdits' | 'plan'
+// Default is `acceptEdits` (Apply): the product surfaces only Apply + Plan, so
+// new threads auto-apply edits. `edit` (review-each) stays a valid value for
+// any thread already persisted with it, just not offered in the picker.
+export const DEFAULT_CHAT_MODE: ChatMode = 'acceptEdits'
 
 // ── Context usage (gauge) ───────────────────────────────────────
 //

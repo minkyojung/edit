@@ -84,7 +84,11 @@ export interface RunChatArgs {
    *   the caller also drops the propose_* relays + Bash.
    * Omit only for non-chat callers (e.g. ingest) that want the sidecar's
    * bypassPermissions default. */
-  permissionMode?: 'plan' | 'default'
+  permissionMode?: 'plan' | 'default' | 'acceptEdits'
+  /** acceptEdits mode: auto-accept each proposed change the instant it lands
+   * (apply without waiting for a manual Keep). The diff still renders — now as
+   * an already-applied change. Default false → edits stay pending for review. */
+  autoAcceptEdits?: boolean
   /** Built-in SDK tool names to expose. Omit for the edit default
    * (Read/Glob/Grep/Bash). Plan turns pass ['Read','Glob','Grep']. */
   builtinTools?: string[]

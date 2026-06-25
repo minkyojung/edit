@@ -345,6 +345,11 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           // every other tool straight through, so this matches the old bypass
           // behaviour otherwise. (Plan turns keep 'plan'.)
           permissionMode: isPlan ? 'plan' : 'default',
+          // acceptEdits mode: same sidecar path as edit (propose_* relays,
+          // 'default' gate), but the host auto-accepts each proposal the moment
+          // it lands — applied without a manual Keep. Mirrors the SDK's
+          // 'acceptEdits' behaviour within our staged-review architecture.
+          autoAcceptEdits: activeThreadMode === 'acceptEdits',
           // Interactive plan tools must be in the list or the SDK never offers
           // them: AskUserQuestion (ask before planning), ExitPlanMode (propose
           // the finished plan for approval). Write is included so the model can
