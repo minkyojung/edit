@@ -89,10 +89,14 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
   // its prior state and re-emitting the new whole. The caller
   // treats `part.id` as identity and upserts.
   const partsById = new Map<string, MessagePart>()
-  // index → partId for the open content_block at that index.
-  // Anthropic's raw stream uses an index per concurrent block; we
-  // route deltas via this.
-  const blockIndexToPartId = new Map<number, string>()
+  // "(parentToolUseId|'')#index" → partId for the open content_block.
+  // Anthropic's raw stream uses an index per concurrent block; we route deltas
+  // via this. Keyed by the SUBAGENT parent too (not just index) so a
+  // subagent's block 0 doesn't collide with the main thread's — or another
+  // parallel subagent's — block 0 streaming at the same time.
+  const blockKeyToPartId = new Map<string, string>()
+  const blockKey = (parentId: string | undefined, idx: number) =>
+    `${parentId ?? ''}#${idx}`
   // Tool input arrives as fragments of JSON via input_json_delta.
   // We keep the partial string per part until content_block_stop,
   // then JSON.parse.
@@ -118,20 +122,26 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
       // events.
       if (ev?.type === 'stream_event') {
         const inner = ev.event
+        // Subagent attribution: when forwardSubagentText is on, a subagent's
+        // text / thinking / tool blocks stream as ordinary content_block events
+        // carrying the spawning Task's tool_use id here. null on the main
+        // thread → undefined, so main-thread parts are untouched.
+        const parentId = ev.parent_tool_use_id ?? undefined
         // Block opens — register a part of the right type at this
         // index.
         if (inner?.type === 'content_block_start') {
           const idx = inner.index ?? 0
+          const key = blockKey(parentId, idx)
           const block = inner.content_block ?? {}
           const partId = crypto.randomUUID()
           const ts = Date.now()
           if (block.type === 'text') {
-            const part: TextPart = { id: partId, ts, type: 'text', text: block.text ?? '' }
-            blockIndexToPartId.set(idx, partId)
+            const part: TextPart = { id: partId, ts, type: 'text', text: block.text ?? '', parentToolUseId: parentId }
+            blockKeyToPartId.set(key, partId)
             upsertPart(part)
           } else if (block.type === 'thinking') {
-            const part: ReasoningPart = { id: partId, ts, type: 'reasoning', text: block.thinking ?? '' }
-            blockIndexToPartId.set(idx, partId)
+            const part: ReasoningPart = { id: partId, ts, type: 'reasoning', text: block.thinking ?? '', parentToolUseId: parentId }
+            blockKeyToPartId.set(key, partId)
             upsertPart(part)
           } else if (block.type === 'tool_use') {
             const part: ToolPart = {
@@ -142,8 +152,9 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
               toolCallId: block.id ?? partId,
               input: {},
               state: 'input-streaming',
+              parentToolUseId: parentId,
             }
-            blockIndexToPartId.set(idx, partId)
+            blockKeyToPartId.set(key, partId)
             toolInputFragments.set(partId, '')
             upsertPart(part)
           } else if (block.type === 'redacted_thinking') {
@@ -160,7 +171,7 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
         // Deltas — append to whichever block is open at this index.
         if (inner?.type === 'content_block_delta') {
           const idx = inner.index ?? 0
-          const partId = blockIndexToPartId.get(idx)
+          const partId = blockKeyToPartId.get(blockKey(parentId, idx))
           const d = inner.delta
           if (partId && d) {
             const prev = partsById.get(partId)
@@ -185,8 +196,9 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
         // flip state.
         if (inner?.type === 'content_block_stop') {
           const idx = inner.index ?? 0
-          const partId = blockIndexToPartId.get(idx)
-          blockIndexToPartId.delete(idx)
+          const key = blockKey(parentId, idx)
+          const partId = blockKeyToPartId.get(key)
+          blockKeyToPartId.delete(key)
           if (partId) {
             const prev = partsById.get(partId)
             if (prev?.type === 'tool') {

@@ -4,6 +4,7 @@ import { TextPart } from '@/chat/parts/TextPart'
 import { ToolPart } from '@/chat/parts/ToolPart'
 import { ThinkingPill } from '@/chat/parts/ReasoningPart'
 import { ProcessGroup } from '@/chat/parts/ProcessGroup'
+import { SubagentGroup } from '@/chat/parts/SubagentGroup'
 import { QuestionActivity } from '@/chat/parts/QuestionActivity'
 import { TodoActivity } from '@/chat/parts/TodoActivity'
 import { TaskActivity } from '@/chat/parts/TaskActivity'
@@ -42,13 +43,40 @@ export function PartList({
 
   const compactNodes: ReactNode[] = []
   const processRows: ReactNode[] = []
+  // Subagent (Task) lanes — pulled OUT of the collapsed process group into
+  // their own always-visible block so a fan-out reads as orchestration, not as
+  // buried tool calls.
+  const taskNodes: ReactNode[] = []
   const textNodes: ReactNode[] = []
   const editParts: ToolPartType[] = []
   const questionParts: ToolPartType[] = []
+
+  // Subagent attribution (Level 2): parts the SDK tagged with a parentToolUseId
+  // belong to a Task lane, not the main timeline — group them by parent so each
+  // lane renders its own nested transcript. EXCEPTION: a subagent's edit
+  // proposals (propose_*) still surface at the TURN level for review (the
+  // Keep/Reject flow is turn-scoped), so they stay in the main stream.
+  const childByParent = new Map<string, MessagePart[]>()
+  const mainParts: MessagePart[] = []
+  for (const p of parts) {
+    const pid =
+      p.type === 'text' || p.type === 'reasoning' || p.type === 'tool'
+        ? p.parentToolUseId
+        : undefined
+    const isSubagentEdit = p.type === 'tool' && isProposeEditTool(p.toolName)
+    if (pid && !isSubagentEdit) {
+      const arr = childByParent.get(pid)
+      if (arr) arr.push(p)
+      else childByParent.set(pid, [p])
+    } else {
+      mainParts.push(p)
+    }
+  }
+
   // The model re-issues the whole TodoWrite list each update. Render the LATEST
   // content at the FIRST call's timeline position (in-place update, matching
   // Claude Code) and skip the rest.
-  const todoWriteParts = parts.filter(
+  const todoWriteParts = mainParts.filter(
     (p): p is ToolPartType => p.type === 'tool' && p.toolName === 'TodoWrite',
   )
   const latestTodo = todoWriteParts.at(-1)
@@ -75,7 +103,7 @@ export function PartList({
     reasoningKey = null
   }
 
-  for (const part of parts) {
+  for (const part of mainParts) {
     switch (part.type) {
       case 'reasoning':
         if (part.text) {
@@ -86,12 +114,19 @@ export function PartList({
       case 'tool':
         flushReasoning()
         if (part.toolName === 'Agent' || part.toolName === 'Task') {
-          // Delegated subagent — it's a tool the model used, so it lives in the
-          // process group with the other tool calls (just rendered as its own
-          // Agent row). The SDK names this tool 'Agent'; 'Task' is a defensive
-          // alias.
-          processRows.push(<TaskActivity key={part.id} part={part} />)
-          toolCount++
+          // Delegated subagent — surfaced as its own lane in the SubagentGroup
+          // (NOT folded into the collapsed process summary), so parallel
+          // fan-out stays visible. The SDK names this tool 'Agent'; 'Task' is a
+          // defensive alias. Level 2: its nested transcript (this subagent's own
+          // reads/thinking/tools, tagged with parentToolUseId === toolCallId) is
+          // passed as expandable steps.
+          taskNodes.push(
+            <TaskActivity
+              key={part.id}
+              part={part}
+              steps={renderSubagentSteps(childByParent.get(part.toolCallId), isStreaming)}
+            />,
+          )
         } else if (part.toolName === 'TodoWrite') {
           // Render the latest list at the first call's spot; later updates skip.
           if (part.id === firstTodoId && latestTodo) {
@@ -154,6 +189,9 @@ export function PartList({
           {processRows}
         </ProcessGroup>
       )}
+      {taskNodes.length > 0 && (
+        <SubagentGroup count={taskNodes.length}>{taskNodes}</SubagentGroup>
+      )}
       {textNodes}
       {questionParts.map((part) => (
         <QuestionActivity key={part.id} part={part} />
@@ -163,6 +201,57 @@ export function PartList({
       ))}
     </>
   )
+}
+
+/** Render one subagent's nested transcript — the parts it produced (reads,
+ * thinking, non-edit tool calls), in arrival order — as the expandable detail
+ * of its Task lane. Consecutive reasoning fragments merge into a single pill,
+ * matching the main timeline. Returns undefined when the lane has no nested
+ * steps yet (heartbeat-only), so the lane stays a static row. */
+function renderSubagentSteps(
+  parts: MessagePart[] | undefined,
+  isStreaming: boolean,
+): ReactNode {
+  if (!parts || parts.length === 0) return undefined
+  const rows: ReactNode[] = []
+  let reasoningBuf: string[] = []
+  let reasoningKey: string | null = null
+  const flush = () => {
+    if (reasoningBuf.length === 0) return
+    rows.push(
+      <ThinkingPill
+        key={`r-${reasoningKey}`}
+        content={reasoningBuf.join('\n\n')}
+        isStreaming={isStreaming}
+      />,
+    )
+    reasoningBuf = []
+    reasoningKey = null
+  }
+  for (const p of parts) {
+    if (p.type === 'reasoning') {
+      if (p.text) {
+        if (reasoningKey === null) reasoningKey = p.id
+        reasoningBuf.push(p.text)
+      }
+    } else if (p.type === 'text') {
+      flush()
+      rows.push(<TextPart key={p.id} part={p} isStreaming={isStreaming} />)
+    } else if (p.type === 'tool') {
+      flush()
+      if (p.toolName === 'TodoWrite') {
+        rows.push(<TodoActivity key={p.id} part={p} />)
+      } else if (p.toolName === 'AskUserQuestion') {
+        rows.push(<QuestionActivity key={p.id} part={p} />)
+      } else {
+        // Includes a deeper Agent/Task (depth > 1): rendered as a plain tool
+        // row rather than recursing, so the tree can't nest without bound.
+        rows.push(<ToolPart key={p.id} part={p} />)
+      }
+    }
+  }
+  flush()
+  return rows.length > 0 ? <>{rows}</> : undefined
 }
 
 /** Group key for de-duping edit rows: the target file's name (both the live

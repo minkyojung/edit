@@ -684,6 +684,13 @@ export class Server {
       // SDKAssistantMessage per turn. The frontend reassembles the live
       // text from content_block_delta events.
       includePartialMessages: true,
+      // Forward each subagent's full text/thinking (not just the heartbeat
+      // counters) as messages tagged with `parent_tool_use_id`, so the host can
+      // nest each Task lane's real transcript (its reads/thinking/tool calls).
+      // Without this, parallel fan-out shows only a "N tools · last: Read"
+      // heartbeat per lane. Increases event volume — every subagent step
+      // streams — which is the deliberate cost of the drill-down view.
+      forwardSubagentText: true,
       // Auto-summarize older turns once context approaches the model
       // limit, instead of erroring out. autoCompactEnabled lives in
       // Settings (sdk.d.ts:5073) — surfaced via the `settings` flag

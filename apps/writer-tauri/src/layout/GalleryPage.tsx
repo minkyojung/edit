@@ -358,6 +358,60 @@ const toolPartFx = (toolName: string, input: unknown): MessagePart => ({
   state: 'output-available',
   output: 'ok',
 })
+// A Task (subagent) part with its live heartbeat — `done` flips it from a
+// running lane (spinner) to a settled one (summary only).
+const taskPartFx = (
+  description: string,
+  task: { toolUses?: number; totalTokens?: number; lastTool?: string },
+  done: boolean,
+): MessagePart => ({
+  id: `p-${mockTurnSeq++}`,
+  ts: 0,
+  type: 'tool',
+  toolName: 'Task',
+  toolCallId: `tc-${mockTurnSeq}`,
+  input: { description },
+  state: done ? 'output-available' : 'input-available',
+  task,
+  output: done ? 'ok' : undefined,
+})
+// Level 2 nested-transcript fixtures: a Task with an explicit id, plus child
+// parts tagged with `parentToolUseId` pointing back at it (the SDK's
+// forwardSubagentText shape) so PartList nests them under that lane.
+const taskWithId = (
+  id: string,
+  description: string,
+  task: { toolUses?: number; totalTokens?: number; lastTool?: string },
+  done: boolean,
+): MessagePart => ({
+  id: `p-${mockTurnSeq++}`,
+  ts: 0,
+  type: 'tool',
+  toolName: 'Task',
+  toolCallId: id,
+  input: { description },
+  state: done ? 'output-available' : 'input-available',
+  task,
+  output: done ? 'ok' : undefined,
+})
+const subReasoning = (parent: string, text: string): MessagePart => ({
+  id: `p-${mockTurnSeq++}`,
+  ts: 0,
+  type: 'reasoning',
+  text,
+  parentToolUseId: parent,
+})
+const subTool = (parent: string, toolName: string, input: unknown): MessagePart => ({
+  id: `p-${mockTurnSeq++}`,
+  ts: 0,
+  type: 'tool',
+  toolName,
+  toolCallId: `tc-${mockTurnSeq}`,
+  input,
+  state: 'output-available',
+  output: 'ok',
+  parentToolUseId: parent,
+})
 const retryPartFx = (attempt: number, maxRetries: number, error: string): MessagePart => ({
   id: `p-${mockTurnSeq++}`,
   ts: 0,
@@ -901,6 +955,64 @@ export function GalleryPage() {
               />
             ))}
           </div>
+        </Subgroup>
+
+        <Subgroup title="Subagent fan-out — parallel lanes (orchestration)">
+          <Scenario
+            title="Streaming — orchestrator delegated 3 notes, lanes running in parallel"
+            turns={[
+              userTurn('Proofread these 3 notes.'),
+              mockTurn({
+                status: 'streaming',
+                parts: [
+                  reasoningPart('Three independent notes — splitting into parallel subagents.'),
+                  taskPartFx('Proofread note1.md', { toolUses: 2, totalTokens: 1200, lastTool: 'Read' }, false),
+                  taskPartFx('Proofread note2.md', { toolUses: 1, totalTokens: 600, lastTool: 'Grep' }, false),
+                  taskPartFx('Proofread note3.md', { toolUses: 3, totalTokens: 2100, lastTool: 'propose_edit' }, true),
+                ],
+              }),
+            ]}
+          />
+          <Scenario
+            title="Done — fan-out settled, lanes stay visible with their final tallies"
+            turns={[
+              userTurn('Proofread these 3 notes.'),
+              mockTurn({
+                status: 'done',
+                durationMs: 18400,
+                stopReason: 'end_turn',
+                content: 'Proofread all three — 5 fixes proposed across the set.',
+                parts: [
+                  taskPartFx('Proofread note1.md', { toolUses: 4, totalTokens: 3100, lastTool: 'propose_edit' }, true),
+                  taskPartFx('Proofread note2.md', { toolUses: 2, totalTokens: 1400, lastTool: 'propose_edit' }, true),
+                  taskPartFx('Proofread note3.md', { toolUses: 3, totalTokens: 2100, lastTool: 'propose_edit' }, true),
+                  textPart('Proofread all three — 5 fixes proposed across the set.'),
+                ],
+              }),
+            ]}
+          />
+          <Scenario
+            title="Level 2 — drill-down: expand a lane to see what that subagent actually did"
+            turns={[
+              userTurn('Proofread these 2 notes.'),
+              mockTurn({
+                status: 'done',
+                durationMs: 14200,
+                stopReason: 'end_turn',
+                content: 'Proofread both — 3 fixes proposed.',
+                parts: [
+                  taskWithId('sub-1', 'Proofread note1.md', { toolUses: 3, totalTokens: 2100, lastTool: 'propose_edit' }, true),
+                  subReasoning('sub-1', 'Reading note1, scanning for awkward repetition and run-on sentences.'),
+                  subTool('sub-1', 'Read', { file_path: 'note1.md' }),
+                  subTool('sub-1', 'Grep', { pattern: '그리고' }),
+                  taskWithId('sub-2', 'Proofread note2.md', { toolUses: 2, totalTokens: 1400, lastTool: 'propose_edit' }, true),
+                  subReasoning('sub-2', 'Tightening redundant phrasing in note2.'),
+                  subTool('sub-2', 'Read', { file_path: 'note2.md' }),
+                  textPart('Proofread both — 3 fixes proposed.'),
+                ],
+              }),
+            ]}
+          />
         </Subgroup>
 
         <Subgroup title="Error scenarios — full turn (real MessageRow)">

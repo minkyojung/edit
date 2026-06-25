@@ -1,20 +1,28 @@
+import type { ReactNode } from 'react'
 import { IconLoader2, IconRobot } from '@tabler/icons-react'
 import type { ToolPart } from '@/chat/types'
 import { ActivityRow } from '@/chat/parts/ActivityRow'
 
-/** Renders a Task tool call — the model delegating work to a subagent — as an
- * activity row. Phase 1 (heartbeat): the subagent runs out-of-band and the
- * `task_progress` system messages stamp tool/token counts onto the part, shown
- * here as a compact summary. (Phase 2 would nest the subagent's full transcript
- * in the detail.) */
-export function TaskActivity({ part }: { part: ToolPart }) {
+/** One subagent lane inside the SubagentGroup — a Task delegation.
+ *
+ * The description (which note / topic this lane owns) is the HEADLINE so
+ * parallel lanes are distinguishable at a glance; the live heartbeat
+ * (tool/token counts + last tool, from `task_progress` system messages) rides
+ * along as a dim inline suffix that stays visible, and a spinner marks a lane
+ * that's still running.
+ *
+ * When `steps` are present (Level 2, forwardSubagentText on) the row becomes
+ * expandable: collapsed shows the headline + heartbeat, expanded reveals the
+ * subagent's actual transcript. With no steps (heartbeat-only) it stays a
+ * static line — there's nothing to drill into. */
+export function TaskActivity({ part, steps }: { part: ToolPart; steps?: ReactNode }) {
   const input = (part.input ?? {}) as { description?: string }
   const description = input.description?.trim() || 'Subagent task'
   const running =
     part.state === 'input-streaming' || part.state === 'input-available'
 
   const task = part.task
-  const summary = task
+  const heartbeat = task
     ? [
         task.toolUses != null && `${task.toolUses} tool${task.toolUses === 1 ? '' : 's'}`,
         task.totalTokens != null && `${formatK(task.totalTokens)} tokens`,
@@ -22,19 +30,19 @@ export function TaskActivity({ part }: { part: ToolPart }) {
       ]
         .filter(Boolean)
         .join(' · ')
-    : null
+    : undefined
 
   return (
     <ActivityRow
       icon={<IconRobot size={14} />}
-      label="Agent"
-      preview={description}
+      label={description}
+      preview={heartbeat || undefined}
       trailing={
         running ? (
           <IconLoader2 size={12} className="shrink-0 animate-spin text-muted-foreground" />
         ) : undefined
       }
-      detail={summary ? <div className="text-muted-foreground">{summary}</div> : undefined}
+      detail={steps}
     />
   )
 }

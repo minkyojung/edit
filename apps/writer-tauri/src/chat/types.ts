@@ -302,6 +302,11 @@ export interface TextPart {
   ts: number
   type: 'text'
   text: string
+  /** Set when this part came from a subagent (SDK `parent_tool_use_id`) — the
+   * tool_use id of the Task that spawned it. The renderer nests parts carrying
+   * this under their parent Task lane instead of the main timeline. Undefined
+   * for main-thread parts. */
+  parentToolUseId?: string
 }
 
 export interface ReasoningPart {
@@ -309,6 +314,8 @@ export interface ReasoningPart {
   ts: number
   type: 'reasoning'
   text: string
+  /** See {@link TextPart.parentToolUseId}. */
+  parentToolUseId?: string
 }
 
 export type ToolPartState =
@@ -349,6 +356,9 @@ export interface ToolPart {
     totalTokens?: number
     lastTool?: string
   }
+  /** See {@link TextPart.parentToolUseId}. A tool call made BY a subagent
+   * carries its parent Task's id here, so it nests in that lane. */
+  parentToolUseId?: string
 }
 
 export interface StepStartPart {
