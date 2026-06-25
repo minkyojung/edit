@@ -12,7 +12,6 @@ import {
   IconFolderPlus,
   IconArrowsSort,
 } from '@tabler/icons-react'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { FolderTree } from './FolderTree'
 import { WikiMetaRows } from './WikiMetaRows'
 import { useDocsStore } from '@/state/docsStore'
@@ -46,18 +45,6 @@ import {
   SidebarMenuButton,
   SidebarMenuAction,
 } from '@/components/ui/sidebar'
-
-/** Pull initials from an email's local part, splitting on .+_- so
- * william.jung@x.com → WJ. Falls back to the first letter, then "?" so
- * the avatar always renders something. */
-function accountInitials(email: string | null): string {
-  if (!email) return '?'
-  const local = email.split('@')[0] ?? ''
-  const parts = local.split(/[._-]+/).filter(Boolean)
-  if (parts.length === 0) return (local[0] ?? '?').toUpperCase()
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-  return (parts[0][0] + parts[1][0]).toUpperCase()
-}
 
 /** Capitalize the email's local part for a friendly-but-honest display
  * name. Returns null when there's no email so callers can render a
@@ -239,12 +226,6 @@ export function AppSidebar() {
                 className="pr-14 text-sidebar-foreground/70 rounded-bl-[calc(var(--window-radius)-var(--window-inset))]"
                 onClick={() => setAccountMenuOpen(true)}
               >
-                <Avatar className="size-4 shrink-0 opacity-80">
-                  <AvatarImage src="" />
-                  <AvatarFallback className="avatar-luma text-[9px] text-primary-foreground font-medium">
-                    {accountInitials(account.email)}
-                  </AvatarFallback>
-                </Avatar>
                 <span className="flex-1 truncate">
                   {accountDisplayName(account.email) ?? 'Guest'}
                 </span>
