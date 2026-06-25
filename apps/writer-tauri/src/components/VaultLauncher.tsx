@@ -6,12 +6,12 @@
 //   - Open folder  — open any existing folder (wiki or translation)
 //
 // Window-per-project model: every entry point opens the project in its OWN
-// window via openProjectWindow(). The launcher itself never boots a vault —
-// it stays open as the hub. (Closing the launcher / reopening it when the
-// last project window closes is window-lifecycle polish for a later phase.)
+// window via openProjectWindow(), then hides itself. It reappears when the
+// last project window closes (useLauncherLifecycle in AppContent).
 
 import { useCallback, useEffect } from 'react'
 import { exists } from '@tauri-apps/plugin-fs'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { Button } from '@/components/ui/button'
 import { pickVault } from '@/lib/vaultPicker'
 import {
@@ -48,6 +48,10 @@ export function VaultLauncher() {
 
   // Open any existing folder. pickVault validates; we detect the project
   // type for the recent list, then open it in its own window.
+  const hideSelf = useCallback(async () => {
+    await getCurrentWebviewWindow().hide()
+  }, [])
+
   const openExisting = useCallback(async () => {
     const path = await pickVault()
     if (!path) return
@@ -56,7 +60,8 @@ export function VaultLauncher() {
       : 'wiki'
     addRecentProject(path, type)
     await openProjectWindow(path, folderName(path))
-  }, [addRecentProject])
+    await hideSelf()
+  }, [addRecentProject, hideSelf])
 
   // Create a new translation project: pick/create a folder, lay down the
   // translation CLAUDE.md + manuscript/ + reference/ skeleton, then open it in
@@ -67,7 +72,8 @@ export function VaultLauncher() {
     await scaffoldTranslationProject(path)
     addRecentProject(path, 'translation')
     await openProjectWindow(path, folderName(path))
-  }, [addRecentProject])
+    await hideSelf()
+  }, [addRecentProject, hideSelf])
 
   // Reopen a recent project. Prune the entry if its folder is gone (moved,
   // deleted, unmounted drive) so the list self-heals.
@@ -79,8 +85,9 @@ export function VaultLauncher() {
       }
       addRecentProject(p.path, p.type) // refresh lastOpened + move to front
       await openProjectWindow(p.path, folderName(p.path))
+      await hideSelf()
     },
-    [addRecentProject, removeRecentProject],
+    [addRecentProject, removeRecentProject, hideSelf],
   )
 
   return (

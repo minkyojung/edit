@@ -76,9 +76,6 @@ export async function openProjectWindow(
     )
   })
   await applyWindowChrome(label)
-  // Hide the launcher now that a project window is open.
-  const launcher = await WebviewWindow.getByLabel(LAUNCHER_LABEL)
-  await launcher?.hide()
 }
 
 /** Label of the launcher window (the config-defined window with no
