@@ -122,11 +122,13 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
       // events.
       if (ev?.type === 'stream_event') {
         const inner = ev.event
-        // Subagent attribution: when forwardSubagentText is on, a subagent's
-        // text / thinking / tool blocks stream as ordinary content_block events
-        // carrying the spawning Task's tool_use id here. null on the main
-        // thread → undefined, so main-thread parts are untouched.
         const parentId = ev.parent_tool_use_id ?? undefined
+        // Subagent content is NOT rendered from these partials: forwardSubagentText
+        // also delivers each subagent message in full (handled in the `assistant`
+        // / `user` branches below, keyed for idempotency), so consuming the
+        // partials too would double-count the same step. Drop subagent partials
+        // here; the main thread (parentId null) streams normally below.
+        if (parentId) return
         // Block opens — register a part of the right type at this
         // index.
         if (inner?.type === 'content_block_start') {
@@ -271,8 +273,43 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
         return
       }
 
-      // 2) Final assistant message — already covered by stream_event.
-      if (ev?.type === 'assistant') return
+      // 2) Assistant message.
+      if (ev?.type === 'assistant') {
+        const parentId = ev.parent_tool_use_id ?? undefined
+        // Main-thread assistant messages are already rendered token-by-token
+        // from stream_event, so the consolidated copy is a no-op. SUBAGENT
+        // messages (parentId set) are NOT streamed as partials we keep — with
+        // forwardSubagentText the subagent's text / thinking / tool_use arrive
+        // here as whole messages, so build the lane's child parts from them.
+        if (!parentId) return
+        const blocks = ev.message?.content
+        if (Array.isArray(blocks)) {
+          blocks.forEach((b, idx) => {
+            // Key by the message uuid + block index so a re-emitted snapshot of
+            // the same message upserts the same part instead of duplicating.
+            const key = `${ev.uuid ?? 'sub'}:${parentId}:${idx}`
+            if (b.type === 'text' && b.text) {
+              upsertPart({ id: key, ts: Date.now(), type: 'text', text: b.text, parentToolUseId: parentId })
+            } else if (b.type === 'thinking' && b.thinking) {
+              upsertPart({ id: key, ts: Date.now(), type: 'reasoning', text: b.thinking, parentToolUseId: parentId })
+            } else if (b.type === 'tool_use') {
+              upsertPart({
+                id: key,
+                ts: Date.now(),
+                type: 'tool',
+                toolName: b.name ?? '<unknown>',
+                // Real tool_use id so the subagent's tool_result (a `user`
+                // message) resolves onto this part by toolCallId.
+                toolCallId: b.id ?? key,
+                input: b.input ?? {},
+                state: 'input-available',
+                parentToolUseId: parentId,
+              })
+            }
+          })
+        }
+        return
+      }
 
       // 3) User message with tool_result — resolve the matching
       // tool part.

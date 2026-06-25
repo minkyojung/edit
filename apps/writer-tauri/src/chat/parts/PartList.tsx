@@ -4,7 +4,6 @@ import { TextPart } from '@/chat/parts/TextPart'
 import { ToolPart } from '@/chat/parts/ToolPart'
 import { ThinkingPill } from '@/chat/parts/ReasoningPart'
 import { ProcessGroup } from '@/chat/parts/ProcessGroup'
-import { SubagentGroup } from '@/chat/parts/SubagentGroup'
 import { QuestionActivity } from '@/chat/parts/QuestionActivity'
 import { TodoActivity } from '@/chat/parts/TodoActivity'
 import { TaskActivity } from '@/chat/parts/TaskActivity'
@@ -43,11 +42,13 @@ export function PartList({
 
   const compactNodes: ReactNode[] = []
   const processRows: ReactNode[] = []
-  // Subagent (Task) lanes — pulled OUT of the collapsed process group into
-  // their own always-visible block so a fan-out reads as orchestration, not as
-  // buried tool calls.
-  const taskNodes: ReactNode[] = []
-  const textNodes: ReactNode[] = []
+  // Answer-level nodes: the orchestrator's narration text AND its Agent rows,
+  // kept in TIMELINE order. So an intro ("spinning up 4 agents") sits ABOVE the
+  // agents it announces and a closing summary sits below them — bucketing every
+  // text part under the agents (as an earlier cut did) read unnaturally.
+  // Subagent (Task) rows are pulled out of the collapsed process group and live
+  // here as top-level expandable Agent rows, in the spot they were spawned.
+  const bodyNodes: ReactNode[] = []
   const editParts: ToolPartType[] = []
   const questionParts: ToolPartType[] = []
 
@@ -114,13 +115,13 @@ export function PartList({
       case 'tool':
         flushReasoning()
         if (part.toolName === 'Agent' || part.toolName === 'Task') {
-          // Delegated subagent — surfaced as its own lane in the SubagentGroup
-          // (NOT folded into the collapsed process summary), so parallel
-          // fan-out stays visible. The SDK names this tool 'Agent'; 'Task' is a
+          // Delegated subagent — surfaced as its own TOP-LEVEL Agent row (NOT
+          // folded into the collapsed process summary), so parallel fan-out
+          // stays visible. The SDK names this tool 'Agent'; 'Task' is a
           // defensive alias. Level 2: its nested transcript (this subagent's own
           // reads/thinking/tools, tagged with parentToolUseId === toolCallId) is
           // passed as expandable steps.
-          taskNodes.push(
+          bodyNodes.push(
             <TaskActivity
               key={part.id}
               part={part}
@@ -147,7 +148,7 @@ export function PartList({
       case 'text':
         flushReasoning()
         if (!hideText) {
-          textNodes.push(<TextPart key={part.id} part={part} isStreaming={isStreaming} />)
+          bodyNodes.push(<TextPart key={part.id} part={part} isStreaming={isStreaming} />)
         }
         break
       case 'compact':
@@ -189,10 +190,10 @@ export function PartList({
           {processRows}
         </ProcessGroup>
       )}
-      {taskNodes.length > 0 && (
-        <SubagentGroup count={taskNodes.length}>{taskNodes}</SubagentGroup>
-      )}
-      {textNodes}
+      {/* Narration text and Agent rows interleaved in timeline order: intro
+          above the agents it announces, agents (each a top-level expandable
+          row, no "N subagents" wrapper), then the closing summary below. */}
+      {bodyNodes}
       {questionParts.map((part) => (
         <QuestionActivity key={part.id} part={part} />
       ))}
@@ -205,9 +206,12 @@ export function PartList({
 
 /** Render one subagent's nested transcript — the parts it produced (reads,
  * thinking, non-edit tool calls), in arrival order — as the expandable detail
- * of its Task lane. Consecutive reasoning fragments merge into a single pill,
- * matching the main timeline. Returns undefined when the lane has no nested
- * steps yet (heartbeat-only), so the lane stays a static row. */
+ * of its top-level Agent row. The steps sit in a left-ruled, indented block so
+ * that, once expanded, they read unambiguously as belonging to THAT agent (the
+ * divider is what separates an agent from its own sub-tasks). Consecutive
+ * reasoning fragments merge into a single pill, matching the main timeline.
+ * Returns undefined when the agent has no nested steps yet (heartbeat-only), so
+ * the row stays a static line. */
 function renderSubagentSteps(
   parts: MessagePart[] | undefined,
   isStreaming: boolean,
@@ -251,7 +255,9 @@ function renderSubagentSteps(
     }
   }
   flush()
-  return rows.length > 0 ? <>{rows}</> : undefined
+  return rows.length > 0 ? (
+    <div className="ml-0.5 border-l border-border/50 pl-3">{rows}</div>
+  ) : undefined
 }
 
 /** Group key for de-duping edit rows: the target file's name (both the live

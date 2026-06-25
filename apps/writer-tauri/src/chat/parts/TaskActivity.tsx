@@ -3,7 +3,7 @@ import { IconLoader2, IconRobot } from '@tabler/icons-react'
 import type { ToolPart } from '@/chat/types'
 import { ActivityRow } from '@/chat/parts/ActivityRow'
 
-/** One subagent lane inside the SubagentGroup — a Task delegation.
+/** One subagent as a top-level Agent row — a Task delegation.
  *
  * The description (which note / topic this lane owns) is the HEADLINE so
  * parallel lanes are distinguishable at a glance; the live heartbeat

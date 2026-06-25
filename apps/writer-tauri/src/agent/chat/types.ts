@@ -202,6 +202,9 @@ export interface ChatEvent {
     }
     // subagent events carry the parent Task's tool_use id (null on main thread)
     parent_tool_use_id?: string | null
+    // Stable per-message id (SDKAssistantMessage.uuid). Keys a subagent
+    // message's child parts so re-emitted snapshots upsert, not duplicate.
+    uuid?: string
     // assistant messages may carry a structured API-level error
     // (SDKAssistantMessageError) — the sidecar maps it to a chat/error code.
     // Also reused by system/api_retry as the triggering error label.
@@ -217,6 +220,10 @@ export interface ChatEvent {
         type: string
         text?: string
         thinking?: string
+        // tool_use content block (lives on assistant messages)
+        id?: string
+        name?: string
+        input?: unknown
         // tool_result content block (lives on user messages)
         tool_use_id?: string
         is_error?: boolean
