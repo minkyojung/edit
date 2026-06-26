@@ -14,7 +14,7 @@
 // Pure render of existing stores (threadsStore turns + seenThreadsStore)
 // — no new backend. Replaces the ThreadPicker dropdown.
 
-import { Fragment, useMemo } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { IconPlus, IconX } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -51,12 +51,46 @@ export function ChatTabs({
     [active],
   )
 
+  // Edge fades: tabs keep a fixed width and the strip scrolls horizontally
+  // when they overflow. Track which sides still have hidden tabs so each
+  // gradient only shows when there's actually more to scroll toward (no
+  // permanent dimming of the first/last tab).
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [edges, setEdges] = useState({ left: false, right: false })
+  const updateEdges = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const { scrollLeft, scrollWidth, clientWidth } = el
+    setEdges({
+      left: scrollLeft > 1,
+      right: scrollLeft + clientWidth < scrollWidth - 1,
+    })
+  }, [])
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    updateEdges()
+    el.addEventListener('scroll', updateEdges, { passive: true })
+    const ro = new ResizeObserver(updateEdges)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', updateEdges)
+      ro.disconnect()
+    }
+    // Re-measure when the tab count changes (added/closed shifts overflow).
+  }, [updateEdges, ordered.length])
+
   return (
     <TooltipProvider>
       <div className="flex min-w-0 flex-1 items-center gap-1">
-        {/* Flat tab strip — tabs sit on the header, sized to content and
-            left-aligned; min-w-0 lets them shrink + truncate when crowded. */}
-        <div className="flex h-9 min-w-0 items-center">
+        {/* Flat tab strip — fixed-width tabs that DON'T shrink; the strip
+            scrolls horizontally when they overflow. Edge gradients (below)
+            hint at off-screen tabs. */}
+        <div className="relative min-w-0 flex-1">
+          <div
+            ref={scrollRef}
+            className="flex h-8 items-center overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
           {ordered.map((t, i) => {
             const isActive = t.id === activeId
             // Hairline between two inactive tabs; it goes transparent next to
@@ -84,6 +118,23 @@ export function ChatTabs({
               </Fragment>
             )
           })}
+          </div>
+
+          {/* Edge gradients — fade tabs into the header at whichever side
+              still has off-screen tabs. Match the header backdrop (background)
+              and don't intercept clicks/scroll. */}
+          {edges.left && (
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-background to-transparent"
+            />
+          )}
+          {edges.right && (
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-background to-transparent"
+            />
+          )}
         </div>
 
         {/* New session. Disabled at the thread cap. */}
@@ -145,10 +196,10 @@ function Segment({ meta, isActive, onSelect, onClose }: SegmentProps) {
         }
       }}
       className={cn(
-        // Content-width, left-aligned tab; min-w-0 lets the title truncate
-        // when the strip is crowded instead of overflowing. Padding is
-        // identical in every state so selecting a tab never resizes it.
-        'group relative flex h-full min-w-0 cursor-pointer items-center justify-start gap-2 rounded-md px-4 text-footnote outline-none transition-colors',
+        // Fixed-width tab that never shrinks (w-40 + shrink-0) — the strip
+        // scrolls instead of squeezing tabs. The title truncates within it.
+        // Padding is identical in every state so selecting never resizes it.
+        'group relative flex h-full w-40 shrink-0 cursor-pointer items-center justify-start gap-2.5 rounded-lg px-2.5 text-caption-2 outline-none transition-colors',
         // Hovering any tab fills it with the same muted surface the active
         // tab uses — so the close badge's fade gradient (from-muted) always
         // has a matching backdrop, on selected and unselected tabs alike.
@@ -177,7 +228,7 @@ function Segment({ meta, isActive, onSelect, onClose }: SegmentProps) {
           the title (covers it) but before the button (which stays on top). */}
       <span
         aria-hidden
-        className="pointer-events-none absolute inset-y-0 right-0 w-14 rounded-r-md bg-gradient-to-l from-muted from-50% to-transparent opacity-0 transition-opacity group-hover:opacity-100"
+        className="pointer-events-none absolute inset-y-0 right-0 w-14 rounded-r-lg bg-gradient-to-l from-muted from-50% to-transparent opacity-0 transition-opacity group-hover:opacity-100"
       />
       <button
         type="button"
