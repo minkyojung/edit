@@ -27,7 +27,7 @@ import { IconLayoutSidebarFilled } from "@tabler/icons-react"
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
-const SIDEBAR_WIDTH = "220px"
+const SIDEBAR_WIDTH = "240px"
 const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
 
@@ -258,9 +258,9 @@ function SidebarTrigger({
     <Button
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
-      variant="ghost"
+      variant="iconGhost"
       size="icon-sm"
-      className={cn("text-sidebar-trigger hover:bg-foreground/12 hover:text-sidebar-foreground cursor-pointer", className)}
+      className={cn("cursor-pointer", className)}
       onClick={(event) => {
         onClick?.(event)
         toggleSidebar()
