@@ -12,6 +12,7 @@ import { useCallback, useMemo, useRef, useState, type ChangeEvent, type Clipboar
 import { notify } from '@/lib/notify'
 import {
   IconArrowUp,
+  IconAt,
   IconClipboard,
   IconFile,
   IconFileText,
@@ -32,7 +33,11 @@ import { ModeToggle } from '@/chat/ModeToggle'
 import { FastToggle } from '@/chat/FastToggle'
 import { ContextGauge } from '@/chat/ContextGauge'
 import { SlashPalette } from '@/chat/SlashPalette'
+import { MentionPalette, type MentionItem } from '@/chat/MentionPalette'
 import { listCommands, type LoadedCommand } from '@/chat/commands'
+import { useDocsStore } from '@/state/docsStore'
+import { pathForDoc } from '@/lib/docPaths'
+import { fuzzyScore } from '@/lib/fuzzyMatch'
 import {
   effortsForModel,
   modelSupportsFastMode,
@@ -49,6 +54,15 @@ import { cn } from '@/lib/utils'
 // kebab-case name, with no whitespace yet. As soon as the user types a
 // space the palette closes and we treat the rest as args.
 const SLASH_RE = /^\/([a-z][a-z0-9-]*)?$/
+
+// Matches an `@` mention being typed: `@` at the start of input or after
+// whitespace (so emails like `a@b` don't trigger), then the partial query up
+// to the next space. The capture group is the query we fuzzy-match on.
+const AT_RE = /(?:^|\s)@([^\s@]*)$/
+
+// Caps for the mention list (recents when empty, ranked results otherwise).
+const MENTION_RECENTS = 8
+const MENTION_RESULTS = 12
 
 const MAX_FILES = 5
 const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB — Claude API image limit
@@ -169,6 +183,8 @@ export function PromptInput({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [attachments, setAttachments] = useState<FileAttachment[]>([])
   const [pastedTexts, setPastedTexts] = useState<Array<{ id: string; preview: string; content: string }>>([])
+  const [mentions, setMentions] = useState<MentionItem[]>([])
+  const knownDocs = useDocsStore((s) => s.knownDocs)
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounterRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -300,10 +316,45 @@ export function PromptInput({
   }, [allCommands, slashMatch, slashQuery])
   const paletteOpen = slashMatch !== null
 
-  // Clamp the highlighted row when the filter shrinks the list.
-  const safeIndex = filteredCommands.length === 0
+  // @-mention candidates: every live note resolved to a vault path (drop ones
+  // with no placement). Built once per catalog change; reused for every query.
+  const mentionCandidates = useMemo<MentionItem[]>(() => {
+    const lookup = new Map(knownDocs.map((d) => [d.slug, d]))
+    return knownDocs
+      .filter((d) => !d.archivedAt && !d.type.startsWith('system:'))
+      .map((d) => {
+        const path = pathForDoc(d, (slug) => lookup.get(slug))
+        return path
+          ? { slug: d.slug, title: d.title || d.relPath || 'Untitled', path }
+          : null
+      })
+      .filter((m): m is MentionItem => m !== null)
+  }, [knownDocs])
+
+  // Mention palette opens while typing `@…`. Slash takes priority (its regex is
+  // anchored to `^/`, so the two never co-match, but guard anyway).
+  const atMatch = !isStreaming ? AT_RE.exec(value) : null
+  const atQuery = atMatch?.[1] ?? ''
+  const mentionOpen = atMatch !== null && !paletteOpen
+  const filteredMentions = useMemo<MentionItem[]>(() => {
+    if (!mentionOpen) return []
+    if (!atQuery) return mentionCandidates.slice(0, MENTION_RECENTS)
+    return mentionCandidates
+      .map((m) => ({
+        m,
+        score: Math.max(fuzzyScore(atQuery, m.title), 0.8 * fuzzyScore(atQuery, m.path)),
+      }))
+      .filter((x) => x.score >= 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, MENTION_RESULTS)
+      .map((x) => x.m)
+  }, [mentionOpen, atQuery, mentionCandidates])
+
+  // Clamp the highlighted row when either palette's filter shrinks the list.
+  const activeList = mentionOpen ? filteredMentions : filteredCommands
+  const safeIndex = activeList.length === 0
     ? 0
-    : Math.min(selectedIndex, filteredCommands.length - 1)
+    : Math.min(selectedIndex, activeList.length - 1)
 
   function pickCommand(cmd: LoadedCommand) {
     // Drop user back into the textarea with `/<name> ` prefilled so they
@@ -313,14 +364,39 @@ export function PromptInput({
     setSelectedIndex(0)
   }
 
+  function pickMention(item: MentionItem) {
+    // Strip the trailing `@query` we were completing — the note is shown as a
+    // chip, not inline text. Keep everything up to the `@` (so any leading
+    // space before it stays).
+    setValue((v) => {
+      const m = AT_RE.exec(v)
+      if (!m) return v
+      const at = v.indexOf('@', m.index)
+      return v.slice(0, at)
+    })
+    setMentions((prev) =>
+      prev.some((m) => m.slug === item.slug) ? prev : [...prev, item],
+    )
+    setSelectedIndex(0)
+  }
+
+  function removeMention(slug: string) {
+    setMentions((prev) => prev.filter((m) => m.slug !== slug))
+  }
+
   function submit() {
     if (!canSubmit) return
     const context = pastedTexts.map((t) => t.content).join('\n\n')
-    const finalText = context && trimmed ? `${context}\n\n${trimmed}` : context || trimmed
+    // @-mentioned notes ride along as vault paths so the agent can Read them.
+    const mentionBlock = mentions.length
+      ? 'Referenced files:\n' + mentions.map((m) => `- ${m.path}`).join('\n')
+      : ''
+    const finalText = [mentionBlock, context, trimmed].filter(Boolean).join('\n\n')
     onSubmit(finalText, attachments)
     setValue('')
     setAttachments([])
     setPastedTexts([])
+    setMentions([])
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -339,25 +415,25 @@ export function PromptInput({
       return
     }
 
-    // Slash palette navigation. We intercept before the textarea sees
-    // the keys so cursor/selection inside the input stays put.
-    if (paletteOpen && filteredCommands.length > 0) {
+    // Palette navigation (slash commands or @-mentions — only one is open at a
+    // time). We intercept before the textarea sees the keys so the cursor /
+    // selection inside the input stays put.
+    if (activeList.length > 0 && (mentionOpen || paletteOpen)) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setSelectedIndex((i) => (i + 1) % filteredCommands.length)
+        setSelectedIndex((i) => (i + 1) % activeList.length)
         return
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault()
-        setSelectedIndex(
-          (i) => (i - 1 + filteredCommands.length) % filteredCommands.length,
-        )
+        setSelectedIndex((i) => (i - 1 + activeList.length) % activeList.length)
         return
       }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
         if (isComposing || e.nativeEvent.isComposing) return
         e.preventDefault()
-        pickCommand(filteredCommands[safeIndex])
+        if (mentionOpen) pickMention(filteredMentions[safeIndex])
+        else pickCommand(filteredCommands[safeIndex])
         return
       }
     }
@@ -412,17 +488,35 @@ export function PromptInput({
           onHover={setSelectedIndex}
         />
       )}
+      {mentionOpen && (
+        <MentionPalette
+          items={filteredMentions}
+          selectedIndex={safeIndex}
+          onSelect={pickMention}
+          onHover={setSelectedIndex}
+        />
+      )}
       {/* Context chips (viewed file, selection, …) live in one horizontal
           row that scrolls sideways when they overflow — the modern chip-bar
           pattern — instead of stacking vertically and growing the composer.
           Each chip is shrink-0 so it keeps its size and the row scrolls. */}
-      {(viewingFilePath || selectionText || attachments.length > 0 || pastedTexts.length > 0) && (
+      {(viewingFilePath || selectionText || attachments.length > 0 || pastedTexts.length > 0 || mentions.length > 0) && (
         <div
           className={cn(
             'flex items-center gap-1.5 overflow-x-auto',
             '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
           )}
         >
+      {mentions.map((m) => (
+        <ContextChip
+          key={m.slug}
+          icon={IconAt}
+          label={m.title}
+          tooltip={m.path}
+          onRemove={() => removeMention(m.slug)}
+          removeLabel={`Remove ${m.title}`}
+        />
+      ))}
       {attachments.map((att) => (
         <ContextChip
           key={att.id}
