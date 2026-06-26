@@ -29,6 +29,7 @@ import { pathForDoc } from '@/lib/docPaths'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
+import { applyWriteWikiPage } from '@/agent/applyIngest'
 import { useSkillProposalStore } from '@/state/skillProposalStore'
 import {
   mapChatEditToPendingChange,
@@ -336,14 +337,31 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           // the Keep button drives, just triggered automatically. Undo still
           // flows through the editor (Cmd-Z → reopen).
           if (autoAcceptEdits) {
-            usePendingChangesStore.getState().accept(mapped.id)
+            if (createdNewNote) {
+              // A brand-new note isn't open in any editor yet, so the async
+              // applier would RACE the navigate-to-open below: if the editor
+              // mounts before the applier's write lands, it reads an empty
+              // buffer and the body never appears (the change is already
+              // 'accepted', so the in-buffer review won't re-render it). Write
+              // the body into the handle HERE and await it, so the note is
+              // populated before we open it. Accept with the body as
+              // resolvedResult so the applier's own write is an idempotent
+              // whole-doc no-op (bodyMarkdown already matches) rather than a
+              // second, doubling append.
+              const body = mapped.edits.map((e) => e.after ?? '').join('\n\n')
+              await applyWriteWikiPage(mapped.pageSlug, body, mapped.id)
+              usePendingChangesStore.getState().accept(mapped.id, body)
+            } else {
+              // Existing note: its editor is already mounted, so the applier's
+              // live-CM write path updates the open buffer with no race.
+              usePendingChangesStore.getState().accept(mapped.id)
+            }
           }
-          // A brand-new note isn't open in any editor, so cmProofReview never
-          // mounts for it and the inline preview can't show. On interactive
-          // runs, open it — the editor mounts, subscribes to the pending store,
-          // and renders the staged body as a green preview. Existing-note edits
-          // are left alone (the suggestion card's click-to-jump handles those;
-          // auto-jumping on every edit would be intrusive).
+          // Open the new note. In acceptEdits mode it's already populated
+          // (above); on interactive runs the editor mounts, subscribes to the
+          // pending store, and renders the staged body as a green preview.
+          // Existing-note edits are left alone (the suggestion card's
+          // click-to-jump handles those; auto-jumping on every edit is intrusive).
           if (createdNewNote && navigateToNewNotes) {
             navigateToNoteBySlug(mapped.pageSlug)
           }
