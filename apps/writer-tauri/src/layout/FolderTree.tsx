@@ -117,7 +117,7 @@ function RenameInput({
         }
       }}
       onBlur={commit}
-      className="mx-2 h-7 min-w-0 flex-1 rounded-sm border border-sidebar-border bg-sidebar px-1 text-[15px] text-sidebar-foreground outline-hidden focus-visible:ring-1 focus-visible:ring-sidebar-ring/40"
+      className="mx-2 h-7 min-w-0 flex-1 rounded-sm border border-sidebar-border bg-sidebar px-1 text-body text-sidebar-foreground outline-hidden focus-visible:ring-1 focus-visible:ring-sidebar-ring/40"
     />
   )
 }
@@ -688,14 +688,14 @@ export function FolderTree() {
           visible before the drop lands. */}
       <DragOverlay dropAnimation={null}>
         {draggingFolderPath ? (
-          <div className="flex items-center gap-1.5 rounded-xl bg-sidebar px-3 py-1 text-sm font-medium text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border">
+          <div className="flex items-center gap-1.5 rounded-xl bg-sidebar px-3 py-1 text-body font-medium text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border">
             <IconFolder size={16} className="text-muted-foreground" />
             <span className="truncate">
               {draggingFolderPath.split('/').pop()}
             </span>
           </div>
         ) : draggingDoc ? (
-          <div className="rounded-xl bg-sidebar px-3 py-1 text-sm font-medium text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border">
+          <div className="rounded-xl bg-sidebar px-3 py-1 text-body font-medium text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border">
             <span className="truncate">
               {draggingDoc.title?.trim() ||
                 draggingDoc.relPath?.split('/').pop()?.replace(/\.md$/, '') ||
