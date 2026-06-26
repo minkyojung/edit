@@ -13,7 +13,7 @@
 
 import {
   IconHandStop,
-  IconBolt,
+  IconWriting,
   IconMap,
   IconCheck,
   IconChevronDown,
@@ -52,7 +52,7 @@ const MODES: readonly ModeOption[] = [
   },
   {
     mode: 'acceptEdits',
-    Icon: IconBolt,
+    Icon: IconWriting,
     title: 'Auto-accept edits',
     description: 'Auto-accept file edit operations',
   },
