@@ -82,7 +82,7 @@ export function EditorTabs() {
           className="shrink-0 text-muted-foreground"
         />
       )}
-      <span className="truncate text-sm font-medium text-foreground">
+      <span className="truncate text-body font-medium text-foreground">
         {activeLabel || 'Untitled'}
       </span>
     </div>

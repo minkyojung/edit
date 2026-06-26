@@ -114,7 +114,7 @@ function PromptButton({
     >
       <IconHighlight size={15} stroke={2} style={{ color: 'oklch(0.82 0.17 85)' }} />
       Highlight
-      <kbd className="ml-0.5 rounded border border-white/15 bg-white/10 px-1 py-px text-[10px] leading-none text-muted-foreground">
+      <kbd className="ml-0.5 rounded border border-white/15 bg-white/10 px-1 py-px text-caption leading-none text-muted-foreground">
         ⌘⇧M
       </kbd>
     </Button>
@@ -183,7 +183,7 @@ function EditRow({
           }
         }}
         placeholder="Add a note…"
-        className="w-56 bg-transparent px-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+        className="w-56 bg-transparent px-1 text-body text-foreground outline-none placeholder:text-muted-foreground"
       />
       <Button variant="ghost" size="icon-xs" onClick={save} aria-label="Save note">
         <IconCheck size={14} stroke={2} />
