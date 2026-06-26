@@ -114,7 +114,9 @@ export function EditableTitleInput({ slug, currentTitle }: Props) {
       // heading rather than a form control — Notion / Obsidian
       // visual pattern.
       className={cn(
-        'mb-6 w-full resize-none bg-transparent text-3xl font-semibold leading-tight text-foreground outline-none placeholder:text-muted-foreground/50',
+        // leading-[normal] (keyword), not a numeric ratio: a numeric line-height
+        // makes WebKit draw the textarea caret at the full line box height.
+        'mb-6 w-full resize-none bg-transparent text-3xl font-semibold leading-[normal] text-foreground outline-none placeholder:text-muted-foreground/50',
         'field-sizing-content overflow-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
       )}
     />

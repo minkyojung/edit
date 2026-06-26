@@ -72,7 +72,10 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
         rows={1}
         className={cn(
           'mb-2 w-full resize-none bg-transparent px-1.5 py-1.5',
-          'text-body leading-relaxed text-foreground outline-none placeholder:text-muted-foreground',
+          // leading-[normal] (keyword), not a numeric ratio: WebKit sizes the
+          // textarea caret to a numeric line-height's full box, towering it over
+          // the text. `normal` keeps the caret hugging the glyphs.
+          'text-body leading-[normal] text-foreground outline-none placeholder:text-muted-foreground',
           'field-sizing-content max-h-48 min-h-8',
           '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
         )}
