@@ -51,7 +51,7 @@ export function DocumentInfoDialog({ open, onOpenChange }: Props) {
           <DialogTitle className="truncate">{label}</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-3 text-sm">
+        <div className="space-y-3 text-body">
           <Section title="Size">
             <Row label="Words" value={fmtNum(stats?.words)} />
             <Row label="Characters" value={fmtNum(stats?.chars)} />
@@ -69,7 +69,7 @@ export function DocumentInfoDialog({ open, onOpenChange }: Props) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground/80">
+      <div className="mb-1 text-footnote font-medium uppercase tracking-wide text-muted-foreground/80">
         {title}
       </div>
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">{children}</dl>
