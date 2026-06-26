@@ -48,9 +48,9 @@ export function SkillsPage() {
       <h1 className="mb-4 text-lg font-semibold text-foreground">Skills</h1>
 
       {loading ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">불러오는 중…</p>
+        <p className="py-10 text-center text-body text-muted-foreground">불러오는 중…</p>
       ) : skills.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">
+        <p className="py-10 text-center text-body text-muted-foreground">
           아직 저장된 스킬이 없어요. 작업하다 보면 AI가 “스킬로 저장할까요?”라고 제안합니다.
         </p>
       ) : (
@@ -76,7 +76,7 @@ export function SkillsPage() {
                     i > 0 ? 'border-t border-border/60' : ''
                   }`}
                 >
-                  <span className="flex-1 truncate text-[15px] font-medium text-foreground">
+                  <span className="flex-1 truncate text-body font-medium text-foreground">
                     {s.name}
                   </span>
                   <IconChevronRight
