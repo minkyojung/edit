@@ -68,9 +68,9 @@ function SkillProposalCard({
   }, [isUpdate, p.updates, p.body])
 
   return (
-    <div className="rounded-lg border border-border bg-card px-3 py-2.5 text-[13px]">
+    <div className="rounded-lg border border-border bg-card px-3 py-2.5 text-callout">
       <div className="mb-1 flex items-center gap-2">
-        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-caption text-muted-foreground">
           {isUpdate ? 'update' : 'skill'}
         </span>
         <span className="font-semibold text-foreground">{p.name}</span>
@@ -88,7 +88,7 @@ function SkillProposalCard({
           </div>
         ) : null
       ) : (
-        <pre className="mb-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-border bg-background p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+        <pre className="mb-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-border bg-background p-2 font-mono text-caption leading-relaxed text-muted-foreground">
           {p.body}
         </pre>
       )}

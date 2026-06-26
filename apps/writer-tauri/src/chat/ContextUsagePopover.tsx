@@ -40,7 +40,7 @@ function buildRows(s: ContextSnapshot): Row[] {
 export function ContextUsagePopover({ snapshot }: { snapshot: ContextSnapshot | null }) {
   if (!snapshot) {
     return (
-      <div className="text-muted-foreground text-xs">
+      <div className="text-muted-foreground text-footnote">
         No data yet — send a message to see usage.
       </div>
     )
@@ -56,7 +56,7 @@ export function ContextUsagePopover({ snapshot }: { snapshot: ContextSnapshot | 
     <div className="space-y-3">
       <div className="flex items-baseline justify-between">
         <span className="text-foreground font-medium">Context</span>
-        <span className="text-muted-foreground text-xs tabular-nums">
+        <span className="text-muted-foreground text-footnote tabular-nums">
           {formatTokens(snapshot.totalTokens)}/{formatTokens(snapshot.maxTokens)}
         </span>
       </div>
@@ -73,7 +73,7 @@ export function ContextUsagePopover({ snapshot }: { snapshot: ContextSnapshot | 
 
       <div className="space-y-1">
         {rows.map((r) => (
-          <div key={r.name} className="flex items-baseline justify-between text-xs">
+          <div key={r.name} className="flex items-baseline justify-between text-footnote">
             <span className={cn('text-muted-foreground', r.isDeferred && 'opacity-70')}>
               {r.name}
             </span>

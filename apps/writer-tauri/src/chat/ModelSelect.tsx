@@ -58,7 +58,7 @@ export function ModelSelect({ value, onChange, disabled }: Props) {
       <DropdownMenuTrigger
         disabled={disabled}
         className={cn(
-          'inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-sm text-muted-foreground transition-colors',
+          'inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-body text-muted-foreground transition-colors',
           'hover:bg-accent hover:text-foreground',
           'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
           'disabled:pointer-events-none disabled:opacity-50',
@@ -67,10 +67,10 @@ export function ModelSelect({ value, onChange, disabled }: Props) {
         {CHAT_MODEL_LABELS[value]}
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="end" className="min-w-36">
-        <DropdownMenuLabel className="text-xs text-muted-foreground">Model</DropdownMenuLabel>
+        <DropdownMenuLabel className="text-footnote text-muted-foreground">Model</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={value} onValueChange={(v) => onChange(v as ChatModel)}>
           {models.map((m) => (
-            <DropdownMenuRadioItem key={m} value={m} className="text-xs">
+            <DropdownMenuRadioItem key={m} value={m} className="text-footnote">
               {CHAT_MODEL_LABELS[m]}
             </DropdownMenuRadioItem>
           ))}

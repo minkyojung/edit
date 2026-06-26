@@ -62,7 +62,7 @@ function UnviewedDot({ on }: { on: boolean }) {
 function Counts({ added, removed }: { added: number; removed: number }) {
   if (added === 0 && removed === 0) return null
   return (
-    <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px]">
+    <span className="flex shrink-0 items-center gap-1.5 font-mono text-caption">
       {added > 0 && <span className="text-success">+{added}</span>}
       {removed > 0 && <span className="text-destructive">-{removed}</span>}
     </span>
@@ -134,7 +134,7 @@ export function ReviewTray() {
     // tucks down behind the composer's rounded top (PromptInput is rounded-3xl = 24px
     // radius and paints on top as the next sibling), so the two read as one connected
     // panel instead of a flat seam.
-    <div className="-mb-6 overflow-hidden rounded-t-2xl border border-border bg-background pb-6 text-xs">
+    <div className="-mb-6 overflow-hidden rounded-t-2xl border border-border bg-background pb-6 text-footnote">
       {/* Summary — collapsed view. Left toggles the file list; right is the bulk decision. */}
       <div className="flex items-stretch">
         <button

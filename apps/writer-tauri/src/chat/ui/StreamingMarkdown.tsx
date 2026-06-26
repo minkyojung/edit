@@ -134,7 +134,7 @@ const STATIC_COMPONENTS: MarkdownComponents = {
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
   code: ({ children }) => (
-    <code className="bg-muted text-foreground text-xs rounded px-1 py-0.5 font-mono">{children}</code>
+    <code className="bg-muted text-foreground text-footnote rounded px-1 py-0.5 font-mono">{children}</code>
   ),
   a: (props) => {
     // react-markdown passes the raw mdast node as `node` on the

@@ -41,7 +41,7 @@ export function ThinkingPanel({
   streamingNoText: boolean
 }) {
   return (
-    <Reasoning isStreaming={streamingNoText} className="mb-2 text-xs">
+    <Reasoning isStreaming={streamingNoText} className="mb-2 text-footnote">
       <ReasoningTrigger />
       <ReasoningContent>{content}</ReasoningContent>
     </Reasoning>

@@ -191,7 +191,7 @@ function ActiveRow({ meta, isActive, onSelect, onArchive, onRename }: ActiveRowP
             }
           }}
           onClick={(e) => e.stopPropagation()}
-          className="min-w-0 flex-1 rounded-md bg-transparent text-sm font-medium text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+          className="min-w-0 flex-1 rounded-md bg-transparent text-body font-medium text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
         />
       ) : (
         <span className="min-w-0 flex-1 truncate">

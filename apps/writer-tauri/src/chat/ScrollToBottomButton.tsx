@@ -21,7 +21,7 @@ export function ScrollToBottomButton({
       className={cn(
         'absolute left-1/2 bottom-full z-10 mb-2 -translate-x-1/2',
         'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5',
-        'border border-border/40 bg-muted text-xs font-medium text-muted-foreground shadow-sm',
+        'border border-border/40 bg-muted text-footnote font-medium text-muted-foreground shadow-sm',
         'transition-opacity duration-150',
         'hover:bg-accent hover:text-foreground',
         'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',

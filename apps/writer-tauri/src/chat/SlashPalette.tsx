@@ -32,7 +32,7 @@ export function SlashPalette({ commands, selectedIndex, onSelect, onHover }: Pro
       <div
         className={cn(
           'absolute bottom-full left-0 right-0 mb-2 rounded-xl border border-border bg-popover',
-          'p-3 text-sm text-muted-foreground shadow-md',
+          'p-3 text-body text-muted-foreground shadow-md',
         )}
       >
         No matching commands.
@@ -68,10 +68,10 @@ export function SlashPalette({ commands, selectedIndex, onSelect, onHover }: Pro
                 selected ? 'bg-muted' : 'hover:bg-muted/50',
               )}
             >
-              <span className="font-mono text-sm font-medium text-foreground">
+              <span className="font-mono text-body font-medium text-foreground">
                 /{cmd.name}
               </span>
-              <span className="truncate text-xs text-muted-foreground">
+              <span className="truncate text-footnote text-muted-foreground">
                 {cmd.description}
               </span>
             </button>

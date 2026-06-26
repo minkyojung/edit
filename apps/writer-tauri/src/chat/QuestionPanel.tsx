@@ -143,7 +143,7 @@ export function QuestionPanel({ pending, onClose }: Props) {
               questions (it labels which one in the pager); for a single
               question it just repeats what the full question already says. */}
           {questions.length > 1 && q.header && (
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <div className="text-footnote font-medium uppercase tracking-wide text-muted-foreground">
               {q.header}
             </div>
           )}
@@ -161,7 +161,7 @@ export function QuestionPanel({ pending, onClose }: Props) {
               >
                 <IconChevronLeft size={16} />
               </button>
-              <span className="text-xs tabular-nums">
+              <span className="text-footnote tabular-nums">
                 {index + 1} of {questions.length}
               </span>
               <button
@@ -206,7 +206,7 @@ export function QuestionPanel({ pending, onClose }: Props) {
             >
               <span
                 className={cn(
-                  'flex size-6 shrink-0 items-center justify-center rounded-md text-xs',
+                  'flex size-6 shrink-0 items-center justify-center rounded-md text-footnote',
                   on ? 'bg-foreground text-background' : 'bg-background/60 text-muted-foreground',
                 )}
               >
@@ -249,7 +249,7 @@ export function QuestionPanel({ pending, onClose }: Props) {
           type="button"
           onClick={advance}
           disabled={sending}
-          className="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+          className="rounded-full px-3 py-1.5 text-footnote font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
         >
           Skip
         </button>
@@ -258,7 +258,7 @@ export function QuestionPanel({ pending, onClose }: Props) {
           onClick={advance}
           disabled={sending || !hasAnswer}
           className={cn(
-            'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
+            'rounded-full px-3 py-1.5 text-footnote font-medium transition-colors',
             sending || !hasAnswer
               ? 'cursor-not-allowed bg-muted text-muted-foreground'
               : 'bg-foreground text-background hover:bg-foreground/90',

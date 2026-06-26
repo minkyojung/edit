@@ -187,7 +187,7 @@ function FileChip({ name, mediaType }: { name: string; mediaType: string }) {
         ? IconFileText
         : IconFile
   return (
-    <div className="flex items-center gap-1 rounded-md bg-background/50 px-2 py-1 text-xs text-muted-foreground">
+    <div className="flex items-center gap-1 rounded-md bg-background/50 px-2 py-1 text-footnote text-muted-foreground">
       <Icon size={12} stroke={1.5} className="shrink-0" />
       <span className="max-w-[140px] truncate">{name}</span>
     </div>
@@ -205,7 +205,7 @@ function StreamingTimer({ startedAt }: { startedAt: number }) {
   }, [])
   const elapsed = Math.max(0, (now - startedAt) / 1000)
   return (
-    <div className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+    <div className="mt-1 flex items-center gap-1.5 text-body text-muted-foreground">
       <ChatRunningIcon size={14} className="shrink-0" />
       <span className="tabular-nums text-muted-foreground/70">{elapsed.toFixed(1)}s</span>
     </div>

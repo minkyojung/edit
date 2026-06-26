@@ -90,9 +90,9 @@ export function ErrorCard({
           duration to its right. */}
       <div className="flex items-start gap-2 px-3 py-2.5 text-destructive">
         <IconAlertTriangle size={16} className="mt-px shrink-0 opacity-90" />
-        <span className="flex-1 min-w-0 text-[14px] font-medium leading-snug">{message}</span>
+        <span className="flex-1 min-w-0 text-body font-medium leading-snug">{message}</span>
         {durationLabel && (
-          <span className="mt-0.5 shrink-0 text-[13px] opacity-70">{durationLabel}</span>
+          <span className="mt-0.5 shrink-0 text-callout opacity-70">{durationLabel}</span>
         )}
         {isAuthError && <ReconnectButton />}
         {onRegenerate && turn.retryable !== false && (
@@ -100,7 +100,7 @@ export function ErrorCard({
             type="button"
             onClick={() => onRegenerate(turn.id)}
             disabled={retryDisabled}
-            className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[14px] font-medium text-destructive transition-colors outline-none hover:bg-destructive/15 focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-body font-medium text-destructive transition-colors outline-none hover:bg-destructive/15 focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
             title={retryDisabled ? `Retry available in ${formatCountdown(remaining)}` : 'Retry'}
           >
             <IconRefresh size={14} />
@@ -115,7 +115,7 @@ export function ErrorCard({
         // ProcessGroup carrying its own `my-2`. Collapse the outer child's
         // top/bottom margin (established pattern) so the strip's vertical
         // padding (py-1.5) stays smaller than its horizontal (px-3).
-        <div className="border-t border-destructive/20 px-3 py-1.5 text-[14px] text-muted-foreground opacity-80 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+        <div className="border-t border-destructive/20 px-3 py-1.5 text-body text-muted-foreground opacity-80 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
           {body}
         </div>
       )}

@@ -392,7 +392,7 @@ export function PromptInput({
       {isDragOver && (
         <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-3xl border-2 border-dashed border-foreground/30 bg-muted/90 backdrop-blur-sm">
           <IconPaperclip size={28} stroke={1.5} className="text-foreground/50" />
-          <span className="text-sm font-medium text-foreground/60">Drop files to attach</span>
+          <span className="text-body font-medium text-foreground/60">Drop files to attach</span>
         </div>
       )}
       <input
@@ -581,7 +581,7 @@ function Kbd({ children }: { children: ReactNode }) {
   return (
     <kbd
       data-slot="kbd"
-      className="bg-foreground/10 text-foreground/80 font-mono text-xs leading-none px-1 py-0.5"
+      className="bg-foreground/10 text-foreground/80 font-mono text-footnote leading-none px-1 py-0.5"
     >
       {children}
     </kbd>

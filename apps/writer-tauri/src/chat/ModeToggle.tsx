@@ -33,7 +33,7 @@ export function ModeToggle({ value, onChange, disabled }: Props) {
           aria-label={isPlan ? 'Plan mode (read-only)' : 'Apply mode'}
           aria-pressed={isPlan}
           className={cn(
-            'flex h-8 items-center gap-1 rounded-full px-2 text-sm font-medium transition-colors',
+            'flex h-8 items-center gap-1 rounded-full px-2 text-body font-medium transition-colors',
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
             'disabled:pointer-events-none disabled:opacity-50',
             isPlan

@@ -95,13 +95,13 @@ export function InlineSuggestion({ part }: { part: ToolPart }) {
         <>
           <FileChip name={name} />
           {(added > 0 || removed > 0) && (
-            <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px]">
+            <span className="flex shrink-0 items-center gap-1.5 font-mono text-caption">
               {added > 0 && <span className="text-success">+{added}</span>}
               {removed > 0 && <span className="text-destructive">-{removed}</span>}
             </span>
           )}
           {status && status !== 'pending' && (
-            <span className="shrink-0 text-[11px] text-muted-foreground">
+            <span className="shrink-0 text-caption text-muted-foreground">
               {status === 'accepted' ? 'Kept' : 'Rejected'}
             </span>
           )}

@@ -32,7 +32,7 @@ export function TerminalNote({
 }) {
   const toneClass = tone === 'warning' ? 'text-warning' : 'text-muted-foreground'
   return (
-    <div className={`mt-1 flex items-center gap-1.5 text-sm ${toneClass}`}>
+    <div className={`mt-1 flex items-center gap-1.5 text-body ${toneClass}`}>
       {icon}
       <span>{label}</span>
       {durationLabel && <span className="opacity-70">· {durationLabel}</span>}

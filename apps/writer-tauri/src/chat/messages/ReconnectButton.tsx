@@ -12,7 +12,7 @@ export function ReconnectButton() {
     <button
       type="button"
       onClick={() => setOpen(true)}
-      className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[14px] font-medium text-destructive transition-colors outline-none hover:bg-destructive/15 focus-visible:ring-2 focus-visible:ring-ring/40"
+      className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-body font-medium text-destructive transition-colors outline-none hover:bg-destructive/15 focus-visible:ring-2 focus-visible:ring-ring/40"
       title="Reconnect to Claude"
     >
       <IconPlugConnected size={14} />

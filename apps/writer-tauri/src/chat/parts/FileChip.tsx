@@ -13,7 +13,7 @@ import type { Icon } from '@tabler/icons-react'
 export function FileChip({ name }: { name: string }) {
   const Icon = iconForFile(name)
   return (
-    <span className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[13px] text-muted-foreground">
+    <span className="inline-flex min-w-0 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-callout text-muted-foreground">
       <Icon size={13} className="shrink-0" />
       <span className="truncate">{name}</span>
     </span>

@@ -138,7 +138,7 @@ function Segment({ meta, isActive, onSelect, onClose }: SegmentProps) {
       className={cn(
         // Equal width (flex-1). Transparent border reserves the active
         // pill's 1px border so widths/heights never jump on selection.
-        'group relative flex h-full min-w-0 flex-1 cursor-pointer items-center justify-center gap-2.5 rounded-full border border-transparent px-2 text-[12px] outline-none transition-all',
+        'group relative flex h-full min-w-0 flex-1 cursor-pointer items-center justify-center gap-2.5 rounded-full border border-transparent px-2 text-footnote outline-none transition-all',
         'text-muted-foreground hover:text-foreground',
         // Focus = a solid background swap (not a raised pill): the active
         // segment fills with the body colour, a clear step from the lighter

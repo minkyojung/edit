@@ -41,7 +41,7 @@ export function ContextChip({
         'group/chip inline-flex h-7 w-fit max-w-[220px] shrink-0 items-center gap-1.5',
         // bg-background (not bg-muted) so the chip reads as a distinct inset
         // against the composer's bg-muted body — contrast carries it, no border.
-        'rounded-md bg-background pl-2.5 pr-1.5 text-[13px] text-foreground/80',
+        'rounded-md bg-background pl-2.5 pr-1.5 text-callout text-foreground/80',
       )}
     >
       <Icon size={14} stroke={1.75} className="shrink-0 text-muted-foreground" />
