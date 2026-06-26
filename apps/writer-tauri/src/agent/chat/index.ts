@@ -86,6 +86,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     appendDocument = true,
     viewingFilePath,
     selectionText,
+    mentionPaths,
     vizEditTarget,
     permissionMode,
     autoAcceptEdits = false,
@@ -167,6 +168,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     currentFilePath,
     viewingFilePath,
     selectionText,
+    mentionPaths,
     vizEditTarget,
     today: todayLocalDate(),
   })

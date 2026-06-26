@@ -86,6 +86,7 @@ export interface ChatRunner {
     overrides?: RunOverrides,
     vizEditTarget?: VizEditTarget,
     attachments?: FileAttachment[],
+    mentionPaths?: string[],
   ) => Promise<void>
 }
 
@@ -130,6 +131,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       overrides?: RunOverrides,
       vizEditTarget?: VizEditTarget,
       attachments?: FileAttachment[],
+      mentionPaths?: string[],
     ) => {
       const startedAt = Date.now()
       // Label for the OS completion ping — the user's request, truncated.
@@ -328,6 +330,8 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           // their rendered body via {{selection}}, so passing it here too
           // would double-inject. overrides ⇒ slash command ⇒ skip.
           selectionText: overrides ? undefined : selectionText,
+          // @-mentioned files (free chat only; slash commands don't carry them).
+          mentionPaths: overrides ? undefined : mentionPaths,
           threadId,
           history,
           prompt: overrides?.prompt,

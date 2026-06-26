@@ -38,7 +38,6 @@ import { listCommands, type LoadedCommand } from '@/chat/commands'
 import { useDocsStore } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { fuzzyScore } from '@/lib/fuzzyMatch'
-import { useAutosizeTextarea } from '@/lib/useAutosizeTextarea'
 import {
   effortsForModel,
   modelSupportsFastMode,
@@ -90,7 +89,7 @@ interface Props {
   status: PromptStatus
   disabled?: boolean
   placeholder?: string
-  onSubmit: (text: string, attachments: FileAttachment[]) => void
+  onSubmit: (text: string, attachments: FileAttachment[], mentionPaths: string[]) => void
   onStop?: () => void
   model: ChatModel
   onModelChange: (model: ChatModel) => void
@@ -189,7 +188,6 @@ export function PromptInput({
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounterRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const textareaRef = useAutosizeTextarea(value)
 
   const addFiles = useCallback(async (fileList: FileList | File[]) => {
     setAttachments((prev) => {
@@ -389,12 +387,10 @@ export function PromptInput({
   function submit() {
     if (!canSubmit) return
     const context = pastedTexts.map((t) => t.content).join('\n\n')
-    // @-mentioned notes ride along as vault paths so the agent can Read them.
-    const mentionBlock = mentions.length
-      ? 'Referenced files:\n' + mentions.map((m) => `- ${m.path}`).join('\n')
-      : ''
-    const finalText = [mentionBlock, context, trimmed].filter(Boolean).join('\n\n')
-    onSubmit(finalText, attachments)
+    const finalText = context && trimmed ? `${context}\n\n${trimmed}` : context || trimmed
+    // @-mentioned notes ride along as vault paths via a separate channel (the
+    // system prompt), NOT the visible message — so they don't clutter the bubble.
+    onSubmit(finalText, attachments, mentions.map((m) => m.path))
     setValue('')
     setAttachments([])
     setPastedTexts([])
@@ -562,7 +558,6 @@ export function PromptInput({
         </div>
       )}
       <textarea
-        ref={textareaRef}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -573,14 +568,13 @@ export function PromptInput({
         disabled={disabled}
         rows={1}
         className={cn(
-          'w-full resize-none bg-transparent px-2.5 py-1.5 text-[15px] leading-relaxed text-foreground outline-none',
+          // line-height MUST stay the `normal` keyword, not a numeric ratio:
+          // WebKit sizes the native caret to a numeric line-height's full box
+          // (incl. leading), so e.g. leading-relaxed made the caret tower over
+          // the text. `normal` keeps the caret hugging the glyphs.
+          'w-full resize-none bg-transparent px-2.5 py-1.5 text-[15px] leading-[normal] text-foreground outline-none',
           'placeholder:text-muted-foreground',
-          // Height hugs the content via useAutosizeTextarea (JS), capped at
-          // max-h-48 then scrolls. We deliberately set NO min-height: in WebKit
-          // a textarea whose box is taller than its text draws the caret at the
-          // full box height, so any min-height made the caret grow. Letting the
-          // box track the content keeps the caret one line tall.
-          'overflow-y-auto max-h-48',
+          'field-sizing-content max-h-48 min-h-28',
           '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
         )}
       />

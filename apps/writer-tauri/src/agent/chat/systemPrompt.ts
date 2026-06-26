@@ -107,6 +107,9 @@ export interface SystemBlocksArgs {
    * "rewrite this" resolve to the selection, not the whole document. Slash
    * commands handle selection via `{{selection}}` and don't pass this. */
   selectionText?: string | null
+  /** Vault-relative paths the user @-mentioned in the composer. Listed in a
+   * `--- REFERENCED FILES ---` block instructing the model to Read them. */
+  mentionPaths?: string[]
   /** When set, a high-salience block naming the visualization being edited
    * (id + current spec) is pinned past the cache boundary, instructing the
    * model to apply changes via the edit_visualization tool. */
@@ -152,6 +155,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     currentFilePath,
     viewingFilePath,
     selectionText,
+    mentionPaths,
     vizEditTarget,
     today,
   } = args
@@ -219,6 +223,15 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `"여기", "this part", or ask to explain / rewrite / fix without naming a target, ` +
         `they mean THIS selection — focus on it (the full document follows for context):\n\n` +
         selectionText,
+    )
+  }
+  if (mentionPaths && mentionPaths.length > 0) {
+    dynamic.push(
+      `--- REFERENCED FILES ---\n` +
+        `The user @-mentioned these files in their message. Treat them as ` +
+        `attached context for this turn — Read them (the exact vault-relative ` +
+        `paths below) before answering, even if the message doesn't name them ` +
+        `again:\n${mentionPaths.map((p) => `- ${p}`).join('\n')}`,
     )
   }
   if (appendDocument) dynamic.push(`--- DOCUMENT ---\n${docForPrompt}`)

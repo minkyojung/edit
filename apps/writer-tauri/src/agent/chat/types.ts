@@ -108,6 +108,10 @@ export interface RunChatArgs {
    * as a `--- SELECTION ---` block so "explain this" targets the selection. Only
    * passed for free chat — slash commands embed selection via `{{selection}}`. */
   selectionText?: string | null
+  /** Vault-relative paths the user @-mentioned in the composer. Injected as a
+   * `--- REFERENCED FILES ---` orientation block (like viewingFilePath) so the
+   * agent Reads them on demand — kept out of the visible user message. */
+  mentionPaths?: string[]
   /** When set, this run is editing a specific visualization: the agent gets
    * the edit_visualization relay tool and the target's id + current spec are
    * injected into the system prompt. Omit for normal turns. */
