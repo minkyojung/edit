@@ -102,7 +102,7 @@ export function ReadLaterQueue() {
         <div className="flex items-baseline gap-2">
           <h1 className="text-lg font-semibold text-foreground">Inbox</h1>
           {unreadCount > 0 && (
-            <span className="text-sm text-muted-foreground">
+            <span className="text-body text-muted-foreground">
               {unreadCount} unread
             </span>
           )}
@@ -135,7 +135,7 @@ export function ReadLaterQueue() {
       </div>
 
       {visible.length === 0 ? (
-        <p className="px-1 py-10 text-center text-sm text-muted-foreground">
+        <p className="px-1 py-10 text-center text-body text-muted-foreground">
           {articles.length === 0
             ? 'Your inbox is empty. Add a URL (article or YouTube) to capture it.'
             : 'Nothing here for this filter.'}
@@ -205,11 +205,11 @@ function QueueRow({
               <IconWorld className="size-5 shrink-0 text-muted-foreground" />
             )}
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-sm font-medium text-foreground">
+              <span className="truncate text-body font-medium text-foreground">
                 {title}
               </span>
               {meta && (
-                <span className="truncate text-xs text-muted-foreground">
+                <span className="truncate text-footnote text-muted-foreground">
                   {meta}
                 </span>
               )}
