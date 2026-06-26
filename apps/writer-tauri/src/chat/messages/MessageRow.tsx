@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import {
   IconAlertTriangle,
+  IconAt,
   IconFile,
   IconFileText,
   IconFileTypePdf,
@@ -44,6 +45,7 @@ export const MessageRow = React.memo(function MessageRow({
     const fileAtts = (turn.attachments ?? []).filter(
       (a): a is Extract<Attachment, { type: 'file' }> => a.type === 'file',
     )
+    const mentions = turn.mentions ?? []
     return (
       <div className="flex justify-end">
         {/* `synthetic` answer bubbles carry a multi-line "Q:/A:" summary —
@@ -58,6 +60,20 @@ export const MessageRow = React.memo(function MessageRow({
             <div className="mb-2 flex flex-wrap gap-1.5">
               {fileAtts.map((att, i) => (
                 <FileChip key={i} name={att.name} mediaType={att.mediaType} />
+              ))}
+            </div>
+          )}
+          {mentions.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {mentions.map((m, i) => (
+                <span
+                  key={i}
+                  title={m.path}
+                  className="inline-flex h-6 items-center gap-1 rounded-md bg-background px-2 text-footnote font-medium text-foreground/80"
+                >
+                  <IconAt size={12} stroke={1.75} className="shrink-0 text-muted-foreground" />
+                  <span className="truncate">{m.path.split('/').pop() ?? m.path}</span>
+                </span>
               ))}
             </div>
           )}

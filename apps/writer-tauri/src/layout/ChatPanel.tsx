@@ -485,6 +485,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         attachments: attachments.length > 0
           ? attachments.map(f => ({ type: 'file' as const, name: f.name, mediaType: f.mediaType }))
           : undefined,
+        mentions: mentionPaths.length > 0
+          ? mentionPaths.map((path) => ({ path }))
+          : undefined,
       }
 
       // First user message in an untitled thread → kick off background title

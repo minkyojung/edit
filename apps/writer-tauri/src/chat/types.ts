@@ -225,6 +225,10 @@ export interface ChatTurn {
   content: string
   ts: number
   attachments?: Attachment[]
+  /** Vault-relative paths the user @-mentioned for this turn. Display-only:
+   * rendered as chips in the user bubble. The agent receives the files via
+   * the system prompt's REFERENCED FILES block, not this field. */
+  mentions?: { path: string }[]
   toolCalls?: ToolCall[]
   status?: 'streaming' | 'done' | 'error' | 'stopped'
   /** Accumulated reasoning text — kept for compat. New code reads it from
