@@ -118,7 +118,7 @@ export function EditorHeader({
         {statusLabel && (
           <span
             className={cn(
-              'shrink-0 px-2 text-xs',
+              'shrink-0 px-2 text-caption',
               collabStatus === 'error' ? 'text-destructive' : 'text-muted-foreground',
             )}
           >
