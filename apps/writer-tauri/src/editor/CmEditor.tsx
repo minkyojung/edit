@@ -323,6 +323,7 @@ export function CmEditor({ handle, header }: Props) {
           tabs/buttons keep painting on top. */}
       <div
         aria-hidden
+        data-header-fade
         className="pointer-events-none absolute top-0 left-0 right-0 z-[5] bg-background/90"
         style={{
           height: 'calc(var(--header-h) + 2rem)',

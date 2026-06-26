@@ -170,6 +170,335 @@ fn apply_window_chrome(app: tauri::AppHandle, label: String) {
     }
 }
 
+/// Per-window full-frame stash, so leaving compact restores the exact size +
+/// position the window had when it entered. Keyed by window label (the main
+/// window and any per-project windows each get their own slot).
+#[derive(Default)]
+struct CompactFrames(std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, [f64; 4]>>>);
+
+/// Animate the window between its full size and the compact (Raycast-Notes)
+/// panel — natively, so the transition is smooth (the JS window API only sets
+/// size instantly).
+///
+/// The same NSWindow is resized, never recreated, so the webview — and with it
+/// the editor's in-flight content (text, cursor, scroll) — survives untouched.
+/// The full frame is stashed on the way in and restored on the way out. Min/max
+/// are widened *before* and tightened *after* the animation so the size
+/// constraints can't clamp the frame mid-flight. The top-left corner is held
+/// fixed while shrinking (AppKit frames are bottom-left origin, so we raise
+/// origin.y by the height delta).
+#[tauri::command]
+fn set_window_compact(
+    window: tauri::WebviewWindow,
+    frames: tauri::State<'_, CompactFrames>,
+    compact: bool,
+) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::{
+            encode::{Encode, Encoding},
+            msg_send,
+            runtime::AnyObject,
+        };
+
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct NSPoint {
+            x: f64,
+            y: f64,
+        }
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct NSSize {
+            width: f64,
+            height: f64,
+        }
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct NSRect {
+            origin: NSPoint,
+            size: NSSize,
+        }
+        unsafe impl Encode for NSPoint {
+            const ENCODING: Encoding =
+                Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
+        }
+        unsafe impl Encode for NSSize {
+            const ENCODING: Encoding =
+                Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
+        }
+        unsafe impl Encode for NSRect {
+            const ENCODING: Encoding =
+                Encoding::Struct("CGRect", &[NSPoint::ENCODING, NSSize::ENCODING]);
+        }
+
+        // Compact panel geometry, in points: opening size + the bounds the user
+        // may drag-resize within. Full minimum mirrors tauri.conf.json.
+        const COMPACT_W: f64 = 420.0;
+        const COMPACT_H: f64 = 520.0;
+        const COMPACT_MIN: NSSize = NSSize { width: 360.0, height: 440.0 };
+        const COMPACT_MAX: NSSize = NSSize { width: 600.0, height: 760.0 };
+        const FULL_MIN: NSSize = NSSize { width: 800.0, height: 600.0 };
+        const NO_MAX: NSSize = NSSize { width: 100000.0, height: 100000.0 };
+
+        let store = frames.0.clone();
+        let label = window.label().to_string();
+        let win = window.clone();
+        // AppKit must be touched on the main thread; setFrame:animate: also
+        // drives its own run loop for the animation.
+        let _ = window.run_on_main_thread(move || unsafe {
+            let Ok(ptr) = win.ns_window() else {
+                return;
+            };
+            let ns = ptr as *mut AnyObject;
+            if ns.is_null() {
+                return;
+            }
+
+            if compact {
+                let frame: NSRect = msg_send![ns, frame];
+                store.lock().unwrap().insert(
+                    label.clone(),
+                    [frame.origin.x, frame.origin.y, frame.size.width, frame.size.height],
+                );
+                // Hold the top edge fixed as the window shrinks.
+                let new_y = frame.origin.y + (frame.size.height - COMPACT_H);
+                let target = NSRect {
+                    origin: NSPoint { x: frame.origin.x, y: new_y },
+                    size: NSSize { width: COMPACT_W, height: COMPACT_H },
+                };
+                let _: () = msg_send![ns, setMinSize: COMPACT_MIN];
+                // animate:false — instant resize. The system's setFrame
+                // animation read poorly (esp. on expand), so it's off for now.
+                let _: () = msg_send![ns, setFrame: target, display: true, animate: false];
+                let _: () = msg_send![ns, setMaxSize: COMPACT_MAX];
+            } else {
+                let saved = store.lock().unwrap().remove(&label);
+                let _: () = msg_send![ns, setMaxSize: NO_MAX];
+                if let Some(f) = saved {
+                    let target = NSRect {
+                        origin: NSPoint { x: f[0], y: f[1] },
+                        size: NSSize { width: f[2], height: f[3] },
+                    };
+                    let _: () = msg_send![ns, setFrame: target, display: true, animate: false];
+                }
+                let _: () = msg_send![ns, setMinSize: FULL_MIN];
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (window, frames, compact);
+    }
+}
+
+/// Set the material of the window's existing NSVisualEffectView directly.
+///
+/// Tauri's `setEffects` only honours the material when it FIRST creates the
+/// effect view — subsequent calls resolve but leave the material unchanged. So
+/// the JS picker can't swap materials through Tauri. This walks the window's
+/// view tree, finds the NSVisualEffectView (added at window creation via
+/// windowEffects), and calls `setMaterial:` on it — an instant, reliable swap.
+///
+/// `material` is the raw NSVisualEffectMaterial value (sidebar=7,
+/// hudWindow=13, windowBackground=12, …), mapped on the JS side.
+#[cfg(target_os = "macos")]
+unsafe fn set_material_recursive(
+    view: *mut objc2::runtime::AnyObject,
+    vev_class: &objc2::runtime::AnyClass,
+    material: isize,
+) {
+    use objc2::{msg_send, runtime::AnyObject};
+    if view.is_null() {
+        return;
+    }
+    let is_vev: bool = msg_send![view, isKindOfClass: vev_class];
+    if is_vev {
+        let _: () = msg_send![view, setMaterial: material];
+    }
+    let subviews: *mut AnyObject = msg_send![view, subviews];
+    if subviews.is_null() {
+        return;
+    }
+    let count: usize = msg_send![subviews, count];
+    for i in 0..count {
+        let child: *mut AnyObject = msg_send![subviews, objectAtIndex: i];
+        set_material_recursive(child, vev_class, material);
+    }
+}
+
+#[tauri::command]
+fn set_vibrancy_material(window: tauri::WebviewWindow, material: i64) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::{class, msg_send, runtime::AnyObject};
+        let win = window.clone();
+        let _ = window.run_on_main_thread(move || unsafe {
+            let Ok(ptr) = win.ns_window() else {
+                return;
+            };
+            let ns = ptr as *mut AnyObject;
+            if ns.is_null() {
+                return;
+            }
+            let content: *mut AnyObject = msg_send![ns, contentView];
+            set_material_recursive(content, class!(NSVisualEffectView), material as isize);
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (window, material);
+    }
+}
+
+/// Add (or remove) a Liquid Glass panel behind the webview — the compact
+/// mode's frosted background, macOS 26+ only.
+///
+/// NSGlassEffectView is inserted as the BOTTOM subview of the window's
+/// contentView (`positioned: .Below`), exactly where window-vibrancy puts its
+/// NSVisualEffectView — the webview floats transparent on top, so only the
+/// glass + the editor text show. Idempotent: any existing glass view is
+/// removed first, so repeated calls (style/tint changes) don't stack.
+///
+/// `style`: NSGlassEffectViewStyle raw (0 = Regular, 1 = Clear).
+/// `tint`: optional [r, g, b, a] in 0..1 sRGB — the real Liquid Glass tint
+/// (blended into the material, not an overlay). None = untinted.
+/// No-ops below macOS 26 (the class won't exist), so callers gate on mode only.
+#[tauri::command]
+fn set_compact_glass(
+    window: tauri::WebviewWindow,
+    enabled: bool,
+    style: i64,
+    tint: Option<Vec<f64>>,
+) -> String {
+    // Returns a diagnostic string (logged on the JS side) so we can see exactly
+    // what happened — class found? glass created? did setStyle stick? Sync
+    // command, so it runs on the main thread (like get_traffic_light_y).
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::{
+            class,
+            encode::{Encode, Encoding},
+            msg_send,
+            runtime::{AnyClass, AnyObject},
+        };
+
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct NSPoint {
+            x: f64,
+            y: f64,
+        }
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct NSSize {
+            width: f64,
+            height: f64,
+        }
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct NSRect {
+            origin: NSPoint,
+            size: NSSize,
+        }
+        unsafe impl Encode for NSPoint {
+            const ENCODING: Encoding =
+                Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
+        }
+        unsafe impl Encode for NSSize {
+            const ENCODING: Encoding =
+                Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
+        }
+        unsafe impl Encode for NSRect {
+            const ENCODING: Encoding =
+                Encoding::Struct("CGRect", &[NSPoint::ENCODING, NSSize::ENCODING]);
+        }
+
+        let Ok(ptr) = window.ns_window() else {
+            return "no-window".to_string();
+        };
+        let ns = ptr as *mut AnyObject;
+        if ns.is_null() {
+            return "null-window".to_string();
+        }
+        unsafe {
+            let content: *mut AnyObject = msg_send![ns, contentView];
+            if content.is_null() {
+                return "no-content".to_string();
+            }
+            // macOS < 26: class absent → no-op (vibrancy fallback stays).
+            let Some(glass_cls) = AnyClass::get(c"NSGlassEffectView") else {
+                return "class-not-found".to_string();
+            };
+
+            // Remove any existing glass first (idempotent re-apply).
+            let subviews: *mut AnyObject = msg_send![content, subviews];
+            if !subviews.is_null() {
+                let count: usize = msg_send![subviews, count];
+                let mut stale: Vec<*mut AnyObject> = Vec::new();
+                for i in 0..count {
+                    let v: *mut AnyObject = msg_send![subviews, objectAtIndex: i];
+                    let is_glass: bool = msg_send![v, isKindOfClass: glass_cls];
+                    if is_glass {
+                        stale.push(v);
+                    }
+                }
+                for v in stale {
+                    let _: () = msg_send![v, removeFromSuperview];
+                }
+            }
+
+            if !enabled {
+                return "removed".to_string();
+            }
+
+            let glass: *mut AnyObject = msg_send![glass_cls, alloc];
+            let glass: *mut AnyObject = msg_send![glass, init];
+            if glass.is_null() {
+                return "alloc-failed".to_string();
+            }
+            let bounds: NSRect = msg_send![content, bounds];
+            let _: () = msg_send![glass, setFrame: bounds];
+            // ViewWidthSizable (2) | ViewHeightSizable (16) — track window size.
+            let _: () = msg_send![glass, setAutoresizingMask: 18usize];
+            // Match the window's ~26pt rounded corners.
+            let _: () = msg_send![glass, setCornerRadius: 26.0f64];
+            let _: () = msg_send![glass, setStyle: style as isize];
+            // Read the style back to confirm the setter actually took.
+            let readback: isize = msg_send![glass, style];
+            let mut tinted = false;
+            if let Some(t) = &tint {
+                if t.len() == 4 {
+                    let color_cls = class!(NSColor);
+                    let color: *mut AnyObject = msg_send![
+                        color_cls,
+                        colorWithSRGBRed: t[0],
+                        green: t[1],
+                        blue: t[2],
+                        alpha: t[3]
+                    ];
+                    if !color.is_null() {
+                        let _: () = msg_send![glass, setTintColor: color];
+                        tinted = true;
+                    }
+                }
+            }
+            // Insert BELOW the webview (NSWindowOrderingMode::Below = -1).
+            let null: *mut AnyObject = std::ptr::null_mut();
+            let _: () = msg_send![content, addSubview: glass, positioned: -1isize, relativeTo: null];
+            format!(
+                "created style={} readback={} tint={} bounds={}x{}",
+                style, readback, tinted, bounds.size.width, bounds.size.height
+            )
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (window, enabled, style, tint);
+        "noop-non-macos".to_string()
+    }
+}
+
 /// Hand control of the close decision to the frontend by emitting
 /// `app:close-requested`. If the emit itself fails we exit immediately to
 /// avoid stranding the user on a window they can't dismiss.
@@ -195,6 +524,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(oauth::PendingOAuth::default())
         .manage(github::PendingGitHubAuth::default())
+        .manage(CompactFrames::default())
         .invoke_handler(tauri::generate_handler![
             oauth::start_claude_oauth,
             oauth::complete_claude_oauth,
@@ -240,6 +570,9 @@ pub fn run() {
             app_quit,
             get_traffic_light_y,
             apply_window_chrome,
+            set_window_compact,
+            set_vibrancy_material,
+            set_compact_glass,
         ])
         .setup(|app| {
             // Resolve the per-device app-data base once, up front: git history

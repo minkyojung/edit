@@ -10,6 +10,7 @@
 // a duplicate (the VS Code behaviour).
 
 import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { Effect, EffectState } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import { hashPath } from '@/lib/windowRoot'
 
@@ -69,6 +70,12 @@ export async function openProjectWindow(
     titleBarStyle: 'overlay',
     hiddenTitle: true,
     dragDropEnabled: false,
+    // Bake the native vibrancy in at creation (mirrors the config `main`
+    // window's windowEffects). Without this a project window opens with NO
+    // effect view — useVibrancy's runtime setEffects would be the only source,
+    // which flashes on first paint and can't run until React mounts. The
+    // runtime call still owns the on/off toggle + the compact material swap.
+    windowEffects: { effects: [Effect.Sidebar], state: EffectState.Active },
   })
 
   await new Promise<void>((resolve, reject) => {
@@ -113,6 +120,9 @@ export async function focusLauncher(): Promise<void> {
     titleBarStyle: 'overlay',
     hiddenTitle: true,
     dragDropEnabled: false,
+    // Match the config-defined launcher's windowEffects on this JS re-creation
+    // path, so a relaunched launcher keeps the same vibrancy.
+    windowEffects: { effects: [Effect.Sidebar], state: EffectState.Active },
   })
   await new Promise<void>((resolve, reject) => {
     void win.once('tauri://created', () => resolve())

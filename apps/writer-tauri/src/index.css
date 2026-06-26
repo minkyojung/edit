@@ -15,6 +15,35 @@
 @custom-variant dark (&:is(.dark *));
 @custom-variant hover (&:hover);
 
+/* COMPACT (Raycast-Notes) mode — UNLAYERED on purpose.
+   These drop the editor's opaque surfaces so the window's native material
+   (set to the picked compact material by useVibrancy) shows through as a
+   frosted panel. They MUST sit outside @layer: the opaque fills come from the
+   `bg-background` UTILITY class, and Tailwind v4's `utilities` layer beats any
+   `@layer base` rule regardless of selector specificity. Unlayered rules
+   outrank every layer, so this is what actually wins. When vibrancy is off the
+   body is opaque --background, so transparent layers just reveal that — a
+   clean opaque fallback. The header fade band is hidden (compact = bare
+   chrome). */
+html[data-window-mode='compact'] [data-slot='sidebar-inset'] {
+  background-color: transparent;
+}
+/* The panel surface is a TRANSLUCENT theme tint, not fully transparent: the
+   native vibrancy material is very see-through, so a bare-transparent panel
+   loses the theme's surface color entirely (light themes end up as dark frost
+   over the desktop, illegible). The tint carries the theme tone while the
+   material still frosts through it. Light needs more opacity for contrast;
+   dark/graphite stay glassier (they already read fine on a dark frost). */
+html[data-window-mode='compact'] [data-editor-panel] {
+  background-color: color-mix(in oklch, var(--background) 80%, transparent);
+}
+html[data-window-mode='compact'].dark [data-editor-panel] {
+  background-color: color-mix(in oklch, var(--background) 45%, transparent);
+}
+html[data-window-mode='compact'] [data-header-fade] {
+  display: none;
+}
+
 @layer base {
   html, body, #root {
     height: 100%;
