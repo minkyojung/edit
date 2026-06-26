@@ -72,7 +72,7 @@ export function ConnectClaudeDialog({ open, onOpenChange, onConnected }: Props) 
         </DialogHeader>
 
         {stage === 'idle' && (
-          <div className="space-y-3 text-sm text-muted-foreground">
+          <div className="space-y-3 text-body text-muted-foreground">
             <p>
               Click the button below. Your browser will open to claude.ai. After you authorize,
               copy the code shown and paste it back here.
@@ -85,7 +85,7 @@ export function ConnectClaudeDialog({ open, onOpenChange, onConnected }: Props) 
 
         {(stage === 'waiting' || stage === 'submitting') && (
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
+            <p className="text-body text-muted-foreground">
               Paste the authentication code from your browser:
             </p>
             <Input
@@ -98,7 +98,7 @@ export function ConnectClaudeDialog({ open, onOpenChange, onConnected }: Props) 
               placeholder="AUTHCODE#STATE"
               disabled={stage === 'submitting'}
             />
-            {error && <p className="text-xs text-destructive">{error}</p>}
+            {error && <p className="text-footnote text-destructive">{error}</p>}
             <DialogFooter>
               <Button variant="outline" onClick={() => { onOpenChange(false); reset() }}>
                 Cancel
@@ -111,7 +111,7 @@ export function ConnectClaudeDialog({ open, onOpenChange, onConnected }: Props) 
         )}
 
         {error && stage === 'idle' && (
-          <p className="text-xs text-destructive">{error}</p>
+          <p className="text-footnote text-destructive">{error}</p>
         )}
       </DialogContent>
     </Dialog>

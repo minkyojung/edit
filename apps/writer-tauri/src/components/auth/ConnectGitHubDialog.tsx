@@ -139,7 +139,7 @@ export function ConnectGitHubDialog({ open, onOpenChange, onConnected }: Props) 
         </DialogHeader>
 
         {stage === 'idle' && (
-          <div className="space-y-3 text-sm text-muted-foreground">
+          <div className="space-y-3 text-body text-muted-foreground">
             <p>
               Click below. Your browser will open to
               github.com/login/device — enter the code shown here to
@@ -148,13 +148,13 @@ export function ConnectGitHubDialog({ open, onOpenChange, onConnected }: Props) 
             <Button onClick={startSignIn} className="w-full">
               Sign in to GitHub
             </Button>
-            {error && <p className="text-xs text-destructive">{error}</p>}
+            {error && <p className="text-footnote text-destructive">{error}</p>}
           </div>
         )}
 
         {stage === 'authorizing' && device && (
           <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
+            <p className="text-body text-muted-foreground">
               Enter this code at{' '}
               <button
                 type="button"
@@ -173,7 +173,7 @@ export function ConnectGitHubDialog({ open, onOpenChange, onConnected }: Props) 
             >
               {device.userCode}
             </button>
-            <p className="text-center text-xs text-muted-foreground">
+            <p className="text-center text-footnote text-muted-foreground">
               {copied
                 ? 'Copied!'
                 : 'Click the code to copy · Waiting for authorization…'}
