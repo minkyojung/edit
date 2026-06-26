@@ -38,6 +38,7 @@ import { listCommands, type LoadedCommand } from '@/chat/commands'
 import { useDocsStore } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { fuzzyScore } from '@/lib/fuzzyMatch'
+import { useAutosizeTextarea } from '@/lib/useAutosizeTextarea'
 import {
   effortsForModel,
   modelSupportsFastMode,
@@ -188,6 +189,7 @@ export function PromptInput({
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounterRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useAutosizeTextarea(value)
 
   const addFiles = useCallback(async (fileList: FileList | File[]) => {
     setAttachments((prev) => {
@@ -511,10 +513,11 @@ export function PromptInput({
         <ContextChip
           key={m.slug}
           icon={IconAt}
-          label={m.title}
+          label={m.path.split('/').pop() ?? m.title}
           tooltip={m.path}
           onRemove={() => removeMention(m.slug)}
           removeLabel={`Remove ${m.title}`}
+          overlayRemove
         />
       ))}
       {attachments.map((att) => (
@@ -559,6 +562,7 @@ export function PromptInput({
         </div>
       )}
       <textarea
+        ref={textareaRef}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -571,7 +575,12 @@ export function PromptInput({
         className={cn(
           'w-full resize-none bg-transparent px-2.5 py-1.5 text-[15px] leading-relaxed text-foreground outline-none',
           'placeholder:text-muted-foreground',
-          'field-sizing-content max-h-48 min-h-28',
+          // Height hugs the content via useAutosizeTextarea (JS), capped at
+          // max-h-48 then scrolls. We deliberately set NO min-height: in WebKit
+          // a textarea whose box is taller than its text draws the caret at the
+          // full box height, so any min-height made the caret grow. Letting the
+          // box track the content keeps the caret one line tall.
+          'overflow-y-auto max-h-48',
           '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
         )}
       />
