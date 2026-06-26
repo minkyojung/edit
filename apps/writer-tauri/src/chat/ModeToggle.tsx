@@ -1,9 +1,8 @@
 // Approval-mode picker for the PromptInput footer. Three mutually-exclusive
-// ChatModes surfaced as a dropdown (Codex-style: icon + title + SDK
-// description + check on the active one). Each row maps 1:1 to a ChatMode and
-// carries the Claude Agent SDK's own `PermissionMode` description verbatim
-// (sdk.d.ts) — the host then realizes that mode within our staged-review
-// architecture:
+// ChatModes surfaced as a dropdown (Codex-style: icon + title + description +
+// check on the active one). Each row maps 1:1 to a ChatMode and to a Claude
+// Agent SDK `PermissionMode` (sdk.d.ts); the description states what the host
+// actually does in our staged-review architecture, not the raw SDK wording:
 //
 //   edit        → SDK 'default'      — proposals wait for Keep/Reject
 //   acceptEdits → SDK 'acceptEdits'  — proposals auto-apply the instant they land
@@ -39,7 +38,7 @@ interface ModeOption {
   mode: ChatMode
   Icon: ComponentType<IconProps>
   title: string
-  /** Verbatim from the SDK's PermissionMode doc (sdk.d.ts). */
+  /** What the host actually does in this mode (not the raw SDK wording). */
   description: string
 }
 
@@ -48,19 +47,19 @@ const MODES: readonly ModeOption[] = [
     mode: 'edit',
     Icon: IconHandStop,
     title: 'Ask for approval',
-    description: 'Standard behavior, prompts for dangerous operations',
+    description: 'Review each edit before applying it',
   },
   {
     mode: 'acceptEdits',
     Icon: IconWriting,
     title: 'Auto-accept edits',
-    description: 'Auto-accept file edit operations',
+    description: 'Apply every edit automatically, no review',
   },
   {
     mode: 'plan',
     Icon: IconMap,
     title: 'Plan',
-    description: 'Planning mode, no actual tool execution',
+    description: 'Read-only — plan without making edits',
   },
 ]
 
