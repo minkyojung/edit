@@ -21,9 +21,11 @@ import { usePendingChangesStore } from '@/state/pendingChangesStore'
  *    (Anthropic re-opens the thinking block between tool rounds).
  *  - text parts render below the group as the answer body — the white primary
  *    content, the focus of the turn.
- *  - edit-tool parts (propose_edit / write / multi_edit) render as expanded
- *    edit rows (ActivityRow header + diff) at the very end, kept OUT of the
- *    collapsed group so the proposed change stays visible for review.
+ *  - edit-tool parts (propose_edit / write / multi_edit) render INLINE in the
+ *    body at their timeline position (an ActivityRow header + diff), so a
+ *    proposal sits where the tool actually ran — e.g. above a closing summary —
+ *    instead of being bucketed to the end. They stay OUT of the collapsed
+ *    process group so the proposed change is always visible for review.
  * step-start parts are no-ops (sidecar never emits them today). */
 export function PartList({
   parts,
@@ -49,7 +51,6 @@ export function PartList({
   // Subagent (Task) rows are pulled out of the collapsed process group and live
   // here as top-level expandable Agent rows, in the spot they were spawned.
   const bodyNodes: ReactNode[] = []
-  const editParts: ToolPartType[] = []
   const questionParts: ToolPartType[] = []
 
   // Subagent attribution (Level 2): parts the SDK tagged with a parentToolUseId
@@ -73,6 +74,26 @@ export function PartList({
       mainParts.push(p)
     }
   }
+
+  // Edit/write proposals render inline (in the loop below), but de-dupe first:
+  // a turn that creates a note AND edits it fires two proposals for the same
+  // file; only one resolves to a live store change (the other is a non-
+  // actionable read-only "shell"). When a live edit exists for a file, hide the
+  // shells for that file so the user sees one actionable row; a lone shell (no
+  // live sibling) still renders so past edits stay visible. Computed up front so
+  // the loop can decide visibility at each edit's own timeline position.
+  const isLiveEdit = (p: ToolPartType) => !!(p.pendingId && changesById[p.pendingId])
+  const liveFileKeys = new Set(
+    mainParts
+      .filter(
+        (p): p is ToolPartType =>
+          p.type === 'tool' && isProposeEditTool(p.toolName),
+      )
+      .filter(isLiveEdit)
+      .map(editFileKey),
+  )
+  const isVisibleEdit = (p: ToolPartType) =>
+    isLiveEdit(p) || !liveFileKeys.has(editFileKey(p))
 
   // The model re-issues the whole TodoWrite list each update. Render the LATEST
   // content at the FIRST call's timeline position (in-place update, matching
@@ -139,7 +160,12 @@ export function PartList({
           // collapsed process group, and don't count it as a generic tool call.
           questionParts.push(part)
         } else if (isProposeEditTool(part.toolName)) {
-          editParts.push(part)
+          // Inline at the timeline position (into bodyNodes) so the proposal
+          // sits where the tool ran — not bucketed to the end. Skip hidden
+          // duplicate shells (a dropped edit for a file with a live sibling).
+          if (isVisibleEdit(part)) {
+            bodyNodes.push(<InlineSuggestion key={part.id} part={part} />)
+          }
         } else {
           processRows.push(<ToolPart key={part.id} part={part} />)
           toolCount++
@@ -167,18 +193,6 @@ export function PartList({
   }
   flushReasoning()
 
-  // De-dupe edit rows. A turn that creates a note AND edits it fires two
-  // proposals for the same file; only one resolves to a live store change
-  // (the other is dropped → a non-actionable read-only "shell"). When a live
-  // edit exists for a file, hide the shells for that same file so the user
-  // sees one actionable row instead of two identical-looking ones. A lone
-  // shell (no live sibling) still renders so past edits stay visible.
-  const isLiveEdit = (p: ToolPartType) => !!(p.pendingId && changesById[p.pendingId])
-  const liveFileKeys = new Set(editParts.filter(isLiveEdit).map(editFileKey))
-  const visibleEdits = editParts.filter(
-    (p) => isLiveEdit(p) || !liveFileKeys.has(editFileKey(p)),
-  )
-
   return (
     <>
       {compactNodes}
@@ -196,9 +210,6 @@ export function PartList({
       {bodyNodes}
       {questionParts.map((part) => (
         <QuestionActivity key={part.id} part={part} />
-      ))}
-      {visibleEdits.map((part) => (
-        <InlineSuggestion key={part.id} part={part} />
       ))}
     </>
   )
