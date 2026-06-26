@@ -34,7 +34,7 @@ export function FileViewerHeaderTitle({ rel }: { rel: string }) {
   return (
     <div className="flex min-w-0 items-center gap-1.5 px-2">
       <IconFile size={14} stroke={1.75} className="shrink-0 text-muted-foreground" />
-      <span className="truncate text-sm font-medium text-foreground" title={rel}>
+      <span className="truncate text-body font-medium text-foreground" title={rel}>
         {fileName}
       </span>
       <Tooltip>
@@ -126,7 +126,7 @@ export function FileViewer() {
             <audio src={assetUrl} controls className="w-full max-w-md" />
           </div>
         ) : kind === 'text' && text !== null ? (
-          <pre className="whitespace-pre-wrap break-words p-4 font-mono text-sm text-foreground">
+          <pre className="whitespace-pre-wrap break-words p-4 font-mono text-body text-foreground">
             {text}
           </pre>
         ) : kind === 'other' ? (
@@ -136,7 +136,7 @@ export function FileViewer() {
           />
         ) : (
           // Loading (media/text not ready yet).
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+          <div className="flex h-full items-center justify-center text-body text-muted-foreground">
             Loading…
           </div>
         )}
@@ -148,11 +148,11 @@ export function FileViewer() {
 function Fallback({ message, onOpen }: { message: string; onOpen: () => void }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-      <p className="text-sm text-muted-foreground">{message}</p>
+      <p className="text-body text-muted-foreground">{message}</p>
       <button
         type="button"
         onClick={onOpen}
-        className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
+        className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-body text-foreground transition-colors hover:bg-accent"
       >
         <IconExternalLink size={15} stroke={1.75} />
         Open in default app
