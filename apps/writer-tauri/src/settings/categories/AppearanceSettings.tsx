@@ -85,7 +85,7 @@ export function AppearanceSettings() {
 
   return (
     <section>
-      <h2 className="mb-2 text-base font-semibold text-foreground">Appearance</h2>
+      <h2 className="mb-2 text-body font-semibold text-foreground">Appearance</h2>
       <SettingRow title="Theme" description="The color palette for the whole app.">
         <Select value={palette} onValueChange={(v) => setPalette(v as Palette)}>
           <SelectTrigger className="w-48">

@@ -30,10 +30,10 @@ export function FilesSettings() {
 
   return (
     <section>
-      <h2 className="mb-2 text-base font-semibold text-foreground">Files &amp; Notes</h2>
+      <h2 className="mb-2 text-body font-semibold text-foreground">Files &amp; Notes</h2>
       <SettingRow title="Vault" description="The folder your notes live in.">
         <span
-          className="block max-w-[20rem] truncate font-mono text-xs text-muted-foreground"
+          className="block max-w-[20rem] truncate font-mono text-footnote text-muted-foreground"
           title={vaultPath}
         >
           {vaultPath || 'Not set'}

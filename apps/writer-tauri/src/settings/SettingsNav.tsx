@@ -28,7 +28,7 @@ export function SettingsNav({
           type="button"
           onClick={() => onSelect(c.id)}
           className={cn(
-            'w-full rounded-md px-2.5 py-1.5 text-left text-sm transition-colors',
+            'w-full rounded-md px-2.5 py-1.5 text-left text-body transition-colors',
             active === c.id
               ? 'bg-selected text-selected-foreground'
               : 'text-muted-foreground hover:bg-accent hover:text-foreground',

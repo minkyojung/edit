@@ -15,7 +15,7 @@ export function EditorSettings() {
 
   return (
     <section>
-      <h2 className="mb-2 text-base font-semibold text-foreground">Editor</h2>
+      <h2 className="mb-2 text-body font-semibold text-foreground">Editor</h2>
       <SettingRow
         title="본문 너비"
         description="CodeMirror 에디터 본문 컬럼의 최대 너비(px). 클릭하면 바로 적용됩니다."

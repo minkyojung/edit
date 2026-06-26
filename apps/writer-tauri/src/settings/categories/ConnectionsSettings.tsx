@@ -45,7 +45,7 @@ export function ConnectionsSettings() {
 
   return (
     <section>
-      <h2 className="mb-2 text-base font-semibold text-foreground">Connections</h2>
+      <h2 className="mb-2 text-body font-semibold text-foreground">Connections</h2>
 
       <SettingRow
         title="Claude"
