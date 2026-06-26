@@ -27,7 +27,7 @@ export type ProjectType = 'wiki' | 'translation'
 
 /** macOS system sound played when a background chat job finishes (file names in
  * /System/Library/Sounds). 'None' silences the completion ping. */
-export type NotificationSound = 'None' | 'Glass' | 'Ping' | 'Hero' | 'Submarine' | 'Tink'
+export type NotificationSound = 'None' | 'Glass' | 'Ping' | 'Pop' | 'Bottle' | 'Sosumi'
 
 /** One row in the launcher's "Recent" list. Shared across all windows
  * (it's a global app preference, not per-window state), so it lives in

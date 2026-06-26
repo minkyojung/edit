@@ -8,6 +8,7 @@ mod github;
 mod oauth;
 mod os_trash;
 mod reveal;
+mod sound;
 mod secure_storage;
 mod vault_sync;
 
@@ -210,6 +211,7 @@ pub fn run() {
             fetch_url::fetch_http,
             os_trash::move_to_trash,
             reveal::reveal_in_finder,
+            sound::play_system_sound,
             anthropic::anthropic_messages_create,
             git::git_init,
             git::git_commit,

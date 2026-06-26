@@ -12,8 +12,17 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { invoke } from '@tauri-apps/api/core'
+import { IconVolume } from '@tabler/icons-react'
 import { useSettingsStore, type NotificationSound } from '@/state/settingsStore'
 import { SettingRow } from '../SettingRow'
+
+/** Preview a sound through the Rust `afplay` command. No-op for the silent
+ * option. Best-effort — a failed preview never surfaces. */
+function previewSound(sound: NotificationSound) {
+  if (sound === 'None') return
+  void invoke('play_system_sound', { name: sound }).catch(() => {})
+}
 
 // Vibrancy is a macOS-only window effect; hide the toggle elsewhere.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent)
@@ -48,9 +57,9 @@ const FONT_OPTIONS: FontOptionDef[] = [
 const SOUND_OPTIONS: { value: NotificationSound; label: string }[] = [
   { value: 'Glass', label: 'Glass' },
   { value: 'Ping', label: 'Ping' },
-  { value: 'Hero', label: 'Hero' },
-  { value: 'Submarine', label: 'Submarine' },
-  { value: 'Tink', label: 'Tink' },
+  { value: 'Pop', label: 'Pop' },
+  { value: 'Bottle', label: 'Bottle' },
+  { value: 'Sosumi', label: 'Sosumi' },
   { value: 'None', label: 'None (silent)' },
 ]
 
@@ -125,21 +134,38 @@ export function AppearanceSettings() {
           title="Completion sound"
           description="Sound played when a background chat job finishes (only while the app is unfocused)."
         >
-          <Select
-            value={notifSound}
-            onValueChange={(v) => setNotifSound(v as NotificationSound)}
-          >
-            <SelectTrigger className="w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {SOUND_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-1.5">
+            <Select
+              value={notifSound}
+              onValueChange={(v) => {
+                const sound = v as NotificationSound
+                setNotifSound(sound)
+                previewSound(sound) // hear it the moment you pick it
+              }}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SOUND_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {/* Replay the current sound (re-selecting the same value won't fire
+                onValueChange, so this is how you hear it again). */}
+            <button
+              type="button"
+              onClick={() => previewSound(notifSound)}
+              disabled={notifSound === 'None'}
+              aria-label="Play sound"
+              className="shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            >
+              <IconVolume size={16} stroke={1.5} />
+            </button>
+          </div>
         </SettingRow>
       )}
     </section>
