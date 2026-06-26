@@ -606,10 +606,10 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
             stroke={1.5}
             className="text-muted-foreground/40"
           />
-          <p className="text-[16px] font-semibold text-foreground">
+          <p className="text-title-3 font-semibold text-foreground">
             Connect Claude
           </p>
-          <p className="max-w-xs text-center text-[14px] text-muted-foreground">
+          <p className="max-w-xs text-center text-body text-muted-foreground">
             Sign in with your Anthropic account to start chatting.
           </p>
           <Button
@@ -648,8 +648,8 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
               stroke={1.5}
               className="text-muted-foreground/40"
             />
-            <p className="text-[16px] font-semibold text-foreground">Ask anything</p>
-            <p className="max-w-xs text-center text-[14px] text-muted-foreground">
+            <p className="text-title-3 font-semibold text-foreground">Ask anything</p>
+            <p className="max-w-xs text-center text-body text-muted-foreground">
               Type a message or try a slash command like /proofread.
             </p>
           </div>
