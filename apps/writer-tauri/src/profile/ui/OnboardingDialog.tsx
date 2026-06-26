@@ -264,7 +264,7 @@ function RunningStage({
   sectionStatus: Record<ProfileSectionKey, SectionStatus>
 }) {
   return (
-    <div className="flex flex-col gap-2 text-sm">
+    <div className="flex flex-col gap-2 text-body">
       <ProgressLine
         status={discoveryLabel?.startsWith('Found') ? 'done' : 'loading'}
         label={discoveryLabel ?? 'Searching for posts…'}
@@ -308,7 +308,7 @@ function ProgressLine({
 function DoneStage({ onOpen }: { onOpen: () => void }) {
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-muted-foreground">
+      <p className="text-body text-muted-foreground">
         Your profile is ready. Open it to review and edit.
       </p>
       <div className="flex justify-end">
@@ -331,7 +331,7 @@ function FailedStage({
 }) {
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-start gap-2 text-sm text-muted-foreground">
+      <div className="flex items-start gap-2 text-body text-muted-foreground">
         <IconAlertCircle className="size-4 mt-0.5 text-warning" />
         <span>{message}</span>
       </div>
