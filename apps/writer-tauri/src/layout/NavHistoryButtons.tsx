@@ -30,9 +30,8 @@ export function NavHistoryButtons() {
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
-            variant="ghost"
+            variant="iconGhost"
             size="icon-sm"
-            className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
             onClick={() => navigate(-1)}
             aria-label="Go back"
           >
@@ -44,9 +43,8 @@ export function NavHistoryButtons() {
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
-            variant="ghost"
+            variant="iconGhost"
             size="icon-sm"
-            className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
             onClick={() => navigate(1)}
             aria-label="Go forward"
           >

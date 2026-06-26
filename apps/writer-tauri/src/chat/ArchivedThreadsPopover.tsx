@@ -16,6 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
 import { formatRelative } from '@/lib/formatRelative'
 import { MAX_ACTIVE_THREADS, type ThreadMeta } from './types'
 
@@ -50,13 +51,14 @@ export function ArchivedThreadsPopover({
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
-              <button
-                type="button"
-                className="flex size-8 shrink-0 items-center justify-center self-center rounded-sm text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30"
+              <Button
+                variant="iconGhost"
+                size="icon-sm"
+                className="shrink-0 self-center"
                 aria-label="Archived chats"
               >
                 <IconHistory size={16} stroke={1.75} />
-              </button>
+              </Button>
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="bottom">Archived chats</TooltipContent>

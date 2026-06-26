@@ -96,7 +96,7 @@ export function EditorHeader({
         data-tauri-drag-region
         className="flex flex-1 items-center gap-2 self-stretch pl-3"
       >
-        <SidebarTrigger className="text-sidebar-foreground/60 hover:text-sidebar-foreground" />
+        <SidebarTrigger />
         <NavHistoryButtons />
       </div>
       <div
@@ -147,13 +147,10 @@ function ContextPanelTrigger() {
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
-          variant="ghost"
+          variant="iconGhost"
           size="icon-sm"
           onClick={toggle}
-          className={cn(
-            'relative cursor-pointer transition-colors',
-            'text-sidebar-foreground/60 hover:text-sidebar-foreground',
-          )}
+          className="relative cursor-pointer"
           aria-label={open ? 'Hide right panel' : 'Show right panel'}
           aria-pressed={open}
         >

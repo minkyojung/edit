@@ -16,6 +16,13 @@ const buttonVariants = cva(
           "bg-secondary text-secondary-foreground hover:bg-secondary/80 aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
         ghost:
           "hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground dark:hover:bg-accent/50",
+        // Header / chrome icon buttons. Mirrors the sidebar header's icon-button
+        // skin exactly (Sidebar.tsx top icons): muted resting glyph, a soft
+        // foreground/12 hover fill, and rounded-md so every chrome icon — sidebar,
+        // editor header, chat header — reads as the same control. The aria-expanded
+        // pair keeps dropdown/popover triggers lit while open. Pair with size="icon-sm".
+        iconGhost:
+          "rounded-md text-sidebar-foreground/60 hover:bg-foreground/12 hover:text-sidebar-foreground aria-expanded:bg-foreground/12 aria-expanded:text-sidebar-foreground [&_svg:not([class*='size-'])]:size-[18px]",
         destructive:
           "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
         link: "text-primary underline-offset-4 hover:underline",

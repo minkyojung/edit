@@ -1,9 +1,10 @@
-// Segmented session switcher at the top of the chat panel — an
-// NSSegmentedControl-style EQUAL-WIDTH bar. Every active thread is a
-// segment; the focused one is a raised pill. All segments stay visible
-// (no overflow/scroll), titles truncate with "…".
+// Session switcher at the top of the chat panel — a flat, left-aligned
+// editor-style tab strip (VSCode/Cursor tabs), NOT an enclosed segmented
+// control. Tabs size to their title and shrink + truncate when crowded;
+// the focused one gets a soft `bg-muted` highlight. Hairlines separate
+// adjacent inactive tabs.
 //
-// The dot in the favicon slot is a KakaoTalk-style read/unread mark:
+// The dot in the leading slot is a KakaoTalk-style read/unread mark:
 //   • solid (bg-foreground) → UNREAD: new turns arrived since you last
 //                             opened this session
 //   • faint               → read: you've looked since its last activity
@@ -53,18 +54,26 @@ export function ChatTabs({
   return (
     <TooltipProvider>
       <div className="flex min-w-0 flex-1 items-center gap-1">
-        {/* Segmented track — equal-width segments fill it. */}
-        <div className="flex h-9 min-w-0 flex-1 items-center rounded-full bg-muted p-[2.5px]">
+        {/* Flat tab strip — tabs sit on the header, sized to content and
+            left-aligned; min-w-0 lets them shrink + truncate when crowded. */}
+        <div className="flex h-9 min-w-0 items-center">
           {ordered.map((t, i) => {
             const isActive = t.id === activeId
-            // Hairline between two inactive segments; it vanishes next to
-            // the raised active pill (the pill is the boundary).
+            // Hairline between two inactive tabs; it goes transparent next to
+            // the active tab. The span ALWAYS occupies 1px (only its colour
+            // toggles) so selecting a tab never shifts the strip.
             const prevActive = i > 0 && ordered[i - 1].id === activeId
-            const showDivider = i > 0 && !isActive && !prevActive
+            const dividerVisible = !isActive && !prevActive
             return (
               <Fragment key={t.id}>
-                {showDivider && (
-                  <span aria-hidden className="h-3 w-px shrink-0 bg-border/50" />
+                {i > 0 && (
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'h-3 w-px shrink-0',
+                      dividerVisible ? 'bg-border/50' : 'bg-transparent',
+                    )}
+                  />
                 )}
                 <Segment
                   meta={t}
@@ -81,14 +90,14 @@ export function ChatTabs({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
-              variant="ghost"
+              variant="iconGhost"
               size="icon-sm"
               onClick={() => {
                 if (!atLimit) onCreate()
               }}
               disabled={atLimit}
               aria-label="New chat"
-              className="shrink-0 text-sidebar-foreground/60 transition-colors hover:text-sidebar-foreground"
+              className="shrink-0"
             >
               <IconPlus size={16} stroke={1.75} />
             </Button>
@@ -136,14 +145,16 @@ function Segment({ meta, isActive, onSelect, onClose }: SegmentProps) {
         }
       }}
       className={cn(
-        // Equal width (flex-1). Transparent border reserves the active
-        // pill's 1px border so widths/heights never jump on selection.
-        'group relative flex h-full min-w-0 flex-1 cursor-pointer items-center justify-center gap-2.5 rounded-full border border-transparent px-2 text-footnote outline-none transition-all',
-        'text-muted-foreground hover:text-foreground',
-        // Focus = a solid background swap (not a raised pill): the active
-        // segment fills with the body colour, a clear step from the lighter
-        // bg-muted track.
-        'data-[state=active]:bg-background data-[state=active]:text-foreground',
+        // Content-width, left-aligned tab; min-w-0 lets the title truncate
+        // when the strip is crowded instead of overflowing. Padding is
+        // identical in every state so selecting a tab never resizes it.
+        'group relative flex h-full min-w-0 cursor-pointer items-center justify-start gap-2 rounded-md px-4 text-footnote outline-none transition-colors',
+        // Hovering any tab fills it with the same muted surface the active
+        // tab uses — so the close badge's fade gradient (from-muted) always
+        // has a matching backdrop, on selected and unselected tabs alike.
+        'text-muted-foreground hover:bg-muted hover:text-foreground',
+        // Focus = a soft muted fill on the bare header + a brighter glyph.
+        'data-[state=active]:bg-muted data-[state=active]:text-foreground',
       )}
     >
       <span
@@ -160,19 +171,25 @@ function Segment({ meta, isActive, onSelect, onClose }: SegmentProps) {
       {/* Close = archive. Active segment only; revealed on hover. Absolutely
           placed so it doesn't shift the centred title. stopPropagation so the
           segment's onClick (select) doesn't also fire. */}
-      {isActive && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            onClose()
-          }}
-          aria-label="Close chat"
-          className="absolute right-1 flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100"
-        >
-          <IconX size={12} stroke={1.75} />
-        </button>
-      )}
+      {/* Close badge shows on hover of ANY tab (not just the selected one).
+          Fade the title out under it instead of letting them collide — the
+          gradient matches the tab's hover/active bg-muted fill. Painted after
+          the title (covers it) but before the button (which stays on top). */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 right-0 w-14 rounded-r-md bg-gradient-to-l from-muted from-50% to-transparent opacity-0 transition-opacity group-hover:opacity-100"
+      />
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onClose()
+        }}
+        aria-label="Close chat"
+        className="absolute right-1.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-muted-foreground/40 text-foreground opacity-0 transition hover:bg-muted-foreground/60 group-hover:opacity-100 dark:bg-foreground dark:text-background dark:hover:bg-foreground/90"
+      >
+        <IconX size={9} stroke={2.5} />
+      </button>
     </div>
   )
 }

@@ -85,13 +85,11 @@ export function DocMenu() {
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
               <Button
-                variant="ghost"
+                variant="iconGhost"
                 size="icon-sm"
                 disabled={busy}
                 aria-label="Organize"
-                className={cn(
-                  'cursor-pointer text-sidebar-foreground/60 hover:text-sidebar-foreground',
-                )}
+                className="cursor-pointer"
               >
                 {busy ? (
                   <IconLoader2 size={16} stroke={1.75} className="animate-spin" />
