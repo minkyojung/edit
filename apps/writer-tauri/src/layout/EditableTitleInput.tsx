@@ -29,6 +29,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useDocsStore } from '@/state/docsStore'
 import { useObservePageTitle } from '@/hooks/useObservePageTitle'
+import { cn } from '@/lib/utils'
 
 interface Props {
   slug: string
@@ -43,7 +44,7 @@ export function EditableTitleInput({ slug, currentTitle }: Props) {
   // from props when the slug changes (tab switch) but otherwise the
   // user owns it.
   const [draft, setDraft] = useState(currentTitle ?? '')
-  const inputRef = useRef<HTMLInputElement | null>(null)
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
   useObservePageTitle(inputRef)
 
   // Re-sync draft whenever the underlying doc's title changes. This
@@ -71,7 +72,10 @@ export function EditableTitleInput({ slug, currentTitle }: Props) {
     renameDoc(slug, trimmed)
   }
 
-  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // IME-safe: while composing (Korean/Japanese), Enter confirms the
+    // composition — don't let it commit/blur or insert a newline.
+    if (e.nativeEvent.isComposing) return
     if (e.key === 'Enter') {
       e.preventDefault()
       // Blur fires the same commit path. Doing it via blur (not
@@ -88,9 +92,16 @@ export function EditableTitleInput({ slug, currentTitle }: Props) {
   }
 
   return (
-    <input
+    // A <textarea>, not <input>: a single-line input can't wrap, so a long
+    // title scrolls sideways and clips at the column edge. rows={1} +
+    // field-sizing-content makes it open as one line and grow downward as the
+    // title wraps — the heading-that-wraps pattern (Notion / Obsidian inline
+    // title). resize-none + hidden scrollbar keep it reading as a heading, not
+    // a form control. Enter still commits (onKeyDown), so it never gains a
+    // literal newline.
+    <textarea
       ref={inputRef}
-      type="text"
+      rows={1}
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
@@ -99,10 +110,13 @@ export function EditableTitleInput({ slug, currentTitle }: Props) {
       aria-label="Note title"
       // Same visual weight as ReadOnlyHeader so the slot doesn't
       // jump when switching between daily / system / wiki docs.
-      // bg-transparent + outline-none makes the input feel like a
+      // bg-transparent + outline-none makes the field feel like a
       // heading rather than a form control — Notion / Obsidian
       // visual pattern.
-      className="mb-6 w-full bg-transparent text-3xl font-semibold leading-tight text-foreground outline-none placeholder:text-muted-foreground/50"
+      className={cn(
+        'mb-6 w-full resize-none bg-transparent text-3xl font-semibold leading-tight text-foreground outline-none placeholder:text-muted-foreground/50',
+        'field-sizing-content overflow-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+      )}
     />
   )
 }
