@@ -153,6 +153,19 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     ? pathForDoc(currentDoc, (s) => knownDocs.find((d) => d.slug === s))
     : null
 
+  // @-mentioned files. Resolve each path back to its doc so we can inject the
+  // in-memory body when the note is open/loaded (fresher than disk — the
+  // editor flushes lazily, so a just-edited note reads empty off disk). Unloaded
+  // notes fall back to a "Read this path" instruction.
+  const handles = useDocsStore.getState().handles
+  const mentionFiles = (mentionPaths ?? []).map((path) => {
+    const doc = knownDocs.find(
+      (d) => pathForDoc(d, (s) => knownDocs.find((x) => x.slug === s)) === path,
+    )
+    const body = doc ? handles[doc.slug]?.bodyMarkdown : undefined
+    return { path, body: body && body.trim() ? body : undefined }
+  })
+
   const system = composeSystemBlocks({
     docForPrompt,
     systemBody,
@@ -168,7 +181,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     currentFilePath,
     viewingFilePath,
     selectionText,
-    mentionPaths,
+    mentionFiles,
     vizEditTarget,
     today: todayLocalDate(),
   })

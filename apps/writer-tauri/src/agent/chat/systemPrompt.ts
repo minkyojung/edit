@@ -107,9 +107,11 @@ export interface SystemBlocksArgs {
    * "rewrite this" resolve to the selection, not the whole document. Slash
    * commands handle selection via `{{selection}}` and don't pass this. */
   selectionText?: string | null
-  /** Vault-relative paths the user @-mentioned in the composer. Listed in a
-   * `--- REFERENCED FILES ---` block instructing the model to Read them. */
-  mentionPaths?: string[]
+  /** Files the user @-mentioned in the composer, rendered in a
+   * `--- REFERENCED FILES ---` block. When `body` is present (the note is open
+   * / loaded, so its in-memory content is fresher than disk) it's injected
+   * inline; otherwise the model is told to Read the path. */
+  mentionFiles?: { path: string; body?: string }[]
   /** When set, a high-salience block naming the visualization being edited
    * (id + current spec) is pinned past the cache boundary, instructing the
    * model to apply changes via the edit_visualization tool. */
@@ -155,7 +157,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     currentFilePath,
     viewingFilePath,
     selectionText,
-    mentionPaths,
+    mentionFiles,
     vizEditTarget,
     today,
   } = args
@@ -225,13 +227,17 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         selectionText,
     )
   }
-  if (mentionPaths && mentionPaths.length > 0) {
+  if (mentionFiles && mentionFiles.length > 0) {
+    const blocks = mentionFiles.map((f) =>
+      f.body
+        ? `File \`${f.path}\` (current content — use this, it's fresher than disk):\n\n${f.body}`
+        : `\`${f.path}\` — Read this exact path for its content.`,
+    )
     dynamic.push(
       `--- REFERENCED FILES ---\n` +
         `The user @-mentioned these files in their message. Treat them as ` +
-        `attached context for this turn — Read them (the exact vault-relative ` +
-        `paths below) before answering, even if the message doesn't name them ` +
-        `again:\n${mentionPaths.map((p) => `- ${p}`).join('\n')}`,
+        `attached context for this turn — use them before answering, even if ` +
+        `the message doesn't name them again:\n\n${blocks.join('\n\n')}`,
     )
   }
   if (appendDocument) dynamic.push(`--- DOCUMENT ---\n${docForPrompt}`)
