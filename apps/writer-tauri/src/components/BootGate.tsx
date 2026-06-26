@@ -191,7 +191,7 @@ export function BootGate({ children }: Props) {
   const loadingView = (
     <div className="flex h-full w-full items-center justify-center bg-background">
       {showLoader && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-footnote text-muted-foreground">
           <Spinner />
           <span>Loading your notes…</span>
         </div>

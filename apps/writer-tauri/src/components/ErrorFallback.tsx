@@ -13,8 +13,8 @@ export function FullPageErrorFallback({ error, resetErrorBoundary }: FallbackPro
     <div className="flex h-full w-full items-center justify-center bg-background p-6">
       <div className="max-w-md space-y-3 rounded-md border border-border bg-card p-6 text-center">
         <IconAlertTriangle size={28} stroke={1.5} className="mx-auto text-destructive" />
-        <h2 className="text-base font-medium text-foreground">Something went wrong</h2>
-        <p className="text-xs text-muted-foreground break-words">
+        <h2 className="text-body font-medium text-foreground">Something went wrong</h2>
+        <p className="text-footnote text-muted-foreground break-words">
           {error instanceof Error ? error.message : String(error)}
         </p>
         <div className="flex justify-center gap-2 pt-2">
@@ -33,7 +33,7 @@ export function PanelErrorFallback({ error, resetErrorBoundary }: FallbackProps)
     <div className="flex h-full w-full items-center justify-center p-4">
       <div className="max-w-xs space-y-2 text-center">
         <IconAlertTriangle size={20} stroke={1.5} className="mx-auto text-destructive" />
-        <p className="text-xs text-muted-foreground break-words">
+        <p className="text-footnote text-muted-foreground break-words">
           {error instanceof Error ? error.message : String(error)}
         </p>
         <Button size="sm" variant="outline" onClick={resetErrorBoundary}>

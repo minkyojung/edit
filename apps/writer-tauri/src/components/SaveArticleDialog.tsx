@@ -85,7 +85,7 @@ export function SaveArticleDialog() {
             disabled={saving}
           />
           {isYoutube && (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-footnote text-muted-foreground">
               🎬 YouTube detected — we'll capture the transcript.
             </p>
           )}

@@ -16,7 +16,7 @@ export function DiffBlock({ lines, bare = false }: { lines: DiffLine[]; bare?: b
   return (
     <pre
       className={cn(
-        'overflow-x-auto p-0 font-mono text-[12px] leading-relaxed',
+        'overflow-x-auto p-0 font-mono text-footnote leading-relaxed',
         // `bare` lets a host container (e.g. SuggestionCard) own the border so the
         // header / body / footer read as one flush block.
         !bare && 'rounded-md border border-border bg-background',

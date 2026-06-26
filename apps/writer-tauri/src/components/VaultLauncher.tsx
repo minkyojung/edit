@@ -88,13 +88,13 @@ export function VaultLauncher() {
         <h1 className="mb-1 text-center text-2xl font-semibold tracking-tight text-foreground">
           Octave
         </h1>
-        <p className="mb-6 text-center text-sm text-muted-foreground">
+        <p className="mb-6 text-center text-body text-muted-foreground">
           Open a project to get started.
         </p>
 
         {recentProjects.length > 0 && (
           <div className="mb-3 rounded-xl border bg-card p-2">
-            <div className="px-3 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <div className="px-3 py-1 text-footnote font-medium uppercase tracking-wide text-muted-foreground">
               Recent
             </div>
             {recentProjects.map((p) => (
@@ -105,14 +105,14 @@ export function VaultLauncher() {
                 className="flex w-full items-center justify-between gap-4 rounded-lg p-3 text-left hover:bg-muted/40"
               >
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-foreground">
+                  <div className="truncate text-body font-medium text-foreground">
                     {folderName(p.path)}
                   </div>
-                  <div className="truncate text-xs text-muted-foreground">
+                  <div className="truncate text-footnote text-muted-foreground">
                     {p.path}
                   </div>
                 </div>
-                <span className="flex-none text-xs text-muted-foreground">
+                <span className="flex-none text-footnote text-muted-foreground">
                   {p.type === 'translation' ? 'Translation' : 'Wiki'}
                 </span>
               </button>
