@@ -12,7 +12,7 @@
 // no-op. A 5px activation distance keeps plain clicks / double-clicks
 // working. Fold state is local + by folder path.
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   DndContext,
@@ -65,15 +65,15 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from '@/components/ui/context-menu'
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 /** Inline rename input. Mounts focused with the name pre-selected.
  * Enter / blur commit, Esc cancels. A `done` latch makes the blur that
@@ -119,6 +119,49 @@ function RenameInput({
       onBlur={commit}
       className="mx-2 h-7 min-w-0 flex-1 rounded-sm border border-sidebar-border bg-sidebar px-1 text-body text-sidebar-foreground outline-hidden focus-visible:ring-1 focus-visible:ring-sidebar-ring/40"
     />
+  )
+}
+
+/** Right-click menu anchored to the ROW (not the cursor).
+ *
+ * Radix ContextMenu hard-anchors a 0×0 virtual rect at the pointer and
+ * omits side/align, so its menu always overlaps the clicked row. To get
+ * "open to the right of the row, top-aligned, no overlap" we drive a
+ * DropdownMenu instead: an invisible, click-through trigger overlays the
+ * row (so it becomes the popper anchor) and right-click opens the menu
+ * with side="right" align="start". Left-click still falls through to the
+ * row (open note / toggle folder). */
+function RowContextMenu({
+  children,
+  items,
+}: {
+  children: ReactNode
+  items: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div
+      className="relative"
+      onContextMenu={(e) => {
+        e.preventDefault()
+        setOpen(true)
+      }}
+    >
+      {children}
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenuTrigger asChild>
+          <span aria-hidden className="pointer-events-none absolute inset-0" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          side="right"
+          align="start"
+          sideOffset={6}
+          onCloseAutoFocus={(e) => e.preventDefault()}
+        >
+          {items}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 }
 
@@ -180,70 +223,71 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
       {...listeners}
       className={isDragging ? 'opacity-50' : undefined}
     >
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <TreeRow active={isActive}>
-            {/* Empty lead keeps file text aligned under folder labels;
-                files are text-only (no icon) per the Obsidian look. */}
-            <TreeRowLead asChild>
-              <span aria-hidden />
-            </TreeRowLead>
-            {isEditing ? (
-              <RenameInput
-                initial={node.name}
-                onCommit={(name) => ctx.onCommitRename(node.slug, name)}
-                onCancel={ctx.onCancelRename}
-              />
-            ) : (
-              <TreeRowLabel
-                onClick={() => ctx.onOpen(node.slug)}
-                onDoubleClick={() => ctx.onStartRename(node.slug)}
-              >
-                <span className="truncate">{node.name}</span>
-              </TreeRowLabel>
-            )}
-          </TreeRow>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onSelect={() => ctx.onStartRename(node.slug)}>
-            Rename
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => ctx.onDuplicate(node.slug)}>
-            Duplicate
-          </ContextMenuItem>
-          <ContextMenuSub>
-            <ContextMenuSubTrigger>Move to…</ContextMenuSubTrigger>
-            <ContextMenuSubContent>
-              <ContextMenuItem onSelect={() => ctx.onMoveTo(node.slug, '')}>
-                (vault root)
-              </ContextMenuItem>
-              {ctx.folders.length > 0 && <ContextMenuSeparator />}
-              {ctx.folders.map((f) => (
-                <ContextMenuItem key={f} onSelect={() => ctx.onMoveTo(node.slug, f)}>
-                  {f}
-                </ContextMenuItem>
-              ))}
-            </ContextMenuSubContent>
-          </ContextMenuSub>
-          <ContextMenuSeparator />
-          <ContextMenuItem onSelect={() => ctx.onCopyPath(node.path)}>
-            Copy path
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => ctx.onOpenInDefaultApp(node.path)}>
-            Open in default app
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => ctx.onRevealInFinder(node.path)}>
-            Reveal in Finder
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            onSelect={() => ctx.onDelete(node.slug)}
-            className="text-destructive focus:text-destructive"
-          >
-            Delete
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+      <RowContextMenu
+        items={
+          <>
+            <DropdownMenuItem onSelect={() => ctx.onStartRename(node.slug)}>
+              Rename
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => ctx.onDuplicate(node.slug)}>
+              Duplicate
+            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>Move to…</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem onSelect={() => ctx.onMoveTo(node.slug, '')}>
+                  (vault root)
+                </DropdownMenuItem>
+                {ctx.folders.length > 0 && <DropdownMenuSeparator />}
+                {ctx.folders.map((f) => (
+                  <DropdownMenuItem key={f} onSelect={() => ctx.onMoveTo(node.slug, f)}>
+                    {f}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => ctx.onCopyPath(node.path)}>
+              Copy path
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => ctx.onOpenInDefaultApp(node.path)}>
+              Open in default app
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => ctx.onRevealInFinder(node.path)}>
+              Reveal in Finder
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => ctx.onDelete(node.slug)}
+              className="text-destructive focus:text-destructive"
+            >
+              Delete
+            </DropdownMenuItem>
+          </>
+        }
+      >
+        <TreeRow active={isActive}>
+          {/* Empty lead keeps file text aligned under folder labels;
+              files are text-only (no icon) per the Obsidian look. */}
+          <TreeRowLead asChild>
+            <span aria-hidden />
+          </TreeRowLead>
+          {isEditing ? (
+            <RenameInput
+              initial={node.name}
+              onCommit={(name) => ctx.onCommitRename(node.slug, name)}
+              onCancel={ctx.onCancelRename}
+            />
+          ) : (
+            <TreeRowLabel
+              onClick={() => ctx.onOpen(node.slug)}
+              onDoubleClick={() => ctx.onStartRename(node.slug)}
+            >
+              <span className="truncate">{node.name}</span>
+            </TreeRowLabel>
+          )}
+        </TreeRow>
+      </RowContextMenu>
     </li>
   )
 }
@@ -278,62 +322,63 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
   return (
     <Collapsible asChild open={isOpen} onOpenChange={() => ctx.onToggle(node.path)}>
       <li className={isDragging ? 'opacity-50' : undefined}>
-        <ContextMenu>
-          <ContextMenuTrigger asChild>
-            <div ref={setRowRef} {...attributes} {...listeners}>
-              <TreeRow
-                className={
-                  showDrop
-                    ? 'bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring/50'
-                    : undefined
-                }
+        <RowContextMenu
+          items={
+            <>
+              <DropdownMenuItem onSelect={() => ctx.onStartCreateSubfolder(node.path)}>
+                New subfolder
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => ctx.onStartFolderRename(node.path)}>
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={() => ctx.onDeleteFolder(node.path)}
+                className="text-destructive focus:text-destructive"
               >
-                <CollapsibleTrigger asChild>
-                  <TreeRowLead
-                    aria-label={isOpen ? 'Collapse' : 'Expand'}
-                    onClick={(e: MouseEvent) => e.stopPropagation()}
-                  >
-                    <IconChevronRight
-                      size={16}
-                      stroke={1.75}
-                      className="transition-transform"
-                      style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
-                    />
-                  </TreeRowLead>
-                </CollapsibleTrigger>
-                {isEditing ? (
-                  <RenameInput
-                    initial={node.name}
-                    onCommit={(name) => ctx.onCommitFolderRename(node.path, name)}
-                    onCancel={ctx.onCancelFolderRename}
-                  />
-                ) : (
-                  <TreeRowLabel
-                    onClick={() => ctx.onToggle(node.path)}
-                    onDoubleClick={() => ctx.onStartFolderRename(node.path)}
-                  >
-                    <span className="truncate">{node.name}</span>
-                  </TreeRowLabel>
-                )}
-              </TreeRow>
-            </div>
-          </ContextMenuTrigger>
-          <ContextMenuContent>
-            <ContextMenuItem onSelect={() => ctx.onStartCreateSubfolder(node.path)}>
-              New subfolder
-            </ContextMenuItem>
-            <ContextMenuItem onSelect={() => ctx.onStartFolderRename(node.path)}>
-              Rename
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              onSelect={() => ctx.onDeleteFolder(node.path)}
-              className="text-destructive focus:text-destructive"
+                Delete
+              </DropdownMenuItem>
+            </>
+          }
+        >
+          <div ref={setRowRef} {...attributes} {...listeners}>
+            <TreeRow
+              className={
+                showDrop
+                  ? 'bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring/50'
+                  : undefined
+              }
             >
-              Delete
-            </ContextMenuItem>
-          </ContextMenuContent>
-        </ContextMenu>
+              <CollapsibleTrigger asChild>
+                <TreeRowLead
+                  aria-label={isOpen ? 'Collapse' : 'Expand'}
+                  onClick={(e: MouseEvent) => e.stopPropagation()}
+                >
+                  <IconChevronRight
+                    size={16}
+                    stroke={1.75}
+                    className="transition-transform"
+                    style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                  />
+                </TreeRowLead>
+              </CollapsibleTrigger>
+              {isEditing ? (
+                <RenameInput
+                  initial={node.name}
+                  onCommit={(name) => ctx.onCommitFolderRename(node.path, name)}
+                  onCancel={ctx.onCancelFolderRename}
+                />
+              ) : (
+                <TreeRowLabel
+                  onClick={() => ctx.onToggle(node.path)}
+                  onDoubleClick={() => ctx.onStartFolderRename(node.path)}
+                >
+                  <span className="truncate">{node.name}</span>
+                </TreeRowLabel>
+              )}
+            </TreeRow>
+          </div>
+        </RowContextMenu>
         <CollapsibleContent asChild>
           <TreeSub>
             {ctx.creatingSubfolderParent === node.path && (
@@ -387,31 +432,32 @@ function AttachmentNode({ node, ctx }: { node: TreeAttachment; ctx: TreeCtx }) {
   const Icon = attachmentIcon(node.name)
   return (
     <li>
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <TreeRow>
-            <TreeRowLead asChild>
-              <span aria-hidden>
-                <Icon size={16} className="text-muted-foreground" />
-              </span>
-            </TreeRowLead>
-            <TreeRowLabel onClick={() => ctx.onOpenFile(node.path)}>
-              <span className="truncate">{node.name}</span>
-            </TreeRowLabel>
-          </TreeRow>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onSelect={() => ctx.onCopyPath(node.path)}>
-            Copy path
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => ctx.onOpenInDefaultApp(node.path)}>
-            Open in default app
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => ctx.onRevealInFinder(node.path)}>
-            Reveal in Finder
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+      <RowContextMenu
+        items={
+          <>
+            <DropdownMenuItem onSelect={() => ctx.onCopyPath(node.path)}>
+              Copy path
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => ctx.onOpenInDefaultApp(node.path)}>
+              Open in default app
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => ctx.onRevealInFinder(node.path)}>
+              Reveal in Finder
+            </DropdownMenuItem>
+          </>
+        }
+      >
+        <TreeRow>
+          <TreeRowLead asChild>
+            <span aria-hidden>
+              <Icon size={16} className="text-muted-foreground" />
+            </span>
+          </TreeRowLead>
+          <TreeRowLabel onClick={() => ctx.onOpenFile(node.path)}>
+            <span className="truncate">{node.name}</span>
+          </TreeRowLabel>
+        </TreeRow>
+      </RowContextMenu>
     </li>
   )
 }
