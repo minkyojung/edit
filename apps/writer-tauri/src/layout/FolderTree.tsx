@@ -131,6 +131,14 @@ function RenameInput({
  * row (so it becomes the popper anchor) and right-click opens the menu
  * with side="right" align="start". Left-click still falls through to the
  * row (open note / toggle folder). */
+// Folder menu surface — brighter panel that matches the sidebar's selected
+// row color (color-mix foreground 18% + sidebar), frosted via backdrop-blur,
+// wider with a smaller radius. Applied to both the content and the "Move to…"
+// sub-content so the whole menu reads as one bright surface. (Overrides the
+// dropdown-menu defaults bg-popover / min-w-48 / rounded-md via tailwind-merge.)
+const ROW_MENU_SURFACE =
+  'min-w-64 rounded-lg bg-[color-mix(in_oklch,var(--foreground)_18%,var(--sidebar))]/80 backdrop-blur-xl'
+
 function RowContextMenu({
   children,
   items,
@@ -157,6 +165,7 @@ function RowContextMenu({
           align="start"
           sideOffset={6}
           onCloseAutoFocus={(e) => e.preventDefault()}
+          className={ROW_MENU_SURFACE}
         >
           {items}
         </DropdownMenuContent>
@@ -234,7 +243,7 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
             </DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>Move to…</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
+              <DropdownMenuSubContent className={ROW_MENU_SURFACE}>
                 <DropdownMenuItem onSelect={() => ctx.onMoveTo(node.slug, '')}>
                   (vault root)
                 </DropdownMenuItem>
