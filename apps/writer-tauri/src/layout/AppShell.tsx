@@ -8,6 +8,7 @@ import { RightPanel } from './RightPanel'
 import { EditorHeader } from './EditorHeader'
 import { CloseConfirmDialog } from '@/components/CloseConfirmDialog'
 import { useLayoutStore } from '@/state/layoutStore'
+import { useWindowModeStore } from '@/state/windowModeStore'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 
 interface AppShellProps {
@@ -33,6 +34,10 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
 
 export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: AppShellProps) {
   const { sidebarOpen, contextPanelOpen, setSidebar, togglePanels } = useLayoutStore()
+  // Compact (Raycast-Notes) mode hides the sidebar + right panel so only the
+  // editor title + body remain. The window itself is resized by the store; here
+  // we just collapse the surrounding chrome to match.
+  const compact = useWindowModeStore((s) => s.mode) === 'compact'
   const navigate = useNavigate()
   const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_W)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_W)
@@ -146,7 +151,10 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: A
 
   return (
     <SidebarProvider
-      open={sidebarOpen}
+      // In compact mode force the sidebar off-canvas (no unmount — the same
+      // collapsed state the user gets via the toggle), so the editor column
+      // takes the whole small window.
+      open={compact ? false : sidebarOpen}
       onOpenChange={setSidebar}
       // Override the shadcn default (220px constant) with live state. The var
       // cascades to the gap + container which both read w-(--sidebar-width).
@@ -160,7 +168,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: A
       {/* Sidebar resize handle. Fixed at the sidebar's right edge (left =
           current width); only mounted while the sidebar is open (off-canvas
           when closed, nothing to resize). Sits above the z-10 container. */}
-      {sidebarOpen && (
+      {sidebarOpen && !compact && (
         <div
           role="separator"
           aria-orientation="vertical"
@@ -191,6 +199,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: A
             <EditorHeader
               showSidebarTrigger={!sidebarOpen}
               collabStatus={collabStatus}
+              compact={compact}
             />
             <div className="relative min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {children}
@@ -206,7 +215,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: A
               resize otherwise). after:top-[var(--header-h)] keeps the wider
               hit-area BELOW the header row so it doesn't swallow clicks on the
               editor header's ContextPanelTrigger. */}
-          {contextPanelOpen && (
+          {contextPanelOpen && !compact && (
             <div
               role="separator"
               aria-orientation="vertical"
@@ -226,7 +235,9 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: A
               clips the content while collapsed. */}
           <div
             className="relative h-full shrink-0 overflow-hidden border-l border-sidebar-border bg-background"
-            style={{ width: contextPanelOpen ? panelWidth : 0 }}
+            // Collapsed to 0 in compact (and kept mounted, like the closed
+            // state) so the small window is editor-only.
+            style={{ width: contextPanelOpen && !compact ? panelWidth : 0 }}
           >
             {/* Flush column, mirroring the left sidebar — no window gap, no
                 rounding. The seam is this border-l (the left sidebar's border-r

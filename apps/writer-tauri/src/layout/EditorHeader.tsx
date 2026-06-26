@@ -24,7 +24,11 @@
 // (buttons, the active-doc chip's pointer-events-auto column) opt out
 // of dragging via the standard Tauri exclusion list.
 
-import { IconLayoutSidebarRightFilled } from '@tabler/icons-react'
+import {
+  IconArrowsMaximize,
+  IconArrowsMinimize,
+  IconLayoutSidebarRightFilled,
+} from '@tabler/icons-react'
 import { useMatch } from 'react-router-dom'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Button } from '@/components/ui/button'
@@ -37,6 +41,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useGitStore } from '@/state/gitStore'
+import { useWindowModeStore } from '@/state/windowModeStore'
 import { EditorTabs } from '@/editor/EditorTabs'
 import type { CollabStatus } from '@/hooks/useCollabDoc'
 import { DocMenu } from './DocMenu'
@@ -48,6 +53,10 @@ interface EditorHeaderProps {
    * docs render no label so a healthy connection reads as a clean
    * header. */
   collabStatus?: CollabStatus
+  /** Compact (Raycast-Notes) mode: the window is shrunk to a small panel.
+   * The header drops to bare chrome — traffic-light room + the expand
+   * button — so only the editor title + body remain. */
+  compact?: boolean
 }
 
 // Only the hard-error case surfaces in the header — it's the one
@@ -65,11 +74,37 @@ const STATUS_LABEL: Record<CollabStatus, string | null> = {
 export function EditorHeader({
   showSidebarTrigger,
   collabStatus,
+  compact = false,
 }: EditorHeaderProps) {
   const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
   // On a file route (`/file/:rel`) the center slot shows the file's name
   // + Open action instead of the active-doc label.
   const fileRel = useMatch('/file/:rel')?.params.rel ?? null
+
+  // Compact mode: strip the header to the essentials — keep the traffic-light
+  // reservation (no sidebar to paint it) and the expand button, drop tabs,
+  // nav, sidebar trigger, and the right-panel toggle (those surfaces are
+  // hidden in compact anyway).
+  if (compact) {
+    return (
+      <div
+        data-tauri-drag-region
+        className="absolute top-0 left-0 right-0 z-sticky flex items-center"
+        style={{ height: 'var(--header-h)' }}
+      >
+        <div
+          data-tauri-drag-region
+          className="h-full shrink-0"
+          style={{ width: 'var(--traffic-light-w)' }}
+        />
+        <div data-tauri-drag-region className="flex flex-1 self-stretch" />
+        <div className="flex shrink-0 items-center pr-3">
+          <CompactToggle compact />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       data-tauri-drag-region
@@ -126,9 +161,38 @@ export function EditorHeader({
           </span>
         )}
         <DocMenu />
+        <CompactToggle />
         <ContextPanelTrigger />
       </div>
     </div>
+  )
+}
+
+/** Shrinks the window to / restores it from the compact panel. Same button
+ * in both modes; the glyph + label flip with the current mode. */
+function CompactToggle({ compact = false }: { compact?: boolean }) {
+  const toggle = useWindowModeStore((s) => s.toggle)
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="iconGhost"
+          size="icon-sm"
+          onClick={() => void toggle()}
+          className="cursor-pointer"
+          aria-label={compact ? 'Expand window' : 'Compact window'}
+        >
+          {compact ? (
+            <IconArrowsMaximize size={16} />
+          ) : (
+            <IconArrowsMinimize size={16} />
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {compact ? 'Expand window' : 'Compact window'}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
