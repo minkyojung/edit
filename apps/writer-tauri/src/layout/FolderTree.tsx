@@ -137,7 +137,7 @@ function RenameInput({
 // sub-content so the whole menu reads as one bright surface. (Overrides the
 // dropdown-menu defaults bg-popover / min-w-48 / rounded-md via tailwind-merge.)
 const ROW_MENU_SURFACE =
-  'min-w-64 rounded-lg border border-foreground/15 bg-[color-mix(in_oklch,var(--foreground)_18%,var(--sidebar))]/70 backdrop-blur-2xl'
+  'min-w-64 rounded-lg border border-foreground/8 bg-[color-mix(in_oklch,var(--foreground)_18%,var(--sidebar))]/55 backdrop-blur-2xl'
 
 function RowContextMenu({
   children,
