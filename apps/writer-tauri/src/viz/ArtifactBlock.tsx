@@ -94,7 +94,7 @@ export function ArtifactBlock({
     return (
       <div className="my-2">
         {!isStreaming && (failed || showSource) && (
-          <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="mb-1 flex items-center gap-2 text-footnote text-muted-foreground">
             {failed && <span>아티팩트를 렌더하지 못했습니다 — 소스를 표시합니다.</span>}
             {showSource && !failed && (
               <button
@@ -134,14 +134,14 @@ export function ArtifactBlock({
           <button
             type="button"
             onClick={() => void insertVizIntoDoc('artifact', code)}
-            className="rounded bg-background/80 px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+            className="rounded bg-background/80 px-1.5 py-0.5 text-caption text-muted-foreground hover:bg-muted"
           >
             본문에 삽입
           </button>
           <button
             type="button"
             onClick={() => setShowSource(true)}
-            className="rounded bg-background/80 px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+            className="rounded bg-background/80 px-1.5 py-0.5 text-caption text-muted-foreground hover:bg-muted"
           >
             소스
           </button>

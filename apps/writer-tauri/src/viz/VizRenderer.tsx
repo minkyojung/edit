@@ -26,16 +26,16 @@ function Stat({ node }: { node: VizStat }) {
   return (
     <div className="flex flex-col gap-1 rounded-lg border bg-card p-3">
       <span className="text-2xl font-bold tabular-nums text-foreground">{node.value}</span>
-      <span className="text-xs text-muted-foreground">{node.label}</span>
-      {node.sub && <span className="text-[11px] text-muted-foreground/70">{node.sub}</span>}
+      <span className="text-footnote text-muted-foreground">{node.label}</span>
+      {node.sub && <span className="text-caption text-muted-foreground/70">{node.sub}</span>}
     </div>
   )
 }
 
 const TEXT_CLASS: Record<string, string> = {
-  title: 'text-sm font-semibold tracking-wide text-foreground',
-  body: 'text-sm text-foreground',
-  muted: 'text-xs text-muted-foreground',
+  title: 'text-body font-semibold tracking-wide text-foreground',
+  body: 'text-body text-foreground',
+  muted: 'text-footnote text-muted-foreground',
 }
 
 function Text({ node }: { node: VizText }) {
@@ -45,7 +45,7 @@ function Text({ node }: { node: VizText }) {
 function Table({ node }: { node: VizTable }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-sm">
+      <table className="w-full border-collapse text-body">
         <thead>
           <tr>
             {node.columns.map((c, i) => (

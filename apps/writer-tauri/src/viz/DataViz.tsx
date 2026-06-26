@@ -18,7 +18,7 @@ function formatNum(n: number): string {
 
 function Title({ children }: { children: string }) {
   return (
-    <figcaption className="mb-3 text-center text-sm font-semibold tracking-wide text-foreground">
+    <figcaption className="mb-3 text-center text-body font-semibold tracking-wide text-foreground">
       {children}
     </figcaption>
   )
@@ -28,7 +28,7 @@ function Legend({ data, total }: { data: ChartDatum[]; total: number }) {
   return (
     <ul className="mt-4 flex list-none flex-col gap-2 p-0">
       {data.map((d, i) => (
-        <li key={`${d.label}-${i}`} className="flex items-center gap-2.5 text-sm">
+        <li key={`${d.label}-${i}`} className="flex items-center gap-2.5 text-body">
           <span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: cat(i) }} />
           <span className="flex-1 truncate font-medium text-foreground">{d.label}</span>
           <span className="flex-none tabular-nums text-muted-foreground">
@@ -79,7 +79,7 @@ function DonutChart({ title, data }: { title?: string; data: ChartDatum[] }) {
           ))}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Total</span>
+          <span className="text-caption uppercase tracking-wide text-muted-foreground">Total</span>
           <span className="text-2xl font-bold tabular-nums text-foreground">
             {formatNum(total)}
           </span>
@@ -97,7 +97,7 @@ function BarChart({ title, data }: { title?: string; data: ChartDatum[] }) {
       {title && <Title>{title}</Title>}
       <div className="flex flex-col gap-2.5">
         {data.map((d, i) => (
-          <div key={`${d.label}-${i}`} className="flex items-center gap-3 text-sm">
+          <div key={`${d.label}-${i}`} className="flex items-center gap-3 text-body">
             <span className="w-24 flex-none truncate text-muted-foreground">{d.label}</span>
             <div
               className="h-2.5 flex-1 overflow-hidden rounded-full"
@@ -134,8 +134,8 @@ function KpiGrid({ title, items }: { title?: string; items: KpiItem[] }) {
             <span className="text-xl font-bold tabular-nums" style={{ color: cat(i) }}>
               {it.value}
             </span>
-            <span className="text-xs text-muted-foreground">{it.label}</span>
-            {it.sub && <span className="text-[11px] text-muted-foreground/70">{it.sub}</span>}
+            <span className="text-footnote text-muted-foreground">{it.label}</span>
+            {it.sub && <span className="text-caption text-muted-foreground/70">{it.sub}</span>}
           </div>
         ))}
       </div>
@@ -146,7 +146,7 @@ function KpiGrid({ title, items }: { title?: string; items: KpiItem[] }) {
 // Legend for multi-series charts: one swatch+label per series.
 function SeriesLegend({ series }: { series: ChartSeries[] }) {
   return (
-    <ul className="mb-2 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-xs">
+    <ul className="mb-2 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-footnote">
       {series.map((s, i) => (
         <li key={`${s.label}-${i}`} className="flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: cat(i) }} />
@@ -206,7 +206,7 @@ function ColumnChart({
         {xLabels.map((label, xi) => (
           <span
             key={`${label}-${xi}`}
-            className="flex-1 text-center text-[10px] tabular-nums text-muted-foreground"
+            className="flex-1 text-center text-caption tabular-nums text-muted-foreground"
           >
             {xi % step === 0 ? label : ''}
           </span>
