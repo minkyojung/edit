@@ -27,9 +27,11 @@
 import {
   IconArrowsMaximize,
   IconArrowsMinimize,
+  IconEdit,
   IconLayoutSidebarRightFilled,
+  IconSearch,
 } from '@tabler/icons-react'
-import { useMatch } from 'react-router-dom'
+import { useMatch, useNavigate } from 'react-router-dom'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Button } from '@/components/ui/button'
 import { NavHistoryButtons } from './NavHistoryButtons'
@@ -42,6 +44,9 @@ import { cn } from '@/lib/utils'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useGitStore } from '@/state/gitStore'
 import { useWindowModeStore } from '@/state/windowModeStore'
+import { useDocsStore } from '@/state/docsStore'
+import { useCommandPaletteStore } from '@/state/commandPaletteStore'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { EditorTabs } from '@/editor/EditorTabs'
 import type { CollabStatus } from '@/hooks/useCollabDoc'
 import { DocMenu } from './DocMenu'
@@ -97,9 +102,25 @@ export function EditorHeader({
           className="h-full shrink-0"
           style={{ width: 'var(--traffic-light-w)' }}
         />
-        <div data-tauri-drag-region className="flex flex-1 self-stretch" />
-        <div className="flex shrink-0 items-center pr-3">
+        <div data-tauri-drag-region className="flex-1 self-stretch" />
+        <div className="flex shrink-0 items-center gap-0.5 pr-3">
+          <CompactHeaderActions />
           <CompactToggle compact />
+        </div>
+        {/* Filename pinned and centered on the FULL window width — not the
+            leftover space between the traffic lights and the toggle. Absolute +
+            symmetric padding (traffic-light-w each side) keeps it at the true
+            center while clearing both side clusters, so a long name truncates
+            instead of sliding under them. In-body title is hidden in compact,
+            so this is the single title surface. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 flex justify-center"
+          style={{
+            paddingLeft: 'var(--traffic-light-w)',
+            paddingRight: 'var(--traffic-light-w)',
+          }}
+        >
+          <EditorTabs pinned />
         </div>
       </div>
     )
@@ -193,6 +214,64 @@ function CompactToggle({ compact = false }: { compact?: boolean }) {
         {compact ? 'Expand window' : 'Compact window'}
       </TooltipContent>
     </Tooltip>
+  )
+}
+
+/** Compact-header quick actions: new note + search palette. Reuses the same
+ * docsStore.createNew + commandPalette handlers as the sidebar header, so the
+ * compact panel keeps those two flows without the full sidebar. */
+function CompactHeaderActions() {
+  const navigate = useNavigate()
+  const createNew = useDocsStore((s) => s.createNew)
+  const openPalette = useCommandPaletteStore((s) => s.openPalette)
+
+  const handleCreateNew = () => {
+    createNew()
+      .then((slug) => {
+        const store = useDocsStore.getState()
+        navigate(
+          buildViewUrl({
+            tab: store.sidebarTab,
+            dayAnchor: store.dayAnchor,
+            monthAnchor: store.monthAnchor,
+            slug,
+          }),
+        )
+      })
+      .catch((err) => console.error('[docs] createNew failed', err))
+  }
+
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="iconGhost"
+            size="icon-sm"
+            onClick={handleCreateNew}
+            className="cursor-pointer"
+            aria-label="New note"
+          >
+            <IconEdit size={16} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">New note · ⌘N</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="iconGhost"
+            size="icon-sm"
+            onClick={() => openPalette()}
+            className="cursor-pointer"
+            aria-label="Search"
+          >
+            <IconSearch size={16} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Search · ⌘K</TooltipContent>
+      </Tooltip>
+    </>
   )
 }
 

@@ -19,7 +19,7 @@ import { ChatRunningIcon } from '@/components/icons/ChatRunningIcon'
 import { usePageHeaderStore } from '@/state/pageHeaderStore'
 import { cn } from '@/lib/utils'
 
-export function EditorTabs() {
+export function EditorTabs({ pinned = false }: { pinned?: boolean }) {
   const openSlugs = useDocsStore((s) => s.openSlugs)
   const activeSlug = useActiveSlug()
   const sidebarTab = useDocsStore((s) => s.sidebarTab)
@@ -34,7 +34,9 @@ export function EditorTabs() {
   // the body title scrolls under the header. PageHeader publishes via
   // pageHeaderStore.
   const titleInView = usePageHeaderStore((s) => s.titleInView)
-  const showHeaderTitle = !titleInView
+  // `pinned` keeps the header title always visible (compact mode, where the
+  // in-body title is hidden so the header is the single title surface).
+  const showHeaderTitle = pinned || !titleInView
 
   const goToSlug = useCallback(
     (slug: string) => {

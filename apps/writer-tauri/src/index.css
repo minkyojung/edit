@@ -40,7 +40,20 @@ html[data-window-mode='compact'] [data-editor-panel] {
 html[data-window-mode='compact'].dark [data-editor-panel] {
   background-color: color-mix(in oklch, var(--background) 45%, transparent);
 }
+/* Compact: keep the top scrim (don't hide it) so scrolled body text fades out
+   before it reaches the native traffic lights instead of colliding with them.
+   A touch denser than the panel tint so the traffic-light strip reads cleanly;
+   the band's own gradient mask + backdrop-blur fade it into the panel below. */
 html[data-window-mode='compact'] [data-header-fade] {
+  background-color: color-mix(in oklch, var(--background) 88%, transparent);
+}
+html[data-window-mode='compact'].dark [data-header-fade] {
+  background-color: color-mix(in oklch, var(--background) 60%, transparent);
+}
+/* Compact pins the filename in the header (EditorTabs), so the in-body title
+   would otherwise show the same name twice. Hide it — the header owns the
+   title in compact. */
+html[data-window-mode='compact'] [data-page-title] {
   display: none;
 }
 

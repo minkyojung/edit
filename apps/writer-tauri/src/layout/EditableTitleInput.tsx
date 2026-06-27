@@ -102,6 +102,7 @@ export function EditableTitleInput({ slug, currentTitle }: Props) {
     <textarea
       ref={inputRef}
       rows={1}
+      data-page-title
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
