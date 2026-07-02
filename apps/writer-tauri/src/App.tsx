@@ -28,6 +28,7 @@ import { usePersistLastPath } from '@/hooks/usePersistLastPath'
 import { useWindowChrome } from '@/hooks/useWindowChrome'
 import { useVibrancy } from '@/hooks/useVibrancy'
 import { useWindowModeSync } from '@/hooks/useWindowModeSync'
+import { useCompactShortcut } from '@/hooks/useCompactShortcut'
 import { useLauncherLifecycle } from '@/hooks/useLauncherLifecycle'
 import {
   buildDayUrl,
@@ -204,6 +205,7 @@ function AppContent() {
   useWindowChrome()
   useVibrancy()
   useWindowModeSync()
+  useCompactShortcut()
   useLauncherLifecycle()
 
   // Sidebar dot semantic (Phase E2.8): the dot flips to "viewed"

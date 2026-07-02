@@ -211,7 +211,7 @@ function CompactToggle({ compact = false }: { compact?: boolean }) {
         </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom">
-        {compact ? 'Expand window' : 'Compact window'}
+        {compact ? 'Expand window · ⌘⌥C' : 'Compact window · ⌘⌥C'}
       </TooltipContent>
     </Tooltip>
   )
