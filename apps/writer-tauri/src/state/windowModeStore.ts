@@ -1,15 +1,19 @@
-// Single source of truth for the window's display MODE: the normal full
-// window vs. a small Raycast-Notes-style compact panel.
+// The window's display MODE: the normal full window vs. a small Raycast-Notes
+// compact panel.
 //
-// The whole trick to "shrink but keep what I was writing" is that the same
-// NSWindow is resized, never recreated — the webview (and the editor's text,
-// cursor, scroll) survives. The actual geometry + the smooth animation live
-// natively in the `set_window_compact` Rust command; this store only owns the
-// `mode` flag that AppShell reads to collapse the sidebar / right panel, and
-// the Rust side stashes/restores the full-window frame.
+// SINGLE SOURCE OF TRUTH = the native window SIZE. `mode` is PURELY DERIVED
+// from it by useWindowModeSync (the sole writer), which reads the width on
+// mount and on every native resize. Nothing else writes `mode`.
 //
-// Layout flips first, then the window animates around it: the editor reflows
-// to the compact column while the native frame eases down to 420×520.
+// So `toggle()` is a pure intent: it only issues the resize command. The
+// resulting size change fires onResized → useWindowModeSync derives the new
+// `mode` → the UI (AppShell / EditorHeader / useVibrancy) reflows. One-way:
+//   intent → resize → OS event → derived mode → UI
+// No optimistic writes, no reconciliation, so the two can't drift.
+//
+// The same NSWindow is resized, never recreated, so the editor's content
+// (text, cursor, scroll) survives. Geometry + full-frame stash/restore live
+// natively in the `set_window_compact` Rust command.
 
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
@@ -17,23 +21,22 @@ import { invoke } from '@tauri-apps/api/core'
 export type WindowMode = 'full' | 'compact'
 
 interface WindowModeState {
+  /** Derived from the native window width by useWindowModeSync. Read-only to
+   * the rest of the app; do not set it directly. */
   mode: WindowMode
   toggle: () => Promise<void>
 }
 
-export const useWindowModeStore = create<WindowModeState>((set, get) => ({
+export const useWindowModeStore = create<WindowModeState>((_set, get) => ({
   mode: 'full',
   toggle: async () => {
-    const prev = get().mode
-    const next: WindowMode = prev === 'full' ? 'compact' : 'full'
-    set({ mode: next })
+    // Intent only: flip the native size. `mode` follows via useWindowModeSync's
+    // resize handler — we deliberately don't set it here.
+    const compact = get().mode === 'compact'
     try {
-      await invoke('set_window_compact', { compact: next === 'compact' })
+      await invoke('set_window_compact', { compact: !compact })
     } catch (e) {
-      // Native resize rejected — roll the layout back so it doesn't sit
-      // compact over a full-size window (or vice versa).
       console.error('[window-mode] resize failed', e)
-      set({ mode: prev })
     }
   },
 }))

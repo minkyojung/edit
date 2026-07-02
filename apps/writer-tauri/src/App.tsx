@@ -27,6 +27,7 @@ import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { usePersistLastPath } from '@/hooks/usePersistLastPath'
 import { useWindowChrome } from '@/hooks/useWindowChrome'
 import { useVibrancy } from '@/hooks/useVibrancy'
+import { useWindowModeSync } from '@/hooks/useWindowModeSync'
 import { useLauncherLifecycle } from '@/hooks/useLauncherLifecycle'
 import {
   buildDayUrl,
@@ -202,6 +203,7 @@ function AppContent() {
   useIdleTrigger()
   useWindowChrome()
   useVibrancy()
+  useWindowModeSync()
   useLauncherLifecycle()
 
   // Sidebar dot semantic (Phase E2.8): the dot flips to "viewed"

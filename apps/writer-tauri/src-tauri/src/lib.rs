@@ -234,8 +234,8 @@ fn set_window_compact(
 
         // Compact panel geometry, in points: opening size + the bounds the user
         // may drag-resize within. Full minimum mirrors tauri.conf.json.
-        const COMPACT_W: f64 = 420.0;
-        const COMPACT_H: f64 = 520.0;
+        const COMPACT_W: f64 = 400.0;
+        const COMPACT_H: f64 = 640.0;
         const COMPACT_MIN: NSSize = NSSize { width: 360.0, height: 440.0 };
         const COMPACT_MAX: NSSize = NSSize { width: 600.0, height: 760.0 };
         const FULL_MIN: NSSize = NSSize { width: 800.0, height: 600.0 };
