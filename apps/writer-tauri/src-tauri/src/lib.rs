@@ -272,6 +272,12 @@ fn set_window_compact(
                 // animation read poorly (esp. on expand), so it's off for now.
                 let _: () = msg_send![ns, setFrame: target, display: true, animate: false];
                 let _: () = msg_send![ns, setMaxSize: COMPACT_MAX];
+                // Raycast-panel behavior: float above other apps and show on
+                // every Space (incl. over full-screen apps).
+                // NSFloatingWindowLevel = 3.
+                let _: () = msg_send![ns, setLevel: 3isize];
+                // canJoinAllSpaces (1<<0) | fullScreenAuxiliary (1<<8) = 257.
+                let _: () = msg_send![ns, setCollectionBehavior: 257usize];
             } else {
                 let saved = store.lock().unwrap().remove(&label);
                 let _: () = msg_send![ns, setMaxSize: NO_MAX];
@@ -283,219 +289,16 @@ fn set_window_compact(
                     let _: () = msg_send![ns, setFrame: target, display: true, animate: false];
                 }
                 let _: () = msg_send![ns, setMinSize: FULL_MIN];
+                // Back to a normal window: NSNormalWindowLevel = 0, default
+                // collection behavior.
+                let _: () = msg_send![ns, setLevel: 0isize];
+                let _: () = msg_send![ns, setCollectionBehavior: 0usize];
             }
         });
     }
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (window, frames, compact);
-    }
-}
-
-/// Set the material of the window's existing NSVisualEffectView directly.
-///
-/// Tauri's `setEffects` only honours the material when it FIRST creates the
-/// effect view — subsequent calls resolve but leave the material unchanged. So
-/// the JS picker can't swap materials through Tauri. This walks the window's
-/// view tree, finds the NSVisualEffectView (added at window creation via
-/// windowEffects), and calls `setMaterial:` on it — an instant, reliable swap.
-///
-/// `material` is the raw NSVisualEffectMaterial value (sidebar=7,
-/// hudWindow=13, windowBackground=12, …), mapped on the JS side.
-#[cfg(target_os = "macos")]
-unsafe fn set_material_recursive(
-    view: *mut objc2::runtime::AnyObject,
-    vev_class: &objc2::runtime::AnyClass,
-    material: isize,
-) {
-    use objc2::{msg_send, runtime::AnyObject};
-    if view.is_null() {
-        return;
-    }
-    let is_vev: bool = msg_send![view, isKindOfClass: vev_class];
-    if is_vev {
-        let _: () = msg_send![view, setMaterial: material];
-    }
-    let subviews: *mut AnyObject = msg_send![view, subviews];
-    if subviews.is_null() {
-        return;
-    }
-    let count: usize = msg_send![subviews, count];
-    for i in 0..count {
-        let child: *mut AnyObject = msg_send![subviews, objectAtIndex: i];
-        set_material_recursive(child, vev_class, material);
-    }
-}
-
-#[tauri::command]
-fn set_vibrancy_material(window: tauri::WebviewWindow, material: i64) {
-    #[cfg(target_os = "macos")]
-    {
-        use objc2::{class, msg_send, runtime::AnyObject};
-        let win = window.clone();
-        let _ = window.run_on_main_thread(move || unsafe {
-            let Ok(ptr) = win.ns_window() else {
-                return;
-            };
-            let ns = ptr as *mut AnyObject;
-            if ns.is_null() {
-                return;
-            }
-            let content: *mut AnyObject = msg_send![ns, contentView];
-            set_material_recursive(content, class!(NSVisualEffectView), material as isize);
-        });
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (window, material);
-    }
-}
-
-/// Add (or remove) a Liquid Glass panel behind the webview — the compact
-/// mode's frosted background, macOS 26+ only.
-///
-/// NSGlassEffectView is inserted as the BOTTOM subview of the window's
-/// contentView (`positioned: .Below`), exactly where window-vibrancy puts its
-/// NSVisualEffectView — the webview floats transparent on top, so only the
-/// glass + the editor text show. Idempotent: any existing glass view is
-/// removed first, so repeated calls (style/tint changes) don't stack.
-///
-/// `style`: NSGlassEffectViewStyle raw (0 = Regular, 1 = Clear).
-/// `tint`: optional [r, g, b, a] in 0..1 sRGB — the real Liquid Glass tint
-/// (blended into the material, not an overlay). None = untinted.
-/// No-ops below macOS 26 (the class won't exist), so callers gate on mode only.
-#[tauri::command]
-fn set_compact_glass(
-    window: tauri::WebviewWindow,
-    enabled: bool,
-    style: i64,
-    tint: Option<Vec<f64>>,
-) -> String {
-    // Returns a diagnostic string (logged on the JS side) so we can see exactly
-    // what happened — class found? glass created? did setStyle stick? Sync
-    // command, so it runs on the main thread (like get_traffic_light_y).
-    #[cfg(target_os = "macos")]
-    {
-        use objc2::{
-            class,
-            encode::{Encode, Encoding},
-            msg_send,
-            runtime::{AnyClass, AnyObject},
-        };
-
-        #[repr(C)]
-        #[derive(Clone, Copy)]
-        struct NSPoint {
-            x: f64,
-            y: f64,
-        }
-        #[repr(C)]
-        #[derive(Clone, Copy)]
-        struct NSSize {
-            width: f64,
-            height: f64,
-        }
-        #[repr(C)]
-        #[derive(Clone, Copy)]
-        struct NSRect {
-            origin: NSPoint,
-            size: NSSize,
-        }
-        unsafe impl Encode for NSPoint {
-            const ENCODING: Encoding =
-                Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
-        }
-        unsafe impl Encode for NSSize {
-            const ENCODING: Encoding =
-                Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
-        }
-        unsafe impl Encode for NSRect {
-            const ENCODING: Encoding =
-                Encoding::Struct("CGRect", &[NSPoint::ENCODING, NSSize::ENCODING]);
-        }
-
-        let Ok(ptr) = window.ns_window() else {
-            return "no-window".to_string();
-        };
-        let ns = ptr as *mut AnyObject;
-        if ns.is_null() {
-            return "null-window".to_string();
-        }
-        unsafe {
-            let content: *mut AnyObject = msg_send![ns, contentView];
-            if content.is_null() {
-                return "no-content".to_string();
-            }
-            // macOS < 26: class absent → no-op (vibrancy fallback stays).
-            let Some(glass_cls) = AnyClass::get(c"NSGlassEffectView") else {
-                return "class-not-found".to_string();
-            };
-
-            // Remove any existing glass first (idempotent re-apply).
-            let subviews: *mut AnyObject = msg_send![content, subviews];
-            if !subviews.is_null() {
-                let count: usize = msg_send![subviews, count];
-                let mut stale: Vec<*mut AnyObject> = Vec::new();
-                for i in 0..count {
-                    let v: *mut AnyObject = msg_send![subviews, objectAtIndex: i];
-                    let is_glass: bool = msg_send![v, isKindOfClass: glass_cls];
-                    if is_glass {
-                        stale.push(v);
-                    }
-                }
-                for v in stale {
-                    let _: () = msg_send![v, removeFromSuperview];
-                }
-            }
-
-            if !enabled {
-                return "removed".to_string();
-            }
-
-            let glass: *mut AnyObject = msg_send![glass_cls, alloc];
-            let glass: *mut AnyObject = msg_send![glass, init];
-            if glass.is_null() {
-                return "alloc-failed".to_string();
-            }
-            let bounds: NSRect = msg_send![content, bounds];
-            let _: () = msg_send![glass, setFrame: bounds];
-            // ViewWidthSizable (2) | ViewHeightSizable (16) — track window size.
-            let _: () = msg_send![glass, setAutoresizingMask: 18usize];
-            // Match the window's ~26pt rounded corners.
-            let _: () = msg_send![glass, setCornerRadius: 26.0f64];
-            let _: () = msg_send![glass, setStyle: style as isize];
-            // Read the style back to confirm the setter actually took.
-            let readback: isize = msg_send![glass, style];
-            let mut tinted = false;
-            if let Some(t) = &tint {
-                if t.len() == 4 {
-                    let color_cls = class!(NSColor);
-                    let color: *mut AnyObject = msg_send![
-                        color_cls,
-                        colorWithSRGBRed: t[0],
-                        green: t[1],
-                        blue: t[2],
-                        alpha: t[3]
-                    ];
-                    if !color.is_null() {
-                        let _: () = msg_send![glass, setTintColor: color];
-                        tinted = true;
-                    }
-                }
-            }
-            // Insert BELOW the webview (NSWindowOrderingMode::Below = -1).
-            let null: *mut AnyObject = std::ptr::null_mut();
-            let _: () = msg_send![content, addSubview: glass, positioned: -1isize, relativeTo: null];
-            format!(
-                "created style={} readback={} tint={} bounds={}x{}",
-                style, readback, tinted, bounds.size.width, bounds.size.height
-            )
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (window, enabled, style, tint);
-        "noop-non-macos".to_string()
     }
 }
 
@@ -571,8 +374,6 @@ pub fn run() {
             get_traffic_light_y,
             apply_window_chrome,
             set_window_compact,
-            set_vibrancy_material,
-            set_compact_glass,
         ])
         .setup(|app| {
             // Resolve the per-device app-data base once, up front: git history
