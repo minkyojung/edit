@@ -27,6 +27,7 @@ import {
 import { useDocsStore } from './docsStore'
 import { isChangeMaterializedInActiveCm } from './activeCmEditor'
 import { flushDirty } from '@/lib/docFileSync'
+import { notify } from '@/lib/notify'
 
 // HMR safety: vite's `import.meta.hot.dispose` fires right before
 // the module is replaced. That's the only hook that runs against
@@ -191,6 +192,30 @@ async function commitGroup(
  * status flip) don't double-write. */
 const handledIds = new Set<string>()
 
+/** Archive the empty note a rejected proposal had materialized, so a declined
+ * "new note" leaves no orphan in the sidebar / on disk. Conservative — it skips
+ * (keeps the note) when:
+ *   - another non-rejected change still targets the same note, or
+ *   - the user has since typed their own content into it (bodyMarkdown non-empty).
+ * `archiveDoc` is a soft delete (recoverable via Trash) and refuses system/daily/
+ * non-user-owned pages on its own, returning null — in which case we leave it. */
+function cleanupRejectedNewNote(change: PendingChange): void {
+  const slug = change.pageSlug
+  const stillTargeted = Object.values(usePendingChangesStore.getState().byId).some(
+    (o) => o.id !== change.id && o.pageSlug === slug && o.status !== 'rejected',
+  )
+  if (stillTargeted) return
+  const docs = useDocsStore.getState()
+  const body = docs.handles[slug]?.bodyMarkdown
+  if (body != null && body.trim().length > 0) return // user typed real content — keep
+  const result = docs.archiveDoc(slug)
+  if (result === null) {
+    console.info('[applier] rejected new note not archivable, left as-is', slug)
+  } else {
+    console.log('[applier] archived empty note from rejected proposal', slug)
+  }
+}
+
 /** Begin listening. Idempotent within a single module instance —
  * a second call is a no-op. HMR cleanup is handled by the
  * `import.meta.hot.dispose` block below; the next module instance
@@ -261,13 +286,16 @@ export function startPendingChangesApplier(): void {
       if (c.status === 'accepted') {
         void applyAcceptedChange(c).then((ok) => {
           if (!ok) {
-            // The edit couldn't be placed — and since propose_edit now validates the
-            // anchor at proposal time (sidecar) AND the editor flushes before the
-            // turn, the ONLY way to reach here is the user editing that region AFTER
-            // the proposal. Cursor's rule: their edit wins. So just DISMISS — apply
-            // nothing, keep the user's text, no error toast (the mark clearing is the
-            // feedback). The change stays 'accepted' (resolved, drops from pending).
-            console.info('[applier] suggestion outdated by a user edit — kept user text', c.id)
+            // The edit couldn't be placed: its `before` anchor is no longer in
+            // the note (the user edited that region after the proposal, or the
+            // note otherwise changed). Cursor's rule — the user's text wins, so
+            // DISMISS (keep their text) rather than reopen, which would just
+            // re-fail on the same stale anchor in a loop. But SURFACE it: a
+            // silently-vanished "Kept" reads as success when nothing was written
+            // (the bug this audit flagged). The change stays 'accepted'
+            // (resolved, drops from pending).
+            notify.markCantApply()
+            console.info('[applier] suggestion outdated — kept user text', c.id)
           }
           // Commit at accept time for BOTH sources — Keep is when the
           // disk actually changes. The coordinator debounces a burst of
@@ -285,6 +313,9 @@ export function startPendingChangesApplier(): void {
         // Reject = drop the entry from the apply queue; the disk
         // is never touched. Logged for diagnostics only.
         console.log('[applier] rejected', c.id, 'page', c.pageSlug, 'source', c.source)
+        // If this proposal had created a brand-new empty note to host its body,
+        // reject would otherwise orphan that empty note — clean it up.
+        if (c.createdNewNote) cleanupRejectedNewNote(c)
       }
     }
   })

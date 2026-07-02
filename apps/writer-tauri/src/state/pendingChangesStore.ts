@@ -75,6 +75,12 @@ export interface PendingEdit {
  * — chat tool call or ingest proposal — produces this shape. */
 export interface PendingChange {
   id: string
+  /** True when this change MATERIALIZED a brand-new note (chat propose_write /
+   * create-on-miss): the note is created empty up front to host the staged
+   * body. On reject, if that note is still empty and no other change targets
+   * it, the applier archives it — so a declined "new note" leaves no empty
+   * orphan in the sidebar / on disk. */
+  createdNewNote?: boolean
   /** Which AI surface emitted this. Lets the UI render slightly
    * different chrome (e.g. ingest changes show the source daily;
    * chat changes show the thread id). */
@@ -175,12 +181,12 @@ interface PendingChangesState {
    * but the apply path skips the disk write. */
   reject: (id: string) => void
 
-  /** An accepted change whose apply FAILED — the note changed between
-   * proposal and Keep, so the literal `before` text no longer matches.
-   * Revert it to `pending` so its widget reappears and the user can fix
-   * the note and Keep again, instead of the suggestion vanishing on a
-   * failed apply. Called by the applier on the `!ok` branch. No-op
-   * unless the change is currently `accepted`. */
+  /** Un-decide a change back to `pending`, from `accepted` OR `rejected`.
+   * This is the CM editor's Cmd-Z path: undoing an accept or a reject
+   * reopens the change so its widget reappears. (A FAILED apply does NOT
+   * reopen — the applier dismisses with a toast instead, since reopening
+   * would just re-fail on the same stale anchor in a loop.) No-op unless
+   * the change is currently decided. */
   reopen: (id: string) => void
 
   /** Reject every still-pending change in a group. Used by the

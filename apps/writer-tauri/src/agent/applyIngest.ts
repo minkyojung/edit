@@ -73,6 +73,19 @@ export async function applyToWikiPage(
   const handle = useDocsStore.getState().handles[slug]
   if (!handle) return false
 
+  // Wait for the body to hydrate from disk before reading it. `ensureHandle`
+  // only BUILDS the handle; the disk load resolves separately on
+  // `contentReady`. Reading `bodyMarkdown` before that sees '' for a not-yet-
+  // open note, and this is a read-modify-write — an append would then clobber
+  // the real on-disk content and a replace would silently miss. (createSlice
+  // awaits contentReady for the same reason.)
+  try {
+    await handle.contentReady
+  } catch (err) {
+    console.warn('[apply] contentReady failed', slug, err)
+    return false
+  }
+
   const oldMd = handle.bodyMarkdown
   const newMd = transform(oldMd)
   if (newMd === oldMd) return true

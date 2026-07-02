@@ -227,6 +227,9 @@ export async function materializeChatNewWikiPage(
   return {
     id: payload.pendingId,
     source: 'chat',
+    // This proposal just created the note (empty) to host its body — so a
+    // reject can archive the empty note instead of leaving an orphan.
+    createdNewNote: true,
     pageSlug: slug,
     groupId: payload.runId,
     createdAt: Date.now(),
