@@ -29,6 +29,7 @@ import { pathForDoc } from '@/lib/docPaths'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
+import { useGitStore } from '@/state/gitStore'
 import { applyWriteWikiPage } from '@/agent/applyIngest'
 import { useSkillProposalStore } from '@/state/skillProposalStore'
 import { notify } from '@/lib/notify'
@@ -269,12 +270,17 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         usePendingChangesStore.getState().byId,
       ).filter((c) => c.context.runId === runId).length
       resolve({ stopReason, editCount })
-      // No commit at turn end. Chat edits write NOTHING to disk during
-      // the turn — the propose_* tools only stage proposals — so there's
-      // nothing to record here. The commit happens when the user Keeps a
-      // change: pendingChangesApplier observes the accept, writes disk,
-      // and lands one `ai-edit: chat reply` commit per burst (the same
-      // group-commit coordinator ingest uses).
+      // Reviewed edits write NOTHING to disk during the turn (propose_* only
+      // stage; the commit lands when the user Keeps, via the applier's group
+      // commit). But move_note auto-applies DURING the turn and never passes
+      // through that Keep→commit path. So checkpoint a turn that dirtied the
+      // tree WITHOUT producing reviewable edits (editCount === 0) — i.e. a
+      // pure auto-move turn. When editCount > 0 we leave it to the applier so
+      // its `ai-edit: chat reply (N edits)` label wins (its `git add -A`
+      // sweeps any same-turn moves too). Empty-safe + serialized.
+      if (editCount === 0 && useGitStore.getState().dirtyPaths.size > 0) {
+        void useGitStore.getState().commitChangesNow('ai-edit: organize')
+      }
     }
     const settleErr = (err: unknown) => {
       if (settled) return

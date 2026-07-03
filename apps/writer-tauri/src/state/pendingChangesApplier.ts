@@ -26,7 +26,7 @@ import {
 } from '@/agent/applyIngest'
 import { useDocsStore } from './docsStore'
 import { isChangeMaterializedInActiveCm } from './activeCmEditor'
-import { flushDirty } from '@/lib/docFileSync'
+import { useGitStore } from './gitStore'
 import { notify } from '@/lib/notify'
 
 // HMR safety: vite's `import.meta.hot.dispose` fires right before
@@ -172,18 +172,25 @@ function scheduleGroupCommit(change: PendingChange, ok: boolean): void {
 }
 
 async function commitGroup(
-  _sourceLabel: string,
+  sourceLabel: string,
   accepts: Array<{ pageTitle: string; change: PendingChange }>,
 ): Promise<void> {
   if (accepts.length === 0) return
-  // Git commit was removed here — versioning/backup is being redesigned as an
-  // opt-in layer. Accepts still persist: flushDirty writes the accepted burst to
-  // disk promptly (the 500ms auto-flush loop would also catch it). The vault `.md`
-  // remains the single durable source.
+  // One `ai-edit:` checkpoint per accepted burst — the reversibility floor.
+  // commitChangesNow flushes Y.Doc → disk first and serializes against any
+  // concurrent commit (idle organize / turn-end move), so this lands exactly
+  // the accepted burst as a single revertible commit. Subject uses the
+  // `ai-edit:` conventions isAiEditCommit matches.
+  const n = accepts.length
+  const source = accepts[0].change.source
+  const message =
+    source === 'ingest'
+      ? `ai-edit: ingest from ${sourceLabel} (${n} update${n === 1 ? '' : 's'})`
+      : `ai-edit: chat reply (${n} edit${n === 1 ? '' : 's'})`
   try {
-    await flushDirty()
+    await useGitStore.getState().commitChangesNow(message)
   } catch (err) {
-    console.warn('[applier] flushDirty failed', err)
+    console.warn('[applier] group commit failed', err)
   }
 }
 

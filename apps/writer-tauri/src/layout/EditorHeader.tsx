@@ -25,6 +25,7 @@
 // of dragging via the standard Tauri exclusion list.
 
 import {
+  IconArrowBackUp,
   IconArrowsMaximize,
   IconArrowsMinimize,
   IconEdit,
@@ -178,6 +179,7 @@ export function EditorHeader({
             {statusLabel}
           </span>
         )}
+        <UndoLastAiEdit />
         <DocMenu />
         <CompactToggle />
         <ContextPanelTrigger />
@@ -269,6 +271,35 @@ function CompactHeaderActions() {
         <TooltipContent side="bottom">Search · ⌘K</TooltipContent>
       </Tooltip>
     </>
+  )
+}
+
+/** One-click "undo the AI's last change" — reverts the most recent `ai-edit:`
+ * commit (covers reviewed edits AND auto-applied moves, since lastAiEditSha is
+ * read from the unfiltered log). Hidden when there's nothing to undo; disabled
+ * while a commit/revert is in flight. revertCommit is conflict-safe and the
+ * vault watcher reloads the rolled-back pages on its own. */
+function UndoLastAiEdit() {
+  const lastAiEditSha = useGitStore((s) => s.lastAiEditSha)
+  const status = useGitStore((s) => s.status)
+  const revertCommit = useGitStore((s) => s.revertCommit)
+  if (!lastAiEditSha) return null
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="iconGhost"
+          size="icon-sm"
+          disabled={status === 'committing'}
+          onClick={() => void revertCommit(lastAiEditSha)}
+          className="cursor-pointer"
+          aria-label="Undo the AI's last change"
+        >
+          <IconArrowBackUp size={16} />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">Undo the AI&apos;s last change</TooltipContent>
+    </Tooltip>
   )
 }
 

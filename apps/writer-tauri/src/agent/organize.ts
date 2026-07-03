@@ -8,6 +8,7 @@
 
 import { useDocsStore } from '@/state/docsStore'
 import { useIngestStore } from '@/state/ingestStore'
+import { useGitStore } from '@/state/gitStore'
 import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { processInboxNote, INBOX_PROMPT } from '@/agent/inbox'
 import { DAILY_INGEST_PROMPT } from '@/agent/dailyIngest'
@@ -100,6 +101,17 @@ export async function autoOrganizeInbox(): Promise<{
     } catch (err) {
       console.warn('[organize:idle] inbox note failed', note.slug, err)
     }
+  }
+  // Checkpoint the auto-applied moves as one revertible commit. The pass's
+  // wiki proposals stay pending (not on disk) until the user Keeps them, so
+  // this commit contains exactly the moves. commitChangesNow flushes +
+  // serializes + is empty-safe.
+  if (moves.length > 0) {
+    await useGitStore
+      .getState()
+      .commitChangesNow(
+        `ai-edit: organize (${moves.length} move${moves.length === 1 ? '' : 's'})`,
+      )
   }
   return { processed, moves }
 }

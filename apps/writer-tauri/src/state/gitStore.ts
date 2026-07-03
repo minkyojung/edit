@@ -27,6 +27,7 @@ import {
   gitRevert,
   gitCurrentHead,
   gitShow,
+  LAST_REVIEWED_REF,
   type CommitInfo,
   type CommitDetail,
 } from '@/lib/git'
@@ -58,6 +59,12 @@ interface GitState {
    * Used to (a) decide whether the manual commit button is enabled
    * and (b) assemble the auto-generated commit message. */
   dirtyPaths: Set<string>
+
+  /** SHA of the most recent `ai-edit:` commit in `last-reviewed..HEAD`,
+   * from the UNFILTERED log — so it includes move-only commits that touch
+   * folders outside USER_PATH_PREFIXES (which `activity` drops). Drives the
+   * header "Undo last AI change" button; null when there's nothing to undo. */
+  lastAiEditSha: string | null
 
   /** SHAs of commits the user has expanded inline in the Review
    * panel. Multiple cards can be open at once. Toggling a sha here
@@ -175,37 +182,63 @@ export function isAiEditCommit(commit: CommitInfo): boolean {
 }
 
 export const useGitStore = create<GitState>((set, get) => {
-  // Shared core: snapshot dirtyPaths + run the commit. Both
-  // commitChangesNow and commitImmediate funnel through here so
-  // status transitions and activity refresh stay in lock-step.
-  async function runCommit(message: string): Promise<void> {
-    // Snapshot the paths this commit covers, but DON'T clear them
-    // up-front. gitCommit can fail (git/disk error), and an optimistic
-    // clear with no rollback would strip the dirty set while the changes
-    // are still uncommitted on disk — leaving the user with no way to
-    // retry, since the Sidebar "Save snapshot" button is gated on
-    // dirtyPaths.size. Clear only on success, and only the paths we
-    // committed, so edits that landed during the await survive.
-    const committing = get().dirtyPaths
-    set({ status: 'committing' })
+  // Serialize every git-mutating op (commit AND revert). Two independent
+  // callers — a Keep-burst commit (applier) and an idle-organize / turn-end
+  // move commit — can fire concurrently; without this their `git add -A`,
+  // commit, and revert would interleave against one repo and stage each
+  // other's partial writes. Each op waits for the previous to finish, whether
+  // it resolved or threw.
+  let gitLock: Promise<unknown> = Promise.resolve()
+  function withGitLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = gitLock.then(fn, fn)
+    gitLock = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
 
-    try {
-      const sha = await gitCommit(message)
-      if (sha !== null) set({ headSha: sha })
-      set((s) => ({
-        dirtyPaths: new Set(
-          [...s.dirtyPaths].filter((p) => !committing.has(p)),
-        ),
-        status: 'idle',
-        lastError: null,
-      }))
-      void get().refreshActivity()
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error('[git] commit failed', err)
-      set({ status: 'error', lastError: msg })
-      notify.gitCommitFailed()
-    }
+  // Shared core: flush → snapshot dirtyPaths → commit. Both
+  // commitChangesNow and commitImmediate funnel through here (under the git
+  // lock) so status transitions and activity refresh stay in lock-step.
+  async function runCommit(message: string): Promise<void> {
+    // Snapshot the paths this commit covers at CALL time (before the lock
+    // defers and before flushDirty), but DON'T clear them up-front: an edit
+    // landing during the flush / lock-wait / gitCommit await must survive (we
+    // clear only this subset on success), and a failed commit must leave the
+    // dirty set intact for retry. flushDirty only writes already-dirty docs,
+    // so it adds no path outside this snapshot.
+    const committing = get().dirtyPaths
+    return withGitLock(async () => {
+      // Drain in-memory Y.Doc edits to disk FIRST so `git add -A` captures the
+      // real on-disk state — callers (applier, turn-end, idle organize) don't
+      // need to flush themselves. gitCommit is empty-safe (returns null with no
+      // --allow-empty), so a nothing-to-commit call is a clean no-op.
+      try {
+        await flushDirty()
+      } catch (err) {
+        console.warn('[git] flushDirty before commit failed', err)
+      }
+      set({ status: 'committing' })
+
+      try {
+        const sha = await gitCommit(message)
+        if (sha !== null) set({ headSha: sha })
+        set((s) => ({
+          dirtyPaths: new Set(
+            [...s.dirtyPaths].filter((p) => !committing.has(p)),
+          ),
+          status: 'idle',
+          lastError: null,
+        }))
+        void get().refreshActivity()
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error('[git] commit failed', err)
+        set({ status: 'error', lastError: msg })
+        notify.gitCommitFailed()
+      }
+    })
   }
 
   return {
@@ -213,6 +246,7 @@ export const useGitStore = create<GitState>((set, get) => {
     lastError: null,
     headSha: null,
     activity: [],
+    lastAiEditSha: null,
     dirtyPaths: new Set(),
     expandedShas: new Set<string>(),
     commitDetails: {},
@@ -240,23 +274,29 @@ export const useGitStore = create<GitState>((set, get) => {
     refreshActivity: async () => {
       try {
         const [commits, head] = await Promise.all([
-          // `@{u}` = the branch's upstream (last pushed point). The feed
-          // is "changes since the last backup"; pushing advances `@{u}`
-          // and clears it. No upstream yet (before first backup) →
-          // git_log_since_ref returns empty.
-          gitLogSinceRef('@{u}'),
+          // Diff against `last-reviewed` (planted at git_init, advanced by
+          // "Mark all reviewed"), NOT `@{u}`: GitHub backup/push is disabled,
+          // so there's no upstream and `@{u}` would always be empty — leaving
+          // the activity feed (and the Undo button) permanently blank.
+          gitLogSinceRef(LAST_REVIEWED_REF),
           gitCurrentHead(),
         ])
-        // Filter to commits the user cares about. System-only commits
-        // (threads/, _system/) still live in git history — we just
-        // don't surface them as cards. See isUserVisibleCommit.
-        set({ activity: commits.filter(isUserVisibleCommit), headSha: head })
+        // `lastAiEditSha` comes from the UNFILTERED log so a move-only
+        // `ai-edit: organize` commit (folders outside USER_PATH_PREFIXES) is
+        // still undoable. `activity` stays filtered for the user-facing feed.
+        const lastAiEditSha = commits.find(isAiEditCommit)?.sha ?? null
+        set({
+          activity: commits.filter(isUserVisibleCommit),
+          headSha: head,
+          lastAiEditSha,
+        })
       } catch (err) {
         console.warn('[git] refreshActivity failed', err)
       }
     },
 
     revertCommit: async (sha) => {
+      return withGitLock(async () => {
       set({ status: 'committing' })
       try {
         // `git revert` refuses to run with a dirty working tree (it
@@ -295,6 +335,7 @@ export const useGitStore = create<GitState>((set, get) => {
         set({ status: 'error', lastError: msg })
         notify.gitRevertFailed()
       }
+      })
     },
     toggleCommitDetail: async (sha) => {
       const wasOpen = get().expandedShas.has(sha)

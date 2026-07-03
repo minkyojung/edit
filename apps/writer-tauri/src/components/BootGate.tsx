@@ -37,6 +37,8 @@ import { migrateConventionsIntoClaudeMdV1 } from '@/lib/migrateConventionsIntoCl
 import { migrateClaudeMdStructureV1 } from '@/lib/migrateClaudeMdStructureV1'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
 import { isTranslationProject } from '@/lib/translationProject'
+import { gitInit } from '@/lib/git'
+import { useGitStore } from '@/state/gitStore'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
@@ -163,12 +165,19 @@ export function BootGate({ children }: Props) {
     // disk — never start the boot sequence against a missing folder.
     if (!hasVault || !vaultChecked) return
     const init = async () => {
-      // NOTE: git history + GitHub backup + activity sync were disabled here
-      // (kept only GitHub login). The vault `.md` files remain the single durable
-      // source — docFileSync still flushes to disk. Versioning/backup will be
-      // redesigned as an opt-in layer later; the dead modules (gitStore, vault_sync,
-      // ReviewPanel, …) are slated for a separate deletion pass.
-      //
+      // Reversibility floor: initialise the vault as a git repo (idempotent —
+      // the rust side fast-paths an existing `.git`) so every AI edit becomes a
+      // revertible checkpoint. Best-effort — git missing / not installed
+      // degrades to "no checkpoints" (the `.md` files stay the durable source)
+      // instead of blocking boot. This is LOCAL history only; GitHub
+      // backup/push stays disabled. Runs for every project kind.
+      try {
+        await gitInit()
+        void useGitStore.getState().refreshActivity()
+      } catch (err) {
+        console.warn('[boot] git init failed — checkpoints disabled', err)
+      }
+
       // Project kind drives which boot steps run. The wiki-legacy cleanup +
       // schema migrations apply only to wiki vaults; a translation project
       // (a folder with `manuscript/`) never had those layouts, so we skip them to
