@@ -23,7 +23,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { navigateToNoteBySlug } from '@/editor/cmNav'
 import { assembleContext } from '@/agent/contextPipeline'
-import { getActiveVaultPath } from '@/state/settingsStore'
+import { getActiveVaultPath, getDefaultNoteFolder } from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { pathForDoc } from '@/lib/docPaths'
 import { useChatRuns } from '@/stores/chatRuns'
@@ -177,6 +177,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     // Ground the model's file tools in the real vault root (stable → cached prefix),
     // so the first Read doesn't guess a wrong absolute path.
     vaultRoot: getActiveVaultPath(),
+    // Name the configured capture folder so the model treats it as a staging
+    // inbox to route notes OUT of (rename-safe — reads the setting).
+    captureFolder: getDefaultNoteFolder(),
     // Viewing a non-markdown file (PDF/image/…) → there's no doc body to
     // pin, and `view` may still hold the previously-open note's text, so
     // suppress the DOCUMENT block to avoid feeding stale, wrong context.

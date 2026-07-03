@@ -89,6 +89,11 @@ export interface SystemBlocksArgs {
    * and fails until the tool error reveals the real cwd. Pinned in the STATIC,
    * cacheable prefix (it's stable for the whole session, so it never busts cache). */
   vaultRoot?: string | null
+  /** The vault-relative capture folder (settings `defaultNoteFolder`, e.g.
+   * "inbox"). Injected so the model knows quick captures land there and that
+   * it's the staging area to route notes OUT of — not a permanent home. Stable
+   * for the session → sits in the cacheable prefix. */
+  captureFolder?: string | null
   /** When true (default for free chat) the document body is appended
    * past the SDK's cache boundary so it doesn't poison the cache key.
    * Slash commands that already embed `{{document}}` in their body
@@ -153,6 +158,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     systemBody,
     ctx,
     vaultRoot,
+    captureFolder,
     appendDocument,
     currentFilePath,
     viewingFilePath,
@@ -175,6 +181,18 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `The vault root is \`${vaultRoot}\`. Every note lives under it; build absolute ` +
         `file paths from this root (e.g. \`${vaultRoot}/inbox/Note.md\`). Do NOT guess a ` +
         `different base directory.`,
+    )
+  }
+  // Name the capture folder so the model treats it as a staging area, not a
+  // home: quick captures land here, and filing/organizing means moving notes
+  // OUT of it into the folder that fits. Stable → cacheable prefix.
+  if (captureFolder) {
+    prefix.push(
+      `--- CAPTURE FOLDER ---\n` +
+        `The capture folder is \`${captureFolder}/\` — where quick, unsorted notes land. ` +
+        `Treat it as a staging inbox, NOT a permanent home: when you file or organize, ` +
+        `move a note OUT of \`${captureFolder}/\` into the folder that best fits it (per the ` +
+        `CLAUDE.md rules above). Don't route notes back into \`${captureFolder}/\`.`,
     )
   }
 

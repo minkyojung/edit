@@ -7,6 +7,7 @@
 // cost bounded and the approval queue readable.
 
 import { useDocsStore } from '@/state/docsStore'
+import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { processInboxNote, INBOX_PROMPT } from '@/agent/inbox'
 import { DAILY_INGEST_PROMPT } from '@/agent/dailyIngest'
 import { syncTodayManually } from '@/hooks/useIdleTrigger'
@@ -35,11 +36,14 @@ export async function organizeTodayAndInbox(): Promise<OrganizeResult> {
     console.warn('[organize] daily failed', err)
   }
 
-  // Then each inbox capture, one at a time. Duplicate-skipping is the agent's
-  // job (it reads the target wiki page before proposing).
+  // Then each capture-folder note, one at a time. Duplicate-skipping is the
+  // agent's job (it reads the target wiki page before proposing). The capture
+  // folder is the configured one (settings), not a hardcoded 'inbox', so a
+  // renamed folder keeps working.
+  const capturePrefix = getDefaultNoteFolder() + '/'
   const inbox = useDocsStore
     .getState()
-    .knownDocs.filter((d) => d.relPath?.startsWith('inbox/') && !d.archivedAt)
+    .knownDocs.filter((d) => d.relPath?.startsWith(capturePrefix) && !d.archivedAt)
   for (const note of inbox) {
     try {
       const r = await processInboxNote(note.slug)

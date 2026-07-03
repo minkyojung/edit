@@ -17,6 +17,7 @@
 import { runIntake } from '@/agent/intake'
 import type { RunChatResult } from '@/agent/chat/types'
 import { useDocsStore } from '@/state/docsStore'
+import { getDefaultNoteFolder } from '@/state/settingsStore'
 
 /** Routing brain for inbox captures. Mirrors the wiki/daily/skip
  * taxonomy but points the model at its own edit tools instead of a
@@ -52,9 +53,10 @@ export async function processInboxNote(slug: string): Promise<RunChatResult> {
 /** List inbox captures (slug + title + relPath) — `useDocsStore` isn't a
  * console global, so this is the easy way to grab a slug for __processInbox. */
 function listInboxNotes(): Array<{ slug: string; title?: string; relPath?: string }> {
+  const capturePrefix = getDefaultNoteFolder() + '/'
   return useDocsStore
     .getState()
-    .knownDocs.filter((d) => d.relPath?.startsWith('inbox/'))
+    .knownDocs.filter((d) => d.relPath?.startsWith(capturePrefix))
     .map((d) => ({ slug: d.slug, title: d.title, relPath: d.relPath }))
 }
 

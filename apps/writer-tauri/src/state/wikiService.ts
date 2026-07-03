@@ -22,6 +22,7 @@ import {
 } from './docsStore'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
+import { getDefaultNoteFolder } from '@/state/settingsStore'
 
 // PROOF_BASE_URL removed (Phase 3.A.2). All wiki body reads go
 // through the local Y.Doc + Milkdown serializer now.
@@ -266,7 +267,7 @@ export async function createGenericNote(
   name: string,
   folder: string,
 ): Promise<string | null> {
-  const cleanFolder = folder.trim().replace(/^\/+|\/+$/g, '') || 'inbox'
+  const cleanFolder = folder.trim().replace(/^\/+|\/+$/g, '') || getDefaultNoteFolder()
   const stem = name.trim() || 'Untitled'
   const taken = new Set(
     useDocsStore
