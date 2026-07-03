@@ -104,8 +104,8 @@ export function EditorHeader({
         />
         <div data-tauri-drag-region className="flex-1 self-stretch" />
         <div className="flex shrink-0 items-center gap-0.5 pr-3">
-          <CompactToggle compact />
           <CompactHeaderActions />
+          <CompactToggle compact />
         </div>
         {/* Filename ALWAYS at the true window center (left-1/2 + -translate-x),
             capped by max-width so it clears the traffic lights (left) and the

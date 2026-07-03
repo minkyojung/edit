@@ -57,15 +57,18 @@ function CommandDialog({
           // background (no whole-screen blur), so just the panel is frosted —
           // the rest of the screen stays sharp, only darker. sm:max-w-2xl makes
           // it much wider than the default dialog.
-          "top-1/4 translate-y-0 overflow-hidden rounded-4xl! p-0 sm:max-w-2xl",
+          // `command-palette` marks this dialog so index.css can re-center it
+          // vertically in the compact window (where top-1/4 sits too low).
+          "command-palette top-1/4 translate-y-0 overflow-hidden rounded-4xl! p-0 sm:max-w-2xl",
           "bg-popover/55 backdrop-blur-2xl supports-backdrop-filter:bg-popover/45",
           // Theme-adaptive tint/sheen on the glass (richer than flat popover):
           // a soft top-down foreground gradient gives the panel body + depth,
           // and it inverts automatically (light sheen on dark, dark on light)
           // because --foreground flips per theme.
           "bg-linear-to-b from-foreground/[0.07] to-transparent",
-          // Edge definition: a theme-adaptive hairline + soft drop shadow.
-          "border border-foreground/10 shadow-xl",
+          // Edge: canonical Liquid-Glass rim (layered inset highlights, brighter
+          // on top) instead of a flat border, plus a soft drop shadow.
+          "shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.16),inset_0_-1px_1px_rgba(255,255,255,0.05),0_24px_60px_-15px_rgba(0,0,0,0.5)]",
           className
         )}
         showCloseButton={showCloseButton}
@@ -166,7 +169,7 @@ function CommandItem({
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        "group/command-item relative flex cursor-default items-center gap-2 rounded-2xl px-3 py-2 text-body font-medium outline-hidden select-none in-data-[slot=dialog-content]:rounded-3xl data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-foreground/16 data-selected:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-selected:*:[svg]:text-foreground",
+        "group/command-item relative flex cursor-default items-center gap-2 rounded-md px-3 py-2 text-body font-medium outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-foreground/16 data-selected:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-selected:*:[svg]:text-foreground",
         className
       )}
       {...props}

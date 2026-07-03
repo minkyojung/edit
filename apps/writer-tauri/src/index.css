@@ -56,6 +56,21 @@ html[data-window-mode='compact'].dark [data-header-fade] {
 html[data-window-mode='compact'] [data-page-title] {
   display: none;
 }
+/* The command palette defaults to top-1/4 + sm:max-w-2xl — too low AND wider
+   than a narrow compact window (so it overflows both sides and clips). In
+   compact: center it vertically and cap its width to the window. */
+html[data-window-mode='compact'] .command-palette {
+  /* Anchor the TOP at a fixed height (not vertically centered) so the input
+     stays put as results filter — Spotlight-style, input fixed / list grows
+     down. ~15% ≈ where a full palette's top would sit if centered, so it still
+     reads as roughly centered when full.
+     translate overrides Tailwind v4's `translate` PROPERTY (not `transform`);
+     the two are separate and would otherwise STACK and double-shift it. */
+  top: 15%;
+  translate: -50% 0;
+  width: calc(100% - 2rem);
+  max-width: calc(100% - 2rem);
+}
 
 @layer base {
   html, body, #root {
