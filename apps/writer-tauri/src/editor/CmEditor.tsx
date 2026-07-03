@@ -295,7 +295,7 @@ export function CmEditor({ handle, header }: Props) {
       view = null
       viewRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Re-runs only on slug change (a doc switch); mount-time deps are stable.
   }, [slug])
 
   // Repaint highlights when this doc's highlight records change (create /
