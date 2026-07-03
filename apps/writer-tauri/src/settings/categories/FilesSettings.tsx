@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { SettingRow } from '../SettingRow'
 
 export function FilesSettings() {
@@ -20,6 +21,8 @@ export function FilesSettings() {
   const setDefaultNoteFolder = useSettingsStore((s) => s.setDefaultNoteFolder)
   const intakeModel = useSettingsStore((s) => s.intakeModel)
   const setIntakeModel = useSettingsStore((s) => s.setIntakeModel)
+  const inboxAutoOrganize = useSettingsStore((s) => s.inboxAutoOrganize)
+  const setInboxAutoOrganize = useSettingsStore((s) => s.setInboxAutoOrganize)
   const vaultPath = useSettingsStore((s) => s.vaultPaths[s.activeVaultIndex] ?? '')
 
   // Options: every real folder, plus 'inbox' (the default landing zone) and the current
@@ -72,6 +75,15 @@ export function FilesSettings() {
             ))}
           </SelectContent>
         </Select>
+      </SettingRow>
+      <SettingRow
+        title="Auto-organize inbox"
+        description="When you pause (~1 min idle), file new inbox captures into the wiki and move them to their folder — the same as clicking Organize. Only runs when there are new captures."
+      >
+        <Switch
+          checked={inboxAutoOrganize}
+          onCheckedChange={setInboxAutoOrganize}
+        />
       </SettingRow>
     </section>
   )

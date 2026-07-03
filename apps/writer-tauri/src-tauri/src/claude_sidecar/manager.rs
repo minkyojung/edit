@@ -234,6 +234,11 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             // renders a Keep/Reject card and, on approval, writes it to
             // `_system/agent/skills/<name>/SKILL.md`.
             "chat/skill-pending" => "claude:skill-pending",
+            // move_note MCP tool: the sidecar relays a note relocation
+            // (fromPath → toFolder). Applied IMMEDIATELY by the host
+            // (docsStore.moveDocToFolder) — no review card, since a move is
+            // reversible and loses no content.
+            "chat/move-note" => "claude:move-note",
             // edit_visualization MCP tool: the sidecar relays the new chart
             // spec (chartId + VizNode tree) via this notification; the chat
             // runner re-validates it and applies it to the target block by id

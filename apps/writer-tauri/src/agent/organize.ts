@@ -7,6 +7,7 @@
 // cost bounded and the approval queue readable.
 
 import { useDocsStore } from '@/state/docsStore'
+import { useIngestStore } from '@/state/ingestStore'
 import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { processInboxNote, INBOX_PROMPT } from '@/agent/inbox'
 import { DAILY_INGEST_PROMPT } from '@/agent/dailyIngest'
@@ -55,6 +56,52 @@ export async function organizeTodayAndInbox(): Promise<OrganizeResult> {
   }
 
   return { processed, proposals }
+}
+
+/** Idle auto-organize: process only the inbox captures that haven't been filed
+ * yet, one at a time. Same per-note runner as the manual Organize button
+ * (processInboxNote → wiki/daily edits + move_note), but scoped and gated for
+ * an UNPROMPTED pass:
+ *  - inbox-only — the daily journal is the user's own writing, never touched
+ *    without a click;
+ *  - dedup'd — a note is stamped ingested after its pass, so one the agent
+ *    chose to leave (unsure where it belongs) isn't re-run every idle tick;
+ *    a successfully filed note is moved OUT of the inbox by the agent, so it
+ *    drops off the list naturally.
+ * Returns the count handed to the agent plus the notes that actually moved
+ * (detected by a changed relPath) so the caller can surface the otherwise-
+ * invisible move. Both empty when the inbox has nothing new — the common,
+ * free case. */
+export async function autoOrganizeInbox(): Promise<{
+  processed: number
+  moves: { from: string; to: string }[]
+}> {
+  const capturePrefix = getDefaultNoteFolder() + '/'
+  const ingest = useIngestStore.getState()
+  const fresh = useDocsStore.getState().knownDocs.filter((d) => {
+    if (!d.relPath?.startsWith(capturePrefix) || d.archivedAt) return false
+    const ingestedAt = ingest.lastIngestedAt[d.slug] ?? 0
+    const editedAt = ingest.lastEditedAt[d.slug] ?? 0
+    return ingestedAt === 0 || editedAt > ingestedAt
+  })
+
+  let processed = 0
+  const moves: { from: string; to: string }[] = []
+  for (const note of fresh) {
+    const before = note.relPath
+    try {
+      await processInboxNote(note.slug)
+      useIngestStore.getState().markIngested(note.slug)
+      processed += 1
+      // The agent auto-moves a filed note out of the inbox via move_note; detect
+      // it by the relPath the host rewrote (moveDocToFolder) during the run.
+      const after = useDocsStore.getState().knownDocs.find((d) => d.slug === note.slug)?.relPath
+      if (before && after && after !== before) moves.push({ from: before, to: after })
+    } catch (err) {
+      console.warn('[organize:idle] inbox note failed', note.slug, err)
+    }
+  }
+  return { processed, moves }
 }
 
 /** Build the organize request for a single note (the one open in the editor),

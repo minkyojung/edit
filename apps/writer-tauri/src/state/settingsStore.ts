@@ -86,6 +86,14 @@ interface SettingsState {
   /** Set the Organize / intake model. */
   setIntakeModel: (model: ChatModel) => void
 
+  /** Auto-run the inbox Organize pass when the user goes idle (~1 min of no
+   * input). Same job as the manual Organize button, but inbox-only and gated:
+   * only fires when there are unprocessed captures, so an empty inbox costs
+   * nothing. Default on. User-changeable (settings modal). */
+  inboxAutoOrganize: boolean
+  /** Toggle idle auto-organize of the inbox. */
+  setInboxAutoOrganize: (enabled: boolean) => void
+
   /** macOS sidebar vibrancy (frosted glass). Default on. When off, the window
    * canvas + sidebar paint opaque instead of letting the native effect show.
    * Applied by useVibrancy(); macOS-only (no-op elsewhere). */
@@ -127,6 +135,7 @@ export const useSettingsStore = create<SettingsState>()(
       bootstrapCompleted: false,
       defaultNoteFolder: 'inbox',
       intakeModel: DEFAULT_CHAT_MODEL,
+      inboxAutoOrganize: true,
       sidebarVibrancyEnabled: true,
       // CodeMirror is the default editor; Milkdown is the legacy fallback,
       // reachable by toggling this off in Settings → Editor (kept for rollback
@@ -156,6 +165,7 @@ export const useSettingsStore = create<SettingsState>()(
       setDefaultNoteFolder: (folder) =>
         set({ defaultNoteFolder: folder.trim().replace(/^\/+|\/+$/g, '') || 'inbox' }),
       setIntakeModel: (model) => set({ intakeModel: model }),
+      setInboxAutoOrganize: (enabled) => set({ inboxAutoOrganize: enabled }),
       setSidebarVibrancy: (enabled) => set({ sidebarVibrancyEnabled: enabled }),
       setCmEditorEnabled: (enabled) => set({ cmEditorEnabled: enabled }),
       setEditorColumnWidth: (px) => set({ editorColumnWidth: px }),
@@ -170,6 +180,7 @@ export const useSettingsStore = create<SettingsState>()(
         bootstrapCompleted: s.bootstrapCompleted,
         defaultNoteFolder: s.defaultNoteFolder,
         intakeModel: s.intakeModel,
+        inboxAutoOrganize: s.inboxAutoOrganize,
         sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
         cmEditorEnabled: s.cmEditorEnabled,
         editorColumnWidth: s.editorColumnWidth,
@@ -202,4 +213,10 @@ export function getDefaultNoteFolder(): string {
 /** Model the Organize / intake agent runs on. Non-React read for runIntake. */
 export function getIntakeModel(): ChatModel {
   return useSettingsStore.getState().intakeModel
+}
+
+/** Whether idle auto-organize of the inbox is enabled. Non-React read for the
+ * idle trigger. */
+export function getInboxAutoOrganize(): boolean {
+  return useSettingsStore.getState().inboxAutoOrganize
 }

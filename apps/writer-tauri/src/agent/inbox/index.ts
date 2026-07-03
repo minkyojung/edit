@@ -32,6 +32,8 @@ Three destinations, decided fact by fact:
 
 A typical capture produces BOTH: a few durable ideas → wiki, plus a couple of "did / concluded" lines → daily. Bias toward keeping over skipping — a slightly redundant note costs little, a lost insight costs a lot — but don't store obvious definitions.
 
+Then FILE the raw note out of the inbox: once its durable content is in the wiki (and any dated lines in the daily), call \`move_note\` with the note's path and the folder that best fits it per the CLAUDE.md schema — this keeps the capture folder a staging area, not a graveyard. The move is applied immediately and is reversible, so don't ask. But only move when you're confident where it belongs; if the note was all skip, or you're unsure of its home, LEAVE it in the inbox — never force a move or route it back into the capture folder.
+
 Work efficiently: keep discovery tight (~5 tool calls), propose rather than ask, and stop once you've routed everything worth keeping.`
 
 /** Process a single inbox note: hand it to the chat agent with the

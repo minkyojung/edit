@@ -11,6 +11,7 @@
 // Mounted once at app root via useIdleTrigger() (name kept for the call site)
 // purely to sweep stale proposals on boot.
 
+import { useEffect } from 'react'
 import { processDailyNote } from '@/agent/dailyIngest'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useIngestStore } from '@/state/ingestStore'
@@ -19,6 +20,7 @@ import { todayLocalDate } from '@/hooks/useDocMeta'
 import { extractErrorCode } from '@/chat/utils/errorMessage'
 import { notify } from '@/lib/notify'
 import { useConnectDialog } from '@/stores/connectDialog'
+import { getActiveVaultPath, getInboxAutoOrganize } from '@/state/settingsStore'
 
 interface RunOptions {
   /** Skip the dirty-bit gate. Used by the manual Sync button / dev hooks so a
@@ -110,12 +112,67 @@ export async function syncTodayManually(): Promise<number | null> {
   return runIngestForSlug(today.slug, { force: true })
 }
 
-/** Mounted once near the app root. Daily ingest is pull-only now (the Sync
- * button → syncTodayManually), so there is nothing to do on mount; the hook is
- * kept as a no-op for the existing call site. */
+/** Fire after this many ms of no user input — "the user paused". Long enough
+ * that it doesn't interrupt active work, short enough to feel prompt. */
+const IDLE_MS = 60_000
+
+/** Single-flight guard: never overlap two idle passes (an agentic run can take
+ * seconds; a second idle tick mid-run would double up). Module-level so it
+ * survives re-renders / remounts. */
+let idleRunning = false
+
+/** One idle organize pass. Gated three ways so an unprompted run is cheap and
+ * opt-out-able: a vault must be open, the setting must be on, and no pass may
+ * already be in flight. `autoOrganizeInbox` itself is a no-op when the inbox
+ * has nothing new, so the common idle tick costs nothing. Imported lazily to
+ * avoid a static import cycle (organize.ts imports syncTodayManually from here). */
+async function runIdleOrganize(): Promise<void> {
+  if (idleRunning) return
+  if (!getActiveVaultPath()) return
+  if (!getInboxAutoOrganize()) return
+  idleRunning = true
+  try {
+    const { autoOrganizeInbox } = await import('@/agent/organize')
+    const { processed, moves } = await autoOrganizeInbox()
+    if (processed > 0) console.log('[idle] auto-organized inbox notes:', processed)
+    // Surface the auto-applied moves (they have no review card). Skipped when
+    // nothing moved — a pass that only staged wiki proposals shows its cards.
+    if (moves.length > 0) notify.inboxOrganized(moves)
+  } catch (err) {
+    console.warn('[idle] auto-organize failed', err)
+  } finally {
+    idleRunning = false
+  }
+}
+
+/** Mounted once near the app root. Arms an inactivity timer: after {@link
+ * IDLE_MS} of no user input, run one inbox organize pass (same job as the
+ * manual Organize button, inbox-only + dedup'd). Any input re-arms the timer,
+ * so the pass only fires while the user is paused — never mid-keystroke. The
+ * daily-ingest path stays pull-only (the Sync button); this only automates the
+ * inbox, and only when the setting is on. */
 export function useIdleTrigger(): void {
-  // No-op: the auto timer / boot catch-up were removed. Kept so App.tsx's
-  // call site stays valid; remove both together if desired.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const arm = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => void runIdleOrganize(), IDLE_MS)
+    }
+    const events: (keyof WindowEventMap)[] = [
+      'mousemove',
+      'mousedown',
+      'keydown',
+      'wheel',
+      'touchstart',
+      'focus',
+    ]
+    events.forEach((e) => window.addEventListener(e, arm, { passive: true }))
+    arm() // start the first countdown on mount
+    return () => {
+      if (timer) clearTimeout(timer)
+      events.forEach((e) => window.removeEventListener(e, arm))
+    }
+  }, [])
 }
 
 // Dev-only console hooks. __triggerIdle / __syncToday both hit today's daily

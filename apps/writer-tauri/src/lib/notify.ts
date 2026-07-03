@@ -160,6 +160,26 @@ export const notify = {
       toast.success('Synced — nothing new today')
     }
   },
+  /** Idle auto-organize filed inbox captures into the wiki and MOVED them to
+   * their folders. The move is applied without a review card, so this toast is
+   * how it surfaces — it lists what moved (short filename → folder). A longer
+   * duration than a normal toast since the pass can fire while the user is away;
+   * the moved notes are also visible (and reversible) in the file tree. */
+  inboxOrganized(moves: { from: string; to: string }[]) {
+    if (moves.length === 0) return
+    const fileName = (p: string) => p.split('/').pop()?.replace(/\.md$/, '') ?? p
+    const folderOf = (p: string) => {
+      const i = p.lastIndexOf('/')
+      return i >= 0 ? p.slice(0, i) : ''
+    }
+    const shown = moves.slice(0, 3).map((m) => `${fileName(m.from)} → ${folderOf(m.to)}/`)
+    const more = moves.length > 3 ? ` +${moves.length - 3} more` : ''
+    const noun = moves.length === 1 ? 'note' : 'notes'
+    toast.success(`Organized ${moves.length} inbox ${noun}`, {
+      description: shown.join(', ') + more,
+      duration: 12000,
+    })
+  },
   /** Manual sync threw. Surfaces the rare error path (auth toasts
    * have their own dedicated handler higher in the call chain;
    * this one covers everything else). */

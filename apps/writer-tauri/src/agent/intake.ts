@@ -40,7 +40,8 @@ export async function runIntake(args: IntakeArgs): Promise<RunChatResult> {
     prompt: args.prompt,
     systemPrompt: args.systemPrompt,
     // Read/Glob/Grep come from the built-in preset; these are the write-side
-    // tools the agent proposes through.
-    relayTools: ['propose_edit', 'propose_multi_edit', 'propose_write'],
+    // tools the agent proposes through. `move_note` files the raw note out of
+    // the capture folder once its knowledge is in the wiki (auto-applied).
+    relayTools: ['propose_edit', 'propose_multi_edit', 'propose_write', 'move_note'],
   })
 }

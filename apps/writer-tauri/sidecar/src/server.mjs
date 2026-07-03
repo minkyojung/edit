@@ -301,6 +301,40 @@ function buildProposeMultiEditTool(runId, emit, vaultPath) {
   )
 }
 
+// Move a note OUT of the capture/inbox folder into its resting folder, once its
+// durable knowledge has been filed into the wiki. Unlike the propose_* tools
+// this is APPLIED IMMEDIATELY, not queued for review — a move is reversible and
+// loses no content, so gating it behind an approval card only adds friction.
+// The host resolves the note by path and relocates it (docsStore.moveDocToFolder),
+// which rewrites its relPath and lets the flush machinery move the file on disk.
+function buildMoveNoteTool(runId, emit) {
+  return tool(
+    'move_note',
+    "Move a note OUT of the capture/inbox folder into the folder that best fits it — do this AFTER you've filed the note's durable knowledge into the wiki, so the capture folder stays a staging area and not a graveyard. `from_path` is the note's current vault-relative path (e.g. `inbox/some-note.md`); `to_folder` is the destination folder, vault-relative, no leading/trailing slash (e.g. `people`, `projects/acme`). The CLAUDE.md schema governs which folder fits. Applied IMMEDIATELY (not queued for review) and reversible, so only move when you're confident where it belongs; if unsure, leave it in place. Returns immediately — do not wait.",
+    {
+      from_path: z.string(),
+      to_folder: z.string(),
+    },
+    async (input) => {
+      emit(
+        notification('chat/move-note', {
+          runId,
+          fromPath: input.from_path,
+          toFolder: input.to_folder,
+        }),
+      )
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Move applied: ${input.from_path} → ${input.to_folder}/`,
+          },
+        ],
+      }
+    },
+  )
+}
+
 // Recursive VizNode schema — mirrors src/viz/vizSpec.ts. Layout nodes
 // (stack/columns) nest children; leaves are charts + stat/text/table. The model
 // fills this when it calls edit_visualization, so its output is shaped to our
@@ -1006,6 +1040,8 @@ export class Server {
         relayDefs.push(buildProposeSkillTool(runId, this.emit, existingSkills))
       } else if (name === 'propose_multi_edit') {
         relayDefs.push(buildProposeMultiEditTool(runId, this.emit, vaultPath))
+      } else if (name === 'move_note') {
+        relayDefs.push(buildMoveNoteTool(runId, this.emit))
       } else if (name === 'edit_visualization') {
         relayDefs.push(buildEditVisualizationTool(runId, this.emit))
       }
