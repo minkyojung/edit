@@ -29,6 +29,7 @@ import {
   IconArrowsMinimize,
   IconEdit,
   IconLayoutSidebarRightFilled,
+  IconMessageCircleFilled,
   IconSearch,
 } from '@tabler/icons-react'
 import { useMatch, useNavigate } from 'react-router-dom'
@@ -104,8 +105,8 @@ export function EditorHeader({
         />
         <div data-tauri-drag-region className="flex-1 self-stretch" />
         <div className="flex shrink-0 items-center gap-0.5 pr-3">
-          <CompactHeaderActions />
           <CompactToggle compact />
+          <CompactHeaderActions />
         </div>
         {/* Filename pinned and centered on the FULL window width — not the
             leftover space between the traffic lights and the toggle. Absolute +
@@ -224,6 +225,18 @@ function CompactHeaderActions() {
   const navigate = useNavigate()
   const createNew = useDocsStore((s) => s.createNew)
   const openPalette = useCommandPaletteStore((s) => s.openPalette)
+  const toggleWindow = useWindowModeStore((s) => s.toggle)
+  const openChat = useLayoutStore((s) => s.openRightPanelInMode)
+  const requestChatFocus = useLayoutStore((s) => s.requestChatInputFocus)
+
+  // Ask AI: leave the compact panel and land in the full editor with chat
+  // open + focused. The note being written is the active doc, so the agent
+  // already has it in context — no explicit attach needed.
+  const handleAskAI = () => {
+    openChat('chat')
+    void toggleWindow() // compact → full
+    requestChatFocus()
+  }
 
   const handleCreateNew = () => {
     createNew()
@@ -270,6 +283,20 @@ function CompactHeaderActions() {
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">Search · ⌘K</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="iconGhost"
+            size="icon-sm"
+            onClick={handleAskAI}
+            className="cursor-pointer"
+            aria-label="Ask AI"
+          >
+            <IconMessageCircleFilled size={16} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Ask AI</TooltipContent>
       </Tooltip>
     </>
   )

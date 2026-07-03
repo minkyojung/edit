@@ -8,7 +8,8 @@
 //   error       → last send errored. Same as idle but rendered with an error
 //                 icon hint; the actual error message lives in the turn.
 
-import { useCallback, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useLayoutStore } from '@/state/layoutStore'
 import { notify } from '@/lib/notify'
 import {
   IconArrowUp,
@@ -188,6 +189,17 @@ export function PromptInput({
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounterRef = useRef(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // External "focus the composer" requests (e.g. the compact panel's Ask AI
+  // button) bump a nonce in layoutStore; focus on the next frame so the panel
+  // has finished opening/expanding before we grab focus.
+  const focusNonce = useLayoutStore((s) => s.focusChatInputNonce)
+  useEffect(() => {
+    if (focusNonce === 0) return
+    const id = requestAnimationFrame(() => textareaRef.current?.focus())
+    return () => cancelAnimationFrame(id)
+  }, [focusNonce])
 
   const addFiles = useCallback(async (fileList: FileList | File[]) => {
     setAttachments((prev) => {
@@ -558,6 +570,7 @@ export function PromptInput({
         </div>
       )}
       <textarea
+        ref={textareaRef}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
