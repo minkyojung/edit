@@ -697,6 +697,12 @@ export class Server {
       // in human terms instead of only a "N tools · last: Read" counter. Forks
       // the subagent's cached context, so cost is minimal.
       agentProgressSummaries: true,
+      // Adaptive thinking WITH visible summarized reasoning. Thinking is already
+      // on (Claude Code default), but Opus 4.7/4.8 omit the reasoning text by
+      // default — so the model reasons but our ThinkingPill gets empty content.
+      // `display: 'summarized'` returns a short summary of that reasoning, so the
+      // "thinking" the user sees is real, not a placeholder.
+      thinking: { type: 'adaptive', display: 'summarized' },
       // Auto-summarize older turns once context approaches the model
       // limit, instead of erroring out. autoCompactEnabled lives in
       // Settings (sdk.d.ts:5073) — surfaced via the `settings` flag

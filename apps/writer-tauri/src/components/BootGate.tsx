@@ -28,6 +28,7 @@ import { useThreadsStore } from '@/state/threadsStore'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { VaultLauncher } from '@/components/VaultLauncher'
+import { resolveWindowMode } from '@/hooks/useWindowModeSync'
 import { exists, remove } from '@tauri-apps/plugin-fs'
 import { join } from '@tauri-apps/api/path'
 import { cleanupYdocV2 } from '@/lib/cleanupYdocV2'
@@ -109,6 +110,15 @@ export function BootGate({ children }: Props) {
   // launcher spawns a separate window per project; getActiveVaultPath() in a
   // project window returns its WINDOW_ROOT.
   const [hasVault, setHasVault] = useState(() => WINDOW_ROOT !== null)
+
+  // Resolve the compact/full window mode from the real window size BEFORE the
+  // app UI paints, so an editor window that was compact at reload renders
+  // compact from the first frame (no full→compact flash). Runs in parallel
+  // with bootstrap; being one fast IPC it settles well before it.
+  const [modeResolved, setModeResolved] = useState(false)
+  useEffect(() => {
+    void resolveWindowMode().finally(() => setModeResolved(true))
+  }, [])
   // Whether the stored vault path has been verified to still exist on disk.
   // A path can be remembered across sessions but the folder later moved,
   // deleted, parked on an unmounted drive, or not-yet-synced (iCloud). We
@@ -209,7 +219,9 @@ export function BootGate({ children }: Props) {
     return <VaultLauncher />
   }
 
-  if (!bootstrapping) return <>{children}</>
+  // Hold the app UI until the window mode is known too, so it never paints
+  // full-size chrome into a compact window for a frame.
+  if (!bootstrapping && modeResolved) return <>{children}</>
 
   return loadingView
 }
