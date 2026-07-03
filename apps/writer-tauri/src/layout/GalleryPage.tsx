@@ -1033,6 +1033,49 @@ export function GalleryPage() {
           />
         </Subgroup>
 
+        <Subgroup title="Reasoning — summarized thinking (thinking display: 'summarized')">
+          <p className="text-[13px] text-muted-foreground">
+            Thinking is always on, but Opus 4.7/4.8 omit the reasoning TEXT by
+            default (empty pill). With <code>display: 'summarized'</code> the
+            model returns a short summary of its reasoning — this is what now
+            fills the ThinkingPill / panel.
+          </p>
+          <Scenario
+            title="Streaming — the summarized reasoning shows live before the answer"
+            turns={[
+              userTurn('Rewrite this paragraph to be tighter and more active.'),
+              mockTurn({
+                status: 'streaming',
+                parts: [
+                  reasoningPart(
+                    'The passage leans passive ("was decided by") and buries the subject. ' +
+                      'I\'ll surface the actor, cut two hedging clauses, and split the run-on ' +
+                      'sentence so each idea lands on its own beat — keeping the author\'s voice.',
+                  ),
+                ],
+              }),
+            ]}
+          />
+          <Scenario
+            title="Done — reasoning folds into the collapsed process group, answer below"
+            turns={[
+              userTurn('Rewrite this paragraph to be tighter and more active.'),
+              mockTurn({
+                status: 'done',
+                durationMs: 3400,
+                stopReason: 'end_turn',
+                content: 'Here\'s a tighter, active-voice version — two sentences, same meaning.',
+                parts: [
+                  reasoningPart(
+                    'Passive + run-on. Surface the actor, cut hedges, split into two beats.',
+                  ),
+                  textPart('Here\'s a tighter, active-voice version — two sentences, same meaning.'),
+                ],
+              }),
+            ]}
+          />
+        </Subgroup>
+
         <Subgroup title="Error scenarios — full turn (real MessageRow)">
           <Scenario
             title="Failed — server error after a retry"
