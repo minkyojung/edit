@@ -1,13 +1,13 @@
-// Confirmation modal triggered by app:close-requested when one or more
-// chats are still streaming. Mounted once at AppShell level.
+// The "a chat is in progress — close anyway?" modal, now a pure VIEW over
+// useCloseConfirmStore. Both close paths drive it through the store's promise:
+//   - editor window X  → useWindowClose (per-window close)
+//   - app quit (⌘Q / menu / dock) → the app:close-requested effect below
 //
-// Also runs the vault auto-flush pipeline before any quit path so
-// unsaved edits (and any made during the confirm dialog) reach disk.
-// Without this, edits in the last 2 seconds before quit could be
-// lost: the auto-flush timer runs at most every 2s, and a user
-// typing right before Cmd+Q could fall in that window.
+// It also owns the app-QUIT path (not per-window close): flush pending vault
+// writes, ask if chats are streaming, then quit. Per-window closes live in
+// useWindowClose; this file is only the quit half + the shared dialog.
 
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import {
@@ -20,37 +20,35 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useChatActivity } from '@/stores/chatActivity'
+import { useCloseConfirmStore } from '@/state/closeConfirmStore'
 import { flushDirty, stopAutoFlush } from '@/lib/docFileSync'
 import { stopGitHubSync } from '@/lib/githubSync'
 
-export function CloseConfirmDialog() {
-  const [open, setOpen] = useState(false)
-  const activeCount = useChatActivity((s) => s.activeCount)
+async function quitApp() {
+  await flushDirty()
+  stopAutoFlush()
+  stopGitHubSync()
+  invoke('app_quit').catch(() => {})
+}
 
+export function CloseConfirmDialog() {
+  const open = useCloseConfirmStore((s) => s.open)
+  const activeCount = useCloseConfirmStore((s) => s.activeCount)
+  const resolve = useCloseConfirmStore((s) => s.resolve)
+
+  // App-quit path (⌘Q / dock / menu → app:close-requested). Distinct from
+  // per-window close: this tears the whole app down.
   useEffect(() => {
     let unlisten: (() => void) | undefined
     listen('app:close-requested', async () => {
-      // Best-effort flush of pending vault writes BEFORE we decide
-      // what to do next. Catches the typing-just-before-quit window
-      // where dirty slugs haven't reached the 2s timer yet. The
-      // flush is fast (~200ms typical for a single doc) so this
-      // doesn't measurably delay the close dialog or the quit path.
+      // Flush first so edits typed right before quit reach disk.
       await flushDirty()
-
-      // Snapshot the active count at the moment the user tried to quit.
-      // Reading the store directly avoids a stale-closure hazard since this
-      // callback isn't re-created on every activeCount change.
-      const current = useChatActivity.getState().activeCount
-      if (current > 0) {
-        setOpen(true)
-      } else {
-        // Nothing in flight — quit immediately. Stop the flush timer
-        // so it doesn't keep ticking against a torn-down store
-        // during the brief window before the process exits.
-        stopAutoFlush()
-        stopGitHubSync()
-        invoke('app_quit').catch(() => {})
+      const active = useChatActivity.getState().activeCount
+      if (active > 0) {
+        const proceed = await useCloseConfirmStore.getState().confirmClose(active)
+        if (!proceed) return
       }
+      await quitApp()
     }).then((fn) => {
       unlisten = fn
     })
@@ -59,18 +57,14 @@ export function CloseConfirmDialog() {
     }
   }, [])
 
-  // Final flush + stop before the user confirms a quit-with-chats-
-  // in-flight. The dialog can stay open for arbitrary time; edits
-  // made while it's up should still land on disk.
-  const confirmQuit = async () => {
-    await flushDirty()
-    stopAutoFlush()
-    stopGitHubSync()
-    invoke('app_quit').catch(() => {})
-  }
-
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Dismissing (Esc / backdrop) counts as "keep open, don't close".
+        if (!next) resolve(false)
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>A chat is in progress.</DialogTitle>
@@ -81,16 +75,11 @@ export function CloseConfirmDialog() {
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)} autoFocus>
+          <Button variant="outline" onClick={() => resolve(false)} autoFocus>
             Wait
           </Button>
-          <Button
-            variant="destructive"
-            onClick={() => {
-              void confirmQuit()
-            }}
-          >
-            Cancel and Quit
+          <Button variant="destructive" onClick={() => resolve(true)}>
+            Close anyway
           </Button>
         </DialogFooter>
       </DialogContent>

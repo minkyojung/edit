@@ -516,6 +516,22 @@ pub fn run() {
                         eprintln!("[run] WindowEvent label={label} kind={event:?}");
                     }
                 }
+                // Dock-icon click / app re-activation (macOS). Closing all
+                // windows keeps the app alive (windowless); reopening reveals
+                // the launcher. Only act when nothing is visible — otherwise
+                // macOS's default (focus an existing window) is correct.
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen {
+                    has_visible_windows,
+                    ..
+                } => {
+                    if !has_visible_windows {
+                        if let Some(launcher) = app_handle.get_webview_window("main") {
+                            let _ = launcher.show();
+                            let _ = launcher.set_focus();
+                        }
+                    }
+                }
                 _ => {}
             }
 

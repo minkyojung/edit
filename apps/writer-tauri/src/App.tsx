@@ -29,7 +29,7 @@ import { useWindowChrome } from '@/hooks/useWindowChrome'
 import { useVibrancy } from '@/hooks/useVibrancy'
 import { useWindowModeSync } from '@/hooks/useWindowModeSync'
 import { useCompactShortcut } from '@/hooks/useCompactShortcut'
-import { useLauncherLifecycle } from '@/hooks/useLauncherLifecycle'
+import { useWindowClose } from '@/hooks/useWindowClose'
 import {
   buildDayUrl,
   buildMonthUrl,
@@ -206,7 +206,7 @@ function AppContent() {
   useVibrancy()
   useWindowModeSync()
   useCompactShortcut()
-  useLauncherLifecycle()
+  useWindowClose()
 
   // Sidebar dot semantic (Phase E2.8): the dot flips to "viewed"
   // (grey) the moment the user navigates to a page that has staged

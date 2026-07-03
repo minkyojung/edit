@@ -16,6 +16,8 @@
     "core:window:allow-inner-size",
     "core:window:allow-outer-position",
     "core:window:allow-set-effects",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
     "core:webview:allow-create-webview-window",
     {
       "identifier": "shell:allow-open",

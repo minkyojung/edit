@@ -7,7 +7,7 @@
 //
 // Window-per-project model: every entry point opens the project in its OWN
 // window via openProjectWindow(), then hides itself. It reappears when the
-// last project window closes (useLauncherLifecycle in AppContent).
+// last project window closes (useWindowClose in AppContent).
 
 import { useCallback, useEffect } from 'react'
 import { exists } from '@tauri-apps/plugin-fs'
