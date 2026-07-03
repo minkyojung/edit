@@ -12,6 +12,15 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 // (bypassing the event system) with the same ctx for both calls, which is
 // exactly what happens when two edit-pending events race on the same
 // knownDocs snapshot.
+//
+// The fix for this race lives ONE LAYER UP, in agent/chat/index.ts's
+// edit-pending handler (a per-path promise-chain mutex — see `newNoteByPath`
+// there): a second event for a path already claimed this turn awaits the
+// first's result and MERGES into it (mergeEditIntoStagedBody.test.ts) instead
+// of calling materializeChatNewWikiPage independently. This test intentionally
+// keeps calling `materializeChatNewWikiPage` directly, with no coordination,
+// so it continues to prove the underlying fact the fix works around: this
+// function alone has no per-turn memory of a prior call for the same path.
 const createGenericNote = vi.fn<
   (name: string, folder: string) => Promise<string | null>
 >()

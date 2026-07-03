@@ -31,9 +31,12 @@ import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { applyWriteWikiPage } from '@/agent/applyIngest'
 import { useSkillProposalStore } from '@/state/skillProposalStore'
+import { notify } from '@/lib/notify'
 import {
   mapChatEditToPendingChange,
   materializeChatNewWikiPage,
+  mergeEditIntoStagedBody,
+  toVaultRelative,
 } from './toPendingChange'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { useThreadsStore } from '@/state/threadsStore'
@@ -212,6 +215,23 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const parser = createStreamParser({ onPart, onTextDelta, onThinkingDelta })
 
   const unlistens: UnlistenFn[] = []
+
+  // Per-turn, per-path coordination for the "same not-yet-existing file, two+
+  // tool calls in one turn" race: without this, two `claude:edit-pending`
+  // events for one file_path each independently see no existing doc (their
+  // knownDocs snapshot predates the other's note creation) and both
+  // materialize a brand-new note — materializeRace.test.ts reproduces this in
+  // isolation. Keyed by the same toVaultRelative normalization used
+  // everywhere else. Only entries for a NEWLY MATERIALIZED note are recorded
+  // (an edit that resolves to an already-existing doc isn't racing anything —
+  // mapChatEditToPendingChange creates nothing). Scoped to this run's
+  // closure — garbage collected when the run's promise settles, same
+  // lifetime as `unlistens` below; no explicit teardown needed.
+  const newNoteByPath = new Map<
+    string,
+    Promise<{ pageSlug: string; pendingId: string } | null>
+  >()
+
   const cleanup = () => {
     useChatRuns.getState().end(runId)
     while (unlistens.length > 0) {
@@ -309,38 +329,101 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           toolName: e.payload.toolName,
           input: e.payload.input,
         }
-        // Ensure the target daily exists before we snapshot the catalog. The
-        // model routes inbox actions to `daily/<date>.md`; in a headless run
-        // that daily may not be in the catalog yet, so the path wouldn't
-        // resolve and we'd materialize a phantom note. openDaily is
-        // find-or-create — after it, the real daily resolves and the edit
-        // appends to it instead.
-        const writePath = (e.payload.input as { file_path?: unknown }).file_path
-        const dailyDate =
-          typeof writePath === 'string'
-            ? writePath.match(/(?:^|\/)daily\/(\d{4}-\d{2}-\d{2})\.md$/)?.[1]
-            : undefined
-        if (dailyDate) {
-          await useDocsStore.getState().openDaily(dailyDate)
-        }
-        const ctx = {
-          knownDocs: useDocsStore.getState().knownDocs,
-          vaultPath: getActiveVaultPath(),
-          threadId,
-          userRequest: triggeringRequest,
-        }
-        // First the pure mapper (existing doc). If it can't resolve a
-        // catalog slug, the one recoverable miss is a `propose_write`
-        // creating a brand-new wiki page: materialize the page (so it
-        // gets a slug) and stage its body. Anything still unmapped is a
-        // genuine miss — logged, no decision surface.
-        let mapped = mapChatEditToPendingChange(payload, ctx)
-        let createdNewNote = false
-        if (!mapped) {
-          mapped = await materializeChatNewWikiPage(payload, ctx)
-          createdNewNote = !!mapped
-        }
-        if (mapped) {
+
+        const filePathRaw = (e.payload.input as { file_path?: unknown }).file_path
+        const vaultRelPath =
+          typeof filePathRaw === 'string'
+            ? toVaultRelative(filePathRaw, getActiveVaultPath())
+            : null
+
+        // Promise-chain mutex, keyed by vault-relative path: this event
+        // awaits whatever the PREVIOUS event for the same path is doing
+        // (create or merge) before starting its own work, and immediately
+        // publishes its own tail for the NEXT event to wait on. This
+        // serializes any number of same-turn, same-path tool calls instead of
+        // letting them race (materializeRace.test.ts reproduces the race
+        // this closes). A path with no prior claim resolves instantly.
+        const priorTail: Promise<{ pageSlug: string; pendingId: string } | null> =
+          (vaultRelPath && newNoteByPath.get(vaultRelPath)) || Promise.resolve(null)
+
+        const myTail = (async (): Promise<{ pageSlug: string; pendingId: string } | null> => {
+          const prior = await priorTail
+          if (prior) {
+            // A previous tool call THIS turn already materialized a new note
+            // for this path — merge this call's edit into its staged body
+            // instead of independently mapping/materializing (which is what
+            // created the duplicate note before this fix).
+            const current = usePendingChangesStore.getState().byId[prior.pendingId]
+            const currentAfter = current?.edits[0]?.after ?? ''
+            const mergedBody = mergeEditIntoStagedBody(
+              currentAfter,
+              e.payload.toolName,
+              e.payload.input,
+            )
+            if (mergedBody === currentAfter) {
+              // The tool's edit didn't land against the staged body (e.g. an
+              // Edit whose old_string isn't there) — surface it (A2's
+              // principle: don't silently no-op) instead of pretending it
+              // merged.
+              notify.markCantApply()
+              return prior
+            }
+            usePendingChangesStore.getState().push({
+              ...current,
+              edits: [{ ...current.edits[0], after: mergedBody }],
+            })
+            if (autoAcceptEdits) {
+              // Same populate-before-accept ordering as the first call's
+              // auto-accept path below — the note may already be open from
+              // the first call's navigate, so this keeps the on-disk /
+              // in-editor body in sync with the newly merged staged body.
+              await applyWriteWikiPage(prior.pageSlug, mergedBody, prior.pendingId)
+              usePendingChangesStore.getState().accept(prior.pendingId, mergedBody)
+            }
+            // Don't navigate again — the first call already opened the note.
+            return prior
+          }
+
+          // No prior claim on this path this turn — handle it exactly as
+          // before this fix.
+          //
+          // Ensure the target daily exists before we snapshot the catalog. The
+          // model routes inbox actions to `daily/<date>.md`; in a headless run
+          // that daily may not be in the catalog yet, so the path wouldn't
+          // resolve and we'd materialize a phantom note. openDaily is
+          // find-or-create — after it, the real daily resolves and the edit
+          // appends to it instead.
+          const dailyDate = filePathRaw?.toString().match(
+            /(?:^|\/)daily\/(\d{4}-\d{2}-\d{2})\.md$/,
+          )?.[1]
+          if (dailyDate) {
+            await useDocsStore.getState().openDaily(dailyDate)
+          }
+          const ctx = {
+            knownDocs: useDocsStore.getState().knownDocs,
+            vaultPath: getActiveVaultPath(),
+            threadId,
+            userRequest: triggeringRequest,
+          }
+          // First the pure mapper (existing doc). If it can't resolve a
+          // catalog slug, the one recoverable miss is a `propose_write`
+          // creating a brand-new wiki page: materialize the page (so it
+          // gets a slug) and stage its body. Anything still unmapped is a
+          // genuine miss — logged, no decision surface.
+          let mapped = mapChatEditToPendingChange(payload, ctx)
+          let createdNewNote = false
+          if (!mapped) {
+            mapped = await materializeChatNewWikiPage(payload, ctx)
+            createdNewNote = !!mapped
+          }
+          if (!mapped) {
+            console.warn(
+              '[chat] edit-pending unmappable; no decision surface',
+              { toolName: e.payload.toolName, pendingId: e.payload.pendingId },
+            )
+            return null
+          }
+
           usePendingChangesStore.getState().push(mapped)
           // acceptEdits mode: apply immediately instead of parking for review.
           // The change is rendered (diff preview) and then auto-accepted, so the
@@ -359,7 +442,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
               // resolvedResult so the applier's own write is an idempotent
               // whole-doc no-op (bodyMarkdown already matches) rather than a
               // second, doubling append.
-              const body = mapped.edits.map((e) => e.after ?? '').join('\n\n')
+              const body = mapped.edits.map((ed) => ed.after ?? '').join('\n\n')
               await applyWriteWikiPage(mapped.pageSlug, body, mapped.id)
               usePendingChangesStore.getState().accept(mapped.id, body)
             } else {
@@ -376,12 +459,16 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           if (createdNewNote && navigateToNewNotes) {
             navigateToNoteBySlug(mapped.pageSlug)
           }
-        } else {
-          console.warn(
-            '[chat] edit-pending unmappable; no decision surface',
-            { toolName: e.payload.toolName, pendingId: e.payload.pendingId },
-          )
-        }
+          // Only claim this path for coordination when a note was ACTUALLY
+          // newly materialized — an edit that resolved to an already-existing
+          // doc isn't racing anything (nothing was created), so a later
+          // same-path event should handle itself independently rather than
+          // merging into an unrelated existing-doc PendingChange.
+          return createdNewNote ? { pageSlug: mapped.pageSlug, pendingId: mapped.id } : null
+        })()
+
+        if (vaultRelPath) newNoteByPath.set(vaultRelPath, myTail)
+        await myTail
       }),
       // propose_skill tool fired (Phase 2B). The sidecar relays a proposed
       // reusable skill; we stage it in the dedicated skillProposalStore (NOT

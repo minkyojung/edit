@@ -58,7 +58,7 @@ export function diffPairsToLines(
  * (appendMarkdownToWikiPage), `replace`/`delete` splice the first `before` match, a
  * whole-file replace (no `before`) swaps the body. Used to derive the "after" page so
  * the diff can show document context, not just the changed fragment. */
-function applyEditsToText(snapshot: string, edits: PendingEdit[]): string {
+export function applyEditsToText(snapshot: string, edits: PendingEdit[]): string {
   let doc = snapshot
   for (const e of edits) {
     if (e.kind === 'add') {

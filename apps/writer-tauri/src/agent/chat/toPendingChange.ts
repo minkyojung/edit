@@ -27,6 +27,7 @@ import { createCustomWikiPage, createGenericNote } from '@/state/wikiService'
 import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { stripDuplicateTitleHeading } from '@/lib/markdownText'
 import { splitFrontmatter } from '@/lib/frontmatter'
+import { applyEditsToText } from '@/lib/pendingDiff'
 
 export interface ChatEditPendingPayload {
   runId: string
@@ -276,7 +277,7 @@ function resolveSlugForVaultPath(
  * a basename fallback for symlinked vault hosts. Kept inline rather
  * than imported to keep the chat → store adapter self-contained;
  * unifying the helpers is a Phase F cleanup. */
-function toVaultRelative(filePath: string, vaultPath: string | null): string {
+export function toVaultRelative(filePath: string, vaultPath: string | null): string {
   if (vaultPath) {
     const root = vaultPath.endsWith('/') ? vaultPath : vaultPath + '/'
     if (filePath.startsWith(root)) return filePath.slice(root.length)
@@ -362,6 +363,31 @@ function buildEditsForTool(
     return out
   }
   return []
+}
+
+/** Re-derive the intended body when a SECOND (or later) write-side tool call
+ * in one turn targets a file already staged as a new note THIS turn (e.g.
+ * Write creates it, then Edit refines it) — the race `materializeRace.test.ts`
+ * reproduces without coordination. `newFileContentFor` is wrong here: it
+ * assumes "nothing exists yet" (Edit's `new_string` IS the whole body), which
+ * only holds for the very FIRST call. For a follow-up call there IS a staged
+ * body (from the prior call this turn) to edit against, so this reuses
+ * `buildEditsForTool` — the same existing-doc replace semantics
+ * (Edit → replace old_string→new_string, Write → whole-doc replace,
+ * MultiEdit → sequential replaces) — applied via the applier's own
+ * `applyEditsToText`, so there is exactly one implementation of "how an edit
+ * lands," not a second, divergent one.
+ *
+ * Returns `currentBody` unchanged when the tool's edit doesn't apply (e.g. an
+ * Edit whose `old_string` isn't found in the staged body) — the caller can
+ * detect this via `=== currentBody` and surface it instead of silently
+ * "succeeding" with nothing changed. */
+export function mergeEditIntoStagedBody(
+  currentBody: string,
+  toolName: string,
+  input: Record<string, unknown>,
+): string {
+  return applyEditsToText(currentBody, buildEditsForTool(toolName, input))
 }
 
 function readString(v: unknown): string {

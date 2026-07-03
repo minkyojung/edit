@@ -1,18 +1,21 @@
 // Deterministic close for editor (project) windows.
 //
 // macOS-native model: closing a window just CLOSES it — it doesn't quit the
-// app and doesn't pop the launcher back up. The app stays alive with no
-// windows; re-activating it (dock click → Rust RunEvent::Reopen) reveals the
-// launcher. So this handler only flushes, optionally confirms, and destroys.
+// app. To "resume where you left off", the LAST editor window is HIDDEN rather
+// than destroyed, so its full live state (scroll, cursor, unsaved buffer) is
+// preserved; re-activating the app (dock click → Rust RunEvent::Reopen) shows
+// it straight back. Any non-last window really destroys (you still have others).
 //
-//   preventDefault → flush → confirm if streaming → destroy (always runs)
+//   preventDefault → flush → confirm if streaming → hide (if last) | destroy
 //
 // preventDefault stops Tauri's implicit destroy so the close happens exactly
-// once, on our terms; the destroy is unconditional so a stuck-open window
-// (the old bug) can't happen. Editor windows only (WINDOW_ROOT set).
+// once, on our terms. Editor windows only (WINDOW_ROOT set).
 
 import { useEffect } from 'react'
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+import {
+  getAllWebviewWindows,
+  getCurrentWebviewWindow,
+} from '@tauri-apps/api/webviewWindow'
 import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useCloseConfirmStore } from '@/state/closeConfirmStore'
@@ -43,12 +46,23 @@ export function useWindowClose() {
           if (!proceed) return // keep the window open
         }
 
-        // Just close this window. The launcher is NOT shown here — the app
-        // stays alive windowless and reveals the launcher on reopen (dock
-        // click), the macOS-native behavior.
-        await current
-          .destroy()
-          .catch((e) => console.warn('[close] destroy failed', e))
+        // Last editor window → HIDE it so reopen resumes this exact note
+        // (state preserved). Otherwise really destroy it (other windows
+        // remain). Guarded so a failure can't strand a half-closed window.
+        try {
+          const all = await getAllWebviewWindows()
+          const others = all.filter(
+            (w) => w.label !== current.label && w.label.startsWith('project-'),
+          )
+          if (others.length === 0) {
+            await current.hide()
+          } else {
+            await current.destroy()
+          }
+        } catch (e) {
+          console.warn('[close] close failed', e)
+          await current.destroy().catch(() => {})
+        }
       })
       .then((fn) => {
         unlisten = fn

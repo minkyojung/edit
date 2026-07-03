@@ -442,11 +442,28 @@ pub fn run() {
                 app.set_menu(menu)?;
 
                 app.on_menu_event(|app, event| {
-                    let id = event.id().as_ref();
-                    if id == "quit" || id == "close-window" {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.emit("app:close-requested", ());
+                    match event.id().as_ref() {
+                        // ⌘Q — quit the whole app. The frontend confirms if
+                        // chats are streaming, then exits.
+                        "quit" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.emit("app:close-requested", ());
+                            }
                         }
+                        // ⌘W — close the FOCUSED window only (macOS-native),
+                        // exactly like the native red X. `.close()` fires
+                        // CloseRequested → useWindowClose (editor windows)
+                        // flushes / confirms / destroys. Does NOT quit.
+                        "close-window" => {
+                            let focused = app
+                                .webview_windows()
+                                .into_values()
+                                .find(|w| w.is_focused().unwrap_or(false));
+                            if let Some(window) = focused {
+                                let _ = window.close();
+                            }
+                        }
+                        _ => {}
                     }
                 });
 
@@ -517,18 +534,27 @@ pub fn run() {
                     }
                 }
                 // Dock-icon click / app re-activation (macOS). Closing all
-                // windows keeps the app alive (windowless); reopening reveals
-                // the launcher. Only act when nothing is visible — otherwise
-                // macOS's default (focus an existing window) is correct.
+                // windows keeps the app alive; reopening RESUMES the last note:
+                // prefer showing a hidden project window (its state is intact),
+                // and only fall back to the launcher when no project window
+                // exists. Only act when nothing is visible — otherwise macOS's
+                // default (focus an existing window) is correct.
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen {
                     has_visible_windows,
                     ..
                 } => {
                     if !has_visible_windows {
-                        if let Some(launcher) = app_handle.get_webview_window("main") {
-                            let _ = launcher.show();
-                            let _ = launcher.set_focus();
+                        let windows = app_handle.webview_windows();
+                        let project = windows
+                            .iter()
+                            .find(|(label, _)| label.starts_with("project-"))
+                            .map(|(_, w)| w.clone());
+                        let target =
+                            project.or_else(|| app_handle.get_webview_window("main"));
+                        if let Some(window) = target {
+                            let _ = window.show();
+                            let _ = window.set_focus();
                         }
                     }
                 }
