@@ -29,7 +29,6 @@ import {
   IconArrowsMinimize,
   IconEdit,
   IconLayoutSidebarRightFilled,
-  IconMessageCircleFilled,
   IconSearch,
 } from '@tabler/icons-react'
 import { useMatch, useNavigate } from 'react-router-dom'
@@ -108,18 +107,15 @@ export function EditorHeader({
           <CompactToggle compact />
           <CompactHeaderActions />
         </div>
-        {/* Filename pinned and centered on the FULL window width — not the
-            leftover space between the traffic lights and the toggle. Absolute +
-            symmetric padding (traffic-light-w each side) keeps it at the true
-            center while clearing both side clusters, so a long name truncates
-            instead of sliding under them. In-body title is hidden in compact,
-            so this is the single title surface. */}
+        {/* Filename ALWAYS at the true window center (left-1/2 + -translate-x),
+            capped by max-width so it clears the traffic lights (left) and the
+            buttons (right) and truncates with an ellipsis when long instead of
+            overlapping them. 15rem ≈ both side clusters, so the cap keeps the
+            centered box between them. The in-body title is hidden in compact,
+            so this is the single title. */}
         <div
-          className="pointer-events-none absolute inset-x-0 flex justify-center"
-          style={{
-            paddingLeft: 'var(--traffic-light-w)',
-            paddingRight: 'var(--traffic-light-w)',
-          }}
+          className="pointer-events-none absolute left-1/2 top-0 flex h-full -translate-x-1/2 items-center"
+          style={{ maxWidth: 'calc(100% - 15rem)' }}
         >
           <EditorTabs pinned />
         </div>
@@ -225,18 +221,6 @@ function CompactHeaderActions() {
   const navigate = useNavigate()
   const createNew = useDocsStore((s) => s.createNew)
   const openPalette = useCommandPaletteStore((s) => s.openPalette)
-  const toggleWindow = useWindowModeStore((s) => s.toggle)
-  const openChat = useLayoutStore((s) => s.openRightPanelInMode)
-  const requestChatFocus = useLayoutStore((s) => s.requestChatInputFocus)
-
-  // Ask AI: leave the compact panel and land in the full editor with chat
-  // open + focused. The note being written is the active doc, so the agent
-  // already has it in context — no explicit attach needed.
-  const handleAskAI = () => {
-    openChat('chat')
-    void toggleWindow() // compact → full
-    requestChatFocus()
-  }
 
   const handleCreateNew = () => {
     createNew()
@@ -283,20 +267,6 @@ function CompactHeaderActions() {
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">Search · ⌘K</TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="iconGhost"
-            size="icon-sm"
-            onClick={handleAskAI}
-            className="cursor-pointer"
-            aria-label="Ask AI"
-          >
-            <IconMessageCircleFilled size={16} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">Ask AI</TooltipContent>
       </Tooltip>
     </>
   )
