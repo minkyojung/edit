@@ -239,6 +239,12 @@ pub async fn relocate_git_dir(vault_path: &str) -> Result<(), String> {
     if !in_tree.exists() {
         return Ok(());
     }
+    // A `.git` FILE is our own gitdir POINTER (written by write_vault_git_pointer
+    // so a bare `git` inside the vault resolves to the external git-dir), not a
+    // real in-tree repo — never relocate it.
+    if in_tree.is_file() {
+        return Ok(());
+    }
     let external = appdata::vault_git_dir(vault_path).join(".git");
     if external.exists() {
         // External already set up — don't clobber it (shouldn't normally
@@ -250,6 +256,36 @@ pub async fn relocate_git_dir(vault_path: &str) -> Result<(), String> {
     // passes --work-tree explicitly, so this is belt-and-suspenders for any
     // external `git` CLI use against this repo.)
     run_git(vault_path, &["config", "core.worktree", vault_path]).await?;
+    Ok(())
+}
+
+/// Write a one-line `.git` FILE (a "gitdir pointer") in the vault root so a
+/// bare `git` invocation inside the vault resolves to the external app-data
+/// git-dir. This is what lets the agent run plain `git log` / `git show` /
+/// `git revert` from the vault (via Bash) without knowing the app-data path —
+/// checkpoints are discoverable the ordinary way. The heavy `.git/` object
+/// store stays in app-data (so the vault remains sync-clean); only this
+/// one-line pointer lives in the vault.
+///
+/// Idempotent: only rewrites when the content differs, so it doesn't touch the
+/// file (or wake the vault watcher) on every boot. Caller must ensure the
+/// external git-dir already exists.
+fn write_vault_git_pointer(vault_path: &str) -> Result<(), String> {
+    let external = appdata::vault_git_dir(vault_path).join(".git");
+    let pointer = Path::new(vault_path).join(".git");
+    // Never overwrite a real in-tree repo dir — relocate_git_dir handles those
+    // and runs before this. If a `.git` DIR is somehow still here, bail rather
+    // than clobber it.
+    if pointer.is_dir() {
+        return Ok(());
+    }
+    let content = format!("gitdir: {}\n", external.display());
+    if let Ok(existing) = std::fs::read_to_string(&pointer) {
+        if existing == content {
+            return Ok(());
+        }
+    }
+    std::fs::write(&pointer, content).map_err(|e| format!("write .git pointer failed: {e}"))?;
     Ok(())
 }
 
@@ -271,6 +307,10 @@ pub async fn git_init(vault_path: String) -> Result<(), String> {
     // external git-dir. Fast no-op — called on every boot.
     let external = appdata::vault_git_dir(&vault_path).join(".git");
     if external.exists() {
+        // Repo already set up. Ensure the in-vault gitdir pointer exists even
+        // for vaults whose repo predates it, so bare `git` inside the vault
+        // resolves here.
+        write_vault_git_pointer(&vault_path)?;
         return Ok(());
     }
 
@@ -362,6 +402,10 @@ pub async fn git_init(vault_path: String) -> Result<(), String> {
     // (LLM ingest, user edits) move HEAD forward; the bookmark stays
     // at this base until the user clicks "Mark all reviewed".
     run_git(&vault_path, &["update-ref", LAST_REVIEWED_REF, "HEAD"]).await?;
+
+    // Drop the in-vault gitdir pointer so a bare `git` inside the vault finds
+    // this (external) repo — lets the agent revert/inspect via plain git.
+    write_vault_git_pointer(&vault_path)?;
 
     Ok(())
 }
