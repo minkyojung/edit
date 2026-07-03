@@ -292,6 +292,17 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // diff on the target page. There is no separate tray —
         // `pendingChangesStore` is the single source of truth for chat
         // edits, and every surface reads it.
+        // Audit instrumentation (read-only, safe to leave on): logs each
+        // edit-pending event's arrival so a same-turn race on one file_path —
+        // two events resolving `knownDocs` before either has registered the
+        // other's note (materializeRace.test.ts reproduces this in isolation)
+        // — shows up as two log lines with the same filePath close in time.
+        console.log('[chat] edit-pending', {
+          runId: e.payload.runId,
+          toolName: e.payload.toolName,
+          filePath: (e.payload.input as { file_path?: unknown }).file_path,
+          atMs: Date.now(),
+        })
         const payload = {
           runId: e.payload.runId,
           pendingId: e.payload.pendingId,
