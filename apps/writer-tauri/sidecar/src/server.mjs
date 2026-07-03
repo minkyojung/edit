@@ -691,6 +691,12 @@ export class Server {
       // heartbeat per lane. Increases event volume — every subagent step
       // streams — which is the deliberate cost of the drill-down view.
       forwardSubagentText: true,
+      // Periodic AI-generated progress summaries for running subagents — a short
+      // present-tense line ("Analyzing the wiki structure…") emitted on
+      // `task_progress.summary` every ~30s, so each lane shows what it's DOING
+      // in human terms instead of only a "N tools · last: Read" counter. Forks
+      // the subagent's cached context, so cost is minimal.
+      agentProgressSummaries: true,
       // Auto-summarize older turns once context approaches the model
       // limit, instead of erroring out. autoCompactEnabled lives in
       // Settings (sdk.d.ts:5073) — surfaced via the `settings` flag

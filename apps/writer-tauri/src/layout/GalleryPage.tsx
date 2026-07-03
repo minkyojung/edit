@@ -362,7 +362,7 @@ const toolPartFx = (toolName: string, input: unknown): MessagePart => ({
 // running lane (spinner) to a settled one (summary only).
 const taskPartFx = (
   description: string,
-  task: { toolUses?: number; totalTokens?: number; lastTool?: string },
+  task: { toolUses?: number; totalTokens?: number; lastTool?: string; summary?: string },
   done: boolean,
 ): MessagePart => ({
   id: `p-${mockTurnSeq++}`,
@@ -958,6 +958,24 @@ export function GalleryPage() {
         </Subgroup>
 
         <Subgroup title="Subagent fan-out — parallel lanes (orchestration)">
+          <Scenario
+            title="Streaming — with AI progress summaries (agentProgressSummaries): each lane says what it's DOING"
+            turns={[
+              userTurn('Analyze the vault and summarize its structure.'),
+              mockTurn({
+                status: 'streaming',
+                parts: [
+                  reasoningPart('Four areas — fanning out one subagent each.'),
+                  taskPartFx('Wiki pages analysis', { toolUses: 6, totalTokens: 14000, lastTool: 'Read', summary: 'Reading wiki pages and mapping their link structure' }, false),
+                  taskPartFx('Daily notes analysis', { toolUses: 3, totalTokens: 9000, lastTool: 'Glob', summary: 'Scanning daily notes for recurring themes' }, false),
+                  taskPartFx('Articles analysis', { toolUses: 4, totalTokens: 11000, lastTool: 'Grep', summary: 'Grouping saved articles by topic' }, false),
+                  // No summary yet → falls back to the raw counter, so you can
+                  // compare the two side by side.
+                  taskPartFx('Vault health check', { toolUses: 2, totalTokens: 4000, lastTool: 'Bash' }, false),
+                ],
+              }),
+            ]}
+          />
           <Scenario
             title="Streaming — orchestrator delegated 3 notes, lanes running in parallel"
             turns={[

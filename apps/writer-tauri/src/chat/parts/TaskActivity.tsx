@@ -31,12 +31,15 @@ export function TaskActivity({ part, steps }: { part: ToolPart; steps?: ReactNod
         .filter(Boolean)
         .join(' · ')
     : undefined
+  // Prefer the AI-generated summary ("Analyzing the outline") — it says what the
+  // subagent is DOING in plain terms. Fall back to the raw tool/token counter.
+  const activity = task?.summary?.trim() || heartbeat
 
   return (
     <ActivityRow
       icon={<IconRobot size={14} />}
       label={description}
-      preview={heartbeat || undefined}
+      preview={activity || undefined}
       trailing={
         running ? (
           <IconLoader2 size={12} className="shrink-0 animate-spin text-muted-foreground" />

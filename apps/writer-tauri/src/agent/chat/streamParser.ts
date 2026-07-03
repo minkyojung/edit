@@ -251,6 +251,8 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
                 typeof u.total_tokens === 'number' ? u.total_tokens : part.task?.totalTokens,
               lastTool:
                 typeof ev.last_tool_name === 'string' ? ev.last_tool_name : part.task?.lastTool,
+              summary:
+                typeof ev.summary === 'string' ? ev.summary : part.task?.summary,
             },
           })
         }

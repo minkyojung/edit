@@ -203,6 +203,9 @@ export interface ChatEvent {
     tool_use_id?: string
     description?: string
     last_tool_name?: string
+    // task_progress — an AI-generated present-tense progress line for the
+    // running subagent (agentProgressSummaries), e.g. "Analyzing the outline".
+    summary?: string
     usage?: {
       total_tokens?: number
       tool_uses?: number

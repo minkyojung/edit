@@ -368,6 +368,9 @@ export interface ToolPart {
     toolUses?: number
     totalTokens?: number
     lastTool?: string
+    /** AI-generated "what it's doing now" line (agentProgressSummaries), e.g.
+     * "Analyzing the wiki structure". Preferred over the raw tool counter. */
+    summary?: string
   }
   /** See {@link TextPart.parentToolUseId}. A tool call made BY a subagent
    * carries its parent Task's id here, so it nests in that lane. */
