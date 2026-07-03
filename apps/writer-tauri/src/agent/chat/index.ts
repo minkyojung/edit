@@ -86,6 +86,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       'propose_edit',
       'propose_write',
       'propose_skill',
+      // File-and-forget: when the agent organizes, it moves a note OUT of the
+      // capture folder into its resting place. Auto-applied (reversible), not
+      // queued — see the claude:move-note handler below.
+      'move_note',
     ],
     appendDocument = true,
     viewingFilePath,
@@ -350,124 +354,184 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           (vaultRelPath && newNoteByPath.get(vaultRelPath)) || Promise.resolve(null)
 
         const myTail = (async (): Promise<{ pageSlug: string; pendingId: string } | null> => {
-          const prior = await priorTail
-          if (prior) {
-            // A previous tool call THIS turn already materialized a new note
-            // for this path — merge this call's edit into its staged body
-            // instead of independently mapping/materializing (which is what
-            // created the duplicate note before this fix).
-            const current = usePendingChangesStore.getState().byId[prior.pendingId]
-            const currentAfter = current?.edits[0]?.after ?? ''
-            const mergedBody = mergeEditIntoStagedBody(
-              currentAfter,
-              e.payload.toolName,
-              e.payload.input,
-            )
-            if (mergedBody === currentAfter) {
-              // The tool's edit didn't land against the staged body (e.g. an
-              // Edit whose old_string isn't there) — surface it (A2's
-              // principle: don't silently no-op) instead of pretending it
-              // merged.
-              notify.markCantApply()
+          // The whole body is wrapped in try/catch: without this, a throw
+          // anywhere below (materialize, disk write, ...) would reject this
+          // promise, and since it's exactly what's stored in `newNoteByPath`,
+          // EVERY later same-path event this turn would re-throw the same
+          // rejection at `await priorTail` and silently no-op forever — a
+          // worse failure than the race this mutex was built to close. On
+          // catch, log and resolve to null so later same-path events fall
+          // through to independent handling instead of being poisoned.
+          try {
+            const prior = await priorTail
+            if (prior) {
+              // A previous tool call THIS turn already materialized a new
+              // note for this path — merge this call's edit into its staged
+              // body instead of independently mapping/materializing (which
+              // is what created the duplicate note before this fix).
+              const current = usePendingChangesStore.getState().byId[prior.pendingId]
+              if (!current) {
+                console.warn(
+                  '[chat] edit-pending merge: pendingId missing from store',
+                  prior.pendingId,
+                )
+                return prior
+              }
+              if (current.status === 'rejected') {
+                // The user (or an earlier failure) already declined this
+                // note — don't resurrect it with a late write.
+                return prior
+              }
+              const currentAfter = current.edits[0]?.after ?? ''
+              const mergedBody = mergeEditIntoStagedBody(
+                currentAfter,
+                e.payload.toolName,
+                e.payload.input,
+              )
+              if (mergedBody === currentAfter) {
+                // The tool's edit didn't land against the staged body (e.g.
+                // an Edit whose old_string isn't there) — surface it (A2's
+                // principle: don't silently no-op) instead of pretending it
+                // merged.
+                notify.markCantApply()
+                return prior
+              }
+              if (current.status === 'pending') {
+                // Still awaiting a decision — update the staged proposal.
+                usePendingChangesStore.getState().push({
+                  ...current,
+                  edits: [{ ...current.edits[0], after: mergedBody }],
+                })
+                if (autoAcceptEdits) {
+                  const ok = await applyWriteWikiPage(
+                    prior.pageSlug,
+                    mergedBody,
+                    prior.pendingId,
+                  )
+                  if (ok) {
+                    usePendingChangesStore.getState().accept(prior.pendingId, mergedBody)
+                  } else {
+                    // Don't call accept() on a failed write — that would
+                    // tell every surface "done" over content that never
+                    // reached disk. Leave the change pending so the user can
+                    // still Keep it manually after the toast.
+                    notify.autoAcceptWriteFailed()
+                  }
+                }
+              } else {
+                // status === 'accepted': the store's push/accept would
+                // silently no-op here (its "already decided" guard) — this is
+                // exactly how this merge branch used to lose a second call's
+                // content while auto-accept had already settled the first.
+                // Write directly and check the result instead of assuming success.
+                const ok = await applyWriteWikiPage(
+                  prior.pageSlug,
+                  mergedBody,
+                  prior.pendingId,
+                )
+                if (!ok) notify.autoAcceptWriteFailed()
+              }
+              // Don't navigate again — the first call already opened the note.
               return prior
             }
-            usePendingChangesStore.getState().push({
-              ...current,
-              edits: [{ ...current.edits[0], after: mergedBody }],
-            })
-            if (autoAcceptEdits) {
-              // Same populate-before-accept ordering as the first call's
-              // auto-accept path below — the note may already be open from
-              // the first call's navigate, so this keeps the on-disk /
-              // in-editor body in sync with the newly merged staged body.
-              await applyWriteWikiPage(prior.pageSlug, mergedBody, prior.pendingId)
-              usePendingChangesStore.getState().accept(prior.pendingId, mergedBody)
-            }
-            // Don't navigate again — the first call already opened the note.
-            return prior
-          }
 
-          // No prior claim on this path this turn — handle it exactly as
-          // before this fix.
-          //
-          // Ensure the target daily exists before we snapshot the catalog. The
-          // model routes inbox actions to `daily/<date>.md`; in a headless run
-          // that daily may not be in the catalog yet, so the path wouldn't
-          // resolve and we'd materialize a phantom note. openDaily is
-          // find-or-create — after it, the real daily resolves and the edit
-          // appends to it instead.
-          const dailyDate = filePathRaw?.toString().match(
-            /(?:^|\/)daily\/(\d{4}-\d{2}-\d{2})\.md$/,
-          )?.[1]
-          if (dailyDate) {
-            await useDocsStore.getState().openDaily(dailyDate)
-          }
-          const ctx = {
-            knownDocs: useDocsStore.getState().knownDocs,
-            vaultPath: getActiveVaultPath(),
-            threadId,
-            userRequest: triggeringRequest,
-          }
-          // First the pure mapper (existing doc). If it can't resolve a
-          // catalog slug, the one recoverable miss is a `propose_write`
-          // creating a brand-new wiki page: materialize the page (so it
-          // gets a slug) and stage its body. Anything still unmapped is a
-          // genuine miss — logged, no decision surface.
-          let mapped = mapChatEditToPendingChange(payload, ctx)
-          let createdNewNote = false
-          if (!mapped) {
-            mapped = await materializeChatNewWikiPage(payload, ctx)
-            createdNewNote = !!mapped
-          }
-          if (!mapped) {
-            console.warn(
-              '[chat] edit-pending unmappable; no decision surface',
-              { toolName: e.payload.toolName, pendingId: e.payload.pendingId },
-            )
+            // No prior claim on this path this turn — handle it exactly as
+            // before this fix.
+            //
+            // Ensure the target daily exists before we snapshot the catalog. The
+            // model routes inbox actions to `daily/<date>.md`; in a headless run
+            // that daily may not be in the catalog yet, so the path wouldn't
+            // resolve and we'd materialize a phantom note. openDaily is
+            // find-or-create — after it, the real daily resolves and the edit
+            // appends to it instead.
+            const dailyDate = filePathRaw?.toString().match(
+              /(?:^|\/)daily\/(\d{4}-\d{2}-\d{2})\.md$/,
+            )?.[1]
+            if (dailyDate) {
+              await useDocsStore.getState().openDaily(dailyDate)
+            }
+            const ctx = {
+              knownDocs: useDocsStore.getState().knownDocs,
+              vaultPath: getActiveVaultPath(),
+              threadId,
+              userRequest: triggeringRequest,
+            }
+            // First the pure mapper (existing doc). If it can't resolve a
+            // catalog slug, the one recoverable miss is a `propose_write`
+            // creating a brand-new wiki page: materialize the page (so it
+            // gets a slug) and stage its body. Anything still unmapped is a
+            // genuine miss — logged, no decision surface.
+            let mapped = mapChatEditToPendingChange(payload, ctx)
+            let createdNewNote = false
+            if (!mapped) {
+              mapped = await materializeChatNewWikiPage(payload, ctx)
+              createdNewNote = !!mapped
+            }
+            if (!mapped) {
+              console.warn(
+                '[chat] edit-pending unmappable; no decision surface',
+                { toolName: e.payload.toolName, pendingId: e.payload.pendingId },
+              )
+              return null
+            }
+
+            usePendingChangesStore.getState().push(mapped)
+            // acceptEdits mode: apply immediately instead of parking for review.
+            // The change is rendered (diff preview) and then auto-accepted, so the
+            // applier writes it to disk without a manual Keep — same accept path
+            // the Keep button drives, just triggered automatically. Undo still
+            // flows through the editor (Cmd-Z → reopen).
+            if (autoAcceptEdits) {
+              if (createdNewNote) {
+                // A brand-new note isn't open in any editor yet, so the async
+                // applier would RACE the navigate-to-open below: if the editor
+                // mounts before the applier's write lands, it reads an empty
+                // buffer and the body never appears (the change is already
+                // 'accepted', so the in-buffer review won't re-render it). Write
+                // the body into the handle HERE and await it, so the note is
+                // populated before we open it. Accept with the body as
+                // resolvedResult so the applier's own write is an idempotent
+                // whole-doc no-op (bodyMarkdown already matches) rather than a
+                // second, doubling append.
+                const body = mapped.edits.map((ed) => ed.after ?? '').join('\n\n')
+                const ok = await applyWriteWikiPage(mapped.pageSlug, body, mapped.id)
+                if (ok) {
+                  usePendingChangesStore.getState().accept(mapped.id, body)
+                } else {
+                  // The note WAS materialized (it has a slug + catalog entry) —
+                  // only the write failed. Leave it pending so the user can
+                  // retry via a manual Keep, and say so immediately (no later
+                  // checkpoint will catch this in auto-accept mode).
+                  notify.autoAcceptWriteFailed()
+                }
+              } else {
+                // Existing note: its editor is already mounted, so the applier's
+                // live-CM write path updates the open buffer with no race.
+                usePendingChangesStore.getState().accept(mapped.id)
+              }
+            }
+            // Open the new note. In acceptEdits mode it's already populated
+            // (above); on interactive runs the editor mounts, subscribes to the
+            // pending store, and renders the staged body as a green preview.
+            // Existing-note edits are left alone (the suggestion card's
+            // click-to-jump handles those; auto-jumping on every edit is intrusive).
+            if (createdNewNote && navigateToNewNotes) {
+              navigateToNoteBySlug(mapped.pageSlug)
+            }
+            // Only claim this path for coordination when a note was ACTUALLY
+            // newly materialized — an edit that resolved to an already-existing
+            // doc isn't racing anything (nothing was created), so a later
+            // same-path event should handle itself independently rather than
+            // merging into an unrelated existing-doc PendingChange.
+            return createdNewNote ? { pageSlug: mapped.pageSlug, pendingId: mapped.id } : null
+          } catch (err) {
+            console.error('[chat] edit-pending handler failed', {
+              toolName: e.payload.toolName,
+              filePath: filePathRaw,
+              err,
+            })
             return null
           }
-
-          usePendingChangesStore.getState().push(mapped)
-          // acceptEdits mode: apply immediately instead of parking for review.
-          // The change is rendered (diff preview) and then auto-accepted, so the
-          // applier writes it to disk without a manual Keep — same accept path
-          // the Keep button drives, just triggered automatically. Undo still
-          // flows through the editor (Cmd-Z → reopen).
-          if (autoAcceptEdits) {
-            if (createdNewNote) {
-              // A brand-new note isn't open in any editor yet, so the async
-              // applier would RACE the navigate-to-open below: if the editor
-              // mounts before the applier's write lands, it reads an empty
-              // buffer and the body never appears (the change is already
-              // 'accepted', so the in-buffer review won't re-render it). Write
-              // the body into the handle HERE and await it, so the note is
-              // populated before we open it. Accept with the body as
-              // resolvedResult so the applier's own write is an idempotent
-              // whole-doc no-op (bodyMarkdown already matches) rather than a
-              // second, doubling append.
-              const body = mapped.edits.map((ed) => ed.after ?? '').join('\n\n')
-              await applyWriteWikiPage(mapped.pageSlug, body, mapped.id)
-              usePendingChangesStore.getState().accept(mapped.id, body)
-            } else {
-              // Existing note: its editor is already mounted, so the applier's
-              // live-CM write path updates the open buffer with no race.
-              usePendingChangesStore.getState().accept(mapped.id)
-            }
-          }
-          // Open the new note. In acceptEdits mode it's already populated
-          // (above); on interactive runs the editor mounts, subscribes to the
-          // pending store, and renders the staged body as a green preview.
-          // Existing-note edits are left alone (the suggestion card's
-          // click-to-jump handles those; auto-jumping on every edit is intrusive).
-          if (createdNewNote && navigateToNewNotes) {
-            navigateToNoteBySlug(mapped.pageSlug)
-          }
-          // Only claim this path for coordination when a note was ACTUALLY
-          // newly materialized — an edit that resolved to an already-existing
-          // doc isn't racing anything (nothing was created), so a later
-          // same-path event should handle itself independently rather than
-          // merging into an unrelated existing-doc PendingChange.
-          return createdNewNote ? { pageSlug: mapped.pageSlug, pendingId: mapped.id } : null
         })()
 
         if (vaultRelPath) newNoteByPath.set(vaultRelPath, myTail)
@@ -498,6 +562,34 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           updates: e.payload.updates ?? null,
         })
       }),
+      // move_note MCP tool: relocate a note out of the capture folder into its
+      // resting place. Auto-applied (no review card) — a move is reversible and
+      // loses no content. Resolve the note by its (vault-relative) path and hand
+      // it to docsStore.moveDocToFolder, which rewrites relPath and lets the
+      // flush machinery move the file on disk.
+      listen<{ runId: string; fromPath: string; toFolder: string }>(
+        'claude:move-note',
+        (e) => {
+          if (e.payload.runId !== runId) return
+          const relFrom = toVaultRelative(e.payload.fromPath, getActiveVaultPath())
+          if (!relFrom) {
+            console.warn('[chat] move-note: unresolved path', e.payload.fromPath)
+            return
+          }
+          const doc = useDocsStore
+            .getState()
+            .knownDocs.find((d) => d.relPath === relFrom)
+          if (!doc) {
+            console.warn('[chat] move-note: no note at', relFrom)
+            return
+          }
+          // Strip any leading/trailing slashes so 'people/' and '/people' both
+          // land as the folder 'people'. '' would target the vault root.
+          const folder = e.payload.toFolder.replace(/^\/+|\/+$/g, '')
+          const ok = useDocsStore.getState().moveDocToFolder(doc.slug, folder)
+          console.log('[chat] move-note', { from: relFrom, toFolder: folder, ok })
+        },
+      ),
       listen<DoneEvent>('claude:done', (e) => {
         if (e.payload.runId !== runId) return
         recordContextUsage(threadId, model, e.payload.usage, e.payload.contextUsage)

@@ -15,7 +15,7 @@
 import { StateField, StateEffect, EditorState, Transaction, type Extension, type Range } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
 import { invertedEffects } from '@codemirror/commands'
-import { usePendingChangesStore } from '@/state/pendingChangesStore'
+import { usePendingChangesStore, type PendingChange } from '@/state/pendingChangesStore'
 import { proofRawRangeProvider, type RawRange } from '@/editor/proofRawRanges'
 import {
   planAdditional,
@@ -216,22 +216,37 @@ const proofTheme = EditorView.theme({
 })
 
 // ── Reconciler: materialize one batch of pending proposals ───────────────────
-const serialise = (pending: { id: string }[]) => pending.map((c) => c.id).join('|')
+/** A change's current content, cheap to compare. Used both to decide whether
+ * the store subscription below should even wake up the reconciler, and (per
+ * materialized change) whether its already-inserted green text is stale. A
+ * same-id re-push with unchanged content (the common case — most store
+ * updates are unrelated fields ticking) must NOT retrigger a reconcile; a
+ * same-id re-push with DIFFERENT content (e.g. a second same-turn tool call
+ * merged into this staged proposal — see mergeEditIntoStagedBody) MUST. */
+function contentFingerprint(c: PendingChange): string {
+  return c.resolvedResult ?? c.edits[0]?.after ?? ''
+}
+const serialise = (pending: PendingChange[]) =>
+  pending.map((c) => `${c.id}:${contentFingerprint(c)}`).join(' ')
 
 export function cmInBufferReview(slug: string): Extension {
-  // Ids ever materialized in THIS editor session, so a change is inserted EXACTLY
-  // once. Survives undo (it's not CM state), so an undo that re-opens a change
-  // (status → pending) can't make the reconciler re-insert it — that re-insertion
-  // was the duplication. Pruned when the change leaves the store entirely.
-  const everInserted = new Set<string>()
+  // Content fingerprint recorded at the moment each change was last
+  // materialized in THIS editor session, keyed by change id — so a change is
+  // inserted exactly once per DISTINCT content (not once per id forever).
+  // Survives undo (it's not CM state), so an undo that re-opens a change
+  // (status → pending) can't make the reconciler re-insert it unchanged —
+  // that re-insertion was the duplication this map originally guarded
+  // against. Pruned when the change leaves the store entirely.
+  const insertedFingerprint = new Map<string, string>()
 
   const reconcile = (view: EditorView) => {
     const store = usePendingChangesStore.getState()
     const mats = view.state.field(matField)
-    const pendingIds = new Set(store.pendingForPage(slug).map((c) => c.id))
+    const pending = store.pendingForPage(slug)
+    const pendingIds = new Set(pending.map((c) => c.id))
     // Forget ids the store has fully dropped (pruned) so a genuinely new proposal
     // reusing... (ids are uuids, so this is just housekeeping).
-    for (const id of everInserted) if (!store.byId[id]) everInserted.delete(id)
+    for (const id of insertedFingerprint.keys()) if (!store.byId[id]) insertedFingerprint.delete(id)
 
     // 1) CLEANUP — a materialized proposal was DECIDED elsewhere (e.g. the chat
     //    panel). The in-buffer review OWNS the buffer: rejected → delete the green
@@ -254,15 +269,55 @@ export function cmInBufferReview(slug: string): Extension {
       return
     }
 
+    // 1.5) REFRESH — a materialized proposal is STILL pending, but its
+    //    content changed underneath the already-inserted green text (e.g. a
+    //    second same-turn tool call merged into this SAME pendingId's staged
+    //    body — see mergeEditIntoStagedBody — while this editor was already
+    //    showing the first call's preview). Without this, the buffer would
+    //    silently keep showing the stale text forever, and Keep would commit
+    //    that stale text, discarding the merge. Remove the old red/green
+    //    hunks entirely (both sides — not just one, unlike CLEANUP) and drop
+    //    the recorded fingerprint so the INSERT step below re-materializes it
+    //    fresh with the CURRENT content on the next pass.
+    const stale = mats.filter(
+      (m) =>
+        pendingIds.has(m.changeId) &&
+        store.byId[m.changeId] &&
+        insertedFingerprint.get(m.changeId) !== contentFingerprint(store.byId[m.changeId]),
+    )
+    if (stale.length) {
+      const dels: { from: number; to: number }[] = []
+      const effects: StateEffect<unknown>[] = []
+      for (const m of stale) {
+        effects.push(dropChange.of(m.changeId))
+        for (const h of m.hunks) {
+          if (h.redTo > h.redFrom) dels.push({ from: h.redFrom, to: h.redTo })
+          if (h.greenTo > h.greenFrom) dels.push({ from: h.greenFrom, to: h.greenTo })
+        }
+        insertedFingerprint.delete(m.changeId)
+      }
+      view.dispatch({
+        changes: dels.sort((a, b) => a.from - b.from),
+        effects,
+        annotations: Transaction.addToHistory.of(false),
+      })
+      // Positions shifted and this change is no longer materialized — let a
+      // fresh pass (INSERT, below) re-plan it against the now-current doc,
+      // same deferral pattern the initial mount uses.
+      requestAnimationFrame(() => reconcile(view))
+      return
+    }
+
     // 2) INSERT — materialize fresh proposals, even ALONGSIDE already-materialized
     //    ones: plan against the clean doc (real minus existing green) and translate
-    //    the positions back into the real doc. `everInserted` keeps each change to
-    //    exactly one insertion (an undo-reopen can't re-insert it).
-    const fresh = store.pendingForPage(slug).filter((c) => !everInserted.has(c.id))
+    //    the positions back into the real doc. `insertedFingerprint` keeps each
+    //    change to exactly one insertion per distinct content (an undo-reopen
+    //    can't re-insert it unchanged).
+    const fresh = pending.filter((c) => !insertedFingerprint.has(c.id))
     if (!fresh.length) return
     const plan = planAdditional(view.state.doc.toString(), greenRangesOf(mats), fresh)
     if (!plan.mats.length) return
-    fresh.forEach((c) => everInserted.add(c.id))
+    fresh.forEach((c) => insertedFingerprint.set(c.id, contentFingerprint(c)))
     // Materializing is a SYSTEM action — keep it OUT of undo history so Cmd-Z hits
     // the user's own last edit, not "remove the proposal that just appeared".
     // addMat (not setMat) so existing proposals are preserved + position-mapped.

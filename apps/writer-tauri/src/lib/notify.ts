@@ -40,6 +40,14 @@ export const notify = {
   markCantAdd() {
     toast.error("Couldn't add the mark")
   },
+  /** Auto-accept mode wrote a note's staged body to disk and the write
+   * itself failed (disk error, permission) — surfaced immediately since
+   * there's no manual Keep step to catch it later. */
+  autoAcceptWriteFailed() {
+    toast.error("Couldn't save the AI's change", {
+      description: 'The file may be locked or unwritable',
+    })
+  },
 
   // ── Note CRUD ─────────────────────────────────────────────────
   cantCreateNote(opts: RetryOpts = {}) {
