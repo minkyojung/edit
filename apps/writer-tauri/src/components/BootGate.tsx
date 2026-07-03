@@ -38,7 +38,6 @@ import { migrateClaudeMdStructureV1 } from '@/lib/migrateClaudeMdStructureV1'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
 import { isTranslationProject } from '@/lib/translationProject'
 import { gitInit } from '@/lib/git'
-import { useGitStore } from '@/state/gitStore'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
@@ -173,7 +172,6 @@ export function BootGate({ children }: Props) {
       // backup/push stays disabled. Runs for every project kind.
       try {
         await gitInit()
-        void useGitStore.getState().refreshActivity()
       } catch (err) {
         console.warn('[boot] git init failed — checkpoints disabled', err)
       }

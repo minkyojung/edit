@@ -27,7 +27,6 @@ import {
   gitRevert,
   gitCurrentHead,
   gitShow,
-  LAST_REVIEWED_REF,
   type CommitInfo,
   type CommitDetail,
 } from '@/lib/git'
@@ -59,12 +58,6 @@ interface GitState {
    * Used to (a) decide whether the manual commit button is enabled
    * and (b) assemble the auto-generated commit message. */
   dirtyPaths: Set<string>
-
-  /** SHA of the most recent `ai-edit:` commit in `last-reviewed..HEAD`,
-   * from the UNFILTERED log — so it includes move-only commits that touch
-   * folders outside USER_PATH_PREFIXES (which `activity` drops). Drives the
-   * header "Undo last AI change" button; null when there's nothing to undo. */
-  lastAiEditSha: string | null
 
   /** SHAs of commits the user has expanded inline in the Review
    * panel. Multiple cards can be open at once. Toggling a sha here
@@ -246,7 +239,6 @@ export const useGitStore = create<GitState>((set, get) => {
     lastError: null,
     headSha: null,
     activity: [],
-    lastAiEditSha: null,
     dirtyPaths: new Set(),
     expandedShas: new Set<string>(),
     commitDetails: {},
@@ -274,22 +266,17 @@ export const useGitStore = create<GitState>((set, get) => {
     refreshActivity: async () => {
       try {
         const [commits, head] = await Promise.all([
-          // Diff against `last-reviewed` (planted at git_init, advanced by
-          // "Mark all reviewed"), NOT `@{u}`: GitHub backup/push is disabled,
-          // so there's no upstream and `@{u}` would always be empty — leaving
-          // the activity feed (and the Undo button) permanently blank.
-          gitLogSinceRef(LAST_REVIEWED_REF),
+          // `@{u}` = the branch's upstream (last pushed point). The feed
+          // is "changes since the last backup"; pushing advances `@{u}`
+          // and clears it. No upstream yet (before first backup) →
+          // git_log_since_ref returns empty.
+          gitLogSinceRef('@{u}'),
           gitCurrentHead(),
         ])
-        // `lastAiEditSha` comes from the UNFILTERED log so a move-only
-        // `ai-edit: organize` commit (folders outside USER_PATH_PREFIXES) is
-        // still undoable. `activity` stays filtered for the user-facing feed.
-        const lastAiEditSha = commits.find(isAiEditCommit)?.sha ?? null
-        set({
-          activity: commits.filter(isUserVisibleCommit),
-          headSha: head,
-          lastAiEditSha,
-        })
+        // Filter to commits the user cares about. System-only commits
+        // (threads/, _system/) still live in git history — we just
+        // don't surface them as cards. See isUserVisibleCommit.
+        set({ activity: commits.filter(isUserVisibleCommit), headSha: head })
       } catch (err) {
         console.warn('[git] refreshActivity failed', err)
       }

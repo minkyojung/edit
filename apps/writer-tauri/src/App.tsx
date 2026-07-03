@@ -48,7 +48,6 @@ import { startAutoFlush } from '@/lib/docFileSync'
 import { startVaultWatcher } from '@/lib/vaultWatcher'
 import { startPendingChangesApplier } from '@/state/pendingChangesApplier'
 import { gitInit } from '@/lib/git'
-import { useGitStore } from '@/state/gitStore'
 import { startGitHubSync } from '@/lib/githubSync'
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
@@ -73,7 +72,6 @@ useSettingsStore.subscribe(() => {
     void (async () => {
       try {
         await gitInit()
-        void useGitStore.getState().refreshActivity()
       } catch (err) {
         console.warn('[app] git init on vault switch failed', err)
       }
