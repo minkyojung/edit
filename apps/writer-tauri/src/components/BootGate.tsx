@@ -37,9 +37,11 @@ import { migrateConventionsIntoClaudeMdV1 } from '@/lib/migrateConventionsIntoCl
 import { migrateClaudeMdStructureV1 } from '@/lib/migrateClaudeMdStructureV1'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
 import { seedRoutines } from '@/lib/routinesLib'
+import { seedAgents } from '@/lib/agentsLib'
 import { INBOX_PROMPT } from '@/agent/inbox'
 import { DAILY_INGEST_PROMPT } from '@/agent/dailyIngest'
 import { HANDOFF_PROMPT } from '@/agent/wikiHandoff'
+import { FREE_CHAT_PROMPT } from '@/agent/skills/freeChat'
 import { isTranslationProject } from '@/lib/translationProject'
 import { gitInit } from '@/lib/git'
 
@@ -106,6 +108,36 @@ async function runWikiLegacyBoot(vaultRoot: string | null): Promise<void> {
     ])
   } catch (err) {
     console.warn('[boot] routines seed failed', err)
+  }
+  // Seed default agent roles (`_system/agent/agents/*.md`) — the editable chat
+  // personas. `default` is the main persona (from FREE_CHAT_PROMPT) made
+  // editable; the rest are starter roles the user can edit or delete.
+  try {
+    await seedAgents([
+      {
+        name: 'default',
+        description: 'The general writing copilot (the default chat persona)',
+        body: FREE_CHAT_PROMPT,
+      },
+      {
+        name: 'researcher',
+        description: 'Use for deep, multi-source questions that need real digging',
+        model: 'opus',
+        body: 'You are a research specialist embedded in the user’s notes app. Dig deep across the vault (Read / Glob / Grep) AND the web (WebSearch / WebFetch), cross-check sources against each other, and synthesize a clear, well-organized answer. Cite what you used with [[Page Title]] for wiki pages and links for the web. Prefer depth and accuracy over speed; state your uncertainty plainly rather than guessing.',
+      },
+      {
+        name: 'translator',
+        description: 'Use to translate text, preserving tone and formatting',
+        body: 'You are a translator. Translate the user’s text faithfully, preserving tone, register, and markdown formatting. Keep names and domain terms consistent throughout; when a term is genuinely ambiguous, pick the best fit and note the alternative in one short line. Output only the translation unless the user asks you to explain choices.',
+      },
+      {
+        name: 'proofreader',
+        description: 'Use to copyedit — grammar, clarity, minimal changes',
+        body: 'You are a careful copyeditor. Fix grammar, spelling, punctuation, and clarity while preserving the author’s voice and meaning. Make the MINIMAL changes needed — do not rewrite for style unless asked. If a sentence is genuinely unclear, flag it with a short note rather than guessing the intent.',
+      },
+    ])
+  } catch (err) {
+    console.warn('[boot] agents seed failed', err)
   }
   // Conventions-merge migration: fold `_system/conventions.md` into
   // CLAUDE.md, then retire the old page. Sentinel-gated.

@@ -137,7 +137,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // Resolve this thread's agent (role) — the prompt body + memory
   // namespace come from here. Currently always the built-in default,
   // so behaviour is unchanged; the seam lets roles plug in later.
-  const agent = resolveAgent(useThreadsStore.getState().threads[threadId]?.agentId)
+  const agent = await resolveAgent(useThreadsStore.getState().threads[threadId]?.agentId)
   const systemBody = systemPrompt ?? agent.systemPrompt
   const prompt = promptOverride ?? buildUserContent(history ?? [], attachments)
 

@@ -15,6 +15,7 @@
 // runner — `resolveAgent` just starts returning the chosen role.
 
 import { FREE_CHAT_PROMPT } from './skills/freeChat'
+import { loadAgentPrompt } from '@/lib/agentsLib'
 
 export interface Agent {
   /** Stable id persisted on `ThreadMeta.agentId`. */
@@ -33,9 +34,17 @@ export const DEFAULT_AGENT: Agent = {
   systemPrompt: FREE_CHAT_PROMPT,
 }
 
-/** Resolve a thread's `agentId` to its {@link Agent}. Unknown / missing
- * ids fall back to {@link DEFAULT_AGENT}. Currently always returns
- * DEFAULT_AGENT — this is the seam where role lookup will plug in. */
-export function resolveAgent(_agentId?: string): Agent {
-  return DEFAULT_AGENT
+/** Resolve a thread's `agentId` to its {@link Agent}, loading the role's prompt
+ * from `_system/agent/agents/<id>.md`. The default persona is editable too
+ * (seeded to `agents/default.md` from FREE_CHAT_PROMPT); a missing/empty file —
+ * including an unknown id — falls back to the FREE_CHAT_PROMPT constant, so
+ * behavior is unchanged until the user adds or edits a role. */
+export async function resolveAgent(agentId?: string): Promise<Agent> {
+  const id = agentId?.trim() || 'default'
+  const systemPrompt = await loadAgentPrompt(id, FREE_CHAT_PROMPT)
+  return {
+    id,
+    name: id === 'default' ? DEFAULT_AGENT.name : id,
+    systemPrompt,
+  }
 }
