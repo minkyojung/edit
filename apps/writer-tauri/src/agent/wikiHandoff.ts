@@ -10,7 +10,6 @@
 
 import { runIntake } from '@/agent/intake'
 import type { RunChatResult } from '@/agent/chat/types'
-import { loadRoutinePrompt } from '@/lib/routinesLib'
 
 /** Routing brain for a chat→wiki handoff. Wiki-only (no daily): the chat
  * content is filed as durable knowledge or skipped. Exported so BootGate can
@@ -40,12 +39,12 @@ export async function runChatToWikiHandoff(
   const trimmed = args.messageContent.trim()
   if (!trimmed) return null
 
-  const systemPrompt = await loadRoutinePrompt('chat-to-wiki', HANDOFF_PROMPT)
+  // Native: expand the `/chat-to-wiki` plugin command into the user turn; the
+  // chat content rides along as the appended DOCUMENT block (no path argument —
+  // the command body reads "the document below").
   return runIntake({
     slug: args.threadId,
-    systemPrompt,
-    prompt:
-      'The user wants the chat content in the document below filed into the wiki. Extract durable facts and propose wiki edits per your instructions.',
+    prompt: '/chat-to-wiki',
     content: trimmed,
   })
 }

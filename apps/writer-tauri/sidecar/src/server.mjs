@@ -965,108 +965,69 @@ export class Server {
       // the SDK auto-runs the remaining read-side tools without a
       // CLI prompt. No `canUseTool` callback needed.
 
-      // Vault-local Agent Skills (procedural memory). Load the vault's
-      // skill plugin (`_system/agent`) and enable only its skills by name.
-      // We pass an explicit allowlist (the discovered skill dir names), NOT
-      // `'all'` — `'all'` would also pull Claude Code's bundled skills
-      // (loop / schedule / ...) into context. `settingSources` stays `[]`,
-      // so skills arrive via the plugin path alone and our injected
-      // CLAUDE.md / cache discipline is untouched. Progressive disclosure:
-      // only each skill's name+description sits in context until the model
-      // activates one. Additive + backward-compatible: no skills dir → the
-      // `readdir` throws, we swallow it, and nothing about the call changes.
+      // Register the vault's agent plugin (`_system/agent`). The SDK loads its
+      // `commands/`, `agents/`, and `skills/` NATIVELY — the canonical way, no
+      // hand-rolled loaders. Agent roles become delegatable subagents the main
+      // agent invokes via the Task tool (as `writer-agent-skills:<name>`); no
+      // manual `options.agents`. Skills are still enabled by an explicit
+      // allowlist (NOT `'all'`, which would also pull Claude Code's bundled
+      // skills — loop / schedule / ... — into context). `settingSources` stays
+      // `[]`, so skills/agents/commands arrive via the plugin path alone and our
+      // injected CLAUDE.md / cache discipline is untouched. Progressive
+      // disclosure: only each skill's/agent's name+description sits in context
+      // until the model activates it. Additive: no plugin dir → the `readdir`
+      // throws, we swallow it, and nothing about the call changes.
       try {
-        const skillsRoot = join(vaultPath, '_system/agent/skills')
-        const skillNames = (await readdir(skillsRoot, { withFileTypes: true }))
-          .filter((d) => d.isDirectory())
-          .map((d) => d.name)
-        if (skillNames.length > 0) {
-          options.plugins = [{ type: 'local', path: join(vaultPath, '_system/agent') }]
-          options.skills = skillNames
-          // The `Skill` tool must be exposed for skills to load + activate.
-          // When `options.tools` is an explicit allowlist — which the chat
-          // shape is (host passes builtinTools = ['Read','Glob','Grep','Bash'])
-          // — 'Skill' isn't in it, so skills silently never load (no Skills
-          // category, model can't invoke them). Add it. The preset shape
-          // ({type:'preset',...}) already includes Skill, so only the array
-          // case needs patching.
-          if (Array.isArray(options.tools) && !options.tools.includes('Skill')) {
-            options.tools = [...options.tools, 'Skill']
+        const pluginRoot = join(vaultPath, '_system/agent')
+        await readdir(pluginRoot) // throws if the plugin dir is absent
+        options.plugins = [{ type: 'local', path: pluginRoot }]
+        // The `Skill` + `Task` tools must be exposed for plugin skills to
+        // activate and for the model to delegate to plugin agents. The chat
+        // shape passes an explicit builtinTools allowlist
+        // (['Read','Glob','Grep','Bash']) that omits both; the preset shape
+        // ({type:'preset',...}) already includes them, so only the array case
+        // needs patching.
+        if (Array.isArray(options.tools)) {
+          for (const t of ['Skill', 'Task']) {
+            if (!options.tools.includes(t)) options.tools = [...options.tools, t]
           }
-          // Read each SKILL.md's frontmatter name + description so
-          // propose_skill can present the existing library to the model for
-          // its UPDATE/NEW decision. A skill folder without a readable
-          // SKILL.md is just skipped (it still loads via the plugin path).
-          for (const dir of skillNames) {
-            try {
-              const raw = await readFile(join(skillsRoot, dir, 'SKILL.md'), 'utf-8')
-              const fm = raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? ''
-              const pick = (k) =>
-                fm
-                  .split('\n')
-                  .find((l) => l.startsWith(`${k}:`))
-                  ?.slice(k.length + 1)
-                  .trim()
-                  .replace(/^["']|["']$/g, '') ?? ''
-              existingSkills.push({ name: pick('name') || dir, description: pick('description') })
-            } catch {
-              // Unreadable SKILL.md — skip; it just won't appear in the
-              // dedup list shown to the model.
+        }
+        // Enable the vault's skills by name (allowlist) and read each SKILL.md's
+        // frontmatter name + description so propose_skill can present the
+        // existing library to the model for its UPDATE/NEW decision. A skill
+        // folder without a readable SKILL.md is skipped (it still loads via the
+        // plugin path).
+        try {
+          const skillsRoot = join(pluginRoot, 'skills')
+          const skillNames = (await readdir(skillsRoot, { withFileTypes: true }))
+            .filter((d) => d.isDirectory())
+            .map((d) => d.name)
+          if (skillNames.length > 0) {
+            options.skills = skillNames
+            for (const dir of skillNames) {
+              try {
+                const raw = await readFile(join(skillsRoot, dir, 'SKILL.md'), 'utf-8')
+                const fm = raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? ''
+                const pick = (k) =>
+                  fm
+                    .split('\n')
+                    .find((l) => l.startsWith(`${k}:`))
+                    ?.slice(k.length + 1)
+                    .trim()
+                    .replace(/^["']|["']$/g, '') ?? ''
+                existingSkills.push({ name: pick('name') || dir, description: pick('description') })
+              } catch {
+                // Unreadable SKILL.md — skip; it just won't appear in the
+                // dedup list shown to the model.
+              }
             }
           }
+        } catch {
+          // No `skills/` subdir → plugin still loads commands + agents.
         }
       } catch {
-        // No `_system/agent/skills` directory (or unreadable) → no skills,
-        // no change to the SDK call.
-      }
-
-      // Vault-local agent ROLES (subagents). Read `_system/agent/agents/*.md`
-      // (frontmatter description/model + prompt body = an SDK `AgentDefinition`)
-      // and pass them as `options.agents` so the MAIN agent can DELEGATE to them
-      // via the Task tool — the SDK-native way to "invoke an agent". `default`
-      // is the base persona, not a delegatable subagent, so it's excluded.
-      // Additive: no agents dir → nothing about the call changes.
-      try {
-        const agentsRoot = join(vaultPath, '_system/agent/agents')
-        const files = (await readdir(agentsRoot, { withFileTypes: true }))
-          .filter((d) => d.isFile() && d.name.endsWith('.md'))
-          .map((d) => d.name)
-        const agents = {}
-        for (const file of files) {
-          const name = file.replace(/\.md$/, '')
-          if (name === 'default') continue
-          try {
-            const raw = await readFile(join(agentsRoot, file), 'utf-8')
-            const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
-            const fm = fmMatch?.[1] ?? ''
-            const body = (fmMatch?.[2] ?? raw).trim()
-            if (!body) continue
-            const pick = (k) =>
-              fm
-                .split('\n')
-                .find((l) => l.startsWith(`${k}:`))
-                ?.slice(k.length + 1)
-                .trim()
-                .replace(/^["']|["']$/g, '') ?? ''
-            const def = { description: pick('description') || `The ${name} role`, prompt: body }
-            const model = pick('model')
-            if (model) def.model = model
-            agents[name] = def
-          } catch {
-            // Unreadable agent file — skip.
-          }
-        }
-        if (Object.keys(agents).length > 0) {
-          options.agents = agents
-          // The Task tool must be exposed for the model to invoke subagents —
-          // the explicit builtinTools allowlist (chat shape) omits it, same as
-          // the Skill tool above.
-          if (Array.isArray(options.tools) && !options.tools.includes('Task')) {
-            options.tools = [...options.tools, 'Task']
-          }
-        }
-      } catch {
-        // No `_system/agent/agents` directory (or unreadable) → no subagents.
+        // No `_system/agent` plugin dir (or unreadable) → no plugin, no change
+        // to the SDK call.
       }
     }
 

@@ -10,9 +10,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { useIngestStore } from '@/state/ingestStore'
 import { useGitStore } from '@/state/gitStore'
 import { getDefaultNoteFolder } from '@/state/settingsStore'
-import { processInboxNote, INBOX_PROMPT } from '@/agent/inbox'
-import { DAILY_INGEST_PROMPT } from '@/agent/dailyIngest'
-import { loadRoutinePrompt } from '@/lib/routinesLib'
+import { processInboxNote } from '@/agent/inbox'
 import { syncTodayManually } from '@/hooks/useIdleTrigger'
 import type { OrganizeRequest } from '@/state/pendingOrganizeStore'
 
@@ -135,16 +133,11 @@ export async function buildOrganizeNoteRequest(
     (isDaily && known.date ? `daily/${known.date}.md` : `${slug}.md`)
   const title = `Organize ${known.title || relPath}`
 
+  // Native: send the plugin command as the (visible) user turn; the SDK expands
+  // its body (routing brain) and substitutes `$ARGUMENTS` = the note path. Empty
+  // systemPrompt — the brain lives in the command, not a persona block.
   if (isDaily) {
-    return {
-      systemPrompt: await loadRoutinePrompt('daily-ingest', DAILY_INGEST_PROMPT),
-      prompt: `Process the user's daily note at \`${relPath}\` — read it and file durable facts into the wiki per your instructions.`,
-      title,
-    }
+    return { systemPrompt: '', prompt: `/daily-ingest ${relPath}`, title }
   }
-  return {
-    systemPrompt: await loadRoutinePrompt('organize', INBOX_PROMPT),
-    prompt: `A new note just landed in the inbox at \`${relPath}\`. Read it, then route its content to the wiki and today's daily note per your instructions.`,
-    title,
-  }
+  return { systemPrompt: '', prompt: `/organize ${relPath}`, title }
 }

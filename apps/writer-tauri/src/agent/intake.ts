@@ -16,9 +16,13 @@ import { getIntakeModel } from '@/state/settingsStore'
 export interface IntakeArgs {
   /** Doc slug to attribute the run to (proposals route through it). */
   slug: string
-  /** The routing brain — system prompt telling the agent where content goes. */
-  systemPrompt: string
-  /** Kickoff user message (e.g. "Read the note at X and route it"). */
+  /** The routing brain as a system prompt. Native routines OMIT this — the
+   * brain arrives by expanding a `/command` slash command in `prompt` (the SDK
+   * loads the command from the vault's agent plugin); CLAUDE.md still lands via
+   * ctx. Left empty, the run carries no persona system block. */
+  systemPrompt?: string
+  /** Kickoff user message — a `/command <args>` slash command the SDK expands
+   * into the routing brain, or a plain instruction. */
   prompt: string
   /** Raw content to inject when there's no readable vault file to point at
    * (e.g. a chat message the user sends to the wiki). When omitted, the agent
@@ -38,7 +42,9 @@ export async function runIntake(args: IntakeArgs): Promise<RunChatResult> {
     appendDocument: args.content != null,
     pageContextMarkdown: args.content,
     prompt: args.prompt,
-    systemPrompt: args.systemPrompt,
+    // Empty (not undefined) so runChat keeps an empty systemBody instead of
+    // falling back to the chat persona (FREE_CHAT_PROMPT).
+    systemPrompt: args.systemPrompt ?? '',
     // Read/Glob/Grep come from the built-in preset; these are the write-side
     // tools the agent proposes through. `move_note` files the raw note out of
     // the capture folder once its knowledge is in the wiki (auto-applied).
