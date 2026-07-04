@@ -12,6 +12,7 @@ import { Page } from '@/layout/Page'
 import { ReadLaterQueue } from '@/layout/ReadLaterQueue'
 import { FileViewer } from '@/layout/FileViewer'
 import { SkillsPage } from '@/layout/SkillsPage'
+import { RoutinesPage } from '@/layout/RoutinesPage'
 import { GalleryPage } from '@/layout/GalleryPage'
 import { CommandPalette } from '@/layout/CommandPalette'
 import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
@@ -140,7 +141,7 @@ export function App() {
 // render their own React surface instead of a document) must be exempt —
 // otherwise the self-heal reads their null slug as "broken" and bounces
 // the user back to today's daily.
-const SLUGLESS_ROUTES = new Set(['/read-later', '/skills', '/gallery'])
+const SLUGLESS_ROUTES = new Set(['/read-later', '/skills', '/routines', '/gallery'])
 
 function RouteSyncBridge() {
   useRouteSync()
@@ -280,6 +281,7 @@ function AppContent() {
             <Route path="/file/:rel" element={<FileViewer />} />
             <Route path="/read-later" element={<ReadLaterQueue />} />
             <Route path="/skills" element={<SkillsPage />} />
+            <Route path="/routines" element={<RoutinesPage />} />
             <Route path="/gallery" element={<GalleryPage />} />
           </Routes>
         </AppShell>
