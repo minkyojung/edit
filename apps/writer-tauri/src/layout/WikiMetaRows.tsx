@@ -12,7 +12,7 @@
 
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { IconUser, IconBolt, IconPalette, IconRoute } from '@tabler/icons-react'
+import { IconUser, IconBolt, IconPalette, IconRoute, IconUsers } from '@tabler/icons-react'
 import { SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -102,6 +102,17 @@ export function WikiMetaRows() {
         >
           <IconRoute size={16} stroke={1.5} />
           <span className="flex-1 text-left">Routines</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          className="text-sidebar-foreground/70"
+          isActive={location.pathname === '/agents'}
+          onClick={() => navigate('/agents')}
+          aria-label="Agents"
+        >
+          <IconUsers size={16} stroke={1.5} />
+          <span className="flex-1 text-left">Agents</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
       <SidebarMenuItem>
