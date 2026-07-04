@@ -8,6 +8,7 @@
 import { runIntake } from '@/agent/intake'
 import type { RunChatResult } from '@/agent/chat/types'
 import { useDocsStore } from '@/state/docsStore'
+import { loadRoutinePrompt } from '@/lib/routinesLib'
 
 /** Routing brain for a daily-journal ingest pass. Source = the user's own
  * daily note (raw, never edited); target = wiki only. */
@@ -27,9 +28,10 @@ export async function processDailyNote(slug: string): Promise<RunChatResult> {
     known.relPath ??
     (known.type === 'daily' && known.date ? `daily/${known.date}.md` : `${slug}.md`)
 
+  const systemPrompt = await loadRoutinePrompt('daily-ingest', DAILY_INGEST_PROMPT)
   return runIntake({
     slug,
-    systemPrompt: DAILY_INGEST_PROMPT,
+    systemPrompt,
     prompt: `Process the user's daily note at \`${relPath}\` — read it and file durable facts into the wiki per your instructions.`,
   })
 }

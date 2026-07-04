@@ -38,6 +38,8 @@ import { migrateClaudeMdStructureV1 } from '@/lib/migrateClaudeMdStructureV1'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
 import { seedRoutines } from '@/lib/routinesLib'
 import { INBOX_PROMPT } from '@/agent/inbox'
+import { DAILY_INGEST_PROMPT } from '@/agent/dailyIngest'
+import { HANDOFF_PROMPT } from '@/agent/wikiHandoff'
 import { isTranslationProject } from '@/lib/translationProject'
 import { gitInit } from '@/lib/git'
 
@@ -90,6 +92,16 @@ async function runWikiLegacyBoot(vaultRoot: string | null): Promise<void> {
         name: 'organize',
         description: 'Route an inbox capture into the wiki / daily, then file it out of the inbox',
         body: INBOX_PROMPT,
+      },
+      {
+        name: 'daily-ingest',
+        description: "File durable facts from the user's daily journal into the wiki",
+        body: DAILY_INGEST_PROMPT,
+      },
+      {
+        name: 'chat-to-wiki',
+        description: 'File content the user picked from a chat into the wiki',
+        body: HANDOFF_PROMPT,
       },
     ])
   } catch (err) {
