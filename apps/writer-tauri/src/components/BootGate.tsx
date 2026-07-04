@@ -36,6 +36,8 @@ import { flattenVaultV1 } from '@/lib/flattenVaultV1'
 import { migrateConventionsIntoClaudeMdV1 } from '@/lib/migrateConventionsIntoClaudeMdV1'
 import { migrateClaudeMdStructureV1 } from '@/lib/migrateClaudeMdStructureV1'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
+import { seedRoutines } from '@/lib/routinesLib'
+import { INBOX_PROMPT } from '@/agent/inbox'
 import { isTranslationProject } from '@/lib/translationProject'
 import { gitInit } from '@/lib/git'
 
@@ -79,6 +81,19 @@ async function runWikiLegacyBoot(vaultRoot: string | null): Promise<void> {
     await seedClaudeMd()
   } catch (err) {
     console.warn('[boot] CLAUDE.md seed failed', err)
+  }
+  // Seed default routine command files (`.claude/commands/*.md`) — the editable
+  // task brains. Idempotent by file existence; never overwrites the user's edits.
+  try {
+    await seedRoutines([
+      {
+        name: 'organize',
+        description: 'Route an inbox capture into the wiki / daily, then file it out of the inbox',
+        body: INBOX_PROMPT,
+      },
+    ])
+  } catch (err) {
+    console.warn('[boot] routines seed failed', err)
   }
   // Conventions-merge migration: fold `_system/conventions.md` into
   // CLAUDE.md, then retire the old page. Sentinel-gated.

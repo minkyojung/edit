@@ -18,6 +18,7 @@ import { runIntake } from '@/agent/intake'
 import type { RunChatResult } from '@/agent/chat/types'
 import { useDocsStore } from '@/state/docsStore'
 import { getDefaultNoteFolder } from '@/state/settingsStore'
+import { loadRoutinePrompt } from '@/lib/routinesLib'
 
 /** Routing brain for inbox captures. Mirrors the wiki/daily/skip
  * taxonomy but points the model at its own edit tools instead of a
@@ -45,9 +46,12 @@ export async function processInboxNote(slug: string): Promise<RunChatResult> {
   if (!known) throw new Error(`unknown inbox doc: ${slug}`)
   const relPath = known.relPath ?? `${slug}.md`
 
+  // Routing brain: the user-editable `.claude/commands/organize.md` if present,
+  // else the hardcoded INBOX_PROMPT. Same behavior until the user edits the file.
+  const systemPrompt = await loadRoutinePrompt('organize', INBOX_PROMPT)
   return runIntake({
     slug,
-    systemPrompt: INBOX_PROMPT,
+    systemPrompt,
     prompt: `A new note just landed in the inbox at \`${relPath}\`. Read it, then route its content to the wiki and today's daily note per your instructions.`,
   })
 }
