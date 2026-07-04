@@ -12,6 +12,7 @@ import { useGitStore } from '@/state/gitStore'
 import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { processInboxNote, INBOX_PROMPT } from '@/agent/inbox'
 import { DAILY_INGEST_PROMPT } from '@/agent/dailyIngest'
+import { loadRoutinePrompt } from '@/lib/routinesLib'
 import { syncTodayManually } from '@/hooks/useIdleTrigger'
 import type { OrganizeRequest } from '@/state/pendingOrganizeStore'
 
@@ -123,9 +124,9 @@ export async function autoOrganizeInbox(): Promise<{
  * daily). The kickoff mirrors the headless runners' (processDailyNote /
  * processInboxNote) so the chat path and the bulk path read the same way.
  * Returns null on an unknown slug. */
-export function buildOrganizeNoteRequest(
+export async function buildOrganizeNoteRequest(
   slug: string,
-): Omit<OrganizeRequest, 'threadId'> | null {
+): Promise<Omit<OrganizeRequest, 'threadId'> | null> {
   const known = useDocsStore.getState().knownDocs.find((d) => d.slug === slug)
   if (!known) return null
   const isDaily = known.type === 'daily'
@@ -136,13 +137,13 @@ export function buildOrganizeNoteRequest(
 
   if (isDaily) {
     return {
-      systemPrompt: DAILY_INGEST_PROMPT,
+      systemPrompt: await loadRoutinePrompt('daily-ingest', DAILY_INGEST_PROMPT),
       prompt: `Process the user's daily note at \`${relPath}\` — read it and file durable facts into the wiki per your instructions.`,
       title,
     }
   }
   return {
-    systemPrompt: INBOX_PROMPT,
+    systemPrompt: await loadRoutinePrompt('organize', INBOX_PROMPT),
     prompt: `A new note just landed in the inbox at \`${relPath}\`. Read it, then route its content to the wiki and today's daily note per your instructions.`,
     title,
   }

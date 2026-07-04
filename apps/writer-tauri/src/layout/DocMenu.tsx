@@ -68,9 +68,9 @@ export function DocMenu() {
   // headless: record the intent here, and the chat components (RightPanel +
   // ChatPanel) create the thread and stream the run. The agent's reading /
   // proposing is then watchable like any other conversation.
-  const organizeThis = () => {
+  const organizeThis = async () => {
     if (!activeSlug) return
-    const req = buildOrganizeNoteRequest(activeSlug)
+    const req = await buildOrganizeNoteRequest(activeSlug)
     if (!req) {
       toast.error('Organize failed')
       return
