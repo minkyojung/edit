@@ -24,6 +24,7 @@ import {
   IconPhoto,
   IconPlayerStop,
   IconQuote,
+  IconUsers,
 } from '@tabler/icons-react'
 import { classifyAsset, type AssetKind } from '@/lib/attachments'
 import { ContextChip } from '@/chat/ContextChip'
@@ -34,7 +35,13 @@ import { ModeToggle } from '@/chat/ModeToggle'
 import { FastToggle } from '@/chat/FastToggle'
 import { ContextGauge } from '@/chat/ContextGauge'
 import { SlashPalette } from '@/chat/SlashPalette'
-import { MentionPalette, type MentionItem } from '@/chat/MentionPalette'
+import {
+  MentionPalette,
+  type MentionItem,
+  type MentionRow,
+  type AgentMentionItem,
+} from '@/chat/MentionPalette'
+import { listAgents } from '@/lib/agentsLib'
 import { listCommands, type LoadedCommand } from '@/chat/commands'
 import { useDocsStore } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
@@ -124,6 +131,12 @@ interface Props {
   viewingFilePath?: string | null
   /** Detach the viewed file from the chat's context. Called by the chip's X. */
   onClearViewingFile?: () => void
+  /** The chat thread's current role (agentId). 'default' / undefined = the base
+   * persona (no role chip shown). Set by @-mentioning a role. */
+  role?: string
+  /** Switch the chat's role (persona). Called on picking a role in the @-palette
+   * and when the role chip's X resets to 'default'. */
+  onRoleChange?: (agentId: string) => void
 }
 
 // Chip label: first ~24 chars of the selection on a single line, with an
@@ -178,6 +191,8 @@ export function PromptInput({
   onClearSelection,
   viewingFilePath,
   onClearViewingFile,
+  role,
+  onRoleChange,
 }: Props) {
   const [value, setValue] = useState('')
   const [isComposing, setIsComposing] = useState(false)
@@ -185,6 +200,20 @@ export function PromptInput({
   const [attachments, setAttachments] = useState<FileAttachment[]>([])
   const [pastedTexts, setPastedTexts] = useState<Array<{ id: string; preview: string; content: string }>>([])
   const [mentions, setMentions] = useState<MentionItem[]>([])
+  // Agent roles offered at the top of the @-palette. Loaded once; 'default' is
+  // excluded (it's the base persona — the role chip's X resets to it).
+  const [agentRows, setAgentRows] = useState<AgentMentionItem[]>([])
+  useEffect(() => {
+    listAgents()
+      .then((list) =>
+        setAgentRows(
+          list
+            .filter((a) => a.name !== 'default')
+            .map((a) => ({ agentId: a.name, name: a.name, description: a.description })),
+        ),
+      )
+      .catch(() => setAgentRows([]))
+  }, [])
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounterRef = useRef(0)
@@ -348,19 +377,33 @@ export function PromptInput({
   const atMatch = !isStreaming ? AT_RE.exec(value) : null
   const atQuery = atMatch?.[1] ?? ''
   const mentionOpen = atMatch !== null && !paletteOpen
-  const filteredMentions = useMemo<MentionItem[]>(() => {
+  const filteredMentions = useMemo<MentionRow[]>(() => {
     if (!mentionOpen) return []
-    if (!atQuery) return mentionCandidates.slice(0, MENTION_RECENTS)
-    return mentionCandidates
-      .map((m) => ({
-        m,
-        score: Math.max(fuzzyScore(atQuery, m.title), 0.8 * fuzzyScore(atQuery, m.path)),
-      }))
-      .filter((x) => x.score >= 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, MENTION_RESULTS)
-      .map((x) => x.m)
-  }, [mentionOpen, atQuery, mentionCandidates])
+    // Roles first — all when the query is empty, else fuzzy-matched on
+    // name/description.
+    const agents: MentionRow[] = agentRows
+      .filter(
+        (a) =>
+          !atQuery ||
+          fuzzyScore(atQuery, a.name) >= 0 ||
+          fuzzyScore(atQuery, a.description) >= 0,
+      )
+      .map((a) => ({ kind: 'agent', ...a }))
+    // Notes — recents when empty, ranked otherwise.
+    const noteItems = !atQuery
+      ? mentionCandidates.slice(0, MENTION_RECENTS)
+      : mentionCandidates
+          .map((m) => ({
+            m,
+            score: Math.max(fuzzyScore(atQuery, m.title), 0.8 * fuzzyScore(atQuery, m.path)),
+          }))
+          .filter((x) => x.score >= 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, MENTION_RESULTS)
+          .map((x) => x.m)
+    const notes: MentionRow[] = noteItems.map((m) => ({ kind: 'note', ...m }))
+    return [...agents, ...notes]
+  }, [mentionOpen, atQuery, agentRows, mentionCandidates])
 
   // Clamp the highlighted row when either palette's filter shrinks the list.
   const activeList = mentionOpen ? filteredMentions : filteredCommands
@@ -376,19 +419,29 @@ export function PromptInput({
     setSelectedIndex(0)
   }
 
-  function pickMention(item: MentionItem) {
-    // Strip the trailing `@query` we were completing — the note is shown as a
-    // chip, not inline text. Keep everything up to the `@` (so any leading
-    // space before it stays).
+  // Strip the trailing `@query` we were completing — the result rides as a chip
+  // (note) or a role switch, not inline text. Keep everything up to the `@`.
+  function stripAtQuery() {
     setValue((v) => {
       const m = AT_RE.exec(v)
       if (!m) return v
       const at = v.indexOf('@', m.index)
       return v.slice(0, at)
     })
-    setMentions((prev) =>
-      prev.some((m) => m.slug === item.slug) ? prev : [...prev, item],
-    )
+  }
+
+  function pickMentionRow(row: MentionRow) {
+    stripAtQuery()
+    if (row.kind === 'agent') {
+      // Switch the chat's persona for the whole thread.
+      onRoleChange?.(row.agentId)
+    } else {
+      setMentions((prev) =>
+        prev.some((m) => m.slug === row.slug)
+          ? prev
+          : [...prev, { slug: row.slug, title: row.title, path: row.path }],
+      )
+    }
     setSelectedIndex(0)
   }
 
@@ -442,7 +495,7 @@ export function PromptInput({
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
         if (isComposing || e.nativeEvent.isComposing) return
         e.preventDefault()
-        if (mentionOpen) pickMention(filteredMentions[safeIndex])
+        if (mentionOpen) pickMentionRow(filteredMentions[safeIndex])
         else pickCommand(filteredCommands[safeIndex])
         return
       }
@@ -502,7 +555,7 @@ export function PromptInput({
         <MentionPalette
           items={filteredMentions}
           selectedIndex={safeIndex}
-          onSelect={pickMention}
+          onSelect={pickMentionRow}
           onHover={setSelectedIndex}
         />
       )}
@@ -510,13 +563,22 @@ export function PromptInput({
           row that scrolls sideways when they overflow — the modern chip-bar
           pattern — instead of stacking vertically and growing the composer.
           Each chip is shrink-0 so it keeps its size and the row scrolls. */}
-      {(viewingFilePath || selectionText || attachments.length > 0 || pastedTexts.length > 0 || mentions.length > 0) && (
+      {((role && role !== 'default') || viewingFilePath || selectionText || attachments.length > 0 || pastedTexts.length > 0 || mentions.length > 0) && (
         <div
           className={cn(
             'flex items-center gap-1.5 overflow-x-auto',
             '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
           )}
         >
+      {role && role !== 'default' && (
+        <ContextChip
+          icon={IconUsers}
+          label={role}
+          tooltip={`Role: ${role} — this chat runs as this persona`}
+          onRemove={() => onRoleChange?.('default')}
+          removeLabel="Clear role"
+        />
+      )}
       {mentions.map((m) => (
         <ContextChip
           key={m.slug}

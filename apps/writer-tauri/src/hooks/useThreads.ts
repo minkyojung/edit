@@ -35,6 +35,8 @@ export interface UseThreadsResult {
   setThreadEffort: (id: string, effort: ChatEffort) => void
   setThreadMode: (id: string, mode: ChatMode) => void
   setThreadFastMode: (id: string, fastMode: boolean) => void
+  /** Switch a thread's role/persona (agentId). */
+  setThreadAgent: (id: string, agentId: string) => void
   /** Marks the thread as having a confirmed SDK session. Called once per
    * thread, on the first stream event of its first run. Idempotent — repeat
    * calls short-circuit so we don't write the same value again. */
@@ -130,6 +132,18 @@ export function useThreads(currentSlug: string | null = null): UseThreadsResult 
     [],
   )
 
+  const setThreadAgent = useCallback<UseThreadsResult['setThreadAgent']>(
+    (id, agentId) => {
+      const cur = useThreadsStore.getState().threads[id]
+      if (!cur || cur.agentId === agentId) return
+      void useThreadsStore.getState().updateMeta(id, {
+        agentId,
+        updatedAt: Date.now(),
+      })
+    },
+    [],
+  )
+
   const setThreadModel = useCallback<UseThreadsResult['setThreadModel']>(
     (id, model) => {
       const cur = useThreadsStore.getState().threads[id]
@@ -208,6 +222,7 @@ export function useThreads(currentSlug: string | null = null): UseThreadsResult 
     restoreThread,
     renameThread,
     setThreadModel,
+    setThreadAgent,
     setThreadEffort,
     setThreadMode,
     setThreadFastMode,
