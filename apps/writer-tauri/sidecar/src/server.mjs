@@ -1019,6 +1019,55 @@ export class Server {
         // No `_system/agent/skills` directory (or unreadable) → no skills,
         // no change to the SDK call.
       }
+
+      // Vault-local agent ROLES (subagents). Read `_system/agent/agents/*.md`
+      // (frontmatter description/model + prompt body = an SDK `AgentDefinition`)
+      // and pass them as `options.agents` so the MAIN agent can DELEGATE to them
+      // via the Task tool — the SDK-native way to "invoke an agent". `default`
+      // is the base persona, not a delegatable subagent, so it's excluded.
+      // Additive: no agents dir → nothing about the call changes.
+      try {
+        const agentsRoot = join(vaultPath, '_system/agent/agents')
+        const files = (await readdir(agentsRoot, { withFileTypes: true }))
+          .filter((d) => d.isFile() && d.name.endsWith('.md'))
+          .map((d) => d.name)
+        const agents = {}
+        for (const file of files) {
+          const name = file.replace(/\.md$/, '')
+          if (name === 'default') continue
+          try {
+            const raw = await readFile(join(agentsRoot, file), 'utf-8')
+            const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
+            const fm = fmMatch?.[1] ?? ''
+            const body = (fmMatch?.[2] ?? raw).trim()
+            if (!body) continue
+            const pick = (k) =>
+              fm
+                .split('\n')
+                .find((l) => l.startsWith(`${k}:`))
+                ?.slice(k.length + 1)
+                .trim()
+                .replace(/^["']|["']$/g, '') ?? ''
+            const def = { description: pick('description') || `The ${name} role`, prompt: body }
+            const model = pick('model')
+            if (model) def.model = model
+            agents[name] = def
+          } catch {
+            // Unreadable agent file — skip.
+          }
+        }
+        if (Object.keys(agents).length > 0) {
+          options.agents = agents
+          // The Task tool must be exposed for the model to invoke subagents —
+          // the explicit builtinTools allowlist (chat shape) omits it, same as
+          // the Skill tool above.
+          if (Array.isArray(options.tools) && !options.tools.includes('Task')) {
+            options.tools = [...options.tools, 'Task']
+          }
+        }
+      } catch {
+        // No `_system/agent/agents` directory (or unreadable) → no subagents.
+      }
     }
 
     // Wire relay tools: each one runs inside this sidecar but its handler

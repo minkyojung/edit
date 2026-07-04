@@ -35,7 +35,6 @@ import { FastToggle } from '@/chat/FastToggle'
 import { ContextGauge } from '@/chat/ContextGauge'
 import { SlashPalette } from '@/chat/SlashPalette'
 import { MentionPalette, type MentionItem } from '@/chat/MentionPalette'
-import { RoleSelect } from '@/chat/RoleSelect'
 import { listCommands, type LoadedCommand } from '@/chat/commands'
 import { useDocsStore } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
@@ -125,12 +124,6 @@ interface Props {
   viewingFilePath?: string | null
   /** Detach the viewed file from the chat's context. Called by the chip's X. */
   onClearViewingFile?: () => void
-  /** The chat thread's current role (agentId). 'default' / undefined = the base
-   * persona (no role chip shown). Set by @-mentioning a role. */
-  role?: string
-  /** Switch the chat's role (persona). Called on picking a role in the @-palette
-   * and when the role chip's X resets to 'default'. */
-  onRoleChange?: (agentId: string) => void
 }
 
 // Chip label: first ~24 chars of the selection on a single line, with an
@@ -185,8 +178,6 @@ export function PromptInput({
   onClearSelection,
   viewingFilePath,
   onClearViewingFile,
-  role,
-  onRoleChange,
 }: Props) {
   const [value, setValue] = useState('')
   const [isComposing, setIsComposing] = useState(false)
@@ -635,9 +626,6 @@ export function PromptInput({
             <TooltipContent side="top">Attach file · max 20 MB</TooltipContent>
           </Tooltip>
           <ModeToggle value={mode} onChange={onModeChange} disabled={isStreaming} />
-          {onRoleChange && (
-            <RoleSelect value={role} onChange={onRoleChange} disabled={isStreaming} />
-          )}
         </div>
         <div className="flex items-center gap-1">
           <ContextGauge snapshot={contextSnapshot} />

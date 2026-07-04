@@ -743,8 +743,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
             onClearSelection={handleClearSelection}
             viewingFilePath={viewingFilePath}
             onClearViewingFile={() => setFileChipDismissed(true)}
-            role={activeThread?.agentId}
-            onRoleChange={(id) => activeId && threads.setThreadAgent(activeId, id)}
           />
         )}
       </div>
