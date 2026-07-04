@@ -28,7 +28,7 @@ import {
   usesFrontmatter,
   type DocMetaFile,
 } from '@/lib/docPaths'
-import { composeFrontmatter } from '@/lib/frontmatter'
+import { composeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
 import {
   readVaultFile,
   renameVaultFile,
@@ -513,8 +513,26 @@ async function flushDirtyOnce(): Promise<void> {
       // sidecar. `result.md` is already body-only for frontmatter docs
       // (the loader strips the block on read), so re-attaching here
       // round-trips cleanly instead of doubling the block.
+      // Host-managed DocMeta fields (slug/type/…). For frontmatter docs we also
+      // PRESERVE any custom keys the DocMeta shape doesn't cover — config docs
+      // (skills / commands / agents) keep meaningful frontmatter like
+      // `name` / `description` / `model` there, and stripping it on every save
+      // would silently erase the user's role metadata.
+      let fields = metaToFrontmatterFields(result.meta)
+      if (frontmatterDoc) {
+        try {
+          const { data } = splitFrontmatter(await readVaultFile(mdPath))
+          const preserved: Record<string, string> = {}
+          for (const [k, v] of Object.entries(data)) {
+            if (!(k in fields)) preserved[k] = v
+          }
+          if (Object.keys(preserved).length > 0) fields = { ...preserved, ...fields }
+        } catch {
+          // New file or unreadable — nothing to preserve.
+        }
+      }
       const fileContent = frontmatterDoc
-        ? composeFrontmatter(metaToFrontmatterFields(result.meta), result.md)
+        ? composeFrontmatter(fields, result.md)
         : result.md
       // Skip the write when the serialized output is byte-identical to
       // what's already on disk. Opening a doc marks it dirty
