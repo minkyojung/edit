@@ -73,10 +73,23 @@ export function AppSidebar() {
   // light up via `pathname`.
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const activeSlug = useActiveSlug()
+  const activeDoc = knownDocs.find((d) => d.slug === activeSlug)
   const profileSlug = knownDocs.find(
     (d) => d.type === 'wiki:profile' && !d.archivedAt,
   )?.slug
   const profileActive = !!profileSlug && profileSlug === activeSlug
+
+  // Keep a surface's nav row active not just on its list route, but also while
+  // any of its files is the open doc — so drilling from the list page into a
+  // specific skill/agent/command keeps the parent row highlighted. These dirs
+  // mirror SKILLS_REL / AGENTS_REL / COMMANDS_REL (catalogued as 'note' docs,
+  // whose relPath IS the file location).
+  const activeRel = activeDoc?.relPath ?? null
+  const inSurface = (dir: string) => !!activeRel && activeRel.startsWith(`${dir}/`)
+  const agentsActive = pathname === '/agents' || inSurface('_system/agent/agents')
+  const skillsActive = pathname === '/skills' || inSurface('_system/agent/skills')
+  const commandActive =
+    pathname === '/routines' || inSurface('_system/agent/commands')
 
   // Profile is lazily created — ensure the note exists, then open it in the
   // editor. `busy` guards the async gap so a double-click can't spawn two.
@@ -250,7 +263,7 @@ export function AppSidebar() {
           <button
             type="button"
             onClick={() => navigate('/agents')}
-            data-active={pathname === '/agents' || undefined}
+            data-active={agentsActive || undefined}
             className={NAV_ROW}
           >
             <IconUsers size={18} stroke={1.75} className="shrink-0" />
@@ -259,7 +272,7 @@ export function AppSidebar() {
           <button
             type="button"
             onClick={() => navigate('/skills')}
-            data-active={pathname === '/skills' || undefined}
+            data-active={skillsActive || undefined}
             className={NAV_ROW}
           >
             <IconBolt size={18} stroke={1.75} className="shrink-0" />
@@ -268,7 +281,7 @@ export function AppSidebar() {
           <button
             type="button"
             onClick={() => navigate('/routines')}
-            data-active={pathname === '/routines' || undefined}
+            data-active={commandActive || undefined}
             className={NAV_ROW}
           >
             <IconTerminal2 size={18} stroke={1.75} className="shrink-0" />

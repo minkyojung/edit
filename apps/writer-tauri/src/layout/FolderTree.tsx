@@ -220,8 +220,12 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
   // from search, or revealed by auto-expanding its folders).
   const rowRef = useRef<HTMLLIElement | null>(null)
   useEffect(() => {
-    if (isActive) rowRef.current?.scrollIntoView({ block: 'nearest' })
-  }, [isActive])
+    // Skip the profile note — it's opened from the top nav, so scrolling the
+    // tree to reveal wiki/profile would be a jarring, unwanted jump.
+    if (isActive && node.type !== 'wiki:profile') {
+      rowRef.current?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [isActive, node.type])
   return (
     <li
       ref={(el) => {
@@ -535,6 +539,9 @@ export function FolderTree() {
     const docs = useDocsStore.getState().knownDocs
     const doc = docs.find((d) => d.slug === activeSlug)
     if (!doc) return
+    // The profile note has its own top-nav entry; opening it from there
+    // shouldn't auto-expand wiki/ and yank the tree down to reveal it.
+    if (doc.type === 'wiki:profile') return
     const bySlug = new Map(docs.map((d) => [d.slug, d]))
     const p = pathForDoc(doc, (s) => bySlug.get(s))
     if (!p) return
