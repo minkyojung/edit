@@ -16,8 +16,13 @@ import { ActivityRow } from '@/chat/parts/ActivityRow'
  * subagent's actual transcript. With no steps (heartbeat-only) it stays a
  * static line — there's nothing to drill into. */
 export function TaskActivity({ part, steps }: { part: ToolPart; steps?: ReactNode }) {
-  const input = (part.input ?? {}) as { description?: string }
+  const input = (part.input ?? {}) as { description?: string; subagent_type?: string }
   const description = input.description?.trim() || 'Subagent task'
+  // The role/agent that was invoked (e.g. `translator`) — the lane's identity.
+  // Make it the headline so the user sees WHICH agent is running; the task
+  // description rides along as the preview.
+  const agentType = input.subagent_type?.trim()
+  const label = agentType || description
   const running =
     part.state === 'input-streaming' || part.state === 'input-available'
 
@@ -32,13 +37,14 @@ export function TaskActivity({ part, steps }: { part: ToolPart; steps?: ReactNod
         .join(' · ')
     : undefined
   // Prefer the AI-generated summary ("Analyzing the outline") — it says what the
-  // subagent is DOING in plain terms. Fall back to the raw tool/token counter.
-  const activity = task?.summary?.trim() || heartbeat
+  // subagent is DOING in plain terms. Fall back to the raw tool/token counter,
+  // then to the task description when the headline is the agent name.
+  const activity = task?.summary?.trim() || heartbeat || (agentType ? description : undefined)
 
   return (
     <ActivityRow
       icon={<IconRobot size={14} />}
-      label={description}
+      label={label}
       preview={activity || undefined}
       trailing={
         running ? (
