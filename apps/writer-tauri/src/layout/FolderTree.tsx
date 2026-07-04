@@ -487,7 +487,7 @@ function RootDropZone() {
     <div
       ref={setNodeRef}
       className={
-        'mx-2 mt-1 min-h-16 flex-1 rounded-lg ' +
+        'ml-3 mr-2 mt-1 min-h-16 flex-1 rounded-lg ' +
         (isOver ? 'bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring/50' : '')
       }
     />
@@ -715,7 +715,11 @@ export function FolderTree() {
       onDragCancel={resetDrag}
     >
       <div className="flex h-full flex-col">
-        <ul className="flex flex-col px-2 py-1">
+        {/* Left gutter (pl-3 = 12px) so row ICON/TEXT lands on the traffic-light
+            leading edge (12px gutter + the lead's 8px ml = 20px); the fill may
+            spill a touch left, which is intentional. In sync with the Sidebar
+            surface-list nav. */}
+        <ul className="flex flex-col py-1 pl-3 pr-2">
           {creatingFolder && (
             <li>
               <TreeRow>

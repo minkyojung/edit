@@ -1,23 +1,23 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import {
   IconSettings,
-  IconFilter,
-  IconSelector,
-  IconLogout,
-  IconSparkles,
-  IconBrandGithub,
   IconEdit,
   IconSearch,
   IconFolderPlus,
   IconArrowsSort,
+  IconUser,
+  IconBolt,
+  IconUsers,
+  IconTerminal2,
 } from '@tabler/icons-react'
 import { FolderTree } from './FolderTree'
-import { WikiMetaRows } from './WikiMetaRows'
 import { useDocsStore } from '@/state/docsStore'
 import { useCommandPaletteStore } from '@/state/commandPaletteStore'
 import { useNewFolderStore } from '@/state/newFolderStore'
 import { openSettings } from '@/settings/useSettingsDialog'
+import { ensureProfileWikiSlug } from '@/state/wikiService'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
@@ -28,53 +28,37 @@ import { useConnectGitHubDialog } from '@/stores/connectGitHubDialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useSortStore, SORT_LABELS, type SortMode } from '@/state/sortStore'
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarHeader,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarMenuAction,
 } from '@/components/ui/sidebar'
+import { SIDEBAR_ROW_INTERACTION } from '@/components/ui/sidebarRow'
+import { cn } from '@/lib/utils'
 
-/** Capitalize the email's local part for a friendly-but-honest display
- * name. Returns null when there's no email so callers can render a
- * generic placeholder. */
-function accountDisplayName(email: string | null): string | null {
-  if (!email) return null
-  const local = email.split('@')[0] ?? ''
-  return local
-    .split(/[._-]+/)
-    .filter(Boolean)
-    .map((p) => p[0].toUpperCase() + p.slice(1))
-    .join(' ')
-}
+// Vertical surface-list row: same geometry + shared interaction skin as the
+// folder-tree rows (SIDEBAR_ROW_INTERACTION), so hover / focus / selected match
+// exactly. Selected state is driven by `data-active` (not a class), like TreeRow.
+const NAV_ROW = cn(
+  'flex h-9 w-full items-center gap-2 rounded-sm px-2 text-body font-normal',
+  SIDEBAR_ROW_INTERACTION,
+)
 
 export function AppSidebar() {
   const connectOpen = useConnectDialog((s) => s.open)
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
-  const { account, refresh, disconnect } = useClaudeAuth()
+  // Auth hooks stay mounted here because the connect dialogs live in this
+  // component; Settings → Connections is the surface that shows/manages the
+  // identities, so we only keep the `refresh` callbacks the dialogs need.
+  const { refresh } = useClaudeAuth()
   const githubConnectOpen = useConnectGitHubDialog((s) => s.open)
   const setGithubConnectOpen = useConnectGitHubDialog((s) => s.setOpen)
-  const {
-    account: githubAccount,
-    refresh: refreshGithub,
-  } = useGitHubAuth()
-  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
-  const handleSignOut = useCallback(async () => {
-    if (account.connected) {
-      await disconnect()
-    }
-  }, [account.connected, disconnect])
+  const { refresh: refreshGithub } = useGitHubAuth()
 
   const createNew = useDocsStore((s) => s.createNew)
   const openPalette = useCommandPaletteStore((s) => s.openPalette)
@@ -82,6 +66,42 @@ export function AppSidebar() {
   const sortMode = useSortStore((s) => s.mode)
   const setSortMode = useSortStore((s) => s.setMode)
   const navigate = useNavigate()
+  const { pathname } = useLocation()
+
+  // Profile opens a note (not a route), so its active highlight tracks whether
+  // the profile note is the currently-open doc — mirroring how the routed rows
+  // light up via `pathname`.
+  const knownDocs = useDocsStore((s) => s.knownDocs)
+  const activeSlug = useActiveSlug()
+  const profileSlug = knownDocs.find(
+    (d) => d.type === 'wiki:profile' && !d.archivedAt,
+  )?.slug
+  const profileActive = !!profileSlug && profileSlug === activeSlug
+
+  // Profile is lazily created — ensure the note exists, then open it in the
+  // editor. `busy` guards the async gap so a double-click can't spawn two.
+  const [profileBusy, setProfileBusy] = useState(false)
+  const openProfile = useCallback(async () => {
+    if (profileBusy) return
+    setProfileBusy(true)
+    try {
+      const slug = await ensureProfileWikiSlug()
+      if (!slug) return
+      const store = useDocsStore.getState()
+      navigate(
+        buildViewUrl({
+          tab: store.sidebarTab,
+          dayAnchor: store.dayAnchor,
+          monthAnchor: store.monthAnchor,
+          slug,
+        }),
+      )
+    } catch (err) {
+      console.warn('[sidebar] open profile failed', err)
+    } finally {
+      setProfileBusy(false)
+    }
+  }, [profileBusy, navigate])
 
   // New flat note (lands at inbox/Untitled.md) → open it. Shared by the
   // header "+" button and the ⌘N shortcut so there's one code path.
@@ -140,9 +160,9 @@ export function AppSidebar() {
           className="h-full shrink-0"
           style={{ width: 'var(--traffic-light-w)' }}
         />
-        {/* Drag region fills the gap; the new-note action sits at the
-            right edge (the space freed when the day/week/month switcher
-            was removed). Outside the drag region so it stays clickable. */}
+        {/* Drag region fills the gap; the frequent file actions + Settings sit
+            at the header's right edge (their original home). Outside the drag
+            region so they stay clickable. */}
         <div data-tauri-drag-region className="flex-1 h-full" />
         <button
           type="button"
@@ -164,7 +184,7 @@ export function AppSidebar() {
               <IconArrowsSort size={18} stroke={1.75} />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent side="bottom" align="end">
             <DropdownMenuRadioGroup
               value={sortMode}
               onValueChange={(v) => setSortMode(v as SortMode)}
@@ -195,95 +215,71 @@ export function AppSidebar() {
         >
           <IconEdit size={18} stroke={1.75} />
         </button>
+        <button
+          type="button"
+          aria-label="Settings"
+          title="Settings (⌘,)"
+          onClick={() => openSettings()}
+          className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
+        >
+          <IconSettings size={18} stroke={1.75} />
+        </button>
       </SidebarHeader>
 
       <SidebarContent>
+        {/* On-demand agent / profile surfaces as a vertical list above the
+            folder tree — icon + label rows. Lives INSIDE SidebarContent so it
+            scrolls together with the tree (one scroll for the whole sidebar).
+            Profile opens the self-note; the rest open their management pages. */}
+        {/* Left gutter (pl-3 = 12px) so the ICON/TEXT left edge lands on the
+            macOS traffic-light leading edge (~20px = 12px gutter + the row's
+            8px inner pad). The hover/selection FILL starts at 12px and may
+            spill a touch left of the lights — that's intentional; alignment
+            tracks content, not the fill. Kept in sync with the folder tree's
+            root <ul> below so both share one content line. */}
+        <nav className="flex flex-col gap-0.5 pl-3 pr-2">
+          <button
+            type="button"
+            onClick={() => void openProfile()}
+            data-active={profileActive || undefined}
+            className={NAV_ROW}
+          >
+            <IconUser size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Profile</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/agents')}
+            data-active={pathname === '/agents' || undefined}
+            className={NAV_ROW}
+          >
+            <IconUsers size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Agents</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/skills')}
+            data-active={pathname === '/skills' || undefined}
+            className={NAV_ROW}
+          >
+            <IconBolt size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Skills</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/routines')}
+            data-active={pathname === '/routines' || undefined}
+            className={NAV_ROW}
+          >
+            <IconTerminal2 size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Command</span>
+          </button>
+        </nav>
+
         {/* Obsidian-style folder tree — the vault's folder structure is
             the sidebar. (Replaced the day/week/month date views.) */}
         <FolderTree />
       </SidebarContent>
-
-      <SidebarFooter>
-        <SidebarMenu>
-          {/* Profile + Conventions: always-present, low-frequency wiki
-              surfaces. */}
-          <WikiMetaRows />
-          <DropdownMenu open={accountMenuOpen} onOpenChange={setAccountMenuOpen}>
-            <SidebarMenuItem>
-              {/* Identity uses the SidebarMenuButton primitive so it inherits the
-                  EXACT radius / height / padding / full-width hover of the nav rows
-                  above (the shared SIDEBAR_ROW_INTERACTION skin). The gear and
-                  chevron float on top as SidebarMenuActions, so the whole row
-                  highlights as one unit instead of looking segmented. pr-14 keeps
-                  the name clear of both trailing actions. */}
-              <SidebarMenuButton
-                aria-label="Account"
-                // Bottom-left corner echoes the window's rounded corner it sits in.
-                // The sidebar is flush to the window (side=left, left-0) and the
-                // footer's p-2 inset equals --window-inset, so the concentric value
-                // is exactly --window-radius − --window-inset (≈18px). Other corners
-                // keep the nav-row rounded-sm.
-                className="pr-14 text-sidebar-foreground/70 rounded-bl-[calc(var(--window-radius)-var(--window-inset))]"
-                onClick={() => setAccountMenuOpen(true)}
-              >
-                <span className="flex-1 truncate">
-                  {accountDisplayName(account.email) ?? 'Guest'}
-                </span>
-              </SidebarMenuButton>
-              <SidebarMenuAction
-                aria-label="Settings"
-                title="Settings"
-                className="right-7"
-                onClick={() => openSettings()}
-              >
-                <IconSettings stroke={1.5} />
-              </SidebarMenuAction>
-              <DropdownMenuTrigger asChild>
-                <SidebarMenuAction aria-label="Account menu" title="Account">
-                  <IconSelector stroke={1.5} />
-                </SidebarMenuAction>
-              </DropdownMenuTrigger>
-            </SidebarMenuItem>
-            <DropdownMenuContent side="top" align="end" className="w-52">
-                {/* The dropdown only *shows* the connected identities — managing
-                    them (connect/disconnect) lives in Settings → Connections, so
-                    settings stay the single home for connections. */}
-                {(account.connected || githubAccount.connected) && (
-                  <>
-                    {account.connected && (
-                      <DropdownMenuItem disabled className="opacity-100">
-                        <IconSparkles size={16} stroke={1.5} />
-                        <span className="truncate">{account.email ?? 'Claude'}</span>
-                      </DropdownMenuItem>
-                    )}
-                    {githubAccount.connected && (
-                      <DropdownMenuItem disabled className="opacity-100">
-                        <IconBrandGithub size={16} stroke={1.5} />
-                        <span className="truncate">
-                          {githubAccount.login ?? 'GitHub'}
-                        </span>
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-                <DropdownMenuItem onClick={() => openSettings('connections')}>
-                  <IconSettings size={16} stroke={1.5} />
-                  Manage connections…
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled title="Coming soon">
-                  <IconFilter size={16} stroke={1.5} />
-                  Filter
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive" onClick={handleSignOut}>
-                  <IconLogout size={16} stroke={1.5} />
-                  Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-          </DropdownMenu>
-        </SidebarMenu>
-      </SidebarFooter>
       <ConnectClaudeDialog open={connectOpen} onOpenChange={setConnectOpen} onConnected={refresh} />
       <ConnectGitHubDialog
         open={githubConnectOpen}
