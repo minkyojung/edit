@@ -52,6 +52,13 @@ export interface TreeFolder {
   /** Vault-relative folder path (e.g. `daily/2026-06-10`). */
   path: string
   children: TreeNode[]
+  /** Folder-note fields — set when a same-named sibling note is folded into
+   * this folder (e.g. `daily/2026-06-10.md` + `daily/2026-06-10/`). The row
+   * both opens the note (name click) and expands its children (chevron). Absent
+   * on a plain folder. */
+  slug?: string
+  type?: KnownDoc['type']
+  createdAt?: string
 }
 
 /** A non-markdown file (pdf/png/txt/…) shown as a read-only row. No slug
@@ -139,8 +146,32 @@ export function buildFileTree(
     children.push({ kind: 'attachment', name: fileName, path: rel })
   }
 
+  mergeFolderNotes(rootChildren)
   sortNodes(rootChildren, sortMode)
   return rootChildren
+}
+
+/** Fold each note into a same-named sibling folder (the "folder-note" pattern).
+ * The app's own layout puts a daily journal at `daily/2026-06-10.md` and that
+ * day's captures under `daily/2026-06-10/` — two siblings with the same name.
+ * Rendered separately they read as a confusing duplicate, so here the note is
+ * absorbed into the folder: the folder row gains the note's slug (name-click
+ * opens the journal) while its chevron still reveals the children. Recurses so
+ * nested folder-notes merge too. */
+function mergeFolderNotes(nodes: TreeNode[]): void {
+  const folders = new Map<string, TreeFolder>()
+  for (const n of nodes) if (n.kind === 'folder') folders.set(n.name, n)
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i]
+    if (n.kind !== 'file') continue
+    const folder = folders.get(n.name)
+    if (!folder) continue
+    folder.slug = n.slug
+    folder.type = n.type
+    folder.createdAt = n.createdAt
+    nodes.splice(i, 1)
+  }
+  for (const n of nodes) if (n.kind === 'folder') mergeFolderNotes(n.children)
 }
 
 /** Case-insensitive name compare (the A→Z baseline / fallback). */

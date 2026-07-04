@@ -39,20 +39,35 @@ describe('buildFileTree', () => {
     })
   })
 
-  it('renders a daily and its writing child (literal file + folder)', () => {
+  it('merges a daily note with its same-named folder into one folder-note', () => {
     const tree = buildFileTree([
       doc({ slug: 'd1', type: 'daily', date: '2026-06-10' }),
       doc({ slug: 'w1', type: 'writing', title: 'Note', parentId: 'd1' }),
     ])
     const daily = tree[0] as TreeFolder
     expect(daily.name).toBe('daily')
-    // folders sort before files → the date folder, then the daily file
-    expect(daily.children.map((c) => [c.kind, c.name])).toEqual([
-      ['folder', '2026-06-10'],
-      ['file', '2026-06-10'],
+    // The date note (`daily/2026-06-10.md`) and the date folder
+    // (`daily/2026-06-10/`) collapse into ONE folder-note row instead of two
+    // same-named siblings.
+    expect(daily.children).toHaveLength(1)
+    const dateNode = daily.children[0] as TreeFolder
+    expect(dateNode).toMatchObject({
+      kind: 'folder',
+      name: '2026-06-10',
+      slug: 'd1',
+      type: 'daily',
+    })
+    // The day's capture still nests under it.
+    expect(dateNode.children[0]).toMatchObject({ kind: 'file', name: 'Note', slug: 'w1' })
+  })
+
+  it('leaves a plain folder (no same-named note) without a slug', () => {
+    const tree = buildFileTree([
+      doc({ slug: 'a1', type: 'note', title: 'x', relPath: 'articles/x.md' }),
     ])
-    const dateFolder = daily.children[0] as TreeFolder
-    expect(dateFolder.children[0]).toMatchObject({ kind: 'file', name: 'Note', slug: 'w1' })
+    const articles = tree[0] as TreeFolder
+    expect(articles.name).toBe('articles')
+    expect(articles.slug).toBeUndefined()
   })
 
   it('drops archived docs', () => {

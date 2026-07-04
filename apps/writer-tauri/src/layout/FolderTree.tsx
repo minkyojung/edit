@@ -308,6 +308,10 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
 function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
   const isOpen = ctx.expanded.has(node.path)
   const isEditing = ctx.editingFolderPath === node.path
+  // Folder-note (a folder that absorbed a same-named sibling note): the name
+  // opens the note; the chevron still expands the children. Highlight it as
+  // active when its note is the open doc.
+  const isActive = node.slug != null && node.slug === ctx.activeSlug
   // Droppable wraps ONLY the row (not the children) so nested folder
   // drop zones don't overlap. `folder:` prefix distinguishes the id from
   // a doc-slug drag. The row is BOTH draggable (move this folder) and
@@ -356,6 +360,7 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
         >
           <div ref={setRowRef} {...attributes} {...listeners}>
             <TreeRow
+              active={isActive}
               className={
                 showDrop
                   ? 'bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring/50'
@@ -383,7 +388,9 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
                 />
               ) : (
                 <TreeRowLabel
-                  onClick={() => ctx.onToggle(node.path)}
+                  onClick={() =>
+                    node.slug ? ctx.onOpen(node.slug) : ctx.onToggle(node.path)
+                  }
                   onDoubleClick={() => ctx.onStartFolderRename(node.path)}
                 >
                   <span className="truncate">{node.name}</span>
