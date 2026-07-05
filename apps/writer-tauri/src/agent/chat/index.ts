@@ -359,6 +359,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         const priorTail: Promise<{ pageSlug: string; pendingId: string } | null> =
           (vaultRelPath && newNoteByPath.get(vaultRelPath)) || Promise.resolve(null)
 
+        // Whether THIS specific tool call's proposal was successfully queued
+        // into pendingChangesStore ("Meaning A" — queued & valid — NOT
+        // "Meaning B" — user approved & on disk, which stays fully async and
+        // must never gate the sidecar's ack). Sent back to the sidecar below
+        // so its PostToolUse hook can stop telling the model "queued" when it
+        // silently wasn't (the eager-success gap the pipeline audit found).
+        let ackOk = false
+
         const myTail = (async (): Promise<{ pageSlug: string; pendingId: string } | null> => {
           // The whole body is wrapped in try/catch: without this, a throw
           // anywhere below (materialize, disk write, ...) would reject this
@@ -408,6 +416,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                   ...current,
                   edits: [{ ...current.edits[0], after: mergedBody }],
                 })
+                // Queued successfully — true regardless of what the
+                // auto-accept write below does (that's Meaning B).
+                ackOk = true
                 if (autoAcceptEdits) {
                   const ok = await applyWriteWikiPage(
                     prior.pageSlug,
@@ -430,6 +441,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 // exactly how this merge branch used to lose a second call's
                 // content while auto-accept had already settled the first.
                 // Write directly and check the result instead of assuming success.
+                // Content was successfully incorporated (merged) either way —
+                // true regardless of the disk-write outcome, same Meaning-A
+                // reasoning as the `pending` branch above.
+                ackOk = true
                 const ok = await applyWriteWikiPage(
                   prior.pageSlug,
                   mergedBody,
@@ -482,6 +497,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             }
 
             usePendingChangesStore.getState().push(mapped)
+            // Queued successfully — true regardless of what the auto-accept
+            // write below does (that's Meaning B, fully async by design).
+            ackOk = true
             // acceptEdits mode: apply immediately instead of parking for review.
             // The change is rendered (diff preview) and then auto-accepted, so the
             // applier writes it to disk without a manual Keep — same accept path
@@ -542,6 +560,18 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
         if (vaultRelPath) newNoteByPath.set(vaultRelPath, myTail)
         await myTail
+
+        // Tell the sidecar whether THIS call's proposal actually landed —
+        // its PostToolUse hook is waiting on this pendingId (not `mapped.id`
+        // in the merge case: the hook is keyed to what ITS OWN tool call
+        // returned, which always stamps `e.payload.pendingId`). Best-effort:
+        // the hook fails open on its own timeout if this never arrives, so a
+        // failure here is a lost confirmation, not a stuck turn.
+        invoke('claude_chat_edit_ack', {
+          args: { pendingId: e.payload.pendingId, ok: ackOk },
+        }).catch((err) => {
+          console.warn('[chat] edit-ack send failed', err)
+        })
       }),
       // propose_skill tool fired (Phase 2B). The sidecar relays a proposed
       // reusable skill; we stage it in the dedicated skillProposalStore (NOT

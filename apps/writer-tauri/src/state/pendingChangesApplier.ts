@@ -28,6 +28,7 @@ import { useDocsStore } from './docsStore'
 import { isChangeMaterializedInActiveCm } from './activeCmEditor'
 import { useGitStore, aiEditSubject, type AiEditType } from './gitStore'
 import { notify } from '@/lib/notify'
+import { looseFindRange } from '@/lib/looseMatch'
 
 // HMR safety: vite's `import.meta.hot.dispose` fires right before
 // the module is replaced. That's the only hook that runs against
@@ -235,6 +236,55 @@ function cleanupRejectedNewNote(change: PendingChange): void {
   }
 }
 
+/** Boot-time validation for RESTORED pending changes: `pruneOrphaned` only
+ * checks the target SLUG still exists — it doesn't notice a note whose TEXT
+ * changed while the app was closed (an external edit, a sync, a git pull).
+ * Without this, a stale proposal sits in the tray/cards looking normal and
+ * only fails once the user finally clicks Keep. This checks each anchored
+ * edit's `before` against the note's CURRENT body, using the same tolerant
+ * matcher (`looseFindRange`) the real apply path uses — "still valid" here
+ * means the same thing it means at Keep time. Invalid ones are rejected
+ * (not silently deleted) so they still flow through the normal decided-entry
+ * lifecycle; the user gets ONE batched toast instead of one per suggestion.
+ * `add`-kind edits (new-note bodies) have no text anchor, so they're left
+ * alone — only file EXISTENCE matters for those, which pruneOrphaned covers. */
+async function pruneStaleAnchorsOnce(): Promise<void> {
+  const pending = Object.values(usePendingChangesStore.getState().byId).filter(
+    (c) => c.status === 'pending',
+  )
+  const bySlug = new Map<string, PendingChange[]>()
+  for (const c of pending) {
+    const arr = bySlug.get(c.pageSlug) ?? []
+    arr.push(c)
+    bySlug.set(c.pageSlug, arr)
+  }
+
+  let droppedCount = 0
+  for (const [slug, changes] of bySlug) {
+    const docs = useDocsStore.getState()
+    if (!docs.knownDocs.some((d) => d.slug === slug && !d.archivedAt)) continue // pruneOrphaned's job
+    try {
+      await docs.ensureHandle(slug)
+      await useDocsStore.getState().handles[slug]?.contentReady
+    } catch {
+      continue // couldn't hydrate this note — leave its changes alone, don't guess
+    }
+    const body = useDocsStore.getState().handles[slug]?.bodyMarkdown ?? ''
+    for (const change of changes) {
+      const anchored = change.edits.filter(
+        (e): e is typeof e & { before: string } => e.kind !== 'add' && !!e.before,
+      )
+      if (anchored.length === 0) continue
+      const stillValid = anchored.every((e) => looseFindRange(body, e.before) != null)
+      if (!stillValid) {
+        usePendingChangesStore.getState().reject(change.id)
+        droppedCount++
+      }
+    }
+  }
+  if (droppedCount > 0) notify.staleProposalsDropped(droppedCount)
+}
+
 /** Begin listening. Idempotent within a single module instance —
  * a second call is a no-op. HMR cleanup is handled by the
  * `import.meta.hot.dispose` block below; the next module instance
@@ -278,6 +328,9 @@ export function startPendingChangesApplier(): void {
     const valid = new Set(ds.knownDocs.map((d) => d.slug))
     if (valid.size === 0) return false
     usePendingChangesStore.getState().pruneOrphaned(valid)
+    // Once the catalog is real, also check that surviving pending changes'
+    // target TEXT still exists — pruneOrphaned above only checked the slug.
+    void pruneStaleAnchorsOnce()
     return true
   }
   if (!pruneOrphansOnce()) {

@@ -55,6 +55,24 @@ async function checkOldString(vaultPath, filePath, oldString) {
   return null
 }
 
+/** Pull the pendingId a propose_edit/write/multi_edit call stamped into its
+ * own success text ("... queued for user review (id: <uuid>)."), out of a
+ * PostToolUse hook's `tool_response` — shape is `unknown` per the SDK types,
+ * so stringify first rather than assume a specific object shape; the id
+ * substring survives serialization regardless of how it's nested. Returns
+ * null when no id is found (a call that errored before queuing, or an
+ * unrelated tool). */
+function extractPendingId(toolResponse) {
+  let text
+  try {
+    text = typeof toolResponse === 'string' ? toolResponse : JSON.stringify(toolResponse ?? '')
+  } catch {
+    return null
+  }
+  const match = /\(id:\s*([0-9a-f-]{36})\)/i.exec(text ?? '')
+  return match ? match[1] : null
+}
+
 // Relay tools: defined here, but every invocation reports back to the host
 // (frontend) via a notification rather than performing the action itself.
 // The frontend (which owns the editor / UI) does the real work.
@@ -134,7 +152,7 @@ function buildSubmitProfileTool(runId, emit) {
 // new_string"). The model has prior experience with those names — the
 // `propose_` prefix is the only visible difference, and the matching
 // input shape keeps the tool-call ergonomics unchanged.
-function buildProposeEditTool(runId, emit, vaultPath) {
+function buildProposeEditTool(runId, emit, vaultPath, registerAck) {
   return tool(
     'propose_edit',
     'PREFERRED tool for changing an existing file. Propose a surgical edit: provide the absolute file_path, the exact old_string to replace (copy it VERBATIM from the file — Read it first if unsure), and the new_string. old_string MUST identify exactly ONE place in the file — if the text appears more than once, include enough surrounding lines to make it unique, otherwise the edit is rejected as ambiguous (the host never guesses which occurrence you meant). Works exactly like the built-in Edit tool. The host locates old_string and applies the change in place, then queues it for user review. Returns immediately — do not wait for the user.',
@@ -159,6 +177,7 @@ function buildProposeEditTool(runId, emit, vaultPath) {
           input,
         }),
       )
+      registerAck(pendingId)
       return {
         content: [
           {
@@ -171,7 +190,7 @@ function buildProposeEditTool(runId, emit, vaultPath) {
   )
 }
 
-function buildProposeWriteTool(runId, emit) {
+function buildProposeWriteTool(runId, emit, registerAck) {
   return tool(
     'propose_write',
     'Create a BRAND-NEW file, or replace an existing file\'s ENTIRE content when the user explicitly asks for a full rewrite. Send `content` = the complete desired file content. For any partial change to an existing file — a single line, a value, appending a bullet — do NOT use this; use propose_edit instead so the change applies surgically in place. Returns immediately — do not wait for the user.',
@@ -189,6 +208,7 @@ function buildProposeWriteTool(runId, emit) {
           input,
         }),
       )
+      registerAck(pendingId)
       return {
         content: [
           {
@@ -259,7 +279,7 @@ function buildProposeSkillTool(runId, emit, existingSkills = []) {
   )
 }
 
-function buildProposeMultiEditTool(runId, emit, vaultPath) {
+function buildProposeMultiEditTool(runId, emit, vaultPath, registerAck) {
   return tool(
     'propose_multi_edit',
     'Propose multiple edits to a single file in one transaction. The host queues this proposal for user review and applies it on approval. Use the same way as the built-in MultiEdit tool: provide the file_path and an array of edits, each with old_string and new_string. Each old_string MUST identify exactly ONE place in the file — when the same text appears more than once (e.g. two identical lines you want changed differently), include enough surrounding lines in each old_string to make it unique, otherwise that edit is rejected as ambiguous (the host never guesses which occurrence you meant). Returns immediately — do not wait for the user.',
@@ -289,6 +309,7 @@ function buildProposeMultiEditTool(runId, emit, vaultPath) {
           input,
         }),
       )
+      registerAck(pendingId)
       return {
         content: [
           {
@@ -467,6 +488,15 @@ export class Server {
     // decisionId -> { resolve, reject } for in-flight canUseTool gates
     // (plan approval / clarifying questions) awaiting a host decision.
     this.pendingDecisions = new Map()
+    // pendingId -> resolve(ok: boolean) for a propose_edit/write/multi_edit
+    // proposal awaiting the host's confirmation that it was actually queued
+    // into pendingChangesStore. Registered when the tool emits `chat/edit-
+    // pending`; resolved by `chat/edit-ack`. Read by the PostToolUse hook
+    // (see #buildPostToolUseHooks) — NOT by the tool handlers themselves,
+    // which still return immediately (the agent loop's progress on OTHER
+    // files/tool-calls isn't blocked on this — only the SINGLE tool result
+    // that hook rewrites, if the host reports it didn't land).
+    this.pendingAcks = new Map()
     this.shuttingDown = false
     // Pending waiters for the next setToken call. Resolved when a new token
     // is pushed; used by the AUTH-retry path to coordinate refreshes.
@@ -500,6 +530,8 @@ export class Server {
           return this.#handleCancel(params)
         case 'chat/decision':
           return this.#handleDecision(params)
+        case 'chat/edit-ack':
+          return this.#handleEditAck(params)
         case 'shutdown':
           return this.#handleShutdown(id)
         default:
@@ -1043,13 +1075,17 @@ export class Server {
       if (name === 'submit_profile') {
         relayDefs.push(buildSubmitProfileTool(runId, this.emit))
       } else if (name === 'propose_edit') {
-        relayDefs.push(buildProposeEditTool(runId, this.emit, vaultPath))
+        relayDefs.push(
+          buildProposeEditTool(runId, this.emit, vaultPath, (id) => this.#registerAckSlot(id)),
+        )
       } else if (name === 'propose_write') {
-        relayDefs.push(buildProposeWriteTool(runId, this.emit))
+        relayDefs.push(buildProposeWriteTool(runId, this.emit, (id) => this.#registerAckSlot(id)))
       } else if (name === 'propose_skill') {
         relayDefs.push(buildProposeSkillTool(runId, this.emit, existingSkills))
       } else if (name === 'propose_multi_edit') {
-        relayDefs.push(buildProposeMultiEditTool(runId, this.emit, vaultPath))
+        relayDefs.push(
+          buildProposeMultiEditTool(runId, this.emit, vaultPath, (id) => this.#registerAckSlot(id)),
+        )
       } else if (name === 'move_note') {
         relayDefs.push(buildMoveNoteTool(runId, this.emit))
       } else if (name === 'edit_visualization') {
@@ -1059,6 +1095,73 @@ export class Server {
     if (relayDefs.length > 0) {
       const server = createSdkMcpServer({ name: 'writer-relay', tools: relayDefs })
       options.mcpServers = { 'writer-relay': server }
+    }
+
+    // propose_edit/write/multi_edit report success to the model the instant
+    // they emit `chat/edit-pending` — before the host has actually mapped the
+    // proposal into pendingChangesStore. A PostToolUse hook (not a change to
+    // the tool handlers themselves — one shared check, not duplicated per
+    // tool) confirms the host actually queued it before the model treats it
+    // as settled: if the host's ack (chat/edit-ack, sent once agent/chat/
+    // index.ts's edit-pending handling resolves) says it failed — or never
+    // arrives within the matcher's timeout — this REWRITES the tool's
+    // already-returned "queued" text into a visible error, so the model can
+    // react (retry, re-read the file, tell the user) instead of believing a
+    // proposal exists when it doesn't. Registered unconditionally (not inside
+    // the `canUseTool` block above) — it must run in EVERY permission mode,
+    // including 'bypassPermissions', since eager-success is a correctness
+    // gap independent of the approval flow.
+    options.hooks = {
+      PostToolUse: [
+        {
+          matcher: 'propose_edit|propose_write|propose_multi_edit',
+          // Seconds. Local IPC to the host's own process — generous but
+          // bounded so a host hang can't stall the agent loop forever.
+          timeout: 5,
+          hooks: [
+            async (input) => {
+              const pendingId = extractPendingId(input.tool_response)
+              // No id found — this call errored before queuing (e.g.
+              // checkOldString rejected it) and already carries its own
+              // error text; nothing to confirm.
+              if (!pendingId) return {}
+              const pending = this.pendingAcks.get(pendingId)
+              if (!pending) return {} // no slot registered — let it pass
+              // Belt-and-suspenders: race against our OWN timeout too, in
+              // addition to the matcher's declared `timeout` above — this is
+              // the main chat loop, so a host that never acks must not hang
+              // it regardless of whether the SDK's own timeout enforcement
+              // covers this exact case.
+              // Fail-open on timeout (ok: true, no rewrite) — same convention
+              // checkOldString uses above for anything unverifiable: don't
+              // surface a spurious error over a host that's merely slow, only
+              // over one that explicitly reported failure.
+              const { ok, reason } = await Promise.race([
+                pending.promise,
+                new Promise((r) => setTimeout(() => r({ ok: true, reason: null }), 4000)),
+              ])
+              this.pendingAcks.delete(pendingId)
+              if (ok) return {}
+              return {
+                hookSpecificOutput: {
+                  hookEventName: 'PostToolUse',
+                  updatedToolOutput: {
+                    content: [
+                      {
+                        type: 'text',
+                        text:
+                          '(error: this proposal could not be queued for review' +
+                          (reason ? ` — ${reason}` : '') +
+                          '. Re-read the file and retry.)',
+                      },
+                    ],
+                  },
+                },
+              }
+            },
+          ],
+        },
+      ],
     }
 
     // Up to two attempts: if the first fails with AUTH, ask the host for a
@@ -1391,6 +1494,33 @@ export class Server {
     if (!pending) return
     this.pendingDecisions.delete(decisionId)
     pending.resolve(params?.decision ?? {})
+  }
+
+  // Open a slot for a propose_* tool call's host-ack, keyed by the pendingId
+  // it just emitted in its `chat/edit-pending` notification. Called from the
+  // tool handler itself (buildProposeEditTool etc.), right after emitting —
+  // NOT awaited there; only the PostToolUse hook reads this slot's promise.
+  #registerAckSlot(pendingId) {
+    let resolve
+    const promise = new Promise((r) => {
+      resolve = r
+    })
+    this.pendingAcks.set(pendingId, { promise, resolve })
+  }
+
+  // Host's answer to "did this propose_* proposal actually get queued?"
+  // (agent/chat/index.ts sends this once its edit-pending handling settles).
+  // Resolves the matching PostToolUse hook's wait (see #buildPostToolUseHooks).
+  // Unknown / already-settled / already-timed-out pendingIds are ignored —
+  // the hook's own `timeout` (SDK-native, on the matcher) is what fires if
+  // this never arrives, so a late or duplicate ack is just a harmless no-op.
+  #handleEditAck(params) {
+    const pendingId = params?.pendingId
+    if (typeof pendingId !== 'string') return
+    const pending = this.pendingAcks.get(pendingId)
+    if (!pending) return
+    this.pendingAcks.delete(pendingId)
+    pending.resolve({ ok: !!params?.ok, reason: params?.reason ?? null })
   }
 
   #handleCancel(params) {

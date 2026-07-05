@@ -104,6 +104,21 @@ pub struct ChatDecisionArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ChatEditAckArgs {
+    pub pending_id: String,
+    /// Whether the host actually queued this propose_edit/write/multi_edit
+    /// call into pendingChangesStore. The sidecar's PostToolUse hook awaits
+    /// this before letting the model treat the proposal as settled — false
+    /// (or a timeout) rewrites the tool's already-returned "queued" text
+    /// into a visible error the model can react to.
+    pub ok: bool,
+    /// Optional short reason surfaced in that rewritten error text.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TitleArgs {
     pub run_id: String,
     pub model: String,
@@ -213,6 +228,27 @@ pub async fn claude_chat_decision(app: AppHandle, args: ChatDecisionArgs) -> Res
             "runId": args.run_id,
             "decisionId": args.decision_id,
             "decision": args.decision,
+        })),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Confirms (or denies) that a propose_edit/write/multi_edit proposal was
+/// actually queued into pendingChangesStore, once agent/chat/index.ts's
+/// edit-pending handling settles. Resolves the sidecar's PostToolUse hook
+/// wait (see server.mjs `#handleEditAck`), which otherwise fails open after
+/// its own timeout. Notification only — no response expected.
+#[tauri::command]
+pub async fn claude_chat_edit_ack(app: AppHandle, args: ChatEditAckArgs) -> Result<(), String> {
+    let manager = get_manager(&app)?;
+    let chat = manager.chat_client().await;
+    chat.notify(
+        "chat/edit-ack",
+        Some(json!({
+            "pendingId": args.pending_id,
+            "ok": args.ok,
+            "reason": args.reason,
         })),
     )
     .await

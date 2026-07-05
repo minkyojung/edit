@@ -60,6 +60,15 @@ export const notify = {
       description: 'This suggestion was accepted or rejected elsewhere a moment ago',
     })
   },
+  /** Boot-time sweep found pending suggestions whose target text no longer
+   * exists in the note — the file changed (external edit, sync) while the
+   * app was closed. Dropped as a batch (one toast, not one per suggestion)
+   * instead of leaving them to fail later at Keep time. */
+  staleProposalsDropped(count: number) {
+    toast(`${count} suggestion${count === 1 ? '' : 's'} removed`, {
+      description: 'Their target text changed while the app was closed',
+    })
+  },
 
   // ── Note CRUD ─────────────────────────────────────────────────
   cantCreateNote(opts: RetryOpts = {}) {
