@@ -82,6 +82,15 @@ export const cmPrototypeTheme = EditorView.theme({
     paddingTop: 'var(--prose-gap-list, 0)',
     lineHeight: 'var(--prose-lh-list, 1.35)',
   },
+  // The FIRST logical line has nothing above it to separate from — the 48px
+  // `.cm-content` padding already sets the top inset — so it opts out of the
+  // per-line gap. This also fixes the empty-doc placeholder: the placeholder is
+  // inline content living INSIDE the first `.cm-line`, so the top gap floats its
+  // text down, but CM measures the empty-line caret from the line's top edge
+  // (above this padding) — leaving the placeholder ~1em below the caret. Zeroing
+  // the first line re-aligns them and drops the double top-inset on paragraph 1.
+  // `> .cm-line:first-child` (0,3,0) out-specifies every gap rule above.
+  '.cm-content > .cm-line:first-child': { paddingTop: '0' },
   // Nested cell / preview editors are not a page — kill the inter-line gap the
   // same way the `.cm-content` resets above do (more specific → wins on order).
   '.cm-celledit .cm-line': { paddingTop: '0' },
@@ -418,69 +427,66 @@ export const cmPrototypeTheme = EditorView.theme({
     borderRadius: '3px',
   },
 
-  // ── Slash `/` + wikilink `[[` autocomplete popup ──────────────────────────
-  // Notion-style: dark rounded panel, section headers, leading line icon,
-  // right-aligned markdown hint, muted selection (not CM's default blue bar).
+  // ── Wikilink `[[` autocomplete popup ──────────────────────────────────────
+  // Styles CM's native autocomplete (used for `[[ ]]` links; the `/` block menu
+  // is our own React tooltip in slashMenu.tsx and needs none of this). Matches
+  // the chat SlashPalette's polish (airy rows, roomy panel, inset muted
+  // selection). Metrics are FIXED to the app's type/space tokens (14px body,
+  // 12px footnote, radius token) so the popup is NOT scaled by the editor's own
+  // prose font-size.
+  //
   // The double `.cm-tooltip.cm-tooltip-autocomplete` prefix (auto-scoped to the
   // editor root by EditorView.theme) out-specifies @codemirror/autocomplete's
   // baseTheme, so our colors win over its `#17c` selected background.
   '.cm-tooltip.cm-tooltip-autocomplete': {
     border: '1px solid var(--border)',
-    borderRadius: 'var(--radius, 10px)',
+    borderRadius: 'calc(var(--radius, 10px) + 4px)', // ≈ rounded-xl (panel)
     background: 'var(--popover)',
     color: 'var(--popover-foreground)',
-    boxShadow: '0 8px 28px rgb(0 0 0 / 0.22)',
-    padding: '4px',
+    boxShadow: '0 12px 32px rgb(0 0 0 / 0.28)',
+    padding: '8px', // inset so the selected row floats off the panel edge
     overflow: 'hidden',
   },
+  // CM's baseTheme hard-sets `& > ul { font-family: monospace }` on the
+  // autocomplete list; re-assert the product sans here AND on the label below
+  // so "Text"/"Heading 1" render in the app font, not monospace.
   '.cm-tooltip.cm-tooltip-autocomplete > ul': {
     fontFamily: 'var(--font-sans)',
-    fontSize: '0.9em',
-    maxHeight: '20em',
-  },
-  '.cm-tooltip.cm-tooltip-autocomplete > ul > completion-section': {
-    display: 'block',
-    border: 'none',
-    opacity: '1',
-    padding: '10px 8px 4px',
-    color: 'var(--muted-foreground)',
-    fontSize: '0.72em',
-    fontWeight: '600',
-    letterSpacing: '0.04em',
-    textTransform: 'uppercase',
+    fontSize: 'var(--text-body, 14px)',
+    lineHeight: '1.2',
+    maxHeight: '22em',
   },
   '.cm-tooltip.cm-tooltip-autocomplete > ul > li': {
     display: 'flex',
     alignItems: 'center',
-    gap: '10px',
-    padding: '6px 8px',
-    borderRadius: '6px',
+    gap: '12px',
+    margin: '2px 0', // breathing room between rows, like the chat palette
+    padding: '13px 14px', // roomy rows; taller fill keeps the radius from reading as a pill
+    borderRadius: 'var(--radius, 10px)', // ≈ rounded-lg (item)
     color: 'var(--popover-foreground)',
+    transition: 'background-color 120ms ease', // soft hover, like the chat palette
+  },
+  // CM only moves aria-selected via the keyboard; add a hover tint for
+  // pointer parity with the chat palette. Both stay soft/translucent so the
+  // highlight reads as a gentle wash, not a hard block.
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li:hover': {
+    background: 'color-mix(in oklch, var(--muted) 45%, transparent)',
   },
   '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
-    background: 'var(--muted)',
+    background: 'color-mix(in oklch, var(--muted) 80%, transparent)',
     color: 'var(--popover-foreground)',
   },
-  '.cm-slashIcon': {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '20px',
-    height: '20px',
-    flex: '0 0 auto',
-    color: 'var(--muted-foreground)',
-  },
-  '.cm-slashIcon svg': { width: '16px', height: '16px', display: 'block' },
   '.cm-tooltip.cm-tooltip-autocomplete .cm-completionLabel': {
     flex: '1 1 auto',
-    fontWeight: '450',
+    fontFamily: 'var(--font-sans)', // beats CM's inherited monospace on the label
+    fontWeight: '500',
   },
   '.cm-tooltip.cm-tooltip-autocomplete .cm-completionDetail': {
     marginLeft: 'auto',
     flex: '0 0 auto',
     fontStyle: 'normal',
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-    fontSize: '0.85em',
+    fontSize: 'var(--text-footnote, 12px)',
     color: 'var(--muted-foreground)',
   },
 })

@@ -715,10 +715,10 @@ html[data-window-mode='compact'] .command-palette {
      line break reads distinct from a soft wrap (which stays at line-height).
      Tune this one knob to make prose tighter/airier. */
   --prose-gap-line: 1em;
-  /* List items stay tight independent of the prose gap above — the marker
-     already distinguishes adjacent items, so they don't need the paragraph
-     gap. 0 = no top gap; a tighter line-height packs items closer than body. */
-  --prose-gap-list: 0.3em;
+  /* Matched to --prose-gap-line so a line's top gap DOESN'T change when it is
+     reclassified paragraph↔list mid-typing (typing "- " would otherwise shrink
+     the gap and jump the caret up). Keep these two in lockstep. */
+  --prose-gap-list: 1em;
   --prose-lh-list: 1.6;
 
   /* ── Tahoe Design Tokens (Layer 1: Numeric) ──────────────────────────
