@@ -45,7 +45,11 @@ export const useVaultCommands = create<VaultCommandsStore>()((set, getState) => 
   refresh: async () => {
     try {
       const routines = await listRoutines()
-      set({ commands: routines.map((r) => toCommand(r.name, r.description)) })
+      set({
+        commands: routines
+          .filter((r) => !COMPOSER_HIDDEN.has(r.name))
+          .map((r) => toCommand(r.name, r.description)),
+      })
     } catch {
       // Keep the existing list on a read failure.
     }
