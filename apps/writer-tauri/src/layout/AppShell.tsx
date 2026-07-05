@@ -22,29 +22,85 @@ interface AppShellProps {
 
 // Inspector (right panel) width bounds, in px. Fixed-width column — the
 // editor flexes, this stays put on window resize.
+// MIN is the "controls don't squish" floor: the header keeps its tab strip +
+// a fixed control cluster, and the chat body needs a usable column. Dragging
+// below MIN (minus the deadzone) closes the panel rather than shrinking it.
 const PANEL_MIN_W = 300
 const PANEL_MAX_W = 560
-const PANEL_DEFAULT_W = 440
-// Left sidebar width bounds, in px. DEFAULT matches the shadcn SIDEBAR_WIDTH
-// constant (220px) so nothing shifts until the user drags.
-const SIDEBAR_MIN_W = 180
+// Default = the narrowest panel where the composer's ModeToggle shows its label
+// (icon + "Auto-accept edits"), not just the icon. That label appears via a
+// container query at footer ≥ 440px, and the footer sits inside ~37px of insets
+// (composer px = --surface-inset 8×2, PromptInput p-2.5 10×2, ~1px border), so
+// 440 + 37 ≈ 477 → round to 478 so the label reliably shows on first open.
+const PANEL_DEFAULT_W = 478
+const PANEL_CLOSE_SLOP = 28
+// Left sidebar width bounds, in px.
+//
+// MIN is content-derived: the header keeps 5 shrink-0 action buttons
+// (size-8 = 32px, gap-1 = 4px) to the RIGHT of the 80px traffic-light reserve.
+// Below this width the row would clip, so this is the "buttons don't squish"
+// floor. Dragging below MIN (minus a deadzone) closes the sidebar rather than
+// shrinking it further.
+//   80 (traffic-light reserve) + 5×32 (buttons) + 6×4 (gaps) + 12 (pr-3) = 276
+const SIDEBAR_MIN_W = 80 + 5 * 32 + 6 * 4 + 12
 const SIDEBAR_MAX_W = 360
-const SIDEBAR_DEFAULT_W = 260
+// Default must be ≥ MIN so the header never starts clipped.
+const SIDEBAR_DEFAULT_W = 300
+// Extra drag past MIN before the sidebar snaps closed. Hysteresis: within
+// [MIN-SLOP, MIN] the width rubber-bands to MIN; only past the slop do we close,
+// so the boundary can't flicker open/closed.
+const SIDEBAR_CLOSE_SLOP = 28
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n))
 
+// Persist the dragged widths so they survive reloads (open/closed state already
+// persists via layoutStore). Read once at mount, clamped to current bounds so a
+// stale value from an older build can't resurrect an out-of-range width.
+const SIDEBAR_WIDTH_KEY = 'ui:sidebar-width'
+const PANEL_WIDTH_KEY = 'ui:panel-width'
+const loadWidth = (key: string, def: number, lo: number, hi: number): number => {
+  if (typeof window === 'undefined') return def
+  const n = parseInt(window.localStorage.getItem(key) ?? '', 10)
+  return Number.isFinite(n) ? clamp(n, lo, hi) : def
+}
+
 export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: AppShellProps) {
-  const { sidebarOpen, contextPanelOpen, setSidebar, togglePanels } = useLayoutStore()
+  const { sidebarOpen, contextPanelOpen, setSidebar, setContextPanel, togglePanels } =
+    useLayoutStore()
   // Compact (Raycast-Notes) mode hides the sidebar + right panel so only the
   // editor title + body remain. The window itself is resized by the store; here
   // we just collapse the surrounding chrome to match.
   const compact = useWindowModeStore((s) => s.mode) === 'compact'
   const navigate = useNavigate()
-  const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_W)
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_W)
+  const [panelWidth, setPanelWidth] = useState(() =>
+    loadWidth(PANEL_WIDTH_KEY, PANEL_DEFAULT_W, PANEL_MIN_W, PANEL_MAX_W),
+  )
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    loadWidth(SIDEBAR_WIDTH_KEY, SIDEBAR_DEFAULT_W, SIDEBAR_MIN_W, SIDEBAR_MAX_W),
+  )
   // True only while a sidebar drag is in flight, so the shadcn open/close
   // width transition can be suppressed — otherwise the eased sidebar edge
   // trails the (instant) handle and they visibly separate mid-drag.
   const [resizingSidebar, setResizingSidebar] = useState(false)
+  // Same idea for the right panel: instant width during a drag, eased on
+  // open/close so the collapse animation matches the left sidebar's.
+  const [resizingPanel, setResizingPanel] = useState(false)
+
+  // Persist widths ~300ms after they settle (so a drag writes once on release,
+  // not every frame).
+  useEffect(() => {
+    const id = setTimeout(
+      () => window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)),
+      300,
+    )
+    return () => clearTimeout(id)
+  }, [sidebarWidth])
+  useEffect(() => {
+    const id = setTimeout(
+      () => window.localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth)),
+      300,
+    )
+    return () => clearTimeout(id)
+  }, [panelWidth])
 
   useEffect(() => {
     // App-level meta shortcuts. All three operate on the window scope
@@ -84,32 +140,51 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: A
       e.preventDefault()
       const startX = e.clientX
       const startW = panelWidth
-      const onMove = (ev: PointerEvent) => {
-        setPanelWidth(clamp(startW + (startX - ev.clientX), PANEL_MIN_W, PANEL_MAX_W))
-      }
-      const onUp = () => {
+      setResizingPanel(true)
+      function cleanup() {
         window.removeEventListener('pointermove', onMove)
         window.removeEventListener('pointerup', onUp)
         document.body.style.cursor = ''
         document.body.style.userSelect = ''
+        setResizingPanel(false)
+      }
+      function onMove(ev: PointerEvent) {
+        // Handle sits on the panel's LEFT edge, so dragging left widens.
+        const raw = startW + (startX - ev.clientX)
+        // Dragged decisively below the floor → close via the existing panel
+        // state (same treatment as the left sidebar), not a new width-0 state.
+        if (raw < PANEL_MIN_W - PANEL_CLOSE_SLOP) {
+          cleanup()
+          setContextPanel(false)
+          return
+        }
+        setPanelWidth(clamp(raw, PANEL_MIN_W, PANEL_MAX_W))
+      }
+      function onUp() {
+        cleanup()
       }
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
       window.addEventListener('pointermove', onMove)
       window.addEventListener('pointerup', onUp)
     },
-    [panelWidth],
+    [panelWidth, setContextPanel],
   )
 
-  const nudgeWidth = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowLeft') {
-      e.preventDefault()
-      setPanelWidth((w) => clamp(w + 16, PANEL_MIN_W, PANEL_MAX_W))
-    } else if (e.key === 'ArrowRight') {
-      e.preventDefault()
-      setPanelWidth((w) => clamp(w - 16, PANEL_MIN_W, PANEL_MAX_W))
-    }
-  }, [])
+  const nudgeWidth = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        setPanelWidth((w) => clamp(w + 16, PANEL_MIN_W, PANEL_MAX_W))
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        const next = panelWidth - 16
+        if (next < PANEL_MIN_W - PANEL_CLOSE_SLOP) setContextPanel(false)
+        else setPanelWidth(clamp(next, PANEL_MIN_W, PANEL_MAX_W))
+      }
+    },
+    [panelWidth, setContextPanel],
+  )
 
   // Drag-to-resize the left sidebar. Mirror of startResize; dragging the
   // handle right widens. Width is published as the --sidebar-width CSS var
@@ -121,33 +196,52 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: A
       const startX = e.clientX
       const startW = sidebarWidth
       setResizingSidebar(true)
-      const onMove = (ev: PointerEvent) => {
-        setSidebarWidth(clamp(startW + (ev.clientX - startX), SIDEBAR_MIN_W, SIDEBAR_MAX_W))
-      }
-      const onUp = () => {
+      // Function declarations (hoisted) so cleanup can reference onMove/onUp
+      // and onMove can trigger cleanup when it snaps the sidebar closed.
+      function cleanup() {
         window.removeEventListener('pointermove', onMove)
         window.removeEventListener('pointerup', onUp)
         document.body.style.cursor = ''
         document.body.style.userSelect = ''
         setResizingSidebar(false)
       }
+      function onMove(ev: PointerEvent) {
+        const raw = startW + (ev.clientX - startX)
+        // Dragged decisively below the "don't squish" floor → close via the
+        // existing offcanvas state (NOT a new width-0 state), so the toggle,
+        // ⌘-shortcut, editor reflow and cookie all keep working as one machine.
+        if (raw < SIDEBAR_MIN_W - SIDEBAR_CLOSE_SLOP) {
+          cleanup()
+          setSidebar(false)
+          return
+        }
+        setSidebarWidth(clamp(raw, SIDEBAR_MIN_W, SIDEBAR_MAX_W))
+      }
+      function onUp() {
+        cleanup()
+      }
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
       window.addEventListener('pointermove', onMove)
       window.addEventListener('pointerup', onUp)
     },
-    [sidebarWidth],
+    [sidebarWidth, setSidebar],
   )
 
-  const nudgeSidebarWidth = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowLeft') {
-      e.preventDefault()
-      setSidebarWidth((w) => clamp(w - 16, SIDEBAR_MIN_W, SIDEBAR_MAX_W))
-    } else if (e.key === 'ArrowRight') {
-      e.preventDefault()
-      setSidebarWidth((w) => clamp(w + 16, SIDEBAR_MIN_W, SIDEBAR_MAX_W))
-    }
-  }, [])
+  const nudgeSidebarWidth = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        const next = sidebarWidth - 16
+        if (next < SIDEBAR_MIN_W - SIDEBAR_CLOSE_SLOP) setSidebar(false)
+        else setSidebarWidth(clamp(next, SIDEBAR_MIN_W, SIDEBAR_MAX_W))
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        setSidebarWidth((w) => clamp(w + 16, SIDEBAR_MIN_W, SIDEBAR_MAX_W))
+      }
+    },
+    [sidebarWidth, setSidebar],
+  )
 
   return (
     <SidebarProvider
@@ -234,7 +328,11 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: A
               reopening doesn't re-mount RightPanel and flicker. overflow-hidden
               clips the content while collapsed. */}
           <div
-            className="relative h-full shrink-0 overflow-hidden border-l border-sidebar-border bg-background"
+            className={`relative h-full shrink-0 overflow-hidden border-l border-sidebar-border bg-background${
+              // Eased on open/close to match the left sidebar's collapse; off
+              // during a drag so the edge tracks the handle 1:1.
+              resizingPanel ? '' : ' transition-[width] duration-200 ease-tahoe'
+            }`}
             // Collapsed to 0 in compact (and kept mounted, like the closed
             // state) so the small window is editor-only.
             style={{ width: contextPanelOpen && !compact ? panelWidth : 0 }}

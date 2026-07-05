@@ -61,8 +61,12 @@ export async function openProjectWindow(
   const win = new WebviewWindow(label, {
     url: `index.html?root=${encodeURIComponent(path)}`,
     title,
-    width: 1280,
+    // Match the launcher's fixed opening size (Rust setup forces the same on
+    // the config `main` window). Centered so every project window opens
+    // identically, regardless of where the last one sat.
+    width: 1440,
     height: 800,
+    center: true,
     minWidth: 800,
     minHeight: 600,
     resizable: true,

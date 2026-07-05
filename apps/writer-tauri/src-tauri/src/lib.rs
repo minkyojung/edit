@@ -476,6 +476,21 @@ pub fn run() {
                 }
             }
 
+            // Always open the main window at one fixed size, centered. macOS
+            // restores the last window frame across launches (overriding the
+            // tauri.conf size), so we re-assert it every launch for an
+            // identical opening size + position. The window starts hidden
+            // (`visible: false` in tauri.conf) so we can size/center it
+            // offscreen and only then show it — no resize flash. This runs at
+            // process startup only, so it doesn't fight the in-session compact
+            // toggle (which stashes/restores its own frame).
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_size(tauri::LogicalSize::new(1440.0, 800.0));
+                let _ = window.center();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+
             // proof-server spawn removed (Phase 3.D). The app now boots
             // directly into the claude sidecars below — no engine gate,
             // no port-4000 listener, no projection-repair daemon.
