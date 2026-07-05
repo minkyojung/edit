@@ -36,6 +36,7 @@ import { ContextGauge } from '@/chat/ContextGauge'
 import { SlashPalette } from '@/chat/SlashPalette'
 import { MentionPalette, type MentionItem } from '@/chat/MentionPalette'
 import { listCommands, type LoadedCommand } from '@/chat/commands'
+import { useVaultCommands } from '@/state/vaultCommandsStore'
 import { useDocsStore } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { fuzzyScore } from '@/lib/fuzzyMatch'
@@ -320,7 +321,14 @@ export function PromptInput({
   // before any space. Filter is the partial name (everything after `/`).
   const slashMatch = !isStreaming ? SLASH_RE.exec(value) : null
   const slashQuery = slashMatch?.[1] ?? ''
-  const allCommands = useMemo(() => listCommands(), [])
+  // Builtin editor actions (bundled) + the vault's routine commands (organize /
+  // daily-ingest / … from the agent plugin). Both share the palette; execution
+  // diverges by `source` in ChatPanel.
+  const vaultCommands = useVaultCommands((s) => s.commands)
+  const allCommands = useMemo(
+    () => [...listCommands(), ...vaultCommands],
+    [vaultCommands],
+  )
   const filteredCommands = useMemo<LoadedCommand[]>(() => {
     if (!slashMatch) return []
     if (!slashQuery) return allCommands

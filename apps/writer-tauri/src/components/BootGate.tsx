@@ -25,6 +25,7 @@ import { useEffect, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocsStore } from '@/state/docsStore'
 import { useThreadsStore } from '@/state/threadsStore'
+import { useVaultCommands } from '@/state/vaultCommandsStore'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { VaultLauncher } from '@/components/VaultLauncher'
@@ -109,6 +110,9 @@ async function runWikiLegacyBoot(vaultRoot: string | null): Promise<void> {
   } catch (err) {
     console.warn('[boot] routines seed failed', err)
   }
+  // Load the seeded routine commands into the slash palette (organize /
+  // daily-ingest / chat-to-wiki + any the user added). Best-effort.
+  await useVaultCommands.getState().refresh()
   // Seed default agent roles (`_system/agent/agents/*.md`) — the editable chat
   // personas. `default` is the main persona (from FREE_CHAT_PROMPT) made
   // editable; the rest are starter roles the user can edit or delete.

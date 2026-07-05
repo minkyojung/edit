@@ -47,6 +47,8 @@ import {
 } from '@/chat/types'
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
 import { usePendingOrganize } from '@/state/pendingOrganizeStore'
+import { useVaultCommands } from '@/state/vaultCommandsStore'
+import { pathForDoc } from '@/lib/docPaths'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
 import { ReviewTray } from '@/chat/ReviewTray'
@@ -416,6 +418,32 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     await runSlashCommand(threadId, cmd, args, userTurn, [...turnsHook.turns, userTurn])
   }
 
+  /** Run a vault routine command (organize / daily-ingest / …) NATIVELY: send
+   * `/<name> <arg>` as the prompt so the SDK expands the plugin command. The arg
+   * defaults to the open note's path — the "organize what I'm looking at"
+   * default — unless the user typed one. No client system prompt: the command
+   * body arrives via SDK expansion, and an empty systemBody keeps the chat
+   * persona out. Caller has already appended `userTurn` to `history`. */
+  async function runVaultCommand(
+    threadId: string,
+    name: string,
+    args: string,
+    history: ChatTurn[],
+  ) {
+    const knownDocs = useDocsStore.getState().knownDocs
+    const doc = slug ? knownDocs.find((d) => d.slug === slug) : undefined
+    const notePath = doc
+      ? pathForDoc(doc, (s) => knownDocs.find((d) => d.slug === s))
+      : null
+    const arg = args.trim() || notePath || ''
+    const overrides: RunOverrides = {
+      systemPrompt: '',
+      prompt: arg ? `/${name} ${arg}` : `/${name}`,
+      relayTools: ['propose_edit', 'propose_multi_edit', 'propose_write', 'move_note'],
+    }
+    await runner.run(threadId, history, overrides)
+  }
+
   /** Append a finished error turn without invoking the model. Used for
    * slash invocations that fail before the run starts (unknown name,
    * missing selection). `alreadyAppendedUser` skips re-adding the user
@@ -464,11 +492,28 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       const slash = parseSlashInvocation(text)
       if (slash) {
         const cmd = getCommand(slash.name)
-        if (!cmd) {
-          appendInlineError(threadId, text, `Unknown command: /${slash.name}`)
+        if (cmd) {
+          await executeCommand(threadId, cmd, slash.args, text)
           return
         }
-        await executeCommand(threadId, cmd, slash.args, text)
+        // Not a builtin editor action — is it a vault routine command? Those
+        // run natively (the SDK expands the plugin command).
+        if (useVaultCommands.getState().get(slash.name)) {
+          const userTurn: ChatTurn = {
+            id: crypto.randomUUID(),
+            role: 'user',
+            content: text,
+            ts: Date.now(),
+            slashInvocation: { name: slash.name, args: slash.args },
+          }
+          turnsHook.appendTurn(userTurn)
+          await runVaultCommand(threadId, slash.name, slash.args, [
+            ...turnsHook.turns,
+            userTurn,
+          ])
+          return
+        }
+        appendInlineError(threadId, text, `Unknown command: /${slash.name}`)
         return
       }
 
@@ -556,6 +601,16 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
           )
           return
         }
+        // Vault routine command → rerun natively.
+        if (useVaultCommands.getState().get(lastUser.slashInvocation.name)) {
+          await runVaultCommand(
+            threadId,
+            lastUser.slashInvocation.name,
+            lastUser.slashInvocation.args,
+            history,
+          )
+          return
+        }
         // Command was renamed / removed since the original send; fall back
         // to plain chat so the rerun at least produces something.
       }
@@ -581,6 +636,8 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       const hasSpace = m[2].length > 0
       const cmd = getCommand(m[1])
       if (!cmd) {
+        // Vault routine commands are valid too — they execute natively.
+        if (useVaultCommands.getState().get(m[1])) return { ok: true as const }
         return hasSpace
           ? { ok: false as const, message: `Unknown command: /${m[1]}` }
           : { ok: true as const }
