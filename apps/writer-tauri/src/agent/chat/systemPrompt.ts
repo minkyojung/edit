@@ -168,14 +168,19 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     today,
   } = args
   const prefix: string[] = []
-  if (ctx.selfProfile) {
-    prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
-  }
-  if (ctx.claudeMd) prefix.push(ctx.claudeMd)
+  // App-static persona first so it forms the longest cache-stable prefix: it
+  // ships with the binary and never changes on a vault switch, whereas the
+  // self-profile and CLAUDE.md schema below are per-vault and swappable. Putting
+  // the invariant block first means switching vaults only invalidates the cache
+  // from the profile byte onward, not the persona above it.
   // Native routine runs (slash-command intake) carry their brain in the USER
   // turn, so they pass an empty systemBody — skip it rather than push a blank
   // block. Chat always has a non-empty persona, so this is a no-op there.
   if (systemBody) prefix.push(systemBody)
+  if (ctx.selfProfile) {
+    prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
+  }
+  if (ctx.claudeMd) prefix.push(ctx.claudeMd)
   // Ground the model's file tools in the real vault root (stable → stays in the
   // cacheable prefix). Without it the first Read guesses a wrong absolute path.
   if (vaultRoot) {
