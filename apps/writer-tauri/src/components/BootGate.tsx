@@ -34,6 +34,8 @@ import { exists } from '@tauri-apps/plugin-fs'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
 import { seedRoutines } from '@/lib/routinesLib'
 import { seedAgents } from '@/lib/agentsLib'
+import { seedSkills } from '@/lib/skillsLib'
+import { UNDO_SKILL_BODY, UNDO_SKILL_DESCRIPTION } from '@/agent/skills/undoAiChange'
 import { INBOX_PROMPT } from '@/agent/inbox'
 import { DAILY_INGEST_PROMPT } from '@/agent/dailyIngest'
 import { HANDOFF_PROMPT } from '@/agent/wikiHandoff'
@@ -112,6 +114,20 @@ async function seedWikiDefaults(): Promise<void> {
     ])
   } catch (err) {
     console.warn('[boot] agents seed failed', err)
+  }
+  // Seed default skills (`_system/agent/skills/<name>/SKILL.md`) — procedures
+  // the agent loads on demand. `undo-ai-change` lets the agent reverse its own
+  // recent edits when the user regrets one. Idempotent + tombstone-aware.
+  try {
+    await seedSkills([
+      {
+        name: 'undo-ai-change',
+        description: UNDO_SKILL_DESCRIPTION,
+        body: UNDO_SKILL_BODY,
+      },
+    ])
+  } catch (err) {
+    console.warn('[boot] skills seed failed', err)
   }
 }
 
