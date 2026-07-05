@@ -70,7 +70,22 @@ export const cmPrototypeTheme = EditorView.theme({
   '.cm-proof-preview .cm-celledit .cm-content': {
     padding: '0.3em 0.55em',
   },
-  '.cm-line': { padding: '0' },
+  // Vertical gap on the TOP of every logical line. A soft wrap stays inside one
+  // `.cm-line` (spaced only by line-height), so this gap appears ONLY on hard
+  // (Enter) breaks — making an intentional line break read distinct from a wrap.
+  // Blank lines between paragraphs already add a line-box of separation, so this
+  // stays small. Headings / code override it below.
+  '.cm-line': { padding: 'var(--prose-gap-line, 0.3em) 0 0' },
+  // List item lines opt OUT of the prose gap (marker already separates them).
+  // Same specificity as `.cm-line` but later in source → wins on the top gap.
+  '.cm-list-line': {
+    paddingTop: 'var(--prose-gap-list, 0)',
+    lineHeight: 'var(--prose-lh-list, 1.35)',
+  },
+  // Nested cell / preview editors are not a page — kill the inter-line gap the
+  // same way the `.cm-content` resets above do (more specific → wins on order).
+  '.cm-celledit .cm-line': { paddingTop: '0' },
+  '.cm-proof-preview .cm-line': { paddingTop: '0' },
   '.cm-cursor': { borderLeftColor: 'var(--foreground)' },
   // Drop-position indicator during drag. CM's default is solid black →
   // invisible on a dark palette; tint it so you can gauge where it'll land.
@@ -92,6 +107,11 @@ export const cmPrototypeTheme = EditorView.theme({
   '.cm-h1, .cm-h2, .cm-h3, .cm-h4, .cm-h5, .cm-h6': {
     fontWeight: '600',
     lineHeight: 'var(--prose-lh-heading, 1.25)',
+    // Proximity principle: a heading belongs to the text BELOW it, so give it
+    // much more space above than below (~top:bottom well over 1.5:1). Overrides
+    // the generic `.cm-line` top gap (equal specificity, later in source wins).
+    paddingTop: 'var(--prose-gap-heading, 28px)',
+    paddingBottom: '0.2em',
   },
   '.cm-h1': { fontSize: 'var(--prose-h1, 28px)' },
   '.cm-h2': { fontSize: 'var(--prose-h2, 22px)' },
@@ -158,6 +178,10 @@ export const cmPrototypeTheme = EditorView.theme({
     paddingLeft: '1rem',
     color: 'var(--muted-foreground)',
     fontStyle: 'italic',
+    // A quote is one block — its internal lines shouldn't get the paragraph gap
+    // (they'd drift apart under a continuous left bar). Keep them at line-height,
+    // like code/list. Outer separation comes from the blank lines around it.
+    paddingTop: '0',
   },
 
   // Horizontal rule (line decoration: border on an emptied line)
@@ -172,6 +196,21 @@ export const cmPrototypeTheme = EditorView.theme({
     fontFamily: 'var(--font-mono, ui-monospace, monospace)',
     fontSize: '0.9em',
     background: 'var(--muted)',
+    // Horizontal inset so code doesn't hug the tinted edges; vertical stays tight
+    // (no per-line hard-break gap). The first/last lines below add the box's
+    // top/bottom padding + rounded corners so the per-line backgrounds read as
+    // one card rather than stacked rectangles.
+    padding: '0 1em',
+  },
+  '.cm-code-block-first': {
+    paddingTop: '0.7em',
+    borderTopLeftRadius: '8px',
+    borderTopRightRadius: '8px',
+  },
+  '.cm-code-block-last': {
+    paddingBottom: '0.7em',
+    borderBottomLeftRadius: '8px',
+    borderBottomRightRadius: '8px',
   },
 
   // Shared marker column (v2 step 6 — list indent unification). Every list marker
@@ -334,6 +373,11 @@ export const cmPrototypeTheme = EditorView.theme({
   '.cm-md-table tr:hover .cm-table-delrow': { opacity: '1' },
   '.cm-md-table': {
     borderCollapse: 'collapse',
+    // Fills the editor width. The trap was `width:100%` under AUTO layout: WebKit
+    // dumped the surplus width into arbitrary columns (a 2-char column ballooning
+    // while a text-heavy one stayed narrow). editableTable.ts fixes that by pinning
+    // per-column widths (table-layout:fixed + a computed <colgroup>), so the fill
+    // divides by content demand instead of the engine's guesswork.
     width: '100%',
     fontSize: '0.92em',
   },
@@ -342,6 +386,9 @@ export const cmPrototypeTheme = EditorView.theme({
     border: '1px solid var(--border)',
     padding: '0.35em 0.6em',
     textAlign: 'left',
+    // Fixed layout pins the column width, so long content must wrap inside it
+    // (not overflow the pinned width).
+    overflowWrap: 'break-word',
     // Keep empty cells (e.g. a just-added row/column) visibly sized instead of
     // collapsing to a sliver. `height` acts as a min-height on table cells.
     minWidth: '3em',

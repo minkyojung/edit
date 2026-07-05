@@ -699,7 +699,7 @@ html[data-window-mode='compact'] .command-palette {
      comfortable even though UI is 14px; headings use a clean six-step
      ladder rather than the old em-based 1.6em / 1.3em that drifted
      when root size moved. line-height splits between body (loose,
-     1.7) and headings (tight, 1.25). */
+     1.6) and headings (tight, 1.25). */
   --prose-base: 18px;
   --prose-h1: 31px;
   --prose-h2: 25px;
@@ -707,10 +707,19 @@ html[data-window-mode='compact'] .command-palette {
   --prose-h4: 18px;
   --prose-h5: 16px;
   --prose-h6: 15px;
-  --prose-lh-body: 1.7;
+  --prose-lh-body: 1.6;
   --prose-lh-heading: 1.25;
   --prose-gap-block: 14px;
   --prose-gap-heading: 28px;
+  /* Extra gap added to the TOP of every hard-broken line (Enter), so a hard
+     line break reads distinct from a soft wrap (which stays at line-height).
+     Tune this one knob to make prose tighter/airier. */
+  --prose-gap-line: 1em;
+  /* List items stay tight independent of the prose gap above — the marker
+     already distinguishes adjacent items, so they don't need the paragraph
+     gap. 0 = no top gap; a tighter line-height packs items closer than body. */
+  --prose-gap-list: 0.3em;
+  --prose-lh-list: 1.6;
 
   /* ── Tahoe Design Tokens (Layer 1: Numeric) ──────────────────────────
      Raw scale values aligned to macOS Tahoe's 4pt grid and SF Pro

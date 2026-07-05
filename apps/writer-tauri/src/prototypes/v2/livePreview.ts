@@ -89,10 +89,18 @@ function buildDecos(
   const hide = (from: number, to: number) => {
     if (to > from) out.push(HIDE.range(from, to))
   }
-  const eachLineClass = (from: number, to: number, cls: string) => {
-    let n = state.doc.lineAt(from).number
-    const end = state.doc.lineAt(Math.min(to, state.doc.length)).number
-    for (; n <= end; n++) out.push(Decoration.line({ class: cls }).range(state.doc.line(n).from))
+  // `edges` also tags the first/last line with `${cls}-first` / `${cls}-last`, so a
+  // per-line-backgrounded block (code) can round its outer corners + pad top/bottom
+  // and read as one card instead of stacked rectangles.
+  const eachLineClass = (from: number, to: number, cls: string, edges = false) => {
+    const first = state.doc.lineAt(from).number
+    const last = state.doc.lineAt(Math.min(to, state.doc.length)).number
+    for (let n = first; n <= last; n++) {
+      let c = cls
+      if (edges && n === first) c += ` ${cls}-first`
+      if (edges && n === last) c += ` ${cls}-last`
+      out.push(Decoration.line({ class: c }).range(state.doc.line(n).from))
+    }
   }
   for (const { from, to } of ranges) {
     tree.iterate({
@@ -221,7 +229,7 @@ function buildDecos(
         // Fenced code — style every line (fences stay visible; mono looks fine).
         // No reveal toggle.
         if (name === 'FencedCode') {
-          eachLineClass(nf, nt, 'cm-code-block')
+          eachLineClass(nf, nt, 'cm-code-block', true)
           return
         }
 
@@ -248,6 +256,7 @@ function buildDecos(
           listLinesDone.add(line.from)
           out.push(
             Decoration.line({
+              class: 'cm-list-line',
               attributes: {
                 style: `padding-left:${(level + 1) * LIST_INDENT}em;text-indent:-${LIST_INDENT}em`,
               },
@@ -350,6 +359,7 @@ function buildDecos(
         const level = Math.floor(indent / 2)
         out.push(
           Decoration.line({
+            class: 'cm-list-line',
             attributes: {
               style: `padding-left:${(level + 1) * LIST_INDENT}em;text-indent:-${LIST_INDENT}em`,
             },

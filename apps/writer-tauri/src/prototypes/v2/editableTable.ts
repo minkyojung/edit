@@ -323,6 +323,30 @@ export class EditableTableWidget extends WidgetType {
       grid.push(rowCells)
     }
 
+    // ── Column widths: full-width table, split proportionally to content ─────────
+    // `width:100%` under auto layout let WebKit dump surplus width into arbitrary
+    // columns (a 2-char column ballooning while a text-heavy one stayed narrow). We
+    // instead pin explicit per-column widths under `table-layout:fixed`, so the
+    // table fills the editor AND divides that width by each column's content demand.
+    // CJK counts double (Korean glyphs are ~2x Latin width); sqrt damps the spread
+    // so one long cell can't starve the rest, and a floor of 3 keeps empty columns
+    // visible.
+    const dataLines = rows.filter((l) => !isDelim(l))
+    const textCost = (s: string) =>
+      [...s.trim()].reduce((n, ch) => n + (/[ᄀ-￿]/.test(ch) ? 2 : 1), 0)
+    const weights = aligns.map((_, i) =>
+      Math.sqrt(Math.max(3, ...dataLines.map((l) => textCost(cellsOf(l)[i] ?? '')))),
+    )
+    const wsum = weights.reduce((a, b) => a + b, 0) || 1
+    const colgroup = document.createElement('colgroup')
+    for (const w of weights) {
+      const col = document.createElement('col')
+      col.style.width = `${((w / wsum) * 100).toFixed(2)}%`
+      colgroup.appendChild(col)
+    }
+    table.insertBefore(colgroup, table.firstChild)
+    table.style.tableLayout = 'fixed'
+
     // `wrap` owns the vertical SPACING as PADDING (not margin) so CM6's heightmap —
     // which measures a block widget by its bounding box, excluding margins — sees
     // the full height; with margin the map was ~28px short per table and clicks /
