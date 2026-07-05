@@ -271,14 +271,16 @@ function renderSubagentSteps(
   ) : undefined
 }
 
-/** Group key for de-duping edit rows: the target file's name (both the live
- * write and the dropped edit carry the same file_path). Falls back to the
- * part id so a path-less part is never collapsed into another. */
+/** Group key for de-duping edit rows: the target file's FULL path (both the
+ * live write and the dropped edit carry the exact same file_path string for
+ * the same file, which is what this dedup is actually for). Previously keyed
+ * by basename only, which collapsed two DIFFERENT files that happen to share
+ * a filename in different folders (e.g. `inbox/Q3.md` and `daily/Q3.md`) —
+ * hiding a genuine, unrelated proposal as if it were a duplicate shell. Falls
+ * back to the part id so a path-less part is never collapsed into another. */
 function editFileKey(part: ToolPartType): string {
   const fp = (part.input as { file_path?: string } | null | undefined)?.file_path
-  if (!fp) return part.id
-  const idx = Math.max(fp.lastIndexOf('/'), fp.lastIndexOf('\\'))
-  return idx >= 0 ? fp.slice(idx + 1) : fp
+  return fp || part.id
 }
 
 /** "N tool calls, M messages" — counts only what the collapsed group hides
