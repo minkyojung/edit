@@ -10,6 +10,13 @@ import { useDocsStore } from '@/state/docsStore'
 import { useIngestStore } from '@/state/ingestStore'
 import { useGitStore, aiEditSubject } from '@/state/gitStore'
 import { getDefaultNoteFolder } from '@/state/settingsStore'
+import { getActiveSlugFromHash } from '@/lib/viewUrl'
+
+/** Don't auto-file a capture edited within this window — the user only just
+ * paused on it (the idle trigger fires at 60s of inactivity), so treat it as
+ * still in-hand. Matches IDLE_MS so a note touched during the current idle
+ * window is left alone until the next cycle. */
+const ORGANIZE_EDIT_COOLDOWN_MS = 60_000
 import { processInboxNote } from '@/agent/inbox'
 import { syncTodayManually } from '@/hooks/useIdleTrigger'
 import type { OrganizeRequest } from '@/state/pendingOrganizeStore'
@@ -78,11 +85,21 @@ export async function autoOrganizeInbox(): Promise<{
 }> {
   const capturePrefix = getDefaultNoteFolder() + '/'
   const ingest = useIngestStore.getState()
+  const now = Date.now()
+  const activeSlug = getActiveSlugFromHash()
   const fresh = useDocsStore.getState().knownDocs.filter((d) => {
     if (!d.relPath?.startsWith(capturePrefix) || d.archivedAt) return false
     const ingestedAt = ingest.lastIngestedAt[d.slug] ?? 0
     const editedAt = ingest.lastEditedAt[d.slug] ?? 0
-    return ingestedAt === 0 || editedAt > ingestedAt
+    // Has new content to file? (never ingested, or edited since last ingest)
+    if (!(ingestedAt === 0 || editedAt > ingestedAt)) return false
+    // Leave a note the user is actively working on ALONE — filing it now would
+    // move/rewrite it out from under them and swallow their in-flight edit (the
+    // race that orphaned a manual edit). Skip the note open in the editor, and
+    // any edited within the idle window (they only just paused on it).
+    if (d.slug === activeSlug) return false
+    if (now - editedAt < ORGANIZE_EDIT_COOLDOWN_MS) return false
+    return true
   })
 
   let processed = 0
