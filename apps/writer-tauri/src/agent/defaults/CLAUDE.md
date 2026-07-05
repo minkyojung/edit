@@ -25,6 +25,7 @@ inbox/                   — landing zone for newly created / captured notes
 wiki/                    — synthesized entity / topic / concept pages (you own these)
   <Title>.md             — the page itself
   <Title>.meta.json      — identity sidecar (system-managed, do not edit)
+  Profile.md             — user self-profile singleton (rarely changes; see Profile zones below)
 
 articles/                — saved read-it-later web pages (raw; you don't edit these)
   <Title>.md             — the saved article body (extracted markdown)
@@ -32,7 +33,6 @@ articles/                — saved read-it-later web pages (raw; you don't edit 
 
 _system/                 — bookkeeping (host-managed; read-only to you)
   index.md               — catalog of every wiki page, one line each (host-written)
-  profile.md             — user self-profile (rarely changes)
 
 threads/                 — chat thread storage, off-limits to you
 ```
