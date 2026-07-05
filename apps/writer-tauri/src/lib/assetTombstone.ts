@@ -1,13 +1,12 @@
-// Tombstones for user-deleted agent assets (routines / agents).
+// Tombstones for user-deleted agent assets (skills / routines / agents).
 //
-// seedRoutines / seedAgents re-create the built-in defaults on every boot
-// when their file is missing (idempotent-by-existence). Without a record of
-// what the user deliberately deleted, a deleted default would resurrect on the
-// next launch — unnatural ("I deleted it, why is it back?"). This module keeps
-// a small list of deleted vault-relative paths so seeding can skip them.
-//
-// Only SEEDED kinds need this — skills are never re-created, so deleting a
-// skill is already permanent and records no tombstone.
+// seedSkills / seedRoutines / seedAgents re-create the built-in defaults on
+// every boot when their file is missing (idempotent-by-existence). Without a
+// record of what the user deliberately deleted, a deleted default would
+// resurrect on the next launch — unnatural ("I deleted it, why is it back?").
+// This module keeps a small list of deleted vault-relative paths so seeding can
+// skip them. All three seeded kinds tombstone on delete; a user-created skill
+// that was never a default also records a harmless entry no seeder checks.
 //
 // Stored in the vault (`_system/agent/.deleted.json`) so the record travels
 // with the vault (git, other machines), matching "the vault is the single

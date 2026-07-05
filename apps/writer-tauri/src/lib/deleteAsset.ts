@@ -24,13 +24,15 @@ export function isAgentAssetPath(rel: string): boolean {
 }
 
 /** Delete a skill / routine / agent by its vault path. Tears it out of the
- * in-memory catalog (closing any open tab), removes it on disk, and — for the
- * seeded kinds (routines / agents) — tombstones it so the boot seeders don't
- * resurrect it. No-op-safe: an unknown-shaped path just deletes nothing. */
+ * in-memory catalog (closing any open tab), removes it on disk, and tombstones
+ * it so the boot seeders don't resurrect a deleted default. No-op-safe: an
+ * unknown-shaped path just deletes nothing. */
 export async function deleteAssetByPath(rel: string): Promise<void> {
   const isSkill = SKILL_RE.test(rel)
-  const seeded = ROUTINE_RE.test(rel) || AGENT_RE.test(rel)
-  if (!isSkill && !seeded) return
+  // All three kinds are now boot-seeded (skills via seedSkills), so all three
+  // tombstone on delete — otherwise a deleted default returns on next launch.
+  const isAsset = isSkill || ROUTINE_RE.test(rel) || AGENT_RE.test(rel)
+  if (!isAsset) return
 
   // Drop from the catalog FIRST so the flush loop can't re-write the file
   // mid-delete; removeKnownDoc closes the tab + destroys the handle. No-op
@@ -49,5 +51,5 @@ export async function deleteAssetByPath(rel: string): Promise<void> {
     await trashVaultFile(rel)
   }
 
-  if (seeded) await addTombstone(rel)
+  await addTombstone(rel)
 }

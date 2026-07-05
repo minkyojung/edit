@@ -4,10 +4,36 @@
 // they open in the editor like any note. The Skills page reads the files
 // directly to show name + description; opening/deletion use the slug/folder.
 
-import { listVaultDir, readVaultFile } from '@/lib/vault'
+import { listVaultDir, readVaultFile, writeVaultFile, vaultFileExists } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
+import { readTombstones } from '@/lib/assetTombstone'
 
 export const SKILLS_REL = '_system/agent/skills'
+
+/** One default skill to seed: the folder name, a one-line `description` (the
+ * when-to-use trigger that surfaces in the agent's context), and the SKILL.md
+ * body (the procedure). */
+export interface SkillSeed {
+  name: string
+  description: string
+  body: string
+}
+
+/** Seed default skills into `<SKILLS_REL>/<name>/SKILL.md` if missing.
+ * Idempotent by file existence (never overwrites the user's edits) and skips
+ * anything the user deleted (tombstoned), so a removed default doesn't
+ * resurrect — the same contract as `seedRoutines` / `seedAgents`. */
+export async function seedSkills(seeds: SkillSeed[]): Promise<void> {
+  const dead = await readTombstones()
+  for (const seed of seeds) {
+    const rel = `${SKILLS_REL}/${seed.name}/SKILL.md`
+    if (dead.has(rel)) continue
+    if (await vaultFileExists(rel)) continue
+    const content = `---\nname: ${seed.name}\ndescription: ${seed.description}\n---\n\n${seed.body.trim()}\n`
+    await writeVaultFile(rel, content)
+    console.log('[seed skills] wrote default', rel)
+  }
+}
 
 export interface VaultSkill {
   /** Folder name under the skills dir — the delete/identity key. */
