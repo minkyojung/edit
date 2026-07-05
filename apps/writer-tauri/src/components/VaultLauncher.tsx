@@ -9,7 +9,7 @@
 // window via openProjectWindow(), then hides itself. It reappears when the
 // last project window closes (useWindowClose in AppContent).
 
-import { useCallback, useEffect } from 'react'
+import { useCallback } from 'react'
 import { exists } from '@tauri-apps/plugin-fs'
 import { Button } from '@/components/ui/button'
 import { pickVault } from '@/lib/vaultPicker'
@@ -28,22 +28,6 @@ export function VaultLauncher() {
   const recentProjects = useSettingsStore((s) => s.recentProjects)
   const addRecentProject = useSettingsStore((s) => s.addRecentProject)
   const removeRecentProject = useSettingsStore((s) => s.removeRecentProject)
-
-  // One-time migration: a legacy single-vault path (from before
-  // window-per-project) won't be in the recent list. Surface it as a recent
-  // so existing users can one-click reopen their old vault instead of
-  // hunting for it with "Open folder".
-  useEffect(() => {
-    const { vaultPaths, recentProjects: recents } = useSettingsStore.getState()
-    const legacy = vaultPaths[0]
-    if (!legacy || recents.some((p) => p.path === legacy)) return
-    void (async () => {
-      const type: ProjectType = (await isTranslationProject(legacy))
-        ? 'translation'
-        : 'wiki'
-      addRecentProject(legacy, type)
-    })()
-  }, [addRecentProject])
 
   // Open any existing folder. pickVault validates; we detect the project
   // type for the recent list, then open it in its own window.

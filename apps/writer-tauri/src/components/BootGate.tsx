@@ -30,8 +30,7 @@ import { getActiveVaultPath } from '@/state/settingsStore'
 import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { VaultLauncher } from '@/components/VaultLauncher'
 import { resolveWindowMode } from '@/hooks/useWindowModeSync'
-import { exists, remove } from '@tauri-apps/plugin-fs'
-import { join } from '@tauri-apps/api/path'
+import { exists } from '@tauri-apps/plugin-fs'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
 import { seedRoutines } from '@/lib/routinesLib'
 import { seedAgents } from '@/lib/agentsLib'
@@ -45,23 +44,11 @@ import { gitInit } from '@/lib/git'
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
 /** Wiki-vault boot steps: seed the default files a wiki vault needs (CLAUDE.md,
- * routine commands, agent roles) plus one harmless leftover-cleanup. Only wiki
- * vaults get these — a translation project (a folder with `manuscript/`) has its
- * own layout and would just get littered with wiki scaffolding. Each step is
- * best-effort: a failure logs and the boot continues. */
-async function runWikiLegacyBoot(vaultRoot: string | null): Promise<void> {
-  // Clean-boundary follow-up: the activity cache now lives in per-device
-  // app-data, so delete the leftover in-vault `events.db*` (+ WAL/SHM) one
-  // time. Best-effort — a missing file just means an already-clean vault.
-  try {
-    if (vaultRoot) {
-      for (const f of ['events.db', 'events.db-wal', 'events.db-shm']) {
-        await remove(await join(vaultRoot, f)).catch(() => {})
-      }
-    }
-  } catch (err) {
-    console.warn('[boot] legacy events.db cleanup failed', err)
-  }
+ * routine commands, agent roles). Only wiki vaults get these — a translation
+ * project (a folder with `manuscript/`) has its own layout and would just get
+ * littered with wiki scaffolding. Each step is best-effort: a failure logs and
+ * the boot continues. */
+async function seedWikiDefaults(): Promise<void> {
   // Seed `CLAUDE.md` at the vault root if missing — the schema document the
   // agent reads every chat. Idempotent by file existence; never overwrites
   // a user's edits.
@@ -208,15 +195,15 @@ export function BootGate({ children }: Props) {
         console.warn('[boot] git init failed — checkpoints disabled', err)
       }
 
-      // Project kind drives which boot steps run. The wiki-legacy cleanup +
-      // schema migrations apply only to wiki vaults; a translation project
-      // (a folder with `manuscript/`) never had those layouts, so we skip them to
-      // keep the project clean. bootstrap() below is generic and runs for
-      // every kind. Unknown / fresh folders default to wiki (the legacy path).
+      // Project kind drives which boot steps run. The wiki default seeds apply
+      // only to wiki vaults; a translation project (a folder with `manuscript/`)
+      // has its own layout, so we skip them to keep the project clean.
+      // bootstrap() below is generic and runs for every kind. Unknown / fresh
+      // folders default to wiki.
       const vaultRoot = getActiveVaultPath()
       const isWiki = vaultRoot ? !(await isTranslationProject(vaultRoot)) : true
       if (isWiki) {
-        await runWikiLegacyBoot(vaultRoot)
+        await seedWikiDefaults()
       }
       bootstrap()
       // Load chat thread metas + turns from `threads/`. Fires in

@@ -101,14 +101,6 @@ interface SettingsState {
   /** Toggle sidebar vibrancy. */
   setSidebarVibrancy: (enabled: boolean) => void
 
-  /** Use the experimental CodeMirror editor instead of Milkdown. Default off
-   * (Milkdown). Read by Page.tsx to pick the editor; a change takes effect on
-   * the next reload. Dogfooding gate while the ProseMirror→CodeMirror
-   * migration is evaluated — global (cross-window) preference. */
-  cmEditorEnabled: boolean
-  /** Toggle the CodeMirror editor. */
-  setCmEditorEnabled: (enabled: boolean) => void
-
   /** Max width (px) of the CodeMirror editor's centered text column. Tuning
    * knob in Settings → Editor; applied live (no reload). */
   editorColumnWidth: number
@@ -137,11 +129,6 @@ export const useSettingsStore = create<SettingsState>()(
       intakeModel: DEFAULT_CHAT_MODEL,
       inboxAutoOrganize: true,
       sidebarVibrancyEnabled: true,
-      // CodeMirror is the default editor; Milkdown is the legacy fallback,
-      // reachable by toggling this off in Settings → Editor (kept for rollback
-      // until the PM dependency removal lands). Existing users keep their
-      // persisted choice.
-      cmEditorEnabled: true,
       editorColumnWidth: 700,
       editorTextAlign: 'justify',
       notificationSound: 'Glass',
@@ -167,7 +154,6 @@ export const useSettingsStore = create<SettingsState>()(
       setIntakeModel: (model) => set({ intakeModel: model }),
       setInboxAutoOrganize: (enabled) => set({ inboxAutoOrganize: enabled }),
       setSidebarVibrancy: (enabled) => set({ sidebarVibrancyEnabled: enabled }),
-      setCmEditorEnabled: (enabled) => set({ cmEditorEnabled: enabled }),
       setEditorColumnWidth: (px) => set({ editorColumnWidth: px }),
       setEditorTextAlign: (align) => set({ editorTextAlign: align }),
     }),
@@ -182,7 +168,6 @@ export const useSettingsStore = create<SettingsState>()(
         intakeModel: s.intakeModel,
         inboxAutoOrganize: s.inboxAutoOrganize,
         sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
-        cmEditorEnabled: s.cmEditorEnabled,
         editorColumnWidth: s.editorColumnWidth,
         editorTextAlign: s.editorTextAlign,
         recentProjects: s.recentProjects,
