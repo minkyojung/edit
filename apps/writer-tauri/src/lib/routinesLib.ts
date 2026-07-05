@@ -7,9 +7,10 @@
 //     frontmatter), so they open in the real editor and auto-save like any note;
 //   • fileTree hides `_`-prefixed paths, so they don't clutter the notes tree.
 //
-// At runtime loadRoutinePrompt reads the body and feeds it as the intake system
-// prompt; a missing/empty file falls back to the hardcoded constant, so behavior
-// is unchanged until the user edits the file.
+// At runtime the SDK loads these command files natively from the agent plugin:
+// a routine run sends a "/<name> <args>" slash command as its prompt and the
+// SDK expands the command body into the turn. This module only seeds the
+// defaults and lists them for the Routines page.
 
 import {
   readVaultFile,
@@ -18,27 +19,11 @@ import {
   listVaultDir,
 } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
+import { readTombstones } from '@/lib/assetTombstone'
 
 /** Where routine command files live — under the agent plugin dir, next to
  * `_system/agent/skills`. */
 export const COMMANDS_REL = '_system/agent/commands'
-
-/** Load a routine's prompt body from `<COMMANDS_REL>/<name>.md`, stripping any
- * YAML frontmatter. Falls back to `fallback` (the hardcoded constant) when the
- * file is missing, unreadable, or its body is empty — so a fresh vault, or one
- * where the user deleted the file, behaves exactly as before. */
-export async function loadRoutinePrompt(
-  name: string,
-  fallback: string,
-): Promise<string> {
-  try {
-    const raw = await readVaultFile(`${COMMANDS_REL}/${name}.md`)
-    const body = splitFrontmatter(raw).body.trim()
-    return body.length > 0 ? body : fallback
-  } catch {
-    return fallback
-  }
-}
 
 /** One default routine to seed: the command file name, a one-line description
  * (frontmatter, for the Routines list), and the body (the current hardcoded
@@ -54,8 +39,12 @@ export interface RoutineSeed {
  * `seedClaudeMd`. Called once at boot. scanVault mints a slug into each on the
  * next scan, so they become editable notes. */
 export async function seedRoutines(seeds: RoutineSeed[]): Promise<void> {
+  // Skip anything the user has deleted, so a deleted default doesn't resurrect
+  // on the next boot (seeding is otherwise idempotent-by-existence).
+  const dead = await readTombstones()
   for (const seed of seeds) {
     const rel = `${COMMANDS_REL}/${seed.name}.md`
+    if (dead.has(rel)) continue
     if (await vaultFileExists(rel)) continue
     const content = `---\nname: ${seed.name}\ndescription: ${seed.description}\n---\n\n${seed.body.trim()}\n`
     await writeVaultFile(rel, content)

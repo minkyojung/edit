@@ -6,7 +6,7 @@
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { IconSparkles, IconLoader2 } from '@tabler/icons-react'
+import { IconDots, IconLoader2 } from '@tabler/icons-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -27,6 +27,8 @@ import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { organizeTodayAndInbox, buildOrganizeNoteRequest } from '@/agent/organize'
 import { usePendingOrganize } from '@/state/pendingOrganizeStore'
+import { isAgentAssetPath, deleteAssetByPath } from '@/lib/deleteAsset'
+import { confirm } from '@/state/confirmStore'
 import { DocumentInfoDialog } from './DocumentInfoDialog'
 
 export function DocMenu() {
@@ -78,6 +80,38 @@ export function DocMenu() {
     setOrganizeRequest(req)
   }
 
+  // Delete the active doc. Skills / routines / agents route through the shared
+  // asset-delete path (folder-aware for skills, tombstoned so seeded defaults
+  // don't resurrect); every other note is a plain trash. Both ask first.
+  const navigateTo = (slug: string) => {
+    const store = useDocsStore.getState()
+    navigate(
+      buildViewUrl({
+        tab: store.sidebarTab,
+        dayAnchor: store.dayAnchor,
+        monthAnchor: store.monthAnchor,
+        slug,
+      }),
+    )
+  }
+  const handleDelete = async () => {
+    if (!activeSlug || !activeDoc) return
+    const rel = activeDoc.relPath
+    if (rel && isAgentAssetPath(rel)) {
+      const ok = await confirm({
+        title: `Delete “${activeDoc.title || rel}”?`,
+        description: 'This cannot be undone.',
+      })
+      if (!ok) return
+      await deleteAssetByPath(rel)
+      const next = useDocsStore.getState().openSlugs[0]
+      if (next) navigateTo(next)
+      return
+    }
+    const next = await deleteToTrash(activeSlug)
+    if (next) navigateTo(next)
+  }
+
   return (
     <>
       <DropdownMenu>
@@ -88,18 +122,18 @@ export function DocMenu() {
                 variant="iconGhost"
                 size="icon-sm"
                 disabled={busy}
-                aria-label="Organize"
+                aria-label="More"
                 className="cursor-pointer"
               >
                 {busy ? (
                   <IconLoader2 size={16} stroke={1.75} className="animate-spin" />
                 ) : (
-                  <IconSparkles size={16} stroke={1.75} />
+                  <IconDots size={16} stroke={1.75} />
                 )}
               </Button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent side="bottom">Organize</TooltipContent>
+          <TooltipContent side="bottom">More</TooltipContent>
         </Tooltip>
 
         <DropdownMenuContent align="end" sideOffset={6} className="w-56">
@@ -120,22 +154,7 @@ export function DocMenu() {
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={deleteDisabled}
-            onSelect={() => {
-              if (!activeSlug) return
-              void deleteToTrash(activeSlug).then((next) => {
-                if (next) {
-                  const store = useDocsStore.getState()
-                  navigate(
-                    buildViewUrl({
-                      tab: store.sidebarTab,
-                      dayAnchor: store.dayAnchor,
-                      monthAnchor: store.monthAnchor,
-                      slug: next,
-                    }),
-                  )
-                }
-              })
-            }}
+            onSelect={() => void handleDelete()}
             className={cn('text-destructive focus:text-destructive')}
           >
             Delete

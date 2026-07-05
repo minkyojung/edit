@@ -57,7 +57,7 @@ export function effectiveLength(text: string): number {
  * the body in Path C Step 4), so a body that opens by restating the
  * page's own name as an H1 shows the title twice. This removes that one
  * redundant line and ONLY that — a leading heading whose text differs
- * from the title (a real section header like `# 배경`) is left intact.
+ * from the title (a real section header like `# Background`) is left intact.
  * Exact trimmed match, never a fuzzy guess: a section header equal to
  * the page's own name has no legitimate meaning, so the rule can't eat
  * real content. */

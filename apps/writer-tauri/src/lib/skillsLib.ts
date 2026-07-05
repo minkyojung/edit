@@ -4,10 +4,10 @@
 // they open in the editor like any note. The Skills page reads the files
 // directly to show name + description; opening/deletion use the slug/folder.
 
-import { listVaultDir, readVaultFile, deleteVaultDir } from '@/lib/vault'
+import { listVaultDir, readVaultFile } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
 
-const SKILLS_REL = '_system/agent/skills'
+export const SKILLS_REL = '_system/agent/skills'
 
 export interface VaultSkill {
   /** Folder name under the skills dir — the delete/identity key. */
@@ -46,12 +46,6 @@ export async function listSkills(): Promise<VaultSkill[]> {
     }
   }
   return skills.sort((a, b) => a.name.localeCompare(b.name))
-}
-
-/** Delete a skill by its folder name. The next chat turn's dir scan stops
- * including it, so it drops out of the agent's context too. */
-export async function deleteSkill(dir: string): Promise<void> {
-  await deleteVaultDir(`${SKILLS_REL}/${dir}`)
 }
 
 /** Read a skill's current body (frontmatter stripped) by folder name.

@@ -10,7 +10,9 @@ import { useNavigate } from 'react-router-dom'
 import { IconBolt, IconChevronRight, IconTrash } from '@tabler/icons-react'
 import { useDocsStore } from '@/state/docsStore'
 import { buildViewUrl } from '@/lib/viewUrl'
-import { listSkills, deleteSkill, type VaultSkill } from '@/lib/skillsLib'
+import { listSkills, SKILLS_REL, type VaultSkill } from '@/lib/skillsLib'
+import { deleteAssetByPath } from '@/lib/deleteAsset'
+import { confirm } from '@/state/confirmStore'
 
 export function SkillsPage() {
   const [skills, setSkills] = useState<VaultSkill[]>([])
@@ -33,12 +35,17 @@ export function SkillsPage() {
     navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
   }
 
-  const remove = async (dir: string) => {
+  const remove = async (skill: VaultSkill) => {
+    const ok = await confirm({
+      title: `Delete “${skill.name}”?`,
+      description: 'The skill folder will be removed. This cannot be undone.',
+    })
+    if (!ok) return
     try {
-      await deleteSkill(dir)
-      setSkills((cur) => cur.filter((s) => s.dir !== dir))
+      await deleteAssetByPath(`${SKILLS_REL}/${skill.dir}/SKILL.md`)
+      setSkills((cur) => cur.filter((s) => s.dir !== skill.dir))
     } catch (err) {
-      console.warn('[skills] delete failed', dir, err)
+      console.warn('[skills] delete failed', skill.dir, err)
     }
   }
 
@@ -48,10 +55,10 @@ export function SkillsPage() {
       <h1 className="mb-4 text-lg font-semibold text-foreground">Skills</h1>
 
       {loading ? (
-        <p className="py-10 text-center text-body text-muted-foreground">불러오는 중…</p>
+        <p className="py-10 text-center text-body text-muted-foreground">Loading…</p>
       ) : skills.length === 0 ? (
         <p className="py-10 text-center text-body text-muted-foreground">
-          아직 저장된 스킬이 없어요. 작업하다 보면 AI가 “스킬로 저장할까요?”라고 제안합니다.
+          No skills yet. As you work, the AI will offer to save useful ones.
         </p>
       ) : (
         // macOS System Settings-style grouped list: one rounded card, colored
@@ -91,7 +98,7 @@ export function SkillsPage() {
               <button
                 type="button"
                 aria-label={`Delete ${s.name}`}
-                onClick={() => void remove(s.dir)}
+                onClick={() => void remove(s)}
                 className="absolute top-1/2 right-9 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground opacity-0 transition hover:bg-background hover:text-destructive group-hover:opacity-100"
               >
                 <IconTrash size={15} stroke={1.5} />

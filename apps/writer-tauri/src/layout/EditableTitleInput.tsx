@@ -4,7 +4,7 @@
  * Sits above the body, plays the role of the file's name on disk:
  *   - User types here → renameDoc → fs.rename on the next flush.
  *   - Body content is independent; editing the body never affects the
- *     filename (Path C Step 4's "title 분리" decision, Obsidian model).
+ *     filename (Path C Step 4's "title separation" decision, Obsidian model).
  *
  * Commit strategy — onBlur AND Enter:
  *   The input keeps a local draft while editing so each keystroke

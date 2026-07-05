@@ -18,6 +18,7 @@ import {
   listVaultDir,
 } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
+import { readTombstones } from '@/lib/assetTombstone'
 
 /** Where agent role files live — under the agent plugin dir, next to
  * `_system/agent/skills` and `_system/agent/commands`. */
@@ -53,8 +54,12 @@ export interface AgentSeed {
  * scanVault mints a slug into each on the next scan, so they become editable
  * notes. */
 export async function seedAgents(seeds: AgentSeed[]): Promise<void> {
+  // Skip anything the user has deleted, so a deleted default doesn't resurrect
+  // on the next boot (seeding is otherwise idempotent-by-existence).
+  const dead = await readTombstones()
   for (const seed of seeds) {
     const rel = `${AGENTS_REL}/${seed.name}.md`
+    if (dead.has(rel)) continue
     if (await vaultFileExists(rel)) continue
     const fm = [
       `name: ${seed.name}`,

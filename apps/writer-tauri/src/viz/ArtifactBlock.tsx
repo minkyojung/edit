@@ -30,7 +30,7 @@ export function ArtifactBlock({
   code: string
   isStreaming: boolean
   // When rendered inside the editor NodeView, the NodeView owns the
-  // edit affordance, so suppress this component's own "소스" toggle.
+  // edit affordance, so suppress this component's own "Source" toggle.
   embedded?: boolean
 }) {
   const themeSignal = usePaletteSignal()
@@ -95,14 +95,14 @@ export function ArtifactBlock({
       <div className="my-2">
         {!isStreaming && (failed || showSource) && (
           <div className="mb-1 flex items-center gap-2 text-footnote text-muted-foreground">
-            {failed && <span>아티팩트를 렌더하지 못했습니다 — 소스를 표시합니다.</span>}
+            {failed && <span>Couldn’t render the artifact — showing the source.</span>}
             {showSource && !failed && (
               <button
                 type="button"
                 onClick={() => setShowSource(false)}
                 className="rounded px-1.5 py-0.5 hover:bg-muted"
               >
-                렌더 보기
+                View render
               </button>
             )}
           </div>
@@ -136,14 +136,14 @@ export function ArtifactBlock({
             onClick={() => void insertVizIntoDoc('artifact', code)}
             className="rounded bg-background/80 px-1.5 py-0.5 text-caption text-muted-foreground hover:bg-muted"
           >
-            본문에 삽입
+            Insert into note
           </button>
           <button
             type="button"
             onClick={() => setShowSource(true)}
             className="rounded bg-background/80 px-1.5 py-0.5 text-caption text-muted-foreground hover:bg-muted"
           >
-            소스
+            Source
           </button>
         </div>
       )}

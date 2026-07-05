@@ -10,10 +10,12 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { IconChevronRight, IconRoute } from '@tabler/icons-react'
+import { IconChevronRight, IconRoute, IconTrash } from '@tabler/icons-react'
 import { useDocsStore } from '@/state/docsStore'
 import { buildViewUrl } from '@/lib/viewUrl'
-import { listRoutines, type VaultRoutine } from '@/lib/routinesLib'
+import { listRoutines, COMMANDS_REL, type VaultRoutine } from '@/lib/routinesLib'
+import { deleteAssetByPath } from '@/lib/deleteAsset'
+import { confirm } from '@/state/confirmStore'
 
 export function RoutinesPage() {
   const [routines, setRoutines] = useState<VaultRoutine[]>([])
@@ -36,16 +38,30 @@ export function RoutinesPage() {
     navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
   }
 
+  const remove = async (routine: VaultRoutine) => {
+    const ok = await confirm({
+      title: `Delete “${routine.name}”?`,
+      description: 'This cannot be undone.',
+    })
+    if (!ok) return
+    try {
+      await deleteAssetByPath(`${COMMANDS_REL}/${routine.fileName}`)
+      setRoutines((cur) => cur.filter((r) => r.fileName !== routine.fileName))
+    } catch (err) {
+      console.warn('[routines] delete failed', routine.fileName, err)
+    }
+  }
+
   return (
     // pt clears the absolutely-positioned EditorHeader AppShell overlays.
     <div className="mx-auto w-full max-w-2xl px-6 pb-16 pt-[calc(var(--header-h)+8px)]">
       <h1 className="mb-4 text-lg font-semibold text-foreground">Routines</h1>
 
       {loading ? (
-        <p className="py-10 text-center text-body text-muted-foreground">불러오는 중…</p>
+        <p className="py-10 text-center text-body text-muted-foreground">Loading…</p>
       ) : routines.length === 0 ? (
         <p className="py-10 text-center text-body text-muted-foreground">
-          아직 루틴이 없어요. 볼트를 열면 기본 루틴이 자동으로 생깁니다.
+          No routines yet. Opening a vault adds the defaults.
         </p>
       ) : (
         <ul className="overflow-hidden rounded-[10px] border border-border/60 bg-card">
@@ -74,6 +90,14 @@ export function RoutinesPage() {
                     className="shrink-0 text-muted-foreground/40"
                   />
                 </span>
+              </button>
+              <button
+                type="button"
+                aria-label={`Delete ${r.name}`}
+                onClick={() => void remove(r)}
+                className="absolute top-1/2 right-9 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground opacity-0 transition hover:bg-background hover:text-destructive group-hover:opacity-100"
+              >
+                <IconTrash size={15} stroke={1.5} />
               </button>
             </li>
           ))}

@@ -1,32 +1,32 @@
 /**
- * Vault folder watcher — Phase 4.E.1 (logging-only baseline).
+ * Vault folder watcher — keeps the in-memory catalog in sync with the
+ * disk when files change from OUTSIDE the app (the Claude agent's
+ * `mv` / writes, Finder, git pull, another editor).
  *
  * Listens to the OS file-system event stream for the active vault
- * folder and prints filtered events to the console. NO mutations
- * happen here yet — this scaffold exists so we can:
+ * folder, filters it, and routes each change to a catalog mutation:
+ *   - create → `addKnownDoc` (a new note appears in the sidebar).
+ *   - remove → `removeKnownDoc` (drops it from the catalog; debounced
+ *     so a rename's remove leg can coalesce with its add leg).
+ *   - rename / move → `updateKnownDocPath` in place (keeps the slug,
+ *     open tab, and handle; refreshes the sidebar label on a rename).
+ *   - modify (content) → `reloadFromVault` re-reads the body into the
+ *     open editor. When the local copy has unsaved edits, this is a
+ *     CONFLICT: instead of clobbering either side, it marks the slug
+ *     and surfaces a toast with a "Reload" action.
  *
- *   1. Verify the Tauri plugin-fs `watch` API actually fires events
- *      for our vault on macOS (the dev platform).
- *   2. Observe the shape of those events (paths, action types,
- *      timing) to inform the router design in Phase 4.E.2.
- *   3. Validate that the existing `isOurRecentWrite()` echo filter
- *      from `vault.ts` correctly suppresses fsevents triggered by
- *      our own writes — without that, every flushDirty tick would
- *      ping-pong as an "external change".
+ * Own writes are suppressed via `isOurRecentWrite()` (content-hash
+ * based) from `vault.ts` — without it every 2s flush tick would
+ * ping-pong back as a phantom "external change". External wiki changes
+ * also invalidate the Tier 1 index, and create/remove bursts refresh
+ * the folder inventory (debounced).
  *
  * Lifecycle:
- *   - `startVaultWatcher()` — called once at app boot, gated on
+ *   - `startVaultWatcher()` — called at app boot, gated on
  *     `getActiveVaultPath()`. Returns the dispose function so the
  *     caller (App.tsx) can clean up on teardown.
- *   - Returns no-op when no vault is selected (vault picker hasn't
- *     run yet). Caller should re-invoke after picker completes —
- *     wiring for that lives in Phase 4.E.2.
- *
- * Out of scope for this phase:
- *   - Re-loading Y.Doc on external edit
- *   - Adding / removing knownDocs on external file create / delete
- *   - Conflict UI when app is editing a doc that gets modified
- *   - Debouncing event bursts (git checkout, batch rename)
+ *   - Returns no-op when no vault is selected (vault picker hasn't run
+ *     yet). App.tsx re-invokes it when the active vault changes.
  */
 
 import { watchImmediate } from '@tauri-apps/plugin-fs'
@@ -345,7 +345,7 @@ function dispatchEvent(event: { type: unknown }, paths: string[]): void {
  *   3. Local copy dirty → skip with a console warning. The user has
  *      unsaved edits queued; silently overwriting them with the
  *      external version would lose work. Phase 4.E.4 surfaces this
- *      as a banner with a "다시 불러오기" action; for now the user
+ *      as a banner with a "Reload" action; for now the user
  *      can manually close-and-reopen the tab to force a reload.
  *   4. Clean + open → call the store's reloadFromVault action, which
  *      re-reads the body and applies it to the live Y.Doc.

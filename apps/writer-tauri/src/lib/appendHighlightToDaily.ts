@@ -2,8 +2,8 @@
 // today's daily note, nested under the article's breadcrumb:
 //
 //   - [[A Recipe for Training Neural Networks]]
-//     - "overfit a single batch" — 단일 배치부터 검증
-//     - "always start simple" — 이거 우리 워크플로우에 적용
+//     - "overfit a single batch" — validate on one batch first
+//     - "always start simple" — apply this to our workflow
 //
 // Only commented highlights land here — a note is the user's own thought,
 // journal-worthy; bare highlights stay in the article as the amber mark.

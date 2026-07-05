@@ -15,7 +15,7 @@ export async function insertVizIntoDoc(
 ): Promise<void> {
   const slug = getActiveSlugFromHash()
   if (!slug) {
-    toast.error('열린 문서가 없습니다', { description: '먼저 문서를 여세요' })
+    toast.error('No open document', { description: 'Open a document first' })
     return
   }
   // If the source itself contains a triple-backtick run, widen the fence so it
@@ -23,6 +23,6 @@ export async function insertVizIntoDoc(
   const fence = code.includes('```') ? '````' : '```'
   const body = `${fence}${lang}\n${code.replace(/\s+$/, '')}\n${fence}`
   const ok = await appendMarkdownToWikiPage(slug, body)
-  if (ok) toast.success('본문에 삽입됨')
-  else toast.error('본문에 삽입하지 못했습니다')
+  if (ok) toast.success('Inserted into note')
+  else toast.error('Could not insert into note')
 }

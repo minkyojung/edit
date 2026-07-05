@@ -211,7 +211,7 @@ function formatDate(iso: string | undefined): string | null {
 function slugify(input: string): string {
   return input
     .toLowerCase()
-    .replace(/[^a-z0-9가-힣]+/gi, '-')
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
     .replace(/^-+|-+$/g, '')
 }
 

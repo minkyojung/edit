@@ -42,7 +42,7 @@ coherent across chapters, sessions, and people.
 Fill these in for this work; leave everything that grows to the reference.
 
 - **Languages**: [source] → [target]
-- **Voice / register**: [e.g. warm, plain Korean; 해요체; keep the author's wit]
+- **Voice / register**: [e.g. warm and plain; keep the author's wit]
 - **Standing rules**: [anything that always applies — e.g. keep English product
   names as-is]
 

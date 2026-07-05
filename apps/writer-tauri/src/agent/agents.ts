@@ -30,7 +30,7 @@ export interface Agent {
  * framing. */
 export const DEFAULT_AGENT: Agent = {
   id: 'default',
-  name: '기본',
+  name: 'Default',
   systemPrompt: FREE_CHAT_PROMPT,
 }
 

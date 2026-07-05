@@ -86,7 +86,7 @@ export function MermaidBlock({
   code: string
   isStreaming: boolean
   // When rendered inside the editor NodeView the diagram already lives in the
-  // doc, so suppress the chat-only "본문에 삽입" affordance.
+  // doc, so suppress the chat-only "Insert into note" affordance.
   embedded?: boolean
 }) {
   const themeSignal = usePaletteSignal()
@@ -151,7 +151,7 @@ export function MermaidBlock({
           onClick={() => void insertVizIntoDoc('mermaid', code)}
           className="absolute right-1 top-1 rounded bg-background/80 px-1.5 py-0.5 text-caption text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
         >
-          본문에 삽입
+          Insert into note
         </button>
       )}
     </div>

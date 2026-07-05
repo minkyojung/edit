@@ -23,7 +23,7 @@ export const useDocStatsStore = create<DocStatsState>((set) => ({
 }))
 
 /** Count words + chars from raw document text. Words split on whitespace
- * (covers Korean's space-delimited 어절 and English alike); chars is the
+ * (whitespace splitting suits space-delimited languages like English and Korean); chars is the
  * raw length so it matches what's actually in the document. */
 export function computeDocStats(text: string): DocStats {
   const trimmed = text.trim()

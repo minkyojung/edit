@@ -75,7 +75,7 @@ interface GitState {
    * detail. */
   loadingShas: Set<string>
 
-  /** SHAs the user has clicked "검토 완료" on. The gutter marker
+  /** SHAs the user has clicked "Reviewed" on. The gutter marker
    * hides these even though they're still in `activity`. Populated
    * by `dismissSha` (U.3) and cleared by `markAllReviewed`. */
   dismissedShas: Set<string>

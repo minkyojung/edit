@@ -19,6 +19,7 @@ import { CommandPalette } from '@/layout/CommandPalette'
 import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
 import { SaveArticleDialog } from '@/components/SaveArticleDialog'
 import { SettingsDialog } from '@/settings/SettingsDialog'
+import { ConfirmDialogHost } from '@/components/ConfirmDialogHost'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore, getActiveVaultPath } from '@/state/settingsStore'
@@ -294,6 +295,7 @@ function AppContent() {
         />
         <SaveArticleDialog />
         <SettingsDialog />
+        <ConfirmDialogHost />
       </>
     </ErrorBoundary>
   )

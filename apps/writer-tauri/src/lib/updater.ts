@@ -32,11 +32,11 @@ async function checkOnce(): Promise<void> {
     await update.downloadAndInstall()
     stagedVersion = update.version
 
-    toast(`Octave ${update.version} 준비됨`, {
-      description: '재시작하면 업데이트가 적용됩니다.',
+    toast(`Octave ${update.version} ready`, {
+      description: 'Restart to apply the update.',
       duration: Infinity,
       action: {
-        label: '지금 재시작',
+        label: 'Restart now',
         onClick: () => {
           void relaunch()
         },

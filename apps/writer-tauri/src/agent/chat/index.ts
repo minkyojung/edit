@@ -154,7 +154,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   // The note the user is currently viewing, as a vault-relative path — orientation
   // context (Cursor's "attached current file"), NOT a hard constraint. Lets the model
-  // resolve "this note" / "여기" deictically while staying free to act on other notes
+  // resolve "this note" / "here" deictically while staying free to act on other notes
   // via its tools. Null on the queue route or before the catalog hydrates.
   const knownDocs = useDocsStore.getState().knownDocs
   const currentDoc = slug ? knownDocs.find((d) => d.slug === slug) : undefined

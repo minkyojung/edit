@@ -21,7 +21,7 @@ export function VizBlock({
   code: string
   isStreaming: boolean
   // When rendered inside the editor NodeView the chart already lives in the
-  // doc, so suppress the chat-only "본문에 삽입" affordance (the NodeView
+  // doc, so suppress the chat-only "Insert into note" affordance (the NodeView
   // toolbar owns edit/insert there).
   embedded?: boolean
 }) {
@@ -40,7 +40,7 @@ export function VizBlock({
           onClick={() => void insertVizIntoDoc('chart', code)}
           className="absolute right-1 top-1 rounded bg-background/80 px-1.5 py-0.5 text-caption text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
         >
-          본문에 삽입
+          Insert into note
         </button>
       )}
     </div>
