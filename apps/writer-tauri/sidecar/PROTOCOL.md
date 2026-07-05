@@ -115,6 +115,27 @@ the first `chat`. May be called again any time to rotate (e.g. after refresh).
 
 ---
 
+### `models`
+
+List the models the installed SDK version reports support for, so the host's
+model picker stays in sync with whatever the current `@anthropic-ai/claude-agent-sdk`
+actually offers (no hand-maintained model list on the host side).
+
+**params**: `null` (or omitted)
+
+**result**:
+```json
+{ "models": [ { "id": "claude-sonnet-4-6", "...": "capability flags" } ] }
+```
+
+**errors**:
+- `-32002 NOT_INITIALIZED`
+- `-32602 INVALID_PARAMS` — reused (rather than `NO_TOKEN`) by the current
+  implementation when `setToken` hasn't been called yet; documented here as
+  the actual behavior, not a claim about what it "should" be.
+
+---
+
 ### `chat`
 
 Start a chat turn. Streams `chat/event` notifications until either `chat/done`
@@ -174,6 +195,47 @@ Other concurrent chats on the same sidecar are unaffected.
 
 The active chat terminates with a `chat/error` notification carrying
 `code: "CANCELLED"`.
+
+---
+
+### `chat/decision` (notification, no response)
+
+Answers a parked `canUseTool` gate — `AskUserQuestion` (any permission mode)
+or `ExitPlanMode` (plan mode only). Resolves the matching pending decision so
+the SDK's `canUseTool` callback returns and the turn continues. Unknown or
+already-settled `decisionId`s are ignored.
+
+**params**:
+```json
+{ "runId": "client-uuid", "decisionId": "sidecar-minted-uuid", "decision": {"...": "shape below"} }
+```
+
+`decision`'s shape depends on which tool requested it:
+- `AskUserQuestion` → `{ "answers": { "q1": "..." }, "response"?: "free-form reply" }`
+- `ExitPlanMode` → `{ "type": "approve" }` or `{ "type": "reject", "message": "..." }`
+
+Only fires for `permissionMode: "plan"` or `"default"` — never for
+`"bypassPermissions"`, which short-circuits `canUseTool` entirely.
+
+---
+
+### `chat/edit-ack` (notification, no response)
+
+Confirms (or denies) that a `propose_edit`/`propose_write`/`propose_multi_edit`
+call was actually queued into the host's pending-changes store. The sidecar's
+`PostToolUse` hook (see `chat/edit-pending` below) awaits this before letting
+the model treat the proposal as settled.
+
+**params**:
+```json
+{ "pendingId": "uuid from the tool's own success text", "ok": true, "reason": null }
+```
+
+**Fail-open contract**: if this is never sent (or arrives after the hook's own
+~4-5s internal timeout), the hook treats the proposal as `ok: true` rather
+than blocking or erroring — a missing ack is NOT itself surfaced as a failure
+to the model. Only an explicit `ok: false` rewrites the tool's already-returned
+"queued" text into a visible error.
 
 ---
 
@@ -273,6 +335,36 @@ marks into the editor, etc.).
 ```
 
 The shape of `input` is whatever the relay tool's schema accepts.
+
+---
+
+### `chat/permission`
+
+Sent when the sidecar's `canUseTool` gate parks on `AskUserQuestion` or (in
+plan mode) `ExitPlanMode`, waiting for the user's decision. Answered by
+`chat/decision` (Section 3), matched via `decisionId`.
+
+**params**:
+```json
+{ "runId": "client-uuid", "decisionId": "sidecar-minted-uuid", "toolName": "AskUserQuestion", "input": {"...": "the tool's own input"} }
+```
+
+---
+
+### `chat/edit-pending`
+
+Sent when the model calls `propose_edit`/`propose_write`/`propose_multi_edit`.
+The tool itself returns a "queued for review" success string to the model
+immediately (non-blocking) — this notification is the host's cue to actually
+map the proposal into its pending-changes store. Once the host has decided
+whether it landed, it answers with `chat/edit-ack` (Section 3), which the
+sidecar's `PostToolUse` hook uses to confirm — or, on failure, rewrite — what
+the model was told.
+
+**params**:
+```json
+{ "runId": "client-uuid", "pendingId": "sidecar-minted-uuid", "toolName": "Edit" | "Write" | "MultiEdit", "input": {"...": "the tool's own input"} }
+```
 
 ---
 

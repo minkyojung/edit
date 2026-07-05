@@ -10,6 +10,8 @@
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { FrameParser, encode } from '../src/jsonrpc.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -116,6 +118,69 @@ function record(name, ok, detail) {
   console.log(`${ok ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}`)
 }
 
+// Drives one propose_edit call through the sidecar's PostToolUse ack hook,
+// answering the resulting `chat/edit-pending` with `chat/edit-ack` (acting as
+// "the host") for either the CONTROL (ok: true, the common/happy path) or
+// TREATMENT (ok: false, the path that should rewrite the tool's own returned
+// text) case. Returns what the model actually saw, so the caller can compare
+// control vs treatment — the differential is what proves the hook fired at
+// all, since a hook that silently stopped matching/working would otherwise
+// look identical to a hook that's working (both "look fine" on their own).
+async function runProposeEditCheck(c, runId, ok) {
+  const scratchDir = await mkdtemp(join(tmpdir(), 'sidecar-smoke-'))
+  const filePath = join(scratchDir, 'test.txt')
+  await writeFile(filePath, 'hello world\n', 'utf-8')
+
+  let pendingId = null
+  let toolResultText = ''
+  let finalText = ''
+  c.onEvent((msg) => {
+    if (msg.method === 'chat/edit-pending' && msg.params.runId === runId) {
+      pendingId = msg.params.pendingId
+      // Act as "the host": this is the exact chat/edit-ack shape
+      // agent/chat/index.ts sends after resolving its own edit-pending handling.
+      c.notify('chat/edit-ack', { pendingId, ok })
+    }
+    if (msg.method === 'chat/event' && msg.params.runId === runId) {
+      const ev = msg.params.event
+      // Tool results are always echoed back as a `user` message (PROTOCOL.md
+      // Section 4, `chat/event`'s passthrough list) — including whatever the
+      // PostToolUse hook rewrote them to. This is the most direct externally
+      // observable signal that the hook's `updatedToolOutput` actually landed.
+      if (ev?.type === 'user') {
+        const blocks = ev.message?.content ?? []
+        for (const b of blocks) {
+          if (b.type === 'tool_result') {
+            const t = Array.isArray(b.content)
+              ? b.content.map((x) => x.text ?? '').join('')
+              : String(b.content ?? '')
+            toolResultText += t
+          }
+        }
+      }
+      if (ev?.type === 'assistant') {
+        const blocks = ev.message?.content ?? []
+        for (const b of blocks) {
+          if (b.type === 'text') finalText += b.text
+        }
+      }
+    }
+  })
+
+  const ack = await c.request('chat', {
+    runId,
+    model: 'claude-sonnet-4-6',
+    vaultPath: scratchDir,
+    relayTools: ['propose_edit'],
+    prompt:
+      `Call the propose_edit tool exactly once on file_path "${filePath}", ` +
+      'replacing old_string "hello" with new_string "goodbye". Do not explain, just call the tool.',
+  })
+  if (!ack.accepted) throw new Error('not accepted')
+  await c.waitForNotification('chat/done', (p) => p.runId === runId)
+  return { pendingId, toolResultText, finalText }
+}
+
 async function run() {
   console.log('=== chat-mode sidecar ===')
   const c = spawnSidecar('chat')
@@ -198,6 +263,60 @@ async function run() {
     record('chat (multiplex 2)', true, `A="${textA.trim()}" B="${textB.trim()}"`)
   } catch (e) {
     record('chat (multiplex 2)', false, e.message)
+  }
+
+  // 4a. models — cheap, deterministic canary for an SDK response-shape change.
+  try {
+    const r = await c.request('models', null)
+    record('models', Array.isArray(r.models) && r.models.length > 0, `count=${r.models?.length}`)
+  } catch (e) {
+    record('models', false, e.message)
+  }
+
+  // 4b. chat/decision (AskUserQuestion / ExitPlanMode gate) is intentionally
+  // NOT smoke-tested here — triggering it requires the MODEL to choose to call
+  // AskUserQuestion/ExitPlanMode, which is prompt-dependent and non-deterministic
+  // across model/SDK versions. That flakiness is exactly what a smoke test must
+  // avoid. A deeper, interactive check belongs in a separate, manually-run
+  // script, not this fast/deterministic one.
+
+  // 4c. propose_edit + PostToolUse hook + chat/edit-ack — the highest-risk path
+  // per the SDK-conformance audit (the hook's matcher format and
+  // `updatedToolOutput` shape aren't strictly documented by the SDK's own
+  // types). Run CONTROL (ok: true) then TREATMENT (ok: false) and compare —
+  // the differential is what proves the hook actually fired, so a silent
+  // break can't hide behind the hook's own fail-open behavior.
+  try {
+    const control = await runProposeEditCheck(c, 'edit-control', true)
+    const treatment = await runProposeEditCheck(c, 'edit-treatment', false)
+
+    if (!control.pendingId || !treatment.pendingId) {
+      record(
+        'propose_edit + edit-ack plumbing',
+        false,
+        'chat/edit-pending never arrived for one or both runs',
+      )
+    } else if (control.toolResultText !== treatment.toolResultText) {
+      record(
+        'propose_edit + PostToolUse hook (tool_result rewritten)',
+        true,
+        'control/treatment tool_result differ, as expected',
+      )
+    } else if (control.finalText !== treatment.finalText) {
+      record(
+        'propose_edit + PostToolUse hook (behavioral diff only — WARN)',
+        true,
+        'tool_result identical but downstream response differs; verify manually that the SDK still folds the rewrite in some other way',
+      )
+    } else {
+      record(
+        'propose_edit + PostToolUse hook',
+        false,
+        'no observable difference between ok:true and ok:false — the hook may not be firing (matcher syntax or updatedToolOutput shape may have changed in this SDK version)',
+      )
+    }
+  } catch (e) {
+    record('propose_edit + PostToolUse hook', false, e.message)
   }
 
   // 5. cancel mid-flight
