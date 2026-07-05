@@ -49,8 +49,8 @@ async function ensureDefaultVaultFolder(): Promise<string | null> {
  * Policy: "one folder = one Writer vault". Acceptable when:
  *   - empty (a fresh vault), OR
  *   - it's already a Writer vault — identified by a marker the app
- *     always writes: a standard subdir (`wiki/`, `_system/`, …),
- *     `CLAUDE.md`, or a `writer-*.done` migration sentinel.
+ *     always writes: a standard subdir (`wiki/`, `_system/`, …) or
+ *     `CLAUDE.md`.
  *
  * The old rule ("only our subdirs, no foreign files") no longer fits:
  * a flat vault holds arbitrary user folders + files (inbox/, articles/,
@@ -67,10 +67,7 @@ async function isAcceptableVaultFolder(path: string): Promise<boolean> {
 
   const names = new Set(visible.map((e) => e.name))
   const markers = [...VAULT_SUBDIRS, 'CLAUDE.md']
-  if (markers.some((m) => names.has(m))) return true
-  return visible.some(
-    (e) => !e.isDirectory && e.name.startsWith('writer-') && e.name.endsWith('.done'),
-  )
+  return markers.some((m) => names.has(m))
 }
 
 /** Open the OS folder picker and persist the selection. Returns the

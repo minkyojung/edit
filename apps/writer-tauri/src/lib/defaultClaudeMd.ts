@@ -22,11 +22,9 @@
 // live in a TS source file; they render as plain triple backticks
 // once written to disk.
 
-// The user's behaviour-rules section. Exported so the boot migration that
-// upgrades existing vaults (migrateClaudeMdStructureV1) can insert the SAME
-// block into a CLAUDE.md that predates it — without this section the agent
-// has nowhere to anchor a "remember to write formally" preference and the
-// proposed edit is silently dropped.
+// The user's behaviour-rules section, spliced into DEFAULT_CLAUDE_MD below.
+// Without this section the agent has nowhere to anchor a "remember to write
+// formally" preference and the proposed edit is silently dropped.
 export const PREFERENCES_SECTION = `## Preferences
 
 Behaviour rules the user has set for how YOU should work — tone, format, language, defaults. Treat them as hard rules, the same as anything else in this file. The user owns this section and may edit it; it starts empty.

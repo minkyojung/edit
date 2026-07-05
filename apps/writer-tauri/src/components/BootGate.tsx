@@ -32,10 +32,6 @@ import { VaultLauncher } from '@/components/VaultLauncher'
 import { resolveWindowMode } from '@/hooks/useWindowModeSync'
 import { exists, remove } from '@tauri-apps/plugin-fs'
 import { join } from '@tauri-apps/api/path'
-import { cleanupYdocV2 } from '@/lib/cleanupYdocV2'
-import { flattenVaultV1 } from '@/lib/flattenVaultV1'
-import { migrateConventionsIntoClaudeMdV1 } from '@/lib/migrateConventionsIntoClaudeMdV1'
-import { migrateClaudeMdStructureV1 } from '@/lib/migrateClaudeMdStructureV1'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
 import { seedRoutines } from '@/lib/routinesLib'
 import { seedAgents } from '@/lib/agentsLib'
@@ -48,10 +44,10 @@ import { gitInit } from '@/lib/git'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
-/** Wiki-vault boot steps: one-time legacy cleanup + schema migrations that
- * only apply to wiki vaults. A translation project (a folder with `manuscript/`)
- * never had these layouts, so running them would just litter `.done`
- * sentinel files — the boot gates them out by project kind. Each step is
+/** Wiki-vault boot steps: seed the default files a wiki vault needs (CLAUDE.md,
+ * routine commands, agent roles) plus one harmless leftover-cleanup. Only wiki
+ * vaults get these — a translation project (a folder with `manuscript/`) has its
+ * own layout and would just get littered with wiki scaffolding. Each step is
  * best-effort: a failure logs and the boot continues. */
 async function runWikiLegacyBoot(vaultRoot: string | null): Promise<void> {
   // Clean-boundary follow-up: the activity cache now lives in per-device
@@ -65,19 +61,6 @@ async function runWikiLegacyBoot(vaultRoot: string | null): Promise<void> {
     }
   } catch (err) {
     console.warn('[boot] legacy events.db cleanup failed', err)
-  }
-  // Phase 7 of the Yjs-removal migration: delete leftover `.ydoc` binaries
-  // so the scan-vault catalog never sees a stray `.ydoc`. Sentinel-gated.
-  try {
-    await cleanupYdocV2()
-  } catch (err) {
-    console.warn('[boot] ydoc cleanup failed', err)
-  }
-  // Flat-vault migration: remove the retired `daily/` folder. Sentinel-gated.
-  try {
-    await flattenVaultV1()
-  } catch (err) {
-    console.warn('[boot] flatten-vault migration failed', err)
   }
   // Seed `CLAUDE.md` at the vault root if missing — the schema document the
   // agent reads every chat. Idempotent by file existence; never overwrites
@@ -142,20 +125,6 @@ async function runWikiLegacyBoot(vaultRoot: string | null): Promise<void> {
     ])
   } catch (err) {
     console.warn('[boot] agents seed failed', err)
-  }
-  // Conventions-merge migration: fold `_system/conventions.md` into
-  // CLAUDE.md, then retire the old page. Sentinel-gated.
-  try {
-    await migrateConventionsIntoClaudeMdV1()
-  } catch (err) {
-    console.warn('[boot] conventions-merge migration failed', err)
-  }
-  // CLAUDE.md structure upgrade for vaults created before the Preferences
-  // section existed. Sentinel-gated; surgical, non-destructive.
-  try {
-    await migrateClaudeMdStructureV1()
-  } catch (err) {
-    console.warn('[boot] CLAUDE.md structure migration failed', err)
   }
 }
 
