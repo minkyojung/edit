@@ -29,7 +29,7 @@ import { pathForDoc } from '@/lib/docPaths'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
-import { useGitStore } from '@/state/gitStore'
+import { useGitStore, aiEditSubject } from '@/state/gitStore'
 import { applyWriteWikiPage } from '@/agent/applyIngest'
 import { useSkillProposalStore } from '@/state/skillProposalStore'
 import { notify } from '@/lib/notify'
@@ -276,10 +276,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       // through that Keep→commit path. So checkpoint a turn that dirtied the
       // tree WITHOUT producing reviewable edits (editCount === 0) — i.e. a
       // pure auto-move turn. When editCount > 0 we leave it to the applier so
-      // its `ai-edit: chat reply (N edits)` label wins (its `git add -A`
+      // its `edit(ai): …` label wins (its `git add -A`
       // sweeps any same-turn moves too). Empty-safe + serialized.
       if (editCount === 0 && useGitStore.getState().dirtyPaths.size > 0) {
-        void useGitStore.getState().commitChangesNow('ai-edit: organize')
+        void useGitStore.getState().commitChangesNow(aiEditSubject('organize'))
       }
     }
     const settleErr = (err: unknown) => {

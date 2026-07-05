@@ -111,7 +111,7 @@ interface GitState {
 
   /** Ensure `commitDetails[sha]` is populated, without changing the
    * expanded state. Used by the gutter marker, which needs detail
-   * for every active ai-edit commit regardless of Review-panel UI.
+   * for every active assistant `(ai)` commit regardless of Review-panel UI.
    * No-op when the detail is already cached. */
   ensureCommitDetail: (sha: string) => Promise<void>
 }
@@ -162,16 +162,29 @@ export function isUserVisibleCommit(commit: CommitInfo): boolean {
   )
 }
 
-/** Match commits produced by the LLM-edit path (sidecar ingest, chat
- * handoff, direct edit). Subject conventions:
- *   - `ai-edit: ingest from <label> (<N> updates)`
- *   - `ai-edit: chat reply (<N> edits)`
- *   - `ai-edit: chat: <command> (<N> edits)`
- * The Review panel's `commitSource` strips the same prefix for label
- * extraction; the gutter only needs the boolean. Keep both helpers in
- * sync if the convention changes. */
+/** Assistant-checkpoint commit types — the `<type>` in `<type>(ai): …`. The
+ * `(ai)` scope marks a commit as the assistant's work (vs the user's own
+ * `edit:` snapshot from {@link autoCommitMessage}); the type says what the
+ * assistant did, readable at a glance in `git log`. */
+export type AiEditType = 'edit' | 'organize' | 'ingest' | 'revert'
+
+/** Build an assistant-checkpoint subject: `<type>(ai): <names>`, capped at two
+ * named targets with a `(+N more)` tail. `names` are human-readable (page
+ * titles or paths). Empty names collapse to the bare `<type>(ai)`. */
+export function aiEditSubject(type: AiEditType, names: string[] = []): string {
+  if (names.length === 0) return `${type}(ai)`
+  const shown = names.slice(0, 2).join(', ')
+  const extra = names.length - 2
+  return `${type}(ai): ${shown}${extra > 0 ? ` (+${extra} more)` : ''}`
+}
+
+/** Match commits produced by the assistant (chat edits, ingest, organize
+ * moves, reverts). They carry an `(ai)` scope right after the type —
+ * `edit(ai): …`, `organize(ai): …` — which the user's own `edit: <file>`
+ * snapshots never have. The undo-ai-change skill greps `(ai):` for the same
+ * set; keep the two in sync if the convention changes. */
 export function isAiEditCommit(commit: CommitInfo): boolean {
-  return commit.subject.startsWith('ai-edit:')
+  return /^[a-z]+\(ai\)/.test(commit.subject)
 }
 
 export const useGitStore = create<GitState>((set, get) => {

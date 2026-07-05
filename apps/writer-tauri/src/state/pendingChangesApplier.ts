@@ -26,7 +26,7 @@ import {
 } from '@/agent/applyIngest'
 import { useDocsStore } from './docsStore'
 import { isChangeMaterializedInActiveCm } from './activeCmEditor'
-import { useGitStore } from './gitStore'
+import { useGitStore, aiEditSubject, type AiEditType } from './gitStore'
 import { notify } from '@/lib/notify'
 
 // HMR safety: vite's `import.meta.hot.dispose` fires right before
@@ -130,7 +130,7 @@ async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
 /** Group-level commit coordinator, shared by chat and ingest. As the
  * pending changes of a group (one chat run or one ingest pass, keyed by
  * groupId) are accepted, we collect them and, after a quiet debounce,
- * land them in a single `ai-edit: ...` commit. This keeps git history
+ * land them in a single `edit(ai): …` / `ingest(ai): …` commit. Keeps history
  * clean — one run/pass = one commit, not one commit per Keep click. */
 const groupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const groupAccepts = new Map<
@@ -176,17 +176,29 @@ async function commitGroup(
   accepts: Array<{ pageTitle: string; change: PendingChange }>,
 ): Promise<void> {
   if (accepts.length === 0) return
-  // One `ai-edit:` checkpoint per accepted burst — the reversibility floor.
+  // One assistant checkpoint per accepted burst — the reversibility floor.
   // commitChangesNow flushes Y.Doc → disk first and serializes against any
   // concurrent commit (idle organize / turn-end move), so this lands exactly
-  // the accepted burst as a single revertible commit. Subject uses the
-  // `ai-edit:` conventions isAiEditCommit matches.
-  const n = accepts.length
+  // the accepted burst as a single revertible commit. The subject uses the
+  // `(ai)`-scoped convention isAiEditCommit matches.
   const source = accepts[0].change.source
-  const message =
-    source === 'ingest'
-      ? `ai-edit: ingest from ${sourceLabel} (${n} update${n === 1 ? '' : 's'})`
-      : `ai-edit: chat reply (${n} edit${n === 1 ? '' : 's'})`
+  const type: AiEditType = source === 'ingest' ? 'ingest' : 'edit'
+  // Name each edited page (title, else its path), deduped — one page edited
+  // twice appears once. The subject names the pages so the undo skill can match
+  // "undo what you added to Tom".
+  const knownDocs = useDocsStore.getState().knownDocs
+  const names = [
+    ...new Set(
+      accepts.map((a) => {
+        const doc = knownDocs.find((d) => d.slug === a.change.pageSlug)
+        return doc?.title?.trim() || doc?.relPath || a.change.pageSlug
+      }),
+    ),
+  ]
+  const subject = aiEditSubject(type, names)
+  // Ingest keeps its source note in the body for provenance; the subject names
+  // the pages that changed.
+  const message = source === 'ingest' ? `${subject}\n\nSource: ${sourceLabel}` : subject
   try {
     await useGitStore.getState().commitChangesNow(message)
   } catch (err) {

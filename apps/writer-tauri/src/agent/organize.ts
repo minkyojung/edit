@@ -8,7 +8,7 @@
 
 import { useDocsStore } from '@/state/docsStore'
 import { useIngestStore } from '@/state/ingestStore'
-import { useGitStore } from '@/state/gitStore'
+import { useGitStore, aiEditSubject } from '@/state/gitStore'
 import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { processInboxNote } from '@/agent/inbox'
 import { syncTodayManually } from '@/hooks/useIdleTrigger'
@@ -106,11 +106,14 @@ export async function autoOrganizeInbox(): Promise<{
   // this commit contains exactly the moves. commitChangesNow flushes +
   // serializes + is empty-safe.
   if (moves.length > 0) {
-    await useGitStore
-      .getState()
-      .commitChangesNow(
-        `ai-edit: organize (${moves.length} move${moves.length === 1 ? '' : 's'})`,
-      )
+    // Name each move `<note> → <dest folder>` so the checkpoint reads at a
+    // glance (and the undo skill can match "undo the organize of X").
+    const names = moves.map((m) => {
+      const base = m.from.split('/').pop() ?? m.from
+      const destDir = m.to.slice(0, m.to.lastIndexOf('/')) || m.to
+      return `${base} → ${destDir}`
+    })
+    await useGitStore.getState().commitChangesNow(aiEditSubject('organize', names))
   }
   return { processed, moves }
 }
