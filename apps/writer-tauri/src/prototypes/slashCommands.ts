@@ -1,32 +1,25 @@
-// Slash menu (`/`) via the CM-native @codemirror/autocomplete (research #2).
-// A single CompletionSource replaces the PM trigger plugin + zustand store +
-// React popup + capture-phase keyboard hack. Autocomplete itself owns the
-// popup, positioning, ↑/↓/Enter/Esc, focus-stays-in-editor, and the
-// "replace /query on apply" — we only supply: (a) when to trigger, (b) the
-// keyword-filtered item list, (c) each item's text edit.
+// Slash menu (`/`) logic — the trigger-word items, keyword filter, code-block
+// guard, and each item's text edit. Pure/CM-agnostic on purpose: the rendering
+// + open/close state live in `src/editor/slashMenu.tsx` (a StateField + our own
+// React tooltip), so this file stays a small, testable logic module.
 
-import {
-  type Completion,
-  type CompletionContext,
-  type CompletionResult,
-} from '@codemirror/autocomplete'
 import { syntaxTree } from '@codemirror/language'
 import type { SyntaxNode } from '@lezer/common'
 import type { EditorView } from '@codemirror/view'
 import type { EditorState } from '@codemirror/state'
 
-interface SlashItem {
+export interface SlashItem {
   id: string
   label: string
   keywords: string[]
-  type: string // CM completion type → default icon
-  apply: NonNullable<Completion['apply']>
+  detail?: string // right-aligned markdown hint (#, ##, - …)
+  apply: (view: EditorView, from: number, to: number) => void
 }
 
-/** Replace the matched `/query` with a line-prefix marker (block transform),
- * caret right after it. `from`..`to` span the `/query` at line start. */
+/** Replace the matched `/query` (from..to) with a line-prefix marker (block
+ * transform), caret right after it. */
 function prefix(marker: string): SlashItem['apply'] {
-  return (view: EditorView, _c, from: number, to: number) => {
+  return (view, from, to) => {
     view.dispatch({
       changes: { from, to, insert: marker },
       selection: { anchor: from + marker.length },
@@ -36,7 +29,7 @@ function prefix(marker: string): SlashItem['apply'] {
 
 /** Replace `/query` with a whole-line block + place the caret usefully. */
 function block(insert: string, caretOffset: number): SlashItem['apply'] {
-  return (view: EditorView, _c, from: number, to: number) => {
+  return (view, from, to) => {
     view.dispatch({
       changes: { from, to, insert },
       selection: { anchor: from + caretOffset },
@@ -45,17 +38,17 @@ function block(insert: string, caretOffset: number): SlashItem['apply'] {
 }
 
 export const SLASH_ITEMS: SlashItem[] = [
-  { id: 'text', label: 'Text', keywords: ['paragraph', 'plain', 'p'], type: 'text', apply: prefix('') },
-  { id: 'h1', label: 'Heading 1', keywords: ['title', 'h1', '#'], type: 'keyword', apply: prefix('# ') },
-  { id: 'h2', label: 'Heading 2', keywords: ['subtitle', 'h2', '##'], type: 'keyword', apply: prefix('## ') },
-  { id: 'h3', label: 'Heading 3', keywords: ['h3', '###'], type: 'keyword', apply: prefix('### ') },
-  { id: 'bullet', label: 'Bullet list', keywords: ['ul', 'unordered', 'list', '-'], type: 'keyword', apply: prefix('- ') },
-  { id: 'numbered', label: 'Numbered list', keywords: ['ol', 'ordered', '1.'], type: 'keyword', apply: prefix('1. ') },
-  { id: 'todo', label: 'To-do list', keywords: ['todo', 'task', 'check', 'checkbox', '[ ]'], type: 'keyword', apply: prefix('- [ ] ') },
-  { id: 'quote', label: 'Quote', keywords: ['blockquote', 'cite', '>'], type: 'keyword', apply: prefix('> ') },
-  { id: 'divider', label: 'Divider', keywords: ['hr', 'rule', 'separator', '---'], type: 'keyword', apply: block('---\n', 4) },
-  { id: 'code', label: 'Code block', keywords: ['fence', 'pre', '```'], type: 'keyword', apply: block('```\n\n```', 4) },
-  { id: 'image', label: 'Image', keywords: ['picture', 'photo', 'img'], type: 'keyword', apply: block('![alt](url)', 2) },
+  { id: 'text', label: 'Text', keywords: ['paragraph', 'plain', 'p'], apply: prefix('') },
+  { id: 'h1', label: 'Heading 1', keywords: ['title', 'h1', '#'], detail: '#', apply: prefix('# ') },
+  { id: 'h2', label: 'Heading 2', keywords: ['subtitle', 'h2', '##'], detail: '##', apply: prefix('## ') },
+  { id: 'h3', label: 'Heading 3', keywords: ['h3', '###'], detail: '###', apply: prefix('### ') },
+  { id: 'bullet', label: 'Bullet list', keywords: ['ul', 'unordered', 'list', '-'], detail: '-', apply: prefix('- ') },
+  { id: 'numbered', label: 'Numbered list', keywords: ['ol', 'ordered', '1.'], detail: '1.', apply: prefix('1. ') },
+  { id: 'todo', label: 'To-do list', keywords: ['todo', 'task', 'check', 'checkbox', '[ ]'], detail: '[ ]', apply: prefix('- [ ] ') },
+  { id: 'quote', label: 'Quote', keywords: ['blockquote', 'cite', '>'], detail: '>', apply: prefix('> ') },
+  { id: 'divider', label: 'Divider', keywords: ['hr', 'rule', 'separator', '---'], detail: '---', apply: block('---\n', 4) },
+  { id: 'code', label: 'Code block', keywords: ['fence', 'pre', '```'], detail: '```', apply: block('```\n\n```', 4) },
+  { id: 'image', label: 'Image', keywords: ['picture', 'photo', 'img'], detail: '![]', apply: block('![alt](url)', 2) },
 ]
 
 /** Items matching the query against label + keywords. Empty query = all. */
@@ -74,27 +67,4 @@ export function inCodeBlock(state: EditorState, pos: number): boolean {
     n = n.parent
   }
   return false
-}
-
-/** The CompletionSource. Triggers ONLY on `/` at the very start of a line
- * (writing-first; mid-paragraph slashes are noise) and never inside a code
- * block. Returns keyword-filtered items with filter:false (we already
- * filtered). Exported for headless tests. */
-export function slashSource(context: CompletionContext): CompletionResult | null {
-  const word = context.matchBefore(/\/[\p{L}\p{N}_]*/u)
-  if (!word) return null
-  const line = context.state.doc.lineAt(context.pos)
-  if (word.from !== line.from) return null // only at line start
-  if (inCodeBlock(context.state, context.pos)) return null
-
-  const query = word.text.slice(1)
-  const items = filterSlashItems(query)
-  if (items.length === 0) return null
-
-  return {
-    from: word.from,
-    to: word.to,
-    filter: false, // already keyword-filtered
-    options: items.map((it) => ({ label: it.label, type: it.type, apply: it.apply })),
-  }
 }

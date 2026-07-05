@@ -1,71 +1,75 @@
-// Headless proof for the slash menu's CompletionSource (research #2 §6):
-// triggers only at line-start, never mid-line or in a code block, filters by
-// keyword, and apply replaces the `/query` with the right marker. The popup /
-// keyboard / focus are CM autocomplete's job (not re-tested here).
+// Headless proof for the slash menu's logic: triggers only at line-start, never
+// mid-line or in a code block, filters by keyword, and each item's `apply`
+// replaces the `/query` with the right marker. The popup / keyboard / focus /
+// positioning are covered by CM (StateField + showTooltip) and not re-tested.
 
 import { describe, expect, it } from 'vitest'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { CompletionContext } from '@codemirror/autocomplete'
 import { ensureSyntaxTree } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
-import { slashSource, SLASH_ITEMS } from './slashCommands'
+import { SLASH_ITEMS } from './slashCommands'
+import { readSlash } from '@/editor/slashMenu'
 
-function ctxAt(doc: string, pos: number, explicit = false): CompletionContext {
+function stateAt(doc: string, pos: number): EditorState {
   const state = EditorState.create({
     doc,
     selection: { anchor: pos },
     extensions: [markdown({ extensions: [GFM] })],
   })
   ensureSyntaxTree(state, doc.length, 5000)
-  return new CompletionContext(state, pos, explicit)
+  return state
 }
 
-describe('slash source — trigger conditions', () => {
-  it('fires at line start `/` → returns all items', () => {
-    const r = slashSource(ctxAt('/', 1))
-    expect(r).not.toBeNull()
-    expect(r!.options.length).toBe(SLASH_ITEMS.length)
-    expect(r!.from).toBe(0)
+describe('slash menu — trigger conditions', () => {
+  it('fires at line start `/` → all items', () => {
+    const s = readSlash(stateAt('/', 1), null)
+    expect(s).not.toBeNull()
+    expect(s!.items.length).toBe(SLASH_ITEMS.length)
+    expect(s!.from).toBe(0)
   })
 
   it('does NOT fire mid-line (slash after text)', () => {
-    expect(slashSource(ctxAt('hello /x', 8))).toBeNull()
+    expect(readSlash(stateAt('hello /x', 8), null)).toBeNull()
   })
 
   it('does NOT fire inside a fenced code block', () => {
     const doc = '```\n/h1\n```'
     const pos = doc.indexOf('/h1') + 3
-    expect(slashSource(ctxAt(doc, pos))).toBeNull()
+    expect(readSlash(stateAt(doc, pos), null)).toBeNull()
   })
 })
 
-describe('slash source — keyword filtering', () => {
+describe('slash menu — keyword filtering', () => {
   it('`/h1` → Heading 1', () => {
-    const r = slashSource(ctxAt('/h1', 3))!
-    expect(r.options.map((o) => o.label)).toContain('Heading 1')
+    const s = readSlash(stateAt('/h1', 3), null)!
+    expect(s.items.map((i) => i.label)).toContain('Heading 1')
   })
 
   it('`/todo` → To-do list (keyword, not label)', () => {
-    const r = slashSource(ctxAt('/todo', 5))!
-    expect(r.options.map((o) => o.label)).toEqual(['To-do list'])
+    const s = readSlash(stateAt('/todo', 5), null)!
+    expect(s.items.map((i) => i.label)).toEqual(['To-do list'])
   })
 
   it('no match → null (no popup)', () => {
-    expect(slashSource(ctxAt('/zzzzz', 6))).toBeNull()
+    expect(readSlash(stateAt('/zzzzz', 6), null)).toBeNull()
+  })
+
+  it('keeps the selected index within the shrinking list', () => {
+    const prev = { from: 0, to: 3, items: SLASH_ITEMS, selectedIndex: 9 }
+    const s = readSlash(stateAt('/todo', 5), prev)!
+    expect(s.items.length).toBe(1)
+    expect(s.selectedIndex).toBe(0)
   })
 })
 
-describe('slash source — apply replaces /query with the marker', () => {
+describe('slash menu — apply replaces /query with the marker', () => {
   function applyFirst(doc: string, pos: number): string {
-    const r = slashSource(ctxAt(doc, pos))!
-    const opt = r.options[0]
-    const view = new EditorView({
-      state: EditorState.create({ doc, selection: { anchor: pos } }),
-    })
-    const apply = opt.apply as (v: EditorView, c: unknown, f: number, t: number) => void
-    apply(view, opt, r.from, r.to ?? r.from)
+    const state = stateAt(doc, pos)
+    const s = readSlash(state, null)!
+    const view = new EditorView({ state })
+    s.items[0].apply(view, s.from, s.to)
     const text = view.state.doc.toString()
     view.destroy()
     return text

@@ -61,7 +61,7 @@ import { CmHighlightBar } from '@/editor/CmHighlightBar'
 import { DocStatsPanel } from '@/editor/DocStatsPanel'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { cmWikilinkSource } from '@/editor/cmAutocomplete'
-import { slashSource } from '@/prototypes/slashCommands'
+import { slashMenu, slashKeymap } from '@/editor/slashMenu'
 import { smartEnter } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
 import { clearTopLevelMarkerBackward } from '@/prototypes/listBackspace'
@@ -147,6 +147,12 @@ export function CmEditor({ handle, header }: Props) {
             // browser's own beforeinput (insertParagraph/insertLineBreak) signal.
             imeListContinue(),
             indentUnit.of('  '),
+            // `/` block menu: state + our React tooltip. `slashKeymap` (also
+            // Prec.highest) MUST precede smartEnter so it can claim Enter/↑/↓
+            // while the menu is open; it returns false when closed, so smartEnter
+            // and cursor movement stay intact.
+            slashMenu,
+            slashKeymap,
             // ENTER — one deterministic handler at Prec.highest: tight list continuation
             // / clean exit, blockquote continuation, else plain newline. Must beat every
             // other Enter handler so CM's loose-list inference never runs.
@@ -171,7 +177,7 @@ export function CmEditor({ handle, header }: Props) {
             // so English prose hyphenates under justify; CJK is unaffected.
             EditorView.contentAttributes.of({ lang: 'en' }),
             markdown({ extensions: [GFM], addKeymap: false }),
-            autocompletion({ override: [cmWikilinkSource, slashSource], icons: true }), // [[ notes, / blocks
+            autocompletion({ override: [cmWikilinkSource] }), // [[ notes ]] (slash menu is slashMenu, above)
             placeholder('Start writing…'),
             taskCheckboxClick,
             livePreviewV2,
