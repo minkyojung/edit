@@ -250,6 +250,11 @@ export function AppSidebar() {
             spill a touch left of the lights — that's intentional; alignment
             tracks content, not the fill. Kept in sync with the folder tree's
             root <ul> below so both share one content line. */}
+        {/* Small muted section label (title-case, aligned to the icon column at
+            pl-5) — categorizes the top surfaces vs. the notes tree below. */}
+        <div className="-mb-1 select-none px-5 pt-2 text-footnote font-medium text-sidebar-foreground/50">
+          Assistant
+        </div>
         <nav className="flex flex-col gap-0.5 pl-3 pr-2">
           <button
             type="button"
@@ -289,6 +294,11 @@ export function AppSidebar() {
           </button>
         </nav>
 
+        {/* Section label for the vault's notes, mirroring the "Assistant"
+            label above so the two zones read as distinct groups. */}
+        <div className="-mb-1 select-none px-5 pt-3 text-footnote font-medium text-sidebar-foreground/50">
+          Notes
+        </div>
         {/* Obsidian-style folder tree — the vault's folder structure is
             the sidebar. (Replaced the day/week/month date views.) */}
         <FolderTree />
