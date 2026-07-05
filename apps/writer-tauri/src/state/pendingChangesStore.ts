@@ -161,7 +161,12 @@ interface PendingChangesState {
    * caller can correlate later (chat: pendingId from sidecar;
    * ingest: a fresh UUID). Idempotent on the id — re-push with the
    * same id is treated as a content refresh, preserving status only
-   * if it's still `pending`. */
+   * if it's still `pending`. Returns false (a no-op) when an entity
+   * with this id already exists and is no longer `pending` — the
+   * caller MUST check this instead of assuming the push landed (a
+   * silently-ignored push here is exactly the bug class the merge
+   * logic in agent/chat/index.ts hit once already: the auto-accept
+   * write happened but the store update was silently dropped). */
   push: (
     change: Omit<
       PendingChange,
@@ -169,25 +174,27 @@ interface PendingChangesState {
     > & {
       createdAt?: number
     },
-  ) => void
+  ) => boolean
 
   /** User clicked Accept on one change. Flips status; the host's
    * apply path (a subscriber to this store) reads the accepted
-   * change and writes to disk. No-op if the change is already
-   * decided. */
-  accept: (id: string, resolvedResult?: string) => void
+   * change and writes to disk. Returns false (no-op) if the change
+   * doesn't exist or is already decided — callers must check this
+   * rather than assuming the accept took effect. */
+  accept: (id: string, resolvedResult?: string) => boolean
 
   /** User clicked Reject on one change. Same lifecycle as accept,
-   * but the apply path skips the disk write. */
-  reject: (id: string) => void
+   * but the apply path skips the disk write. Returns false (no-op)
+   * under the same conditions as `accept`. */
+  reject: (id: string) => boolean
 
   /** Un-decide a change back to `pending`, from `accepted` OR `rejected`.
    * This is the CM editor's Cmd-Z path: undoing an accept or a reject
    * reopens the change so its widget reappears. (A FAILED apply does NOT
    * reopen — the applier dismisses with a toast instead, since reopening
-   * would just re-fail on the same stale anchor in a loop.) No-op unless
-   * the change is currently decided. */
-  reopen: (id: string) => void
+   * would just re-fail on the same stale anchor in a loop.) Returns false
+   * (no-op) unless the change is currently decided. */
+  reopen: (id: string) => boolean
 
   /** Reject every still-pending change in a group. Used by the
    * page-level "AI made this page — reject everything" affordance
@@ -238,12 +245,14 @@ export const usePendingChangesStore = create<PendingChangesState>()(
       byId: {},
 
       push: (change) => {
+        let ok = false
         set((s) => {
           const existing = s.byId[change.id]
           // Re-push of an already-decided change is ignored — the
           // user's decision sticks. Only `pending` (or first-time
           // push) refreshes the content.
           if (existing && existing.status !== 'pending') return s
+          ok = true
           // Snapshot the page's markdown at the moment the proposal
           // lands. The Review Panel's contextualised diff renders
           // against this snapshot so the card stays a faithful
@@ -268,12 +277,15 @@ export const usePendingChangesStore = create<PendingChangesState>()(
           }
           return { byId: { ...s.byId, [change.id]: next } }
         })
+        return ok
       },
 
       accept: (id, resolvedResult) => {
+        let ok = false
         set((s) => {
           const existing = s.byId[id]
           if (!existing || existing.status !== 'pending') return s
+          ok = true
           return {
             byId: {
               ...s.byId,
@@ -281,12 +293,15 @@ export const usePendingChangesStore = create<PendingChangesState>()(
             },
           }
         })
+        return ok
       },
 
       reject: (id) => {
+        let ok = false
         set((s) => {
           const existing = s.byId[id]
           if (!existing || existing.status !== 'pending') return s
+          ok = true
           return {
             byId: {
               ...s.byId,
@@ -294,14 +309,17 @@ export const usePendingChangesStore = create<PendingChangesState>()(
             },
           }
         })
+        return ok
       },
 
       reopen: (id) => {
+        let ok = false
         set((s) => {
           const existing = s.byId[id]
           // Un-decide a change back to pending — from accepted OR rejected (the CM
           // editor's Cmd-Z undoes both an accept and a reject via this).
           if (!existing || existing.status === 'pending') return s
+          ok = true
           return {
             byId: {
               ...s.byId,
@@ -309,6 +327,7 @@ export const usePendingChangesStore = create<PendingChangesState>()(
             },
           }
         })
+        return ok
       },
 
       markPageViewed: (pageSlug) => {
@@ -451,9 +470,11 @@ if (import.meta.env.DEV) {
 /** Reject a change from ANY surface (chat card, inline editor ✕). When the change's
  * doc is open in a CM editor, route the reject THROUGH the editor so it lands in CM's
  * history and Cmd-Z can undo it; otherwise fall back to a plain store mutation. The one
- * shared path keeps the chat panel and the editor behaving identically. */
-export function rejectPendingChange(id: string): void {
+ * shared path keeps the chat panel and the editor behaving identically. Returns whether
+ * a reject actually happened (false when the change no longer exists / was already
+ * decided by the time this ran — e.g. resolved on another surface a moment earlier). */
+export function rejectPendingChange(id: string): boolean {
   const slug = usePendingChangesStore.getState().byId[id]?.pageSlug
-  if (slug && rejectActiveCmChange(slug, id)) return
-  usePendingChangesStore.getState().reject(id)
+  if (slug && rejectActiveCmChange(slug, id)) return true
+  return usePendingChangesStore.getState().reject(id)
 }

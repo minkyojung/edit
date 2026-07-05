@@ -14,6 +14,7 @@ import { useMemo } from 'react'
 import { IconExternalLink, IconPencil } from '@tabler/icons-react'
 import type { ToolPart } from '@/chat/types'
 import { usePendingChangesStore, rejectPendingChange } from '@/state/pendingChangesStore'
+import { notify } from '@/lib/notify'
 import { useDocsStore } from '@/state/docsStore'
 import { computePendingDiffLines } from '@/lib/pendingDiff'
 import { DiffBlock } from '@/components/DiffBlock'
@@ -133,14 +134,21 @@ export function InlineSuggestion({ part }: { part: ToolPart }) {
                 <button
                   type="button"
                   className="pending-edit__action pending-edit__action--reject"
-                  onClick={() => rejectPendingChange(change.id)}
+                  onClick={() => {
+                    // Can no-op if the change was already decided on another
+                    // surface (tray, in-buffer editor) a moment earlier —
+                    // say so instead of leaving the click looking ignored.
+                    if (!rejectPendingChange(change.id)) notify.alreadyHandled()
+                  }}
                 >
                   Reject
                 </button>
                 <button
                   type="button"
                   className="pending-edit__action pending-edit__action--keep"
-                  onClick={() => accept(change.id)}
+                  onClick={() => {
+                    if (!accept(change.id)) notify.alreadyHandled()
+                  }}
                 >
                   Keep
                 </button>

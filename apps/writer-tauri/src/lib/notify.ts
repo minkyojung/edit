@@ -48,6 +48,18 @@ export const notify = {
       description: 'The file may be locked or unwritable',
     })
   },
+  /** Keep/Reject clicked on a suggestion that was ALREADY decided a split
+   * second earlier on another surface (the review tray, or the in-buffer
+   * editor) — a narrow render-lag race, not a fault. Distinct copy from
+   * `markCantApply`/`markCantDismiss`, which are about a STALE ANCHOR (the
+   * surrounding text changed) — a different cause with a different fix
+   * (re-propose vs. nothing to do here, it's already handled). Neutral
+   * (not `.error`) since nothing actually went wrong. */
+  alreadyHandled() {
+    toast('Already handled', {
+      description: 'This suggestion was accepted or rejected elsewhere a moment ago',
+    })
+  },
 
   // ── Note CRUD ─────────────────────────────────────────────────
   cantCreateNote(opts: RetryOpts = {}) {

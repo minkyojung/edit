@@ -14,6 +14,7 @@
 
 import { diffLines, structuredPatch } from 'diff'
 import type { DiffLine } from './git'
+import { looseReplace } from './looseMatch'
 import type { PendingChange, PendingEdit } from '@/state/pendingChangesStore'
 
 /** diffLines tokenises by line; a string whose last line lacks a
@@ -55,9 +56,14 @@ export function diffPairsToLines(
 
 /** Apply a change's edits to the page snapshot, returning the resulting body. Pure
  * string transform mirroring the applier's write paths — `add` appends to the end
- * (appendMarkdownToWikiPage), `replace`/`delete` splice the first `before` match, a
- * whole-file replace (no `before`) swaps the body. Used to derive the "after" page so
- * the diff can show document context, not just the changed fragment. */
+ * (appendMarkdownToWikiPage); `replace`/`delete` locate `before` via the SAME tolerant,
+ * ambiguity-safe matcher the real disk-apply path uses (`looseReplace` — exact match,
+ * falling back to a normalized single-line match, refusing when more than one candidate
+ * matches). Before this, this function did its own plain `String.replace`, which could
+ * disagree with the real apply path about whether/where an edit lands — the preview
+ * would show one result while the actual save silently did something else. A whole-file
+ * replace (no `before`) swaps the body. Used to derive the "after" page so the diff can
+ * show document context, not just the changed fragment. */
 export function applyEditsToText(snapshot: string, edits: PendingEdit[]): string {
   let doc = snapshot
   for (const e of edits) {
@@ -65,12 +71,16 @@ export function applyEditsToText(snapshot: string, edits: PendingEdit[]): string
       const body = e.after ?? ''
       doc = doc.length > 0 ? `${doc}\n\n${body}` : body
     } else if (e.kind === 'replace') {
-      // Use a replacement FUNCTION, not a string — a string replacement makes
-      // String.replace interpret `$&` / `$$` / `` $` `` etc. as special patterns, which
-      // would corrupt `after` text containing a literal `$` (prices, LaTeX, …).
-      doc = e.before ? doc.replace(e.before, () => e.after ?? '') : (e.after ?? '')
+      if (!e.before) {
+        doc = e.after ?? '' // whole-file replace
+      } else {
+        // null = before wasn't found, or matched more than once (ambiguous) —
+        // looseReplace refuses rather than guess; leave doc unchanged for
+        // this edit, same as the real apply path would.
+        doc = looseReplace(doc, e.before, e.after ?? '') ?? doc
+      }
     } else if (e.kind === 'delete' && e.before) {
-      doc = doc.replace(e.before, () => '')
+      doc = looseReplace(doc, e.before, '') ?? doc
     }
   }
   return doc
