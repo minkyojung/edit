@@ -106,10 +106,9 @@ export function CmEditor({ handle, header }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const slug = handle?.slug ?? null
-  // Column width + alignment are live settings (Settings → Editor). Changing them
-  // re-renders the wrapper (maxWidth / CSS vars); CM's resize observer re-wraps
+  // Body width is fixed at 750px. Alignment is a live setting (Settings → Editor);
+  // changing it re-renders the wrapper CSS vars and CM's resize observer re-wraps
   // lines automatically — no editor remount.
-  const columnWidth = useSettingsStore((s) => s.editorColumnWidth)
   const textAlign = useSettingsStore((s) => s.editorTextAlign)
 
   useEffect(() => {
@@ -343,7 +342,7 @@ export function CmEditor({ handle, header }: Props) {
             // `max-w-2xl` compiles to `max-width: var(--container-2xl)`, and this project
             // doesn't define those container vars, so the rule is dropped and the column
             // loses its cap. A literal px value (from settings) is immune to that.
-            maxWidth: `${columnWidth}px`,
+            maxWidth: '750px',
             marginInline: 'auto',
             paddingTop: 'calc(var(--header-h) + 1.5rem)',
             paddingBottom: '4rem',

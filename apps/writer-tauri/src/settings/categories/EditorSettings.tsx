@@ -1,15 +1,25 @@
-// "Editor" settings panel — tune the editor's text column width + alignment.
-// (The engine toggle was retired: CodeMirror is now the only editor.)
+// "Editor" settings panel — tune the editor's text alignment.
+// (Body width is fixed at 750px; the engine toggle was retired: CodeMirror is
+// now the only editor.)
 
-import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useSettingsStore } from '@/state/settingsStore'
 import { SettingRow } from '../SettingRow'
 
-const COLUMN_WIDTHS = [650, 680, 700, 720] as const
+type TextAlign = 'justify' | 'left'
+
+const ALIGN_OPTIONS: { value: TextAlign; label: string }[] = [
+  { value: 'justify', label: 'Justify' },
+  { value: 'left', label: 'Left' },
+]
 
 export function EditorSettings() {
-  const columnWidth = useSettingsStore((s) => s.editorColumnWidth)
-  const setColumnWidth = useSettingsStore((s) => s.setEditorColumnWidth)
   const textAlign = useSettingsStore((s) => s.editorTextAlign)
   const setTextAlign = useSettingsStore((s) => s.setEditorTextAlign)
 
@@ -17,45 +27,24 @@ export function EditorSettings() {
     <section>
       <h2 className="mb-2 text-body font-semibold text-foreground">Editor</h2>
       <SettingRow
-        title="Body width"
-        description="Maximum width of the editor body column (px). Applies on click."
-      >
-        <div className="flex gap-1">
-          {COLUMN_WIDTHS.map((w) => (
-            <Button
-              key={w}
-              size="sm"
-              variant={columnWidth === w ? 'default' : 'outline'}
-              onClick={() => setColumnWidth(w)}
-              aria-pressed={columnWidth === w}
-            >
-              {w}
-            </Button>
-          ))}
-        </div>
-      </SettingRow>
-      <SettingRow
         title="Alignment"
-        description="Justified alignment hyphenates words to align both edges; left alignment leaves the right edge ragged. Applies on click."
+        description="Justified alignment hyphenates words to align both edges; left alignment leaves the right edge ragged."
       >
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={textAlign === 'justify' ? 'default' : 'outline'}
-            onClick={() => setTextAlign('justify')}
-            aria-pressed={textAlign === 'justify'}
-          >
-            Justify
-          </Button>
-          <Button
-            size="sm"
-            variant={textAlign === 'left' ? 'default' : 'outline'}
-            onClick={() => setTextAlign('left')}
-            aria-pressed={textAlign === 'left'}
-          >
-            Left
-          </Button>
-        </div>
+        <Select
+          value={textAlign}
+          onValueChange={(v) => setTextAlign(v as TextAlign)}
+        >
+          <SelectTrigger size="sm" className="w-32">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {ALIGN_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </SettingRow>
     </section>
   )

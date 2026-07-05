@@ -101,12 +101,6 @@ interface SettingsState {
   /** Toggle sidebar vibrancy. */
   setSidebarVibrancy: (enabled: boolean) => void
 
-  /** Max width (px) of the CodeMirror editor's centered text column. Tuning
-   * knob in Settings → Editor; applied live (no reload). */
-  editorColumnWidth: number
-  /** Set the editor column width in px. */
-  setEditorColumnWidth: (px: number) => void
-
   /** CodeMirror editor body alignment. 'justify' flushes both edges (with
    * hyphenation); 'left' is ragged-right (no auto-hyphens). Applied live. */
   editorTextAlign: 'justify' | 'left'
@@ -129,7 +123,6 @@ export const useSettingsStore = create<SettingsState>()(
       intakeModel: DEFAULT_CHAT_MODEL,
       inboxAutoOrganize: true,
       sidebarVibrancyEnabled: true,
-      editorColumnWidth: 700,
       editorTextAlign: 'justify',
       notificationSound: 'Glass',
       setNotificationSound: (sound) => set({ notificationSound: sound }),
@@ -154,7 +147,6 @@ export const useSettingsStore = create<SettingsState>()(
       setIntakeModel: (model) => set({ intakeModel: model }),
       setInboxAutoOrganize: (enabled) => set({ inboxAutoOrganize: enabled }),
       setSidebarVibrancy: (enabled) => set({ sidebarVibrancyEnabled: enabled }),
-      setEditorColumnWidth: (px) => set({ editorColumnWidth: px }),
       setEditorTextAlign: (align) => set({ editorTextAlign: align }),
     }),
     {
@@ -168,7 +160,6 @@ export const useSettingsStore = create<SettingsState>()(
         intakeModel: s.intakeModel,
         inboxAutoOrganize: s.inboxAutoOrganize,
         sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
-        editorColumnWidth: s.editorColumnWidth,
         editorTextAlign: s.editorTextAlign,
         recentProjects: s.recentProjects,
       }),
