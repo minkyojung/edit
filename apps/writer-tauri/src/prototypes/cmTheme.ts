@@ -298,7 +298,13 @@ export const cmPrototypeTheme = EditorView.theme({
     display: 'inline-block',
     width: '100%',
     verticalAlign: 'bottom',
-    margin: 'var(--prose-gap-block, 14px) 0',
+    // Vertical spacing as PADDING, not margin — this is a BLOCK widget, and CM6
+    // measures a block widget's height from its bounding box, which EXCLUDES margin
+    // (the same trap the table wrap documents below). With margin the heightmap ran
+    // ~28px short per card, so clicks / vertical arrows below the player mapped to
+    // the wrong line. Padding is inside the box → counted. The figure has no border
+    // or background, so padding looks identical to the old margin.
+    padding: 'var(--prose-gap-block, 14px) 0',
     // The player is a non-text widget — never let a text drag highlight/grab it
     // (Obsidian keeps the embed clean while you select just the source line).
     userSelect: 'none',
@@ -410,5 +416,71 @@ export const cmPrototypeTheme = EditorView.theme({
   '.cm-cell-body:focus': {
     background: 'color-mix(in oklch, var(--info) 12%, transparent)',
     borderRadius: '3px',
+  },
+
+  // ── Slash `/` + wikilink `[[` autocomplete popup ──────────────────────────
+  // Notion-style: dark rounded panel, section headers, leading line icon,
+  // right-aligned markdown hint, muted selection (not CM's default blue bar).
+  // The double `.cm-tooltip.cm-tooltip-autocomplete` prefix (auto-scoped to the
+  // editor root by EditorView.theme) out-specifies @codemirror/autocomplete's
+  // baseTheme, so our colors win over its `#17c` selected background.
+  '.cm-tooltip.cm-tooltip-autocomplete': {
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius, 10px)',
+    background: 'var(--popover)',
+    color: 'var(--popover-foreground)',
+    boxShadow: '0 8px 28px rgb(0 0 0 / 0.22)',
+    padding: '4px',
+    overflow: 'hidden',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul': {
+    fontFamily: 'var(--font-sans)',
+    fontSize: '0.9em',
+    maxHeight: '20em',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > completion-section': {
+    display: 'block',
+    border: 'none',
+    opacity: '1',
+    padding: '10px 8px 4px',
+    color: 'var(--muted-foreground)',
+    fontSize: '0.72em',
+    fontWeight: '600',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '6px 8px',
+    borderRadius: '6px',
+    color: 'var(--popover-foreground)',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+    background: 'var(--muted)',
+    color: 'var(--popover-foreground)',
+  },
+  '.cm-slashIcon': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '20px',
+    height: '20px',
+    flex: '0 0 auto',
+    color: 'var(--muted-foreground)',
+  },
+  '.cm-slashIcon svg': { width: '16px', height: '16px', display: 'block' },
+  '.cm-tooltip.cm-tooltip-autocomplete .cm-completionLabel': {
+    flex: '1 1 auto',
+    fontWeight: '450',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete .cm-completionDetail': {
+    marginLeft: 'auto',
+    flex: '0 0 auto',
+    fontStyle: 'normal',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: '0.85em',
+    color: 'var(--muted-foreground)',
   },
 })

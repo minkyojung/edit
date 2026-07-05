@@ -3,7 +3,7 @@
 // widgets.)
 
 import { WidgetType, type EditorView } from '@codemirror/view'
-import { addRow, addColumn, deleteRow, deleteColumn } from './tableEdit'
+import { addRow, addColumn, deleteRow, deleteColumn, applyContentColumns } from './tableEdit'
 import { setVaultAssetSrc } from './setAssetSrc'
 
 export class ImageWidget extends WidgetType {
@@ -186,6 +186,8 @@ export class TableWidget extends WidgetType {
       })
     }
 
+    // Full-width, content-proportional columns (shared with the editable renderer).
+    applyContentColumns(table, this.source)
     wrap.appendChild(table)
     wrap.append(
       ctrl('cm-table-addcol', '+', 'Add column', addColumn),
