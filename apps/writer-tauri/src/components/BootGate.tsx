@@ -35,11 +35,7 @@ import { seedClaudeMd } from '@/lib/seedClaudeMd'
 import { seedRoutines } from '@/lib/routinesLib'
 import { seedAgents } from '@/lib/agentsLib'
 import { seedSkills } from '@/lib/skillsLib'
-import { UNDO_SKILL_BODY, UNDO_SKILL_DESCRIPTION } from '@/agent/skills/undoAiChange'
-import { INBOX_PROMPT } from '@/agent/inbox'
-import { DAILY_INGEST_PROMPT } from '@/agent/dailyIngest'
-import { HANDOFF_PROMPT } from '@/agent/wikiHandoff'
-import { FREE_CHAT_PROMPT } from '@/agent/skills/freeChat'
+import { DEFAULT_SKILLS, DEFAULT_COMMANDS, DEFAULT_AGENTS } from '@/agent/defaults'
 import { isTranslationProject } from '@/lib/translationProject'
 import { gitInit } from '@/lib/git'
 
@@ -62,23 +58,7 @@ async function seedWikiDefaults(): Promise<void> {
   // Seed default routine command files (`.claude/commands/*.md`) — the editable
   // task brains. Idempotent by file existence; never overwrites the user's edits.
   try {
-    await seedRoutines([
-      {
-        name: 'organize',
-        description: 'Route an inbox capture into the wiki / daily, then file it out of the inbox',
-        body: INBOX_PROMPT,
-      },
-      {
-        name: 'daily-ingest',
-        description: "File durable facts from the user's daily journal into the wiki",
-        body: DAILY_INGEST_PROMPT,
-      },
-      {
-        name: 'chat-to-wiki',
-        description: 'File content the user picked from a chat into the wiki',
-        body: HANDOFF_PROMPT,
-      },
-    ])
+    await seedRoutines(DEFAULT_COMMANDS)
   } catch (err) {
     console.warn('[boot] routines seed failed', err)
   }
@@ -89,29 +69,7 @@ async function seedWikiDefaults(): Promise<void> {
   // personas. `default` is the main persona (from FREE_CHAT_PROMPT) made
   // editable; the rest are starter roles the user can edit or delete.
   try {
-    await seedAgents([
-      {
-        name: 'default',
-        description: 'The general writing copilot (the default chat persona)',
-        body: FREE_CHAT_PROMPT,
-      },
-      {
-        name: 'researcher',
-        description: 'Use for deep, multi-source questions that need real digging',
-        model: 'opus',
-        body: 'You are a research specialist embedded in the user’s notes app. Dig deep across the vault (Read / Glob / Grep) AND the web (WebSearch / WebFetch), cross-check sources against each other, and synthesize a clear, well-organized answer. Cite what you used with [[Page Title]] for wiki pages and links for the web. Prefer depth and accuracy over speed; state your uncertainty plainly rather than guessing.',
-      },
-      {
-        name: 'translator',
-        description: 'Use to translate text, preserving tone and formatting',
-        body: 'You are a translator. Translate the user’s text faithfully, preserving tone, register, and markdown formatting. Keep names and domain terms consistent throughout; when a term is genuinely ambiguous, pick the best fit and note the alternative in one short line. Output only the translation unless the user asks you to explain choices.',
-      },
-      {
-        name: 'proofreader',
-        description: 'Use to copyedit — grammar, clarity, minimal changes',
-        body: 'You are a careful copyeditor. Fix grammar, spelling, punctuation, and clarity while preserving the author’s voice and meaning. Make the MINIMAL changes needed — do not rewrite for style unless asked. If a sentence is genuinely unclear, flag it with a short note rather than guessing the intent.',
-      },
-    ])
+    await seedAgents(DEFAULT_AGENTS)
   } catch (err) {
     console.warn('[boot] agents seed failed', err)
   }
@@ -119,13 +77,7 @@ async function seedWikiDefaults(): Promise<void> {
   // the agent loads on demand. `undo-ai-change` lets the agent reverse its own
   // recent edits when the user regrets one. Idempotent + tombstone-aware.
   try {
-    await seedSkills([
-      {
-        name: 'undo-ai-change',
-        description: UNDO_SKILL_DESCRIPTION,
-        body: UNDO_SKILL_BODY,
-      },
-    ])
+    await seedSkills(DEFAULT_SKILLS)
   } catch (err) {
     console.warn('[boot] skills seed failed', err)
   }

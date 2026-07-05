@@ -18,7 +18,8 @@
 import { create } from 'zustand'
 
 export interface OrganizeRequest {
-  /** Routing brain (INBOX_PROMPT for a normal note, DAILY_INGEST_PROMPT for a daily). */
+  /** System prompt for the run. Empty for native routine runs — the brain
+   * arrives by expanding the `/organize` or `/daily-ingest` slash command. */
   systemPrompt: string
   /** Kickoff user message handed to the run (names the file to read). */
   prompt: string

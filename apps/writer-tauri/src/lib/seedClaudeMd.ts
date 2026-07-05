@@ -13,7 +13,7 @@
 
 import { vaultFileExists, writeVaultFile } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
-import { DEFAULT_CLAUDE_MD } from '@/lib/defaultClaudeMd'
+import { DEFAULT_CLAUDE_MD } from '@/agent/defaults'
 
 const CLAUDE_MD_REL = 'CLAUDE.md'
 
