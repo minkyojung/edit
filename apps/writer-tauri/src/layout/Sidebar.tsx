@@ -8,8 +8,8 @@ import {
   IconArrowsSort,
   IconUser,
   IconBolt,
-  IconUsers,
-  IconTerminal2,
+  IconRobot,
+  IconRoute,
 } from '@tabler/icons-react'
 import { FolderTree } from './FolderTree'
 import { useDocsStore } from '@/state/docsStore'
@@ -271,7 +271,7 @@ export function AppSidebar() {
             data-active={agentsActive || undefined}
             className={NAV_ROW}
           >
-            <IconUsers size={18} stroke={1.75} className="shrink-0" />
+            <IconRobot size={18} stroke={1.75} className="shrink-0" />
             <span className="flex-1 truncate text-left">Agents</span>
           </button>
           <button
@@ -289,8 +289,8 @@ export function AppSidebar() {
             data-active={commandActive || undefined}
             className={NAV_ROW}
           >
-            <IconTerminal2 size={18} stroke={1.75} className="shrink-0" />
-            <span className="flex-1 truncate text-left">Command</span>
+            <IconRoute size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Routine</span>
           </button>
         </nav>
 
