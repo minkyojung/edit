@@ -700,13 +700,13 @@ html[data-window-mode='compact'] .command-palette {
      ladder rather than the old em-based 1.6em / 1.3em that drifted
      when root size moved. line-height splits between body (loose,
      1.7) and headings (tight, 1.25). */
-  --prose-base: 16px;
-  --prose-h1: 28px;
-  --prose-h2: 22px;
-  --prose-h3: 18px;
-  --prose-h4: 16px;
-  --prose-h5: 14px;
-  --prose-h6: 13px;
+  --prose-base: 18px;
+  --prose-h1: 31px;
+  --prose-h2: 25px;
+  --prose-h3: 20px;
+  --prose-h4: 18px;
+  --prose-h5: 16px;
+  --prose-h6: 15px;
   --prose-lh-body: 1.7;
   --prose-lh-heading: 1.25;
   --prose-gap-block: 14px;
