@@ -67,8 +67,17 @@ function buildDecos(
   // never render. true = focused → show raw; false = blurred → render. undefined =
   // main editor's active-line behavior.
   revealAll?: boolean,
+  // Whether the editor is FOCUSED. An unfocused editor has no active caret for
+  // reveal purposes, so EVERY construct renders clean (Obsidian: a blurred pane
+  // is fully rendered). Defaults true so headless tests keep caret-based reveal.
+  focused = true,
 ): Range<Decoration>[] {
   const out: Range<Decoration>[] = []
+  // Single reveal gate. A construct shows its raw markers only when the editor is
+  // focused AND the caret touches [from, to]. Routing every branch (headings,
+  // lists, quotes, tasks, inline marks) through this one predicate is what makes
+  // an unfocused editor render uniformly clean.
+  const caretIn = (from: number, to: number) => focused && cursorInRange(state, from, to)
   // Lines whose list marker the Lezer `ListMark` branch already styled, so the
   // immediate-marker fallback (after the tree walk) doesn't double-decorate once
   // the parser catches up a keystroke later.
@@ -122,7 +131,7 @@ function buildDecos(
         }
         if (name === 'HeaderMark') {
           const line = state.doc.lineAt(nf)
-          if (!cursorInRange(state, line.from, line.to)) {
+          if (!caretIn(line.from, line.to)) {
             const trailing = state.doc.sliceString(nt, nt + 1) === ' ' ? 1 : 0
             hide(nf, nt + trailing)
           }
@@ -153,7 +162,7 @@ function buildDecos(
           // Reveal the raw `(url)` only when the caret is inside THIS link's
           // span — not anywhere on the (line-wrapped) line. Without this, a
           // caret in a long bullet's text pops every link's URL on the line.
-          const reveal = revealAll ?? cursorInRange(state, p!.from, p!.to)
+          const reveal = revealAll ?? caretIn(p!.from, p!.to)
           if (!reveal) hide(nf, nt)
           return
         }
@@ -178,7 +187,7 @@ function buildDecos(
           const line = state.doc.lineAt(nf)
           const rFrom = p ? p.from : line.from
           const rTo = p ? p.to : line.to
-          const reveal = revealAll ?? cursorInRange(state, rFrom, rTo)
+          const reveal = revealAll ?? caretIn(rFrom, rTo)
           if (!reveal) hide(nf, nt)
           return
         }
@@ -192,7 +201,7 @@ function buildDecos(
         }
         if (name === 'QuoteMark') {
           const line = state.doc.lineAt(nf)
-          if (!cursorInRange(state, line.from, line.to)) {
+          if (!caretIn(line.from, line.to)) {
             const trailing = state.doc.sliceString(nt, nt + 1) === ' ' ? 1 : 0
             hide(nf, nt + trailing)
           }
@@ -203,7 +212,7 @@ function buildDecos(
         // border) unless the caret is on the line, then show raw `---`.
         if (name === 'HorizontalRule') {
           const line = state.doc.lineAt(nf)
-          if (!cursorInRange(state, line.from, line.to)) {
+          if (!caretIn(line.from, line.to)) {
             out.push(Decoration.line({ class: 'cm-hr' }).range(line.from))
           }
           return
@@ -257,7 +266,7 @@ function buildDecos(
             if (tm) {
               const markerTo = nt + 4 // after `]`
               const checked = /[xX]/.test(tm[1])
-              const revealed = cursorInRange(state, nf, markerTo) // caret on `- [ ]` → raw
+              const revealed = caretIn(nf, markerTo) // caret on `- [ ]` → raw
               mark(
                 nf,
                 markerTo,
@@ -281,7 +290,7 @@ function buildDecos(
           // dash and draws a •, unless the caret is on it (then raw). Either way the
           // `.cm-list-marker` column stays, so the body never shifts on reveal.
           if (isNum) return void mark(nf, nt, 'cm-list-marker cm-list-num')
-          mark(nf, nt, cursorInRange(state, nf, nt) ? 'cm-list-marker' : 'cm-list-marker cm-list-bullet')
+          mark(nf, nt, caretIn(nf, nt) ? 'cm-list-marker' : 'cm-list-marker cm-list-bullet')
           return
         }
       },
@@ -304,7 +313,7 @@ function buildDecos(
       const end = innerTo + 2
       // Obsidian model: the TITLE is always the link (blue underline / red broken).
       mark(innerFrom, innerTo, state.facet(wikilinkKnown)(m[1]) ? 'cm-wikilink' : 'cm-wikilink-broken')
-      if (revealAll ?? cursorInRange(state, start, end)) {
+      if (revealAll ?? caretIn(start, end)) {
         // editing → SHOW the `[[`/`]]` brackets, just muted (a class, not a replace,
         // so the composing caret's line never carries a replace → IME-safe).
         mark(start, innerFrom, 'cm-wikilink-bracket')
@@ -353,7 +362,7 @@ function buildDecos(
           mark(
             markerFrom,
             taskTo,
-            cursorInRange(state, markerFrom, taskTo)
+            caretIn(markerFrom, taskTo)
               ? 'cm-list-marker'
               : `cm-list-marker cm-task-marker${checked ? ' cm-task-marker-checked' : ''}`,
           )
@@ -363,7 +372,7 @@ function buildDecos(
           mark(
             markerFrom,
             markerTo,
-            cursorInRange(state, markerFrom, markerTo)
+            caretIn(markerFrom, markerTo)
               ? 'cm-list-marker'
               : 'cm-list-marker cm-list-bullet',
           )
@@ -394,11 +403,15 @@ function previewPlugin(inlineOnly: boolean) {
       build(view: EditorView): DecorationSet {
         // Cell mode reveals by focus (a single-line cell is always "on its line").
         const revealAll = inlineOnly ? view.hasFocus : undefined
-        return Decoration.set(buildDecos(view.state, view.visibleRanges, inlineOnly, revealAll), true)
+        return Decoration.set(
+          buildDecos(view.state, view.visibleRanges, inlineOnly, revealAll, view.hasFocus),
+          true,
+        )
       }
       update(u: ViewUpdate) {
-        // Reveal depends on selection (main) or focus (cell), so rebuild on both.
-        if (u.docChanged || u.viewportChanged || u.selectionSet || (inlineOnly && u.focusChanged) || this.paused) {
+        // Reveal depends on selection AND focus (a blurred main editor renders fully
+        // clean), so rebuild on both — not just the cell variant.
+        if (u.docChanged || u.viewportChanged || u.selectionSet || u.focusChanged || this.paused) {
           if (u.view.composing) {
             this.deco = this.deco.map(u.changes)
             this.paused = true
