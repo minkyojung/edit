@@ -18,6 +18,7 @@ import { SettingsNav } from './SettingsNav'
 import { AppearanceSettings } from './categories/AppearanceSettings'
 import { EditorSettings } from './categories/EditorSettings'
 import { FilesSettings } from './categories/FilesSettings'
+import { VersionSettings } from './categories/VersionSettings'
 import { ConnectionsSettings } from './categories/ConnectionsSettings'
 
 export function SettingsDialog() {
@@ -44,15 +45,16 @@ export function SettingsDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="h-[86vh] max-h-[760px] w-[94vw] max-w-5xl gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-5xl">
+      <DialogContent className="grid-rows-[minmax(0,1fr)] h-[86vh] max-h-[760px] w-[94vw] max-w-5xl gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-5xl">
         <DialogTitle className="sr-only">Settings</DialogTitle>
-        <div className="flex h-full">
+        <div className="flex h-full min-h-0">
           <SettingsNav active={active} onSelect={setActive} />
-          <ScrollArea className="flex-1">
+          <ScrollArea className="min-h-0 flex-1">
             <div className="px-6 py-5">
               {active === 'appearance' && <AppearanceSettings />}
               {active === 'editor' && <EditorSettings />}
               {active === 'files' && <FilesSettings />}
+              {active === 'version' && <VersionSettings />}
               {active === 'connections' && <ConnectionsSettings />}
             </div>
           </ScrollArea>

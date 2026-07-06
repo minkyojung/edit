@@ -155,12 +155,13 @@ function buildSubmitProfileTool(runId, emit) {
 function buildProposeEditTool(runId, emit, vaultPath, registerAck) {
   return tool(
     'propose_edit',
-    'PREFERRED tool for changing an existing file. Propose a surgical edit: provide the absolute file_path, the exact old_string to replace (copy it VERBATIM from the file — Read it first if unsure), and the new_string. old_string MUST identify exactly ONE place in the file — if the text appears more than once, include enough surrounding lines to make it unique, otherwise the edit is rejected as ambiguous (the host never guesses which occurrence you meant). Works exactly like the built-in Edit tool. The host locates old_string and applies the change in place, then queues it for user review. Returns immediately — do not wait for the user.',
+    'PREFERRED tool for changing an existing file. Propose a surgical edit: provide the absolute file_path, the exact old_string to replace (copy it VERBATIM from the file — Read it first if unsure), and the new_string. old_string MUST identify exactly ONE place in the file — if the text appears more than once, include enough surrounding lines to make it unique, otherwise the edit is rejected as ambiguous (the host never guesses which occurrence you meant). Works exactly like the built-in Edit tool. The host locates old_string and applies the change in place, then queues it for user review. Returns immediately — do not wait for the user. `reason`: a short one-line note recorded in the VERSION HISTORY (the commit log) for this edit — say what changed and why in plain terms. It is NOT shown in your chat reply; it is the audit trail so the user can later see why a change was made. Keep it specific ("Fixed the typo in the intro", "Added the 2026 pricing row"), not generic.',
     {
       file_path: z.string(),
       old_string: z.string(),
       new_string: z.string(),
       replace_all: z.boolean().optional(),
+      reason: z.string().optional(),
     },
     async (input) => {
       // Validate the anchor against the live file (the built-in Edit's contract) so a
@@ -193,10 +194,11 @@ function buildProposeEditTool(runId, emit, vaultPath, registerAck) {
 function buildProposeWriteTool(runId, emit, registerAck) {
   return tool(
     'propose_write',
-    'Create a BRAND-NEW file, or replace an existing file\'s ENTIRE content when the user explicitly asks for a full rewrite. Send `content` = the complete desired file content. For any partial change to an existing file — a single line, a value, appending a bullet — do NOT use this; use propose_edit instead so the change applies surgically in place. Returns immediately — do not wait for the user.',
+    'Create a BRAND-NEW file, or replace an existing file\'s ENTIRE content when the user explicitly asks for a full rewrite. Send `content` = the complete desired file content. For any partial change to an existing file — a single line, a value, appending a bullet — do NOT use this; use propose_edit instead so the change applies surgically in place. Returns immediately — do not wait for the user. `reason`: a short one-line note recorded in the VERSION HISTORY (the commit log) for this write — say what the file is / why you created or rewrote it, in plain terms. It is NOT shown in your chat reply; it is the audit trail. Keep it specific, not generic.',
     {
       file_path: z.string(),
       content: z.string(),
+      reason: z.string().optional(),
     },
     async (input) => {
       const pendingId = globalThis.crypto.randomUUID()

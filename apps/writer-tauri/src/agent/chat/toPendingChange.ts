@@ -120,6 +120,8 @@ export function mapChatEditToPendingChange(
     groupId: payload.runId,
     createdAt: Date.now(),
     edits,
+    // Model-supplied `reason` → recorded as the commit body on Keep.
+    reason: readString(payload.input.reason).trim() || undefined,
     context: {
       threadId: ctx.threadId,
       runId: payload.runId,
@@ -242,6 +244,8 @@ export async function materializeChatNewWikiPage(
         after: stagedBody,
       },
     ],
+    // Model-supplied `reason` → recorded as the commit body on Keep.
+    reason: readString(payload.input.reason).trim() || undefined,
     context: {
       threadId: ctx.threadId,
       runId: payload.runId,

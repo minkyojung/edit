@@ -184,22 +184,32 @@ async function commitGroup(
   // `(ai)`-scoped convention isAiEditCommit matches.
   const source = accepts[0].change.source
   const type: AiEditType = source === 'ingest' ? 'ingest' : 'edit'
-  // Name each edited page (title, else its path), deduped — one page edited
-  // twice appears once. The subject names the pages so the undo skill can match
-  // "undo what you added to Tom".
   const knownDocs = useDocsStore.getState().knownDocs
-  const names = [
+  const nameFor = (slug: string) => {
+    const doc = knownDocs.find((d) => d.slug === slug)
+    return doc?.title?.trim() || doc?.relPath || slug
+  }
+  // Subject: the edited pages, deduped — so the undo skill can match "undo what
+  // you added to Tom".
+  const names = [...new Set(accepts.map((a) => nameFor(a.change.pageSlug)))]
+  const subject = aiEditSubject(type, names)
+  // Body: the per-edit `reason` the model supplied on propose_edit/write — one
+  // bullet each (deduped), so the version history says WHY each change happened.
+  const reasonLines = [
     ...new Set(
-      accepts.map((a) => {
-        const doc = knownDocs.find((d) => d.slug === a.change.pageSlug)
-        return doc?.title?.trim() || doc?.relPath || a.change.pageSlug
-      }),
+      accepts
+        .map((a) => {
+          const r = a.change.reason?.trim()
+          return r ? `- ${nameFor(a.change.pageSlug)}: ${r}` : null
+        })
+        .filter((x): x is string => x !== null),
     ),
   ]
-  const subject = aiEditSubject(type, names)
-  // Ingest keeps its source note in the body for provenance; the subject names
-  // the pages that changed.
-  const message = source === 'ingest' ? `${subject}\n\nSource: ${sourceLabel}` : subject
+  const bodyParts: string[] = []
+  if (reasonLines.length > 0) bodyParts.push(reasonLines.join('\n'))
+  // Ingest keeps its source note for provenance.
+  if (source === 'ingest') bodyParts.push(`Source: ${sourceLabel}`)
+  const message = bodyParts.length > 0 ? `${subject}\n\n${bodyParts.join('\n\n')}` : subject
   try {
     await useGitStore.getState().commitChangesNow(message)
   } catch (err) {

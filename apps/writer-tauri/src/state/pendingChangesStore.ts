@@ -107,6 +107,10 @@ export interface PendingChange {
    * AND their concurrent edits outside the frozen old spans both survive. Unset
    * for chat-panel/ingest accepts, which fall back to the per-edit apply. */
   resolvedResult?: string
+  /** One-line rationale the model passed on `propose_edit` / `propose_write`
+   * (`reason`). NOT shown in chat — it's recorded as the commit body when this
+   * change is Kept, so the version history says why the edit happened. */
+  reason?: string
   /** Provenance + reasoning, surfaced in the inline review chip and
    * in the Review Panel timeline. */
   context: {
@@ -269,6 +273,7 @@ export const usePendingChangesStore = create<PendingChangesState>()(
             groupId: change.groupId,
             createdAt: change.createdAt ?? Date.now(),
             edits: change.edits,
+            reason: change.reason,
             context: change.context,
             status: 'pending',
             decidedAt: null,
