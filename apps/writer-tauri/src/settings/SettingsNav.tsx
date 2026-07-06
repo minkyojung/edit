@@ -8,7 +8,6 @@ export const SETTINGS_CATEGORIES = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'editor', label: 'Editor' },
   { id: 'files', label: 'Files & Notes' },
-  { id: 'version', label: 'Version' },
   { id: 'connections', label: 'Connections' },
 ] as const
 

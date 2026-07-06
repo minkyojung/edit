@@ -18,7 +18,6 @@ import { SettingsNav } from './SettingsNav'
 import { AppearanceSettings } from './categories/AppearanceSettings'
 import { EditorSettings } from './categories/EditorSettings'
 import { FilesSettings } from './categories/FilesSettings'
-import { VersionSettings } from './categories/VersionSettings'
 import { ConnectionsSettings } from './categories/ConnectionsSettings'
 
 export function SettingsDialog() {
@@ -54,7 +53,6 @@ export function SettingsDialog() {
               {active === 'appearance' && <AppearanceSettings />}
               {active === 'editor' && <EditorSettings />}
               {active === 'files' && <FilesSettings />}
-              {active === 'version' && <VersionSettings />}
               {active === 'connections' && <ConnectionsSettings />}
             </div>
           </ScrollArea>
