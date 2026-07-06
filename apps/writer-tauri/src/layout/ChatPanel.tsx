@@ -46,7 +46,6 @@ import {
   type FileAttachment,
 } from '@/chat/types'
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
-import { usePendingOrganize } from '@/state/pendingOrganizeStore'
 import { useVaultCommands } from '@/state/vaultCommandsStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { MessageRow } from '@/chat/messages/MessageRow'
@@ -192,35 +191,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     sessionStarted: activeThread?.sessionStarted ?? false,
   })
   const { status: chatStatus, streaming } = runner
-
-  // Run side of the "Organize this note" hand-off. RightPanel created and
-  // activated a fresh thread for the request and stamped its id; once that
-  // thread is the active one here (so turnsHook/runner are bound to it), append
-  // the kickoff user turn and dispatch the agent with the routing system
-  // prompt. The thread is brand-new, so history is just this one turn. The ref
-  // guards against a second dispatch on re-render; clear() drops the request.
-  const organizeReq = usePendingOrganize((s) => s.request)
-  const clearOrganize = usePendingOrganize((s) => s.clear)
-  const organizeRanRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!organizeReq || !organizeReq.threadId) return
-    if (organizeReq.threadId !== activeId) return
-    if (organizeRanRef.current === organizeReq.threadId) return
-    organizeRanRef.current = organizeReq.threadId
-    const userTurn: ChatTurn = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: 'Organize this note',
-      ts: Date.now(),
-    }
-    turnsHook.appendTurn(userTurn)
-    void runner.run(organizeReq.threadId, [userTurn], {
-      systemPrompt: organizeReq.systemPrompt,
-      prompt: organizeReq.prompt,
-      relayTools: ['propose_edit', 'propose_write'],
-    })
-    clearOrganize()
-  }, [organizeReq, activeId, turnsHook, runner, clearOrganize])
 
   const handleScroll = useCallback(() => {
     const c = scrollRef.current
