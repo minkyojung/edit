@@ -237,9 +237,17 @@ function Segment({ meta, isActive, onSelect, onClose }: SegmentProps) {
           onClose()
         }}
         aria-label="Close chat"
-        className="absolute right-1.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-muted-foreground/40 text-foreground opacity-0 transition hover:bg-muted-foreground/60 group-hover:opacity-100 dark:bg-foreground dark:text-background dark:hover:bg-foreground/90"
+        className={cn(
+          // Ghost X — no solid badge; matches the app's other dismiss buttons
+          // (a bare glyph that only fills subtly on direct hover). The tab's
+          // fade gradient still keeps it legible over the title.
+          'absolute right-1 flex size-5 shrink-0 items-center justify-center rounded-md',
+          'text-muted-foreground opacity-0 outline-none transition',
+          'hover:bg-foreground/10 hover:text-foreground',
+          'group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40',
+        )}
       >
-        <IconX size={9} stroke={2.5} />
+        <IconX size={13} stroke={2} />
       </button>
     </div>
   )

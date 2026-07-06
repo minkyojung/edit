@@ -87,13 +87,16 @@ export function ContextChip({
             }}
             aria-label={removeLabel}
             className={cn(
-              'absolute right-1 flex size-4 items-center justify-center rounded-full',
-              'bg-muted-foreground/40 text-foreground opacity-0 transition group-hover/chip:opacity-100',
-              'hover:bg-muted-foreground/60 dark:bg-foreground dark:text-background dark:hover:bg-foreground/90',
+              // Ghost X — matches the chat session tabs and the app's other
+              // dismiss buttons; the right-edge fade keeps it legible over the
+              // label.
+              'absolute right-0.5 flex size-5 items-center justify-center rounded-md',
+              'text-muted-foreground opacity-0 transition group-hover/chip:opacity-100',
+              'hover:bg-foreground/10 hover:text-foreground',
               'outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/40',
             )}
           >
-            <IconX size={9} stroke={2.5} />
+            <IconX size={13} stroke={2} />
           </button>
         </>
       )}
