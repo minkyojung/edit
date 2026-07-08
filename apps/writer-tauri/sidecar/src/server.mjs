@@ -203,50 +203,6 @@ function extractPendingId(toolResponse) {
 // see the `canUseTool` hook below for the staged-edit gate that
 // supersedes the old chat:edit bridge.
 
-// Ingest result tool. Called once per ingest pass with the complete
-// JSON shape the frontend used to extract from raw assistant text.
-// The schema enforces structure at the SDK boundary — no more
-// frontend-side JSON parsing or per-field sanitization.
-//
-// Single-call contract: the model emits exactly one tool call per
-// run carrying every proposal / index update / log entry it decided
-// on. Empty arrays + null logEntry are valid (an ingest pass that
-// found nothing notable still calls the tool to mark the pass as
-// complete). The handler forwards the raw input to the host as an
-// `ingest/result` notification; ingest.ts assembles its IngestResult
-// from that payload directly.
-// `submit_profile` is the Profile-bootstrap counterpart to
-// submit_ingest_result. The Profile pipeline runs N per-URL Haiku
-// calls + 1 synthesis Sonnet call; every call uses this same tool
-// to emit a Profile-shaped payload, so the schema is shared. The
-// host distinguishes pass type by which event the run belongs to,
-// not by tool name.
-//
-// All array fields are optional / can be empty — a per-URL pass
-// may legitimately yield zero voice_samples for a thin source,
-// and the synthesis pass merges across sources to fill gaps.
-function buildSubmitProfileTool(runId, emit) {
-  return tool(
-    'submit_profile',
-    'Submit a structured profile extracted from one or more sources about the user. Use null for fields you cannot determine; use empty arrays for list fields with no entries. voice_samples must be verbatim quotes from the source text — do not paraphrase or invent. dispositions and values may be inferred from the writing but should be supported by something in the source. Call this exactly once per run.',
-    {
-      name: z.string().nullable(),
-      headline: z.string().nullable(),
-      location: z.string().nullable(),
-      roles: z.array(z.string()),
-      interests: z.array(z.string()),
-      voice_samples: z.array(z.string()),
-      values: z.array(z.string()),
-      dispositions: z.array(z.string()),
-      about: z.string(),
-    },
-    async (args) => {
-      emit(notification('profile/result', { runId, input: args }))
-      return { content: [{ type: 'text', text: 'Profile result recorded.' }] }
-    },
-  )
-}
-
 // E6 "host-applies" pattern: instead of letting the SDK's built-in
 // Edit / Write / MultiEdit tools touch disk themselves (gated through
 // `canUseTool` and then resolved by user via the host), we register
@@ -254,8 +210,8 @@ function buildSubmitProfileTool(runId, emit) {
 // proposal to the host as a `chat/edit-pending` notification and
 // return success immediately. The model believes the edit succeeded;
 // the host queues the proposal in `pendingChangesStore` and applies
-// it on user Keep. Symmetry with ingest's `submit_ingest_result`
-// (host does the writes after the LLM emits proposals).
+// it on user Keep. Ingest proposals flow the same way — the host does
+// the writes after the LLM emits proposals.
 //
 // Why this is the right shape:
 //   * Disk write timing is fully under host control — no IPC roundtrip
@@ -1071,15 +1027,9 @@ export class Server {
       }
     }
 
-    // Phase 1 of the Claude-Code-style migration: when the host gives us
-    // a vaultPath, root the agent in the vault and turn on Claude Code's
-    // full built-in toolset (Read/Edit/Write/Bash/Grep/Glob/...). The
-    // model can now read and edit vault .md files directly through the
-    // tools it already knows from Claude Code — no custom edit relay
-    // required. We keep the legacy `edit_document` MCP tool registered
-    // alongside so a regression in built-in routing falls back instead
-    // of breaking chat. Once the built-in path is verified end-to-end
-    // (Phase 2) the legacy tool and applyDirectEdit host bridge come out.
+    // When the host gives us a vaultPath, root the agent in the vault and
+    // turn on Claude Code's built-in toolset so the model reads and edits
+    // vault .md files through the tools it already knows from Claude Code.
     //
     // Notes:
     //   * `cwd` scopes the Read/Edit tools' implicit path resolution to
@@ -1096,52 +1046,33 @@ export class Server {
     let existingSkills = []
     if (vaultPath) {
       options.cwd = vaultPath
-      // Built-in tool exposure is per-caller. Chat needs the full
-      // Claude Code preset (Read / Edit / Write / Bash / Grep / Glob)
-      // so the model can edit the doc on user request, gated through
-      // `canUseTool` + the host's PendingEditsBar. Ingest is a
-      // background flow with a structured-output channel — the LLM
-      // must not write to disk directly, so the host pins it to a
-      // read-only subset (Read / Glob / Grep, typically). Output
-      // lands via the `submit_ingest_result` relay tool and the host
-      // turns proposals into disk writes after user review.
+      // Built-in tool exposure is per-caller, and the write surface is
+      // deliberately narrow. The chat host passes an explicit `builtinTools`
+      // allowlist WITHOUT the write-side tools (Edit / Write / MultiEdit /
+      // NotebookEdit) — disk-changing intent instead flows through the
+      // host-applies `propose_*` MCP tools (registered in the relay loop
+      // below), which emit a `chat/edit-pending` notification and return
+      // immediately without parking a Promise; the host queues the proposal
+      // in `pendingChangesStore` and applies it on user Keep. Ingest is a
+      // background flow pinned to a read-only subset (Read / Glob / Grep)
+      // that emits the same `propose_*` proposals.
       //
       // `tools: ['Read', ...]` (explicit array) is the SDK's "least
-      // privilege" surface (sdk.d.ts:1211) — listed tools are the
-      // only ones the model sees, so Edit/Write are not just denied
-      // but invisible. Caller omits `builtinTools` for the chat
-      // shape and the preset stays.
+      // privilege" surface (sdk.d.ts:1211) — listed tools are the only ones
+      // the model sees, so Edit/Write are not just denied but invisible.
+      // When the caller omits `builtinTools` the full `claude_code` preset
+      // is used instead.
       options.tools = Array.isArray(builtinTools) && builtinTools.length > 0
         ? builtinTools
         : { type: 'preset', preset: 'claude_code' }
-      // Phase 3.1 of the Cursor-style staged edit migration: every
-      // built-in write-side tool (Edit / Write / MultiEdit / NotebookEdit)
-      // routes through `canUseTool` before it can run. For now we deny
-      // them all and surface the attempt so we can verify on the host
-      // that no fs.write slipped through — the next sub-phase (3.2)
-      // replaces this with a host round-trip that waits for the user
-      // to Apply/Reject. Read / Grep / Glob / Bash are not gated; the
-      // model still needs them to discover context.
-      //
-      // `permissionMode` MUST drop out of `bypassPermissions` for
-      // `canUseTool` to fire — bypass mode short-circuits the
-      // permission check entirely (sdk.d.ts L1806). 'default' is the
-      // standard mode where the SDK consults `canUseTool` (or, absent
-      // a callback, falls back to its interactive CLI prompt — which
-      // doesn't apply to us since we're driving the SDK from a long-
-      // running sidecar).
-      // Phase E6: the chat surface no longer exposes write-side
-      // built-in tools (Edit / Write / MultiEdit / NotebookEdit are
-      // omitted from `builtinTools` by the host). Disk-changing
-      // intent now flows through the host-applies `propose_*` MCP
-      // tools (registered in the relay loop below), which emit a
-      // `chat/edit-pending` notification and return immediately
-      // without parking a Promise. The host queues the proposal in
-      // `pendingChangesStore` and applies it on user Keep.
-      //
-      // permissionMode stays 'bypassPermissions' (its default) so
-      // the SDK auto-runs the remaining read-side tools without a
-      // CLI prompt. No `canUseTool` callback needed.
+      // permissionMode stays 'bypassPermissions' (its default) so the SDK
+      // auto-runs the read-side tools without a CLI prompt. No `canUseTool`
+      // callback is needed for edits — the write tools aren't on the surface
+      // at all, so there's nothing to gate. (Bypass short-circuits the
+      // permission check entirely — sdk.d.ts L1806 — which is why the write
+      // tools are withheld rather than gated. The `canUseTool` callback that
+      // IS attached under 'plan'/'default' handles AskUserQuestion and the
+      // plan-approval flow, not edits.)
 
       // Register the vault's agent plugin (`_system/agent`). The SDK loads its
       // `commands/`, `agents/`, and `skills/` NATIVELY — the canonical way, no
@@ -1221,9 +1152,7 @@ export class Server {
       : (this.mode === 'chat' ? [] : [])
     const relayDefs = []
     for (const name of enabledRelay) {
-      if (name === 'submit_profile') {
-        relayDefs.push(buildSubmitProfileTool(runId, this.emit))
-      } else if (name === 'propose_edit') {
+      if (name === 'propose_edit') {
         relayDefs.push(
           buildProposeEditTool(runId, this.emit, vaultPath, (id) => this.#registerAckSlot(id)),
         )

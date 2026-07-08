@@ -1,10 +1,10 @@
-mod anthropic;
 mod appdata;
 pub mod claude_sidecar;
 mod events;
 mod fetch_url;
 mod git;
 mod github;
+mod google_oauth;
 mod oauth;
 mod os_trash;
 mod reveal;
@@ -334,6 +334,10 @@ pub fn run() {
             oauth::get_claude_token,
             oauth::get_claude_account,
             oauth::disconnect_claude,
+            google_oauth::start_google_oauth,
+            google_oauth::get_google_account,
+            google_oauth::disconnect_google,
+            google_oauth::get_google_token,
             claude_sidecar::commands::claude_chat_start,
             claude_sidecar::commands::claude_list_models,
             claude_sidecar::commands::claude_chat_cancel,
@@ -346,7 +350,6 @@ pub fn run() {
             os_trash::move_to_trash,
             reveal::reveal_in_finder,
             sound::play_system_sound,
-            anthropic::anthropic_messages_create,
             git::git_init,
             git::git_commit,
             git::git_log_since_ref,
