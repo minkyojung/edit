@@ -1,39 +1,43 @@
 // First-run onboarding, shown in the launcher window BEFORE the VaultLauncher.
 //
 // This is the first screen a brand-new user sees — the launcher no longer
-// appears until onboarding is done. The minimum viable step of the redesigned
-// flow is: a welcome, then choosing WHERE notes live. Picking a folder is also
-// the launcher's job, so we reuse its pick/create logic rather than duplicate
-// it. `markBootstrapCompleted()` fires the moment a folder is chosen (or the
-// user skips), so every later launch shows the normal VaultLauncher instead.
+// appears until onboarding is done. Flow: welcome → connect → folder → done.
+// Folder is mandatory (no skip); picking one only STORES the choice, so the
+// completion panel can confirm before the project window opens. `openProject`
+// (from the done panel) is what actually spawns the window + marks onboarding
+// complete, so every later launch shows the normal VaultLauncher instead.
 //
-// Layout: a compact, centred window with a two-column split — copy + actions on
-// the left, a preview panel on the right. The window is shrunk to onboarding
-// size on mount and restored when we leave, so the returning-user launcher
-// keeps the normal editor window size. Later steps (Claude connect, a seeded
-// first note, the profile "aha") layer on from here without changing this gate.
+// Panels are pure presentation under src/profile/ui/onboarding/ — the same ones
+// the /onboard design-preview renders, so layout can be iterated without
+// restarting. This wrapper owns the window sizing, the step state, and the real
+// folder-pick / project-open behaviour.
 
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { pickVault } from '@/lib/vaultPicker'
-import {
-  isTranslationProject,
-  scaffoldTranslationProject,
-} from '@/lib/translationProject'
+import { isTranslationProject } from '@/lib/translationProject'
 import { openProjectWindow } from '@/lib/projectWindow'
 import { useSettingsStore, type ProjectType } from '@/state/settingsStore'
 import { WelcomePanel } from '@/profile/ui/onboarding/WelcomePanel'
+import { ConnectPanel } from '@/profile/ui/onboarding/ConnectPanel'
+import { FolderPanel } from '@/profile/ui/onboarding/FolderPanel'
+import { DonePanel } from '@/profile/ui/onboarding/DonePanel'
 
 // Compact onboarding window (width ≥ the 800 min in tauri.conf.json).
 const ONBOARDING_W = 900
 const ONBOARDING_H = 580
 
+type Step = 'welcome' | 'connect' | 'folder' | 'done'
+
 export function OnboardingLauncher() {
   const addRecentProject = useSettingsStore((s) => s.addRecentProject)
   const markBootstrapCompleted = useSettingsStore((s) => s.markBootstrapCompleted)
 
+  const [step, setStep] = useState<Step>('welcome')
+  const [chosen, setChosen] = useState<{ path: string; type: ProjectType } | null>(null)
+
   // Shrink + centre the window for onboarding; restore the previous size when
-  // we leave (skip / folder chosen → VaultLauncher or a project window).
+  // we leave (project window opened).
   useEffect(() => {
     const win = getCurrentWindow()
     let prev: LogicalSize | null = null
@@ -53,36 +57,43 @@ export function OnboardingLauncher() {
     }
   }, [])
 
-  // Pick (or create) a folder to hold notes, then open it in its own window.
-  // The native picker's "New Folder" affordance covers the create case, so a
-  // brand-new user can make a fresh vault here. Mirrors VaultLauncher.openExisting.
+  // Mandatory folder choice: pick (or create) a folder, remember it, and advance
+  // to the completion step. The native picker's "New Folder" affordance covers
+  // the create case. Detecting an existing translation project keeps that path
+  // working even though onboarding no longer scaffolds new ones.
   const chooseFolder = useCallback(async () => {
     const path = await pickVault()
     if (!path) return
     const type: ProjectType = (await isTranslationProject(path)) ? 'translation' : 'wiki'
-    addRecentProject(path, type)
-    markBootstrapCompleted()
-    await openProjectWindow(path, folderName(path))
-  }, [addRecentProject, markBootstrapCompleted])
+    setChosen({ path, type })
+    setStep('done')
+  }, [])
 
-  // Scaffold a fresh translation project (CLAUDE.md + manuscript/ + reference/).
-  // Mirrors VaultLauncher.newTranslation.
-  const newTranslation = useCallback(async () => {
-    const path = await pickVault()
-    if (!path) return
-    await scaffoldTranslationProject(path)
-    addRecentProject(path, 'translation')
+  // Finish: record the project, mark onboarding done, open it in its own window.
+  const openProject = useCallback(async () => {
+    if (!chosen) return
+    addRecentProject(chosen.path, chosen.type)
     markBootstrapCompleted()
-    await openProjectWindow(path, folderName(path))
-  }, [addRecentProject, markBootstrapCompleted])
+    await openProjectWindow(chosen.path, folderName(chosen.path))
+  }, [chosen, addRecentProject, markBootstrapCompleted])
 
-  return (
-    <WelcomePanel
-      onChooseFolder={() => void chooseFolder()}
-      onNewTranslation={() => void newTranslation()}
-      onSkip={markBootstrapCompleted}
-    />
-  )
+  if (step === 'welcome') {
+    return <WelcomePanel onGetStarted={() => setStep('connect')} />
+  }
+  if (step === 'connect') {
+    // Rough: both actions advance. Real OAuth wiring (ConnectClaudeDialog) lands
+    // in polish.
+    return (
+      <ConnectPanel
+        onConnect={() => setStep('folder')}
+        onLater={() => setStep('folder')}
+      />
+    )
+  }
+  if (step === 'folder') {
+    return <FolderPanel onChooseFolder={() => void chooseFolder()} />
+  }
+  return <DonePanel onEnter={() => void openProject()} />
 }
 
 /** Last path segment, for the project's display name. */

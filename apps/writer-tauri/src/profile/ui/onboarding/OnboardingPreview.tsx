@@ -13,6 +13,9 @@
 import { useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { WelcomePanel } from '@/profile/ui/onboarding/WelcomePanel'
+import { ConnectPanel } from '@/profile/ui/onboarding/ConnectPanel'
+import { FolderPanel } from '@/profile/ui/onboarding/FolderPanel'
+import { DonePanel } from '@/profile/ui/onboarding/DonePanel'
 import { Button } from '@/components/ui/button'
 
 const noop = () => {}
@@ -23,12 +26,24 @@ const ONBOARDING_H = 580
 const STEPS: { key: string; label: string; render: () => ReactNode }[] = [
   {
     key: 'welcome',
-    label: 'Welcome + folder',
-    render: () => (
-      <WelcomePanel onChooseFolder={noop} onNewTranslation={noop} onSkip={noop} />
-    ),
+    label: 'Welcome + trust',
+    render: () => <WelcomePanel onGetStarted={noop} />,
   },
-  // Next steps land here as they're built: Connect Claude, seeded first note, …
+  {
+    key: 'connect',
+    label: 'Connect Claude',
+    render: () => <ConnectPanel onConnect={noop} onLater={noop} />,
+  },
+  {
+    key: 'folder',
+    label: 'Choose folder',
+    render: () => <FolderPanel onChooseFolder={noop} />,
+  },
+  {
+    key: 'done',
+    label: "You're all set",
+    render: () => <DonePanel onEnter={noop} />,
+  },
 ]
 
 export function OnboardingPreview() {

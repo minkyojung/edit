@@ -32,7 +32,7 @@ import { VaultLauncher } from '@/components/VaultLauncher'
 import { OnboardingLauncher } from '@/components/OnboardingLauncher'
 import { resolveWindowMode } from '@/hooks/useWindowModeSync'
 import { exists } from '@tauri-apps/plugin-fs'
-import { seedClaudeMd } from '@/lib/seedClaudeMd'
+import { seedClaudeMd, seedWelcomeNote } from '@/lib/seedClaudeMd'
 import { seedRoutines } from '@/lib/routinesLib'
 import { seedAgents } from '@/lib/agentsLib'
 import { seedSkills } from '@/lib/skillsLib'
@@ -48,6 +48,15 @@ const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
  * littered with wiki scaffolding. Each step is best-effort: a failure logs and
  * the boot continues. */
 async function seedWikiDefaults(): Promise<void> {
+  // Seed a `Welcome.md` starter note into a BRAND-NEW vault (detected by the
+  // absence of CLAUDE.md), so a first-run user opens on real content instead of
+  // a blank editor. MUST run before seedClaudeMd — the freshness check reads
+  // CLAUDE.md's absence. No-op on existing vaults.
+  try {
+    await seedWelcomeNote()
+  } catch (err) {
+    console.warn('[boot] Welcome.md seed failed', err)
+  }
   // Seed `CLAUDE.md` at the vault root if missing — the schema document the
   // agent reads every chat. Idempotent by file existence; never overwrites
   // a user's edits.
