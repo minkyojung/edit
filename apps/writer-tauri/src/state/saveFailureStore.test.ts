@@ -67,6 +67,21 @@ describe('saveFailureStore', () => {
     expect(store().worstCause()).toBe('unreachable')
   })
 
+  // #3 regression: the quit/close gate counts actually-failing slugs, at
+  // any streak length — a single failed write still means lost edits.
+  it('failingSlugCount counts every tracked slug, below threshold included', () => {
+    failN('a', 'unreachable', 1) // one blip, not yet persistent
+    failN('b', 'permission', PERSISTENT_THRESHOLD)
+    expect(store().failingSlugCount()).toBe(2)
+    expect(store().hasPersistentFailure()).toBe(true)
+  })
+
+  it('failingSlugCount is zero after reconcile prunes the last failure', () => {
+    failN('a', 'disk-full', PERSISTENT_THRESHOLD)
+    store().reconcile([]) // slug saved / gone
+    expect(store().failingSlugCount()).toBe(0)
+  })
+
   // #8: the cause follows the latest classification within a streak.
   it('recordFailure updates the cause as the underlying error changes', () => {
     failN('a', 'unreachable', PERSISTENT_THRESHOLD)

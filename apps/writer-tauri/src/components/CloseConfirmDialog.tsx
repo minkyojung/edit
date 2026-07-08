@@ -21,7 +21,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useCloseConfirmStore } from '@/state/closeConfirmStore'
-import { flushDirty, stopAutoFlush, getDirtySlugs } from '@/lib/docFileSync'
+import { flushDirty, stopAutoFlush } from '@/lib/docFileSync'
+import { useSaveFailureStore } from '@/state/saveFailureStore'
 import { stopGitHubSync } from '@/lib/githubSync'
 
 async function quitApp() {
@@ -44,10 +45,13 @@ export function CloseConfirmDialog() {
     listen('app:close-requested', async () => {
       // Flush first so edits typed right before quit reach disk.
       await flushDirty()
-      // Data-loss gate: if the flush left slugs dirty, a write is failing
-      // (disk full, vault disconnected, …). Quitting now drops those
-      // in-memory edits, so confirm before tearing the app down.
-      const unsaved = getDirtySlugs().length
+      // Data-loss gate: warn only when a write actually FAILED (disk full,
+      // vault disconnected, …) — not merely when a slug is still dirty. A
+      // slug stays dirty for benign reasons too (external-edit conflict,
+      // not-yet-ready view, deferred stale-path write), and those aren't
+      // edits quitting would drop. Keying off the failure store keeps the
+      // "couldn't be saved" copy honest and never blocks a clean quit.
+      const unsaved = useSaveFailureStore.getState().failingSlugCount()
       if (unsaved > 0) {
         const proceed = await useCloseConfirmStore.getState().confirmUnsaved(unsaved)
         if (!proceed) return

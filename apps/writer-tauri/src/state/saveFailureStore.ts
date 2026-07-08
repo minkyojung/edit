@@ -46,6 +46,12 @@ interface SaveFailureState {
   reconcile: (dirtySlugs: string[]) => void
   /** Any slug currently past the persistence threshold. */
   hasPersistentFailure: () => boolean
+  /** How many slugs have a write actively failing (any streak length).
+   * The quit/close data-loss gate keys off THIS, not the raw dirty set: a
+   * slug also stays dirty for benign reasons (an unresolved external-edit
+   * conflict, a not-yet-ready view, a deferred stale-path write), and none
+   * of those are edits the user is about to lose to a broken disk. */
+  failingSlugCount: () => number
   /** Highest-priority cause among the persistent failures (drives the
    * collapsed toast copy), or null when nothing is persistently failing. */
   worstCause: () => SaveFailureCause | null
@@ -69,6 +75,7 @@ export const useSaveFailureStore = create<SaveFailureState>((set, get) => ({
   },
   hasPersistentFailure: () =>
     Object.values(get().failures).some((e) => e.count >= PERSISTENT_THRESHOLD),
+  failingSlugCount: () => Object.keys(get().failures).length,
   worstCause: () => {
     const persistent = Object.values(get().failures).filter(
       (e) => e.count >= PERSISTENT_THRESHOLD,

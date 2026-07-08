@@ -19,7 +19,8 @@ import {
 import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useCloseConfirmStore } from '@/state/closeConfirmStore'
-import { flushDirty, getDirtySlugs } from '@/lib/docFileSync'
+import { flushDirty } from '@/lib/docFileSync'
+import { useSaveFailureStore } from '@/state/saveFailureStore'
 
 export function useWindowClose() {
   useEffect(() => {
@@ -59,9 +60,11 @@ export function useWindowClose() {
             // loss even with a failed flush, so no gate needed.
             await current.hide()
           } else {
-            // Real destroy loses this window's in-memory buffer. If the
-            // flush above left edits unsaved (write failing), confirm.
-            const unsaved = getDirtySlugs().length
+            // Real destroy loses this window's in-memory buffer. Confirm
+            // only when a write actually FAILED (failure store), not just
+            // when a slug is still dirty for a benign reason (conflict,
+            // not-yet-ready view, deferred stale-path write).
+            const unsaved = useSaveFailureStore.getState().failingSlugCount()
             if (unsaved > 0) {
               const proceed = await useCloseConfirmStore
                 .getState()
