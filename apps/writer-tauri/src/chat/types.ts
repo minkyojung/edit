@@ -16,21 +16,40 @@
 /** Models the user can pick from in the PromptInput model selector.
  * Kept narrow + explicit so the UI can display friendly labels without
  * round-tripping through agent ids. The sidecar accepts the raw id. */
-export type ChatModel = 'claude-haiku-4-5' | 'claude-sonnet-4-6' | 'claude-opus-4-8'
+export type ChatModel =
+  | 'claude-haiku-4-5'
+  | 'claude-sonnet-4-6'
+  | 'claude-opus-4-8'
+  | 'claude-fable-5'
 
 export const CHAT_MODELS: readonly ChatModel[] = [
   'claude-haiku-4-5',
   'claude-sonnet-4-6',
   'claude-opus-4-8',
+  'claude-fable-5',
 ] as const
 
 export const CHAT_MODEL_LABELS: Record<ChatModel, string> = {
   'claude-haiku-4-5': 'Haiku 4.5',
   'claude-sonnet-4-6': 'Sonnet 4.6',
   'claude-opus-4-8': 'Opus 4.8',
+  'claude-fable-5': 'Fable 5',
 }
 
 export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-4-6'
+
+/** One model the account can actually use, as reported by the Claude Agent
+ * SDK's session-init handshake (query.supportedModels()). Only `value` is
+ * consumed today — the picker intersects CHAT_MODELS against these so models
+ * the account lacks access to (e.g. region-gated) stay hidden. The capability
+ * fields mirror the SDK shape and are kept for future use. */
+export interface ModelInfo {
+  value: string
+  displayName?: string
+  description?: string
+  supportsFastMode?: boolean
+  supportedEffortLevels?: string[]
+}
 
 /** Coerce a persisted model id to a currently-offered one. Threads created
  * before a model was retired carry an id no longer in CHAT_MODELS (e.g.
@@ -75,6 +94,7 @@ export const EFFORTS_BY_MODEL: Record<ChatModel, readonly ChatEffort[]> = {
   'claude-haiku-4-5': ['low', 'medium', 'high'],
   'claude-sonnet-4-6': ['low', 'medium', 'high'],
   'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh'],
+  'claude-fable-5': ['low', 'medium', 'high', 'xhigh'],
 }
 
 export function effortsForModel(model: ChatModel): readonly ChatEffort[] {
@@ -98,12 +118,21 @@ export const CHAT_EFFORT_LABELS: Record<ChatEffort, string> = {
 
 export const DEFAULT_CHAT_EFFORT: ChatEffort = 'medium'
 
-/** Chat interaction mode. `edit` (default) lets the model propose changes;
- * `plan` is read-only — the model explores and writes a plan but cannot
- * propose or apply edits (enforced by permissionMode 'plan' + dropping the
- * propose_* relay tools and Bash for the turn). */
-export type ChatMode = 'edit' | 'plan'
-export const DEFAULT_CHAT_MODE: ChatMode = 'edit'
+/** Chat interaction mode — our surface of the SDK's permission modes.
+ * - `edit` (default): the model proposes changes via the propose_* tools; each
+ *   lands as a pending change the user reviews (Keep/Reject). SDK permissionMode
+ *   'default'.
+ * - `acceptEdits`: same proposal flow, but each change is auto-accepted the
+ *   moment it lands — applied without a manual Keep (the diff still renders, now
+ *   already-applied). Mirrors the SDK's 'acceptEdits' mode: edits apply
+ *   automatically. For fast, trusted runs.
+ * - `plan`: read-only — the model explores and writes a plan but cannot propose
+ *   or apply edits (permissionMode 'plan' + propose_* relays and Bash dropped). */
+export type ChatMode = 'edit' | 'acceptEdits' | 'plan'
+// Default is `acceptEdits` (Apply): the product surfaces only Apply + Plan, so
+// new threads auto-apply edits. `edit` (review-each) stays a valid value for
+// any thread already persisted with it, just not offered in the picker.
+export const DEFAULT_CHAT_MODE: ChatMode = 'acceptEdits'
 
 // ── Context usage (gauge) ───────────────────────────────────────
 //
@@ -167,6 +196,11 @@ export interface ThreadMeta {
   /** Per-thread fast-mode preference (faster Opus output). Absent/false = off.
    * Only meaningful where modelSupportsFastMode(model) is true. */
   fastMode?: boolean
+  /** Last context-window snapshot for this thread, persisted so the gauge
+   * survives an app restart. A resumed session keeps its prior history, so
+   * the stored fill is still representative until the next turn refreshes it.
+   * Absent until the first turn completes (and on pre-existing threads). */
+  contextUsage?: ContextSnapshot
   /** True once the SDK has confirmed a session for this thread (set on the
    * first stream event of the first run). Subsequent runs must use `resume`
    * regardless of history shape — including Regenerate, which deletes the
@@ -174,6 +208,11 @@ export interface ThreadMeta {
    * the history-shape heuristic. Absent on threads created before this
    * field existed; callers fall back to the legacy heuristic in that case. */
   sessionStarted?: boolean
+  /** Which agent (role) drives this thread — its persona prompt + memory
+   * namespace. Absent on older threads; resolveAgent() treats absence as
+   * the built-in 'default'. Currently always 'default' (no role-creation
+   * UX yet); the field exists so roles can be assigned without backfilling. */
+  agentId?: string
 }
 
 export interface ChatTurn {
@@ -186,6 +225,10 @@ export interface ChatTurn {
   content: string
   ts: number
   attachments?: Attachment[]
+  /** Vault-relative paths the user @-mentioned for this turn. Display-only:
+   * rendered as chips in the user bubble. The agent receives the files via
+   * the system prompt's REFERENCED FILES block, not this field. */
+  mentions?: { path: string }[]
   toolCalls?: ToolCall[]
   status?: 'streaming' | 'done' | 'error' | 'stopped'
   /** Accumulated reasoning text — kept for compat. New code reads it from
@@ -217,6 +260,15 @@ export interface ChatTurn {
    * countdown shown in the error card. Absent when the SDK didn't emit a
    * snapshot before the failure. */
   resetsAt?: number
+  /** For `errorCode === 'RATE_LIMIT'` only: which window was hit
+   * (e.g. 'five_hour', 'seven_day_opus'); the card turns it into a label. */
+  rateLimitType?: string
+  /** For `errorCode === 'RATE_LIMIT'` only: why overage/paid usage is
+   * unavailable (e.g. 'out_of_credits'); lets the card say "Out of credits". */
+  overageDisabledReason?: string
+  /** Whether retrying could succeed. `false` for AUTH/BILLING/INVALID/BUDGET —
+   * the card hides Retry. Absent → treated as retryable. */
+  retryable?: boolean
   /** Set on a user turn when the message originated as a slash command
    * (e.g. `/proofread`). Lets handleRegenerate route the rerun back through
    * executeCommand's path — same system prompt, same relayTools, same
@@ -255,12 +307,19 @@ export type MessagePart =
   | ReasoningPart
   | ToolPart
   | StepStartPart
+  | CompactPart
+  | RetryPart
 
 export interface TextPart {
   id: string
   ts: number
   type: 'text'
   text: string
+  /** Set when this part came from a subagent (SDK `parent_tool_use_id`) — the
+   * tool_use id of the Task that spawned it. The renderer nests parts carrying
+   * this under their parent Task lane instead of the main timeline. Undefined
+   * for main-thread parts. */
+  parentToolUseId?: string
 }
 
 export interface ReasoningPart {
@@ -268,6 +327,8 @@ export interface ReasoningPart {
   ts: number
   type: 'reasoning'
   text: string
+  /** See {@link TextPart.parentToolUseId}. */
+  parentToolUseId?: string
 }
 
 export type ToolPartState =
@@ -296,6 +357,24 @@ export interface ToolPart {
    * inline suggestion card can render the diff and drive Keep / Reject.
    * Undefined until the tool_result lands (and for non-edit tools). */
   pendingId?: string
+  /** For AskUserQuestion: the user's chosen answer, stamped onto the part when
+   * the turn rotates (the SDK's tool output only echoes the options, not the
+   * selection). Lets the question render its Q&A inline as an activity row
+   * instead of a separate synthetic user bubble. */
+  answer?: string
+  /** For the Task tool: live subagent progress from `task_progress` system
+   * messages (the subagent runs out-of-band; this is the heartbeat). */
+  task?: {
+    toolUses?: number
+    totalTokens?: number
+    lastTool?: string
+    /** AI-generated "what it's doing now" line (agentProgressSummaries), e.g.
+     * "Analyzing the wiki structure". Preferred over the raw tool counter. */
+    summary?: string
+  }
+  /** See {@link TextPart.parentToolUseId}. A tool call made BY a subagent
+   * carries its parent Task's id here, so it nests in that lane. */
+  parentToolUseId?: string
 }
 
 export interface StepStartPart {
@@ -304,8 +383,48 @@ export interface StepStartPart {
   type: 'step-start'
 }
 
+/** A context-compaction boundary (`compact_boundary`): the SDK summarized the
+ * earlier conversation to stay under the window. Rendered as a thin transcript
+ * divider so the user knows older turns were condensed. */
+export interface CompactPart {
+  id: string
+  ts: number
+  type: 'compact'
+  trigger: 'manual' | 'auto'
+  preTokens?: number
+  postTokens?: number
+}
+
+/** An `api_retry` indicator — the SDK hit a transient API error (429 / 5xx)
+ * and is retrying after a back-off, during which no other events flow. A
+ * single coalescing row (constant id) so the otherwise-silent pause reads as
+ * "recovering", not "hung". Naturally collapses into the process summary once
+ * real events resume. */
+export interface RetryPart {
+  id: string
+  ts: number
+  type: 'retry'
+  /** Which attempt is starting (1-based) and the ceiling, when reported. */
+  attempt?: number
+  maxRetries?: number
+  /** The structured error label that triggered the retry (e.g. 'server_error'). */
+  error?: string
+}
+
 export type Attachment =
   | { type: 'selection'; from: number; to: number; preview: string }
+  | { type: 'file'; name: string; mediaType: string }
+
+/** A file the user attached to a chat turn for the model to read.
+ * `dataUrl` carries the full base64-encoded content; it is NOT stored
+ * in the ChatTurn (too large for JSONL) — it flows only through the
+ * live run path (PromptInput → useChatRunner → runChat → sidecar). */
+export interface FileAttachment {
+  id: string
+  name: string
+  mediaType: string
+  dataUrl: string
+}
 
 export interface ToolCall {
   id: string                       // Anthropic tool_use_id

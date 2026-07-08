@@ -18,10 +18,10 @@ import {
   installDocSync,
   markSlugDirty,
 } from '@/lib/docFileSync'
-import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
-import { useEditorViewStore } from '@/state/editorViewStore'
+import { applyMarkdownToActiveCmEditor } from '@/state/activeCmEditor'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
-import { pathForDoc } from '@/lib/docPaths'
+import { pathForDoc, usesFrontmatter } from '@/lib/docPaths'
+import { splitFrontmatter } from '@/lib/frontmatter'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { isWikiDoc } from './helpers'
@@ -52,6 +52,11 @@ export interface HandlesSlice {
    * already present — protects against the race where our own
    * create flow's `.md` write echoes back as a watch event. */
   addKnownDoc: (doc: KnownDoc) => void
+  /** Swap a doc's `relPath` (and, for a renamed file, its `title`) in
+   * place — keeps slug/tab/handle — used when an external move/rename
+   * reappears the same note at a new path. `title` is left untouched when
+   * omitted. */
+  updateKnownDocPath: (slug: string, relPath: string, title?: string) => void
   /** Drop a doc from the catalog after its file disappeared from
    * disk. If the doc is currently open as a tab, closes it first so
    * the handle tear-down + tab-strip invariants run through their
@@ -121,36 +126,9 @@ export const createHandlesSlice = (
     clearDirty(slug)
     const activeSlug = getActiveSlugFromHash()
     if (activeSlug === slug) {
-      const view = useEditorViewStore.getState().view
-      const parser = useEditorViewStore.getState().parser
-      if (view && parser) {
-        try {
-          // `applyMarkdownToEditor` strips `<br />` noise, runs the
-          // schema rehydrate, and dispatches with
-          // `addToHistory: false` — shared with the mount-time
-          // hydrate. Returns false when the (post-strip) markdown
-          // is empty, which we treat as "user emptied the file
-          // externally" and clear PM to match.
-          const applied = applyMarkdownToEditor(
-            view,
-            refreshedMarkdown,
-            parser,
-          )
-          if (!applied) {
-            view.dispatch(
-              view.state.tr
-                .delete(0, view.state.doc.content.size)
-                .setMeta('addToHistory', false),
-            )
-          }
-        } catch (err) {
-          console.warn(
-            '[vault:reload] PM dispatch failed for',
-            slug,
-            err,
-          )
-        }
-      }
+      // Push the external edit into the live CodeMirror editor (no-op if this
+      // slug isn't the mounted view).
+      applyMarkdownToActiveCmEditor(slug, refreshedMarkdown)
     }
     console.log(`[vault:reload] ${slug} hydrated from external edit`)
   },
@@ -160,6 +138,22 @@ export const createHandlesSlice = (
       if (s.knownDocs.some((d) => d.slug === doc.slug)) return s
       return { knownDocs: [...s.knownDocs, doc] }
     })
+  },
+
+  updateKnownDocPath: (slug, relPath, title) => {
+    // In-place swap for an externally-moved/renamed note — keeps the
+    // slug, open tab, and handle intact (unlike remove+add, which tears
+    // them down). Touches `relPath` (placement) and, when the filename
+    // changed, `title` (the sidebar label for a generic note). `title`
+    // is only overwritten when supplied, so a pure folder move that omits
+    // it leaves the label alone.
+    set((s) => ({
+      knownDocs: s.knownDocs.map((d) =>
+        d.slug === slug
+          ? { ...d, relPath, ...(title !== undefined ? { title } : {}) }
+          : d,
+      ),
+    }))
   },
 
   removeKnownDoc: (slug) => {
@@ -315,7 +309,14 @@ async function loadBodyMarkdown(
   if (!mdPath) return { kind: 'missing' }
   try {
     if (!(await vaultFileExists(mdPath))) return { kind: 'missing' }
-    const markdown = await readVaultFile(mdPath)
+    const raw = await readVaultFile(mdPath)
+    // Frontmatter-native docs carry a `---` metadata block the editor must
+    // never see (it would render as raw YAML and the user could clobber
+    // identity fields). Strip it here so `bodyMarkdown` is body-only; the
+    // flush re-attaches it on save (see usesFrontmatter in docFileSync).
+    const markdown = usesFrontmatter(known)
+      ? splitFrontmatter(raw).body
+      : raw
     return { kind: 'loaded', markdown }
   } catch (error) {
     console.warn('[vault:load] bodyMarkdown read failed for', slug, error)

@@ -14,8 +14,11 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import type { ThreadMeta } from '@/chat/types'
+import { projectStorageKey } from '@/lib/windowRoot'
 
-const STORAGE_KEY = 'writer-tauri:active-thread'
+// Namespaced per window: each project window tracks its own active thread,
+// so opening project B doesn't inherit project A's selection.
+const STORAGE_KEY = projectStorageKey('writer-tauri:active-thread')
 
 function read(): string | null {
   try {

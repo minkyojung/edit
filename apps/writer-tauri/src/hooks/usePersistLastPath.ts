@@ -17,7 +17,11 @@
 
 import { useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
+import { projectStorageKey } from '@/lib/windowRoot'
 
+/** Base key. Per-project last-viewed doc is namespaced per window via
+ * {@link projectStorageKey} so two project windows don't restore each
+ * other's last doc. */
 export const LAST_PATH_STORAGE_KEY = 'writer-tauri:lastPath'
 
 export function usePersistLastPath() {
@@ -25,7 +29,7 @@ export function usePersistLastPath() {
   useEffect(() => {
     if (pathname === '/' || pathname === '/notes') return
     try {
-      localStorage.setItem(LAST_PATH_STORAGE_KEY, pathname)
+      localStorage.setItem(projectStorageKey(LAST_PATH_STORAGE_KEY), pathname)
     } catch {
       // localStorage write can throw under private browsing / quota —
       // session restore is a nice-to-have, not a correctness requirement,

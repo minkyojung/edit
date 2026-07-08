@@ -18,7 +18,8 @@ vi.mock('@/lib/notify', () => ({
   notify: { gitCommitFailed: vi.fn(), gitRevertFailed: vi.fn(), gitRevertSucceeded: vi.fn(), gitMarkReviewedFailed: vi.fn() },
 }))
 
-import { useGitStore } from './gitStore'
+import { useGitStore, aiEditSubject, isAiEditCommit } from './gitStore'
+import type { CommitInfo } from '@/lib/git'
 
 describe('gitStore commit lifecycle', () => {
   beforeEach(() => {
@@ -64,5 +65,31 @@ describe('gitStore commit lifecycle', () => {
 
     const s = useGitStore.getState()
     expect([...s.dirtyPaths]).toEqual(['wiki/C.md'])
+  })
+})
+
+describe('aiEditSubject / isAiEditCommit', () => {
+  const commit = (subject: string): CommitInfo => ({ sha: 'x', subject, timestamp: 0, files: [] })
+
+  it('builds a `type(ai): names` subject, capped at two with a +N more tail', () => {
+    expect(aiEditSubject('edit', ['Tom'])).toBe('edit(ai): Tom')
+    expect(aiEditSubject('edit', ['Tom', 'Ideas'])).toBe('edit(ai): Tom, Ideas')
+    expect(aiEditSubject('edit', ['Tom', 'Ideas', 'Plan', 'X'])).toBe(
+      'edit(ai): Tom, Ideas (+2 more)',
+    )
+    expect(aiEditSubject('organize')).toBe('organize(ai)')
+  })
+
+  it('recognizes (ai)-scoped subjects as assistant commits', () => {
+    expect(isAiEditCommit(commit('edit(ai): Tom'))).toBe(true)
+    expect(isAiEditCommit(commit('organize(ai): a.md → daily/2026-06-17'))).toBe(true)
+    expect(isAiEditCommit(commit('revert(ai): Tom'))).toBe(true)
+  })
+
+  it("does NOT match the user's own `edit:` snapshots", () => {
+    expect(isAiEditCommit(commit('edit: Tom.md'))).toBe(false)
+    expect(isAiEditCommit(commit('edit: 3 files'))).toBe(false)
+    // a filename that happens to contain (ai) must not false-positive
+    expect(isAiEditCommit(commit('edit: notes(ai).md'))).toBe(false)
   })
 })

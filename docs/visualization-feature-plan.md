@@ -7,7 +7,45 @@
 
 ---
 
-## 0. 핵심 결정 (먼저 못 박을 것)
+## 진행 현황 (2026-06-04, 코드 감사 반영)
+
+> **이 섹션이 현재 진실.** 아래 §0~§7은 *원래* 계획(2026-05 초안)이며, 실제 구현은 크게 분기했다 — 특히 **Vega-Lite는 폐기**(자체 SVG 엔진으로 대체)되고, **아티팩트(임의 HTML)**·**선언형 차트 엔진**·**VizNode 합성**·**채팅 에이전트 통일 편집**이 추가됐다. 본문은 역사적 맥락으로 둔다.
+
+`data-structure-github-sync` 브랜치 기준. (✅ 완료 / 🟡 부분 / ❌ 없음·폐기)
+
+| 항목 | 상태 | 위치 / 비고 |
+|---|---|---|
+| 토큰 해석 유틸 (oklch/color-mix → rgb) | ✅ | `viz/resolveTokens.ts` (숨김 probe + getComputedStyle) |
+| 챗 Mermaid 렌더 (지연로드, strict, 소스폴백) | ✅ | `viz/MermaidBlock.tsx` + `StreamingMarkdown` `rawLang==='mermaid'` |
+| 에디터 NodeView (mermaid/artifact/chart/github 렌더+소스토글+↑↓편집삭제) | ✅ | `editor/cards/CodeBlockVizNodeView.tsx` |
+| 챗 → 본문 삽입 버튼 | ✅ | `viz/insertIntoDoc.ts` (mermaid/artifact/**chart**) |
+| **아티팩트 (임의 HTML, 격리 iframe + 주입 CSP)** | ✅ | `viz/artifactDocument.ts`(빌더+CSP+테마, 단위테스트) + `viz/ArtifactBlock.tsx`. *원래 "범위 밖(B안)"이었으나 구현* |
+| 시각화 디자인 시스템 (`--viz-cat-1~6` 계열 팔레트) | ✅ | `index.css` (:root/.dark, oklch 등간격) |
+| **선언형 차트 엔진** (ChartSpec → 호스트 DOM SVG) | ✅ | `viz/chartSpec.ts`(`parseChartSpec`/`parseChartObject`) + `viz/DataViz.tsx`(donut/bar/column/kpi). *Vega-Lite 대체: iframe無·보안無·테마자동* |
+| Vega-Lite | ❌ 폐기 | 자체 SVG 엔진으로 대체(F3에서 vega-embed 제거). 계획 Phase 4 취소 |
+| **VizNode 재귀 합성 스펙 + 렌더러** (대시보드) | ✅ | `viz/vizSpec.ts`(레이아웃 stack/columns + 리프 차트/stat/text/table, 깊이·노드 한도, 레거시 ChartSpec 하위호환) + `viz/VizRenderer.tsx` + `viz/VizBlock.tsx`. *계획에 없던 확장* |
+| viz 블록 안정 id (영속·자동부여) | ✅ | `editor/vizIdPlugin.ts` + `editor/schema/fenceMeta.ts` (`v:<id>`) |
+| id로 블록 찾기/교체 | ✅ | `editor/vizBlockOps.ts` (findVizById/getVizSourceById/replaceVizById) |
+| **차트 편집 = 채팅 에이전트 통일** (제자리 id 교체) | ✅ | `sidecar/server.mjs` `edit_visualization` 도구 → `chat/viz-apply` → `manager.rs` 브리지 → `agent/chat/index.ts` 리스너 `replaceVizById`. ✎로 무장→일반 채팅. (커밋 `6835d57c`) |
+| `/visualize` 명령어 | ❌ 폐기 | 명령어 대신 **자유 챗 자동 발행 + "본문에 삽입" 버튼**으로 대체 |
+
+**계획 대비 주요 변경**
+- **Vega-Lite 제거 → 자체 선언형 SVG 엔진**: 프롬프트로 임의 HTML 색을 강제하는 한계 → "AI는 데이터(스펙)만, 그림은 우리가". 일관성·보안면 0.
+- **아티팩트(임의 HTML)**: "범위 밖"이었으나 격리 iframe(sandbox=allow-scripts, same-origin 無)+주입 CSP로 구현. 자유·인터랙티브 롱테일 담당.
+- **VizNode 합성**: 단일 차트를 넘어 레이아웃(stack/columns)으로 대시보드 조립. 단일 ChartSpec은 리프로 하위호환.
+- **편집을 채팅 에이전트 도구로 통일**: 별도 one-shot 파이프라인 폐기, 같은 세션에서 `edit_visualization`으로 제자리 수정.
+
+**다음 할 일 (전부 선택 — viz는 한 단락 완성)**
+1. **생성도 본문에 바로** — 지금은 챗에 그린 뒤 "본문에 삽입" 수동. 원하면 통일.
+2. **선택 없이 "이름으로 차트 지목" 편집** — 문서 컨텍스트(프롬프트)에 fence의 `v:<id>`를 노출해야 가능. 현재는 plain text라 id 안 보임.
+3. **플랜 B 안전망** — 에이전트가 `edit_visualization` 대신 ```chart를 챗에 그릴 때(SDK가 tool_choice 강제 불가) 그 펜스를 가로채 id에 적용. *실제로 반복될 때만.*
+4. **꺾은선(line) 차트** 등 리프 종류 확장.
+
+**잔여 리스크**: tool_choice 강제 불가 → 드물게 에이전트가 본문 대신 챗에만 차트를 그릴 수 있음(플랜 B로 보강 가능). 임의 HTML(아티팩트) 출력 조이기(few-shot/CSS 가드)는 별개로 유효.
+
+---
+
+## 0. 핵심 결정 (먼저 못 박을 것) — *원래 계획 (역사)*
 
 | 질문 | 결정 | 이유 |
 |---|---|---|

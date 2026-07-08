@@ -1,0 +1,52 @@
+/* Token colours for the markdown source shown in DiffBlock. Keyed by the tok-* classes
+   CodeMirror's classHighlighter emits (see lib/highlightMarkdown.ts). Light defaults +
+   a .dark override so the diff card respects the app theme. Tasteful + minimal — only
+   the tokens that actually appear in note markdown are styled; anything else inherits
+   the row's default colour. */
+
+.tok-heading {
+  font-weight: 600;
+  color: #1f6feb;
+}
+.tok-strong {
+  font-weight: 600;
+}
+.tok-emphasis {
+  font-style: italic;
+}
+.tok-strikethrough {
+  text-decoration: line-through;
+}
+.tok-link,
+.tok-url {
+  color: #1f6feb;
+}
+.tok-monospace {
+  color: #c2410c;
+}
+.tok-meta,
+.tok-processingInstruction,
+.tok-labelName {
+  color: #8b949e;
+}
+.tok-quote {
+  color: #57606a;
+  font-style: italic;
+}
+
+.dark .tok-heading,
+.dark .tok-link,
+.dark .tok-url {
+  color: #79c0ff;
+}
+.dark .tok-monospace {
+  color: #ff9e64;
+}
+.dark .tok-meta,
+.dark .tok-processingInstruction,
+.dark .tok-labelName {
+  color: #6e7681;
+}
+.dark .tok-quote {
+  color: #8b949e;
+}

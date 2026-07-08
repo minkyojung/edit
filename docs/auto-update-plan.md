@@ -2,6 +2,16 @@
 
 > Dogfooding을 시작하기 전에, 본인 및 외부 사용자에게 안전하게 새 버전을 배포하기 위한 자동 업데이트 시스템 설계 및 구현 계획.
 
+> **2026-06-21 갱신 — 결정·구현 현황**
+> - 제품명 `Octave`, 번들 ID `com.minkyojung.octave`, 버전 `0.0.1` 확정.
+> - 호스팅: **자체 도메인(R2) 대신 GitHub Releases**로 시작 (`minkyojung/edit`, public).
+>   매니페스트 endpoint = `https://github.com/minkyojung/edit/releases/latest/download/latest.json`.
+> - 채널 분리(canary/stable)는 **지금은 안 함** — 혼자 dogfooding이라 stable 단일. 외부 사용자 생기면 pre-release로 도입.
+> - Tauri updater 서명 키 생성 완료 → 1Password "Octave — Tauri Updater Signing Key" (private key + password), 로컬 `~/.tauri/octave.key`. pubkey는 tauri.conf.json에 박힘.
+> - **코드 구현 완료**: tauri.conf.json(updater 플러그인+createUpdaterArtifacts), Cargo(updater/process), capabilities, lib.rs 등록 + Writer→Octave 리네임, 프론트 `src/lib/updater.ts`(런처 윈도우에서 시작 5초 후 + 1시간마다 check→다운로드→재시작 토스트).
+> - **남은 것**: Apple 인증서/공증 발급(가입은 완료) → 첫 수동 빌드+서명+공증 → GitHub 릴리스에 번들+latest.json 업로드 → 자동 업데이트 실측. 그 후 CI 자동화.
+> - 아래 본문의 `Rabat`/`rabat.app`/R2 가정은 **구버전 기준**이라 위 결정으로 대체됨.
+
 ## 1. 배경 및 결정
 
 ### 왜 Auto-Update가 필요한가
@@ -120,11 +130,12 @@
 "identifier": "com.williamjung.rabat"
 ```
 
-#### 결정 기록 (확정 후 채우기)
-- [ ] `productName`: ___________
-- [ ] `identifier`: ___________
-- [ ] `version`: ___________
-- [ ] 채널: `canary` + `stable`
+#### 결정 기록 (2026-06-21 확정)
+- [x] `productName`: `Octave`
+- [x] `identifier`: `com.minkyojung.octave`
+- [x] `version`: `0.0.1`
+- [x] 채널: stable 단일 (canary/stable 분리는 외부 사용자 생길 때)
+- [x] 호스팅: GitHub Releases (`minkyojung/edit`)
 
 ### Phase 1 — Apple 행정 (1~2일, 병렬 진행)
 - [ ] Apple Developer Program 가입 ($99/년)

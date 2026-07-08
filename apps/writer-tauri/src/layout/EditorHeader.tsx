@@ -1,7 +1,7 @@
 // Top window-chrome row above the editor canvas. Sits at --header-h so it
 // lines up with the sidebar header and the chat panel's matching header row.
-// All chrome buttons share the Tahoe-style treatment defined in
-// lib/chrome.ts (translucent fill + hairline border + emboss).
+// Header buttons are plain icon-only ghost buttons (no filled chrome),
+// matching the sidebar header's icon buttons.
 //
 // Structure: a 3-column flex row. Equal flex-1 columns so the centered
 // active-doc label sits in the visual middle regardless of how the side
@@ -24,8 +24,14 @@
 // (buttons, the active-doc chip's pointer-events-auto column) opt out
 // of dragging via the standard Tauri exclusion list.
 
-import { IconLayoutSidebarRightFilled } from '@tabler/icons-react'
-import type { EditorView } from '@milkdown/kit/prose/view'
+import {
+  IconArrowsMaximize,
+  IconArrowsMinimize,
+  IconEdit,
+  IconLayoutSidebarRightFilled,
+  IconSearch,
+} from '@tabler/icons-react'
+import { useMatch, useNavigate } from 'react-router-dom'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Button } from '@/components/ui/button'
 import { NavHistoryButtons } from './NavHistoryButtons'
@@ -35,24 +41,36 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { TAHOE_CHROME } from '@/lib/chrome'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useGitStore } from '@/state/gitStore'
+import { useWindowModeStore } from '@/state/windowModeStore'
+import { useDocsStore } from '@/state/docsStore'
+import { useCommandPaletteStore } from '@/state/commandPaletteStore'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { EditorTabs } from '@/editor/EditorTabs'
 import type { CollabStatus } from '@/hooks/useCollabDoc'
 import { DocMenu } from './DocMenu'
+import { FileViewerHeaderTitle } from './FileViewer'
 
 interface EditorHeaderProps {
   showSidebarTrigger: boolean
-  editorView: EditorView | null
   /** Collab status surfaced next to the actions cluster. Connected
    * docs render no label so a healthy connection reads as a clean
    * header. */
   collabStatus?: CollabStatus
+  /** Compact (Raycast-Notes) mode: the window is shrunk to a small panel.
+   * The header drops to bare chrome — traffic-light room + the expand
+   * button — so only the editor title + body remain. */
+  compact?: boolean
 }
 
+// Only the hard-error case surfaces in the header — it's the one
+// status the user must act on. A normal load is near-instant (local
+// file hydrate) so showing it just adds noise in the happy path and
+// reads as wrong when no doc is open at all. The "load is taking too
+// long" signal already lives in the footer behind a grace window.
 const STATUS_LABEL: Record<CollabStatus, string | null> = {
-  loading: 'Starting…',
+  loading: null,
   ready: null,
   error: 'Storage error',
 }
@@ -60,10 +78,51 @@ const STATUS_LABEL: Record<CollabStatus, string | null> = {
 
 export function EditorHeader({
   showSidebarTrigger,
-  editorView,
   collabStatus,
+  compact = false,
 }: EditorHeaderProps) {
   const statusLabel = collabStatus ? STATUS_LABEL[collabStatus] : null
+  // On a file route (`/file/:rel`) the center slot shows the file's name
+  // + Open action instead of the active-doc label.
+  const fileRel = useMatch('/file/:rel')?.params.rel ?? null
+
+  // Compact mode: strip the header to the essentials — keep the traffic-light
+  // reservation (no sidebar to paint it) and the expand button, drop tabs,
+  // nav, sidebar trigger, and the right-panel toggle (those surfaces are
+  // hidden in compact anyway).
+  if (compact) {
+    return (
+      <div
+        data-tauri-drag-region
+        className="absolute top-0 left-0 right-0 z-sticky flex items-center"
+        style={{ height: 'var(--header-h)' }}
+      >
+        <div
+          data-tauri-drag-region
+          className="h-full shrink-0"
+          style={{ width: 'var(--traffic-light-w)' }}
+        />
+        <div data-tauri-drag-region className="flex-1 self-stretch" />
+        <div className="flex shrink-0 items-center gap-0.5 pr-3">
+          <CompactHeaderActions />
+          <CompactToggle compact />
+        </div>
+        {/* Filename ALWAYS at the true window center (left-1/2 + -translate-x),
+            capped by max-width so it clears the traffic lights (left) and the
+            buttons (right) and truncates with an ellipsis when long instead of
+            overlapping them. 15rem ≈ both side clusters, so the cap keeps the
+            centered box between them. The in-body title is hidden in compact,
+            so this is the single title. */}
+        <div
+          className="pointer-events-none absolute left-1/2 top-0 flex h-full -translate-x-1/2 items-center"
+          style={{ maxWidth: 'calc(100% - 15rem)' }}
+        >
+          <EditorTabs pinned />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       data-tauri-drag-region
@@ -90,27 +149,126 @@ export function EditorHeader({
         data-tauri-drag-region
         className="flex flex-1 items-center gap-2 self-stretch pl-3"
       >
-        <SidebarTrigger className={TAHOE_CHROME} />
+        <SidebarTrigger />
         <NavHistoryButtons />
       </div>
-      <div className="flex min-w-0 flex-1 items-center justify-center">
-        <EditorTabs />
+      <div
+        className={cn(
+          'flex min-w-0 items-center justify-center',
+          // File titles tend to be long (full filenames), so give the
+          // center a wider share on file routes while keeping the left/
+          // right clusters equal so it stays visually centered.
+          fileRel != null ? 'flex-[1.7]' : 'flex-1',
+        )}
+      >
+        {fileRel != null ? (
+          <FileViewerHeaderTitle rel={fileRel} />
+        ) : (
+          <EditorTabs />
+        )}
       </div>
       <div className="flex flex-1 items-center justify-end gap-2 pr-3">
         {statusLabel && (
           <span
             className={cn(
-              'shrink-0 px-2 text-xs',
+              'shrink-0 px-2 text-caption',
               collabStatus === 'error' ? 'text-destructive' : 'text-muted-foreground',
             )}
           >
             {statusLabel}
           </span>
         )}
-        <DocMenu editorView={editorView} />
+        <DocMenu />
+        <CompactToggle />
         <ContextPanelTrigger />
       </div>
     </div>
+  )
+}
+
+/** Shrinks the window to / restores it from the compact panel. Same button
+ * in both modes; the glyph + label flip with the current mode. */
+function CompactToggle({ compact = false }: { compact?: boolean }) {
+  const toggle = useWindowModeStore((s) => s.toggle)
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="iconGhost"
+          size="icon-sm"
+          onClick={() => void toggle()}
+          className="cursor-pointer"
+          aria-label={compact ? 'Expand window' : 'Compact window'}
+        >
+          {compact ? (
+            <IconArrowsMaximize size={16} />
+          ) : (
+            <IconArrowsMinimize size={16} />
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {compact ? 'Expand window · ⌘⌥C' : 'Compact window · ⌘⌥C'}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** Compact-header quick actions: new note + search palette. Reuses the same
+ * docsStore.createNew + commandPalette handlers as the sidebar header, so the
+ * compact panel keeps those two flows without the full sidebar. */
+function CompactHeaderActions() {
+  const navigate = useNavigate()
+  const createNew = useDocsStore((s) => s.createNew)
+  const openPalette = useCommandPaletteStore((s) => s.openPalette)
+
+  const handleCreateNew = () => {
+    createNew()
+      .then((slug) => {
+        const store = useDocsStore.getState()
+        navigate(
+          buildViewUrl({
+            tab: store.sidebarTab,
+            dayAnchor: store.dayAnchor,
+            monthAnchor: store.monthAnchor,
+            slug,
+          }),
+        )
+      })
+      .catch((err) => console.error('[docs] createNew failed', err))
+  }
+
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="iconGhost"
+            size="icon-sm"
+            onClick={handleCreateNew}
+            className="cursor-pointer"
+            aria-label="New note"
+          >
+            <IconEdit size={16} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">New note · ⌘N</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="iconGhost"
+            size="icon-sm"
+            onClick={() => openPalette()}
+            className="cursor-pointer"
+            aria-label="Search"
+          >
+            <IconSearch size={16} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Search · ⌘K</TooltipContent>
+      </Tooltip>
+    </>
   )
 }
 
@@ -129,14 +287,10 @@ function ContextPanelTrigger() {
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
-          variant="ghost"
+          variant="iconGhost"
           size="icon-sm"
           onClick={toggle}
-          className={cn(
-            'relative cursor-pointer transition-colors',
-            TAHOE_CHROME,
-            open ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-          )}
+          className="relative cursor-pointer"
           aria-label={open ? 'Hide right panel' : 'Show right panel'}
           aria-pressed={open}
         >

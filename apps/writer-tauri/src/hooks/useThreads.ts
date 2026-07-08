@@ -69,6 +69,9 @@ export function useThreads(currentSlug: string | null = null): UseThreadsResult 
         archived: false,
         model: DEFAULT_CHAT_MODEL,
         effort: DEFAULT_CHAT_EFFORT,
+        // The built-in agent (role). Single default for now; the field
+        // is stamped at creation so role assignment needs no backfill.
+        agentId: 'default',
       }
       // Await the store update so callers can rely on the new thread
       // being visible in the threads list when this resolves. Without

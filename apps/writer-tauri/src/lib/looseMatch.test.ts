@@ -17,6 +17,21 @@ describe('looseFindRange — exact (tier 1)', () => {
   it('returns null when there is no plausible match', () => {
     expect(looseFindRange('성별: 남자', '나이: 47살')).toBeNull()
   })
+
+  it('returns null when an exact needle appears more than once (ambiguous)', () => {
+    // The model wanted to change the SECOND "사과", but the bare needle
+    // could match either. Refuse rather than silently patching the first.
+    const body = '철수: 사과\n영희: 사과'
+    expect(looseFindRange(body, '사과')).toBeNull()
+  })
+
+  it('still matches when surrounding context makes the needle unique', () => {
+    // Same doc, but the needle carries the line prefix → exactly one place.
+    const body = '철수: 사과\n영희: 사과'
+    const r = looseFindRange(body, '영희: 사과')
+    expect(r).not.toBeNull()
+    expect(body.slice(r!.start, r!.end)).toBe('영희: 사과')
+  })
 })
 
 describe('looseFindRange — normalized line match (tier 2)', () => {
@@ -78,5 +93,16 @@ describe('looseReplace', () => {
 
   it('returns null when nothing matches', () => {
     expect(looseReplace('성별: 남자', '나이: 47살', '나이: 45살')).toBeNull()
+  })
+
+  it('returns null (no silent corruption) when the needle is ambiguous', () => {
+    // Two identical lines; the bare needle could hit either → refuse.
+    expect(looseReplace('철수: 사과\n영희: 사과', '사과', '바나나')).toBeNull()
+  })
+
+  it('swaps the right one when context disambiguates', () => {
+    expect(
+      looseReplace('철수: 사과\n영희: 사과', '영희: 사과', '영희: 바나나'),
+    ).toBe('철수: 사과\n영희: 바나나')
   })
 })

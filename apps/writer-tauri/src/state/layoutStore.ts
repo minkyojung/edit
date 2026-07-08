@@ -32,6 +32,10 @@ interface LayoutState {
    * common path from a header button (e.g. clicking the Review badge
    * while the panel is closed). */
   openRightPanelInMode: (mode: RightPanelMode) => void
+  /** Increments to request focusing the chat composer. PromptInput watches
+   * this nonce and focuses its textarea. Not persisted (transient signal). */
+  focusChatInputNonce: number
+  requestChatInputFocus: () => void
 }
 
 export const useLayoutStore = create<LayoutState>()(
@@ -54,6 +58,9 @@ export const useLayoutStore = create<LayoutState>()(
       setRightPanelMode: (mode) => set({ rightPanelMode: mode }),
       openRightPanelInMode: (mode) =>
         set({ contextPanelOpen: true, rightPanelMode: mode }),
+      focusChatInputNonce: 0,
+      requestChatInputFocus: () =>
+        set((s) => ({ focusChatInputNonce: s.focusChatInputNonce + 1 })),
     }),
     {
       name: 'layout-state',

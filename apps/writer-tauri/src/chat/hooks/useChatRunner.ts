@@ -1,15 +1,17 @@
 import { useState, useCallback } from 'react'
-import type { EditorView } from '@milkdown/kit/prose/view'
 import { runChat } from '@/agent/chat/index'
+import { flushDirty } from '@/lib/docFileSync'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import { modelSupportsFastMode } from '@/chat/types'
-import type { ChatEffort, ChatMode, ChatModel, ChatTurn } from '@/chat/types'
+import type { ChatEffort, ChatMode, ChatModel, ChatTurn, FileAttachment } from '@/chat/types'
+import type { VizEditTarget } from '@/agent/chat/types'
 import type { PromptStatus } from '@/chat/PromptInput'
 import { classifyRunError } from '@/chat/utils/errorMessage'
 import { createStreamingBuffer } from '@/chat/utils/streamingBuffer'
 import { createThrottledFlusher } from '@/chat/utils/throttledFlusher'
 import { watchOffline } from '@/chat/utils/watchOffline'
+import { notifyJobDone } from '@/lib/notifyOs'
 import { useAnsweredQuestions } from '@/state/answeredQuestionsStore'
 import { useThreadsStore } from '@/state/threadsStore'
 import { buildQueueContextMarkdown } from '@/agent/chat/buildQueueContext'
@@ -39,7 +41,6 @@ export type RunOverrides = {
 }
 
 interface UseChatRunnerDeps {
-  editorView: EditorView | null
   /** True when the chat is running on the Read Later queue route (no
    * document mounted). Turns run read-only with a generated article-list
    * page context instead of editor text. */
@@ -48,6 +49,14 @@ interface UseChatRunnerDeps {
    * the proposal listener can route by slug instead of relying on a
    * captured (and soon-stale) view reference after doc switch. */
   slug: string | null
+  /** Vault-relative path of a non-markdown file open in the FileViewer
+   * (`/file/:rel`) route — null on every other surface. Forwarded to runChat
+   * so the agent knows which file the user is looking at. */
+  viewingFilePath: string | null
+  /** Editor text currently selected (live or frozen snapshot), or null. For
+   * free-chat turns it's forwarded to runChat as a `--- SELECTION ---` block
+   * so "explain this" focuses on the selection. */
+  selectionText: string | null
   activeId: string | null
   activeThreadModel: ChatModel
   activeThreadEffort: ChatEffort
@@ -71,7 +80,14 @@ interface UseChatRunnerDeps {
 export interface ChatRunner {
   status: PromptStatus
   streaming: { threadId: string; turn: ChatTurn } | null
-  run: (threadId: string, history: ChatTurn[], overrides?: RunOverrides) => Promise<void>
+  run: (
+    threadId: string,
+    history: ChatTurn[],
+    overrides?: RunOverrides,
+    vizEditTarget?: VizEditTarget,
+    attachments?: FileAttachment[],
+    mentionPaths?: string[],
+  ) => Promise<void>
 }
 
 /** Drives a single assistant turn end-to-end: seed streaming buffer, run
@@ -87,9 +103,10 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
   const endActivity = useChatActivity((s) => s.end)
 
   const {
-    editorView,
     isQueue,
     slug,
+    viewingFilePath,
+    selectionText,
     activeId,
     activeThreadModel,
     activeThreadEffort,
@@ -108,8 +125,22 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
   // is removed, so a truly-destroyed ydoc never receives a late mark.
 
   const run = useCallback(
-    async (threadId: string, history: ChatTurn[], overrides?: RunOverrides) => {
+    async (
+      threadId: string,
+      history: ChatTurn[],
+      overrides?: RunOverrides,
+      vizEditTarget?: VizEditTarget,
+      attachments?: FileAttachment[],
+      mentionPaths?: string[],
+    ) => {
       const startedAt = Date.now()
+      // Label for the OS completion ping — the user's request, truncated.
+      const jobTitle =
+        [...(history ?? [])]
+          .reverse()
+          .find((t) => t.role === 'user' && !t.synthetic)
+          ?.content?.trim()
+          .slice(0, 60) || 'Chat finished'
       // Discard any answer summary left over from a prior run (e.g. one whose
       // tool result never arrived because the turn was aborted) so this run's
       // questions can't inherit a stale bubble.
@@ -189,6 +220,9 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         errorText: string | null = null,
         errorCode: string | undefined = undefined,
         resetsAt: number | undefined = undefined,
+        rateLimitType: string | undefined = undefined,
+        retryable: boolean | undefined = undefined,
+        overageDisabledReason: string | undefined = undefined,
       ) => {
         flusher.cancel()
         const parts = buffer.buildParts()
@@ -215,6 +249,9 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           errorText: errorText ?? undefined,
           errorCode,
           resetsAt,
+          rateLimitType,
+          overageDisabledReason,
+          retryable,
         })
         setStreaming(null)
       }
@@ -227,26 +264,27 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       // The SDK delivers the answer as the AskUserQuestion tool result, which
       // arrives BEFORE the model streams its continuation — so at this instant
       // the buffer holds exactly the pre-question content. We:
-      //   1. commit that as a finished assistant turn (unless it's only the
-      //      question itself, which already lived in the footer panel),
-      //   2. append the user's answer as a display-only `synthetic` bubble,
-      //   3. start a fresh streaming turn + buffer for the continuation,
-      // yielding the canonical [assistant] → [you answered] → [assistant]
-      // ordering instead of one merged block.
+      //   1. stamp the chosen answer onto the AskUserQuestion part (the SDK
+      //      output echoes only the options, not the selection),
+      //   2. commit that as a finished assistant turn — the answered question
+      //      now renders inline as a QuestionActivity row, so there is no
+      //      separate synthetic "you answered" bubble,
+      //   3. start a fresh streaming turn + buffer for the continuation.
       const rotateForAnswer = (qaText: string) => {
         flusher.cancel()
-        const parts = buffer.buildParts()
+        const parts = buffer.buildParts().map((p) =>
+          p.type === 'tool' && p.toolName === 'AskUserQuestion' && !p.answer
+            ? { ...p, answer: qaText }
+            : p,
+        )
         const content = buffer.joinByType('text')
         const thinking = buffer.joinByType('reasoning')
-        // Drop a pre-question turn that carries nothing the footer didn't
-        // already show — i.e. only the AskUserQuestion call, no prose/reasoning
-        // and no other tool work.
-        const meaningful =
-          content.trim().length > 0 ||
-          thinking.trim().length > 0 ||
-          parts.some((p) => p.type === 'tool' && p.toolName !== 'AskUserQuestion')
+        // Commit whenever there's anything to show. The answered question lives
+        // in `parts` now, so a question-only turn is worth keeping.
+        const hasContent =
+          content.trim().length > 0 || thinking.trim().length > 0 || parts.length > 0
         const toAppend: ChatTurn[] = []
-        if (meaningful) {
+        if (hasContent) {
           toAppend.push({
             id: assistantId,
             role: 'assistant',
@@ -259,14 +297,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
             stopReason: null,
           })
         }
-        toAppend.push({
-          id: crypto.randomUUID(),
-          role: 'user',
-          content: qaText,
-          ts: Date.now(),
-          status: 'done',
-          synthetic: true,
-        })
         // Swap to a fresh streaming turn + buffer BEFORE persisting, so any
         // continuation part that races in lands on the new turn (it's post-
         // answer content), never back on the committed pre-question turn.
@@ -276,51 +306,73 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           threadId,
           turn: { id: assistantId, role: 'assistant', content: '', ts: Date.now(), status: 'streaming' },
         })
-        // One atomic append for the committed turn + answer bubble — separate
-        // appendTurn calls would race on appendVaultFile's read-modify-write
-        // and could reorder or drop one.
         void useThreadsStore.getState().appendTurns(threadId, toAppend)
       }
 
       try {
+        // Flush the editor's unsaved body to disk BEFORE the turn so the agent's
+        // file tools (read_page) and the propose_edit anchor see the same content the
+        // user sees — otherwise the model reads a stale .md and its old_string won't
+        // match the live doc. Idempotent (skips unchanged docs).
+        await flushDirty()
         // Plan turns go read-only: 'plan' permission mode blocks tool
         // execution, and we drop the propose_* relays + Bash so the model
         // explores with Read/Glob/Grep and writes a plan instead of editing.
         const isPlan = activeThreadMode === 'plan'
         const result = await runChat({
-          // Null on the queue route — runChat falls back to the page
-          // markdown below instead of reading editor text.
-          view: editorView,
           // Queue turns have no doc; a synthetic slug keeps run-registry
           // bookkeeping happy. Edits never target it (read-only Q&A).
           slug: slug ?? QUEUE_SLUG,
           // On the queue, feed the saved-article list as the "current page".
           pageContextMarkdown: isQueue ? buildQueueContextMarkdown() : undefined,
+          viewingFilePath,
+          // Free-chat only: slash commands already fold the selection into
+          // their rendered body via {{selection}}, so passing it here too
+          // would double-inject. overrides ⇒ slash command ⇒ skip.
+          selectionText: overrides ? undefined : selectionText,
+          // @-mentioned files (free chat only; slash commands don't carry them).
+          mentionPaths: overrides ? undefined : mentionPaths,
           threadId,
           history,
           prompt: overrides?.prompt,
           systemPrompt: overrides?.systemPrompt,
           appendDocument: overrides ? false : undefined,
+          attachments: overrides ? undefined : attachments,
+          // Editing a specific viz block: runChat adds the edit_visualization
+          // relay tool + injects the target's id/spec into the system prompt.
+          vizEditTarget,
           // Plan turns keep the propose_* relays available so the model can
           // execute once the plan is approved. The gate (sidecar canUseTool)
           // denies them while planning and allows them after ExitPlanMode is
-          // approved; read_page/search_wiki are allowed throughout.
+          // approved; reads go through the built-in Read/Glob/Grep throughout.
           // Queue turns are read-only: no propose_* (there's no doc to edit);
           // the model reads article bodies via the built-in Read/Glob/Grep.
           relayTools: isPlan
-            ? ['read_page', 'search_wiki', 'propose_edit', 'propose_multi_edit', 'propose_write']
+            ? ['propose_edit', 'propose_write']
             : isQueue
               ? []
               : overrides?.relayTools,
-          permissionMode: isPlan ? 'plan' : undefined,
+          // 'default' (not bypass) so the sidecar's canUseTool gate fires and
+          // the model can pause on AskUserQuestion mid-chat; the gate passes
+          // every other tool straight through, so this matches the old bypass
+          // behaviour otherwise. (Plan turns keep 'plan'.)
+          permissionMode: isPlan ? 'plan' : 'default',
+          // acceptEdits mode: same sidecar path as edit (propose_* relays,
+          // 'default' gate), but the host auto-accepts each proposal the moment
+          // it lands — applied without a manual Keep. Mirrors the SDK's
+          // 'acceptEdits' behaviour within our staged-review architecture.
+          autoAcceptEdits: activeThreadMode === 'acceptEdits',
           // Interactive plan tools must be in the list or the SDK never offers
           // them: AskUserQuestion (ask before planning), ExitPlanMode (propose
           // the finished plan for approval). Write is included so the model can
           // record its plan to the plan file (the canonical flow that lands a
           // clean plan in ExitPlanMode.plan); the sidecar gate confines Write
-          // to the plans directory, so the vault stays read-only.
+          // to the plans directory, so the vault stays read-only. WebSearch /
+          // WebFetch let the model research the web while planning — both are
+          // read-only, so they pass the plan-mode canUseTool gate and keep the
+          // source untouched.
           builtinTools: isPlan
-            ? ['Read', 'Glob', 'Grep', 'Write', 'AskUserQuestion', 'ExitPlanMode']
+            ? ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Write', 'AskUserQuestion', 'ExitPlanMode']
             : undefined,
           model: overrides?.model ?? activeThreadModel,
           effort: overrides?.effort ?? activeThreadEffort,
@@ -329,6 +381,11 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           // fastMode request the SDK would ignore anyway.
           fastMode: activeThreadFastMode && modelSupportsFastMode(activeThreadModel),
           sessionStarted,
+          // Interactive surface: open notes the agent creates this run so their
+          // inline green/red preview is immediately visible. (Headless ingest
+          // leaves this off.) Queue turns can't create notes (no propose_*), so
+          // this never fires there.
+          navigateToNewNotes: true,
           onSessionStart: () => markSessionStarted(threadId),
           onPart: (part) => {
             buffer.upsert(part)
@@ -361,19 +418,39 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         appliedCount = result.editCount
         commit('done', result.stopReason)
         setStatus('idle')
+        // Completion ping — only fires while the app is unfocused (the user
+        // walked away). Best-effort; never blocks the run.
+        void notifyJobDone(
+          jobTitle,
+          result.editCount > 0 ? `${result.editCount} change(s) proposed` : undefined,
+        )
       } catch (e) {
         // Errors live on a dedicated turn field, not in the parts timeline —
         // that keeps prompt history (`buildPrompt`) and Copy output clean,
         // and lets the renderer surface the failure with proper error chrome.
         const outcome = classifyRunError(e, { offlineAborted: offline.aborted })
-        commit(outcome.terminal, null, outcome.errorText, outcome.errorCode, outcome.resetsAt)
+        commit(
+          outcome.terminal,
+          null,
+          outcome.errorText,
+          outcome.errorCode,
+          outcome.resetsAt,
+          outcome.rateLimitType,
+          outcome.retryable,
+          outcome.overageDisabledReason,
+        )
         setStatus(outcome.chatStatus)
+        // Ping on a real failure too (not a user-pressed Stop) so a background
+        // job that died while you were away doesn't go unnoticed.
+        if (outcome.terminal === 'error') {
+          void notifyJobDone(jobTitle, outcome.errorText ?? 'Failed')
+        }
       } finally {
         offline.dispose()
         endActivity()
       }
     },
-    [editorView, isQueue, slug, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
+    [isQueue, slug, viewingFilePath, selectionText, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
   return { status, streaming, run }

@@ -23,16 +23,12 @@ import {
   appendMarkdownToWikiPage,
   applyReplaceInWikiPage,
   applyWriteWikiPage,
-  appendToSystemLog,
 } from '@/agent/applyIngest'
-import { useGitStore } from './gitStore'
 import { useDocsStore } from './docsStore'
-import { useEditorViewStore } from './editorViewStore'
-import { commitSuggestionInDoc } from '@/editor/markReconcile'
-import { getActiveSlugFromHash } from '@/lib/viewUrl'
-import { flushDirty } from '@/lib/docFileSync'
-import { pathForDoc } from '@/lib/docPaths'
-import { todayLocalDate } from '@/hooks/useDocMeta'
+import { isChangeMaterializedInActiveCm } from './activeCmEditor'
+import { useGitStore, aiEditSubject, type AiEditType } from './gitStore'
+import { notify } from '@/lib/notify'
+import { looseFindRange } from '@/lib/looseMatch'
 
 // HMR safety: vite's `import.meta.hot.dispose` fires right before
 // the module is replaced. That's the only hook that runs against
@@ -43,6 +39,10 @@ import { todayLocalDate } from '@/hooks/useDocMeta'
 // before the fix itself was written into the codebase.
 let unsub: (() => void) | null = null
 let pruneTimer: ReturnType<typeof setInterval> | null = null
+// One-shot subscription waiting for docs to finish loading so we can drop orphaned
+// pending changes (a pageSlug with no catalog doc). Held at module scope so HMR / stop
+// can clear it if it hasn't fired yet.
+let orphanUnsub: (() => void) | null = null
 
 /** How often the boot-time applier sweeps decided (accepted /
  * rejected) entries past their retention window. The store keeps
@@ -62,42 +62,34 @@ const PRUNE_INTERVAL_MS = 60_000
  * immediately without parking a Promise). One write path,
  * observable from inside the host. */
 async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
-  // Fast path — for edits materialised as suggestion marks in the
-  // ACTIVE editor, commit them surgically in the doc (drop insert marks
-  // → content becomes body; delete the delete-marked text). dirtyTracker
-  // + flush then persist exactly what was on screen, cursor undisturbed
-  // — no whole-doc replaceWith, no markdown re-match. The applier
-  // subscribes before any editor mounts, so this runs before the inline-
-  // review plugin's reconcile, which then finds no marks and no-ops.
-  //
-  // CRUCIAL: a single change can be MIXED — some edits materialise as
-  // marks (committed here), others live only as decorations or were
-  // unplaced (no marks). `commitSuggestionInDoc` reports which edit.ids
-  // it handled; we markdown-apply ONLY the rest below. (Committing then
-  // returning early would silently drop the non-materialised edits.)
-  const view = useEditorViewStore.getState().view
-  const committed =
-    view && getActiveSlugFromHash() === change.pageSlug
-      ? commitSuggestionInDoc(view.state, change.id)
-      : null
-  const handledEditIds = committed?.handledEditIds ?? new Set<string>()
-  if (committed && view) {
-    // The committed content is now ordinary body; dirtyTracker mirrors
-    // it into handle.bodyMarkdown synchronously on dispatch, so the
-    // markdown applies below see the updated body.
-    view.dispatch(committed.tr)
+  // In-buffer review (Cursor-style) OWNS the buffer + the save mirror for changes
+  // it's showing: on Keep it deletes the red and the editor writes bodyMarkdown
+  // itself. So the applier must NOT also try to place the edit here — its anchor
+  // would no longer match (the proposal text is already in the buffer), which only
+  // logged a harmless "outdated" warning. Treat as handled.
+  if (isChangeMaterializedInActiveCm(change.pageSlug, change.id)) return true
+
+  // Apply each edit to the wiki page's markdown directly — engine-agnostic
+  // string ops on the stored body. (CodeMirror loads the body as markdown,
+  // so there's no in-editor PM transaction to commit; the former PM "fast
+  // path" that dispatched suggestion-mark commits into a live ProseMirror
+  // view is gone with the PM editor.)
+  // In-editor Keep with an edited green proposal (Cursor-style): the review
+  // already computed the final merged document (current doc + edited green,
+  // user's outside edits preserved). Apply it verbatim instead of re-deriving
+  // from `edits` — that's the whole point, the edited text wouldn't match.
+  if (change.resolvedResult != null) {
+    return applyWriteWikiPage(change.pageSlug, change.resolvedResult, change.id)
   }
 
   let allOk = true
   for (const edit of change.edits) {
-    // Already committed surgically in the doc — skip the markdown apply.
-    if (handledEditIds.has(edit.id)) continue
     if (edit.kind === 'add') {
       if (!edit.after) {
         allOk = false
         continue
       }
-      const ok = await appendMarkdownToWikiPage(change.pageSlug, edit.after)
+      const ok = await appendMarkdownToWikiPage(change.pageSlug, edit.after, change.id)
       if (!ok) allOk = false
       continue
     }
@@ -108,7 +100,7 @@ async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
       // wholesale writer; range-replace covers the Edit / MultiEdit
       // shape where `before` carries the literal text to swap.
       if (!edit.before) {
-        const ok = await applyWriteWikiPage(change.pageSlug, edit.after ?? '')
+        const ok = await applyWriteWikiPage(change.pageSlug, edit.after ?? '', change.id)
         if (!ok) allOk = false
         continue
       }
@@ -116,6 +108,7 @@ async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
         change.pageSlug,
         edit.before,
         edit.after ?? '',
+        change.id,
       )
       if (!ok) allOk = false
       continue
@@ -125,7 +118,7 @@ async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
         allOk = false
         continue
       }
-      const ok = await applyReplaceInWikiPage(change.pageSlug, edit.before, '')
+      const ok = await applyReplaceInWikiPage(change.pageSlug, edit.before, '', change.id)
       if (!ok) allOk = false
       continue
     }
@@ -135,60 +128,10 @@ async function applyAcceptedChange(change: PendingChange): Promise<boolean> {
   return allOk
 }
 
-/** Auto-emit a single system:log row for an accepted change. Pulls
- * date / source / target / summary from data the host already has —
- * never asks the LLM to format anything. Keeps system:log a host-
- * managed surface (same shape as system:index).
- *
- * Skipped sources:
- *   - ingest: wikiHandoff emits one batched row per pass already
- *
- * Summary derivation precedence:
- *   1. entry.context.rationale (ingest-style — usually a one-liner)
- *   2. derived "edited (+N -M chars)" from the edit diff sizes
- *   3. last-resort "edited" placeholder
- *
- * Errors are swallowed (logged) — logging is best-effort; a failure
- * here should never block the actual apply that just succeeded. */
-async function logAcceptedChange(change: PendingChange): Promise<void> {
-  try {
-    const knownDoc = useDocsStore
-      .getState()
-      .knownDocs.find((d) => d.slug === change.pageSlug)
-    if (!knownDoc) return
-    const getDoc = (slug: string) =>
-      useDocsStore.getState().knownDocs.find((d) => d.slug === slug)
-    const sourcePath = pathForDoc(knownDoc, getDoc) ?? change.pageSlug
-
-    let summary = change.context.rationale?.trim() ?? ''
-    if (!summary) {
-      let added = 0
-      let removed = 0
-      for (const e of change.edits) {
-        added += e.after?.length ?? 0
-        removed += e.before?.length ?? 0
-      }
-      summary =
-        added > 0 || removed > 0
-          ? `edited (+${added} -${removed} chars)`
-          : 'edited'
-    }
-
-    await appendToSystemLog({
-      date: todayLocalDate(),
-      kind: change.source,
-      source: sourcePath,
-      summary,
-    })
-  } catch (err) {
-    console.warn('[applier] auto-log failed', change.id, err)
-  }
-}
-
 /** Group-level commit coordinator, shared by chat and ingest. As the
  * pending changes of a group (one chat run or one ingest pass, keyed by
  * groupId) are accepted, we collect them and, after a quiet debounce,
- * land them in a single `ai-edit: ...` commit. This keeps git history
+ * land them in a single `edit(ai): …` / `ingest(ai): …` commit. Keeps history
  * clean — one run/pass = one commit, not one commit per Keep click. */
 const groupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const groupAccepts = new Map<
@@ -233,24 +176,44 @@ async function commitGroup(
   sourceLabel: string,
   accepts: Array<{ pageTitle: string; change: PendingChange }>,
 ): Promise<void> {
-  try {
-    await flushDirty()
-  } catch (err) {
-    console.warn('[applier] flushDirty failed before commit', err)
+  if (accepts.length === 0) return
+  // One assistant checkpoint per accepted burst — the reversibility floor.
+  // commitChangesNow flushes Y.Doc → disk first and serializes against any
+  // concurrent commit (idle organize / turn-end move), so this lands exactly
+  // the accepted burst as a single revertible commit. The subject uses the
+  // `(ai)`-scoped convention isAiEditCommit matches.
+  const source = accepts[0].change.source
+  const type: AiEditType = source === 'ingest' ? 'ingest' : 'edit'
+  const knownDocs = useDocsStore.getState().knownDocs
+  const nameFor = (slug: string) => {
+    const doc = knownDocs.find((d) => d.slug === slug)
+    return doc?.title?.trim() || doc?.relPath || slug
   }
-  const n = accepts.length
-  const plural = n === 1 ? '' : 's'
-  // Chat and ingest share this coordinator; only the subject differs.
-  // Both keep the `ai-edit:` prefix so isAiEditCommit + the Review
-  // panel's commitSource parser recognise them.
-  const subject =
-    accepts[0]?.change.source === 'chat'
-      ? `ai-edit: chat reply (${n} page update${plural})`
-      : `ai-edit: ingest from ${sourceLabel} (${n} page update${plural})`
+  // Subject: the edited pages, deduped — so the undo skill can match "undo what
+  // you added to Tom".
+  const names = [...new Set(accepts.map((a) => nameFor(a.change.pageSlug)))]
+  const subject = aiEditSubject(type, names)
+  // Body: the per-edit `reason` the model supplied on propose_edit/write — one
+  // bullet each (deduped), so the version history says WHY each change happened.
+  const reasonLines = [
+    ...new Set(
+      accepts
+        .map((a) => {
+          const r = a.change.reason?.trim()
+          return r ? `- ${nameFor(a.change.pageSlug)}: ${r}` : null
+        })
+        .filter((x): x is string => x !== null),
+    ),
+  ]
+  const bodyParts: string[] = []
+  if (reasonLines.length > 0) bodyParts.push(reasonLines.join('\n'))
+  // Ingest keeps its source note for provenance.
+  if (source === 'ingest') bodyParts.push(`Source: ${sourceLabel}`)
+  const message = bodyParts.length > 0 ? `${subject}\n\n${bodyParts.join('\n\n')}` : subject
   try {
-    await useGitStore.getState().commitChangesNow(subject)
+    await useGitStore.getState().commitChangesNow(message)
   } catch (err) {
-    console.warn('[applier] commit failed', err)
+    console.warn('[applier] group commit failed', err)
   }
 }
 
@@ -258,6 +221,79 @@ async function commitGroup(
  * notifications (e.g. zustand firing the listener after our own
  * status flip) don't double-write. */
 const handledIds = new Set<string>()
+
+/** Archive the empty note a rejected proposal had materialized, so a declined
+ * "new note" leaves no orphan in the sidebar / on disk. Conservative — it skips
+ * (keeps the note) when:
+ *   - another non-rejected change still targets the same note, or
+ *   - the user has since typed their own content into it (bodyMarkdown non-empty).
+ * `archiveDoc` is a soft delete (recoverable via Trash) and refuses system/daily/
+ * non-user-owned pages on its own, returning null — in which case we leave it. */
+function cleanupRejectedNewNote(change: PendingChange): void {
+  const slug = change.pageSlug
+  const stillTargeted = Object.values(usePendingChangesStore.getState().byId).some(
+    (o) => o.id !== change.id && o.pageSlug === slug && o.status !== 'rejected',
+  )
+  if (stillTargeted) return
+  const docs = useDocsStore.getState()
+  const body = docs.handles[slug]?.bodyMarkdown
+  if (body != null && body.trim().length > 0) return // user typed real content — keep
+  const result = docs.archiveDoc(slug)
+  if (result === null) {
+    console.info('[applier] rejected new note not archivable, left as-is', slug)
+  } else {
+    console.log('[applier] archived empty note from rejected proposal', slug)
+  }
+}
+
+/** Boot-time validation for RESTORED pending changes: `pruneOrphaned` only
+ * checks the target SLUG still exists — it doesn't notice a note whose TEXT
+ * changed while the app was closed (an external edit, a sync, a git pull).
+ * Without this, a stale proposal sits in the tray/cards looking normal and
+ * only fails once the user finally clicks Keep. This checks each anchored
+ * edit's `before` against the note's CURRENT body, using the same tolerant
+ * matcher (`looseFindRange`) the real apply path uses — "still valid" here
+ * means the same thing it means at Keep time. Invalid ones are rejected
+ * (not silently deleted) so they still flow through the normal decided-entry
+ * lifecycle; the user gets ONE batched toast instead of one per suggestion.
+ * `add`-kind edits (new-note bodies) have no text anchor, so they're left
+ * alone — only file EXISTENCE matters for those, which pruneOrphaned covers. */
+async function pruneStaleAnchorsOnce(): Promise<void> {
+  const pending = Object.values(usePendingChangesStore.getState().byId).filter(
+    (c) => c.status === 'pending',
+  )
+  const bySlug = new Map<string, PendingChange[]>()
+  for (const c of pending) {
+    const arr = bySlug.get(c.pageSlug) ?? []
+    arr.push(c)
+    bySlug.set(c.pageSlug, arr)
+  }
+
+  let droppedCount = 0
+  for (const [slug, changes] of bySlug) {
+    const docs = useDocsStore.getState()
+    if (!docs.knownDocs.some((d) => d.slug === slug && !d.archivedAt)) continue // pruneOrphaned's job
+    try {
+      await docs.ensureHandle(slug)
+      await useDocsStore.getState().handles[slug]?.contentReady
+    } catch {
+      continue // couldn't hydrate this note — leave its changes alone, don't guess
+    }
+    const body = useDocsStore.getState().handles[slug]?.bodyMarkdown ?? ''
+    for (const change of changes) {
+      const anchored = change.edits.filter(
+        (e): e is typeof e & { before: string } => e.kind !== 'add' && !!e.before,
+      )
+      if (anchored.length === 0) continue
+      const stillValid = anchored.every((e) => looseFindRange(body, e.before) != null)
+      if (!stillValid) {
+        usePendingChangesStore.getState().reject(change.id)
+        droppedCount++
+      }
+    }
+  }
+  if (droppedCount > 0) notify.staleProposalsDropped(droppedCount)
+}
 
 /** Begin listening. Idempotent within a single module instance —
  * a second call is a no-op. HMR cleanup is handled by the
@@ -290,20 +326,58 @@ export function startPendingChangesApplier(): void {
     usePendingChangesStore.getState().pruneDecided()
   }, PRUNE_INTERVAL_MS)
 
+  // Drop persisted pending changes whose target page no longer exists — orphans from a
+  // prior session or a deleted note. They'd otherwise haunt every surface (review tray,
+  // chat cards, sidebar dot) as ghost rows that show a raw slug and can't be opened.
+  // pruneOrphaned was defined but never wired; this is its one caller. Run only once
+  // docs have finished loading (bootstrapping === false) and never against an empty
+  // catalog, so a transient loaded-but-empty state can't nuke every pending change.
+  const pruneOrphansOnce = (): boolean => {
+    const ds = useDocsStore.getState()
+    if (ds.bootstrapping) return false
+    const valid = new Set(ds.knownDocs.map((d) => d.slug))
+    if (valid.size === 0) return false
+    usePendingChangesStore.getState().pruneOrphaned(valid)
+    // Once the catalog is real, also check that surviving pending changes'
+    // target TEXT still exists — pruneOrphaned above only checked the slug.
+    void pruneStaleAnchorsOnce()
+    return true
+  }
+  if (!pruneOrphansOnce()) {
+    orphanUnsub = useDocsStore.subscribe(() => {
+      if (pruneOrphansOnce()) {
+        orphanUnsub?.()
+        orphanUnsub = null
+      }
+    })
+  }
+
   unsub = usePendingChangesStore.subscribe((state) => {
     for (const c of Object.values(state.byId)) {
-      if (c.status === 'pending') continue
+      if (c.status === 'pending') {
+        // Reopened (Cmd-Z undid an accept/reject) — clear the "handled" mark so the
+        // NEXT decision re-runs the apply. Without this, re-accepting a change the
+        // user undid is silently skipped: the mark clears but the doc never changes
+        // and no undoable CM transaction is produced. New pending changes aren't in
+        // the set, so this is a no-op for them.
+        handledIds.delete(c.id)
+        continue
+      }
       if (handledIds.has(c.id)) continue
       handledIds.add(c.id)
       if (c.status === 'accepted') {
         void applyAcceptedChange(c).then((ok) => {
-          // Auto-log every accepted chat change to system:log. system:log
-          // is host-managed end-to-end — the LLM doesn't write to it.
-          // Ingest pass logs are emitted by wikiHandoff in a single
-          // batch row per pass, so we skip them here to avoid double
-          // entries.
-          if (ok && c.source === 'chat') {
-            void logAcceptedChange(c)
+          if (!ok) {
+            // The edit couldn't be placed: its `before` anchor is no longer in
+            // the note (the user edited that region after the proposal, or the
+            // note otherwise changed). Cursor's rule — the user's text wins, so
+            // DISMISS (keep their text) rather than reopen, which would just
+            // re-fail on the same stale anchor in a loop. But SURFACE it: a
+            // silently-vanished "Kept" reads as success when nothing was written
+            // (the bug this audit flagged). The change stays 'accepted'
+            // (resolved, drops from pending).
+            notify.markCantApply()
+            console.info('[applier] suggestion outdated — kept user text', c.id)
           }
           // Commit at accept time for BOTH sources — Keep is when the
           // disk actually changes. The coordinator debounces a burst of
@@ -321,6 +395,9 @@ export function startPendingChangesApplier(): void {
         // Reject = drop the entry from the apply queue; the disk
         // is never touched. Logged for diagnostics only.
         console.log('[applier] rejected', c.id, 'page', c.pageSlug, 'source', c.source)
+        // If this proposal had created a brand-new empty note to host its body,
+        // reject would otherwise orphan that empty note — clean it up.
+        if (c.createdNewNote) cleanupRejectedNewNote(c)
       }
     }
   })
@@ -331,6 +408,8 @@ export function startPendingChangesApplier(): void {
 export function stopPendingChangesApplier(): void {
   unsub?.()
   unsub = null
+  orphanUnsub?.()
+  orphanUnsub = null
   if (pruneTimer) clearInterval(pruneTimer)
   pruneTimer = null
   handledIds.clear()
@@ -349,6 +428,8 @@ if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     unsub?.()
     unsub = null
+    orphanUnsub?.()
+    orphanUnsub = null
     if (pruneTimer) clearInterval(pruneTimer)
     pruneTimer = null
     handledIds.clear()

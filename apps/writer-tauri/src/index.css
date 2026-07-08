@@ -15,6 +15,63 @@
 @custom-variant dark (&:is(.dark *));
 @custom-variant hover (&:hover);
 
+/* COMPACT (Raycast-Notes) mode — UNLAYERED on purpose.
+   These drop the editor's opaque surfaces so the window's native material
+   (set to the picked compact material by useVibrancy) shows through as a
+   frosted panel. They MUST sit outside @layer: the opaque fills come from the
+   `bg-background` UTILITY class, and Tailwind v4's `utilities` layer beats any
+   `@layer base` rule regardless of selector specificity. Unlayered rules
+   outrank every layer, so this is what actually wins. When vibrancy is off the
+   body is opaque --background, so transparent layers just reveal that — a
+   clean opaque fallback. The header fade band is hidden (compact = bare
+   chrome). */
+html[data-window-mode='compact'] [data-slot='sidebar-inset'] {
+  background-color: transparent;
+}
+/* The panel surface is a TRANSLUCENT theme tint, not fully transparent: the
+   native vibrancy material is very see-through, so a bare-transparent panel
+   loses the theme's surface color entirely (light themes end up as dark frost
+   over the desktop, illegible). The tint carries the theme tone while the
+   material still frosts through it. Light needs more opacity for contrast;
+   dark/graphite stay glassier (they already read fine on a dark frost). */
+html[data-window-mode='compact'] [data-editor-panel] {
+  background-color: color-mix(in oklch, var(--background) 80%, transparent);
+}
+html[data-window-mode='compact'].dark [data-editor-panel] {
+  background-color: color-mix(in oklch, var(--background) 45%, transparent);
+}
+/* Compact: keep the top scrim (don't hide it) so scrolled body text fades out
+   before it reaches the native traffic lights instead of colliding with them.
+   A touch denser than the panel tint so the traffic-light strip reads cleanly;
+   the band's own gradient mask + backdrop-blur fade it into the panel below. */
+html[data-window-mode='compact'] [data-header-fade] {
+  background-color: color-mix(in oklch, var(--background) 88%, transparent);
+}
+html[data-window-mode='compact'].dark [data-header-fade] {
+  background-color: color-mix(in oklch, var(--background) 60%, transparent);
+}
+/* Compact pins the filename in the header (EditorTabs), so the in-body title
+   would otherwise show the same name twice. Hide it — the header owns the
+   title in compact. */
+html[data-window-mode='compact'] [data-page-title] {
+  display: none;
+}
+/* The command palette defaults to top-1/4 + sm:max-w-2xl — too low AND wider
+   than a narrow compact window (so it overflows both sides and clips). In
+   compact: center it vertically and cap its width to the window. */
+html[data-window-mode='compact'] .command-palette {
+  /* Anchor the TOP at a fixed height (not vertically centered) so the input
+     stays put as results filter — Spotlight-style, input fixed / list grows
+     down. ~15% ≈ where a full palette's top would sit if centered, so it still
+     reads as roughly centered when full.
+     translate overrides Tailwind v4's `translate` PROPERTY (not `transform`);
+     the two are separate and would otherwise STACK and double-shift it. */
+  top: 15%;
+  translate: -50% 0;
+  width: calc(100% - 2rem);
+  max-width: calc(100% - 2rem);
+}
+
 @layer base {
   html, body, #root {
     height: 100%;
@@ -33,14 +90,25 @@
 
   body {
     -webkit-font-smoothing: antialiased;
-    /* Window-frame tone follows the content canvas (--background), not
-       the sidebar. That makes the floating sidebar read as a card
-       *over* the canvas — the outer gaps around the sidebar are the
-       same tone as the editor surface, so the card appears lifted
-       rather than embedded in a separate strip. */
-    background-color: var(--background);
+    /* VIBRANCY: the window canvas is transparent so the native
+       NSVisualEffectView (windowEffects: sidebar) shows through. Opaque
+       surfaces (editor column, right panel) paint their own --background;
+       the left sidebar + window-inset gaps stay transparent → frosted.
+       This is the DEFAULT (vibrancy on) and matches the tauri.conf startup
+       effect, so the common case has no first-paint flash. The toggle
+       (useVibrancy) flips `html[data-vibrancy="off"]` to paint opaque. */
+    background-color: transparent;
     color: var(--foreground);
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+  }
+  /* Vibrancy OFF — paint the canvas + sidebar opaque so no native effect /
+     desktop shows. Driven by useVibrancy() setting the attribute on <html>
+     (and calling clearEffects() on the native side). */
+  html[data-vibrancy='off'] body {
+    background-color: var(--background);
+  }
+  html[data-vibrancy='off'] [data-slot='sidebar-inner'] {
+    background-color: var(--sidebar);
   }
   /* In fullscreen macOS hides the traffic-light buttons, so the 80px
      reservation on the left of EditorHeader / SidebarHeader stops
@@ -74,440 +142,7 @@
 /* ── Editor / external library styles (isolated in @layer base so Tailwind
    utilities can always override) ─────────────────────────────────────── */
 @layer base {
-  .milkdown,
-  .ProseMirror {
-    font-family: var(--font-sans);
-    font-size: var(--prose-base);
-    /* Body line spacing from the design token. The text caret is drawn by
-       customCaretPlugin (the native caret is hidden), so line-height is now
-       purely a reading-rhythm choice and no longer affects caret height —
-       the earlier integer-px hack for "caret uniformity" was a misdiagnosis
-       (native WebKit sizes the caret to the line box by design; we replaced
-       the native caret instead). Headings / pre override below. */
-    line-height: var(--prose-lh-body);
-    color: var(--foreground);
-    outline: none;
-    width: 100%;
-    min-height: 200px;
-    cursor: text;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    border: none;
-    box-shadow: none;
-    background: none;
-  }
-
-  .ProseMirror p {
-    margin-bottom: var(--prose-gap-block);
-  }
-
-  /* Custom caret (customCaretPlugin.ts). The native macOS-WebKit caret is the
-     full line-box height by design; we hide it and draw our own at the text
-     height so it hugs the glyphs and stays uniform line-to-line. The class is
-     toggled on only while our caret is shown — during selection / blur / IME
-     composition it comes off so the native caret returns. */
-  .ProseMirror.pm-native-caret-hidden {
-    caret-color: transparent;
-  }
-  .pm-custom-caret {
-    position: fixed;
-    width: 1.5px;
-    background: var(--foreground);
-    border-radius: 1px;
-    pointer-events: none;
-    z-index: 30;
-    will-change: left, top, height;
-    animation: pm-caret-blink 1.06s steps(1, end) infinite;
-  }
-  @keyframes pm-caret-blink {
-    0%, 50% { opacity: 1; }
-    50.01%, 100% { opacity: 0; }
-  }
-
-  /* Drop cursor (prosemirror-dropcursor). Color comes from the
-     theme token so light/dark switch picks the right contrast;
-     width is set inline by the plugin (width: 2). */
-  .pm-drop-cursor {
-    background-color: var(--foreground);
-    border-radius: 1px;
-  }
-
-  .ProseMirror h1,
-  .ProseMirror h2,
-  .ProseMirror h3,
-  .ProseMirror h4,
-  .ProseMirror h5,
-  .ProseMirror h6 {
-    font-weight: 600;
-    line-height: var(--prose-lh-heading);
-    /* Headings sit closer to the block above only when at the very top
-       of the doc — the parent input handles that. Otherwise breathe. */
-    margin-top: var(--prose-gap-heading);
-    margin-bottom: var(--prose-gap-block);
-  }
-
-  .ProseMirror :is(h1, h2, h3, h4, h5, h6):first-child {
-    margin-top: 0;
-  }
-
-  .ProseMirror h1 { font-size: var(--prose-h1); }
-  .ProseMirror h2 { font-size: var(--prose-h2); }
-  .ProseMirror h3 { font-size: var(--prose-h3); }
-  .ProseMirror h4 { font-size: var(--prose-h4); }
-  .ProseMirror h5 { font-size: var(--prose-h5); text-transform: uppercase; letter-spacing: 0.04em; }
-  .ProseMirror h6 { font-size: var(--prose-h6); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); }
-
-  .ProseMirror ul,
-  .ProseMirror ol {
-    /* The list-item-block NodeView draws its own marker (bullet SVG /
-       checkbox / number label) inside each <li>, so the browser's
-       native disc/decimal would just be a second marker. Suppress it. */
-    list-style: none;
-    padding-left: 0;
-    margin-bottom: var(--prose-gap-block);
-  }
-
-  /* Inter-item spacing belongs on the OUTER list-item-block wrapper,
-     not on the inner `.list-item` <li> the NodeView puts inside it.
-     Margin on the inner li sits inside the editable flex row, where
-     the browser includes it in cross-block selection paint and draws
-     it as a horizontal bar between items during a drag-select. The
-     outer wrapper sits between items in flow, outside the editable
-     row, so its margin produces the same visual gap without the paint
-     side effect — this is the same split @milkdown/crepe ships in
-     `theme/common/list-item.css`. */
-  .ProseMirror li {
-    margin-bottom: 0;
-  }
-
-  .ProseMirror li > p {
-    margin-bottom: 0;
-  }
-
-
-  .ProseMirror blockquote {
-    border-left: 2px solid var(--border);
-    padding-left: 1rem;
-    margin-bottom: var(--prose-gap-block);
-    color: var(--muted-foreground);
-    font-style: italic;
-  }
-
-  .ProseMirror code {
-    font-family: var(--font-mono, ui-monospace, monospace);
-    font-size: 0.9em;
-    background: var(--muted);
-    /* Inline marks decorate with PAINT ONLY (background / colour) — never
-       box-model (vertical padding / border / box-shadow), which enlarges
-       the inline box and so the WebKit caret next to it. Horizontal
-       padding is fine (width only). Trade: no vertical chip breathing. */
-    padding: 0 0.3rem;
-    border-radius: 0.25rem;
-  }
-
-  .ProseMirror pre {
-    background: var(--muted);
-    padding: 0.75rem 1rem;
-    border-radius: 0.5rem;
-    overflow-x: auto;
-    margin-bottom: var(--prose-gap-block);
-    font-size: 0.9em;
-    line-height: 1.5;
-  }
-
-  .ProseMirror pre code {
-    background: transparent;
-    padding: 0;
-    font-size: inherit;
-  }
-
-  .ProseMirror hr {
-    border: none;
-    border-top: 1px solid var(--border);
-    margin: var(--prose-gap-heading) 0;
-  }
-
-  /* GFM tables — system pages (log / index) render their records as
-     markdown tables so columns align for the user. The Milkdown GFM
-     preset parses the table; these rules give it readable defaults
-     without redesigning the whole table editing UX (Phase 2 will add
-     sort / filter on top via a custom NodeView). overflow-x lets
-     wide tables scroll horizontally in the narrow right panel. */
-  .ProseMirror .tableWrapper {
-    overflow-x: auto;
-    margin-bottom: var(--prose-gap-block);
-  }
-  .ProseMirror table {
-    border-collapse: collapse;
-    width: 100%;
-    font-size: 0.92em;
-  }
-  .ProseMirror th,
-  .ProseMirror td {
-    border: 1px solid var(--border);
-    padding: 0.35em 0.6em;
-    text-align: left;
-    vertical-align: top;
-  }
-  .ProseMirror th {
-    background-color: color-mix(in oklch, var(--muted) 60%, transparent);
-    font-weight: 600;
-  }
-  .ProseMirror tr:nth-child(even) td {
-    background-color: color-mix(in oklch, var(--muted) 20%, transparent);
-  }
-
-  .ProseMirror a {
-    color: var(--info);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
-
-  /* Wikilink — link mark with a `note:{slug}` href, treated as an
-     internal jump rather than an external URL. Targets the href
-     pattern instead of a class because we ride on commonmark's
-     `link` mark (so server round-trip preserves it); the click
-     plugin intercepts these by href prefix. */
-  .ProseMirror a[href^="note:"] {
-    color: var(--info);
-    background-color: color-mix(in oklch, var(--info) 12%, transparent);
-    /* Paint-only (see inline code): background + horizontal padding only.
-       No vertical padding / box-shadow, so the pill never enlarges the
-       inline box and the caret stays uniform across every line. */
-    padding: 0 0.3em;
-    border-radius: 0.25em;
-    text-decoration: none;
-    cursor: pointer;
-    transition: background-color 120ms ease;
-  }
-  .ProseMirror a[href^="note:"]:hover {
-    background-color: color-mix(in oklch, var(--info) 22%, transparent);
-  }
-
-  /* Broken wikilink — slug isn't (or no longer is) in the docs
-     registry. Decoration overrides the bright info tone with a muted
-     destructive treatment + strikethrough so the reader can tell the
-     jump won't go anywhere. The link mark stays attached so the slug
-     survives a future sync that could revive the target. */
-  .ProseMirror .wikilink-broken {
-    color: var(--muted-foreground);
-    background-color: color-mix(in oklch, var(--destructive) 8%, transparent);
-    text-decoration: line-through;
-  }
-
-  /* Archived wikilink — slug is in the registry but the user
-     archived the target. Render as disabled (muted + no hover
-     affordance + not-allowed cursor) so the reader can tell at a
-     glance the jump is unavailable, without the alarm of a broken
-     link. Restoring from Archive flips this back to the live style
-     automatically since the decoration rebuilds on knownDocs change. */
-  .ProseMirror .wikilink-archived {
-    color: var(--muted-foreground);
-    background-color: transparent;
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-  .ProseMirror .wikilink-archived:hover {
-    background-color: transparent;
-  }
-
-  /* AI-edit gutter — coloured 3px bar painted to the left of any
-     top-level block touched by an unreviewed ai-edit commit. The
-     decoration is `Decoration.node`, so the class lands on the
-     block's own element; position:relative + ::before paints the
-     bar in the margin without affecting layout.
-       add     — green (insertion)
-       replace — amber (mixed add+remove)
-       remove  — red   (pure deletion)
-     `left` matches the editor's left padding so the bar sits in the
-     visible gutter rather than overlapping body text. */
-  .ProseMirror .ai-edit-gutter {
-    position: relative;
-  }
-  .ProseMirror .ai-edit-gutter::before {
-    content: '';
-    position: absolute;
-    left: -1rem;
-    top: 0.15em;
-    bottom: 0.15em;
-    width: 3px;
-    border-radius: 2px;
-    background-color: var(--ai-edit-gutter-color, var(--muted-foreground));
-    pointer-events: none;
-  }
-  .ProseMirror .ai-edit-gutter--add {
-    --ai-edit-gutter-color: oklch(0.72 0.18 145);
-  }
-  .ProseMirror .ai-edit-gutter--replace {
-    --ai-edit-gutter-color: oklch(0.78 0.16 80);
-  }
-  .ProseMirror .ai-edit-gutter--remove {
-    --ai-edit-gutter-color: oklch(0.68 0.20 25);
-  }
-
-  /* Pending AI change preview — `inlineReviewPlugin` mounts these
-     decorations on the active editor view. Two coordinated parts
-     for each edit:
-       1. `.pending-mark--remove` — `Decoration.inline` painting the
-          existing text that would be removed (replace / delete).
-       2. `.pending-add-widget--{inline|block}` — `Decoration.widget`
-          carrying the added content in green, inline or block
-          depending on the shape of `after`.
-     Plus a single `.pending-unplaced-banner` at the top of the doc
-     when any pending edit can't be pinned to a position. */
-
-  /* Inline mark for removed text. Applied to the actual text in the
-     doc — that range gets a red tint + strikethrough, but the text
-     itself isn't mutated (PM Decoration.inline only adds CSS). A
-     Reject leaves zero residue; a Keep does the real edit via the
-     disk-write path. */
-  .ProseMirror .pending-mark--remove {
-    background-color: color-mix(in oklch, oklch(0.68 0.20 25) 14%, transparent);
-    text-decoration: line-through;
-    text-decoration-color: color-mix(in oklch, oklch(0.68 0.20 25) 60%, transparent);
-    border-radius: 2px;
-    padding: 0 0.05em;
-  }
-
-  /* Mark-native pending (the live editor's `materialize` mode). Block-
-     shaped pending content lives in the doc as real nodes carrying a
-     `proofSuggestion` mark, rendered by Milkdown's NodeViews so it
-     matches committed body exactly. The mark span only tints the text:
-       - insert → green (added, not yet on disk — see stripPendingFromDoc)
-       - delete → red + strikethrough (slated for removal on Keep)
-     Mirrors the .pending-add-widget__content / .pending-mark--remove
-     colours so the two rendering paths look identical. */
-  .ProseMirror span[data-proof='suggestion'][data-kind='insert'] {
-    background-color: color-mix(in oklch, oklch(0.72 0.18 145) 14%, transparent);
-    border-radius: 2px;
-  }
-  .ProseMirror span[data-proof='suggestion'][data-kind='delete'] {
-    background-color: color-mix(in oklch, oklch(0.68 0.20 25) 14%, transparent);
-    text-decoration: line-through;
-    text-decoration-color: color-mix(in oklch, oklch(0.68 0.20 25) 60%, transparent);
-    border-radius: 2px;
-  }
-  /* User highlight on a saved article — a warm amber wash behind the text.
-     No cursor override (natural text I-beam — selecting / clicking is
-     handled by a plugin, not a button) and no box-shadow ring (it read as
-     a boxy block). Background only, so no layout / caret impact. */
-  .ProseMirror span[data-highlight] {
-    background-color: color-mix(in oklch, oklch(0.85 0.16 85) 32%, transparent);
-    border-radius: 2px;
-    transition: background-color 120ms ease;
-  }
-  /* Hover: deepen the wash as an interaction affordance, so the reader can
-     tell the highlight is clickable (a click selects it + opens the menu).
-     Background only and the I-beam cursor is kept, so the text stays
-     directly editable and the line box / caret are untouched. */
-  .ProseMirror span[data-highlight]:hover {
-    background-color: color-mix(in oklch, oklch(0.85 0.16 85) 46%, transparent);
-  }
-
-  /* Widget for added content. Inline span flows next to the cursor
-     for paragraph-shaped `after` (small phrase / single sentence);
-     block div for content that carries headings, lists, multiple
-     paragraphs. */
-  .ProseMirror .pending-add-widget {
-    /* Suppress macOS / WKWebView selection backdrop over the
-       widget DOM — same fix the card NodeViews use. Without this
-       the widget's tint stacks with the OS accent paint when the
-       cursor sits adjacent. */
-  }
-  .ProseMirror .pending-add-widget ::selection,
-  .ProseMirror .pending-add-widget::selection {
-    background: transparent;
-  }
-  .ProseMirror .pending-add-widget--inline {
-    /* Plain `inline` (not inline-flex) so the added text sits in the
-       same line box as the surrounding text — an inline-flex wrapper
-       established a taller line box, making the green box taller than
-       the red strike and inflating the caret next to it. The chip's
-       spacing rides on its own `margin-left` (below), so dropping the
-       flex `gap` is safe. */
-    display: inline;
-    vertical-align: baseline;
-    margin: 0 0.15em;
-  }
-  /* Keep the chip from stretching the text line — center it on the
-     line box instead of letting its button height set the line. */
-  .ProseMirror .pending-add-widget--inline .pending-edit__actions {
-    vertical-align: middle;
-  }
-  .ProseMirror .pending-add-widget--block {
-    display: block;
-    margin: 0.15em 0;
-  }
-  .ProseMirror .pending-add-widget__content {
-    background-color: color-mix(in oklch, oklch(0.72 0.18 145) 14%, transparent);
-    border-radius: 2px;
-    padding: 0 0.25em;
-  }
-  /* Block-flavour content lets the inner ProseMirror render headings
-     / lists / blockquotes with natural typography while still
-     carrying the green tint via the tone class (see below). The
-     content wrapper here only provides spacing. */
-  .ProseMirror .pending-add-widget--block .pending-add-widget__content {
-    background-color: transparent;
-    padding: 0;
-  }
-
-  /* Top-of-doc banner shown when one or more pending changes can't
-     be pinned to a position in this page. The widget directs the
-     user to the Review panel so the change can still be decided —
-     we never silently lose pending data, never place it at a
-     misleading position. */
-  .ProseMirror .pending-unplaced-banner {
-    display: flex;
-    align-items: center;
-    gap: 0.5em;
-    margin: 0 0 0.75em 0;
-    padding: 0.4em 0.6em;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background-color: var(--muted);
-    font-size: 12px;
-  }
-  .pending-unplaced-banner__text {
-    color: var(--muted-foreground);
-  }
-  .pending-unplaced-banner__link {
-    appearance: none;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    color: var(--info, oklch(0.72 0.15 230));
-    font-weight: 500;
-    font-family: inherit;
-    font-size: inherit;
-    padding: 0;
-  }
-  .pending-unplaced-banner__link:hover {
-    text-decoration: underline;
-  }
-
-  /* Reject / Keep chip. Reused by the Review panel's PendingDetail
-     so both surfaces look identical. Default flow = block, right-
-     aligned (panel + inline-widget block flavour use this). The
-     inline widget overrides below to flow next to text instead. */
-  .pending-edit__actions {
-    display: flex;
-    gap: 2px;
-    width: fit-content;
-    margin-left: auto;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 2px;
-    background-color: var(--muted);
-    align-items: center;
-  }
-  /* Inline widget: chip flows next to the added text instead of
-     floating right on its own line. */
-  .ProseMirror .pending-add-widget--inline .pending-edit__actions {
-    display: inline-flex;
-    margin-left: 0.35em;
-    width: auto;
-  }
+  /* Reject / Keep chip — shared by SkillProposalTray + ReviewTray cards. */
   .pending-edit__action {
     appearance: none;
     border: none;
@@ -536,381 +171,6 @@
     cursor: not-allowed;
     opacity: 0.5;
   }
-
-  /* Prose-mode tone blocks (DiffHunkProse / proseDom). The block is
-     a `.ProseMirror` host carrying a tone modifier; rules below
-     paint the inner content with a faint bg tint and reset
-     paragraph margins so the highlight hugs the editor's natural
-     line height. Headings / lists / blockquotes get the same tint
-     since they're block elements rendered by the editor's
-     serializer.
-     Selector matches the bare `.pending-edit-tone` class so it
-     applies in both surfaces — the inline widget (inside the live
-     editor's `.ProseMirror`) AND the Review panel (rendered in its
-     own React tree, no `.ProseMirror` ancestor). */
-  .pending-edit-tone :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, pre) {
-    margin-top: 0;
-    margin-bottom: 0;
-    padding: 0 0.3em;
-    border-radius: 2px;
-  }
-  .pending-edit-tone--add :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, pre) {
-    background-color: color-mix(in oklch, oklch(0.72 0.18 145) 14%, transparent);
-  }
-  .pending-edit-tone--remove :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, pre) {
-    background-color: color-mix(in oklch, oklch(0.68 0.20 25) 12%, transparent);
-    text-decoration: line-through;
-    text-decoration-color: color-mix(in oklch, oklch(0.68 0.20 25) 60%, transparent);
-  }
-  /* List rendering — restore default bullet / number markers inside
-     the preview tone block. The editor body wraps its lists in a
-     custom NodeView that draws its own markers (and so `.ProseMirror
-     ul/ol { list-style: none; padding-left: 0 }` is set above to
-     prevent duplicate markers). But preview surfaces (Review panel
-     diff, inline-widget block content) render via plain DOMSerializer
-     with no NodeView — without overriding the list-style:none
-     inherited from `.ProseMirror`, list items render with no marker
-     at all. Restoring disc / decimal makes the preview match what
-     the user sees on the live page once Keep lands. */
-  .pending-edit-tone ul {
-    list-style: disc;
-    padding-left: 1.5em;
-  }
-  .pending-edit-tone ol {
-    list-style: decimal;
-    padding-left: 1.5em;
-  }
-  .pending-edit-tone li {
-    display: list-item;
-  }
-
-  /* Empty-body placeholder — the placeholderPlugin tags the first
-     block with data-placeholder=<hint> when the doc is effectively
-     empty (one block, no text or just a ZWS). ::before paints the
-     hint inline at the caret so the user sees a clear starting
-     prompt without affecting cursor or selection. The hint vanishes
-     the moment the block has any real content. */
-  .ProseMirror [data-placeholder]::before {
-    content: attr(data-placeholder);
-    color: var(--muted-foreground);
-    pointer-events: none;
-    position: absolute;
-    opacity: 0.6;
-  }
-  /* Hide the placeholder when the inline review plugin is showing
-     any pending widget or unplaced-banner overlay — the page isn't
-     visually empty, so the "Start writing…" hint contradicts what
-     the user sees. The class is set by inlineReviewPlugin's
-     `props.attributes` and only persists while pending entries
-     exist for this page. */
-  .ProseMirror.pm-has-pending [data-placeholder]::before {
-    content: none;
-  }
-
-  .ProseMirror:focus,
-  .ProseMirror:focus-visible,
-  .milkdown:focus,
-  .milkdown:focus-visible {
-    outline: none;
-  }
-
-  /* Card NodeViews (image, video). Each card wraps its media in a
-     contenteditable=false figure whose drag entry is owned by a
-     small handle pinned in the left gutter — the wrapper itself is
-     NOT draggable, so pointer events on media-internal native
-     controls (video seek bar, volume slider) reach the controls
-     without being hijacked by the card-move gesture. Margin matches
-     --prose-gap-block so the card sits flush with surrounding
-     paragraphs and a fresh paragraph inserted after the card lands
-     at a normal line height instead of pressed against the media. */
-  .ProseMirror .image-card,
-  .ProseMirror .video-card,
-  .ProseMirror .audio-card {
-    position: relative;
-    margin-top: var(--prose-gap-block);
-    margin-bottom: var(--prose-gap-block);
-  }
-  /* Hover affordance: surface a grab cursor on the card so the
-     drag-to-move gesture has a discoverable hint. Buttons / seek bar
-     inside the controls override this with their own cursor values,
-     so it only applies to the media area itself. */
-  .ProseMirror .image-card:hover,
-  .ProseMirror .video-card:hover,
-  .ProseMirror .audio-card:hover {
-    cursor: grab;
-  }
-  .ProseMirror .image-card:active,
-  .ProseMirror .video-card:active,
-  .ProseMirror .audio-card:active {
-    cursor: grabbing;
-  }
-  /* Title input on the audio card stays a text cursor — it's an
-     editable field, not part of the drag surface. */
-  .ProseMirror .audio-card .audio-title-input,
-  .ProseMirror .audio-card .audio-title-input:hover {
-    cursor: text;
-  }
-  /* macOS Live Text (Sonoma+) auto-detects text burned into media
-     bitmaps — image captions and video subtitle frames alike — and
-     makes that text selectable / draggable as a separate item.
-     Disabling user-select on the media element suppresses the Live
-     Text affordance so the card drags as one unit. */
-  .ProseMirror .image-card img,
-  .ProseMirror .video-card video {
-    -webkit-user-select: none;
-    user-select: none;
-  }
-  /* Image presentation: never overflow the column (max-width), keep the
-     aspect ratio (height auto), center, and soften the corners. Small
-     images (e.g. downloaded thumbnails) stay at natural size — centered
-     rather than upscaled, so they read crisp — while large images shrink
-     to fit. Applies to all editor images, saved articles included. */
-  .ProseMirror .image-card img {
-    display: block;
-    max-width: 100%;
-    height: auto;
-    margin-inline: auto;
-    border-radius: 8px;
-  }
-  .ProseMirror .image-card.ProseMirror-selectednode,
-  .ProseMirror .video-card.ProseMirror-selectednode,
-  .ProseMirror .audio-card.ProseMirror-selectednode {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
-    border-radius: 4px;
-  }
-
-  /* Custom video controls — pinned to the bottom of the video frame,
-     always visible. Each interactive element inside `.video-controls`
-     attaches `stopPropagation` in JS so PM's input pipeline never sees
-     its events; the rest of the card body remains a normal mousedown
-     surface that PM uses to start a card drag. */
-  .ProseMirror .video-card video {
-    display: block;
-  }
-
-  /* Shared media-controls layout — selected via the
-     `[data-card-controls]` attribute that MediaControls.ts sets on
-     its root. Buttons, seek bar, fill, thumb, and the time display
-     all look identical across video and audio. Per-variant container
-     styling (`.video-controls` for the absolute-positioned auto-
-     hiding gradient overlay, `.audio-controls` for the solid in-flow
-     bar) lives in the matching block below. */
-  .ProseMirror [data-card-controls] {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    font-size: 12px;
-    line-height: 1;
-    user-select: none;
-  }
-  .ProseMirror [data-card-controls] button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: 0;
-    color: inherit;
-    cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
-    line-height: 0;
-  }
-  .ProseMirror [data-card-controls] button svg {
-    display: block;
-  }
-  .ProseMirror [data-card-controls] .time {
-    font-variant-numeric: tabular-nums;
-    opacity: 0.85;
-  }
-  /* Two-element split for the scrubber: the outer `.seek-bar` is the
-     hit-area (taller than the visual line so vertical-axis grabs are
-     forgiving), the inner `.seek-track` is the visual line itself.
-     Earlier attempts at folding both into one element via padding +
-     background-clip rendered inconsistently on WKWebView (the
-     background didn't paint in some builds), so the split is the
-     structural fix. */
-  .ProseMirror [data-card-controls] .seek-bar {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    height: 16px;
-    cursor: pointer;
-  }
-  .ProseMirror [data-card-controls] .seek-track {
-    position: relative;
-    width: 100%;
-    height: 4px;
-    border-radius: 2px;
-  }
-  .ProseMirror [data-card-controls] .seek-fill {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    border-radius: 2px;
-    pointer-events: none;
-  }
-  .ProseMirror [data-card-controls] .seek-thumb {
-    position: absolute;
-    top: 50%;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-    pointer-events: none;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  }
-
-  /* Video controls — absolute-positioned overlay on the video frame,
-     dark gradient background, auto-hides during playback. */
-  .ProseMirror .video-controls {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
-    color: white;
-    border-radius: 0 0 4px 4px;
-    /* Auto-hide: invisible during playback, fades in on hover, and
-       stays pinned when paused / ended (is-paused toggled from
-       MediaControls.ts in sync with video.paused / video.ended). */
-    opacity: 0;
-    transition: opacity 180ms ease-out;
-  }
-  .ProseMirror .video-card:hover .video-controls,
-  .ProseMirror .video-controls.is-paused {
-    opacity: 1;
-  }
-  .ProseMirror .video-controls button:hover {
-    background: rgba(255, 255, 255, 0.18);
-  }
-  .ProseMirror .video-controls .seek-track {
-    background: rgba(255, 255, 255, 0.3);
-  }
-  .ProseMirror .video-controls .seek-fill {
-    background: white;
-  }
-  .ProseMirror .video-controls .seek-thumb {
-    background: white;
-  }
-
-  /* Audio card — no visual frame, so the user-supplied title input is
-     the card's identity. Single `--card` background with a border-top
-     between the title area and the controls so contrast stays
-     uniform across themes (an earlier split that used `--card` +
-     `--muted` left some palettes rendering the input on near-black
-     against a not-quite-white `--foreground`, which read as low-
-     contrast / barely visible).
-     The underlying `<audio>` element is hidden because the
-     MediaControls layer is the only player UI. */
-  .ProseMirror .audio-card {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--card);
-    color: var(--card-foreground, var(--foreground));
-    overflow: hidden;
-  }
-  .ProseMirror .audio-card audio {
-    display: none;
-  }
-  .ProseMirror .audio-card-body {
-    padding: 0;
-  }
-  /* Inner host wrapper that restores `contenteditable=true` for the
-     input — see AudioCardNodeView.ts for the WebKit-quirk rationale.
-     The wrapper carries no visual styling of its own; the input is
-     responsible for its own appearance. */
-  .ProseMirror .audio-title-host {
-    display: block;
-  }
-  .ProseMirror .audio-title-input {
-    display: block;
-    width: 100%;
-    padding: 10px 12px;
-    border: 0;
-    background: transparent;
-    color: inherit;
-    font-size: 14px;
-    font-family: inherit;
-    outline: none;
-  }
-  .ProseMirror .audio-title-input::placeholder {
-    color: var(--muted-foreground);
-  }
-  .ProseMirror .audio-controls {
-    background: transparent;
-    color: inherit;
-    border-top: 1px solid var(--border);
-  }
-  .ProseMirror .audio-controls button:hover {
-    background: var(--accent);
-  }
-  .ProseMirror .audio-controls .seek-track {
-    background: var(--border);
-  }
-  .ProseMirror .audio-controls .seek-fill {
-    background: currentColor;
-  }
-  .ProseMirror .audio-controls .seek-thumb {
-    background: currentColor;
-  }
-
-  /* PM mirrors NodeSelection into a DOM Range over the card wrapper so
-     the browser applies its system highlight color (macOS / WKWebView
-     paints this as a green-yellow tint when the accent color isn't
-     blue). The internal Range is needed for PM's selection sync; only
-     its visual paint is undesired. Suppress it on the card subtree —
-     the .ProseMirror-selectednode outline above stays as the canonical
-     selection affordance. */
-  .ProseMirror .image-card ::selection,
-  .ProseMirror .image-card::selection,
-  .ProseMirror .video-card ::selection,
-  .ProseMirror .video-card::selection,
-  .ProseMirror .audio-card ::selection,
-  .ProseMirror .audio-card::selection {
-    background: transparent;
-  }
-  /* …but allow text selection inside the audio title input (it's an
-     editable field, not part of the suppression rule above). */
-  .ProseMirror .audio-card .audio-title-input::selection {
-    background: var(--accent);
-    color: var(--accent-foreground);
-  }
-  /* Empty paragraphs (the trailing paragraph PM inserts after a card)
-     would otherwise collapse to height 0 in some WebKit builds and
-     leave the caret pressed against the previous block. Reserving one
-     line of height matches the visual rhythm of non-empty paragraphs.
-     --prose-lh-body is unitless (1.7), so multiply by 1em to get a
-     concrete height. */
-  .ProseMirror p:empty {
-    min-height: calc(1em * var(--prose-lh-body));
-  }
-
-  /* luma — avatar gradient */
-  .avatar-luma {
-    background: conic-gradient(
-      from 180deg at 50% 50%,
-      oklch(0.75 0.18 300),
-      oklch(0.70 0.20 250),
-      oklch(0.68 0.22 210),
-      oklch(0.72 0.18 270),
-      oklch(0.75 0.18 300)
-    );
-  }
-
-  .dark .avatar-luma {
-    background: conic-gradient(
-      from 180deg at 50% 50%,
-      oklch(0.55 0.20 300),
-      oklch(0.50 0.22 250),
-      oklch(0.48 0.24 210),
-      oklch(0.52 0.20 270),
-      oklch(0.55 0.20 300)
-    );
-  }
-
   /* Override @tailwindcss/typography blue defaults with design system colors */
   .prose {
     --tw-prose-body: var(--foreground);
@@ -953,7 +213,13 @@
      a true gray, keeping the same lightness (0.62). Scoped to
      .palette-graphite so plain dark mode is untouched; the invert
      tokens are the ones that apply because graphite also sets .dark
-     (the chat prose runs in prose-invert there). */
+     (the chat prose runs in prose-invert there).
+
+     The divider (hr) and blockquote border default to --border, a
+     translucent white — zero chroma itself, but the blue-hued graphite
+     bg shows through it and reads as faintly blue. An opaque neutral
+     gray covers the bg so no blue bleeds in. Lightness picked to match
+     the perceived weight of the translucent border on the dark bg. */
   .palette-graphite .prose {
     --tw-prose-bullets: oklch(0.62 0 0);
     --tw-prose-counters: oklch(0.62 0 0);
@@ -1064,110 +330,70 @@
 
 }
 
-/* ── Milkdown list-item-block (NodeView) ────────────────────────────
- * Unlayered on purpose: Tailwind v4 generates a `.list-item` utility
- * (display: list-item) into @layer utilities because the class name is
- * picked up by source scanning. Layered rules lose to higher-layer
- * rules regardless of specificity, so an `@layer base` rule of ours
- * with `.list-item { display: flex }` was being stomped.
+/* ── Chat markdown rules (divider / blockquote bar / table borders) ──
+ * Unlayered on purpose, same reason as the list-item block below: the
+ * @tailwindcss/typography plugin emits its `prose` element styles into
+ * a higher layer than `@layer base`, so a base-layer `--tw-prose-*`
+ * override is stomped regardless of specificity (this is why earlier
+ * token overrides had no visible effect). Setting border-color directly
+ * from outside any layer wins over the plugin's layered rules.
  *
- * State classes (bullet/ordered/checked/unchecked) live on the inner
- * `.milkdown-icon` span, NOT on .label-wrapper — selectors below
- * target the right element.
- */
-.ProseMirror .milkdown-list-item-block {
-  display: block;
-  padding: 0;
-  /* No inter-item margin: any in-flow gap between block siblings
-     inside contenteditable gets painted by the browser's cross-block
-     selection during a drag-select, showing as a horizontal bar in
-     the gutter. We let line-height alone do the breathing; if more
-     air is wanted later, push it onto `.ProseMirror p` line-height
-     (inside the item's own box, where it doesn't paint). */
-  margin-bottom: 0;
-}
-.ProseMirror .milkdown-list-item-block .list-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.375rem;
-}
-.ProseMirror .milkdown-list-item-block .list-item > .children {
-  min-width: 0;
-  flex: 1;
-}
-/* The base `.ProseMirror p { margin-bottom }` rule applies inside the
- * NodeView's content slot (the `li > p` fallback doesn't — the NodeView
- * injects `div.children > div.content-dom` between `li` and `p`).
- * Zero it out so list items don't get an extra block of spacing. */
-.ProseMirror .milkdown-list-item-block .content-dom > p {
-  margin-bottom: 0;
-}
-.ProseMirror .milkdown-list-item-block .label-wrapper {
-  color: var(--muted-foreground);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* Keep the icon column out of the user's text selection — without
-     this, dragging across items can include the contenteditable=false
-     wrapper in the selection rectangle, which paints a strip across
-     the marker gutter. */
-  user-select: none;
-  flex-shrink: 0;
-  height: 1.6em;
-  width: 1.5rem;
-}
-/* Bullet — decorative marker, dim color. The dot is the SVG body. */
-.ProseMirror .milkdown-list-item-block .milkdown-icon.bullet {
-  color: var(--muted-foreground);
-}
-.ProseMirror .milkdown-list-item-block .milkdown-icon.bullet svg {
-  width: 0.55em;
-  height: 0.55em;
-}
-/* Ordered — text label ("1.", "2."), not SVG. */
-.ProseMirror .milkdown-list-item-block .milkdown-icon.ordered {
-  font-variant-numeric: tabular-nums;
-  font-size: 0.95em;
-  color: var(--muted-foreground);
+ * --border is a translucent white that reads as a bright line over the
+ * dark canvas. Replace with an opaque neutral gray just above the dark
+ * background lightness (~0.209 dark / ~0.225 graphite) so the rules are
+ * barely-there section hints, not hard lines. Scoped to .dark so it
+ * covers every dark palette and leaves light mode untouched. */
+.dark .prose :is(hr, blockquote) {
+  border-color: oklch(0.32 0 0);
 }
 
-/* Checkboxes — span IS the box (border / background), SVG inside
- * carries the check mark. Mirrors shadcn's Checkbox: outlined
- * border-primary by default, filled bg-primary when checked, with
- * primary-foreground for the inner check. */
-.ProseMirror .milkdown-list-item-block .milkdown-icon.unchecked,
-.ProseMirror .milkdown-list-item-block .milkdown-icon.checked {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1em;
-  height: 1em;
-  border-radius: 3px;
-  box-sizing: border-box;
-  transition: background-color 80ms ease, border-color 80ms ease;
-}
-.ProseMirror .milkdown-list-item-block .milkdown-icon.unchecked {
-  border: 1.5px solid var(--border);
-  background: transparent;
-}
-.ProseMirror .milkdown-list-item-block .label-wrapper:hover .milkdown-icon.unchecked {
-  border-color: var(--primary);
-}
-.ProseMirror .milkdown-list-item-block .milkdown-icon.checked {
-  border: 1.5px solid var(--primary);
-  background: var(--primary);
-}
-.ProseMirror .milkdown-list-item-block .milkdown-icon.checked svg {
-  stroke: var(--primary-foreground);
-  width: 0.95em;
-  height: 0.95em;
+/* hr's default prose margin is 3em (~45px at our 15px scale), dwarfing
+   the 1px rule. Unlayered for the same layer-precedence reason; applies
+   in every theme. ~1.75em reads as a section break, not a gap. */
+.prose hr {
+  margin-top: 1.75em;
+  margin-bottom: 1.75em;
 }
 
-/* Pointer affordance covers the whole 1.5rem column, not just the
- * span box, so a slightly missed click still toggles. */
-.ProseMirror .milkdown-list-item-block .label-wrapper:has(.checked),
-.ProseMirror .milkdown-list-item-block .label-wrapper:has(.unchecked) {
-  cursor: pointer;
+/* Chat table — header-emphasis design. The prose default draws a rule
+   under every row, which reads as noisy "just lines". Instead: drop the
+   per-row rules and carry the structure on a tinted, bold header with a
+   single underline; roomier padding + top-aligned cells settle the
+   ragged row heights. Unlayered for the same layer-precedence reason. */
+.prose table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.dark .prose table {
+  border-color: oklch(0.32 0 0);
+}
+.prose thead th {
+  background-color: color-mix(in oklab, var(--muted) 55%, transparent);
+  font-weight: 600;
+  text-align: left;
+  vertical-align: bottom;
+  padding: 0.5em 0.7em;
+  border-bottom: 1px solid var(--border);
+}
+.dark .prose thead th {
+  border-bottom-color: oklch(0.4 0 0);
+}
+.prose tbody td {
+  vertical-align: top;
+  padding: 0.5em 0.7em;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background-color: color-mix(in oklab, var(--muted) 30%, transparent);
+}
+.dark .prose tbody td {
+  border-bottom-color: oklch(0.3 0 0);
+}
+.prose tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 :root {
@@ -1214,6 +440,16 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
+  /* Visualization categorical palette (AI artifacts + mermaid). Equal chroma
+     and lightness with the hue rotated in even steps → distinct series that
+     still read as one tonal family. Hues are anchored on the app's semantic
+     colors (info 260 / success 160 / warning 60). Light recipe: L 0.58. */
+  --viz-cat-1: oklch(0.58 0.15 260);
+  --viz-cat-2: oklch(0.58 0.15 320);
+  --viz-cat-3: oklch(0.58 0.15 160);
+  --viz-cat-4: oklch(0.58 0.15 60);
+  --viz-cat-5: oklch(0.58 0.15 20);
+  --viz-cat-6: oklch(0.58 0.15 200);
   /* Base radius for the Tailwind v4 radius scale. All `rounded-*`
      utilities derive from this (see @theme inline below), so a single
      bump propagates app-wide. Sized to sit one step inside the Tahoe
@@ -1251,6 +487,13 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-active: oklch(0.925 0 0);
   --sidebar-active-foreground: oklch(0.205 0 0);
+  /* App-wide "selected" interaction tone. The sidebar rows are the reference
+     implementation of the two-tone interaction (hover = --accent, selected =
+     a recessed tone), so --selected aliases the per-theme --sidebar-active
+     value; var() resolves against whichever palette class is active, so this
+     single :root declaration covers every theme — no per-palette copy. */
+  --selected: var(--sidebar-active);
+  --selected-foreground: var(--sidebar-active-foreground);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
   --proof-ai: oklch(0.78 0.10 270 / 0.18);
@@ -1258,19 +501,24 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
+  /* Neutral charcoal ramp (chroma 0), matched to Codex's three tiers:
+     canvas #181818 (--background) → raised surfaces / trays / previews
+     #1f1f1f (card/popover/sidebar) → interactive fills, incl. the composer
+     input #2d2d2d (muted/secondary/accent). Foreground/text/chart tokens are
+     unchanged. Graphite is the blue-tinted sibling — this stays neutral. */
+  --background: oklch(0.209 0 0);
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
+  --card: oklch(0.239 0 0);
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
+  --popover: oklch(0.239 0 0);
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.922 0 0);
   --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
+  --secondary: oklch(0.297 0 0);
   --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
+  --muted: oklch(0.297 0 0);
   --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
+  --accent: oklch(0.297 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
   --info: oklch(0.70 0.18 260);
@@ -1299,13 +547,21 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
+  /* Viz categorical palette — dark recipe lifts L to 0.72 (same C·H) so the
+     series stay vivid against dark surfaces. See :root for rationale. */
+  --viz-cat-1: oklch(0.72 0.15 260);
+  --viz-cat-2: oklch(0.72 0.15 320);
+  --viz-cat-3: oklch(0.72 0.15 160);
+  --viz-cat-4: oklch(0.72 0.15 60);
+  --viz-cat-5: oklch(0.72 0.15 20);
+  --viz-cat-6: oklch(0.72 0.15 200);
+  --sidebar: oklch(0.239 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary: oklch(0.488 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent: oklch(0.297 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-active: oklch(0.17 0 0);
+  --sidebar-active: oklch(0.209 0 0);
   --sidebar-active-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
@@ -1314,47 +570,13 @@
 }
 
 /* ── Palettes ──────────────────────────────────────────────────────────
-   각 팔레트는 완전한 토큰 셋을 정의한다.
-   - charcoal : #191919 베이스, 뉴트럴 다크
-   - graphite : #1D2024 베이스, 살짝 푸른빛 도는 다크 그레이
-   - olive    : #111001 베이스, 따뜻한 다크 (페이퍼 톤)
-   - paper    : #D2D2D2 베이스, 라이트 그레이 (warm-neutral, 종이 톤)
-   - mist     : #E9EAEC 베이스, 차가운 라이트 그레이 (graphite의 라이트 카운터파트)
-   theme-provider 가 <html> 에 `palette-*` 클래스를 부여한다.
-   다크 계열 팔레트는 Tailwind `dark:` variant 호환을 위해 `.dark` 도 함께 부여. */
-
-.palette-charcoal {
-  --background: oklch(0.185 0 0);
-  --foreground: oklch(0.93 0 0);
-  --card: oklch(0.215 0 0);
-  --card-foreground: oklch(0.93 0 0);
-  --popover: oklch(0.215 0 0);
-  --popover-foreground: oklch(0.93 0 0);
-  --primary: oklch(0.93 0 0);
-  --primary-foreground: oklch(0.185 0 0);
-  --secondary: oklch(0.245 0 0);
-  --secondary-foreground: oklch(0.93 0 0);
-  --muted: oklch(0.245 0 0);
-  --muted-foreground: oklch(0.63 0 0);
-  --accent: oklch(0.28 0 0);
-  --accent-foreground: oklch(0.93 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 8%);
-  --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.45 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.93 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.93 0 0);
-  --sidebar-accent: oklch(1 0 0 / 10%);
-  --sidebar-accent-foreground: oklch(0.93 0 0);
-  --sidebar-active: oklch(0.165 0 0);
-  --sidebar-active-foreground: oklch(0.93 0 0);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.45 0 0);
-  --sidebar-trigger: oklch(0.50 0 0);
-  --proof-ai: oklch(0.68 0.12 270 / 0.30);
-}
+   세 가지 테마:
+   - light    : :root 베이스 (aqua) — 별도 블록 불필요, :root 상속
+   - dark     : .dark 베이스, 뉴트럴 다크 — 별도 블록 불필요, .dark 상속
+   - graphite : 살짝 푸른빛 도는 다크 그레이 (.dark 위에 override)
+   theme-provider 가 <html> 에 `palette-*` + `dark`/`light` 클래스를 부여하고,
+   네이티브 창 appearance 도 setTheme 으로 동기화한다(비브런시 머티리얼 명/암 일치).
+   다크 계열은 Tailwind `dark:` variant 호환을 위해 `.dark` 도 함께 부여. */
 
 .palette-graphite {
   --background: oklch(0.225 0.007 258);
@@ -1377,7 +599,7 @@
   --ring: oklch(0.47 0.01 258);
   --sidebar: oklch(0.245 0.007 258);
   --sidebar-foreground: oklch(0.93 0.003 258);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary: oklch(0.488 0 0);
   --sidebar-primary-foreground: oklch(0.93 0.003 258);
   --sidebar-accent: oklch(1 0 0 / 10%);
   --sidebar-accent-foreground: oklch(0.93 0.003 258);
@@ -1387,105 +609,6 @@
   --sidebar-ring: oklch(0.47 0.01 258);
   --sidebar-trigger: oklch(0.51 0.005 258);
   --proof-ai: oklch(0.68 0.12 270 / 0.30);
-}
-
-.palette-olive {
-  --background: oklch(0.165 0.015 100);
-  --foreground: oklch(0.91 0.025 95);
-  --card: oklch(0.20 0.018 100);
-  --card-foreground: oklch(0.91 0.025 95);
-  --popover: oklch(0.20 0.018 100);
-  --popover-foreground: oklch(0.91 0.025 95);
-  --primary: oklch(0.91 0.025 95);
-  --primary-foreground: oklch(0.165 0.015 100);
-  --secondary: oklch(0.235 0.020 100);
-  --secondary-foreground: oklch(0.91 0.025 95);
-  --muted: oklch(0.235 0.020 100);
-  --muted-foreground: oklch(0.62 0.020 95);
-  --accent: oklch(0.275 0.025 100);
-  --accent-foreground: oklch(0.91 0.025 95);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(0.91 0.025 95 / 10%);
-  --input: oklch(0.91 0.025 95 / 14%);
-  --ring: oklch(0.45 0.04 100);
-  --sidebar: oklch(0.185 0.015 100);
-  --sidebar-foreground: oklch(0.91 0.025 95);
-  --sidebar-primary: oklch(0.72 0.14 92);
-  --sidebar-primary-foreground: oklch(0.165 0.015 100);
-  --sidebar-accent: oklch(0.91 0.025 95 / 10%);
-  --sidebar-accent-foreground: oklch(0.91 0.025 95);
-  --sidebar-active: oklch(0.155 0.015 100);
-  --sidebar-active-foreground: oklch(0.91 0.025 95);
-  --sidebar-border: oklch(0.91 0.025 95 / 8%);
-  --sidebar-ring: oklch(0.45 0.04 100);
-  --sidebar-trigger: oklch(0.55 0.03 100);
-  --proof-ai: oklch(0.7 0.12 95 / 0.25);
-}
-
-.palette-mist {
-  --background: oklch(0.93 0.005 258);
-  --foreground: oklch(0.23 0.008 258);
-  --card: oklch(0.97 0.004 258);
-  --card-foreground: oklch(0.23 0.008 258);
-  --popover: oklch(0.985 0.003 258);
-  --popover-foreground: oklch(0.23 0.008 258);
-  --primary: oklch(0.23 0.008 258);
-  --primary-foreground: oklch(0.97 0.004 258);
-  --secondary: oklch(0.88 0.006 258);
-  --secondary-foreground: oklch(0.23 0.008 258);
-  --muted: oklch(0.88 0.006 258);
-  --muted-foreground: oklch(0.5 0.008 258);
-  --accent: oklch(0.85 0.006 258);
-  --accent-foreground: oklch(0.23 0.008 258);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.23 0.008 258 / 10%);
-  --input: oklch(0.23 0.008 258 / 13%);
-  --ring: oklch(0.55 0.01 258);
-  --sidebar: oklch(0.91 0.005 258);
-  --sidebar-foreground: oklch(0.23 0.008 258);
-  --sidebar-primary: oklch(0.23 0.008 258);
-  --sidebar-primary-foreground: oklch(0.97 0.004 258);
-  --sidebar-accent: oklch(0.23 0.008 258 / 6%);
-  --sidebar-accent-foreground: oklch(0.23 0.008 258);
-  --sidebar-active: oklch(0.855 0.005 258);
-  --sidebar-active-foreground: oklch(0.23 0.008 258);
-  --sidebar-border: oklch(0.23 0.008 258 / 10%);
-  --sidebar-ring: oklch(0.55 0.01 258);
-  --sidebar-trigger: oklch(0.45 0.008 258);
-  --proof-ai: oklch(0.5 0.15 270 / 0.18);
-}
-
-.palette-paper {
-  --background: oklch(0.855 0 0);
-  --foreground: oklch(0.21 0 0);
-  --card: oklch(0.93 0 0);
-  --card-foreground: oklch(0.21 0 0);
-  --popover: oklch(0.955 0 0);
-  --popover-foreground: oklch(0.21 0 0);
-  --primary: oklch(0.21 0 0);
-  --primary-foreground: oklch(0.93 0 0);
-  --secondary: oklch(0.81 0 0);
-  --secondary-foreground: oklch(0.21 0 0);
-  --muted: oklch(0.81 0 0);
-  --muted-foreground: oklch(0.49 0 0);
-  --accent: oklch(0.79 0 0);
-  --accent-foreground: oklch(0.21 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0 0 0 / 12%);
-  --input: oklch(0 0 0 / 15%);
-  --ring: oklch(0.55 0 0);
-  --sidebar: oklch(0.835 0 0);
-  --sidebar-foreground: oklch(0.21 0 0);
-  --sidebar-primary: oklch(0.21 0 0);
-  --sidebar-primary-foreground: oklch(0.93 0 0);
-  --sidebar-accent: oklch(0 0 0 / 7%);
-  --sidebar-accent-foreground: oklch(0.21 0 0);
-  --sidebar-active: oklch(0.77 0 0);
-  --sidebar-active-foreground: oklch(0.21 0 0);
-  --sidebar-border: oklch(0 0 0 / 12%);
-  --sidebar-ring: oklch(0.55 0 0);
-  --sidebar-trigger: oklch(0.45 0 0);
-  --proof-ai: oklch(0.65 0.15 270 / 0.20);
 }
 
 @theme inline {
@@ -1536,6 +659,8 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-trigger: var(--sidebar-trigger);
+  --color-selected: var(--selected);
+  --color-selected-foreground: var(--selected-foreground);
   --font-heading: var(--font-sans);
   /* Default to Pretendard (Latin + Korean, unified metrics). Latin-only
      choices (Geist / Nunito) opt back in via their html.font-* class. */
@@ -1574,18 +699,27 @@
      comfortable even though UI is 14px; headings use a clean six-step
      ladder rather than the old em-based 1.6em / 1.3em that drifted
      when root size moved. line-height splits between body (loose,
-     1.7) and headings (tight, 1.25). */
-  --prose-base: 16px;
-  --prose-h1: 28px;
-  --prose-h2: 22px;
-  --prose-h3: 18px;
-  --prose-h4: 16px;
-  --prose-h5: 14px;
-  --prose-h6: 13px;
-  --prose-lh-body: 1.7;
+     1.6) and headings (tight, 1.25). */
+  --prose-base: 18px;
+  --prose-h1: 31px;
+  --prose-h2: 25px;
+  --prose-h3: 20px;
+  --prose-h4: 18px;
+  --prose-h5: 16px;
+  --prose-h6: 15px;
+  --prose-lh-body: 1.6;
   --prose-lh-heading: 1.25;
   --prose-gap-block: 14px;
   --prose-gap-heading: 28px;
+  /* Extra gap added to the TOP of every hard-broken line (Enter), so a hard
+     line break reads distinct from a soft wrap (which stays at line-height).
+     Tune this one knob to make prose tighter/airier. */
+  --prose-gap-line: 1em;
+  /* Matched to --prose-gap-line so a line's top gap DOESN'T change when it is
+     reclassified paragraph↔list mid-typing (typing "- " would otherwise shrink
+     the gap and jump the caret up). Keep these two in lockstep. */
+  --prose-gap-list: 1em;
+  --prose-lh-list: 1.6;
 
   /* ── Tahoe Design Tokens (Layer 1: Numeric) ──────────────────────────
      Raw scale values aligned to macOS Tahoe's 4pt grid and SF Pro
@@ -1613,6 +747,7 @@
      Cursor all land on 14px body for the same reason. Token names
      keep the HIG semantic (Body / Callout / Footnote) — only the
      raw values shift up by 1. */
+  --font-size-9: 10px;   /* Caption 2 — smallest; chrome labels (chat tabs) */
   --font-size-10: 11px;  /* Caption  */
   --font-size-11: 12px;  /* Footnote */
   --font-size-12: 13px;  /* Callout  */
@@ -1677,6 +812,7 @@
      without touching call sites. */
 
   /* Text scale — Apple HIG names (Caption, Footnote, ... LargeTitle). */
+  --text-caption-2: var(--font-size-9);
   --text-caption: var(--font-size-10);
   --text-footnote: var(--font-size-11);
   --text-callout: var(--font-size-12);

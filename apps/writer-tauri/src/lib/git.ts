@@ -152,9 +152,11 @@ export interface FileDiff {
 }
 
 export interface DiffLine {
-  /** `"add"` for `+` lines, `"remove"` for `-` lines. (No
-   * `"context"` because we request `--unified=0`.) */
-  kind: 'add' | 'remove'
+  /** `"add"` for `+` lines, `"remove"` for `-` lines, `"context"` for
+   * unchanged surrounding lines. Git diffs here request `--unified=0`
+   * so they never emit `"context"`; the pending-change diff
+   * (computePendingDiffLines) does, to show document context. */
+  kind: 'add' | 'remove' | 'context'
   /** Line text without the `+` / `-` prefix. */
   text: string
   /** 1-based line number from the unified-diff hunk header. For

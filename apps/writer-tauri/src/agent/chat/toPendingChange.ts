@@ -23,8 +23,11 @@
 import type { PendingChange, PendingEdit } from '@/state/pendingChangesStore'
 import type { KnownDoc } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
-import { createCustomWikiPage } from '@/state/wikiService'
+import { createCustomWikiPage, createGenericNote } from '@/state/wikiService'
+import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { stripDuplicateTitleHeading } from '@/lib/markdownText'
+import { splitFrontmatter } from '@/lib/frontmatter'
+import { applyEditsToText } from '@/lib/pendingDiff'
 
 export interface ChatEditPendingPayload {
   runId: string
@@ -55,10 +58,30 @@ export function mapChatEditToPendingChange(
   ctx: MapContext,
 ): Omit<PendingChange, 'status' | 'decidedAt' | 'viewedAt'> | null {
   const filePath = readString(payload.input.file_path)
-  if (!filePath) return null
+  if (!filePath) {
+    console.warn('[map] miss: no file_path', { toolName: payload.toolName })
+    return null
+  }
 
   const slug = resolveSlugForVaultPath(filePath, ctx.knownDocs, ctx.vaultPath)
-  if (!slug) return null
+  if (!slug) {
+    // For a brand-new `propose_write` this miss is EXPECTED — the caller falls through
+    // to materializeChatNewWikiPage which creates the page. For `propose_edit` /
+    // `propose_multi_edit` (toolName Edit/MultiEdit) there is NO such recovery, so a
+    // miss here is the "create-then-edit in one turn" bug. Log the edit's file_path +
+    // the catalog paths we matched against so a path MISMATCH (b) is distinguishable
+    // from a NOT-YET-CREATED note (a).
+    const getDoc = (s: string) => ctx.knownDocs.find((d) => d.slug === s)
+    console.warn('[map] miss: slug unresolved', {
+      toolName: payload.toolName,
+      filePath,
+      knownPaths: ctx.knownDocs
+        .filter((d) => !d.archivedAt)
+        .map((d) => pathForDoc(d, getDoc))
+        .filter(Boolean),
+    })
+    return null
+  }
 
   // System pages (system:log, system:index, system:conventions, ...)
   // are host-managed. We deterministically build their bodies — the
@@ -79,7 +102,13 @@ export function mapChatEditToPendingChange(
   }
 
   const edits = buildEditsForTool(payload.toolName, payload.input)
-  if (edits.length === 0) return null
+  if (edits.length === 0) {
+    console.warn('[map] miss: no edits built', {
+      toolName: payload.toolName,
+      inputKeys: Object.keys(payload.input),
+    })
+    return null
+  }
 
   return {
     id: payload.pendingId,
@@ -91,6 +120,8 @@ export function mapChatEditToPendingChange(
     groupId: payload.runId,
     createdAt: Date.now(),
     edits,
+    // Model-supplied `reason` → recorded as the commit body on Keep.
+    reason: readString(payload.input.reason).trim() || undefined,
     context: {
       threadId: ctx.threadId,
       runId: payload.runId,
@@ -103,57 +134,105 @@ export function mapChatEditToPendingChange(
   }
 }
 
-/** Create a brand-new wiki page for a chat `propose_write` whose target
- * path doesn't resolve to an existing doc, then return a PendingChange
- * staging its body for review. Mirrors ingest's
- * `materializeNewPageProposals`: the page is born with just its H1
- * title (so it exists in the catalog, shows in the sidebar, and can
- * host a staged change), and the body sits in the review queue until
- * the user Keeps it.
+/** Strip a leading YAML frontmatter block from AI-supplied whole-document
+ * content, keeping body only. The model reads notes via the built-in Read
+ * tool, which exposes the on-disk `---` block (slug/type/createdAt …), and
+ * often echoes it back into `propose_write` content. Those fields would
+ * otherwise render as literal body text AND get re-wrapped by the flush
+ * writer (double frontmatter on disk). The metadata is dropped, not merged:
+ * the catalog (`KnownDoc`) is the source of truth for slug/type, so an
+ * echoed block is at best redundant and at worst a slug clobber.
  *
- * Returns null when this isn't a new-wiki-page write — wrong tool
- * (only whole-file `propose_write`/`Write` creates pages; Edit /
- * MultiEdit target existing text, where a missing target is a real
- * miss), a non-wiki path (daily / writing have date / parent placement
- * rules this path doesn't model), no body, or an already-resolvable
- * path — and when page creation itself fails. The caller then falls
- * through to the existing "unmappable" warning. */
+ * No-op when there's no `---` block (splitFrontmatter returns body === raw).
+ * Apply ONLY to whole-document content (Write `content`, new-note body) —
+ * never to an Edit's `old_string` / `new_string` fragment, which carries no
+ * frontmatter and would be corrupted by a false match. */
+function normalizeAiBody(raw: string): string {
+  return splitFrontmatter(raw).body
+}
+
+/** The content to seed a brand-new file with, derived from whichever write-side
+ * tool the model used. `Write` carries the whole body in `content`; `Edit` /
+ * `MultiEdit` carry it in `new_string` (nothing to replace in a file that doesn't
+ * exist yet, so the new text IS the body). '' for other tools.
+ *
+ * Frontmatter is stripped here (whole-document boundary) so an echoed `---`
+ * block never reaches the staged body — see {@link normalizeAiBody}. */
+function newFileContentFor(toolName: string, input: Record<string, unknown>): string {
+  if (toolName === 'Write') return normalizeAiBody(readString(input.content))
+  if (toolName === 'Edit') return normalizeAiBody(readString(input.new_string))
+  if (toolName === 'MultiEdit') {
+    const edits = Array.isArray(input.edits) ? input.edits : []
+    return edits
+      .map((e) => readString((e as { new_string?: unknown }).new_string))
+      .filter(Boolean)
+      .join('\n')
+  }
+  return ''
+}
+
+/** Create a brand-new note for a chat write-side tool whose target path doesn't
+ * resolve to an existing doc, then return a PendingChange staging its body for review.
+ *
+ * Placement follows the FOLDER the model put in `file_path` (governed by CLAUDE.md):
+ * a `wiki/` path becomes a real wiki page (so it shows in the index and `[[links]]`
+ * resolve); any other folder is a generic note placed there; a bare filename falls back
+ * to the configured default folder (settings `defaultNoteFolder`, default 'inbox'). The
+ * note is born empty (so it exists in the catalog + sidebar and can host a staged
+ * change); the body sits in the review queue until the user Keeps.
+ *
+ * (Function name is legacy — kept so the caller in agent/chat/index.ts is untouched.)
+ *
+ * Handles any write-side tool whose path doesn't resolve — `Write` (body in
+ * `content`) and `Edit`/`MultiEdit` (body in `new_string`) — so an edit to a
+ * not-yet-created file is staged, not dropped. Returns null when there's no usable
+ * body, the path already resolves, or note creation fails. */
 export async function materializeChatNewWikiPage(
   payload: ChatEditPendingPayload,
   ctx: MapContext,
 ): Promise<Omit<PendingChange, 'status' | 'decidedAt' | 'viewedAt'> | null> {
-  if (payload.toolName !== 'Write') return null
   const filePath = readString(payload.input.file_path)
-  const content = readString(payload.input.content)
-  if (!filePath || !content.trim()) return null
+  if (!filePath) return null
+  const content = newFileContentFor(payload.toolName, payload.input)
+  if (!content.trim()) return null
 
   const relative = toVaultRelative(filePath, ctx.vaultPath)
-  if (!relative.startsWith('wiki/') || !relative.endsWith('.md')) return null
+  if (!relative.endsWith('.md')) return null
 
-  // Belt-and-suspenders: if the path already resolves to a live doc
-  // this isn't a creation (the pure mapper owns it). Guards against a
-  // duplicate page if this ever runs for a resolvable path.
+  // Belt-and-suspenders: if the path already resolves to a live doc this isn't a
+  // creation (the pure mapper owns it). Guards against a duplicate.
   if (resolveSlugForVaultPath(filePath, ctx.knownDocs, ctx.vaultPath)) return null
 
-  const name = relative.slice('wiki/'.length).replace(/\.md$/, '').trim()
+  // Split the model's path into folder + filename. The folder is the model's
+  // routing decision (governed by CLAUDE.md); the filename is always its own.
+  const parts = relative.split('/')
+  const name = (parts.pop() ?? '').replace(/\.md$/, '').trim()
   if (!name) return null
+  const folder = parts.join('/')
 
-  // The page title lives in the header field (createCustomWikiPage sets
-  // it from `name`), decoupled from the body — so we DON'T seed a `#
-  // name` heading into the body, which would render the title twice.
-  // The model often opens its content with that same title heading
-  // anyway; strip it (and only it — a different leading heading is real
-  // content) so the page doesn't show the name twice.
+  // The note's title comes from its filename (the create helpers set it from `name`),
+  // decoupled from the body — so we DON'T keep a leading `# name` heading that would
+  // render the title twice. Strip only that duplicate; a different leading heading is
+  // real content.
   const { body: stagedBody, removed } = stripDuplicateTitleHeading(content, name)
   if (removed) {
-    console.log('[chat] dropped duplicate title heading from new page body', { name })
+    console.log('[chat] dropped duplicate title heading from new note body', { name })
   }
-  const slug = await createCustomWikiPage(name)
+  // Route by the chosen folder: a `wiki/` path becomes a real wiki page (so it lands in
+  // the index and links resolve); any other folder is a generic note placed there; a
+  // bare filename falls back to the default folder.
+  const slug =
+    folder === 'wiki'
+      ? await createCustomWikiPage(name)
+      : await createGenericNote(name, folder || getDefaultNoteFolder())
   if (!slug) return null
 
   return {
     id: payload.pendingId,
     source: 'chat',
+    // This proposal just created the note (empty) to host its body — so a
+    // reject can archive the empty note instead of leaving an orphan.
+    createdNewNote: true,
     pageSlug: slug,
     groupId: payload.runId,
     createdAt: Date.now(),
@@ -165,6 +244,8 @@ export async function materializeChatNewWikiPage(
         after: stagedBody,
       },
     ],
+    // Model-supplied `reason` → recorded as the commit body on Keep.
+    reason: readString(payload.input.reason).trim() || undefined,
     context: {
       threadId: ctx.threadId,
       runId: payload.runId,
@@ -200,7 +281,7 @@ function resolveSlugForVaultPath(
  * a basename fallback for symlinked vault hosts. Kept inline rather
  * than imported to keep the chat → store adapter self-contained;
  * unifying the helpers is a Phase F cleanup. */
-function toVaultRelative(filePath: string, vaultPath: string | null): string {
+export function toVaultRelative(filePath: string, vaultPath: string | null): string {
   if (vaultPath) {
     const root = vaultPath.endsWith('/') ? vaultPath : vaultPath + '/'
     if (filePath.startsWith(root)) return filePath.slice(root.length)
@@ -250,7 +331,9 @@ function buildEditsForTool(
     ]
   }
   if (toolName === 'Write') {
-    const content = readString(input.content)
+    // Whole-document boundary: strip any echoed frontmatter so the `---`
+    // block doesn't land in the body (preview + applied doc + disk).
+    const content = normalizeAiBody(readString(input.content))
     return [
       {
         id: crypto.randomUUID(),
@@ -284,6 +367,31 @@ function buildEditsForTool(
     return out
   }
   return []
+}
+
+/** Re-derive the intended body when a SECOND (or later) write-side tool call
+ * in one turn targets a file already staged as a new note THIS turn (e.g.
+ * Write creates it, then Edit refines it) — the race `materializeRace.test.ts`
+ * reproduces without coordination. `newFileContentFor` is wrong here: it
+ * assumes "nothing exists yet" (Edit's `new_string` IS the whole body), which
+ * only holds for the very FIRST call. For a follow-up call there IS a staged
+ * body (from the prior call this turn) to edit against, so this reuses
+ * `buildEditsForTool` — the same existing-doc replace semantics
+ * (Edit → replace old_string→new_string, Write → whole-doc replace,
+ * MultiEdit → sequential replaces) — applied via the applier's own
+ * `applyEditsToText`, so there is exactly one implementation of "how an edit
+ * lands," not a second, divergent one.
+ *
+ * Returns `currentBody` unchanged when the tool's edit doesn't apply (e.g. an
+ * Edit whose `old_string` isn't found in the staged body) — the caller can
+ * detect this via `=== currentBody` and surface it instead of silently
+ * "succeeding" with nothing changed. */
+export function mergeEditIntoStagedBody(
+  currentBody: string,
+  toolName: string,
+  input: Record<string, unknown>,
+): string {
+  return applyEditsToText(currentBody, buildEditsForTool(toolName, input))
 }
 
 function readString(v: unknown): string {

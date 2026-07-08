@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { KnownDoc } from '@/state/docsStore'
-import { metaPathForDoc, pathForDoc, sanitizeFilename } from './docPaths'
+import { metaPathForDoc, pathForDoc, sanitizeFilename, usesFrontmatter } from './docPaths'
 
 function known(partial: Partial<KnownDoc> & { type: KnownDoc['type'] }): KnownDoc {
   return {
@@ -9,6 +9,7 @@ function known(partial: Partial<KnownDoc> & { type: KnownDoc['type'] }): KnownDo
     date: partial.date,
     title: partial.title,
     parentId: partial.parentId,
+    relPath: partial.relPath,
   }
 }
 
@@ -110,23 +111,27 @@ describe('pathForDoc', () => {
     expect(pathForDoc(note)).toBeNull()
   })
 
-  it('places articles under articles/ by title', () => {
-    expect(
-      pathForDoc(known({ type: 'article', title: 'A Recipe for Training' })),
-    ).toBe('articles/A Recipe for Training.md')
-  })
-
-  it('sanitises reserved characters in article titles', () => {
-    expect(
-      pathForDoc(known({ type: 'article', title: 'URL: https://example.com' })),
-    ).toBe('articles/URL- https---example.com.md')
-  })
-
-  it('falls back to Untitled for blank-titled articles', () => {
-    expect(pathForDoc(known({ type: 'article', title: '   ' }))).toBe(
-      'articles/Untitled.md',
+  it('returns a generic note at its stored relPath verbatim', () => {
+    expect(pathForDoc(known({ type: 'note', relPath: 'projects/Memo.md' }))).toBe(
+      'projects/Memo.md',
     )
-    expect(pathForDoc(known({ type: 'article' }))).toBe('articles/Untitled.md')
+    // Inbox captures (saved pages / youtube) are notes — placement is the
+    // relPath set at creation (inbox/<title>.md), returned verbatim.
+    expect(
+      pathForDoc(known({ type: 'note', relPath: 'inbox/Inside the Mind.md' })),
+    ).toBe('inbox/Inside the Mind.md')
+    // No relPath → no placement.
+    expect(pathForDoc(known({ type: 'note' }))).toBeNull()
+  })
+})
+
+describe('usesFrontmatter', () => {
+  it('is true for every type — all docs are frontmatter-native (no sidecars)', () => {
+    expect(usesFrontmatter(known({ type: 'daily' }))).toBe(true)
+    expect(usesFrontmatter(known({ type: 'writing' }))).toBe(true)
+    expect(usesFrontmatter(known({ type: 'note' }))).toBe(true)
+    expect(usesFrontmatter(known({ type: 'wiki:custom-x' }))).toBe(true)
+    expect(usesFrontmatter(known({ type: 'system:log' }))).toBe(true)
   })
 })
 

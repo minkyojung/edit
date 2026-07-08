@@ -62,6 +62,7 @@ function ReadOnlyHeader({
   return (
     <div
       ref={ref}
+      data-page-title
       aria-label={ariaLabel}
       className="mb-6 w-full text-3xl font-semibold leading-tight text-foreground"
     >

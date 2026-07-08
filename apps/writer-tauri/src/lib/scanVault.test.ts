@@ -16,6 +16,12 @@
 
 import { describe, expect, it } from 'vitest'
 import { mdRelToKnownDoc } from './scanVault'
+import {
+  frontmatterToMeta,
+  metaToFrontmatterFields,
+  type DocMetaFile,
+} from './docPaths'
+import { composeFrontmatter, splitFrontmatter } from './frontmatter'
 
 const noChildren = new Map<string, string>()
 
@@ -110,6 +116,75 @@ describe('mdRelToKnownDoc — system pages', () => {
   })
 })
 
+describe('mdRelToKnownDoc — inbox (captures)', () => {
+  it('maps inbox/<title>.md to a generic note carrying its path', () => {
+    expect(mdRelToKnownDoc('yt-1', 'inbox/Tim Urban TED.md', noChildren)).toEqual({
+      slug: 'yt-1',
+      type: 'note',
+      title: 'Tim Urban TED',
+      relPath: 'inbox/Tim Urban TED.md',
+    })
+  })
+
+  it('layers youtube frontmatter metadata onto the path-derived note', () => {
+    const md = [
+      '---',
+      'slug: yt-2',
+      'sourceUrl: https://www.youtube.com/watch?v=arj7oStGLkU',
+      'siteName: TED',
+      'videoId: arj7oStGLkU',
+      'durationSec: 843',
+      'thumbnailUrl: https://i.ytimg.com/vi/arj7oStGLkU/hq.jpg',
+      '---',
+      '',
+      '[00:12] So in college...',
+    ].join('\n')
+    const { data } = splitFrontmatter(md)
+    const doc = mdRelToKnownDoc('yt-2', 'inbox/Master Procrastinator.md', noChildren, frontmatterToMeta(data))
+    expect(doc).toEqual({
+      slug: 'yt-2',
+      type: 'note',
+      title: 'Master Procrastinator',
+      relPath: 'inbox/Master Procrastinator.md',
+      sourceUrl: 'https://www.youtube.com/watch?v=arj7oStGLkU',
+      siteName: 'TED',
+      videoId: 'arj7oStGLkU',
+      durationSec: 843,
+      thumbnailUrl: 'https://i.ytimg.com/vi/arj7oStGLkU/hq.jpg',
+    })
+  })
+})
+
+describe('mdRelToKnownDoc — generic notes (folder-tree mode)', () => {
+  it('maps any other .md to a note carrying its path, when allowed', () => {
+    expect(mdRelToKnownDoc('n1', 'projects/Memo.md', noChildren, {}, true)).toEqual({
+      slug: 'n1',
+      type: 'note',
+      title: 'Memo',
+      relPath: 'projects/Memo.md',
+    })
+  })
+
+  it('handles a root-level note', () => {
+    expect(mdRelToKnownDoc('n2', 'README.md', noChildren, {}, true)).toMatchObject({
+      type: 'note',
+      title: 'README',
+      relPath: 'README.md',
+    })
+  })
+
+  it('still skips unrecognised paths when allowGeneric is off (default)', () => {
+    expect(mdRelToKnownDoc('n3', 'projects/Memo.md', noChildren)).toBeNull()
+  })
+
+  it('prefers a recognised type over generic, even when allowed', () => {
+    expect(mdRelToKnownDoc('w1', 'wiki/Tom.md', noChildren, {}, true)).toMatchObject({
+      type: 'wiki:custom-w1',
+      title: 'Tom',
+    })
+  })
+})
+
 describe('mdRelToKnownDoc — unknown paths', () => {
   it('returns null for paths outside the four recognised subdirectories', () => {
     expect(mdRelToKnownDoc('s1', 'random.md', noChildren)).toBeNull()
@@ -123,5 +198,175 @@ describe('mdRelToKnownDoc — unknown paths', () => {
     // in depth so a direct caller can't pass a sidecar by mistake.
     expect(mdRelToKnownDoc('s1', 'wiki/Tom.meta.json', noChildren)).toBeNull()
     expect(mdRelToKnownDoc('s1', 'wiki/Tom.ydoc', noChildren)).toBeNull()
+  })
+})
+
+// ── Frontmatter read path ────────────────────────────────────────────
+// The file-first metadata home: when a doc's metadata lives in its own
+// `---` block instead of a `.meta.json` sidecar, frontmatterToMeta maps
+// it back to the same sidecar shape the catalog overlay reads.
+
+describe('frontmatterToMeta', () => {
+  it('passes through string identity + soft-state fields', () => {
+    expect(
+      frontmatterToMeta({
+        slug: 'abc123',
+        createdAt: '2026-06-11T00:00:00.000Z',
+        archivedFromParent: 'daily-xyz',
+      }),
+    ).toEqual({
+      slug: 'abc123',
+      createdAt: '2026-06-11T00:00:00.000Z',
+      archivedFromParent: 'daily-xyz',
+    })
+  })
+
+  it('coerces numeric fields from their string form', () => {
+    expect(frontmatterToMeta({ archivedAt: '1718000000000', aiImportance: '72' })).toEqual({
+      archivedAt: 1718000000000,
+      aiImportance: 72,
+    })
+  })
+
+  it('drops a non-numeric archivedAt rather than storing NaN', () => {
+    expect(frontmatterToMeta({ slug: 'x', archivedAt: 'oops' })).toEqual({ slug: 'x' })
+  })
+
+  it('restores article source metadata', () => {
+    expect(
+      frontmatterToMeta({
+        slug: 'a1',
+        sourceUrl: 'https://x.com/p',
+        siteName: 'X',
+        savedAt: '2026-06-10',
+      }),
+    ).toEqual({
+      slug: 'a1',
+      sourceUrl: 'https://x.com/p',
+      siteName: 'X',
+      savedAt: '2026-06-10',
+    })
+  })
+
+  it('ignores unrecognised keys', () => {
+    expect(frontmatterToMeta({ slug: 'x', somethingNew: 'ignored' })).toEqual({ slug: 'x' })
+  })
+})
+
+describe('frontmatter → KnownDoc (read path logic)', () => {
+  it('rebuilds an archived article from its frontmatter block', () => {
+    const md = [
+      '---',
+      'slug: art-1',
+      'sourceUrl: https://example.com/post',
+      'siteName: Example',
+      'archivedAt: 1718000000000',
+      '---',
+      '',
+      'Article body here.',
+    ].join('\n')
+
+    const { data } = splitFrontmatter(md)
+    const doc = mdRelToKnownDoc('art-1', 'articles/My Saved Post.md', noChildren, frontmatterToMeta(data))
+
+    expect(doc).toEqual({
+      slug: 'art-1',
+      type: 'note',
+      title: 'My Saved Post',
+      relPath: 'articles/My Saved Post.md',
+      sourceUrl: 'https://example.com/post',
+      siteName: 'Example',
+      archivedAt: 1718000000000,
+    })
+  })
+
+  it('takes the title from the filename verbatim (Obsidian-style)', () => {
+    const { data } = splitFrontmatter('---\nslug: w1\n---\n\nbody')
+    const daily = new Map([['2026-06-08', 'daily-1']])
+    const doc = mdRelToKnownDoc('w1', 'daily/2026-06-08/Untitled.md', daily, frontmatterToMeta(data))
+
+    expect(doc?.title).toBe('Untitled') // shown literally, no placeholder flag
+    expect(doc?.type).toBe('writing')
+    expect(doc?.parentId).toBe('daily-1')
+  })
+})
+
+// The read and write mappings are inverses. This round-trip is the guard
+// that keeps them in lockstep: write a doc's metadata to frontmatter, read
+// it back, and it must reconstruct the same fields. A field added to one
+// mapping but not the other fails here rather than silently losing data on
+// the first save of a frontmatter-native doc.
+describe('meta ⇄ frontmatter round-trip', () => {
+  it('reconstructs every emitted field through compose → split', () => {
+    const meta: Partial<DocMetaFile> = {
+      slug: 'note-9',
+      createdAt: '2026-06-11T00:00:00.000Z',
+      aiSummary: 'A one: line summary #with punctuation',
+      aiImportance: 64,
+      sourceUrl: 'https://example.com/watch?v=abc',
+      siteName: 'Example',
+      savedAt: '2026-06-10T09:00:00.000Z',
+      readAt: '2026-06-10T10:00:00.000Z',
+    }
+
+    const fields = metaToFrontmatterFields(meta)
+    const file = composeFrontmatter(fields, 'The note body.\n')
+    const { data, body } = splitFrontmatter(file)
+
+    expect(frontmatterToMeta(data)).toEqual(meta)
+    expect(body).toBe('The note body.\n')
+  })
+
+  it('round-trips the archive markers (number coercion survives)', () => {
+    const meta: Partial<DocMetaFile> = {
+      slug: 'arch-1',
+      archivedAt: 1718000000000,
+      archivedFromParent: 'daily-2',
+    }
+    const { data } = splitFrontmatter(composeFrontmatter(metaToFrontmatterFields(meta), 'b'))
+    expect(frontmatterToMeta(data)).toEqual(meta)
+  })
+
+  it('round-trips youtube capture fields (durationSec stays numeric)', () => {
+    const meta: Partial<DocMetaFile> = {
+      slug: 'yt-3',
+      sourceUrl: 'https://www.youtube.com/watch?v=arj7oStGLkU',
+      siteName: 'TED',
+      videoId: 'arj7oStGLkU',
+      durationSec: 843,
+      thumbnailUrl: 'https://i.ytimg.com/vi/arj7oStGLkU/hq.jpg',
+    }
+    const { data } = splitFrontmatter(composeFrontmatter(metaToFrontmatterFields(meta), 'transcript'))
+    expect(frontmatterToMeta(data)).toEqual(meta)
+  })
+
+  it('drops version (sidecar-only bookkeeping)', () => {
+    const fields = metaToFrontmatterFields({ version: 1, slug: 'x' })
+    expect(fields.slug).toBe('x')
+    expect('version' in fields).toBe(false)
+  })
+
+  it('round-trips highlights as a JSON scalar (quotes/apostrophes survive)', () => {
+    const meta: Partial<DocMetaFile> = {
+      slug: 'h-1',
+      highlights: [
+        {
+          id: 'h1',
+          quote: `it's "the most" — a, b: c`,
+          occurrence: 2,
+          note: '메모',
+          createdAt: '2026-06-15T00:00:00.000Z',
+        },
+      ],
+    }
+    const { data } = splitFrontmatter(
+      composeFrontmatter(metaToFrontmatterFields(meta), 'body'),
+    )
+    expect(frontmatterToMeta(data)).toEqual(meta)
+  })
+
+  it('emits no highlights field for an empty list', () => {
+    const fields = metaToFrontmatterFields({ slug: 'x', highlights: [] })
+    expect(fields.highlights).toBeUndefined()
   })
 })

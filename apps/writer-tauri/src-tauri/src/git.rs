@@ -20,8 +20,11 @@
 //! onboarding note.
 
 use serde::Serialize;
+use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
+
+use crate::appdata;
 
 /// Bookmark ref name used for the "last reviewed" pointer. The
 /// frontend's ActivityView shows commits in `<this-ref>..HEAD` and
@@ -42,6 +45,13 @@ const DEFAULT_GITIGNORE: &str = "# Manila vault gitignore — managed by the app
 # tracking it just bloats history. The .meta.json sidecar IS tracked\n\
 # because it carries durable metadata (aiSummary, archivedAt, …).\n\
 *.ydoc\n\
+\n\
+# GitHub-activity cache (SQLite). Derived from GitHub on demand, binary,\n\
+# and the WAL churns constantly — tracking it bloats history and risks\n\
+# corruption across devices. The connector rebuilds it when missing.\n\
+events.db\n\
+events.db-wal\n\
+events.db-shm\n\
 \n\
 # Chat thread state — per-session JSON the app stores so the Chat\n\
 # panel can resume mid-thread. Pure ephemeral state; users don't read\n\
@@ -123,21 +133,23 @@ pub struct DiffLine {
     pub line_num: u32,
 }
 
-/// Build a `Command` anchored at `vault_path` AND pinned to
-/// `vault_path/.git` via `--git-dir` + `--work-tree`. The explicit
-/// pins are what stop git's working-tree discovery from walking up
-/// to ancestor directories — without them a stray `.git/` in `$HOME`
-/// (common after an accidental `git init ~`) would silently swallow
-/// every command and we'd be operating on the wrong repo.
+/// Build a `Command` whose **work-tree is the vault** but whose **git data dir
+/// lives OUTSIDE the vault**, in the per-device app-data folder
+/// (`appdata::vault_git_dir`). Keeping `.git` out of the vault is what lets the
+/// vault sync cleanly via iCloud/Syncthing without corrupting the repo.
 ///
-/// Every git invocation in this module goes through this helper so
-/// the anchoring rule lives in exactly one place.
+/// Both `--git-dir` and `--work-tree` are passed explicitly on EVERY command,
+/// so (a) git never creates a `.git` file/folder in the vault, and (b) git's
+/// working-tree discovery can't walk up to a stray ancestor `.git/`.
+///
+/// Every git invocation in this module goes through this helper so the
+/// location rule lives in exactly one place.
 fn git_command(vault_path: &str) -> Command {
     let trimmed = vault_path.trim_end_matches('/');
-    let git_dir = format!("{trimmed}/.git");
+    let git_dir = appdata::vault_git_dir(vault_path).join(".git");
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(vault_path);
-    cmd.arg(format!("--git-dir={git_dir}"));
+    cmd.arg(format!("--git-dir={}", git_dir.display()));
     cmd.arg(format!("--work-tree={trimmed}"));
     cmd.stdin(Stdio::null());
     cmd
@@ -148,9 +160,24 @@ fn git_command(vault_path: &str) -> Command {
 /// non-zero — caller decides whether that's fatal or expected
 /// (e.g. `git commit` with nothing staged is a normal no-op).
 async fn run_git(vault_path: &str, args: &[&str]) -> Result<String, String> {
+    run_git_with_env(vault_path, args, &[]).await
+}
+
+/// Like {@link run_git} but also sets process environment variables on the
+/// spawned git. Used by `git_push` to hand the auth token to git's inline
+/// credential helper via `GH_TOKEN` — keeping the secret out of argv so it
+/// never shows up in `ps`.
+async fn run_git_with_env(
+    vault_path: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<String, String> {
     let mut cmd = git_command(vault_path);
     for a in args {
         cmd.arg(a);
+    }
+    for (k, v) in envs {
+        cmd.env(k, v);
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -168,7 +195,101 @@ async fn run_git(vault_path: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Initialise a git repo inside `vault_path` if one isn't already
+/// Move directory `src` to `dst`, falling back to a recursive copy + remove
+/// when a plain rename can't cross filesystems (e.g. the vault lives on an
+/// external/network drive while app-data is on the internal disk).
+fn move_dir(src: &Path, dst: &Path) -> Result<(), String> {
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir for move: {e}"))?;
+    }
+    if std::fs::rename(src, dst).is_ok() {
+        return Ok(());
+    }
+    // Cross-device (EXDEV) or similar — copy then remove the original.
+    copy_dir_recursive(src, dst)?;
+    std::fs::remove_dir_all(src).map_err(|e| format!("remove after copy: {e}"))?;
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("create {}: {e}", dst.display()))?;
+    for entry in std::fs::read_dir(src).map_err(|e| format!("read {}: {e}", src.display()))? {
+        let entry = entry.map_err(|e| format!("read entry: {e}"))?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if entry
+            .file_type()
+            .map_err(|e| format!("file_type: {e}"))?
+            .is_dir()
+        {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to).map_err(|e| format!("copy {}: {e}", from.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Move any in-vault `.git` OUT to the external app-data git-dir and pin its
+/// work-tree back at the vault. Used for (a) legacy vaults whose `.git` is
+/// still inside, and (b) freshly cloned vaults (clone always writes
+/// `<dest>/.git`). Idempotent: a no-op when the vault has no in-tree `.git`.
+pub async fn relocate_git_dir(vault_path: &str) -> Result<(), String> {
+    let in_tree = Path::new(vault_path).join(".git");
+    if !in_tree.exists() {
+        return Ok(());
+    }
+    // A `.git` FILE is our own gitdir POINTER (written by write_vault_git_pointer
+    // so a bare `git` inside the vault resolves to the external git-dir), not a
+    // real in-tree repo — never relocate it.
+    if in_tree.is_file() {
+        return Ok(());
+    }
+    let external = appdata::vault_git_dir(vault_path).join(".git");
+    if external.exists() {
+        // External already set up — don't clobber it (shouldn't normally
+        // co-exist with an in-tree .git).
+        return Ok(());
+    }
+    move_dir(&in_tree, &external)?;
+    // Pin the moved repo's work-tree back to the vault. (Every command also
+    // passes --work-tree explicitly, so this is belt-and-suspenders for any
+    // external `git` CLI use against this repo.)
+    run_git(vault_path, &["config", "core.worktree", vault_path]).await?;
+    Ok(())
+}
+
+/// Write a one-line `.git` FILE (a "gitdir pointer") in the vault root so a
+/// bare `git` invocation inside the vault resolves to the external app-data
+/// git-dir. This is what lets the agent run plain `git log` / `git show` /
+/// `git revert` from the vault (via Bash) without knowing the app-data path —
+/// checkpoints are discoverable the ordinary way. The heavy `.git/` object
+/// store stays in app-data (so the vault remains sync-clean); only this
+/// one-line pointer lives in the vault.
+///
+/// Idempotent: only rewrites when the content differs, so it doesn't touch the
+/// file (or wake the vault watcher) on every boot. Caller must ensure the
+/// external git-dir already exists.
+fn write_vault_git_pointer(vault_path: &str) -> Result<(), String> {
+    let external = appdata::vault_git_dir(vault_path).join(".git");
+    let pointer = Path::new(vault_path).join(".git");
+    // Never overwrite a real in-tree repo dir — relocate_git_dir handles those
+    // and runs before this. If a `.git` DIR is somehow still here, bail rather
+    // than clobber it.
+    if pointer.is_dir() {
+        return Ok(());
+    }
+    let content = format!("gitdir: {}\n", external.display());
+    if let Ok(existing) = std::fs::read_to_string(&pointer) {
+        if existing == content {
+            return Ok(());
+        }
+    }
+    std::fs::write(&pointer, content).map_err(|e| format!("write .git pointer failed: {e}"))?;
+    Ok(())
+}
+
+/// Initialise a git repo for `vault_path` if one isn't already
 /// there. Seeds `.gitignore` and produces an initial commit so
 /// subsequent revert / log operations have a base.
 ///
@@ -177,15 +298,19 @@ async fn run_git(vault_path: &str, args: &[&str]) -> Result<String, String> {
 /// the vault picker, so a no-op fast path matters.
 #[tauri::command]
 pub async fn git_init(vault_path: String) -> Result<(), String> {
-    // Already a repo? We check the filesystem directly rather than
-    // shelling out to `git rev-parse --git-dir` because that command
-    // walks ancestor directories looking for ANY `.git` — and a
-    // stray `.git/` in `$HOME` (common after an accidental
-    // `git init ~`) would make us treat the user's whole home as
-    // the vault repo. Direct path check is unambiguous: a repo lives
-    // in `<vault>/.git` or it doesn't.
-    let git_dir = std::path::Path::new(&vault_path).join(".git");
-    if git_dir.exists() {
+    // Migrate a legacy in-vault `.git` (or a just-cloned one) OUT to the
+    // per-device app-data git-dir so the vault stays sync-clean. Idempotent
+    // no-op when there's no in-tree `.git`.
+    relocate_git_dir(&vault_path).await?;
+
+    // Already initialised? The repo now lives OUTSIDE the vault, so check the
+    // external git-dir. Fast no-op — called on every boot.
+    let external = appdata::vault_git_dir(&vault_path).join(".git");
+    if external.exists() {
+        // Repo already set up. Ensure the in-vault gitdir pointer exists even
+        // for vaults whose repo predates it, so bare `git` inside the vault
+        // resolves here.
+        write_vault_git_pointer(&vault_path)?;
         return Ok(());
     }
 
@@ -205,29 +330,15 @@ pub async fn git_init(vault_path: String) -> Result<(), String> {
         return Err("git --version exited non-zero (broken install?)".to_string());
     }
 
-    // From this point on we're creating the repo inside `vault_path`.
-    // Use a plain (no `-C`, no `--git-dir`) `git init` so the new
-    // repo lands exactly where we expect. After this call `.git/`
-    // exists and subsequent `run_git` calls (which pass --git-dir
-    // explicitly) operate on it directly.
-    //
-    // `-b main` requires git 2.28+; shipped with every supported
-    // macOS for several years.
-    let init_status = Command::new("git")
-        .arg("init")
-        .arg("-b")
-        .arg("main")
-        .arg(&vault_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| format!("git init spawn failed: {e}"))?;
-    if !init_status.status.success() {
-        let stderr = String::from_utf8_lossy(&init_status.stderr).into_owned();
-        return Err(format!("git init failed: {}", stderr.trim()));
+    // Create the repo at the EXTERNAL git-dir with the vault as its work-tree
+    // — the dotfiles-repo pattern (`git --git-dir=X --work-tree=W init` leaves
+    // NO `.git` in W). git_command already supplies --git-dir/--work-tree, so
+    // run_git inits at the right place. `-b main` requires git 2.28+.
+    if let Some(parent) = external.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create git-dir parent failed: {e}"))?;
     }
+    run_git(&vault_path, &["init", "-b", "main"]).await?;
 
     // Identity: prefer the user's global config. If absent, fall
     // back to a sentinel identity so the initial commit doesn't
@@ -291,6 +402,10 @@ pub async fn git_init(vault_path: String) -> Result<(), String> {
     // (LLM ingest, user edits) move HEAD forward; the bookmark stays
     // at this base until the user clicks "Mark all reviewed".
     run_git(&vault_path, &["update-ref", LAST_REVIEWED_REF, "HEAD"]).await?;
+
+    // Drop the in-vault gitdir pointer so a bare `git` inside the vault finds
+    // this (external) repo — lets the agent revert/inspect via plain git.
+    write_vault_git_pointer(&vault_path)?;
 
     Ok(())
 }
@@ -416,6 +531,152 @@ pub async fn git_commit(vault_path: String, message: String) -> Result<Option<St
 
     let sha = run_git(&vault_path, &["rev-parse", "HEAD"]).await?;
     Ok(Some(sha.trim().to_string()))
+}
+
+/// Build the `-c credential.helper=…` args that feed git the auth token at
+/// push time WITHOUT placing the token on the command line. The first
+/// (empty) helper disables any inherited helper — e.g. the macOS keychain
+/// — so only ours answers; the second is an inline shell helper that
+/// echoes the token read from the `GH_TOKEN` environment variable. Only
+/// the variable *name* lives here, never the token, so it can't leak via
+/// `ps`. `git_push` supplies the actual value through the process env.
+fn credential_helper_args() -> Vec<String> {
+    vec![
+        "-c".into(),
+        "credential.helper=".into(),
+        "-c".into(),
+        "credential.helper=!f() { echo username=x-access-token; echo \"password=$GH_TOKEN\"; }; f"
+            .into(),
+    ]
+}
+
+/// Point `origin` at `url` — adding the remote, or updating it when it
+/// already exists (idempotent across re-runs). The URL carries no token;
+/// auth is injected per-push by {@link git_push}.
+pub async fn git_remote_set(vault_path: &str, url: &str) -> Result<(), String> {
+    if run_git(vault_path, &["remote", "add", "origin", url])
+        .await
+        .is_err()
+    {
+        run_git(vault_path, &["remote", "set-url", "origin", url]).await?;
+    }
+    Ok(())
+}
+
+/// Current branch name (e.g. `main` or `master`). Lets the backup push the
+/// vault's ACTUAL branch instead of assuming one — older vaults were
+/// `git init`'d before the `-b main` default and live on `master`.
+pub async fn git_current_branch(vault_path: &str) -> Result<String, String> {
+    let out = run_git(vault_path, &["rev-parse", "--abbrev-ref", "HEAD"]).await?;
+    Ok(out.trim().to_string())
+}
+
+/// Push `branch` to `origin`, authenticating with `token` via the inline
+/// credential helper. The token travels only through the `GH_TOKEN`
+/// environment variable (never argv), so it appears in neither `ps` nor
+/// `.git/config`. `GIT_TERMINAL_PROMPT=0` turns an auth failure into an
+/// error instead of a hang on an interactive prompt.
+pub async fn git_push(vault_path: &str, token: &str, branch: &str) -> Result<(), String> {
+    let mut args = credential_helper_args();
+    args.extend(["push", "-u", "origin", branch].iter().map(|s| s.to_string()));
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_git_with_env(
+        vault_path,
+        &arg_refs,
+        &[("GH_TOKEN", token), ("GIT_TERMINAL_PROMPT", "0")],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Clone `url` into `dest`, authenticating with `token` via the inline
+/// credential helper. Used by the restore slice: a fresh/empty vault on a new
+/// device pulls its entire history down. Unlike the other helpers this does
+/// NOT go through {@link git_command} — there's no `.git` to pin yet, so we run
+/// a plain `git clone` with the credential helper and the token-by-env, the
+/// same secret handling as {@link git_push} (token never on argv → never in
+/// `ps`). `dest` must be empty or non-existent (the caller guarantees this so
+/// we never clobber local notes). `GIT_TERMINAL_PROMPT=0` turns an auth failure
+/// into an error instead of an interactive hang.
+pub async fn git_clone(url: &str, dest: &str, token: &str) -> Result<(), String> {
+    let mut args = credential_helper_args();
+    args.extend(["clone", url, dest].iter().map(|s| s.to_string()));
+
+    let mut cmd = Command::new("git");
+    for a in &args {
+        cmd.arg(a);
+    }
+    cmd.env("GH_TOKEN", token);
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("git clone spawn failed: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let code = output.status.code().unwrap_or(-1);
+        return Err(format!("git clone exit {code}: {}", stderr.trim()));
+    }
+    Ok(())
+}
+
+/// Fetch `origin` into the vault's remote-tracking refs (`origin/<branch>`),
+/// authenticating with `token`. Does NOT touch the working tree — it only
+/// updates what git knows about the remote, so callers can compare local vs
+/// remote (ahead/behind) or fast-forward afterwards.
+pub async fn git_fetch(vault_path: &str, token: &str) -> Result<(), String> {
+    let mut args = credential_helper_args();
+    args.extend(["fetch", "origin"].iter().map(|s| s.to_string()));
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_git_with_env(
+        vault_path,
+        &arg_refs,
+        &[("GH_TOKEN", token), ("GIT_TERMINAL_PROMPT", "0")],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Receive remote changes by **fast-forward only**. Fetches `origin`, then —
+/// only if the local branch is strictly behind (an ancestor of the remote) —
+/// fast-forwards the working tree to `origin/<branch>`.
+///
+/// Returns `Ok(true)` when it advanced (or was already up to date), `Ok(false)`
+/// when the branches have **diverged** (both sides have unique commits → a
+/// fast-forward isn't possible). A diverged return is the signal for the
+/// conflict slice ("keep both"), NOT an error.
+///
+/// Why `--ff-only` (never a real merge): it refuses rather than create a merge
+/// commit or write `<<<<<<<` conflict markers into the user's notes. The
+/// working tree is therefore never left half-merged — either it advances
+/// cleanly or it doesn't move at all.
+///
+/// Divergence is detected with `merge-base --is-ancestor` (exit code, not
+/// string matching) so it's robust across git locales. A missing remote ref
+/// also yields `false` (nothing to fast-forward onto).
+pub async fn git_pull_ff(vault_path: &str, token: &str, branch: &str) -> Result<bool, String> {
+    git_fetch(vault_path, token).await?;
+    let remote_ref = format!("origin/{branch}");
+
+    // Is local HEAD an ancestor of the remote tip? exit 0 = yes (ff is safe),
+    // exit 1 = no (diverged, or remote ref absent). Other codes → treat as
+    // "can't ff" too; the underlying problem surfaces on the next real op.
+    let is_ancestor = git_command(vault_path)
+        .args(["merge-base", "--is-ancestor", "HEAD", &remote_ref])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .map_err(|e| format!("merge-base failed: {e}"))?;
+    if !is_ancestor.success() {
+        return Ok(false);
+    }
+
+    run_git(vault_path, &["merge", "--ff-only", &remote_ref]).await?;
+    Ok(true)
 }
 
 /// Return commits from `<ref_name>..HEAD`, newest first. Each entry
@@ -795,4 +1056,33 @@ fn parse_signed_range(part: &str, sign: char) -> Option<u32> {
     let body = part.strip_prefix(sign)?;
     let start_str = body.split(',').next()?;
     start_str.parse::<u32>().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credential_helper_disables_inherited_then_adds_inline() {
+        let args = credential_helper_args();
+        assert_eq!(args.len(), 4);
+        assert_eq!(args[0], "-c");
+        // Empty value clears any inherited helper (e.g. osxkeychain).
+        assert_eq!(args[1], "credential.helper=");
+        assert_eq!(args[2], "-c");
+        // The inline helper reads the token from the env var by NAME.
+        assert!(args[3].contains("$GH_TOKEN"));
+        assert!(args[3].contains("username=x-access-token"));
+    }
+
+    #[test]
+    fn credential_helper_args_carry_no_secret() {
+        // The token is supplied by git_push via the process env, never on
+        // the command line. These args reference only the variable name,
+        // so nothing here can leak a real token through `ps`.
+        for a in credential_helper_args() {
+            assert!(!a.contains("ghp_"));
+            assert!(!a.contains("gho_"));
+        }
+    }
 }

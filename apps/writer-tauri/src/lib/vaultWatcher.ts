@@ -1,41 +1,46 @@
 /**
- * Vault folder watcher — Phase 4.E.1 (logging-only baseline).
+ * Vault folder watcher — keeps the in-memory catalog in sync with the
+ * disk when files change from OUTSIDE the app (the Claude agent's
+ * `mv` / writes, Finder, git pull, another editor).
  *
  * Listens to the OS file-system event stream for the active vault
- * folder and prints filtered events to the console. NO mutations
- * happen here yet — this scaffold exists so we can:
+ * folder, filters it, and routes each change to a catalog mutation:
+ *   - create → `addKnownDoc` (a new note appears in the sidebar).
+ *   - remove → `removeKnownDoc` (drops it from the catalog; debounced
+ *     so a rename's remove leg can coalesce with its add leg).
+ *   - rename / move → `updateKnownDocPath` in place (keeps the slug,
+ *     open tab, and handle; refreshes the sidebar label on a rename).
+ *   - modify (content) → `reloadFromVault` re-reads the body into the
+ *     open editor. When the local copy has unsaved edits, this is a
+ *     CONFLICT: instead of clobbering either side, it marks the slug
+ *     and surfaces a toast with a "Reload" action.
  *
- *   1. Verify the Tauri plugin-fs `watch` API actually fires events
- *      for our vault on macOS (the dev platform).
- *   2. Observe the shape of those events (paths, action types,
- *      timing) to inform the router design in Phase 4.E.2.
- *   3. Validate that the existing `isOurRecentWrite()` echo filter
- *      from `vault.ts` correctly suppresses fsevents triggered by
- *      our own writes — without that, every flushDirty tick would
- *      ping-pong as an "external change".
+ * Own writes are suppressed via `isOurRecentWrite()` (content-hash
+ * based) from `vault.ts` — without it every 2s flush tick would
+ * ping-pong back as a phantom "external change". External wiki changes
+ * also invalidate the Tier 1 index, and create/remove bursts refresh
+ * the folder inventory (debounced).
  *
  * Lifecycle:
- *   - `startVaultWatcher()` — called once at app boot, gated on
+ *   - `startVaultWatcher()` — called at app boot, gated on
  *     `getActiveVaultPath()`. Returns the dispose function so the
  *     caller (App.tsx) can clean up on teardown.
- *   - Returns no-op when no vault is selected (vault picker hasn't
- *     run yet). Caller should re-invoke after picker completes —
- *     wiring for that lives in Phase 4.E.2.
- *
- * Out of scope for this phase:
- *   - Re-loading Y.Doc on external edit
- *   - Adding / removing knownDocs on external file create / delete
- *   - Conflict UI when app is editing a doc that gets modified
- *   - Debouncing event bursts (git checkout, batch rename)
+ *   - Returns no-op when no vault is selected (vault picker hasn't run
+ *     yet). App.tsx re-invokes it when the active vault changes.
  */
 
-import { watch } from '@tauri-apps/plugin-fs'
+import { watchImmediate } from '@tauri-apps/plugin-fs'
 import { normalize } from '@tauri-apps/api/path'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useDocsStore } from '@/state/docsStore'
 import { findSlugByVaultPath } from '@/state/docsStore/helpers'
+import { pathForDoc } from '@/lib/docPaths'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
-import { isOurRecentWrite } from './vault'
+import {
+  isOurRecentWrite,
+  listVaultTreeRecursive,
+  vaultFileExists,
+} from './vault'
 import { isDirty } from './docFileSync'
 import { buildKnownDocForExternalPath } from './scanVault'
 import { useExternalConflictStore } from '@/state/externalConflictStore'
@@ -55,6 +60,25 @@ function isActivityPath(rel: string): boolean {
 }
 
 let activeUnwatch: (() => void) | null = null
+
+/** Folder create/rename/delete AND non-markdown file add/remove (incl.
+ * external Finder changes) never surface as watchable `.md` files, so the
+ * file router below ignores them — leaving the sidebar's folder inventory
+ * (`knownFolders`) and attachment inventory (`knownFiles`) stale. Re-read
+ * both on any create/remove burst, debounced so a batch op (or our own
+ * write) collapses to one cheap walk. */
+let folderRefreshTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleFolderRefresh(): void {
+  if (folderRefreshTimer) clearTimeout(folderRefreshTimer)
+  folderRefreshTimer = setTimeout(() => {
+    folderRefreshTimer = null
+    void listVaultTreeRecursive()
+      .then(({ dirs, files }) =>
+        useDocsStore.setState({ knownFolders: dirs, knownFiles: files }),
+      )
+      .catch((err) => console.warn('[watch] tree refresh failed', err))
+  }, 400)
+}
 
 /** Start watching the active vault. Returns a disposer; calling it
  * (or `stopVaultWatcher`) tears the watcher down. Safe to call
@@ -79,14 +103,19 @@ export async function startVaultWatcher(): Promise<() => void> {
   const vaultPath = await normalize(rawVaultPath)
 
   console.log('[watch] starting on', vaultPath)
-  const unwatch = await watch(
+  const unwatch = await watchImmediate(
     vaultPath,
     (event) => {
-      // Tauri's `watch` callback fires for every fsevent. On macOS
+      // Tauri's watch callback fires for every fsevent. On macOS
       // the event shape is `{ type: { create: {...} | modify: {...} | remove: {...} }, paths: [...] }`.
       // Paths can be either vault-relative (most events) or absolute
       // (whole-dir metadata pings) — `toVaultRelative` normalises.
       if (!isActionableEvent(event)) return
+
+      // A create/remove burst may be a folder add / rename / delete (or
+      // a file add/remove that creates/empties a folder) — refresh the
+      // folder inventory so empty + renamed folders stay in sync.
+      if (isCreateOrRemoveEvent(event)) scheduleFolderRefresh()
 
       const rawPaths = Array.isArray(event.paths) ? event.paths : []
       const relPaths = rawPaths.map((p) => toVaultRelative(p, vaultPath))
@@ -106,6 +135,8 @@ export async function startVaultWatcher(): Promise<() => void> {
       // listener signature is sync.
       void resolveAndDispatch(event, candidates, rawPaths)
     },
+    // watchImmediate (no debounce) — external edits reflect right away;
+    // the default debounced `watch` was adding latency / missing events.
     { recursive: true },
   )
   activeUnwatch = unwatch
@@ -188,6 +219,68 @@ function isActionableEvent(event: { type: unknown }): boolean {
   return false
 }
 
+/** True for create or remove fsevents (folder churn shows up as these,
+ * never as `modify`). Used to gate the folder-inventory refresh so plain
+ * file edits don't trigger a dir walk. */
+function isCreateOrRemoveEvent(event: { type: unknown }): boolean {
+  const type = event.type as
+    | { create?: unknown; remove?: unknown }
+    | undefined
+  if (!type) return false
+  return ('create' in type && !!type.create) || ('remove' in type && !!type.remove)
+}
+
+/** Pure routing decisions extracted from the watcher handlers so they
+ * can be regression-tested without spinning up the fs event stream, a
+ * vault on disk, or the store. The handlers below call these; the live
+ * verification covers the I/O wiring around them. Three decisions, each
+ * a spot we actually shipped a bug at:
+ *
+ *   A. {@link classifyModify} — a `modify` event is a move/rename
+ *      (`kind:'rename'`) vs a plain content save (everything else →
+ *      reload). Getting this wrong routed external moves through reload,
+ *      so the open tab closed and reopened instead of following the file.
+ *   B. {@link renameLeg} — a single rename event names one path with no
+ *      direction, so disk presence decides whether it's the move's
+ *      destination (add) or its source (remove).
+ *   C. {@link planReappear} — when a rebuilt doc shares a slug with a
+ *      known one, decide whether to add (new), update placement+label
+ *      (move/rename), or no-op (echo). Skipping the title refresh left
+ *      the sidebar row showing the pre-rename name.
+ */
+export type ModifyRoute = 'rename' | 'reload'
+export function classifyModify(kind: string | undefined): ModifyRoute {
+  return kind === 'rename' ? 'rename' : 'reload'
+}
+
+export type RenameLeg = 'add' | 'remove'
+export function renameLeg(existsOnDisk: boolean): RenameLeg {
+  return existsOnDisk ? 'add' : 'remove'
+}
+
+export type ReappearPlan =
+  | { kind: 'add' }
+  | { kind: 'update'; relPath: string; title: string | undefined }
+  | { kind: 'noop' }
+
+/** Decide what to do when a freshly built KnownDoc lands. `existing` is
+ * the catalog entry sharing its slug (undefined when none). A blank
+ * `rebuilt.relPath` can't reposition anything, so it degrades to no-op
+ * rather than writing an empty placement. */
+export function planReappear(
+  existing: { relPath?: string; title?: string } | undefined,
+  rebuilt: { relPath?: string; title?: string },
+): ReappearPlan {
+  if (!existing) return { kind: 'add' }
+  if (
+    rebuilt.relPath &&
+    (existing.relPath !== rebuilt.relPath || existing.title !== rebuilt.title)
+  ) {
+    return { kind: 'update', relPath: rebuilt.relPath, title: rebuilt.title }
+  }
+  return { kind: 'noop' }
+}
+
 /** Classify a single external fsevent and dispatch each path to the
  * matching handler stub. Phase 4.E.2 — no mutations yet; handlers
  * log a classification line so we can verify the router's decisions
@@ -224,10 +317,17 @@ function dispatchEvent(event: { type: unknown }, paths: string[]): void {
     return
   }
   if ('modify' in type && type.modify) {
-    // `kind: 'data'` is the only modify variant that reaches here —
-    // `isActionableEvent` already filtered out `metadata`. A future
-    // `rename` kind would also land in `modify`; route it to add /
-    // remove based on shape when Phase 4.E.3 needs it.
+    // macOS notify delivers an external move/rename as a pair of
+    // `modify`/`rename`/`mode:'any'` events — one naming the old path,
+    // one the new — NOT as create+remove. Route those to the rename
+    // handler (which splits them into the add / remove legs A2's
+    // move-coalescing already understands). Plain content saves arrive
+    // as `kind: 'data'` and still reload in place.
+    const kind = (type.modify as { kind?: string }).kind
+    if (classifyModify(kind) === 'rename') {
+      for (const rel of paths) void handleExternalRename(rel)
+      return
+    }
     for (const rel of paths) handleExternalReload(rel)
     return
   }
@@ -245,7 +345,7 @@ function dispatchEvent(event: { type: unknown }, paths: string[]): void {
  *   3. Local copy dirty → skip with a console warning. The user has
  *      unsaved edits queued; silently overwriting them with the
  *      external version would lose work. Phase 4.E.4 surfaces this
- *      as a banner with a "다시 불러오기" action; for now the user
+ *      as a banner with a "Reload" action; for now the user
  *      can manually close-and-reopen the tab to force a reload.
  *   4. Clean + open → call the store's reloadFromVault action, which
  *      re-reads the body and applies it to the live Y.Doc.
@@ -324,14 +424,27 @@ function handleExternalAdd(rel: string): void {
   void buildKnownDocForExternalPath(rel, state.knownDocs)
     .then((doc) => {
       if (!doc) return
-      // The catalog may have changed between the await above and now
-      // (a near-simultaneous bootstrap rerun, or another watcher
-      // event). Re-fetch to keep the add idempotent against any other
-      // path that might have just added the same slug.
       const live = useDocsStore.getState()
-      if (live.knownDocs.some((d) => d.slug === doc.slug)) return
-      console.log('[vault:add] external doc added', { rel, slug: doc.slug })
-      live.addKnownDoc(doc)
+      const existing = live.knownDocs.find((d) => d.slug === doc.slug)
+      const plan = planReappear(existing, doc)
+      if (plan.kind === 'add') {
+        console.log('[vault:add] external doc added', { rel, slug: doc.slug })
+        live.addKnownDoc(doc)
+        return
+      }
+      // Same note (frontmatter slug) reappearing = an external
+      // move/rename. Cancel any pending delete for it (the remove leg of
+      // the move) so the open tab + handle survive, then update its
+      // placement IN PLACE when it actually shifted. For a generic note
+      // both the placement (`relPath`) AND the sidebar label (`title`,
+      // derived from the filename) follow the rename — a pure folder move
+      // keeps the filename so only relPath changes, but a rename changes
+      // the title too, and without refreshing it the row would keep the
+      // old name. A `noop` plan (echo: same path + title) skips the write.
+      cancelPendingRemove(doc.slug)
+      if (plan.kind === 'update') {
+        live.updateKnownDocPath(doc.slug, plan.relPath, plan.title)
+      }
     })
     .catch((err) => {
       console.warn('[vault:add] failed to build KnownDoc', { rel, err })
@@ -352,6 +465,39 @@ function handleExternalAdd(rel: string): void {
  * edits. The user moved the file to the trash deliberately; second-
  * guessing them with a confirm dialog would feel paternalistic.
  */
+/** One leg of an external move/rename. macOS notify names a single
+ * path per `rename` event with `mode: 'any'`, so the event itself
+ * can't say whether this path is the move's source or destination —
+ * we disambiguate by disk presence:
+ *
+ *   - exists now  → destination. Route like a create: `handleExternalAdd`
+ *     matches the file's frontmatter slug to the open doc and swaps its
+ *     relPath in place (tab + handle survive), or adds a brand-new doc.
+ *   - gone now     → source. Route like a delete: `handleExternalRemove`
+ *     defers removal so the destination leg can cancel it — turning the
+ *     two events back into a single "moved" rather than "deleted + added".
+ *
+ * The two legs can arrive in either order; the add/remove handlers'
+ * existing pending-remove coalescing makes the result order-independent. */
+async function handleExternalRename(rel: string): Promise<void> {
+  if (renameLeg(await vaultFileExists(rel)) === 'add') {
+    handleExternalAdd(rel)
+  } else {
+    handleExternalRemove(rel)
+  }
+}
+
+/** Pending deletes, keyed by slug. A remove event schedules one; a
+ * matching add (the other half of a move) cancels it. */
+const pendingRemove = new Map<string, ReturnType<typeof setTimeout>>()
+function cancelPendingRemove(slug: string): void {
+  const t = pendingRemove.get(slug)
+  if (t) {
+    clearTimeout(t)
+    pendingRemove.delete(slug)
+  }
+}
+
 function handleExternalRemove(rel: string): void {
   // A deletion is still an activity — `git add -A` in the next commit
   // will turn the missing file into a `D` change. We note it so the
@@ -363,32 +509,42 @@ function handleExternalRemove(rel: string): void {
   const state = useDocsStore.getState()
   const slug = findSlugByVaultPath(state.knownDocs, rel)
   if (!slug) return
-  console.log('[vault:remove] external doc removed', { rel, slug })
-  state.removeKnownDoc(slug)
+  // A move/rename fires remove(old)+add(new) with the SAME slug. Don't
+  // delete immediately — defer briefly. If the note reappears (the add
+  // leg updates its relPath in place), it's a move, not a delete. We
+  // re-check by path so the remove/add order doesn't matter: only
+  // delete if the doc still resolves to the removed path.
+  cancelPendingRemove(slug)
+  pendingRemove.set(
+    slug,
+    setTimeout(() => {
+      pendingRemove.delete(slug)
+      const live = useDocsStore.getState()
+      const doc = live.knownDocs.find((d) => d.slug === slug)
+      if (!doc) return
+      const bySlug = new Map(live.knownDocs.map((d) => [d.slug, d]))
+      if (pathForDoc(doc, (s) => bySlug.get(s)) === rel) {
+        console.log('[vault:remove] external doc removed', { rel, slug })
+        live.removeKnownDoc(slug)
+      }
+    }, 150),
+  )
 }
 
-/** True for vault-relative paths we want the router to consider.
+/** True for vault-relative paths the router should process.
  *
- * Only `.md` body files inside the four placement subdirectories
- * (`wiki/`, `daily/`, `_system/`, `threads/`) are interesting:
+ * Flat vault: EVERY `.md` anywhere in the vault is a note, so external
+ * adds/edits/deletes in arbitrary user folders (articles/, projects/,
+ * the root, …) must sync live — not just the old four system folders.
+ * (Echo suppression is content-hash based, so our own writes in any
+ * folder are still filtered before reaching the handlers.)
  *
- *   - `.meta.json` / `.ydoc` are app-internal sidecars; users
- *     don't edit them directly, and atomic-write tmp variants
- *     also share their suffix.
- *   - `.md.tmp` is leaked by the atomic-write pattern; the echo
- *     filter catches it but this gate is a defensive double-check.
- *   - Bare directory names (no extension) fire on metadata pings.
- *
- * Phase 4.E.2's router will use the same predicate to classify
- * what to do with each `.md`. */
+ * Excludes:
+ *   - non-`.md` (sidecars `.meta.json`, atomic-write `.md.tmp`, etc.),
+ *   - anything inside a dot-dir (`.git/`, `.obsidian/`) — noise. */
 function isWatchableBodyFile(rel: string): boolean {
   if (!rel.endsWith('.md')) return false
-  return (
-    rel.startsWith('wiki/') ||
-    rel.startsWith('daily/') ||
-    rel.startsWith('_system/') ||
-    rel.startsWith('threads/')
-  )
+  return !rel.split('/').some((seg) => seg.startsWith('.'))
 }
 
 // Dev-only console handle for manual testing.

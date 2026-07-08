@@ -19,7 +19,10 @@ use super::manager::SidecarManager;
 pub struct ChatStartArgs {
     pub run_id: String,
     pub model: String,
-    pub prompt: String,
+    /// Either a plain string or a ContentBlock array (when the user attached
+    /// files). Passed through verbatim; the SDK's MessageParam accepts both
+    /// forms for `content`.
+    pub prompt: Value,
     /// Either a single string or an array of strings (with
     /// SYSTEM_PROMPT_DYNAMIC_BOUNDARY sentinel). The frontend chooses
     /// the shape; we pass it through to the SDK verbatim, which
@@ -74,6 +77,19 @@ pub struct ChatStartArgs {
     /// review.
     #[serde(default)]
     pub builtin_tools: Option<Vec<String>>,
+    /// Security lockdown: block network egress + secret-file reads (SDK
+    /// sandbox + deny rules) so a prompt injection in captured content
+    /// can't exfiltrate. Omitted → the sidecar defaults it ON (secure by
+    /// default); the frontend forwards the user's Settings toggle.
+    #[serde(default)]
+    pub sandbox_enabled: Option<bool>,
+    /// Whether this run may delegate (Task) or activate skills (Skill).
+    /// Omitted → the sidecar defaults it ON for the trusted chat/plan
+    /// surfaces. The frontend sends `Some(false)` for untrusted-content
+    /// shapes (capture/intake) so injected content can't Task-delegate to a
+    /// full-toolset subagent and escape the least-privilege builtin set.
+    #[serde(default)]
+    pub allow_delegation: Option<bool>,
     /// Request fast mode (faster output) for this run. Forwarded to the
     /// sidecar which sets the SDK's `settings.fastMode`. The frontend only
     /// sends `Some(true)` after gating on model support; `None` = off.
@@ -97,6 +113,21 @@ pub struct ChatDecisionArgs {
     /// `{ "type": "reject", "message": "..." }` (ExitPlanMode) or
     /// `{ "answers": { ... } }` (AskUserQuestion).
     pub decision: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatEditAckArgs {
+    pub pending_id: String,
+    /// Whether the host actually queued this propose_edit/write/multi_edit
+    /// call into pendingChangesStore. The sidecar's PostToolUse hook awaits
+    /// this before letting the model treat the proposal as settled — false
+    /// (or a timeout) rewrites the tool's already-returned "queued" text
+    /// into a visible error the model can react to.
+    pub ok: bool,
+    /// Optional short reason surfaced in that rewritten error text.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -160,12 +191,35 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     if let Some(bt) = args.builtin_tools {
         params["builtinTools"] = json!(bt);
     }
+    if let Some(se) = args.sandbox_enabled {
+        params["sandboxEnabled"] = json!(se);
+    }
+    if let Some(ad) = args.allow_delegation {
+        params["allowDelegation"] = json!(ad);
+    }
     if let Some(fm) = args.fast_mode {
         params["fastMode"] = json!(fm);
     }
 
     let chat = manager.chat_client().await;
     chat.request("chat", Some(params))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Lists the models this account can actually use, from the SDK's session-init
+/// handshake (`query.supportedModels()`). The host filters its model picker to
+/// this set; on any error it falls back to the built-in list, so this is purely
+/// additive — a failure never blocks model selection.
+#[tauri::command]
+pub async fn claude_list_models(app: AppHandle) -> Result<Value, String> {
+    let manager = get_manager(&app)?;
+    manager
+        .try_inject_token(&app)
+        .await
+        .map_err(|e| e.to_string())?;
+    let chat = manager.chat_client().await;
+    chat.request("models", None)
         .await
         .map_err(|e| e.to_string())
 }
@@ -193,6 +247,27 @@ pub async fn claude_chat_decision(app: AppHandle, args: ChatDecisionArgs) -> Res
             "runId": args.run_id,
             "decisionId": args.decision_id,
             "decision": args.decision,
+        })),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Confirms (or denies) that a propose_edit/write/multi_edit proposal was
+/// actually queued into pendingChangesStore, once agent/chat/index.ts's
+/// edit-pending handling settles. Resolves the sidecar's PostToolUse hook
+/// wait (see server.mjs `#handleEditAck`), which otherwise fails open after
+/// its own timeout. Notification only — no response expected.
+#[tauri::command]
+pub async fn claude_chat_edit_ack(app: AppHandle, args: ChatEditAckArgs) -> Result<(), String> {
+    let manager = get_manager(&app)?;
+    let chat = manager.chat_client().await;
+    chat.notify(
+        "chat/edit-ack",
+        Some(json!({
+            "pendingId": args.pending_id,
+            "ok": args.ok,
+            "reason": args.reason,
         })),
     )
     .await

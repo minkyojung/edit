@@ -45,7 +45,7 @@ export function InlineCardFooter({
   return (
     <div
       className={cn(
-        'flex items-center gap-1.5 border-t px-3 py-1.5 text-xs',
+        'flex items-center gap-1.5 border-t px-3 py-1.5 text-footnote',
         tone === 'destructive'
           ? 'border-destructive/30 bg-destructive/15 text-destructive'
           : 'border-border/60 bg-muted/70 text-muted-foreground',

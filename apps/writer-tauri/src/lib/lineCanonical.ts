@@ -28,7 +28,7 @@ export function leadingMarkerLength(line: string): number {
  *   - wikilinks → bare label (`[[Sera]]` / `[Sera](note:..)` → `Sera`)
  *   - drop the leading block marker (heading/bullet/ordered/quote),
  *     tolerant of indentation
- *   - collapse whitespace around colons (`나이 : 47` → `나이:47`)
+ *   - collapse whitespace around colons (`age : 47` → `age:47`)
  *   - collapse remaining whitespace runs, then trim
  * CJK-friendly: only squeezes spacing the model commonly gets wrong;
  * never joins distinct words. */

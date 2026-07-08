@@ -34,7 +34,7 @@ export function CopyButton({ text }: { text: string }) {
       title={copied ? 'Copied' : 'Copy'}
       className="inline-flex items-center rounded p-0.5 text-muted-foreground/70 transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
     >
-      {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+      {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
     </button>
   )
 }

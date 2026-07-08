@@ -1,0 +1,49 @@
+import { describe, it, expect } from 'vitest'
+import {
+  DEFAULT_SKILLS,
+  DEFAULT_COMMANDS,
+  DEFAULT_AGENTS,
+  DEFAULT_CLAUDE_MD,
+} from './index'
+
+// Guards the bundled-defaults loader: the `.md` files are globbed + parsed at
+// build time, so these assert the content downstream seeders depend on.
+describe('bundled defaults', () => {
+  it('loads the undo skill with its (ai) grep', () => {
+    const undo = DEFAULT_SKILLS.find((s) => s.name === 'undo-ai-change')
+    expect(undo).toBeDefined()
+    expect(undo!.description).toContain('Reverse')
+    expect(undo!.body).toContain("git log --grep='(ai):'")
+  })
+
+  it('loads the three routine commands with $ARGUMENTS / createdAt', () => {
+    expect(DEFAULT_COMMANDS.map((c) => c.name)).toEqual([
+      'chat-to-wiki',
+      'daily-ingest',
+      'organize',
+    ])
+    const organize = DEFAULT_COMMANDS.find((c) => c.name === 'organize')!
+    expect(organize.body).toContain('$ARGUMENTS')
+    expect(organize.body).toContain('createdAt')
+  })
+
+  it('loads the four agent roles, carrying the model frontmatter', () => {
+    expect(DEFAULT_AGENTS.map((a) => a.name)).toEqual([
+      'default',
+      'proofreader',
+      'researcher',
+      'translator',
+    ])
+    expect(DEFAULT_AGENTS.find((a) => a.name === 'researcher')!.model).toBe('opus')
+    expect(DEFAULT_AGENTS.find((a) => a.name === 'translator')!.model).toBeUndefined()
+    // the default persona carries the proactive-memory + undo nudges
+    expect(DEFAULT_AGENTS.find((a) => a.name === 'default')!.body).toContain('second brain')
+    expect(DEFAULT_AGENTS.find((a) => a.name === 'default')!.body).toContain('undo-ai-change')
+  })
+
+  it('loads CLAUDE.md with the Preferences section inlined', () => {
+    expect(DEFAULT_CLAUDE_MD).toContain('# Wiki Maintainer')
+    expect(DEFAULT_CLAUDE_MD).toContain('## Preferences')
+    expect(DEFAULT_CLAUDE_MD).not.toContain('PREFERENCES_SECTION')
+  })
+})

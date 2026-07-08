@@ -1,7 +1,7 @@
 import { Toaster } from 'sonner'
 import { useTheme } from '@/components/theme-provider'
 
-const DARK_PALETTES = new Set(['charcoal', 'graphite', 'olive'])
+const DARK_PALETTES = new Set(['dark', 'graphite'])
 
 export function AppToaster() {
   const { palette } = useTheme()
@@ -15,7 +15,7 @@ export function AppToaster() {
       duration={5000}
       toastOptions={{
         classNames: {
-          toast: 'rounded-md border border-border bg-popover text-popover-foreground shadow-md',
+          toast: 'rounded-[28px] border border-border bg-popover text-popover-foreground shadow-md',
           description: 'text-muted-foreground',
           actionButton: 'rounded-sm bg-primary text-primary-foreground',
         },

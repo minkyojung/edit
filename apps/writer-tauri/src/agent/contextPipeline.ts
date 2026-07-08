@@ -5,9 +5,8 @@
 // the same prefix shape:
 //
 //   prefix (caching-friendly):
-//     - CLAUDE.md         (vault schema, user-editable)
+//     - CLAUDE.md         (vault schema + conventions, user-editable)
 //     - SELF PROFILE      (wiki:profile body)
-//     - CONVENTIONS       (wiki:conventions body)
 //
 //   suffix (consumer-specific):
 //     - chat embeds the current document past the SDK cache boundary
@@ -20,79 +19,42 @@
 // across SWE-bench / agentic benchmarks). That fixes the same
 // "unrelated context pulls in random wiki pages" failure mode chat
 // already fixed and lets the two flows share a cache prefix.
+//
+// Durable facts about the user are NOT carried as a separate "agent
+// memory" surface — they live in the wiki (entity pages + the
+// self-profile), which the agent edits through the normal proposal
+// flow and which is already injected here. There is no hidden
+// always-on scratchpad the agent writes to behind the user's back.
 
-import { readClaudeMd, readConventions, readSelfProfile } from '@/state/wikiService'
-
-/** Names of Tier 3 MCP tools the chat path opts into when the
- * sidecar has a vault path. Ingest does NOT include these in
- * `relayTools` — it relies on the SDK's built-in Read / Glob / Grep
- * preset (sidecar enables it via `tools: { preset: 'claude_code' }`)
- * plus its own `submit_ingest_result` output tool. Listing the chat
- * tools here keeps the chat call site unchanged. */
-const DEFAULT_TOOLS = ['read_page', 'search_wiki'] as const
-export type Tier3ToolName = (typeof DEFAULT_TOOLS)[number]
-
-export type AssembleContextMode = 'chat' | 'ingest'
+import { readClaudeMd, readSelfProfile } from '@/state/wikiService'
 
 export interface ContextBundle {
   /** Vault-root `CLAUDE.md` body. Karpathy / Claude Code schema
    * document — vault layout, three-tier rules, operations, tool
    * usage guidance, citation conventions. Shipped in both modes. */
   claudeMd: string
-  /** User-editable schema document (`wiki:conventions`). Small,
-   * cache-friendly, central to how the LLM understands the user's
-   * preferences. */
-  conventions: string
   /** User self-profile (`wiki:profile`) body. Grounds "who the user
    * is" before every downstream block. Empty when the page doesn't
    * exist yet. */
   selfProfile: string
-  /** Tier 3 tool names the chat consumer should pass to
-   * `relayTools`. Empty in ingest mode and when the chat caller
-   * opts out via `enableTools: false`. */
-  tools: Tier3ToolName[]
   /** Rough character count of the user-facing payload — diagnostics
    * only. */
   budgetUsed: number
 }
 
-export interface AssembleContextOptions {
-  /** Which consumer is calling. Both modes now return the same
-   * shape (CLAUDE.md + profile + conventions); the only behavioural
-   * difference is the default `tools` array. */
-  mode?: AssembleContextMode
-  /** When `false`, returns an empty `tools` array — for callers
-   * that explicitly don't want LLM-driven fetch. Default `true`. */
-  enableTools?: boolean
-}
-
 /** Assemble the LLM-facing context bundle. Concurrent reads under
  * the hood — independent state, so we fire them in parallel. */
-export async function assembleContext(
-  opts: AssembleContextOptions = {},
-): Promise<ContextBundle> {
-  const mode: AssembleContextMode = opts.mode ?? 'ingest'
-
-  const [claudeMd, conventions, selfProfile] = await Promise.all([
+export async function assembleContext(): Promise<ContextBundle> {
+  const [claudeMd, selfProfile] = await Promise.all([
     readClaudeMd(),
-    readConventions(),
     readSelfProfile(),
   ])
 
-  // Tier-3 MCP tools are chat-specific. Ingest uses the SDK's
-  // built-in Read / Glob / Grep preset + its own structured-output
-  // tool, so the array stays empty here regardless of `enableTools`.
-  const tools: Tier3ToolName[] =
-    mode === 'chat' && opts.enableTools !== false ? [...DEFAULT_TOOLS] : []
-
-  const budgetUsed =
-    claudeMd.length + conventions.length + selfProfile.length
+  const budgetUsed = claudeMd.length + selfProfile.length
 
   return {
     claudeMd,
-    conventions,
     selfProfile,
-    tools,
     budgetUsed,
   }
 }

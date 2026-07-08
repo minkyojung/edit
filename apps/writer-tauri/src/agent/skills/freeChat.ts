@@ -1,27 +1,19 @@
-// System prompt body for free-form chat. The bulk of the agent's
-// behaviour now lives in `CLAUDE.md` at the vault root — vault
-// layout, three-tier discipline, operations, tool usage rules,
-// citation conventions. The user can edit that file freely; this
-// constant only carries the framing the LLM needs at the chat
-// surface specifically (app context + response defaults).
+// FREE_CHAT_PROMPT — the default chat persona body.
+//
+// The content itself now lives in the bundled default agent file
+// `agent/defaults/agents/default.md` (one source of truth, seeded into the
+// vault at boot as `_system/agent/agents/default.md`). This module just
+// surfaces that same body as a constant for `resolveAgent`'s fallback — used
+// when the vault's `default.md` is missing/unreadable.
 //
 // Anatomy of the system prompt the chat runner assembles:
 //   1. SELF PROFILE   (wiki:profile body)
-//   2. CONVENTIONS    (wiki:conventions body, user-editable)
-//   3. CLAUDE.md      (vault schema, Karpathy / Claude Code pattern)
-//   4. FREE_CHAT_PROMPT  ← this file
-//   5. (cache boundary)
-//   6. DOCUMENT       (current editor body)
-//
-// Keep this block short. CLAUDE.md owns the operational rules.
+//   2. CLAUDE.md      (vault schema + conventions)
+//   3. FREE_CHAT_PROMPT  ← default.md body
+//   4. (cache boundary)
+//   5. DOCUMENT       (current editor body)
 
-export const FREE_CHAT_PROMPT = `
-You are a writing copilot embedded in the user's note-taking app. The CLAUDE.md schema above is the source of truth for how this vault is organized and how you should behave as wiki maintainer — follow it.
+import { DEFAULT_AGENTS } from '@/agent/defaults'
 
-Surface-specific notes for the chat:
-- Reply in the same language as the user's most recent message.
-- Default to concise GitHub-flavored markdown.
-- When a question doesn't need the wiki (small talk, generic knowledge, current-document help), answer in chat without any tool call.
-- When the user explicitly asks for an edit ("rewrite this", "fix the grammar", "make this shorter", "add a sentence"), apply the editing rules in CLAUDE.md.
-- The document the user is currently viewing is inlined below the cache boundary.
-`.trim()
+export const FREE_CHAT_PROMPT =
+  DEFAULT_AGENTS.find((a) => a.name === 'default')?.body ?? ''

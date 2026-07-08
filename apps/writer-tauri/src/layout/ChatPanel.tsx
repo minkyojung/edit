@@ -11,10 +11,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import type { EditorView } from '@milkdown/kit/prose/view'
+import { parseFilePathFromPath } from '@/lib/viewUrl'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
-import { clearFrozenRange, getFrozenRange } from '@/editor/frozenSelectionPlugin'
-import { TextSelection } from '@milkdown/kit/prose/state'
+import { useEditorSelectionStore } from '@/state/editorSelectionStore'
+import { useDocsStore } from '@/state/docsStore'
+import { useDocLabel } from '@/hooks/useDocLabel'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
@@ -42,10 +43,15 @@ import {
   clampEffort,
   normalizeModel,
   type ChatTurn,
+  type FileAttachment,
 } from '@/chat/types'
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
+import { useVaultCommands } from '@/state/vaultCommandsStore'
+import { pathForDoc } from '@/lib/docPaths'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
+import { ReviewTray } from '@/chat/ReviewTray'
+import { SkillProposalTray } from '@/chat/SkillProposalTray'
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -58,7 +64,6 @@ function parseSlashInvocation(text: string): { name: string; args: string } | nu
 }
 
 interface Props {
-  editorView: EditorView | null
   slug: string | null
   // Threads + active id are owned by RightPanel (so the picker can sit
   // in the shared top bar) and passed down here. `slug` is still passed
@@ -68,10 +73,38 @@ interface Props {
   activeId: string | null
 }
 
-export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
+export function ChatPanel({ slug, threads, activeId }: Props) {
   // Read Later queue route: no editor document, so chat runs read-only with
   // a generated article-list page context (see useChatRunner / runChat).
-  const isQueue = useLocation().pathname === '/read-later'
+  const pathname = useLocation().pathname
+  const isQueue = pathname === '/read-later'
+  // FileViewer route (`/file/:rel`): a non-markdown file (PDF/image/…) is open.
+  // There's no slug/editor for it, so this path is the only signal the chat
+  // gets about what the user is looking at.
+  const routeFilePath = parseFilePathFromPath(pathname)
+  // The file chip is detachable: the user can drop the open file from the
+  // chat's context via its X. Tracked as a dismissal so we can keep using the
+  // route as the source of truth — opening a different file (route change)
+  // re-attaches automatically.
+  const [fileChipDismissed, setFileChipDismissed] = useState(false)
+  useEffect(() => {
+    setFileChipDismissed(false)
+  }, [routeFilePath])
+  // What the chat actually sees / the chip renders: null once detached.
+  const viewingFilePath = routeFilePath && !fileChipDismissed ? routeFilePath : null
+  // The editor's live selection (text + line range), editor-agnostic: the
+  // active editor (CodeMirror) publishes it to this store, so the chat reads it
+  // without a PM `editorView`. Drives the selection chip, the slash-command
+  // Send gate (hasSelection), and free-chat selection context.
+  const selection = useEditorSelectionStore((s) => s.selection)
+  const noteLabel = useDocLabel(slug)
+  const selectionText = selection?.text ?? null
+  // Chip label uses the editor's metadata — "Note · L10–14" — rather than a
+  // text snippet, so it reads like a code-editor reference.
+  const selectionLabel = selection
+    ? `${noteLabel || 'Selection'} · L${selection.fromLine}` +
+      (selection.toLine !== selection.fromLine ? `–${selection.toLine}` : '')
+    : null
   const { account } = useClaudeAuth()
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const turnsHook = useThreadTurns(activeId)
@@ -144,9 +177,10 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   // executeCommand) just call `runner.run(...)` instead of duplicating the
   // run lifecycle.
   const runner = useChatRunner({
-    editorView,
     isQueue,
     slug,
+    viewingFilePath,
+    selectionText,
     activeId,
     activeThreadModel,
     activeThreadEffort,
@@ -199,75 +233,42 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     })
   }, [turnsHook.turns, streaming, pinned])
 
-  // On the queue route there's no editor view, but chat still works
-  // (read-only Q&A over the article list) — gate on the thread only.
-  const ready = !!activeId && (!!editorView || isQueue)
+  // An open doc (`slug`) is enough — edits flow through pendingChangesStore, not
+  // a live editor view. The queue route is read-only Q&A; the FileViewer route
+  // has neither a view nor a slug but is still a valid chat surface, so gate on
+  // being ON that route (`routeFilePath`), NOT on `viewingFilePath`: detaching
+  // the file chip must not disable the input — general questions are fine there.
+  const ready = !!activeId && (isQueue || !!slug || !!routeFilePath)
 
-  // Track whether the editor currently has *something* selectable for slash
-  // commands — either a live non-empty selection or a frozen snapshot taken
-  // when focus moved to the chat input. selectionchange fires on both
-  // caret moves inside the editor and on focus transitions to the textarea
-  // (the latter triggers blur → snapshot in frozenSelectionPlugin), so it
-  // covers both sources without separate plumbing.
-  // Mirror the editor's "what's attached?" state into React. We track
-  // both a boolean (used by the validator to gate Send) and the full
-  // selected text (used by the chip preview). selectionchange fires on
-  // every caret move and on focus transitions to/from the textarea, so
-  // it covers live selections and the blur-snapshot path together;
-  // focusout/focusin add coverage for keyboard-driven focus shifts.
-  const [selectionPreview, setSelectionPreview] = useState<string | null>(null)
-  const hasSelection = selectionPreview !== null
+  // Whether the editor has a non-empty selection — gates selection-scoped
+  // slash commands (validatePrompt). Sourced from the same editor-agnostic
+  // store as the chip.
+  const hasSelection = selection !== null
+
+  // "Edit with AI" from a viz block's toolbar arms a one-shot: it carries the
+  // block's stable id, and the NEXT chat message becomes an edit instruction for
+  // THAT block. The send (handleSend) hands the run a `vizEditTarget` so the
+  // SAME chat agent edits it via the edit_visualization tool — not a separate
+  // pipeline. Holds the target vizId (or null when disarmed); cleared after it
+  // fires or the selection is detached.
+  const editingVizRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!editorView) {
-      setSelectionPreview(null)
-      return
+    const arm = (e: Event) => {
+      const id = (e as CustomEvent<{ vizId?: string }>).detail?.vizId
+      if (id) editingVizRef.current = id
     }
-    const update = () => {
-      const ev = editorView
-      const sel = ev.state.selection
-      if (!sel.empty) {
-        setSelectionPreview(ev.state.doc.textBetween(sel.from, sel.to, '\n', '\n'))
-        return
-      }
-      const frozen = getFrozenRange(ev)
-      if (frozen) {
-        setSelectionPreview(ev.state.doc.textBetween(frozen.from, frozen.to, '\n', '\n'))
-        return
-      }
-      setSelectionPreview(null)
-    }
-    update()
-    document.addEventListener('selectionchange', update)
-    editorView.dom.addEventListener('focusout', update)
-    editorView.dom.addEventListener('focusin', update)
-    return () => {
-      document.removeEventListener('selectionchange', update)
-      editorView.dom.removeEventListener('focusout', update)
-      editorView.dom.removeEventListener('focusin', update)
-    }
-  }, [editorView])
+    window.addEventListener('writer:viz-edit', arm)
+    return () => window.removeEventListener('writer:viz-edit', arm)
+  }, [])
 
-  // X-button on the chip detaches the selection from the run. Clears both
-  // the frozen snapshot and any live PM selection so the chip disappears
-  // immediately whether the editor has focus or not. Collapsing live
-  // selection uses TextSelection.create at the current head — no caret
-  // jump, just collapse-in-place.
+  // X-button on the chip detaches the selection: collapse the live selection in
+  // whichever editor is mounted (via the store's registered callback). The
+  // editor's selection-change listener then publishes the now-empty selection
+  // back to the store, so the chip disappears on its own.
   const handleClearSelection = useCallback(() => {
-    if (!editorView) return
-    clearFrozenRange(editorView)
-    const sel = editorView.state.selection
-    if (!sel.empty) {
-      editorView.dispatch(
-        editorView.state.tr.setSelection(
-          TextSelection.create(editorView.state.doc, sel.head),
-        ),
-      )
-    }
-    // PM transactions don't fire DOM selectionchange, so the listener that
-    // mirrors selection state into React doesn't run on its own here.
-    // Push the cleared state directly.
-    setSelectionPreview(null)
-  }, [editorView])
+    editingVizRef.current = null
+    useEditorSelectionStore.getState().collapse?.()
+  }, [])
 
   // Merge the in-flight streaming turn (local) with the persisted turns (Yjs)
   // for rendering. Only show the streaming turn if it belongs to the thread
@@ -289,6 +290,10 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
         // synthetic user turn, so re-running resumes past the already-answered
         // question with mismatched semantics.
         if (turnsHook.turns[i - 1]?.synthetic) return null
+        // A refusal won't change on a re-run of the same prompt — offering
+        // Regenerate is a dead button. Suppress it; the user can still edit
+        // the prompt and send a fresh message.
+        if (turnsHook.turns[i].stopReason === 'refusal') return null
         return turnsHook.turns[i].id
       }
       // Stop at the first non-assistant from the end — only the trailing
@@ -316,24 +321,18 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
   ) {
     let systemPrompt: string
     try {
-      const ev = editorView!
-      const docText = ev.state.doc.textBetween(0, ev.state.doc.content.size, '\n', '\n')
-      // Pull selection text from either the live selection or, if the user
-      // has clicked into the chat input and collapsed it, the frozen range
-      // snapshot left behind by frozenSelectionPlugin. render.ts still
-      // throws CommandRenderError when scope is "selection" and both are
-      // empty — we surface that as an inline error turn below.
-      const sel = ev.state.selection
-      let selection = ''
-      if (!sel.empty) {
-        selection = ev.state.doc.textBetween(sel.from, sel.to, '\n', '\n')
-      } else {
-        const frozen = getFrozenRange(ev)
-        if (frozen) {
-          selection = ev.state.doc.textBetween(frozen.from, frozen.to, '\n', '\n')
-        }
-      }
-      systemPrompt = renderBody(cmd, { document: docText, selection, args })
+      // Document + selection from the editor-agnostic sources CM publishes: the
+      // open doc's bodyMarkdown cache and the live selection store (the same one
+      // the chip reads). render.ts throws CommandRenderError when scope is
+      // "selection" and nothing is selected — surfaced as an inline error below.
+      const docText = slug
+        ? (useDocsStore.getState().handles[slug]?.bodyMarkdown ?? '')
+        : ''
+      systemPrompt = renderBody(cmd, {
+        document: docText,
+        selection: selectionText ?? '',
+        args,
+      })
     } catch (e) {
       const msg = e instanceof CommandRenderError ? e.message : String(e)
       appendInlineError(threadId, userTurn.content, msg, /* alreadyAppendedUser */ true)
@@ -389,6 +388,32 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     await runSlashCommand(threadId, cmd, args, userTurn, [...turnsHook.turns, userTurn])
   }
 
+  /** Run a vault routine command (organize / daily-ingest / …) NATIVELY: send
+   * `/<name> <arg>` as the prompt so the SDK expands the plugin command. The arg
+   * defaults to the open note's path — the "organize what I'm looking at"
+   * default — unless the user typed one. No client system prompt: the command
+   * body arrives via SDK expansion, and an empty systemBody keeps the chat
+   * persona out. Caller has already appended `userTurn` to `history`. */
+  async function runVaultCommand(
+    threadId: string,
+    name: string,
+    args: string,
+    history: ChatTurn[],
+  ) {
+    const knownDocs = useDocsStore.getState().knownDocs
+    const doc = slug ? knownDocs.find((d) => d.slug === slug) : undefined
+    const notePath = doc
+      ? pathForDoc(doc, (s) => knownDocs.find((d) => d.slug === s))
+      : null
+    const arg = args.trim() || notePath || ''
+    const overrides: RunOverrides = {
+      systemPrompt: '',
+      prompt: arg ? `/${name} ${arg}` : `/${name}`,
+      relayTools: ['propose_edit', 'propose_multi_edit', 'propose_write', 'move_note'],
+    }
+    await runner.run(threadId, history, overrides)
+  }
+
   /** Append a finished error turn without invoking the model. Used for
    * slash invocations that fail before the run starts (unknown name,
    * missing selection). `alreadyAppendedUser` skips re-adding the user
@@ -417,7 +442,11 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
     })
   }
 
-  async function handleSend(text: string) {
+  async function handleSend(
+    text: string,
+    attachments: FileAttachment[] = [],
+    mentionPaths: string[] = [],
+  ) {
     if (!ready || chatStatus === 'streaming') return
     // Latch BEFORE any await / state set so a fast double-Enter can't
     // smuggle a duplicate request through while React is still committing
@@ -433,19 +462,47 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
       const slash = parseSlashInvocation(text)
       if (slash) {
         const cmd = getCommand(slash.name)
-        if (!cmd) {
-          appendInlineError(threadId, text, `Unknown command: /${slash.name}`)
+        if (cmd) {
+          await executeCommand(threadId, cmd, slash.args, text)
           return
         }
-        await executeCommand(threadId, cmd, slash.args, text)
+        // Not a builtin editor action — is it a vault routine command? Those
+        // run natively (the SDK expands the plugin command).
+        if (useVaultCommands.getState().get(slash.name)) {
+          const userTurn: ChatTurn = {
+            id: crypto.randomUUID(),
+            role: 'user',
+            content: text,
+            ts: Date.now(),
+            slashInvocation: { name: slash.name, args: slash.args },
+          }
+          turnsHook.appendTurn(userTurn)
+          await runVaultCommand(threadId, slash.name, slash.args, [
+            ...turnsHook.turns,
+            userTurn,
+          ])
+          return
+        }
+        appendInlineError(threadId, text, `Unknown command: /${slash.name}`)
         return
       }
+
+      // Viz "Edit with AI" read the target block's source from the PM view to
+      // hand the agent its current spec; that path doesn't exist on CM. Clear
+      // any stale arm so it can't leak into this send.
+      editingVizRef.current = null
 
       const userTurn: ChatTurn = {
         id: crypto.randomUUID(),
         role: 'user',
         content: text,
         ts: Date.now(),
+        attachments: attachments.length > 0
+          ? attachments.map(f => ({ type: 'file' as const, name: f.name, mediaType: f.mediaType }))
+          : undefined,
+        mentions: mentionPaths.length > 0
+          ? mentionPaths.map((path) => ({ path }))
+          : undefined,
       }
 
       // First user message in an untitled thread → kick off background title
@@ -465,7 +522,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
       // The user's turn is finished text — push to Yjs once and let it sync.
       turnsHook.appendTurn(userTurn)
 
-      await runner.run(threadId, [...turnsHook.turns, userTurn])
+      await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, undefined, attachments, mentionPaths)
     } finally {
       sendInFlightRef.current = false
     }
@@ -514,6 +571,16 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
           )
           return
         }
+        // Vault routine command → rerun natively.
+        if (useVaultCommands.getState().get(lastUser.slashInvocation.name)) {
+          await runVaultCommand(
+            threadId,
+            lastUser.slashInvocation.name,
+            lastUser.slashInvocation.args,
+            history,
+          )
+          return
+        }
         // Command was renamed / removed since the original send; fall back
         // to plain chat so the rerun at least produces something.
       }
@@ -539,6 +606,8 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
       const hasSpace = m[2].length > 0
       const cmd = getCommand(m[1])
       if (!cmd) {
+        // Vault routine commands are valid too — they execute natively.
+        if (useVaultCommands.getState().get(m[1])) return { ok: true as const }
         return hasSpace
           ? { ok: false as const, message: `Unknown command: /${m[1]}` }
           : { ok: true as const }
@@ -571,10 +640,10 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
             stroke={1.5}
             className="text-muted-foreground/40"
           />
-          <p className="text-[16px] font-semibold text-foreground">
+          <p className="text-title-3 font-semibold text-foreground">
             Connect Claude
           </p>
-          <p className="max-w-xs text-center text-[14px] text-muted-foreground">
+          <p className="max-w-xs text-center text-body text-muted-foreground">
             Sign in with your Anthropic account to start chatting.
           </p>
           <Button
@@ -613,8 +682,8 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
               stroke={1.5}
               className="text-muted-foreground/40"
             />
-            <p className="text-[16px] font-semibold text-foreground">Ask anything</p>
-            <p className="max-w-xs text-center text-[14px] text-muted-foreground">
+            <p className="text-title-3 font-semibold text-foreground">Ask anything</p>
+            <p className="max-w-xs text-center text-body text-muted-foreground">
               Type a message or try a slash command like /proofread.
             </p>
           </div>
@@ -651,7 +720,7 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
           the transcript. Mirrors the editor's header/footer glass bands. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute bottom-0 left-0 right-0 bg-sidebar/90"
+        className="pointer-events-none absolute bottom-0 left-0 right-0 bg-background/90"
         style={{
           height: footerHeight + 48,
           backdropFilter: 'blur(12px)',
@@ -669,6 +738,10 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
           visible={!pinned && renderedTurns.length > 0}
           onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
         />
+        {/* Pending AI changes, grouped by file — sits above the input, hides when empty. */}
+        <ReviewTray />
+        {/* Proposed skills (propose_skill) — same slot, separate store. */}
+        <SkillProposalTray />
         {pendingPermission?.toolName === 'AskUserQuestion' ||
         pendingPermission?.toolName === 'ExitPlanMode' ? (
           // Any parked gate (clarifying question or plan approval) takes the
@@ -692,8 +765,11 @@ export function ChatPanel({ editorView, slug, threads, activeId }: Props) {
             fastModeState={fastModeState}
             contextSnapshot={contextSnapshot}
             validate={validatePrompt}
-            selectionText={selectionPreview}
+            selectionText={selectionText}
+            selectionLabel={selectionLabel}
             onClearSelection={handleClearSelection}
+            viewingFilePath={viewingFilePath}
+            onClearViewingFile={() => setFileChipDismissed(true)}
           />
         )}
       </div>

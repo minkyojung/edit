@@ -16,6 +16,29 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { WINDOW_ROOT } from '@/lib/windowRoot'
+import { type ChatModel, DEFAULT_CHAT_MODEL } from '@/chat/types'
+
+/** What kind of project a folder holds. Drives the launcher label and,
+ * later, which CLAUDE.md scaffold a fresh folder gets. Detected from the
+ * folder contents when opening an existing folder (a `manuscript/` dir → a
+ * translation project), or set explicitly when scaffolding a new one. */
+export type ProjectType = 'wiki' | 'translation'
+
+/** macOS system sound played when a background chat job finishes (file names in
+ * /System/Library/Sounds). 'None' silences the completion ping. */
+export type NotificationSound = 'None' | 'Glass' | 'Ping' | 'Pop' | 'Bottle' | 'Sosumi'
+
+/** One row in the launcher's "Recent" list. Shared across all windows
+ * (it's a global app preference, not per-window state), so it lives in
+ * the persisted settings store. */
+export interface RecentProject {
+  path: string
+  type: ProjectType
+  /** Epoch ms of the last time this project was opened. Sort key for
+   * the launcher list (most recent first). */
+  lastOpened: number
+}
 
 interface SettingsState {
   /** Selected vault folders. v1 enforces length ≤ 1; future multi-
@@ -37,6 +60,65 @@ interface SettingsState {
   /** Flip bootstrapCompleted to true. Called by onboarding on
    * Finish / Skip. Idempotent. */
   markBootstrapCompleted: () => void
+
+  /** Projects shown in the launcher's "Recent" list, newest first.
+   * Global (cross-window) app preference. */
+  recentProjects: RecentProject[]
+  /** Record a project as just-opened: upsert by path (refresh its
+   * `lastOpened` + type) and move it to the front. */
+  addRecentProject: (path: string, type: ProjectType) => void
+  /** Drop a project from the recent list (e.g. user removes a stale
+   * entry whose folder is gone). */
+  removeRecentProject: (path: string) => void
+
+  /** Folder new chat-created notes land in (Obsidian's "default location for
+   * new notes"). Default 'inbox'. The host FORCES this folder — the LLM's
+   * chosen path is ignored — so the model can't scatter notes into wiki/ on a
+   * whim. User-changeable (settings modal). */
+  defaultNoteFolder: string
+  /** Set the default new-note folder. Trims slashes; empty → 'inbox'. */
+  setDefaultNoteFolder: (folder: string) => void
+
+  /** Model the Organize / intake agent runs on (filing notes into the
+   * wiki / daily). Default Sonnet; switch to Haiku to cut cost on bulk
+   * passes, or Opus for quality. User-changeable (settings modal). */
+  intakeModel: ChatModel
+  /** Set the Organize / intake model. */
+  setIntakeModel: (model: ChatModel) => void
+
+  /** Auto-run the inbox Organize pass when the user goes idle (~1 min of no
+   * input). Same job as the manual Organize button, but inbox-only and gated:
+   * only fires when there are unprocessed captures, so an empty inbox costs
+   * nothing. Default on. User-changeable (settings modal). */
+  inboxAutoOrganize: boolean
+  /** Toggle idle auto-organize of the inbox. */
+  setInboxAutoOrganize: (enabled: boolean) => void
+
+  /** macOS sidebar vibrancy (frosted glass). Default on. When off, the window
+   * canvas + sidebar paint opaque instead of letting the native effect show.
+   * Applied by useVibrancy(); macOS-only (no-op elsewhere). */
+  sidebarVibrancyEnabled: boolean
+  /** Toggle sidebar vibrancy. */
+  setSidebarVibrancy: (enabled: boolean) => void
+
+  /** CodeMirror editor body alignment. 'justify' flushes both edges (with
+   * hyphenation); 'left' is ragged-right (no auto-hyphens). Applied live. */
+  editorTextAlign: 'justify' | 'left'
+  /** Set the editor body alignment. */
+  setEditorTextAlign: (align: 'justify' | 'left') => void
+
+  /** Sound for the background-job completion notification. 'None' = silent. */
+  notificationSound: NotificationSound
+  /** Set the completion-notification sound. */
+  setNotificationSound: (sound: NotificationSound) => void
+
+  /** Security lockdown: block the AI from sending data to the network and
+   * from reading secret files (SSH keys, tokens, credentials). Makes a
+   * prompt injection in captured content harmless. Default ON (secure by
+   * default); turning it off is an advanced choice. */
+  sandboxEnabled: boolean
+  /** Toggle the security lockdown. */
+  setSandboxEnabled: (enabled: boolean) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -45,10 +127,37 @@ export const useSettingsStore = create<SettingsState>()(
       vaultPaths: [],
       activeVaultIndex: 0,
       bootstrapCompleted: false,
+      defaultNoteFolder: 'inbox',
+      intakeModel: DEFAULT_CHAT_MODEL,
+      inboxAutoOrganize: true,
+      sidebarVibrancyEnabled: true,
+      editorTextAlign: 'justify',
+      notificationSound: 'Glass',
+      sandboxEnabled: true,
+      setNotificationSound: (sound) => set({ notificationSound: sound }),
+      setSandboxEnabled: (enabled) => set({ sandboxEnabled: enabled }),
+      recentProjects: [],
       setActiveVaultPath: (path) =>
         set({ vaultPaths: [path], activeVaultIndex: 0 }),
       clearVault: () => set({ vaultPaths: [], activeVaultIndex: 0 }),
       markBootstrapCompleted: () => set({ bootstrapCompleted: true }),
+      addRecentProject: (path, type) =>
+        set((s) => ({
+          recentProjects: [
+            { path, type, lastOpened: Date.now() },
+            ...s.recentProjects.filter((p) => p.path !== path),
+          ],
+        })),
+      removeRecentProject: (path) =>
+        set((s) => ({
+          recentProjects: s.recentProjects.filter((p) => p.path !== path),
+        })),
+      setDefaultNoteFolder: (folder) =>
+        set({ defaultNoteFolder: folder.trim().replace(/^\/+|\/+$/g, '') || 'inbox' }),
+      setIntakeModel: (model) => set({ intakeModel: model }),
+      setInboxAutoOrganize: (enabled) => set({ inboxAutoOrganize: enabled }),
+      setSidebarVibrancy: (enabled) => set({ sidebarVibrancyEnabled: enabled }),
+      setEditorTextAlign: (align) => set({ editorTextAlign: align }),
     }),
     {
       name: 'writer-tauri:settings',
@@ -57,14 +166,51 @@ export const useSettingsStore = create<SettingsState>()(
         vaultPaths: s.vaultPaths,
         activeVaultIndex: s.activeVaultIndex,
         bootstrapCompleted: s.bootstrapCompleted,
+        defaultNoteFolder: s.defaultNoteFolder,
+        intakeModel: s.intakeModel,
+        inboxAutoOrganize: s.inboxAutoOrganize,
+        sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
+        editorTextAlign: s.editorTextAlign,
+        sandboxEnabled: s.sandboxEnabled,
+        recentProjects: s.recentProjects,
       }),
     },
   ),
 )
 
-/** Read the active vault path from the store. Returns null when no
- * vault has been selected yet — callers gate file I/O on this. */
+/** Read the active vault path. In a project window (window-per-project
+ * model) the root is fixed by the window's `?root=` param, so it wins —
+ * each window stays bound to its own folder regardless of the shared,
+ * cross-window localStorage settings. Falls back to the legacy
+ * single-vault store for the launcher window and the pre-multi-window
+ * flow. Returns null when no vault is selected — callers gate file I/O
+ * on this. */
 export function getActiveVaultPath(): string | null {
+  if (WINDOW_ROOT) return WINDOW_ROOT
   const { vaultPaths, activeVaultIndex } = useSettingsStore.getState()
   return vaultPaths[activeVaultIndex] ?? null
+}
+
+/** Folder new chat-created notes land in. Default 'inbox'. Non-React read for the
+ * chat materialiser (toPendingChange). */
+export function getDefaultNoteFolder(): string {
+  return useSettingsStore.getState().defaultNoteFolder || 'inbox'
+}
+
+/** Model the Organize / intake agent runs on. Non-React read for runIntake. */
+export function getIntakeModel(): ChatModel {
+  return useSettingsStore.getState().intakeModel
+}
+
+/** Whether idle auto-organize of the inbox is enabled. Non-React read for the
+ * idle trigger. */
+export function getInboxAutoOrganize(): boolean {
+  return useSettingsStore.getState().inboxAutoOrganize
+}
+
+/** Whether the security lockdown (block network egress + secret-file reads)
+ * is enabled. Non-React read for the chat runner, which forwards it to the
+ * sidecar's `sandboxEnabled`. Default ON. */
+export function getSandboxEnabled(): boolean {
+  return useSettingsStore.getState().sandboxEnabled
 }

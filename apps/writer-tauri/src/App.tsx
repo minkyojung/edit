@@ -1,41 +1,44 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from 'react-error-boundary'
-import type { EditorView } from '@milkdown/kit/prose/view'
 import { ThemeProvider } from '@/components/theme-provider'
 import { FontProvider } from '@/components/font-provider'
 import { AppToaster } from '@/components/AppToaster'
 import { BootGate } from '@/components/BootGate'
+import { OnboardingPreview } from '@/profile/ui/onboarding/OnboardingPreview'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { AppShell } from '@/layout/AppShell'
 import { Page } from '@/layout/Page'
 import { ReadLaterQueue } from '@/layout/ReadLaterQueue'
+import { FileViewer } from '@/layout/FileViewer'
+import { SkillsPage } from '@/layout/SkillsPage'
+import { RoutinesPage } from '@/layout/RoutinesPage'
+import { AgentsPage } from '@/layout/AgentsPage'
+import { GalleryPage } from '@/layout/GalleryPage'
 import { CommandPalette } from '@/layout/CommandPalette'
-import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
-import { ImageAltDialog } from '@/editor/ImageAltDialog'
 import { SaveArticleDialog } from '@/components/SaveArticleDialog'
+import { SettingsDialog } from '@/settings/SettingsDialog'
+import { ConfirmDialogHost } from '@/components/ConfirmDialogHost'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
-import { useSettingsStore } from '@/state/settingsStore'
-import { useEditorViewStore } from '@/state/editorViewStore'
+import { useSettingsStore, getActiveVaultPath } from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { useIdleTrigger } from '@/hooks/useIdleTrigger'
 import { useRouteSync } from '@/hooks/useRouteSync'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { usePersistLastPath } from '@/hooks/usePersistLastPath'
 import { useWindowChrome } from '@/hooks/useWindowChrome'
+import { useVibrancy } from '@/hooks/useVibrancy'
+import { useWindowModeSync } from '@/hooks/useWindowModeSync'
+import { useCompactShortcut } from '@/hooks/useCompactShortcut'
+import { useWindowClose } from '@/hooks/useWindowClose'
 import {
   buildDayUrl,
   buildMonthUrl,
   buildWeekUrl,
   parseSlugFromPath,
 } from '@/lib/viewUrl'
-import {
-  useLazyMaterialize,
-  type LazyMaterializeConfig,
-} from '@/hooks/useLazyMaterialize'
-import { applyPendingLogsForView } from '@/agent/applyIngest'
 // Phase 4.A — dev-only side-effect imports. Each module registers
 // a `window.__X` handle so the picker / vault I/O is reachable from
 // DevTools before real UI wiring lands. Real callers (settings
@@ -44,21 +47,40 @@ import { applyPendingLogsForView } from '@/agent/applyIngest'
 import '@/lib/vaultPicker'
 import '@/lib/vault'
 import '@/lib/scanVault'
-import '@/lib/caretDebug'
 import { startAutoFlush } from '@/lib/docFileSync'
 import { startVaultWatcher } from '@/lib/vaultWatcher'
 import { startPendingChangesApplier } from '@/state/pendingChangesApplier'
+import { gitInit } from '@/lib/git'
+import { startGitHubSync } from '@/lib/githubSync'
 
 // Begin the periodic vault flush loop on app load. Idempotent: safe
 // under React StrictMode's double-mount and against any future caller
 // that might also start it.
 startAutoFlush()
 
-// Watch the vault folder for external edits. Gated on
-// getActiveVaultPath() inside startVaultWatcher — when BootGate's
-// auto-picker is still up, it logs an inert message and no-ops.
-// The picker re-invokes after selecting a vault.
+// Watch the vault folder for external edits. At module load the vault
+// may not be picked yet (first-run VaultLauncher), so startVaultWatcher
+// no-ops; the subscription below (re)starts it whenever the active vault
+// path changes — first pick, or switching vaults later — so the watcher
+// always tracks the current vault without needing a reload.
 void startVaultWatcher()
+let watchedVaultPath = getActiveVaultPath()
+useSettingsStore.subscribe(() => {
+  const current = getActiveVaultPath()
+  if (current !== watchedVaultPath) {
+    watchedVaultPath = current
+    void startVaultWatcher()
+    // Ensure the switched-in vault is a git repo and prime the activity feed
+    // so the Undo button reflects the new vault (BootGate only runs on mount).
+    void (async () => {
+      try {
+        await gitInit()
+      } catch (err) {
+        console.warn('[app] git init on vault switch failed', err)
+      }
+    })()
+  }
+})
 
 // Listen for `pending → accepted` transitions in pendingChangesStore
 // and run the matching disk-write path. Without this no click on the
@@ -66,20 +88,10 @@ void startVaultWatcher()
 // flips status and the widget vanishes. Idempotent.
 startPendingChangesApplier()
 
-// Module-scope so the configs array reference is stable across
-// renders — required by useLazyMaterialize's caller contract
-// (configs.length must be constant; React enforces it for the
-// per-config hook calls inside).
-const SYSTEM_DRAIN_CONFIGS: LazyMaterializeConfig[] = [
-  {
-    matchType: 'system:log',
-    queueSelector: (s) => s.pendingLogs,
-    applyForView: applyPendingLogsForView,
-    signaturePrefix: 'log',
-  },
-  // system:index used to live here too — it now writes deterministically
-  // from state/wikiIndex.ts on every wiki change, no queue needed.
-]
+// Begin the periodic GitHub activity sync. Idempotent; gated on an
+// active vault + a connected token inside, so it no-ops until both
+// exist. Launch-time and connect-time immediate syncs fire separately.
+startGitHubSync()
 
 export function App() {
   // HashRouter sits above BootGate so anything router-aware (useActiveSlug,
@@ -88,13 +100,24 @@ export function App() {
   // gates rendering on the catalog bootstrap, so hoisting the router
   // above it doesn't change any timing.
   return (
-    <ThemeProvider defaultPalette="charcoal" storageKey="writer-palette">
+    <ThemeProvider defaultPalette="dark" storageKey="writer-palette">
       <FontProvider defaultFont="pretendard" storageKey="writer-font">
         <TooltipProvider delayDuration={200}>
           <HashRouter>
-            <BootGate>
-              <AppContent />
-            </BootGate>
+            <Routes>
+              {/* Design-preview page for the onboarding flow — standalone, so
+                  it renders WITHOUT BootGate/AppShell (no sidebar/editor). More
+                  specific than "*", so React Router matches it first. */}
+              <Route path="/onboard" element={<OnboardingPreview />} />
+              <Route
+                path="*"
+                element={
+                  <BootGate>
+                    <AppContent />
+                  </BootGate>
+                }
+              />
+            </Routes>
             <AppToaster />
           </HashRouter>
         </TooltipProvider>
@@ -124,7 +147,7 @@ export function App() {
 // render their own React surface instead of a document) must be exempt —
 // otherwise the self-heal reads their null slug as "broken" and bounces
 // the user back to today's daily.
-const SLUGLESS_ROUTES = new Set(['/read-later'])
+const SLUGLESS_ROUTES = new Set(['/read-later', '/skills', '/routines', '/agents', '/gallery'])
 
 function RouteSyncBridge() {
   useRouteSync()
@@ -143,6 +166,10 @@ function RouteSyncBridge() {
     // null slug, judges the URL "broken", and bounces back to today's
     // daily a beat after the queue paints.
     if (SLUGLESS_ROUTES.has(pathname)) return
+    // The file viewer carries a path param, not a slug — its route is
+    // variable (`/file/<encoded path>`), so it can't live in the
+    // exact-match Set above. Exempt the whole prefix from the self-heal.
+    if (pathname.startsWith('/file/')) return
     const slug = parseSlugFromPath(pathname)
     const valid = slug !== null && knownDocs.some((d) => d.slug === slug)
     if (valid) return
@@ -186,7 +213,6 @@ function AppContent() {
   const activeSlug = useActiveSlug()
   const handles = useDocsStore((s) => s.handles)
   const statusMap = useDocsStore((s) => s.status)
-  const [view, setView] = useState<EditorView | null>(null)
 
   // Karpathy "Memories" ingest — fires in the background when the
   // user navigates away from a daily, or when the local date rolls
@@ -194,6 +220,10 @@ function AppContent() {
   // date-poll timer share a single lifetime across the session.
   useIdleTrigger()
   useWindowChrome()
+  useVibrancy()
+  useWindowModeSync()
+  useCompactShortcut()
+  useWindowClose()
 
   // Sidebar dot semantic (Phase E2.8): the dot flips to "viewed"
   // (grey) the moment the user navigates to a page that has staged
@@ -206,22 +236,10 @@ function AppContent() {
     if (!activeSlug) return
     usePendingChangesStore.getState().markPageViewed(activeSlug)
   }, [activeSlug])
-  // Drains queued log entries / index updates into their respective
-  // system pages when the user navigates there. One hook, one
-  // configs table — adding system:about or system:lint later is a
-  // single config row above. Wiki proposal review (the third
-  // ingest output) stays on the in-page banner surface, not in
-  // this lazy-drain pipeline.
-  useLazyMaterialize(SYSTEM_DRAIN_CONFIGS)
 
-  // First-run onboarding trigger. We read bootstrapCompleted from the
-  // persisted settings store as the initial value so a returning user
-  // never sees a flash of the dialog. The state is local — once
-  // OnboardingDialog calls markBootstrapCompleted, this component
-  // doesn't need to know; the next launch starts with the flag true.
-  const [onboardingOpen, setOnboardingOpen] = useState(
-    () => !useSettingsStore.getState().bootstrapCompleted,
-  )
+  // First-run onboarding now lives in the LAUNCHER window (BootGate →
+  // OnboardingLauncher), BEFORE the picker — so by the time a project window
+  // renders this shell, onboarding is already done. Nothing to gate here.
 
   const activeHandle = activeSlug ? handles[activeSlug] ?? null : null
   const activeStatus = activeSlug ? statusMap[activeSlug] ?? 'loading' : 'loading'
@@ -232,20 +250,7 @@ function AppContent() {
   // pure mapping from path → same surface, so adding a new view
   // route later is a one-line addition rather than a copy of the JSX.
   const notesElement = (
-    <Page
-      key={activeSlug ?? 'no-doc'}
-      handle={activeHandle}
-      status={activeStatus}
-      onViewReady={(v) => {
-        // Mirror into the global store so non-React
-        // consumers (future palette commands) can reach
-        // the live view without prop drilling. Local
-        // state stays the source of truth for sibling
-        // renders below.
-        setView(v)
-        useEditorViewStore.getState().setView(v)
-      }}
-    />
+    <Page key={activeSlug ?? 'no-doc'} handle={activeHandle} status={activeStatus} />
   )
 
   return (
@@ -259,7 +264,6 @@ function AppContent() {
           oauthStatus="unauthenticated"
           collabHandle={activeHandle}
           collabStatus={activeStatus}
-          editorView={view}
         >
           <Routes>
             {/* Root + legacy /notes both redirect to today's Day view.
@@ -275,16 +279,18 @@ function AppContent() {
             <Route path="/week/:slug" element={notesElement} />
             <Route path="/month/:ym" element={notesElement} />
             <Route path="/month/:ym/:slug" element={notesElement} />
+            <Route path="/file/:rel" element={<FileViewer />} />
             <Route path="/read-later" element={<ReadLaterQueue />} />
+            <Route path="/skills" element={<SkillsPage />} />
+            <Route path="/routines" element={<RoutinesPage />} />
+            <Route path="/agents" element={<AgentsPage />} />
+            <Route path="/gallery" element={<GalleryPage />} />
           </Routes>
         </AppShell>
         <CommandPalette />
-        <OnboardingDialog
-          open={onboardingOpen}
-          onClose={() => setOnboardingOpen(false)}
-        />
-        <ImageAltDialog />
         <SaveArticleDialog />
+        <SettingsDialog />
+        <ConfirmDialogHost />
       </>
     </ErrorBoundary>
   )

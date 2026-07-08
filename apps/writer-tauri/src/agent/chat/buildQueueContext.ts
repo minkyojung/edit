@@ -27,7 +27,7 @@ function dateLabel(savedAt?: string): string {
 export function buildQueueContextMarkdown(): string {
   const articles = useDocsStore
     .getState()
-    .knownDocs.filter((d) => d.type === 'article' && !d.archivedAt)
+    .knownDocs.filter((d) => d.sourceUrl && !d.archivedAt)
     .sort((a, b) => (b.savedAt ?? '').localeCompare(a.savedAt ?? ''))
 
   const unread = articles.filter((d) => !d.readAt).length
@@ -36,7 +36,7 @@ export function buildQueueContextMarkdown(): string {
     `# Read Later — saved articles (read-only view)`,
     ``,
     `${articles.length} saved · ${unread} unread. The full body of each`,
-    `article lives at \`articles/<title>.md\` — Glob/Read it when the user`,
+    `item lives at \`inbox/<title>.md\` — Glob/Read it when the user`,
     `wants detail beyond this list.`,
     ``,
   ]

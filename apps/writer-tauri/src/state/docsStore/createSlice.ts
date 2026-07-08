@@ -22,10 +22,10 @@
 
 import { generateClientSlug } from '@/lib/slug'
 import { todayLocalDate } from '@/hooks/useDocMeta'
-import { applyMarkdownToEditor } from '@/lib/seedMarkdown'
-import { markSlugDirty } from '@/lib/docFileSync'
-import { useEditorViewStore } from '../editorViewStore'
-import { getActiveSlugFromHash } from '@/lib/viewUrl'
+import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
+import { createVaultFolder, readVaultFile } from '@/lib/vault'
+import { splitFrontmatter } from '@/lib/frontmatter'
+import { applyMarkdownToActiveCmEditor } from '../activeCmEditor'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
 export interface CreateSlice {
@@ -35,6 +35,14 @@ export interface CreateSlice {
    * (URL is the source of truth — the store no longer sets activeSlug
    * on its own). */
   createNew: () => Promise<string>
+  /** Create a folder on disk at `relPath` and add it to knownFolders so
+   * the sidebar tree shows it immediately. Idempotent. Returns false on
+   * a filesystem error. */
+  createFolder: (relPath: string) => Promise<boolean>
+  /** Duplicate a generic `note`: a copy in the same folder named
+   * "<name> copy" (de-duped), with the source body. Returns the new
+   * slug (or null for non-note docs). */
+  duplicateDoc: (slug: string) => Promise<string | null>
   /** Find or create the daily entry for the given local date and
    * make it the active tab. Returns the slug (or null on edge cases
    * the caller treats as no-op). */
@@ -62,39 +70,132 @@ export interface CreateSlice {
   replaceDocBody: (slug: string, markdown: string) => Promise<boolean>
 }
 
+/** First free inbox path for a new untitled note: `inbox/Untitled.md`,
+ * then `inbox/Untitled 1.md`, `inbox/Untitled 2.md`, … so two quick
+ * ⌘N presses don't collide on the same file. */
+function uniqueInboxPath(knownDocs: KnownDoc[]): string {
+  const taken = new Set(
+    knownDocs.map((d) => d.relPath).filter((p): p is string => Boolean(p)),
+  )
+  let candidate = 'inbox/Untitled.md'
+  let n = 1
+  while (taken.has(candidate)) {
+    candidate = `inbox/Untitled ${n}.md`
+    n += 1
+  }
+  return candidate
+}
+
 export const createCreateSlice = (
   set: SetDocsState,
   get: GetDocsState,
 ): CreateSlice => ({
   createNew: async () => {
-    // Anchor the new writing under today's daily. `type: 'writing'`
-    // has no disk placement of its own — `pathForDoc` walks parentId
-    // up to a daily ancestor to derive `daily/<date>/<title>.md`, and
-    // returns null when no daily is found. Pre-fix this slice created
-    // `{ type: 'writing' }` with no parentId, which meant pathForDoc
-    // returned null, flushDirty silently skipped the doc, and the
-    // brand-new note never reached disk — so it vanished on restart.
-    //
-    // Going through openDaily + createChildNote reuses the existing
-    // daily-anchoring logic (so its `daily/<date>.md` lands on disk —
-    // the boot scan needs that file to resolve the writing's parentId
-    // on next session).
-    //
-    // Side effect worth noting: openDaily adds today's daily to the
-    // tab strip if it wasn't already there. Calling code (the "+ tab"
-    // button in EditorTabs) then navigates to the returned slug — the
-    // new writing, not the daily — so the user lands where they
-    // expected. The visible daily tab is a deliberate context cue
-    // ("you created this under today").
-    const dailySlug = await get().openDaily()
-    if (!dailySlug) {
-      throw new Error('createNew: failed to anchor under today\'s daily')
+    // Flat Obsidian-style note: a plain `note` lands at
+    // `inbox/<name>.md`. (The vault is now a flat tree — the old
+    // "anchor every new note under today's daily as a `writing`"
+    // model was retired.) For `note` docs `relPath` is the only
+    // placement rule pathForDoc knows; without it pathForDoc returns
+    // null, flushDirty skips the doc, and the brand-new note never
+    // reaches disk — so we always set relPath here.
+    const slug = generateClientSlug()
+    const createdAt = new Date().toISOString()
+    const relPath = uniqueInboxPath(get().knownDocs)
+    const meta: KnownDoc = {
+      slug,
+      type: 'note',
+      // Filename (sans `inbox/` + `.md`) is the sidebar label; keep
+      // title in sync so CommandPalette / tabs show the same name.
+      title: relPath.slice('inbox/'.length).replace(/\.md$/, ''),
+      relPath,
+      createdAt,
     }
-    const slug = await get().createChildNote(dailySlug)
-    if (!slug) {
-      throw new Error('createNew: createChildNote refused')
-    }
+    set((s) => ({
+      knownDocs: [...s.knownDocs, meta],
+      openSlugs: s.openSlugs.includes(slug)
+        ? s.openSlugs
+        : [...s.openSlugs, slug],
+    }))
+    await get().ensureHandle(slug)
+    // Force the (empty) note to disk now so it survives a restart even
+    // before the first edit — mirrors createArticle's explicit flush.
+    markSlugDirty(slug)
+    void flushDirty()
     return slug
+  },
+
+  createFolder: async (relPath) => {
+    // Optimistic: show the folder in the tree immediately, then create
+    // it on disk in the background (the mkdir IPC round-trip — slower on
+    // iCloud — would otherwise delay the row appearing). Roll back the
+    // optimistic add if the disk op fails.
+    set((s) => ({
+      knownFolders: s.knownFolders.includes(relPath)
+        ? s.knownFolders
+        : [...s.knownFolders, relPath],
+    }))
+    try {
+      await createVaultFolder(relPath)
+      return true
+    } catch (err) {
+      console.error('[docs] createFolder failed', err)
+      set((s) => ({
+        knownFolders: s.knownFolders.filter((f) => f !== relPath),
+      }))
+      return false
+    }
+  },
+
+  duplicateDoc: async (slug) => {
+    const src = get().knownDocs.find((d) => d.slug === slug)
+    if (src?.type !== 'note' || !src.relPath) return null
+    const dir = src.relPath.includes('/')
+      ? src.relPath.slice(0, src.relPath.lastIndexOf('/') + 1)
+      : ''
+    const stem = (src.relPath.split('/').pop() ?? '').replace(/\.md$/, '')
+    // First free "<stem> copy.md", then " copy 2", …
+    const taken = new Set(
+      get().knownDocs.map((d) => d.relPath).filter((p): p is string => Boolean(p)),
+    )
+    let relPath = `${dir}${stem} copy.md`
+    let n = 2
+    while (taken.has(relPath)) {
+      relPath = `${dir}${stem} copy ${n}.md`
+      n += 1
+    }
+    // Copy the source body (strip its frontmatter — the copy mints a
+    // fresh slug).
+    let body = ''
+    try {
+      body = splitFrontmatter(await readVaultFile(src.relPath)).body
+    } catch (err) {
+      console.warn('[docs] duplicateDoc read failed', err)
+    }
+    const newSlug = generateClientSlug()
+    const meta: KnownDoc = {
+      slug: newSlug,
+      type: 'note',
+      title: relPath.slice(dir.length).replace(/\.md$/, ''),
+      relPath,
+      createdAt: new Date().toISOString(),
+    }
+    set((s) => ({
+      knownDocs: [...s.knownDocs, meta],
+      openSlugs: s.openSlugs.includes(newSlug)
+        ? s.openSlugs
+        : [...s.openSlugs, newSlug],
+    }))
+    await get().ensureHandle(newSlug)
+    if (body.trim()) {
+      try {
+        await get().seedDocBody(newSlug, body)
+      } catch (err) {
+        console.warn('[docs] duplicateDoc seed failed', err)
+      }
+    }
+    markSlugDirty(newSlug)
+    void flushDirty()
+    return newSlug
   },
 
   openDaily: async (date) => {
@@ -213,23 +314,14 @@ export const createCreateSlice = (
     // real text. Brand-new docs (cache is empty after contentReady)
     // proceed to the seed.
     if (handle.bodyMarkdown.trim().length > 0) return false
-    // Active-editor branch: when the slug we're seeding is the doc
-    // the user is currently viewing, write to PM directly so the
-    // seed lands in the live editor. Inactive slugs only update the
-    // cache — the next mount picks it up via the mount-time hydrate,
-    // and markSlugDirty kicks the flush tick so the seed reaches
-    // disk regardless of whether the user opens the doc.
+    // Active-editor branch: when the slug we're seeding is the doc the user is
+    // currently viewing, push it into the live CodeMirror editor so the seed
+    // lands immediately. Inactive slugs only update the cache — the next mount
+    // hydrates it, and markSlugDirty kicks the flush so the seed reaches disk
+    // regardless of whether the user opens the doc.
     handle.bodyMarkdown = markdown
     markSlugDirty(slug)
-    const activeView = activeViewForSlug(slug)
-    if (activeView) {
-      const parser = useEditorViewStore.getState().parser
-      if (!parser) {
-        console.warn('[docs] seedDocBody: parser not ready, skipping', slug)
-        return false
-      }
-      return applyMarkdownToEditor(activeView, markdown, parser)
-    }
+    applyMarkdownToActiveCmEditor(slug, markdown)
     return true
   },
 
@@ -242,32 +334,13 @@ export const createCreateSlice = (
     // hydration otherwise and the replace can land mid-load, leaving
     // the page in a mixed state on next render.
     await handle.contentReady
-    // Active-editor branch — same rationale as seedDocBody above.
-    // Profile rebuilds and wiki ingest rewrites that target the
-    // user's current view land via PM dispatch; everything else
-    // updates the cache for the next mount + kicks the flush.
+    // Active-editor branch — same rationale as seedDocBody above. Profile
+    // rebuilds and wiki ingest rewrites that target the current view land in
+    // the live CM editor; everything else updates the cache + kicks the flush.
     handle.bodyMarkdown = markdown
     markSlugDirty(slug)
-    const activeView = activeViewForSlug(slug)
-    if (activeView) {
-      const parser = useEditorViewStore.getState().parser
-      if (!parser) {
-        console.warn('[docs] replaceDocBody: parser not ready, skipping', slug)
-        return false
-      }
-      return applyMarkdownToEditor(activeView, markdown, parser)
-    }
+    applyMarkdownToActiveCmEditor(slug, markdown)
     return true
   },
 })
 
-/** Returns the live PM EditorView when, and only when, it belongs to
- * `slug`. The view in `editorViewStore` is whichever doc is currently
- * mounted; comparing against the URL-derived active slug is the
- * cheapest way to make sure a background-ingest write doesn't land
- * in a foreground editor for a different doc. Returns null whenever
- * the slug isn't active or no editor is mounted. */
-function activeViewForSlug(slug: string) {
-  if (getActiveSlugFromHash() !== slug) return null
-  return useEditorViewStore.getState().view
-}

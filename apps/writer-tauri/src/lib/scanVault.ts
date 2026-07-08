@@ -32,8 +32,9 @@ import {
   writeVaultFile,
 } from '@/lib/vault'
 import type { KnownDoc } from '@/state/docsStore'
-import type { DocMetaFile } from '@/lib/docPaths'
+import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
 import { seedLastWrittenPath } from '@/lib/docFileSync'
+import { composeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
 
 /** Read the doc's persistent slug from its `.meta.json` sidecar, or
  * mint one + write the sidecar if missing. Two-tier lookup:
@@ -56,24 +57,45 @@ interface SidecarLoad {
 }
 
 async function getOrAssignSlug(mdRel: string): Promise<SidecarLoad> {
-  const metaRel = mdRel.replace(/\.md$/, '.meta.json')
+  // Frontmatter is the source of truth — read it first. A slug there means
+  // the `.md` fully describes the doc (no sidecar consulted).
+  let body = ''
+  let data: Record<string, string> = {}
+  try {
+    const split = splitFrontmatter(await readVaultFile(mdRel))
+    data = split.data
+    body = split.body
+    if (data.slug) {
+      return { slug: data.slug, meta: frontmatterToMeta(data) }
+    }
+  } catch {
+    // Unreadable `.md` — fall through.
+  }
 
+  // Legacy fallback: a `.meta.json` sidecar from before the frontmatter
+  // switch, for docs not yet re-saved. We read its slug but never write
+  // sidecars anymore; the next flush migrates the doc to frontmatter.
+  const metaRel = mdRel.replace(/\.md$/, '.meta.json')
   if (await vaultFileExists(metaRel)) {
     try {
-      const raw = await readVaultFile(metaRel)
-      const parsed = JSON.parse(raw) as Partial<DocMetaFile>
+      const parsed = JSON.parse(await readVaultFile(metaRel)) as Partial<DocMetaFile>
       if (typeof parsed.slug === 'string' && parsed.slug.length > 0) {
         return { slug: parsed.slug, meta: parsed }
       }
     } catch {
-      // Corrupted .meta.json — fall through to mint a fresh slug.
+      // Corrupted sidecar — fall through to mint.
     }
   }
 
+  // Neither: mint a slug and persist it INTO the file's frontmatter
+  // (no sidecar), so identity is stable on the next scan.
   const slug = generateClientSlug()
-  const meta: DocMetaFile = { version: 1, slug }
-  await writeVaultFile(metaRel, `${JSON.stringify(meta, null, 2)}\n`)
-  return { slug, meta }
+  try {
+    await writeVaultFile(mdRel, composeFrontmatter({ ...data, slug }, body))
+  } catch (err) {
+    console.warn('[scan] could not write slug frontmatter for', mdRel, err)
+  }
+  return { slug, meta: { slug } }
 }
 
 /** Walk a vault subdirectory recursively and return every body-.md
@@ -81,10 +103,13 @@ async function getOrAssignSlug(mdRel: string): Promise<SidecarLoad> {
  * (`.marks.json`) and hidden entries (`.DS_Store`, `.git/`, ...) are
  * filtered out at every level. */
 async function listMdRecursive(subRel: string): Promise<string[]> {
-  if (!(await vaultFileExists(subRel))) return []
   const root = getActiveVaultPath()
   if (!root) return []
-  const absPath = await join(root, subRel)
+  // Root (`subRel === ''`) always exists when a vault is selected; the
+  // vault path helpers reject an empty relPath, so don't route '' through
+  // vaultFileExists — use the root directly.
+  if (subRel !== '' && !(await vaultFileExists(subRel))) return []
+  const absPath = subRel === '' ? root : await join(root, subRel)
   const entries = await readDir(absPath)
   const results: string[] = []
   for (const entry of entries) {
@@ -121,8 +146,9 @@ export function mdRelToKnownDoc(
   mdRel: string,
   dailySlugByDate: Map<string, string>,
   meta: Partial<DocMetaFile> = {},
+  allowGeneric = false,
 ): KnownDoc | null {
-  const base = mdRelToBaseDoc(slug, mdRel, dailySlugByDate)
+  const base = mdRelToBaseDoc(slug, mdRel, dailySlugByDate, allowGeneric)
   if (!base) return null
   // Sidecar-stored fields layer onto the path-derived base so soft
   // state (archive flag, title intent) survives the boot rebuild that
@@ -133,15 +159,6 @@ export function mdRelToKnownDoc(
   }
   if (typeof meta.archivedFromParent === 'string') {
     overlay.archivedFromParent = meta.archivedFromParent
-  }
-  // `titleIntent === 'empty'` means the on-disk filename is a system
-  // fallback ('Untitled.md') rather than the user's chosen title.
-  // Drop the filename-derived title so the EditableTitleInput renders
-  // its placeholder instead of treating "Untitled" as the user's
-  // input. Legacy sidecars (no titleIntent) are treated as 'set' —
-  // they always carried a non-fallback filename.
-  if (meta.titleIntent === 'empty') {
-    overlay.title = undefined
   }
   // Phase 5b of the Yjs-removal migration: the doc's creation time
   // used to live in `Y.Map('meta').createdAt`; we now read it off
@@ -161,6 +178,12 @@ export function mdRelToKnownDoc(
   if (typeof meta.savedAt === 'string') overlay.savedAt = meta.savedAt
   if (typeof meta.readAt === 'string') overlay.readAt = meta.readAt
   if (Array.isArray(meta.highlights)) overlay.highlights = meta.highlights
+  // YouTube capture metadata (type 'youtube'). Harmless on other types —
+  // their frontmatter/sidecar never carries these.
+  if (typeof meta.videoId === 'string') overlay.videoId = meta.videoId
+  if (typeof meta.durationSec === 'number') overlay.durationSec = meta.durationSec
+  if (typeof meta.thumbnailUrl === 'string') overlay.thumbnailUrl = meta.thumbnailUrl
+  if (typeof meta.description === 'string') overlay.description = meta.description
   return { ...base, ...overlay } as KnownDoc
 }
 
@@ -168,14 +191,27 @@ function mdRelToBaseDoc(
   slug: string,
   mdRel: string,
   dailySlugByDate: Map<string, string>,
+  allowGeneric = false,
 ): KnownDoc | null {
   // wiki/<title>.md — no nesting beyond one level.
   const wikiMatch = mdRel.match(/^wiki\/([^/]+)\.md$/)
   if (wikiMatch) {
+    const title = wikiMatch[1]
+    // The self-profile page is a singleton the rest of the app keys off by
+    // the fixed type `wiki:profile` (readSelfProfile, ensureProfileWikiSlug,
+    // WIKI_PROFILE_POLICY, the profile pipeline, ingest routing). Recognise
+    // it here by its canonical path so scan and those consumers agree on ONE
+    // identity. Without this the scan registers it as `wiki:custom-*`,
+    // ensureSystemPage can't find it, mints a SECOND `wiki:profile` doc for
+    // the same file, and the slug churns — breaking edits to the profile.
+    // `pathForDoc(wiki:profile)` returns `wiki/Profile.md`, so this round-trips.
+    if (title === 'Profile') {
+      return { slug, type: 'wiki:profile', title }
+    }
     return {
       slug,
       type: `wiki:custom-${slug}` as KnownDoc['type'],
-      title: wikiMatch[1],
+      title,
     }
   }
   // daily/<YYYY-MM-DD>.md — strict date format gate so a stray
@@ -205,12 +241,23 @@ function mdRelToBaseDoc(
       type: `system:${systemMatch[1]}` as KnownDoc['type'],
     }
   }
-  // articles/<title>.md — a saved read-it-later page. Flat (no nesting).
-  // Source metadata (url/site/favicon/read state) is layered from the
-  // sidecar by mdRelToKnownDoc; the title comes from the filename.
-  const articleMatch = mdRel.match(/^articles\/([^/]+)\.md$/)
-  if (articleMatch) {
-    return { slug, type: 'article', title: articleMatch[1] }
+  // inbox/<title>.md (or legacy articles/<title>.md) — a captured item:
+  // a saved web page or a YouTube capture. Both are generic notes; their
+  // KIND is carried in frontmatter (sourceUrl = saved page, videoId =
+  // video), layered on by mdRelToKnownDoc. The path IS the placement, so
+  // relPath is set even though it's a recognised folder — pathForDoc
+  // returns it verbatim and the file never moves.
+  const captureMatch = mdRel.match(/^(?:inbox|articles)\/([^/]+)\.md$/)
+  if (captureMatch) {
+    return { slug, type: 'note', title: captureMatch[1], relPath: mdRel }
+  }
+  // Generic note: any other `.md` in the vault. The path is the
+  // placement, carried on relPath; the title is the filename. Always on
+  // now (flat vault) — `allowGeneric` stays a parameter only so the
+  // unit tests can still exercise the recognised-folders-only path.
+  if (allowGeneric) {
+    const name = mdRel.split('/').pop()?.replace(/\.md$/, '') ?? mdRel
+    return { slug, type: 'note', title: name, relPath: mdRel }
   }
   return null
 }
@@ -222,12 +269,11 @@ function mdRelToBaseDoc(
 export async function scanVault(): Promise<KnownDoc[]> {
   if (!getActiveVaultPath()) return []
 
-  const allMd = [
-    ...(await listMdRecursive('wiki')),
-    ...(await listMdRecursive('daily')),
-    ...(await listMdRecursive('_system')),
-    ...(await listMdRecursive('articles')),
-  ]
+  // Flat Obsidian-style vault: walk the WHOLE vault so every `.md`
+  // surfaces in the catalog (recognised folders keep their special
+  // classification; anything else becomes a generic `note` at its
+  // relPath). Always on now that the folder tree is the only sidebar.
+  const allMd = await listMdRecursive('')
 
   // Pass 1: resolve slug + load sidecar metadata for every file in one
   // read. Done up-front because pass-2's writing-note resolution needs
@@ -254,7 +300,7 @@ export async function scanVault(): Promise<KnownDoc[]> {
   // Pass 2: assemble KnownDoc entries. Unrecognised paths drop out.
   const docs: KnownDoc[] = []
   for (const { slug, mdRel, meta } of scanned) {
-    const doc = mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta)
+    const doc = mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta, true)
     if (doc) docs.push(doc)
   }
 
@@ -296,7 +342,7 @@ export async function buildKnownDocForExternalPath(
   for (const d of catalog) {
     if (d.type === 'daily' && d.date) dailySlugByDate.set(d.date, d.slug)
   }
-  return mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta)
+  return mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta, true)
 }
 
 // Dev-only console handle. `await __scanVault()` to inspect what the

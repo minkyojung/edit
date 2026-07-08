@@ -1,8 +1,37 @@
 # GitHub 연동 기능 개발 계획
 
-> 작성일: 2026-05-31
-> 상태: 설계 확정, 구현 전 (다음 브랜치로 핸드오프)
+> 작성일: 2026-05-31 · 진행 현황 업데이트: 2026-06-04 (코드 감사 반영)
+> 상태: **Phase 1(인증) ✅ + Track A(데이터 커넥터) ✅ 마감(증분 ✅ + rate-limit ✅; ETag는 search API 미지원 확인→스킵) — Track B(vault 백업) 🟡 새 repo push ✅ + 수동 백업 허브 ✅ + 복원/받기(clone·pull·첫실행 런처) ✅ 코드완료·실측대기. 충돌(슬라이스 4)은 ⏸️ 보류.**
+> **🧭 방향 결정 (2026-06-04): 로컬 우선.** git을 **로컬 안전망**(AI 수정 되돌리기·히스토리·리뷰)으로 쓰는 게 핵심. GitHub은 **로그인 + 활동 읽기 + 선택적 수동 백업/복원**까지만 가볍게. **멀티기기 클라우드 동기화·충돌(슬라이스 4)은 실제 멀티기기 수요가 생길 때까지 보류** (로컬 한 대면 충돌 자체가 없음 → 지금은 불필요한 복잡도). 제품 위치 = "옵시디언(로컬 노트+로컬 git) ↔ Conductor" 사이.
 > 한 줄 요약: "GitHub"은 두 갈래(활동 가져오기 / 노트 백업) — 공통 토대인 인증을 먼저 만들고, 수직 슬라이스로 한 갈래씩.
+
+---
+
+## 진행 현황 (2026-06-04)
+
+`data-structure-github-sync` 브랜치 기준 실제 구현 상태. (✅ 완료 / 🟡 부분 / ❌ 없음)
+
+| 항목 | Phase | 상태 | 위치 |
+|---|---|---|---|
+| OAuth Device Flow 로그인 | 1 | ✅ | `src-tauri/src/github.rs` (start/poll_github_device_flow) |
+| 토큰 키체인 보관 (AES-256-GCM) | 1 | ✅ | `secure_storage.rs`, `github.rs` (StoredToken) |
+| 인증 상태 hook (useClaudeAuth 미러) | 1 | ✅ | `src/hooks/useGitHubAuth.ts` |
+| 공용 GitHub 클라이언트 래퍼 | 1 | ✅ | `github.rs` (github_get) — 한도 소진(403/429+remaining 0) 감지→`GithubError::RateLimited`, github_sync는 조용히 스킵+다음 폴링 재시도. github.rs 내부 전용 |
+| events.db 스키마 (events+state+FTS) | 2 | ✅ | `src-tauri/src/events/db.rs` (init_schema) |
+| GitHub 커넥터 폴링 (커밋·PR) | 2 | 🟡 | `github.rs` (github_sync) — `/users/me/events` 대신 search API 사용 |
+| events.db UPSERT (id 중복제거) | 2 | ✅ | `github.rs`, `events/db.rs` (upsert_events) |
+| 데일리 노트 활동 카드 렌더 | 2 | ✅ | `src/viz/GitHubActivityBlock.tsx` (CodeBlockViz 변형) |
+| 증분 동기화 (watermark) | 2 | ✅ | `github.rs` (since_date/next_watermark) — 날짜 범위로 새 것만, 레거시 자가치유. 실측 109→10건 |
+| 증분 동기화 (ETag 304) | 2 | ⛔ N/A | **스파이크 실측 결과 search API 미지원**(`search/commits`·`search/issues` → ETag 헤더 없음 + `cache-control: no-cache`; 대조군 `/users`는 둘 다 있음). 커넥터는 search 사용(events payload slim) → ETag 불가. 스킵 확정 |
+| 원격 git 명령 (remote_set/push/clone/fetch/pull_ff) | 3 | ✅ | `git.rs` — credential-helper. pull_ff=fast-forward만(갈라지면 중단, 마커 안 씀). 충돌 merge는 R4 |
+| repo 관리 API (생성·목록) | 3 | 🟡 | `github.rs` (create_repo, list_repos/github_list_repos). 내vault 판별은 clone 후 manifest로 |
+| syncStore + `.manila/manifest.json` 표식 | 3 | ✅ | `vault_sync.rs` (manifest+vaultId), `src/state/syncStore.ts` |
+| 백업 엔진 — 슬라이스 1 (새 repo push 1회) | 3 | ✅ | `vault_sync.rs` (vault_backup_init) |
+| 백업 엔진 — 슬라이스 2 (수동 백업 허브) | 3 | ✅ | 자동 push는 만들었다가 **수동으로 전환**(커밋 `e1d9e1a8`). 검토 패널이 "마지막 푸시(`@{u}`) 이후 변경"을 보여주고 **Back up** 버튼으로 push. `vault_push`/`pushVault`, AI 배지. autoPush.ts는 삭제. |
+| 백업 엔진 — 슬라이스 3 (다른 기기 clone/pull 복원) | 3 | ✅ 코드완료·실측대기 | `vault_restore`(빈 폴더 clone + manifest 확인, 안 덮어씀) + `vault_pull`(앱 열 때 ff 받기) + `VaultLauncher`(첫 실행 런처: 로컬/복원, 인라인 GitHub 연결) + BootGate boot-pull. `lib/vaultRestore.ts` |
+| 충돌 데이터 계층 (ours/theirs, conflict_sides) | 3 | ❌ | 없음 |
+
+**계획에 없던 추가 구현:** 활동 컬럼 차트(`githubColumnSpec.ts`/`githubDailySpec.ts`, **자체 SVG 엔진 DataViz** — Vega-Lite는 제거됨), 이벤트 FTS 검색(`events/db.rs`+`events/commands.rs`), 이벤트 필터(`EventFilter`), 수동 동기화 버튼(사이드바). + 시각화 합성 엔진 통일 편집(커밋 `6835d57c`, [visualization-feature-plan.md](./visualization-feature-plan.md) 참고).
 
 ---
 
@@ -34,7 +63,7 @@ GitHub과 관련된 두 기능을 한 문서에서 다룬다. 둘은 **방향·�
 
 ---
 
-## 2. 공통 토대 (Phase 1) — GitHub 인증
+## 2. 공통 토대 (Phase 1) — GitHub 인증 ✅ (스코프 `repo`로 확장, 클라이언트 래퍼만 🟡)
 
 A·B 둘 다 GitHub 토큰이 필요하다. **한 번 만들어 공유한다.**
 
@@ -54,7 +83,7 @@ A·B 둘 다 GitHub 토큰이 필요하다. **한 번 만들어 공유한다.**
 
 ---
 
-## 3. Track A — 데이터 커넥터 (인증 다음 1순위)
+## 3. Track A — 데이터 커넥터 (인증 다음 1순위) 🟡 동작 (증분 동기화 ✅, ETag만 남음)
 
 상세 스펙은 [raw-data-timeline-memory-plan.md](./raw-data-timeline-memory-plan.md) §9–10에 이미 있음. 여기선 순서만.
 
@@ -72,7 +101,7 @@ A·B 둘 다 GitHub 토큰이 필요하다. **한 번 만들어 공유한다.**
 
 ---
 
-## 4. Track B — vault 백업/동기화 (A 다음, 또는 멀티기기 필요해질 때)
+## 4. Track B — vault 백업/동기화 (A 다음, 또는 멀티기기 필요해질 때) 🟡 뼈대 완료 (1번 슬라이스: 새 repo push)
 
 > 상태: 문서상 future 항목 (`mvp-scope.md` "자동 git 백업"/"Multi-device sync"). 동기화 수단도 재검토 대상(GitHub repo vs iCloud/libsql — raw-data §143). **GitHub repo로 간다고 가정한 설계.**
 
@@ -99,10 +128,10 @@ A·B 둘 다 GitHub 토큰이 필요하다. **한 번 만들어 공유한다.**
 - 둘 다 내용 있을 때: 자동 머지 금지 → "로컬 우선 / 원격 우선 / 둘 다" 택1.
 
 ### 만드는 순서 (수직 슬라이스, 가장 흔하고 안전한 것부터)
-1. **걸어다니는 뼈대**: 로그인 → 새 repo 자동 생성 → 노트 1회 push → GitHub에서 눈으로 확인. (한 기기, 새 repo, 충돌 없음)
-2. **자동화**: 커밋(=Keep) 날 때마다 자동 push, 오프라인이면 재시도 큐.
-3. **다른 기기**: 로그인 → 내 vault repo면 clone/pull로 복원.
-4. **충돌**: 두 기기서 같은 페이지 동시 수정 처리.
+1. ✅ **걸어다니는 뼈대**: 로그인 → 새 repo 자동 생성 → 노트 1회 push → GitHub에서 눈으로 확인. (완료 — `vault_sync.rs` vault_backup_init, 토큰은 credential-helper로 ps/디스크 미노출, 실측 검증)
+2. ✅ **수동 백업 허브**: 자동 push로 시작했다가 **수동으로 전환**(커밋 `e1d9e1a8`). 검토 패널이 "마지막 푸시(`@{u}`) 이후 변경"을 목록으로 보여주고 **Back up** 버튼이 `vault_push`로 올림 → 목록 비워짐. 기준점이 git-native ref(`@{u}`)라 예전 last-reviewed 책갈피 버그류 소멸. 커밋은 그대로 자동(로컬 보존)이라 데이터 안전. (자동 push 트리거는 제거, push 배관은 재사용.)
+3. ✅ **다른 기기** (코드완료·실측대기): 첫 실행 런처(`VaultLauncher`)에서 GitHub 연결(인라인 device flow) → 내 repo 목록 → 빈 폴더 선택 → `vault_restore` clone. 앱 열 때 `vault_pull`(ff)로 받기. **복원은 git init 전에 가로채야 가능**(빈 폴더에서만)이라 런처가 부팅 앞단에 위치.
+4. ⏸️ **충돌 — 보류 (로컬 우선 결정, 2026-06-04)**: 로컬 한 대면 충돌 자체가 안 생겨 지금 불필요. 멀티기기 본격 사용 시에만 재개. (그때 방식: 별도 UI 없이 git 자동머지 + "둘 다 보관" + 충돌 정보를 AI 세션에 노출해 채팅에서 해결.)
 
 ### 충돌 UX 원칙 (디자이너 관점)
 - 단위는 "파일"이 아니라 **"겹친 페이지"** (페이지 이름으로).
@@ -126,11 +155,24 @@ A·B 둘 다 GitHub 토큰이 필요하다. **한 번 만들어 공유한다.**
 
 ```
 Phase 0  지금 브랜치 main 착지/동결           ← 페인트 말리기 (선행 필수)
-Phase 1  GitHub 인증 (OAuth + 키체인 + 클라이언트)  ← A·B 공통 토대
-Phase 2  Track A: 데이터 커넥터 (events.db 수직 슬라이스)  ← 스펙 완비, 본 줄기
-Phase 3  Track B: vault 백업/동기화
-          1 새 repo push (뼈대) → 2 자동 push → 3 다른 기기 clone → 4 충돌
+Phase 1  GitHub 인증 (OAuth repo 스코프 + 키체인 + 클라이언트)  ✅
+Phase 2  Track A: 데이터 커넥터 (events.db 수직 슬라이스)  ✅ 마감 (증분 ✅ + rate-limit ✅, ETag N/A)
+Phase 3  Track B: vault 백업/동기화                      🟡 슬라이스 3까지(코드)
+          1 새 repo push (뼈대) ✅ → 2 수동 백업 허브 ✅ → 3 다른 기기 복원 ✅(실측대기) → 4 충돌 ⏸️ 보류(로컬 우선)
 ```
+
+---
+
+## 8. 다음 할 일 (우선순위)
+
+1. ~~ETag 304~~ ⛔ **N/A 확정** — 실측 결과 search API 미지원(ETag 없음·`no-cache`). 스킵.
+2. ~~rate-limit 처리~~ ✅ **완료**(커밋 `6114050a`) — 한도 소진 감지→우아한 스킵. → **Track A 마감.**
+3. ~~슬라이스 3 복원~~ ✅ 코드완료 — **실측 필요**: 빈 폴더에서 새 기기처럼 로그인→복원 picker→clone→원본 일치 확인. 그리고 .DS_Store만 있는 폴더 엣지(클론 거부) 확인.
+4. ⏸️ **충돌 — 보류 (로컬 우선 결정, 2026-06-04)**: 멀티기기 클라우드 동기화를 적극 추구하지 않기로. 로컬 한 대 = 충돌 없음. **실제 멀티기기 수요가 생기면 재개** (방식: `conflict_sides` + "둘 다 보관" + 충돌정보를 AI 세션에 노출 → 채팅 해결, 전용 UI 없음).
+
+**→ 현재 능동 작업 없음.** GitHub 연동은 "로컬 우선"으로 일단락(인증·활동·로컬 git·선택적 백업/복원까지). 남은 건 (a) 복원/런처 실측(선택), (b) 멀티기기 필요 시 충돌.
+
+> 보류된 결정(§7): 동기화 수단(GitHub repo vs iCloud/libsql)·멀티기기 여부는 실제 수요 생길 때 재검토.
 
 ---
 

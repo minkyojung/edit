@@ -42,7 +42,7 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
   }
 
   return (
-    <div className="rounded-3xl border border-border/40 bg-muted p-3 text-sm">
+    <div className="rounded-3xl border border-border/40 bg-muted p-3 text-body">
       {/* Header: prompt + close */}
       <div className="mb-2 flex items-start justify-between gap-3 px-1">
         <div className="font-medium text-foreground">Proceed with this plan?</div>
@@ -72,7 +72,10 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
         rows={1}
         className={cn(
           'mb-2 w-full resize-none bg-transparent px-1.5 py-1.5',
-          'text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground',
+          // leading-[normal] (keyword), not a numeric ratio: WebKit sizes the
+          // textarea caret to a numeric line-height's full box, towering it over
+          // the text. `normal` keeps the caret hugging the glyphs.
+          'text-body leading-[normal] text-foreground outline-none placeholder:text-muted-foreground',
           'field-sizing-content max-h-48 min-h-8',
           '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
         )}
@@ -86,7 +89,7 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
           }
           disabled={sending}
           className={cn(
-            'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
+            'rounded-full px-3 py-1.5 text-footnote font-medium transition-colors',
             'text-muted-foreground hover:bg-accent hover:text-foreground',
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/30 disabled:opacity-50',
           )}
@@ -98,7 +101,7 @@ export function PlanApprovalCard({ pending, onClose }: Props) {
           onClick={() => decide({ type: 'approve' })}
           disabled={sending}
           className={cn(
-            'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
+            'rounded-full px-3 py-1.5 text-footnote font-medium transition-colors',
             'bg-foreground text-background hover:bg-foreground/90',
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/30 disabled:opacity-50',
           )}

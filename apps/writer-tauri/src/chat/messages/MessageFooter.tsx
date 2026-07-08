@@ -42,10 +42,10 @@ export function MessageFooter({
     return null
   }
   return (
-    <div className="mt-1 flex items-center gap-1.5 text-[13px]">
+    <div className="mt-1 flex items-center gap-1.5 text-body">
       {stopReasonLabel && (
         <span className="inline-flex items-center gap-1 text-warning">
-          <IconAlertTriangle size={12} />
+          <IconAlertTriangle size={14} />
           <span>{stopReasonLabel}</span>
         </span>
       )}

@@ -3,6 +3,7 @@
 // happen in one place and call sites stay readable (no inline strings).
 
 import { toast } from 'sonner'
+import type { SaveFailureCause } from '@/state/saveFailureStore'
 
 type RetryOpts = { onRetry?: () => void }
 
@@ -39,6 +40,78 @@ export const notify = {
   /** MarkToolbar manual create failed (schema lookup or commit). */
   markCantAdd() {
     toast.error("Couldn't add the mark")
+  },
+  /** Auto-accept mode wrote a note's staged body to disk and the write
+   * itself failed (disk error, permission) — surfaced immediately since
+   * there's no manual Keep step to catch it later. */
+  autoAcceptWriteFailed() {
+    toast.error("Couldn't save the AI's change", {
+      description: 'The file may be locked or unwritable',
+    })
+  },
+  /** Auto-save has failed for ~1.5 s straight (persistent, not a blip):
+   * the vault is unreachable / full / read-only. Copy names the real
+   * cause and the real-world fix — this is NOT a "click save" prompt (the
+   * app auto-saves; the user can't save manually). A single stable toast
+   * id collapses the N-slugs-failing-at-once case into one toast; the
+   * docFileSync reconciler updates its copy as the cause changes and
+   * dismisses it via `saveFailedResolved` when writes recover.
+   *
+   * `dismissible: false` — the user must not be able to swipe away a live
+   * "your edits aren't saving" warning and then keep typing into a void.
+   * It clears only when the condition actually resolves (reconciler). */
+  saveFailed(cause: SaveFailureCause, opts?: RetryOpts) {
+    const copy: Record<SaveFailureCause, { title: string; description: string }> = {
+      unreachable: {
+        title: "Can't reach your vault folder",
+        description: 'The drive may be disconnected. Recent changes are not saved yet.',
+      },
+      'disk-full': {
+        title: 'Not enough disk space to save',
+        description: 'Free up some space, then your changes will save automatically.',
+      },
+      permission: {
+        title: "Can't save — permission denied",
+        description: 'Check the folder permissions. Recent changes are not saved yet.',
+      },
+      unknown: {
+        title: "Couldn't save your changes",
+        description: 'If this keeps happening, please restart the app.',
+      },
+    }
+    const c = copy[cause]
+    toast.error(c.title, {
+      id: 'save-failure',
+      description: c.description,
+      duration: Infinity,
+      dismissible: false,
+      action: retryAction(opts?.onRetry),
+    })
+  },
+  /** Writes recovered — clear the persistent save-failure toast. */
+  saveFailedResolved() {
+    toast.dismiss('save-failure')
+  },
+  /** Keep/Reject clicked on a suggestion that was ALREADY decided a split
+   * second earlier on another surface (the review tray, or the in-buffer
+   * editor) — a narrow render-lag race, not a fault. Distinct copy from
+   * `markCantApply`/`markCantDismiss`, which are about a STALE ANCHOR (the
+   * surrounding text changed) — a different cause with a different fix
+   * (re-propose vs. nothing to do here, it's already handled). Neutral
+   * (not `.error`) since nothing actually went wrong. */
+  alreadyHandled() {
+    toast('Already handled', {
+      description: 'This suggestion was accepted or rejected elsewhere a moment ago',
+    })
+  },
+  /** Boot-time sweep found pending suggestions whose target text no longer
+   * exists in the note — the file changed (external edit, sync) while the
+   * app was closed. Dropped as a batch (one toast, not one per suggestion)
+   * instead of leaving them to fail later at Keep time. */
+  staleProposalsDropped(count: number) {
+    toast(`${count} suggestion${count === 1 ? '' : 's'} removed`, {
+      description: 'Their target text changed while the app was closed',
+    })
   },
 
   // ── Note CRUD ─────────────────────────────────────────────────
@@ -151,6 +224,26 @@ export const notify = {
     } else {
       toast.success('Synced — nothing new today')
     }
+  },
+  /** Idle auto-organize filed inbox captures into the wiki and MOVED them to
+   * their folders. The move is applied without a review card, so this toast is
+   * how it surfaces — it lists what moved (short filename → folder). A longer
+   * duration than a normal toast since the pass can fire while the user is away;
+   * the moved notes are also visible (and reversible) in the file tree. */
+  inboxOrganized(moves: { from: string; to: string }[]) {
+    if (moves.length === 0) return
+    const fileName = (p: string) => p.split('/').pop()?.replace(/\.md$/, '') ?? p
+    const folderOf = (p: string) => {
+      const i = p.lastIndexOf('/')
+      return i >= 0 ? p.slice(0, i) : ''
+    }
+    const shown = moves.slice(0, 3).map((m) => `${fileName(m.from)} → ${folderOf(m.to)}/`)
+    const more = moves.length > 3 ? ` +${moves.length - 3} more` : ''
+    const noun = moves.length === 1 ? 'note' : 'notes'
+    toast.success(`Organized ${moves.length} inbox ${noun}`, {
+      description: shown.join(', ') + more,
+      duration: 12000,
+    })
   },
   /** Manual sync threw. Surfaces the rare error path (auth toasts
    * have their own dedicated handler higher in the call chain;
@@ -321,6 +414,18 @@ export const notify = {
     }
     toast.success(`Imported ${succeeded} ${filesWord(succeeded)}`, {
       description: 'No new facts to extract',
+    })
+  },
+
+  // ── Attachments ───────────────────────────────────────────────
+  attachmentTooLarge(name: string) {
+    toast.error(`${name} is too large`, {
+      description: 'Maximum file size is 20 MB',
+    })
+  },
+  attachmentLimitReached() {
+    toast.error('Maximum 5 files per message', {
+      description: 'Remove an attachment to add another',
     })
   },
 }

@@ -112,4 +112,23 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Build/CI helper scripts run under Node, not the browser — declare its
+    // globals so `no-undef` (from js.recommended) doesn't flag console /
+    // process / URL etc. Flat config ignores `/* eslint-env node */`, so the
+    // environment has to be set here.
+    files: ['scripts/**/*.{js,mjs,cjs}'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        URL: 'readonly',
+        Buffer: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+        require: 'readonly',
+        module: 'writable',
+      },
+    },
+  },
 )

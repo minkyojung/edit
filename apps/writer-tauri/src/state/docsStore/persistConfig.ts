@@ -26,13 +26,16 @@
  */
 
 import type { PersistOptions } from 'zustand/middleware'
+import { projectStorageKey } from '@/lib/windowRoot'
 import type { DocsState, KnownDoc } from './types'
 
 export const persistConfig: PersistOptions<
   DocsState,
   Pick<DocsState, 'openSlugs' | 'expandedDocSlugs'>
 > = {
-  name: 'writer-tauri:docs',
+  // Per-project: open tabs / expanded folders belong to one vault, so each
+  // project window persists its own (localStorage is shared across windows).
+  name: projectStorageKey('writer-tauri:docs'),
   version: 7,
   partialize: (s) => ({
     openSlugs: s.openSlugs,

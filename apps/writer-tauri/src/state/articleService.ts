@@ -1,8 +1,9 @@
-// Article (read-it-later) creation. A saved web page becomes a doc of
-// type `article` at `articles/<title>.md`, with its source metadata
+// Article (read-it-later) creation. A saved web page becomes a generic
+// inbox `note` at `inbox/<title>.md`, with its source metadata
 // (url / site / favicon / savedAt) carried on the KnownDoc and
-// persisted through the `.meta.json` sidecar. The body is the
-// defuddle-extracted Markdown so the editor renders it as a reader.
+// persisted through the `.md` frontmatter. Its "saved-page-ness" is the
+// `sourceUrl` field, not a doc type. The body is the defuddle-extracted
+// Markdown so the editor renders it as a reader.
 //
 // Mirrors wikiService.ts createCustomWikiPage: mint slug, register the
 // catalog entry, seed the body as part of the create transaction. The
@@ -11,6 +12,7 @@
 
 import { generateClientSlug } from '@/lib/slug'
 import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
+import { sanitizeFilename } from '@/lib/docPaths'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 
 export interface ArticleInput {
@@ -37,8 +39,9 @@ export async function createArticle(
   const now = new Date().toISOString()
   const doc: KnownDoc = {
     slug,
-    type: 'article',
+    type: 'note',
     title,
+    relPath: `inbox/${sanitizeFilename(title)}.md`,
     createdAt: now,
     savedAt: input.savedAt ?? now,
     sourceUrl: input.sourceUrl,

@@ -5,13 +5,23 @@
 // migration lands (STEP 3), query.getContextUsage() returns the authoritative
 // `maxTokens` and this estimate is no longer the source of truth.
 //
-// All currently offered chat models (Haiku 4.5 / Sonnet 4.6 / Opus 4.8)
-// expose a 200k window; the 1M-context beta is not enabled on the chat
-// sidecar, so a single constant is correct today. The signature takes the
-// model id so callers don't change when per-model limits diverge later.
+// Sonnet 4.6 / Opus 4.8 / Fable 5 expose a native 1M-token window at standard
+// pricing (no beta flag, no long-context premium); Haiku 4.5 tops out at 200k.
+// Unknown ids fall back to the conservative 200k so the gauge never
+// under-reports how full the window is.
 
 const DEFAULT_CONTEXT_LIMIT = 200_000
+const MILLION = 1_000_000
 
-export function contextLimitForModel(_model: string): number {
-  return DEFAULT_CONTEXT_LIMIT
+/** Input-token window per model id. Keyed by the bare ids we send to the
+ * sidecar; anything else uses DEFAULT_CONTEXT_LIMIT. */
+const CONTEXT_LIMITS: Record<string, number> = {
+  'claude-haiku-4-5': 200_000,
+  'claude-sonnet-4-6': MILLION,
+  'claude-opus-4-8': MILLION,
+  'claude-fable-5': MILLION,
+}
+
+export function contextLimitForModel(model: string): number {
+  return CONTEXT_LIMITS[model] ?? DEFAULT_CONTEXT_LIMIT
 }

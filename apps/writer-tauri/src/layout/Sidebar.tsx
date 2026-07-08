@@ -1,230 +1,171 @@
-import { useCallback, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import {
   IconSettings,
-  IconFilter,
-  IconSelector,
-  IconLogout,
+  IconEdit,
+  IconSearch,
+  IconFolderPlus,
+  IconArrowsSort,
+  IconUser,
+  IconBolt,
+  IconRobot,
+  IconRoute,
+  IconPalette,
   IconSparkles,
-  IconCameraPlus,
 } from '@tabler/icons-react'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { SidebarDateMenu } from './SidebarDateMenu'
-import { DayView } from './views/DayView'
-import { WeekView } from './views/WeekView'
-import { MonthView } from './views/MonthView'
-import { WikiSection } from './WikiSection'
-import { ArticlesSection } from './ArticlesSection'
-import { WikiMetaRows } from './WikiMetaRows'
-import { ArchivedDocsPopover } from './ArchivedDocsPopover'
-import { IngestProposalCard } from './IngestProposalCard'
+import { FolderTree } from './FolderTree'
 import { useDocsStore } from '@/state/docsStore'
-import { useGitStore } from '@/state/gitStore'
-import { buildDayUrl, buildViewUrl, getActiveSlugFromHash } from '@/lib/viewUrl'
+import { useCommandPaletteStore } from '@/state/commandPaletteStore'
+import { useNewFolderStore } from '@/state/newFolderStore'
+import { openSettings } from '@/settings/useSettingsDialog'
+import { ensureProfileWikiSlug } from '@/state/wikiService'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
+import { buildViewUrl } from '@/lib/viewUrl'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
+import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
+import { useGitHubAuth } from '@/hooks/useGitHubAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
-import { useTheme } from '@/components/theme-provider'
-import { useFont, type FontOption } from '@/components/font-provider'
+import { useConnectGitHubDialog } from '@/stores/connectGitHubDialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useSortStore, SORT_LABELS, type SortMode } from '@/state/sortStore'
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
 } from '@/components/ui/sidebar'
+import { SIDEBAR_ROW_INTERACTION } from '@/components/ui/sidebarRow'
+import { cn } from '@/lib/utils'
 
-/** Pull initials from an email's local part, splitting on .+_- so
- * william.jung@x.com → WJ. Falls back to the first letter, then "?" so
- * the avatar always renders something. */
-function accountInitials(email: string | null): string {
-  if (!email) return '?'
-  const local = email.split('@')[0] ?? ''
-  const parts = local.split(/[._-]+/).filter(Boolean)
-  if (parts.length === 0) return (local[0] ?? '?').toUpperCase()
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-  return (parts[0][0] + parts[1][0]).toUpperCase()
-}
-
-/** Capitalize the email's local part for a friendly-but-honest display
- * name. Returns null when there's no email so callers can render a
- * generic placeholder. */
-function accountDisplayName(email: string | null): string | null {
-  if (!email) return null
-  const local = email.split('@')[0] ?? ''
-  return local
-    .split(/[._-]+/)
-    .filter(Boolean)
-    .map((p) => p[0].toUpperCase() + p.slice(1))
-    .join(' ')
-}
-
-type PaletteOption = {
-  value: 'charcoal' | 'graphite' | 'olive' | 'paper' | 'mist'
-  label: string
-  swatch: { bg: string; fg: string; accent: string; border: string }
-}
-
-const PALETTE_OPTIONS: PaletteOption[] = [
-  {
-    value: 'charcoal',
-    label: 'Charcoal',
-    swatch: { bg: '#141414', fg: '#ECECEC', accent: '#262626', border: '#333333' },
-  },
-  {
-    value: 'graphite',
-    label: 'Graphite',
-    swatch: { bg: '#1D2024', fg: '#ECECEE', accent: '#2B2C32', border: '#383940' },
-  },
-  {
-    value: 'olive',
-    label: 'Olive',
-    swatch: { bg: '#111001', fg: '#E8E4D0', accent: '#26230C', border: '#3A3520' },
-  },
-  {
-    value: 'paper',
-    label: 'Paper',
-    swatch: { bg: '#D2D2D2', fg: '#1A1A1A', accent: '#BCBCBC', border: '#A8A8A8' },
-  },
-  {
-    value: 'mist',
-    label: 'Mist',
-    swatch: { bg: '#E9EAEC', fg: '#1D2024', accent: '#CFD1D4', border: '#B8BABE' },
-  },
-]
-
-type FontOptionDef = {
-  value: FontOption
-  label: string
-  /** Inline font-family used for the swatch so each row previews its
-   * own typeface — Geist row in Geist, Nunito row in Nunito. */
-  preview: string
-}
-
-const FONT_OPTIONS: FontOptionDef[] = [
-  { value: 'pretendard', label: 'Pretendard', preview: "'Pretendard Variable', sans-serif" },
-  { value: 'geist', label: 'Geist', preview: "'Geist Variable', sans-serif" },
-  { value: 'nunito', label: 'Nunito Sans', preview: "'Nunito Sans Variable', sans-serif" },
-]
-
-function PaletteSwatch({ swatch }: { swatch: PaletteOption['swatch'] }) {
-  return (
-    <span
-      className="inline-flex size-4 shrink-0 items-center justify-center overflow-hidden rounded-full"
-      style={{ backgroundColor: swatch.bg, boxShadow: `inset 0 0 0 1px ${swatch.border}` }}
-      aria-hidden
-    >
-      <span
-        className="block size-2 rounded-full"
-        style={{ backgroundColor: swatch.fg }}
-      />
-    </span>
-  )
-}
+// Vertical surface-list row: same geometry + shared interaction skin as the
+// folder-tree rows (SIDEBAR_ROW_INTERACTION), so hover / focus / selected match
+// exactly. Selected state is driven by `data-active` (not a class), like TreeRow.
+const NAV_ROW = cn(
+  'flex h-9 w-full items-center gap-2 rounded-sm px-2 text-body font-normal',
+  SIDEBAR_ROW_INTERACTION,
+)
 
 export function AppSidebar() {
-  const { palette, setPalette } = useTheme()
-  const { font, setFont } = useFont()
   const connectOpen = useConnectDialog((s) => s.open)
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
-  const { account, refresh, disconnect } = useClaudeAuth()
-  const sidebarTab = useDocsStore((s) => s.sidebarTab)
-  const dirtyCount = useGitStore((s) => s.dirtyPaths.size)
-  const gitStatus = useGitStore((s) => s.status)
-  const commitImmediate = useGitStore((s) => s.commitImmediate)
-  const saveSnapshotDisabled = dirtyCount === 0 || gitStatus === 'committing'
+  // Auth hooks stay mounted here because the connect dialogs live in this
+  // component; Settings → Connections is the surface that shows/manages the
+  // identities, so we only keep the `refresh` callbacks the dialogs need.
+  const { refresh } = useClaudeAuth()
+  const githubConnectOpen = useConnectGitHubDialog((s) => s.open)
+  const setGithubConnectOpen = useConnectGitHubDialog((s) => s.setOpen)
+  const { refresh: refreshGithub } = useGitHubAuth()
 
-  const handleSignOut = useCallback(async () => {
-    if (account.connected) {
-      await disconnect()
-    }
-  }, [account.connected, disconnect])
-
-  const openDaily = useDocsStore((s) => s.openDaily)
-  const createChildNote = useDocsStore((s) => s.createChildNote)
-  const findDailyAncestorSlug = useDocsStore((s) => s.findDailyAncestorSlug)
+  const createNew = useDocsStore((s) => s.createNew)
+  const openPalette = useCommandPaletteStore((s) => s.openPalette)
+  const startNewFolder = useNewFolderStore((s) => s.start)
+  const sortMode = useSortStore((s) => s.mode)
+  const setSortMode = useSortStore((s) => s.setMode)
   const navigate = useNavigate()
+  const { pathname } = useLocation()
 
-  // Global doc shortcuts:
-  //   ⌘T → today's daily entry (always reachable). Routes through
-  //         buildDayUrl so the jump lands a back/forward entry.
-  //   ⌘N → new child note under whatever's currently active. Mirrors
-  //         Linear / Notion: "make a new thing inside this thing".
+  // Profile opens a note (not a route), so its active highlight tracks whether
+  // the profile note is the currently-open doc — mirroring how the routed rows
+  // light up via `pathname`.
+  const knownDocs = useDocsStore((s) => s.knownDocs)
+  const activeSlug = useActiveSlug()
+  const activeDoc = knownDocs.find((d) => d.slug === activeSlug)
+  const profileSlug = knownDocs.find(
+    (d) => d.type === 'wiki:profile' && !d.archivedAt,
+  )?.slug
+  const profileActive = !!profileSlug && profileSlug === activeSlug
+
+  // Keep a surface's nav row active not just on its list route, but also while
+  // any of its files is the open doc — so drilling from the list page into a
+  // specific skill/agent/command keeps the parent row highlighted. These dirs
+  // mirror SKILLS_REL / AGENTS_REL / COMMANDS_REL (catalogued as 'note' docs,
+  // whose relPath IS the file location).
+  const activeRel = activeDoc?.relPath ?? null
+  const inSurface = (dir: string) => !!activeRel && activeRel.startsWith(`${dir}/`)
+  const agentsActive = pathname === '/agents' || inSurface('_system/agent/agents')
+  const skillsActive = pathname === '/skills' || inSurface('_system/agent/skills')
+  const commandActive =
+    pathname === '/routines' || inSurface('_system/agent/commands')
+  const galleryActive = pathname === '/gallery'
+  const onboardActive = pathname === '/onboard'
+
+  // Profile is lazily created — ensure the note exists, then open it in the
+  // editor. `busy` guards the async gap so a double-click can't spawn two.
+  const [profileBusy, setProfileBusy] = useState(false)
+  const openProfile = useCallback(async () => {
+    if (profileBusy) return
+    setProfileBusy(true)
+    try {
+      const slug = await ensureProfileWikiSlug()
+      if (!slug) return
+      const store = useDocsStore.getState()
+      navigate(
+        buildViewUrl({
+          tab: store.sidebarTab,
+          dayAnchor: store.dayAnchor,
+          monthAnchor: store.monthAnchor,
+          slug,
+        }),
+      )
+    } catch (err) {
+      console.warn('[sidebar] open profile failed', err)
+    } finally {
+      setProfileBusy(false)
+    }
+  }, [profileBusy, navigate])
+
+  // New flat note (lands at inbox/Untitled.md) → open it. Shared by the
+  // header "+" button and the ⌘N shortcut so there's one code path.
+  const handleCreateNew = useCallback(() => {
+    createNew().then((slug) => {
+      const store = useDocsStore.getState()
+      navigate(
+        buildViewUrl({
+          tab: store.sidebarTab,
+          dayAnchor: store.dayAnchor,
+          monthAnchor: store.monthAnchor,
+          slug,
+        }),
+      )
+    }).catch((err) => console.error('[docs] createNew failed', err))
+  }, [createNew, navigate])
+
+  // ⌘N → new note. The vault is flat now, so a new note no longer nests
+  // under today's daily — it's just a fresh file.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
       if (e.shiftKey || e.altKey) return
-      if (e.key === 't' || e.key === 'T') {
-        e.preventDefault()
-        // ⌘T jumps to today and lands the user on Day view so the
-        // shortcut reads as "take me to today's work surface,"
-        // regardless of which date view they had open. Driving this
-        // through navigate() (not direct store setters) gives the
-        // jump a slot in the back/forward stack — ⌘[ undoes the ⌘T.
-        const realToday = new Date()
-        const yyyy = realToday.getFullYear()
-        const mm = String(realToday.getMonth() + 1).padStart(2, '0')
-        const dd = String(realToday.getDate()).padStart(2, '0')
-        const todayISO = `${yyyy}-${mm}-${dd}`
-        openDaily(todayISO).then((slug) => {
-          navigate(buildDayUrl(todayISO, slug ?? null))
-        }).catch((err) =>
-          console.error('[docs] ⌘T openDaily failed', err),
-        )
-        return
-      }
       if (e.key === 'n' || e.key === 'N') {
         e.preventDefault()
-        const activeSlug = getActiveSlugFromHash()
-        if (!activeSlug) return
-        // Writings nest only 1-deep under a daily. If a writing is
-        // currently active, ⌘N creates a sibling under the same daily
-        // rather than a (forbidden) grandchild. Daily / wiki active
-        // pass through unchanged: daily → child writing, wiki → null
-        // (createChildNote refuses, ⌘N becomes a no-op on wiki pages).
-        const target =
-          findDailyAncestorSlug(activeSlug) ?? activeSlug
-        createChildNote(target).then((created) => {
-          if (!created) return
-          const store = useDocsStore.getState()
-          navigate(
-            buildViewUrl({
-              tab: store.sidebarTab,
-              dayAnchor: store.dayAnchor,
-              monthAnchor: store.monthAnchor,
-              slug: created,
-            }),
-          )
-        }).catch((err) =>
-          console.error('[docs] ⌘N createChildNote failed', err),
-        )
+        handleCreateNew()
       }
     }
     // Capture phase so the editor / chat input / any descendant that
-    // calls stopPropagation in its own keydown can't swallow these
-    // shortcuts. ⌘T and ⌘N are global doc actions; they need to win
-    // over local input handling.
+    // calls stopPropagation in its own keydown can't swallow the
+    // shortcut. ⌘N is a global doc action; it needs to win over local
+    // input handling.
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [openDaily, createChildNote, findDailyAncestorSlug, navigate])
+  }, [handleCreateNew])
 
   return (
-    <Sidebar>
+    // The sidebar container's default `border-r` uses the translucent
+    // `--border` token (oklch(1 0 0 / 8–10%) in the dark themes). With the
+    // window transparent for vibrancy, that 1px border sits over the
+    // transparent layout gap and reveals the desktop as a seam at the
+    // sidebar↔editor boundary. Paint it with the opaque `--sidebar` color so
+    // it covers rather than bleeds (seamless, no desktop show-through).
+    <Sidebar className="[border-right-color:var(--sidebar)]">
       <SidebarHeader
         data-tauri-drag-region
-        className="flex flex-row items-center p-0 pr-3"
+        className="flex flex-row items-center gap-1 p-0 pr-3"
         style={{ height: 'var(--header-h)' }}
       >
         {/* Reserve the macOS traffic-light area as a drag region so
@@ -236,150 +177,162 @@ export function AppSidebar() {
           className="h-full shrink-0"
           style={{ width: 'var(--traffic-light-w)' }}
         />
-        {/* Cluster wrapper matches EditorHeader's pl-3 + gap-2 so the
-            SidebarDateMenu sits 12px past the stoplight zone, the same
-            distance EditorHeader's SidebarTrigger keeps from the
-            window's left edge. */}
-        <div className="flex items-center gap-2 pl-3">
-          <SidebarDateMenu />
-        </div>
+        {/* Drag region fills the gap; the frequent file actions + Settings sit
+            at the header's right edge (their original home). Outside the drag
+            region so they stay clickable. */}
         <div data-tauri-drag-region className="flex-1 h-full" />
+        <button
+          type="button"
+          aria-label="Search"
+          title="Search (⌘K)"
+          onClick={() => openPalette()}
+          className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
+        >
+          <IconSearch size={18} stroke={1.75} />
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Sort"
+              title="Sort"
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
+            >
+              <IconArrowsSort size={18} stroke={1.75} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="bottom" align="end">
+            <DropdownMenuRadioGroup
+              value={sortMode}
+              onValueChange={(v) => setSortMode(v as SortMode)}
+            >
+              {(Object.keys(SORT_LABELS) as SortMode[]).map((m) => (
+                <DropdownMenuRadioItem key={m} value={m}>
+                  {SORT_LABELS[m]}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <button
+          type="button"
+          aria-label="New folder"
+          title="New folder"
+          onClick={startNewFolder}
+          className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
+        >
+          <IconFolderPlus size={18} stroke={1.75} />
+        </button>
+        <button
+          type="button"
+          aria-label="New note"
+          title="New note (⌘N)"
+          onClick={handleCreateNew}
+          className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
+        >
+          <IconEdit size={18} stroke={1.75} />
+        </button>
+        <button
+          type="button"
+          aria-label="Settings"
+          title="Settings (⌘,)"
+          onClick={() => openSettings()}
+          className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-foreground/12 hover:text-sidebar-foreground"
+        >
+          <IconSettings size={18} stroke={1.75} />
+        </button>
       </SidebarHeader>
 
       <SidebarContent>
-        <div>
-          {sidebarTab === 'day' && <DayView />}
-          {sidebarTab === 'week' && <WeekView />}
-          {sidebarTab === 'month' && <MonthView />}
+        {/* On-demand agent / profile surfaces as a vertical list above the
+            folder tree — icon + label rows. Lives INSIDE SidebarContent so it
+            scrolls together with the tree (one scroll for the whole sidebar).
+            Profile opens the self-note; the rest open their management pages. */}
+        {/* Left gutter (pl-3 = 12px) so the ICON/TEXT left edge lands on the
+            macOS traffic-light leading edge (~20px = 12px gutter + the row's
+            8px inner pad). The hover/selection FILL starts at 12px and may
+            spill a touch left of the lights — that's intentional; alignment
+            tracks content, not the fill. Kept in sync with the folder tree's
+            root <ul> below so both share one content line. */}
+        {/* Small muted section label (title-case, aligned to the icon column at
+            pl-5) — categorizes the top surfaces vs. the notes tree below. */}
+        <div className="-mb-1 select-none px-5 pt-2 text-footnote font-medium text-sidebar-foreground/50">
+          Assistant
         </div>
-        <ArticlesSection />
-        <WikiSection />
-      </SidebarContent>
+        <nav className="flex flex-col gap-0.5 pl-3 pr-2">
+          <button
+            type="button"
+            onClick={() => void openProfile()}
+            data-active={profileActive || undefined}
+            className={NAV_ROW}
+          >
+            <IconUser size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Profile</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/agents')}
+            data-active={agentsActive || undefined}
+            className={NAV_ROW}
+          >
+            <IconRobot size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Agents</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/skills')}
+            data-active={skillsActive || undefined}
+            className={NAV_ROW}
+          >
+            <IconBolt size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Skills</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/routines')}
+            data-active={commandActive || undefined}
+            className={NAV_ROW}
+          >
+            <IconRoute size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Routine</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/gallery')}
+            data-active={galleryActive || undefined}
+            className={NAV_ROW}
+          >
+            <IconPalette size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Gallery</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/onboard')}
+            data-active={onboardActive || undefined}
+            className={NAV_ROW}
+          >
+            <IconSparkles size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Onboarding</span>
+          </button>
+        </nav>
 
-      <SidebarFooter>
-        {/* Karpathy Memories card — surfaces the queued ingest
-            proposals above the archive button so they're easy to
-            notice without crowding the doc tree above. */}
-        <IngestProposalCard />
-        <SidebarMenu>
-          {/* Profile + Conventions: always-present, low-frequency wiki
-              surfaces, stacked just above Archived. */}
-          <WikiMetaRows />
-          <SidebarMenuItem>
-            <ArchivedDocsPopover />
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <SidebarMenuButton size="lg" className="px-2 h-[46px]">
-                  <Avatar className="size-7 shrink-0">
-                    <AvatarImage src="" />
-                    <AvatarFallback className="avatar-luma text-xs text-primary-foreground font-medium">
-                      {accountInitials(account.email)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[14px] font-semibold text-sidebar-foreground truncate">
-                      {accountDisplayName(account.email) ?? 'Guest'}
-                    </p>
-                    <p className="text-[13px] font-normal text-sidebar-foreground/55 truncate">
-                      {account.connected ? (account.email ?? 'Connected') : 'Not connected'}
-                    </p>
-                  </div>
-                  <IconSelector size={14} stroke={1.5} className="ml-auto text-sidebar-foreground/60" />
-                </SidebarMenuButton>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent side="top" align="start" className="w-52">
-                {!account.connected && (
-                  <>
-                    <DropdownMenuItem onClick={() => setConnectOpen(true)}>
-                      <IconSparkles size={16} stroke={1.5} />
-                      Connect Claude
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-                {account.connected && (
-                  <>
-                    <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-                      Claude
-                    </DropdownMenuLabel>
-                    <DropdownMenuItem disabled className="opacity-100">
-                      <IconSparkles size={16} stroke={1.5} />
-                      <span className="truncate">{account.email ?? 'Connected'}</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={disconnect}>
-                      Disconnect Claude
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-                <DropdownMenuItem
-                  disabled={saveSnapshotDisabled}
-                  onSelect={() => {
-                    void commitImmediate()
-                  }}
-                >
-                  <IconCameraPlus size={16} stroke={1.5} />
-                  <span>Save snapshot</span>
-                  {dirtyCount > 0 && (
-                    <span className="ml-auto text-xs text-muted-foreground">
-                      {dirtyCount}
-                    </span>
-                  )}
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled title="Coming soon">
-                  <IconSettings size={16} stroke={1.5} />
-                  Settings
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled title="Coming soon">
-                  <IconFilter size={16} stroke={1.5} />
-                  Filter
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-                  Palette
-                </DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={palette}
-                  onValueChange={(v) => setPalette(v as PaletteOption['value'])}
-                >
-                  {PALETTE_OPTIONS.map((opt) => (
-                    <DropdownMenuRadioItem key={opt.value} value={opt.value}>
-                      <PaletteSwatch swatch={opt.swatch} />
-                      {opt.label}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-                  Font
-                </DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={font}
-                  onValueChange={(v) => setFont(v as FontOption)}
-                >
-                  {FONT_OPTIONS.map((opt) => (
-                    <DropdownMenuRadioItem
-                      key={opt.value}
-                      value={opt.value}
-                      style={{ fontFamily: opt.preview }}
-                    >
-                      {opt.label}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive" onClick={handleSignOut}>
-                  <IconLogout size={16} stroke={1.5} />
-                  Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
+        {/* Section label for the vault's notes, mirroring the "Assistant"
+            label above so the two zones read as distinct groups. */}
+        <div className="-mb-1 select-none px-5 pt-3 text-footnote font-medium text-sidebar-foreground/50">
+          Notes
+        </div>
+        {/* Obsidian-style folder tree — the vault's folder structure is
+            the sidebar. (Replaced the day/week/month date views.) */}
+        <FolderTree />
+      </SidebarContent>
       <ConnectClaudeDialog open={connectOpen} onOpenChange={setConnectOpen} onConnected={refresh} />
+      <ConnectGitHubDialog
+        open={githubConnectOpen}
+        onOpenChange={setGithubConnectOpen}
+        onConnected={() => {
+          void refreshGithub()
+        }}
+      />
     </Sidebar>
   )
 }

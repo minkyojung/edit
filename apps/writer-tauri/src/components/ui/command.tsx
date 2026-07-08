@@ -52,7 +52,23 @@ function CommandDialog({
       </DialogHeader>
       <DialogContent
         className={cn(
-          "top-1/3 translate-y-0 overflow-hidden rounded-4xl! p-0",
+          // Vibrant frosted-glass command PANEL: translucent + backdrop blur so
+          // the panel itself reads as glass. The DialogOverlay only DIMS the
+          // background (no whole-screen blur), so just the panel is frosted —
+          // the rest of the screen stays sharp, only darker. sm:max-w-2xl makes
+          // it much wider than the default dialog.
+          // `command-palette` marks this dialog so index.css can re-center it
+          // vertically in the compact window (where top-1/4 sits too low).
+          "command-palette top-1/4 translate-y-0 overflow-hidden rounded-4xl! p-0 sm:max-w-2xl",
+          "bg-popover/55 backdrop-blur-2xl supports-backdrop-filter:bg-popover/45",
+          // Theme-adaptive tint/sheen on the glass (richer than flat popover):
+          // a soft top-down foreground gradient gives the panel body + depth,
+          // and it inverts automatically (light sheen on dark, dark on light)
+          // because --foreground flips per theme.
+          "bg-linear-to-b from-foreground/[0.07] to-transparent",
+          // Edge: canonical Liquid-Glass rim (layered inset highlights, brighter
+          // on top) instead of a flat border, plus a soft drop shadow.
+          "shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.16),inset_0_-1px_1px_rgba(255,255,255,0.05),0_24px_60px_-15px_rgba(0,0,0,0.5)]",
           className
         )}
         showCloseButton={showCloseButton}
@@ -69,17 +85,17 @@ function CommandInput({
 }: React.ComponentProps<typeof CommandPrimitive.Input>) {
   return (
     <div data-slot="command-input-wrapper" className="p-1 pb-0">
-      <InputGroup className="h-9 bg-input/50">
+      <InputGroup className="h-14 bg-transparent">
         <CommandPrimitive.Input
           data-slot="command-input"
           className={cn(
-            "w-full text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
+            "w-full text-lg outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
             className
           )}
           {...props}
         />
         <InputGroupAddon>
-          <IconSearch size={16} stroke={2} className="shrink-0 opacity-50" />
+          <IconSearch size={20} stroke={2} className="shrink-0 opacity-50" />
         </InputGroupAddon>
       </InputGroup>
     </div>
@@ -94,7 +110,7 @@ function CommandList({
     <CommandPrimitive.List
       data-slot="command-list"
       className={cn(
-        "no-scrollbar max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
+        "no-scrollbar max-h-[28rem] scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
         className
       )}
       {...props}
@@ -109,7 +125,7 @@ function CommandEmpty({
   return (
     <CommandPrimitive.Empty
       data-slot="command-empty"
-      className={cn("py-6 text-center text-sm", className)}
+      className={cn("py-6 text-center text-body", className)}
       {...props}
     />
   )
@@ -153,7 +169,7 @@ function CommandItem({
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        "group/command-item relative flex cursor-default items-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium outline-hidden select-none in-data-[slot=dialog-content]:rounded-3xl data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-muted data-selected:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-selected:*:[svg]:text-foreground",
+        "group/command-item relative flex cursor-default items-center gap-2 rounded-md px-3 py-2 text-body font-medium outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-foreground/16 data-selected:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-selected:*:[svg]:text-foreground",
         className
       )}
       {...props}

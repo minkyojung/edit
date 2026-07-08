@@ -37,6 +37,15 @@ export async function resolveVaultAssetSrc(
   if (ABSOLUTE_URL_RE.test(rawSrc)) return rawSrc
   const vaultPath = getActiveVaultPath()
   if (!vaultPath) return null
-  const abs = await join(vaultPath, rawSrc)
+  // Markdown asset URLs are percent-encoded (a space must be `%20` to parse as an
+  // image), but the on-disk path is literal — decode before joining. A no-op for the
+  // PM editor's raw (unencoded) attr paths; try/catch guards a stray literal `%`.
+  let relPath = rawSrc
+  try {
+    relPath = decodeURI(rawSrc)
+  } catch {
+    /* malformed escape — fall back to the raw path */
+  }
+  const abs = await join(vaultPath, relPath)
   return convertFileSrc(abs)
 }

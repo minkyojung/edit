@@ -61,25 +61,52 @@ function humanizeEditDocument(input: unknown): HumanizedToolCall {
   return { label: `Replace "${quote}" → "${content}"` }
 }
 
-function humanizeRead(input: unknown): HumanizedToolCall {
+/** Pull plain text out of a tool result — a raw string, or the SDK's
+ * `[{type:'text', text}]` content-block array — so we can count lines or
+ * render the read content. */
+export function readOutputText(output: unknown): string | null {
+  if (typeof output === 'string') return output
+  if (Array.isArray(output)) {
+    const joined = output
+      .map((b) =>
+        b && typeof b === 'object' && 'text' in b
+          ? String((b as { text?: unknown }).text ?? '')
+          : '',
+      )
+      .join('')
+    return joined.length > 0 ? joined : null
+  }
+  return null
+}
+
+function countLines(output: unknown): number | null {
+  const text = readOutputText(output)
+  if (text == null) return null
+  return text.replace(/\n+$/, '').split('\n').length
+}
+
+function humanizeRead(input: unknown, output?: unknown): HumanizedToolCall {
   const i = (input ?? {}) as { file_path?: string }
   const name = basename(i.file_path)
-  if (!name) return { label: 'Reading' }
-  return { label: `Read ${name}`, chips: [{ kind: 'file', name }] }
+  // The file name rides in the chip, so the label carries the line count
+  // (once the result lands) rather than repeating the path.
+  const lines = countLines(output)
+  const label = lines != null ? `Read ${lines} lines` : name ? 'Read' : 'Reading'
+  return name ? { label, chips: [{ kind: 'file', name }] } : { label }
 }
 
 function humanizeEdit(input: unknown): HumanizedToolCall {
   const i = (input ?? {}) as { file_path?: string }
   const name = basename(i.file_path)
   if (!name) return { label: 'Editing' }
-  return { label: `Edit ${name}`, chips: [{ kind: 'file', name }] }
+  return { label: 'Edit', chips: [{ kind: 'file', name }] }
 }
 
 function humanizeWrite(input: unknown): HumanizedToolCall {
   const i = (input ?? {}) as { file_path?: string }
   const name = basename(i.file_path)
   if (!name) return { label: 'Writing' }
-  return { label: `Write ${name}`, chips: [{ kind: 'file', name }] }
+  return { label: 'Write', chips: [{ kind: 'file', name }] }
 }
 
 function humanizeGrep(input: unknown): HumanizedToolCall {
@@ -120,39 +147,50 @@ function humanizeWebFetch(input: unknown): HumanizedToolCall {
   return { label: `Fetching ${host}` }
 }
 
-/** `read_page` — sidecar tool that reads a vault wiki / system page
- * by its vault-relative path. Strips the `.md` extension so the label
- * matches how the rest of the app speaks about pages (`Tom`, not
- * `Tom.md`). The page-open affordance lives on ToolPart's header,
- * driven off `part.input.path` + `pathToKnownSlug`. */
-function humanizeReadPage(input: unknown): HumanizedToolCall {
-  const i = (input ?? {}) as { path?: string }
-  const name = basename(i.path).replace(/\.md$/, '')
-  if (!name) return { label: 'Reading wiki' }
-  return { label: `Read ${name}` }
+/** `edit_visualization` — sidecar relay tool that updates a chart already in the
+ * document by id. The host applies the new spec in place; the label just signals
+ * the activity (the change itself shows in the document body). */
+function humanizeEditVisualization(): HumanizedToolCall {
+  return { label: 'Updating the visualization' }
 }
 
-/** `search_wiki` — sidecar tool that fuzzy-matches the query against
- * page titles and bodies. The output (when available) is a markdown
- * list with one `- path — excerpt` line per hit; counting those gives
- * the user a sense of how broad the model's hit was. While input is
- * still streaming the count is omitted so the label doesn't flap. */
-function humanizeSearchWiki(input: unknown, output?: unknown): HumanizedToolCall {
-  const i = (input ?? {}) as { query?: string }
-  if (!i.query) return { label: 'Searching wiki' }
-  const lines =
-    typeof output === 'string'
-      ? output.split('\n').filter((l) => l.startsWith('- ')).length
-      : undefined
-  const suffix =
-    lines !== undefined
-      ? ` (${lines} ${lines === 1 ? 'result' : 'results'})`
-      : ''
-  return { label: `Searched wiki: "${truncate(i.query, 40)}"${suffix}` }
+/** Our write-side MCP relay tools (propose_edit / write / multi_edit). The
+ * model's intent is an edit proposal; the file rides in a chip and the label
+ * is just the verb — keyed by short name (humanizeToolCall strips the
+ * mcp__writer-relay__ prefix before lookup). Registering these stops the
+ * fallback "Using propose_edit" string from leaking into the activity line. */
+function humanizeProposeEdit(input: unknown): HumanizedToolCall {
+  const i = (input ?? {}) as { file_path?: string }
+  const name = basename(i.file_path)
+  return name ? { label: 'Edit', chips: [{ kind: 'file', name }] } : { label: 'Edit' }
+}
+
+function humanizeProposeWrite(input: unknown): HumanizedToolCall {
+  const i = (input ?? {}) as { file_path?: string }
+  const name = basename(i.file_path)
+  return name ? { label: 'Write', chips: [{ kind: 'file', name }] } : { label: 'Write' }
+}
+
+function humanizeAgent(input: unknown): HumanizedToolCall {
+  const i = (input ?? {}) as { description?: string }
+  const d = i.description?.trim()
+  return { label: d ? `Agent: ${truncate(d, 40)}` : 'Agent' }
+}
+
+function humanizeAskUserQuestion(input: unknown): HumanizedToolCall {
+  const i = (input ?? {}) as { questions?: Array<{ question?: string }> }
+  const q = i.questions?.[0]?.question
+  return { label: q ? `Asked: ${truncate(q, 48)}` : 'Asked a question' }
 }
 
 const humanizers: Record<string, Humanizer> = {
   [EDIT_DOCUMENT_TOOL]: humanizeEditDocument,
+  Agent: humanizeAgent,
+  Task: humanizeAgent,
+  AskUserQuestion: humanizeAskUserQuestion,
+  propose_edit: humanizeProposeEdit,
+  propose_write: humanizeProposeWrite,
+  propose_multi_edit: humanizeProposeEdit,
   Read: humanizeRead,
   Edit: humanizeEdit,
   Write: humanizeWrite,
@@ -161,8 +199,7 @@ const humanizers: Record<string, Humanizer> = {
   Glob: humanizeGlob,
   WebSearch: humanizeWebSearch,
   WebFetch: humanizeWebFetch,
-  read_page: humanizeReadPage,
-  search_wiki: humanizeSearchWiki,
+  edit_visualization: humanizeEditVisualization,
 }
 
 /** Strip the SDK's MCP relay prefix off a tool name. Tools the sidecar

@@ -19,14 +19,16 @@
 
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
-import { useEditorViewStore } from '@/state/editorViewStore'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
 import { hasExternalConflict } from '@/state/externalConflictStore'
 import {
   metaPathForDoc,
+  metaToFrontmatterFields,
   pathForDoc,
+  usesFrontmatter,
   type DocMetaFile,
 } from '@/lib/docPaths'
+import { composeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
 import {
   readVaultFile,
   renameVaultFile,
@@ -34,6 +36,8 @@ import {
   writeVaultFile,
 } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
+import { notify } from '@/lib/notify'
+import { useSaveFailureStore, type SaveFailureCause } from '@/state/saveFailureStore'
 
 /** Merge `next` over the existing `.meta.json` at `metaPath` so a
  * flush preserves fields this layer doesn't track (aiSummary written
@@ -64,6 +68,24 @@ async function mergeSidecar(
     // Corrupt sidecar — let the fresh `next` overwrite it; we'd
     // rather lose stale context metadata than block the flush.
     return next
+  }
+}
+
+/** True when the file at `relPath` exists and its contents exactly
+ * equal `content`. Used by the flush to skip no-op writes (a doc that
+ * was opened — and thus marked dirty — but whose serialized output
+ * matches disk). Returns false on a missing file or any read error so
+ * the caller writes; this guard only ever *suppresses* a redundant
+ * write, never a needed one. */
+async function fileContentEquals(
+  relPath: string,
+  content: string,
+): Promise<boolean> {
+  try {
+    if (!(await vaultFileExists(relPath))) return false
+    return (await readVaultFile(relPath)) === content
+  } catch {
+    return false
   }
 }
 
@@ -124,15 +146,6 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
   // because the cache survived the editor unmount.
   const md = handle.bodyMarkdown
 
-  // `titleIntent` reflects whether the in-memory title is the user's
-  // chosen value or whether `pathForDoc` had to fall back to
-  // 'Untitled' because the doc was created without a title. The boot
-  // reader uses this flag to decide whether the filename should
-  // hydrate back into KnownDoc.title; if 'empty', the title stays
-  // undefined and the EditableTitleInput renders its placeholder
-  // instead of the literal string "Untitled". Wiki, system, and
-  // writing docs all share the same rule so the flush owns it for
-  // every type at once.
   const known = docs.knownDocs.find((d) => d.slug === slug)
   const meta = buildMetaForKnownDoc(slug, known)
   return { md, meta }
@@ -141,11 +154,7 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
 /** Compose the sidecar payload from the in-memory `KnownDoc`. Shared
  * between the full-flush path (`serializeDocToFiles`) and the
  * meta-only path (`flushDirty` for archived docs whose handle has
- * been torn down). Fields included:
- *   - `titleIntent`            — see comment below
- *   - `archivedAt`             — present iff the doc is currently
- *                                archived in memory
- *   - `archivedFromParent`     — same condition
+ * been torn down).
  *
  * `archivedAt`/`archivedFromParent` are emitted explicitly (including
  * the `undefined` case for live docs) so `mergeSidecar` can clear
@@ -157,20 +166,9 @@ function buildMetaForKnownDoc(
   slug: string,
   known: KnownDoc | undefined,
 ): DocMetaFile {
-  // `titleIntent` reflects whether the in-memory title is the user's
-  // chosen value or whether `pathForDoc` had to fall back to
-  // 'Untitled' because the doc was created without a title. The boot
-  // reader uses this flag to decide whether the filename should
-  // hydrate back into KnownDoc.title; if 'empty', the title stays
-  // undefined and the EditableTitleInput renders its placeholder
-  // instead of the literal string "Untitled". Wiki, system, and
-  // writing docs all share the same rule so the flush owns it for
-  // every type at once.
-  const titleIntent: 'empty' | 'set' = known?.title?.trim() ? 'set' : 'empty'
   return {
     version: 1,
     slug,
-    titleIntent,
     archivedAt: known?.archivedAt,
     archivedFromParent: known?.archivedFromParent,
     // Phase 5b of the Yjs-removal migration: createdAt now lives on
@@ -189,6 +187,12 @@ function buildMetaForKnownDoc(
     // authoritative array). Undefined for non-articles → mergeSidecar
     // drops the key.
     highlights: known?.highlights,
+    // YouTube capture metadata (type 'youtube'). Re-emitted each flush so
+    // the frontmatter writer embeds it; undefined elsewhere.
+    videoId: known?.videoId,
+    durationSec: known?.durationSec,
+    thumbnailUrl: known?.thumbnailUrl,
+    description: known?.description,
   }
 }
 
@@ -248,6 +252,29 @@ export function seedLastWrittenPath(
   for (const { slug, mdRel } of entries) {
     lastWrittenPath.set(slug, mdRel)
   }
+}
+
+/** A2 hardening — stale-path write guard. True when a flush must DEFER
+ * writing a doc's body because its on-disk file vanished from the path
+ * the catalog still points at: an external move/rename (or delete) landed
+ * in the narrow window between the OS moving the file and the watcher
+ * updating `relPath`. Writing then would recreate a zombie at the stale
+ * path (move) or resurrect a deleted file (delete) — and strand the live
+ * edits there. Deferring keeps the slug dirty; the next tick lands
+ * correctly once the watcher settles (relPath swapped → rename-on-change
+ * moves the file; or doc torn down → nothing to flush).
+ *
+ * Scoped to the no-rename case (`lastWritten === mdPath`): when the
+ * catalog path already changed, the rename-on-change branch handles the
+ * moved file safely, and a brand-new doc (no `lastWritten`) must still
+ * create its file. Timing-independent — depends only on disk truth, not
+ * on whether the flush beat the watcher. */
+export function shouldDeferStaleWrite(
+  lastWritten: string | undefined,
+  mdPath: string,
+  fileExists: boolean,
+): boolean {
+  return lastWritten === mdPath && !fileExists
 }
 
 function markDirty(slug: string): void {
@@ -350,6 +377,58 @@ let flushQueued = false
  *                                    placement — e.g. 'writing')
  *   - serializeDocToFiles null     → skip (active not ready,
  *                                    transient — wait for view) */
+/** Best-effort classification of a vault write error into an actionable
+ * cause. Tauri's fs plugin surfaces OS errors as strings, so match on the
+ * common substrings and fall back to 'unknown' (still actionable copy). */
+function classifySaveError(err: unknown): SaveFailureCause {
+  const msg = String(err instanceof Error ? err.message : err).toLowerCase()
+  if (msg.includes('no space') || msg.includes('enospc')) return 'disk-full'
+  if (
+    msg.includes('permission denied') ||
+    msg.includes('eacces') ||
+    msg.includes('read-only') ||
+    msg.includes('erofs')
+  )
+    return 'permission'
+  if (
+    msg.includes('no such file') ||
+    msg.includes('not found') ||
+    msg.includes('enoent') ||
+    msg.includes('cannot find') ||
+    msg.includes('not allowed') // tauri fs scope / vanished parent dir
+  )
+    return 'unreachable'
+  return 'unknown'
+}
+
+/** Record a failed vault write. Surfacing is the reconciler's job (below);
+ * this only mutates state. Transient blips stay silent — a slug that
+ * recovers or is removed leaves the dirty set and gets pruned by the
+ * end-of-pass `reconcile`, so it never reaches the persistence threshold. */
+function reportSaveFailure(slug: string, err: unknown): void {
+  useSaveFailureStore.getState().recordFailure(slug, classifySaveError(err))
+}
+
+// ── Save-failure toast: one declarative reconciler ───────────────────
+// The store is the single source of truth; this subscription maps its
+// state onto the toast (show / update-copy / dismiss). Level-triggered, so
+// the copy always follows the current worst cause (#8) and the toast
+// clears the instant the last persistent failure resolves. A signature
+// guard makes redundant store ticks no-ops. The toast is non-dismissible
+// while active (see notify.saveFailed), so a user can't swipe away a live
+// data-loss warning and end up editing into a void (#1). Registered once
+// for the app's lifetime — the store is a session singleton.
+let saveToastCause: SaveFailureCause | null = null
+function reconcileSaveToast(): void {
+  const store = useSaveFailureStore.getState()
+  const cause = store.hasPersistentFailure() ? store.worstCause() : null
+  if (cause === saveToastCause) return
+  saveToastCause = cause
+  if (cause) notify.saveFailed(cause, { onRetry: () => void flushDirty() })
+  else notify.saveFailedResolved()
+}
+useSaveFailureStore.subscribe(reconcileSaveToast)
+
 /** Public flush entry point with single-flight guard. See the
  * `flushInProgress` / `flushQueued` comment above for the contract.
  * The actual work lives in `flushDirtyOnce` below. */
@@ -408,6 +487,16 @@ async function flushDirtyOnce(): Promise<void> {
     // `mergeSidecar` callers means no read-modify-write races.
     const handle = docs.handles[slug]
     if (!handle) {
+      // Frontmatter docs keep their metadata inside the `.md`; without a
+      // handle we can't re-serialise the body to re-embed it, and writing
+      // a `.meta.json` here would mint a spurious sidecar the loader would
+      // then prefer over the frontmatter. Skip — a frontmatter doc's
+      // soft-state is persisted while it's open, by the body flush below
+      // that embeds it in the frontmatter block.
+      if (usesFrontmatter(known)) {
+        clearDirty(slug)
+        continue
+      }
       const metaOnly = serializeMetaOnly(slug)
       if (!metaOnly) {
         clearDirty(slug)
@@ -419,6 +508,7 @@ async function flushDirtyOnce(): Promise<void> {
         clearDirty(slug)
       } catch (err) {
         console.error('[vault:flush] meta-only write failed for', slug, err)
+        reportSaveFailure(slug, err)
         // Leave dirty so the next tick retries.
       }
       continue
@@ -437,23 +527,90 @@ async function flushDirtyOnce(): Promise<void> {
       // files to the new path rather than write a fresh copy and
       // orphan the old one. Skipped silently when the old file is
       // already gone.
+      const frontmatterDoc = usesFrontmatter(known)
       const oldMd = lastWrittenPath.get(slug)
       if (oldMd && oldMd !== mdPath) {
-        const oldMeta = oldMd.replace(/\.md$/, '.meta.json')
         if (await vaultFileExists(oldMd)) {
           await renameVaultFile(oldMd, mdPath)
         }
-        if (await vaultFileExists(oldMeta)) {
-          await renameVaultFile(oldMeta, metaPath)
+        // Only sidecar-backed docs have a `.meta.json` to move alongside;
+        // frontmatter docs carry their metadata inside the renamed `.md`.
+        if (!frontmatterDoc) {
+          const oldMeta = oldMd.replace(/\.md$/, '.meta.json')
+          if (await vaultFileExists(oldMeta)) {
+            await renameVaultFile(oldMeta, metaPath)
+          }
         }
       }
-      await writeVaultFile(mdPath, result.md)
-      // Sidecar carries identity (version + slug) plus opt-in context
-      // metadata other code paths populate (aiSummary, aiImportance,
-      // and any future fields). Read-modify-write so a flush doesn't
-      // clobber fields this layer doesn't know about.
-      const mergedMeta = await mergeSidecar(metaPath, result.meta)
-      await writeVaultFile(metaPath, JSON.stringify(mergedMeta, null, 2))
+      // A2 hardening — stale-path guard. When the catalog still points at
+      // the last-written path (no rename intended above) but that file has
+      // vanished, an external move/delete is mid-flight (OS moved the file
+      // out before the watcher updated relPath). A blind write here would
+      // recreate a zombie at the stale path and strand the live edits.
+      // Defer: leave the slug dirty so the next tick lands at the right
+      // path once the watcher settles. The `oldMd === mdPath` gate scopes
+      // the existence stat to the no-rename case (the rename-on-change
+      // branch above already handles a moved file when the path changed),
+      // so we don't pay a syscall on every rename flush; shouldDeferStaleWrite
+      // is the authoritative rule.
+      if (oldMd === mdPath) {
+        const exists = await vaultFileExists(mdPath)
+        if (shouldDeferStaleWrite(oldMd, mdPath, exists)) {
+          console.warn(
+            '[vault:flush] body target missing — deferring (external move/delete in flight)',
+            { slug, mdPath },
+          )
+          continue
+        }
+      }
+      // Frontmatter-native docs embed their metadata at the top of the
+      // `.md`; every other type writes a plain body + a `.meta.json`
+      // sidecar. `result.md` is already body-only for frontmatter docs
+      // (the loader strips the block on read), so re-attaching here
+      // round-trips cleanly instead of doubling the block.
+      // Host-managed DocMeta fields (slug/type/…). For frontmatter docs we also
+      // PRESERVE any custom keys the DocMeta shape doesn't cover — config docs
+      // (skills / commands / agents) keep meaningful frontmatter like
+      // `name` / `description` / `model` there, and stripping it on every save
+      // would silently erase the user's role metadata.
+      let fields = metaToFrontmatterFields(result.meta)
+      if (frontmatterDoc) {
+        try {
+          const { data } = splitFrontmatter(await readVaultFile(mdPath))
+          const preserved: Record<string, string> = {}
+          for (const [k, v] of Object.entries(data)) {
+            if (!(k in fields)) preserved[k] = v
+          }
+          if (Object.keys(preserved).length > 0) fields = { ...preserved, ...fields }
+        } catch {
+          // New file or unreadable — nothing to preserve.
+        }
+      }
+      const fileContent = frontmatterDoc
+        ? composeFrontmatter(fields, result.md)
+        : result.md
+      // Skip the write when the serialized output is byte-identical to
+      // what's already on disk. Opening a doc marks it dirty
+      // (installDocSync) even when the user never edits it; without this
+      // guard the flush rewrites untouched docs, which surfaces them as
+      // phantom changes in the review panel / git. Reading the file back
+      // is cheap — flush only runs for the small dirty set, and a slug
+      // clears its dirty bit after one flush. Defensive on read errors:
+      // fall through to writing so a transient read never strands an edit.
+      if (!(await fileContentEquals(mdPath, fileContent))) {
+        await writeVaultFile(mdPath, fileContent)
+      }
+      if (!frontmatterDoc) {
+        // Sidecar carries identity (version + slug) plus opt-in context
+        // metadata other code paths populate (aiSummary, aiImportance,
+        // and any future fields). Read-modify-write so a flush doesn't
+        // clobber fields this layer doesn't know about.
+        const mergedMeta = await mergeSidecar(metaPath, result.meta)
+        const metaJson = JSON.stringify(mergedMeta, null, 2)
+        if (!(await fileContentEquals(metaPath, metaJson))) {
+          await writeVaultFile(metaPath, metaJson)
+        }
+      }
       lastWrittenPath.set(slug, mdPath)
       clearDirty(slug)
       if (known.type.startsWith('wiki:')) wikiTouched = true
@@ -465,10 +622,31 @@ async function flushDirtyOnce(): Promise<void> {
       // shows in red in the dev console and any future telemetry
       // pipeline can filter on it.
       console.error('[vault:flush] write failed for', slug, err)
+      reportSaveFailure(slug, err)
       // Leave dirty so the next tick retries.
     }
   }
+  // Prune failure entries for every slug that left the dirty set this pass
+  // (saved, deleted, archived, handle torn down). This is the single
+  // success/cleanup path — keeping `failures ⊆ dirty` — so a recovered or
+  // removed slug can never strand a stale entry, and the toast reconciler
+  // dismisses the moment the last persistent failure clears.
+  useSaveFailureStore.getState().reconcile(getDirtySlugs())
   if (wikiTouched) invalidateWikiIndex()
+}
+
+/** Checkpoint flush on window blur / hide. The 500 ms timer is the
+ * steady-state safety net; these events catch the "user tabbed away to
+ * another app / minimised" moments so unsaved edits land immediately
+ * instead of waiting for the next tick (the Obsidian "flush on focus
+ * loss" behaviour). Fire-and-forget — the single-flight guard
+ * serialises them against the timer, and the no-op skip makes an
+ * already-clean flush free. */
+function onWindowBlur(): void {
+  void flushDirty()
+}
+function onVisibilityChange(): void {
+  if (document.visibilityState === 'hidden') void flushDirty()
 }
 
 /** Begin the periodic flush loop. Idempotent — calling twice is a
@@ -478,6 +656,8 @@ export function startAutoFlush(): void {
   flushTimerId = window.setInterval(() => {
     void flushDirty()
   }, FLUSH_INTERVAL_MS)
+  window.addEventListener('blur', onWindowBlur)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 }
 
 /** Stop the periodic flush loop. Idempotent. Called on app teardown
@@ -485,6 +665,8 @@ export function startAutoFlush(): void {
  * window. CloseConfirmDialog drives a final `flushDirty()` before
  * calling this so unsaved dirty slugs land on disk before exit. */
 export function stopAutoFlush(): void {
+  window.removeEventListener('blur', onWindowBlur)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   if (flushTimerId === null) return
   window.clearInterval(flushTimerId)
   flushTimerId = null
@@ -522,19 +704,14 @@ if (import.meta.env.DEV) {
   }).__replaceActive = replaceActive
   // Diagnostics for the active-doc body rewrite path. Prints whatever
   // `replaceDocBody` would see right now, so a confused test result
-  // can be traced back to "view missing" vs "slug mismatch" vs
-  // "parser missing" without sprinkling console.logs into the slice.
+  // can be traced back to "slug mismatch" vs "no handle" without
+  // sprinkling console.logs into the slice.
   const diagnose = () => {
     const slug = getActiveSlugFromHash()
-    const view = useEditorViewStore.getState().view
-    const parser = useEditorViewStore.getState().parser
     const handle = slug ? useDocsStore.getState().handles[slug] : null
     const out = {
       activeSlug: slug,
-      hasView: Boolean(view),
-      hasParser: Boolean(parser),
       hasHandle: Boolean(handle),
-      docSize: view?.state.doc.content.size ?? null,
       bodyMarkdownLength: handle?.bodyMarkdown?.length ?? null,
       bodyMarkdownPreview:
         handle?.bodyMarkdown?.slice(0, 120) ?? null,

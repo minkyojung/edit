@@ -23,6 +23,7 @@
 import * as React from 'react'
 import { Slot } from 'radix-ui'
 import { cn } from '@/lib/utils'
+import { SIDEBAR_ROW_INTERACTION } from './sidebarRow'
 
 interface TreeRowProps extends React.ComponentProps<'div'> {
   /** Whether this row is the currently selected doc. Drives the
@@ -53,15 +54,11 @@ function TreeRow({ active, className, ...props }: TreeRowProps) {
       data-slot="tree-row"
       data-active={active || undefined}
       className={cn(
-        'group/tree-row relative flex h-8 w-full items-center rounded-xl',
-        'text-sm font-medium text-sidebar-foreground/60',
-        'transition-colors duration-150',
-        // Two-step surface tone: hover gets a softer wash (/50) so an
-        // active row hovered alongside an inactive one still reads as
-        // the stronger surface. data-active wins specificity in cn's
-        // merge, and we don't need a data-active:hover override.
-        'hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
-        'data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground',
+        'group/tree-row relative flex h-9 w-full items-center',
+        'text-body font-normal',
+        // Shared row skin (radius + hover + selected) so tree rows match
+        // the footer menu buttons exactly — see sidebarRow.ts.
+        SIDEBAR_ROW_INTERACTION,
         className,
       )}
       {...props}
@@ -88,10 +85,10 @@ function TreeRowLead({
       data-slot="tree-row-lead"
       {...(!asChild && { type: 'button' as const })}
       className={cn(
-        'ml-2 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
+        'ml-2 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-sm',
         'text-inherit',
         'outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
-        '[&_svg]:size-4 [&_svg]:shrink-0',
+        '[&_svg]:size-[18px] [&_svg]:shrink-0',
         className,
       )}
       {...props}
@@ -120,7 +117,7 @@ function TreeRowLabel({
       type="button"
       data-slot="tree-row-label"
       className={cn(
-        'mx-2 flex h-full min-w-0 flex-1 items-center gap-2 overflow-hidden',
+        'mx-2 flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden',
         'text-left text-inherit',
         'outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
         className,
@@ -151,10 +148,10 @@ function TreeRowTrail({
       data-slot="tree-row-trail"
       {...(!asChild && { type: 'button' as const })}
       className={cn(
-        'mr-1 flex aspect-square w-5 shrink-0 items-center justify-center rounded-xl',
+        'mr-1 flex aspect-square w-6 shrink-0 items-center justify-center rounded-xl',
         'text-inherit transition-opacity',
         'outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring/40',
-        '[&>svg]:size-4 [&>svg]:shrink-0',
+        '[&>svg]:size-[18px] [&>svg]:shrink-0',
         showOnHover &&
           'opacity-0 group-hover/tree-row:opacity-100 group-focus-within/tree-row:opacity-100',
         className,
@@ -183,7 +180,7 @@ function TreeSub({ className, ...props }: React.ComponentProps<'ul'>) {
       className={cn(
         'flex min-w-0 translate-x-px flex-col gap-0.5 py-0.5',
         'ml-3.5 pl-2.5',
-        'border-l border-sidebar-border',
+        'border-l border-sidebar-foreground/20',
         className,
       )}
       {...props}

@@ -1,9 +1,10 @@
 import { createContext, useContext, useEffect, useState } from 'react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
-export type Palette = 'charcoal' | 'graphite' | 'olive' | 'paper' | 'mist'
+export type Palette = 'dark' | 'light' | 'graphite'
 
-const PALETTES: Palette[] = ['charcoal', 'graphite', 'olive', 'paper', 'mist']
-const DARK_PALETTES: ReadonlySet<Palette> = new Set<Palette>(['charcoal', 'graphite', 'olive'])
+const PALETTES: Palette[] = ['dark', 'light', 'graphite']
+const DARK_PALETTES: ReadonlySet<Palette> = new Set<Palette>(['dark', 'graphite'])
 
 type ThemeProviderProps = {
   children: React.ReactNode
@@ -17,7 +18,7 @@ type ThemeProviderState = {
 }
 
 const initialState: ThemeProviderState = {
-  palette: 'charcoal',
+  palette: 'dark',
   setPalette: () => null,
 }
 
@@ -30,7 +31,7 @@ function readStoredPalette(storageKey: string, fallback: Palette): Palette {
 
 export function ThemeProvider({
   children,
-  defaultPalette = 'charcoal',
+  defaultPalette = 'dark',
   storageKey = 'zurich-palette',
   ...props
 }: ThemeProviderProps): React.ReactElement {
@@ -43,8 +44,19 @@ export function ThemeProvider({
     PALETTES.forEach((p) => root.classList.remove(`palette-${p}`))
     root.classList.remove('light', 'dark')
 
+    const isDark = DARK_PALETTES.has(palette)
     root.classList.add(`palette-${palette}`)
-    root.classList.add(DARK_PALETTES.has(palette) ? 'dark' : 'light')
+    root.classList.add(isDark ? 'dark' : 'light')
+
+    // Sync the NATIVE window appearance (NSAppearance) to the palette so the
+    // vibrancy material (windowEffects: sidebar) frosts in the matching
+    // light/dark mode. Without this the CSS theme and the native material
+    // diverge — a light palette over a dark-appearance material is illegible.
+    // Fire-and-forget + guarded: no-ops outside the Tauri runtime (e.g. plain
+    // browser dev).
+    void getCurrentWindow()
+      .setTheme(isDark ? 'dark' : 'light')
+      .catch(() => {})
   }, [palette])
 
   const value = {

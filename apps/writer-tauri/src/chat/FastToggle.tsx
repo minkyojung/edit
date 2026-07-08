@@ -40,7 +40,7 @@ export function FastToggle({ value, onChange, disabled, state }: Props) {
           aria-label={value ? 'Fast mode on' : 'Fast mode off'}
           aria-pressed={value}
           className={cn(
-            'flex h-7 items-center gap-1 rounded-full px-2 text-sm font-medium transition-colors',
+            'flex h-8 items-center gap-1 rounded-full px-2 text-body font-medium transition-colors',
             'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
             'disabled:pointer-events-none disabled:opacity-50',
             cooldown
@@ -50,7 +50,7 @@ export function FastToggle({ value, onChange, disabled, state }: Props) {
                 : 'text-muted-foreground hover:bg-accent hover:text-foreground',
           )}
         >
-          <IconBolt size={16} stroke={2} />
+          <IconBolt size={18} stroke={2} />
           {/* Icon-only until toggled on — the label appears only when fast. */}
           {value && <span>Fast</span>}
         </button>

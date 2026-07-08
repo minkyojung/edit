@@ -42,9 +42,9 @@ interface Props {
   onClose: () => void
 }
 
-type Stage = 'input' | 'running' | 'done' | 'failed'
+export type Stage = 'input' | 'running' | 'done' | 'failed'
 
-interface SectionStatus {
+export interface SectionStatus {
   status: 'pending' | 'loading' | 'done'
 }
 
@@ -221,7 +221,7 @@ export function OnboardingDialog({ open, onClose }: Props) {
   )
 }
 
-function InputStage({
+export function InputStage({
   url,
   setUrl,
   onAnalyze,
@@ -256,7 +256,7 @@ function InputStage({
   )
 }
 
-function RunningStage({
+export function RunningStage({
   discoveryLabel,
   sectionStatus,
 }: {
@@ -264,7 +264,7 @@ function RunningStage({
   sectionStatus: Record<ProfileSectionKey, SectionStatus>
 }) {
   return (
-    <div className="flex flex-col gap-2 text-sm">
+    <div className="flex flex-col gap-2 text-body">
       <ProgressLine
         status={discoveryLabel?.startsWith('Found') ? 'done' : 'loading'}
         label={discoveryLabel ?? 'Searching for posts…'}
@@ -293,7 +293,7 @@ function ProgressLine({
         <span className="size-4 rounded-full border border-muted-foreground/30" />
       )}
       {status === 'loading' && <Spinner className="size-4" />}
-      {status === 'done' && <IconCheck className="size-4 text-emerald-600" />}
+      {status === 'done' && <IconCheck className="size-4 text-success" />}
       <span
         className={
           status === 'pending' ? 'text-muted-foreground' : 'text-foreground'
@@ -305,10 +305,10 @@ function ProgressLine({
   )
 }
 
-function DoneStage({ onOpen }: { onOpen: () => void }) {
+export function DoneStage({ onOpen }: { onOpen: () => void }) {
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-muted-foreground">
+      <p className="text-body text-muted-foreground">
         Your profile is ready. Open it to review and edit.
       </p>
       <div className="flex justify-end">
@@ -320,7 +320,7 @@ function DoneStage({ onOpen }: { onOpen: () => void }) {
   )
 }
 
-function FailedStage({
+export function FailedStage({
   message,
   onRetry,
   onSkip,
@@ -331,8 +331,8 @@ function FailedStage({
 }) {
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-start gap-2 text-sm text-muted-foreground">
-        <IconAlertCircle className="size-4 mt-0.5 text-amber-600" />
+      <div className="flex items-start gap-2 text-body text-muted-foreground">
+        <IconAlertCircle className="size-4 mt-0.5 text-warning" />
         <span>{message}</span>
       </div>
       <div className="flex justify-end gap-2">

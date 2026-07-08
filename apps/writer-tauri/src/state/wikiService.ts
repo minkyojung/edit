@@ -14,29 +14,18 @@
 // `ensureLogWikiSlug` below.
 
 import { generateClientSlug } from '@/lib/slug'
+import { markSlugDirty, flushDirty } from '@/lib/docFileSync'
 import { isEffectivelyEmpty } from '@/lib/markdownText'
 import {
   useDocsStore,
   type KnownDoc,
 } from './docsStore'
-import { useEditorViewStore } from './editorViewStore'
-import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
+import { splitFrontmatter } from '@/lib/frontmatter'
+import { getDefaultNoteFolder } from '@/state/settingsStore'
 
 // PROOF_BASE_URL removed (Phase 3.A.2). All wiki body reads go
 // through the local Y.Doc + Milkdown serializer now.
-
-/** The agent's append-only timeline. `system:*` prefix marks this
- * as agent meta surface — see KnownDoc.type doc. */
-const LOG_TYPE = 'system:log' as const
-
-/** User-editable conventions page. Karpathy's CLAUDE.md pattern:
- * the rules for how the wiki is organized live in the wiki itself,
- * the user co-evolves them, and ingest prepends the page body to
- * its system prompt every call. `system:*` prefix groups it with
- * the other agent meta surfaces (log, index) so sidebar branching
- * and catalog filtering use a single predicate. */
-const CONVENTIONS_TYPE = 'system:conventions' as const
 
 /** System-owned summary index of every wiki page. Karpathy's
  * `index.md` pattern — one line per page, lets the ingest LLM see
@@ -47,54 +36,6 @@ const CONVENTIONS_TYPE = 'system:conventions' as const
  * sidebar's System group renders it separately from user wiki
  * pages. Index is system-managed metadata, not a content target. */
 const INDEX_TYPE = 'system:index' as const
-
-/** Default body seeded into the conventions page on first creation.
- * The user is expected to edit this freely — that's the whole
- * point. We pick a minimal starting set so the LLM has *some*
- * guidance even before the user customizes anything. */
-const DEFAULT_CONVENTIONS = `## Conventions
-
-This wiki is my external memory. The LLM reads my daily notes and keeps the wiki up to date. Edit this page to teach the LLM how my wiki should grow.
-
-### One page per entity
-
-Each distinct subject is ONE page. The page's name IS the entity's name:
-
-- a person  → page named after that person  ("Sarah", "Tom")
-- a book    → page named after the title    ("The Pragmatic Programmer")
-- a project → page named after it           ("Project X")
-- a concept → page named after it           ("Distributed Systems")
-
-The page's body is a flat list of facts about that subject — one bullet per fact, plain prose, no nested headings.
-
-### Adding new info
-
-When ingesting a daily note:
-
-- The fact is about an existing page (look at the WIKI block headers) → emit \`target: <type-id>\` with the bullets to append. Copy the type id verbatim from \`[<type-id> — <title>]\`.
-- The fact is about a NEW subject not in the WIKI → emit \`suggestNewPage: "<entity name>"\`. The entity name goes here, NOT a category ("Sarah", not "People").
-- The fact is transient (mood, weather, small talk) → skip it. Only durable info belongs in the wiki.
-
-Never invent type ids; copy them verbatim.
-
-### Linking
-
-When a bullet mentions another page that already exists in the WIKI block, wrap that page's title with double-brackets so it renders as a clickable link: \`Working with [[Sarah]] on the project\`. Use the title exactly as it appears in the block header. Skip the link when no existing page matches the mention — don't invent links. Never self-link (don't link \`entity\` from inside its own page).
-
-### Length
-
-Each proposal's content is concise — one bullet or a short block of two or three lines. If a fact deserves more, split it into multiple proposals. The wiki accumulates; over-stuffing one bullet ages worse than splitting.
-
-### wiki:profile zones
-
-The \`wiki:profile\` page is special: a separate pipeline (URL → analysis) populates several sections from the user's own writing. Sections have different ownership, and ingest must respect them:
-
-- \`## Voice\`, \`## Themes\`, \`## About\`, \`## Sources\` — managed by the profile pipeline. Do NOT append to these. Their content is regenerated from source URLs on demand, so any ingest additions would be silently overwritten.
-- \`## Background\` — the ingest target on \`wiki:profile\`. Append durable facts about the user themselves here: hobbies, ongoing projects, relationships, recurring interests, things they own or use, life events. One bullet per fact, same shape as other wiki pages.
-- \`## Notes\` — the user's own free-form area. Never append here.
-
-When proposing to \`wiki:profile\`, emit the bullet content normally — the materialisation step places it under \`## Background\`.
-`
 
 /** Lazy-create shape for an agent-managed `system:*` page. Each one
  * carries the same three differences (type id, display title,
@@ -110,16 +51,6 @@ interface SystemPageConfig {
   initialBody: string
 }
 
-const SYSTEM_PAGE_LOG: SystemPageConfig = {
-  type: LOG_TYPE,
-  title: 'log',
-  initialBody: '',
-}
-const SYSTEM_PAGE_CONVENTIONS: SystemPageConfig = {
-  type: CONVENTIONS_TYPE,
-  title: 'Conventions',
-  initialBody: DEFAULT_CONVENTIONS,
-}
 const SYSTEM_PAGE_INDEX: SystemPageConfig = {
   type: INDEX_TYPE,
   title: 'index',
@@ -186,21 +117,6 @@ async function ensureSystemPage(
   return slug
 }
 
-/** Ensure `system:log` exists. The agent's append-only timeline —
- * created lazily on the first ingest pass that produces a log
- * entry. */
-export async function ensureLogWikiSlug(): Promise<string | null> {
-  return ensureSystemPage(SYSTEM_PAGE_LOG)
-}
-
-/** Ensure `system:conventions` exists, seeded with DEFAULT_CONVENTIONS
- * on first creation. Called from runIngest right before the LLM
- * call so the user can edit the conventions and have them shadow
- * the static rules on the very next pass. */
-export async function ensureConventionsWikiSlug(): Promise<string | null> {
-  return ensureSystemPage(SYSTEM_PAGE_CONVENTIONS)
-}
-
 /** Ensure `system:index` exists. The page body is system-owned —
  * see state/wikiIndex.ts which writes a deterministic catalog on
  * every wiki change. Body stays empty until the first persist tick
@@ -219,17 +135,6 @@ export async function ensureProfileWikiSlug(): Promise<string | null> {
   return ensureSystemPage(SYSTEM_PAGE_PROFILE)
 }
 
-/** Read the user's conventions page body. Returns '' when the page
- * doesn't exist or fetch fails — caller should treat that as "use
- * the static fallback rules in the system prompt". */
-export async function readConventions(): Promise<string> {
-  const doc = useDocsStore
-    .getState()
-    .knownDocs.find((d) => d.type === CONVENTIONS_TYPE && !d.archivedAt)
-  if (!doc) return ''
-  return readWikiMarkdown(doc.slug)
-}
-
 /** Read the user's self-profile page body (`wiki:profile`). Returns
  * '' when the page doesn't exist yet (user skipped bootstrap) — chat
  * / ingest then run without the profile prefix, same as before this
@@ -245,15 +150,29 @@ export async function readSelfProfile(): Promise<string> {
 /** Read the vault's `CLAUDE.md` schema document. This is the Karpathy
  * / Claude Code convention: a single user-editable file at the vault
  * root that tells the LLM how the vault is laid out and how it should
- * behave (operations, tool usage rules, citation conventions). The
- * BootGate seed routine drops a default into fresh vaults, so a normal
- * read should succeed; this helper returns '' on the rare failure
- * paths (vault not selected, file deleted between boots) and the
- * caller drops the block from the system prompt rather than erroring. */
+ * behave (operations, tool usage rules, conventions, citations, memory).
+ *
+ * `CLAUDE.md` is just an ordinary root-level note in the catalog
+ * (scanVault registers it as a `note` with `relPath: 'CLAUDE.md'`), so
+ * it's editable in the normal editor like any note. We prefer the live
+ * catalog body (`readWikiMarkdown`, which serializes the open editor or
+ * the cached handle and strips frontmatter) so the user's in-app edits
+ * take effect on the very next turn. When the handle isn't hydrated yet
+ * (early boot, or the catalog hasn't picked up the freshly-seeded file),
+ * we fall back to reading the raw file and stripping its frontmatter.
+ * Returns '' on the rare failure paths and the caller drops the block. */
 export async function readClaudeMd(): Promise<string> {
   try {
+    const doc = useDocsStore
+      .getState()
+      .knownDocs.find((d) => d.relPath === 'CLAUDE.md' && !d.archivedAt)
+    if (doc) {
+      const body = readWikiMarkdown(doc.slug)
+      if (body) return body
+      // Handle not hydrated yet — fall through to the raw-file read.
+    }
     if (!(await vaultFileExists('CLAUDE.md'))) return ''
-    return await readVaultFile('CLAUDE.md')
+    return splitFrontmatter(await readVaultFile('CLAUDE.md')).body.trim()
   } catch (err) {
     console.warn('[wiki] readClaudeMd failed', err)
     return ''
@@ -335,6 +254,53 @@ export async function createCustomWikiPage(
   return slug
 }
 
+/** Create a brand-new EMPTY generic `note` at `<folder>/<name>.md` and return its
+ * slug — the chat counterpart to createCustomWikiPage, but for a plain note in a
+ * user-chosen folder (default 'inbox') instead of a wiki page. The body is NOT seeded
+ * here: the chat materialiser stages it as a PendingChange the user reviews.
+ *
+ * Mirrors docsStore createNew's note placement: a `note` doc needs `relPath` or
+ * pathForDoc returns null and flushDirty skips it (the note never reaches disk), so we
+ * set relPath and force a flush. Name collisions get a numeric suffix. Returns null on
+ * failure. */
+export async function createGenericNote(
+  name: string,
+  folder: string,
+): Promise<string | null> {
+  const cleanFolder = folder.trim().replace(/^\/+|\/+$/g, '') || getDefaultNoteFolder()
+  const stem = name.trim() || 'Untitled'
+  const taken = new Set(
+    useDocsStore
+      .getState()
+      .knownDocs.map((d) => d.relPath)
+      .filter((p): p is string => Boolean(p)),
+  )
+  let relPath = `${cleanFolder}/${stem}.md`
+  let n = 1
+  while (taken.has(relPath)) {
+    relPath = `${cleanFolder}/${stem} ${n}.md`
+    n += 1
+  }
+  const slug = generateClientSlug()
+  const meta: KnownDoc = {
+    slug,
+    type: 'note',
+    title: stem,
+    relPath,
+    createdAt: new Date().toISOString(),
+  }
+  useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, meta] }))
+  try {
+    await useDocsStore.getState().ensureHandle(slug)
+  } catch (err) {
+    console.warn('[note] createGenericNote ensureHandle failed', err)
+    return null
+  }
+  markSlugDirty(slug)
+  void flushDirty()
+  return slug
+}
+
 /** Read a wiki doc's markdown body from the client side.
  *
  * Strategy mirrors agent/ingest.ts:readDocMarkdown:
@@ -353,20 +319,6 @@ export function readWikiMarkdown(slug: string | null): string {
   const docs = useDocsStore.getState()
   const handle = docs.handles[slug]
   if (!handle) return ''
-
-  if (getActiveSlugFromHash() === slug) {
-    const view = useEditorViewStore.getState().view
-    const serializer = useEditorViewStore.getState().serializer
-    if (view && serializer) {
-      try {
-        const md = serializer(view.state.doc).trim()
-        if (isEffectivelyEmpty(md)) return ''
-        return md
-      } catch {
-        // fall through to fragment fallback
-      }
-    }
-  }
 
   // Phase 5a of the Yjs-removal migration: read `handle.bodyMarkdown`
   // instead of the Y.Doc fragment. The cache survives schema

@@ -7,10 +7,11 @@ export function extractErrorCode(e: unknown): string | undefined {
 }
 
 /** Coerce whatever the SDK / fetch / our own code threw into a single
- * readable line. Recognises a small set of well-known codes from the
- * sidecar (NETWORK / IDLE_TIMEOUT / SIDECAR_DIED / AUTH / RATE_LIMIT) and
- * maps them to user-friendly copy; falls through to message cleanup for
- * everything else. */
+ * readable line. Recognises the sidecar's `^CODE:` classifiers (transport:
+ * NETWORK / IDLE_TIMEOUT / SIDECAR_DIED; API/result: AUTH / RATE_LIMIT /
+ * SERVER / BILLING / INVALID / TRUNCATED / MAX_TURNS / BUDGET / FORMAT /
+ * EXEC) and maps each to user-friendly copy; EXEC forwards the SDK's own
+ * detail; anything else falls through to message cleanup. */
 export function humanizeError(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e)
   const code = raw.match(/^([A-Z_]+):/)?.[1]
@@ -25,6 +26,26 @@ export function humanizeError(e: unknown): string {
       return 'Authentication failed — please sign in again'
     case 'RATE_LIMIT':
       return 'Rate limited — try again in a moment'
+    case 'SERVER':
+      return 'The service is busy — try again in a moment'
+    case 'BILLING':
+      return 'Your credit balance is too low'
+    case 'INVALID':
+      return "Couldn't process the request"
+    case 'TRUNCATED':
+      return 'Response was cut off (too long)'
+    case 'MAX_TURNS':
+      return 'Stopped after too many tool steps'
+    case 'BUDGET':
+      return 'Hit the cost limit — stopped'
+    case 'FORMAT':
+      return "Couldn't produce a valid result format"
+    case 'EXEC': {
+      // Carries the SDK's own `errors[0]` detail (possibly empty) after the
+      // code prefix; compose the final line.
+      const detail = raw.replace(/^EXEC:\s*/, '').trim()
+      return detail ? `Stopped on an error: ${detail}` : 'Stopped on an error'
+    }
   }
   let msg = raw.replace(/^Error:\s*/i, '').trim()
   if (msg.length === 0) return 'Something went wrong'
@@ -49,6 +70,15 @@ export type RunOutcome = {
   errorCode: string | undefined
   /** ms-epoch when the rate-limit window resets — only set for RATE_LIMIT. */
   resetsAt: number | undefined
+  /** Which rate-limit window was hit (e.g. 'five_hour') — only for RATE_LIMIT.
+   * Lets the card label the limit. */
+  rateLimitType: string | undefined
+  /** Why overage/paid usage is unavailable (e.g. 'out_of_credits') — only for
+   * RATE_LIMIT. Lets the card say "Out of credits" vs a plain windowed limit. */
+  overageDisabledReason: string | undefined
+  /** Whether retrying could succeed; `false` for AUTH/BILLING/INVALID/BUDGET.
+   * Undefined (legacy / abort paths) is treated as retryable by the card. */
+  retryable: boolean | undefined
 }
 
 /** Classify an error thrown by `runChat`. Mirrors three branches:
@@ -72,17 +102,30 @@ export function classifyRunError(
     : opts.offlineAborted
       ? 'NETWORK'
       : undefined
-  // RATE_LIMIT errors carry a `rateLimit.resetsAt` (ms epoch) attached by
-  // `runChat` from the SDK's most recent rate_limit_event. The error card
-  // uses it to drive a countdown and gate Retry.
-  const rateLimit = (error as Error & { rateLimit?: { resetsAt?: number } })?.rateLimit
-  const resetsAt = errorCode === 'RATE_LIMIT' ? rateLimit?.resetsAt : undefined
+  // RATE_LIMIT errors carry a `rateLimit.resetsAt` (ms epoch) + `rateLimitType`
+  // attached by `runChat` from the SDK's most recent rate_limit_event. The
+  // error card uses them to drive a labelled countdown and gate Retry.
+  const rateLimit = (
+    error as Error & {
+      rateLimit?: { resetsAt?: number; rateLimitType?: string; overageDisabledReason?: string }
+    }
+  )?.rateLimit
+  const isRateLimit = errorCode === 'RATE_LIMIT'
+  const resetsAt = isRateLimit ? rateLimit?.resetsAt : undefined
+  const rateLimitType = isRateLimit ? rateLimit?.rateLimitType : undefined
+  const overageDisabledReason = isRateLimit ? rateLimit?.overageDisabledReason : undefined
+  // Retryability flag set by the sidecar (absent on abort/legacy paths →
+  // undefined, which the card treats as retryable).
+  const retryable = (error as Error & { retryable?: boolean })?.retryable
   return {
     terminal: isError ? 'error' : 'stopped',
     chatStatus: isError ? 'error' : 'idle',
     errorText,
     errorCode,
     resetsAt,
+    rateLimitType,
+    overageDisabledReason,
+    retryable,
   }
 }
 

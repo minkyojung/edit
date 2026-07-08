@@ -34,8 +34,11 @@ import {
   writeTextFile,
 } from '@tauri-apps/plugin-fs'
 import { dirname, join } from '@tauri-apps/api/path'
+import { invoke } from '@tauri-apps/api/core'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { useGitStore } from '@/state/gitStore'
+import { open as openInDefaultApp } from '@tauri-apps/plugin-shell'
+import { isAttachmentFile } from './attachments'
 
 /** Tell the git layer that a path was just modified. This is an
  * **activity signal**, not a commit trigger — the gitStore decides
@@ -119,6 +122,25 @@ export async function ensureVaultStructure(): Promise<void> {
 export async function readVaultFile(relPath: string): Promise<string> {
   const path = await resolveVaultPath(relPath)
   return await readTextFile(path)
+}
+
+/** Absolute filesystem path for a vault-relative path. For UI actions
+ * that hand a real path to the OS (open in default app, reveal in
+ * Finder, copy path). */
+export async function vaultAbsPath(relPath: string): Promise<string> {
+  return resolveVaultPath(relPath)
+}
+
+/** Open a vault file in the OS default app. Resolves the absolute path
+ * (with the same `..`-rejecting validation as every vault read) and hands
+ * it to the shell. Throws on failure — callers add their own logging. */
+export async function openVaultFile(relPath: string): Promise<void> {
+  await openInDefaultApp(await vaultAbsPath(relPath))
+}
+
+/** Reveal a vault file in Finder (selects it in its enclosing folder). */
+export async function revealVaultFile(relPath: string): Promise<void> {
+  await invoke('reveal_in_finder', { path: await vaultAbsPath(relPath) })
 }
 
 /** Window (ms) during which a content-hash we recently wrote stays
@@ -397,6 +419,46 @@ export async function listVaultDir(relPath: string): Promise<string[]> {
     .map((e) => e.name)
 }
 
+/** One recursive pass over the vault collecting BOTH inventories the
+ * sidebar needs: every non-hidden subdirectory (`dirs`, so empty folders
+ * still surface — the tree is otherwise built only from file paths) and
+ * every non-markdown attachment file (`files`, the pdf/png/txt/… rows).
+ * Notes (`.md`), dot-dirs/files, and app sidecars are excluded from
+ * `files` by `isAttachmentFile`; `.`-prefixed dirs are skipped entirely
+ * while `_`-prefixed ones are returned (the tree filters them). Single
+ * traversal — both call sites (boot scan, watcher refresh) want both, so
+ * walking the tree twice would double the readDir cost. */
+export async function listVaultTreeRecursive(
+  subRel = '',
+): Promise<{ dirs: string[]; files: string[] }> {
+  const empty = { dirs: [] as string[], files: [] as string[] }
+  const root = getActiveVaultPath()
+  if (!root) return empty
+  if (subRel !== '' && !(await exists(await resolveVaultPath(subRel)))) return empty
+  const absPath = subRel === '' ? root : await resolveVaultPath(subRel)
+  let entries: Awaited<ReturnType<typeof readDir>>
+  try {
+    entries = await readDir(absPath)
+  } catch {
+    return empty
+  }
+  const dirs: string[] = []
+  const files: string[] = []
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    const childRel = subRel === '' ? entry.name : `${subRel}/${entry.name}`
+    if (entry.isDirectory) {
+      dirs.push(childRel)
+      const sub = await listVaultTreeRecursive(childRel)
+      dirs.push(...sub.dirs)
+      files.push(...sub.files)
+    } else if (entry.isFile && isAttachmentFile(childRel)) {
+      files.push(childRel)
+    }
+  }
+  return { dirs, files }
+}
+
 /** Does the given vault-relative path exist (file OR directory)? */
 export async function vaultFileExists(relPath: string): Promise<boolean> {
   const path = await resolveVaultPath(relPath)
@@ -410,6 +472,36 @@ export async function deleteVaultFile(relPath: string): Promise<void> {
     await remove(path)
     scheduleAutoCommit(relPath)
   }
+}
+
+/** Recursively delete a vault directory and everything inside it.
+ * No-op if it doesn't exist. Used by one-time migrations that retire
+ * a whole layout subtree (e.g. the old `daily/` folder). */
+export async function deleteVaultDir(relPath: string): Promise<void> {
+  const path = await resolveVaultPath(relPath)
+  if (await exists(path)) {
+    await remove(path, { recursive: true })
+    scheduleAutoCommit(relPath)
+  }
+}
+
+/** Create a folder (recursively) in the vault. Idempotent — succeeds
+ * even if it already exists. Empty folders aren't tracked by git, but
+ * they persist on disk and re-surface via listVaultTreeRecursive. */
+export async function createVaultFolder(relPath: string): Promise<void> {
+  const path = await resolveVaultPath(relPath)
+  await mkdir(path, { recursive: true })
+}
+
+/** Send a vault file to the OS trash (macOS Trash / Windows Recycle Bin
+ * / Linux trash) — the recoverable sibling of the permanent
+ * {@link deleteVaultFile}. Routes through the native `move_to_trash`
+ * command (the fs plugin only does permanent removes). No-op if the
+ * file doesn't exist. */
+export async function trashVaultFile(relPath: string): Promise<void> {
+  if (!(await vaultFileExists(relPath))) return
+  const path = await resolveVaultPath(relPath)
+  await invoke('move_to_trash', { path })
 }
 
 // Dev-only console handle. Open DevTools, run e.g.

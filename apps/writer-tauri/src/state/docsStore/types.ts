@@ -39,7 +39,12 @@ export interface KnownDoc {
    * pre-2026-05-13 single `wiki:*` bucket so sidebar grouping, prompt
    * channels, and write-protection guards line up with Karpathy's
    * schema-vs-wiki separation. */
-  type: 'daily' | 'writing' | 'article' | `system:${string}` | `wiki:${string}`
+  type:
+    | 'daily'
+    | 'writing'
+    | 'note'
+    | `system:${string}`
+    | `wiki:${string}`
   /** YYYY-MM-DD when type === 'daily'. */
   date?: string
   /** Parent doc's slug for tree-nested writing notes. Undefined for
@@ -71,21 +76,35 @@ export interface KnownDoc {
    * whose Y.Map had no createdAt either; DocumentInfoDialog renders
    * `—` in that case. */
   createdAt?: string
-  /** Read-it-later source metadata. Set only on `type === 'article'`
-   * docs (saved web pages). Populated by `createArticle` from the
-   * defuddle extraction and persisted via the `.meta.json` sidecar
-   * (DocMetaFile) so they survive restart. `readAt` is set when the
-   * user marks the article read; absent = unread. */
+  /** Read-it-later source metadata. Set on captured-from-URL notes
+   * (saved web pages). A present `sourceUrl` is what marks a generic
+   * `note` as a read-it-later item (the old `type === 'article'` gate).
+   * Populated by `createArticle` from the defuddle extraction and
+   * persisted via the `.md` frontmatter so it survives restart. `readAt`
+   * is set when the user marks it read; absent = unread. */
   sourceUrl?: string
   siteName?: string
   faviconUrl?: string
   description?: string
   savedAt?: string
   readAt?: string
-  /** User highlights on this article (type 'article' only). Source of
-   * truth, persisted via `.meta.json`; the editor re-anchors each one to
+  /** User highlights on a captured note (read-it-later). Source of
+   * truth, persisted via frontmatter; the editor re-anchors each one to
    * the body on mount. */
   highlights?: HighlightRecord[]
+  /** YouTube capture metadata. A present `videoId` is what marks a
+   * generic `note` as a video capture (the old `type === 'youtube'`
+   * gate) — it renders an inline player and picks the video icon. The
+   * transcript is the body; these describe the source video. `sourceUrl`
+   * (watch URL) and `siteName` (channel) reuse the fields above. */
+  videoId?: string
+  durationSec?: number
+  thumbnailUrl?: string
+  /** Vault-relative path for a generic `note` (a `.md` outside the
+   * recognised folders, surfaced by the folder-tree scan). The path IS
+   * the placement — pathForDoc returns it verbatim — since these files
+   * live wherever the user put them. Unset on every typed doc. */
+  relPath?: string
 }
 
 /** Coarse classification used by the DOC_POLICIES table below. Every
@@ -101,7 +120,7 @@ export type DocCategory =
   | 'wiki-content'  // agent-created, user-editable wiki page (wiki:custom-*)
   | 'wiki-profile'  // user self-profile — editable + ingest-updatable, non-archivable
   | 'system-meta'   // agent-managed config / metadata (system:conventions/log/index)
-  | 'article'       // user-saved read-later page (external raw source)
+  | 'note'          // generic user .md anywhere in the vault (folder tree + inbox captures)
 
 /** Capability matrix for one doc category. Every caller that used
  * to ask "can this doc be archived / moved / ingested" reads from
@@ -112,7 +131,7 @@ export interface DocPolicy {
   /** Which sidebar region this doc belongs in. The Day / Week / Month
    * views render `date` and `none` (latter never appears); the
    * Wiki section splits `wiki` (content) and `system` (meta). */
-  sidebarGroup: 'date' | 'wiki' | 'system' | 'article' | 'none'
+  sidebarGroup: 'date' | 'wiki' | 'system' | 'none'
   /** User can soft-delete via archive UI. Karpathy write-ownership
    * invariant: only docs the user authored or owns can be wiped. */
   canArchive: boolean
@@ -138,6 +157,15 @@ export interface DocsState {
   // Persisted
   openSlugs: string[]
   knownDocs: KnownDoc[]
+  /** Vault-relative paths of every folder on disk (recursive). Runtime-
+   * only, rebuilt by bootstrap's scan. Lets the sidebar tree show empty
+   * folders, which the file-derived tree alone can't. */
+  knownFolders: string[]
+  /** Vault-relative paths of every non-markdown attachment on disk
+   * (pdf/png/txt/…). Runtime-only, rebuilt by bootstrap's scan and the
+   * watcher's folder refresh. Surfaces read-only file rows in the tree;
+   * never enters knownDocs (no slug / Yjs doc). */
+  knownFiles: string[]
   /** Slugs of docs whose tree row is currently expanded in the
    * sidebar — daily and writing alike. Persisted so the user's
    * fold layout survives a reload. Today's daily is force-added
@@ -189,6 +217,9 @@ export interface DocsState {
    * so a self-write echoed back through the watcher can't double-add
    * the doc we just created. */
   addKnownDoc: (doc: KnownDoc) => void
+  /** Swap a doc's relPath (and, for a renamed file, its title) in place
+   * (keeps slug/tab/handle) for an external move/rename. */
+  updateKnownDocPath: (slug: string, relPath: string, title?: string) => void
   /** Drop a doc from the catalog because its file vanished from disk.
    * Delegates to {@link closeDoc} for the tab + handle cleanup when
    * the doc is currently open, so the existing tear-down ordering
@@ -197,6 +228,12 @@ export interface DocsState {
   ensureOpen: (slug: string) => void
   closeDoc: (slug: string) => string | null
   createNew: () => Promise<string>
+  /** Create a folder on disk at `relPath` and add it to knownFolders.
+   * Idempotent; returns false on a filesystem error. */
+  createFolder: (relPath: string) => Promise<boolean>
+  /** Duplicate a generic note (same folder, "<name> copy", source body).
+   * Returns the new slug or null for non-note docs. */
+  duplicateDoc: (slug: string) => Promise<string | null>
   /** Find or create the daily entry for the given local date and make
    * it the active tab. Returns the slug. */
   openDaily: (date?: string) => Promise<string | null>
@@ -243,6 +280,14 @@ export interface DocsState {
   deleteForever: (slug: string) => Promise<string | null>
   /** Permanently delete every archived doc (sidecar + local state). */
   emptyArchive: () => Promise<string | null>
+  /** Delete a user doc by moving its file to the OS trash (recoverable)
+   * and dropping it from the catalog / tabs / handles. Returns the slug
+   * to navigate to next, or null. */
+  deleteToTrash: (slug: string) => Promise<string | null>
+  /** Delete a whole folder to the OS trash + drop contained docs from
+   * the catalog/tabs/handles. Refuses folders with non-archivable docs.
+   * Returns the slug to navigate to next, or null. */
+  deleteFolder: (folderPath: string) => Promise<string | null>
   /** Seed a new doc's body from a markdown string. Used by
    * createCustomWikiPage / ensureSystemPage to plant initial content.
    * Ensures the handle (IDB shard + Y.Doc) exists first, then applies
@@ -266,6 +311,19 @@ export interface DocsState {
    * and refuse empty strings; the caller's UI should validate
    * before calling, but this is a hard backstop. */
   renameDoc: (slug: string, newTitle: string) => boolean
+  /** Move a generic `note` into `folderPath` ('' = root): keeps the
+   * filename, swaps the folder part of relPath (de-duped), and lets the
+   * flush move the file on disk. No-op if already there; refuses
+   * non-note docs. */
+  moveDocToFolder: (slug: string, folderPath: string) => boolean
+  /** Rename a folder: move the directory on disk, rewrite the relPath of
+   * every note inside, and update knownFolders. Refuses folders holding
+   * type-derived docs (wiki/system). */
+  renameFolder: (oldPath: string, newLeafName: string) => Promise<boolean>
+  /** Move a folder into `destParent` ('' = root), keeping its leaf name.
+   * Rejects a drop onto itself / a descendant and type-derived folders;
+   * no-op if already there. */
+  moveFolder: (folderPath: string, destParent: string) => Promise<boolean>
   /** Toggle a read-it-later article's read/unread state (sets/clears
    * `readAt` and flushes the sidecar). No-op for non-article docs. */
   setArticleRead: (slug: string, read: boolean) => void

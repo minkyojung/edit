@@ -7,9 +7,9 @@
 // and lets future modules (e.g. queryWiki) reuse the same
 // RunChatArgs shape without dragging the runner in.
 
-import type { EditorView } from '@milkdown/kit/prose/view'
 import type {
   ChatTurn,
+  FileAttachment,
   MessagePart,
 } from '@/chat/types'
 
@@ -24,25 +24,20 @@ export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY_
 export const DEFAULT_MODEL = 'claude-sonnet-4-6'
 export const DOC_CHAR_CAP = 60_000
 
-/** Maps Anthropic model id → the agent identifier we stamp on
- * marks created from a turn. The agent id is read by mark UI to
- * attribute proposals. We pass the full id through (e.g.
- * "claude-haiku-4-5-20251001") instead of collapsing it to the
- * family name, so display surfaces can render the family AND the
- * version. formatModel in lib/formatModel.ts handles the
- * user-facing collapse. */
-export function agentIdForModel(model: string): string {
-  return `ai:${model}`
+/** A visualization the user armed for editing (via the ✎ toolbar, or by
+ * selecting a viz block). When present on a run, the agent is given the
+ * edit_visualization relay tool and told the target's id + current spec, so
+ * "make it a bar chart" edits THAT block in place — same session, no separate
+ * pipeline. `source` is the block's current spec JSON. */
+export interface VizEditTarget {
+  id: string
+  source: string
 }
 
 export interface RunChatArgs {
-  /** The editor view whose text is the chat's "current page" context.
-   * Null on surfaces with no document — e.g. the Read Later queue route,
-   * where `pageContextMarkdown` supplies the page text instead. */
-  view: EditorView | null
-  /** Stand-in "current page" text used when `view` is null (no editor
-   * mounted). The Read Later queue passes a generated article list here
-   * so the agent can answer about the queue. */
+  /** The chat's "current page" text. The Read Later queue passes a generated
+   * article list here; otherwise runChat reads the open doc's bodyMarkdown
+   * cache by slug. */
   pageContextMarkdown?: string
   /** Slug of the doc this run was started against. Used at proposal-
    * apply time to route to the currently-mounted view (if the user is
@@ -59,6 +54,11 @@ export interface RunChatArgs {
    * instructions like "Begin your review." that don't derive from a chat
    * transcript. */
   prompt?: string
+  /** Files the user attached to this turn. Converted to Anthropic
+   * ContentBlock[] alongside the text prompt in buildUserContent().
+   * Not stored in ChatTurn (too large for JSONL); lives only in the
+   * live run path. Ignored when `prompt` is set directly (slash cmds). */
+  attachments?: FileAttachment[]
   /** System prompt body. The current document text is appended automatically.
    * Defaults to FREE_CHAT_PROMPT. */
   systemPrompt?: string
@@ -77,19 +77,51 @@ export interface RunChatArgs {
    * inline mark editing. Slash commands pass an empty list (or a kind-
    * specific list) to scope the toolset. */
   relayTools?: string[]
-  /** Permission mode forwarded to the SDK. Omit for normal edit chat
-   * (sidecar defaults to bypassPermissions). Set to `'plan'` for a
-   * read-only planning turn — the SDK blocks tool execution and the
-   * caller also drops the propose_* relays + Bash. */
-  permissionMode?: 'plan'
+  /** Permission mode forwarded to the SDK.
+   * - `'default'` — normal chat: the sidecar's canUseTool gate fires so the
+   *   model can pause on AskUserQuestion; every other tool passes through.
+   * - `'plan'` — read-only planning turn; the SDK blocks tool execution and
+   *   the caller also drops the propose_* relays + Bash.
+   * Omit only for non-chat callers (e.g. ingest) that want the sidecar's
+   * bypassPermissions default. */
+  permissionMode?: 'plan' | 'default' | 'acceptEdits'
+  /** acceptEdits mode: auto-accept each proposed change the instant it lands
+   * (apply without waiting for a manual Keep). The diff still renders — now as
+   * an already-applied change. Default false → edits stay pending for review. */
+  autoAcceptEdits?: boolean
   /** Built-in SDK tool names to expose. Omit for the edit default
    * (Read/Glob/Grep/Bash). Plan turns pass ['Read','Glob','Grep']. */
   builtinTools?: string[]
+  /** Whether this run may delegate (Task) or activate skills (Skill).
+   * Omit (default true) for the trusted chat/plan surfaces. Set false for
+   * untrusted-content shapes (capture/intake) so the sidecar won't re-add
+   * Task to their narrow builtin allowlist — otherwise injected content
+   * could Task-delegate to a full-toolset subagent. See sidecar server.mjs. */
+  allowDelegation?: boolean
   /** When true (default) the document text is appended to the system
    * prompt under a `--- DOCUMENT ---` header. Slash commands that already
    * embed `{{document}}` in their body should pass false to avoid the
    * document showing up twice. */
   appendDocument?: boolean
+  /** Vault-relative path of a non-markdown file the user is viewing in the
+   * FileViewer (`/file/:rel`) route — a PDF, image, audio, etc. There's no
+   * editor/slug for these, so this is the only signal the agent gets that a
+   * file is open. Injected into the system prompt with an instruction to
+   * Read it on demand (the SDK's Read tool ingests PDFs/images natively).
+   * Null/omitted on every other surface. */
+  viewingFilePath?: string | null
+  /** Editor text the user had selected when sending a free-chat turn. Injected
+   * as a `--- SELECTION ---` block so "explain this" targets the selection. Only
+   * passed for free chat — slash commands embed selection via `{{selection}}`. */
+  selectionText?: string | null
+  /** Vault-relative paths the user @-mentioned in the composer. Injected as a
+   * `--- REFERENCED FILES ---` orientation block (like viewingFilePath) so the
+   * agent Reads them on demand — kept out of the visible user message. */
+  mentionPaths?: string[]
+  /** When set, this run is editing a specific visualization: the agent gets
+   * the edit_visualization relay tool and the target's id + current spec are
+   * injected into the system prompt. Omit for normal turns. */
+  vizEditTarget?: VizEditTarget
   signal?: AbortSignal
   /** Convenience callback fired for raw text deltas. New callers should
    * prefer `onPart` and derive content from the parts timeline. */
@@ -115,6 +147,13 @@ export interface RunChatArgs {
    * a resumable thread look brand-new and triggering a duplicate-create
    * crash inside the SDK. */
   sessionStarted?: boolean
+  /** When true, navigate the editor to a note the agent CREATES this run
+   * (a `propose_write` to a path that didn't exist yet) so its inline
+   * green/red preview is immediately visible. Interactive surfaces set this;
+   * headless ingest (runIntake) leaves it off so background runs don't hijack
+   * the user's current view. Only newly-created notes navigate — edits to
+   * existing notes keep the click-to-jump suggestion card. */
+  navigateToNewNotes?: boolean
 }
 
 export interface RunChatResult {
@@ -130,8 +169,12 @@ export interface RunChatResult {
  * when the chat fails with code `RATE_LIMIT`, so the UI can render a
  * precise "retry in Ns" countdown instead of a vague "try again". */
 export interface ChatErrorRateLimit {
+  /** ms-epoch when the limit resets (normalized from the SDK's seconds). */
   resetsAt?: number
   rateLimitType?: string
+  /** Why overage/paid usage is unavailable — e.g. 'out_of_credits'. Lets the
+   * card distinguish "out of credits" from a plain windowed rate limit. */
+  overageDisabledReason?: string
 }
 
 // ── Sidecar event payloads ─────────────────────────────────────
@@ -153,12 +196,51 @@ export interface ChatEvent {
   runId: string
   event: {
     type?: string
+    // system messages carry a subtype (e.g. 'compact_boundary', 'task_progress')
+    subtype?: string
+    // compact_boundary — the SDK summarized earlier turns to fit the window
+    compact_metadata?: {
+      trigger?: 'manual' | 'auto'
+      pre_tokens?: number
+      post_tokens?: number
+    }
+    // task_started / task_progress — subagent heartbeat. `tool_use_id` links
+    // back to the Task tool_use part this progress belongs to.
+    tool_use_id?: string
+    description?: string
+    last_tool_name?: string
+    // task_progress — an AI-generated present-tense progress line for the
+    // running subagent (agentProgressSummaries), e.g. "Analyzing the outline".
+    summary?: string
+    usage?: {
+      total_tokens?: number
+      tool_uses?: number
+      duration_ms?: number
+    }
+    // subagent events carry the parent Task's tool_use id (null on main thread)
+    parent_tool_use_id?: string | null
+    // Stable per-message id (SDKAssistantMessage.uuid). Keys a subagent
+    // message's child parts so re-emitted snapshots upsert, not duplicate.
+    uuid?: string
+    // assistant messages may carry a structured API-level error
+    // (SDKAssistantMessageError) — the sidecar maps it to a chat/error code.
+    // Also reused by system/api_retry as the triggering error label.
+    error?: string
+    // system/api_retry — the SDK auto-retries a transient error (429/5xx)
+    // after a back-off; surfaced as a transient "Retrying…" row.
+    attempt?: number
+    max_retries?: number
+    retry_delay_ms?: number
     // assistant / user — message.content is an array of content blocks
     message?: {
       content?: Array<{
         type: string
         text?: string
         thinking?: string
+        // tool_use content block (lives on assistant messages)
+        id?: string
+        name?: string
+        input?: unknown
         // tool_result content block (lives on user messages)
         tool_use_id?: string
         is_error?: boolean
@@ -238,4 +320,15 @@ export interface ErrorEvent {
   runId: string
   code: string
   message: string
+  /** Whether retrying the same request could succeed. Drives whether the
+   * error card shows a Retry button. Absent → treated as retryable. */
+  retryable?: boolean
+  /** For `code === 'RATE_LIMIT'`: the SDK's reset info, sourced sidecar-side
+   * from `rate_limit_event`. `resetsAt` is SECONDS since epoch (normalized to
+   * ms at the host boundary). Lets the card show the right window + countdown. */
+  rateLimit?: {
+    resetsAt?: number
+    rateLimitType?: string
+    overageDisabledReason?: string
+  }
 }

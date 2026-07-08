@@ -13,9 +13,11 @@ export interface StreamingBuffer {
   upsert: (part: MessagePart) => void
   /** Snapshot the parts in their original arrival order. */
   buildParts: () => MessagePart[]
-  /** Concatenate the `.text` of every part of the given type, in order.
-   * Used to derive the legacy `content` / `thinking` fields the rest of the
-   * UI (and prompt history) still reads. */
+  /** Concatenate the `.text` of every MAIN-THREAD part of the given type, in
+   * order. Subagent parts (those carrying a `parentToolUseId`) are skipped —
+   * they belong to a nested lane, and folding their text into the orchestrator's
+   * own `content` / `thinking` would pollute the answer, Copy output, and prompt
+   * history. Used to derive the legacy `content` / `thinking` fields. */
   joinByType: (type: 'text' | 'reasoning') => string
 }
 
@@ -34,7 +36,9 @@ export function createStreamingBuffer(): StreamingBuffer {
       let out = ''
       for (const id of partOrder) {
         const p = partsById.get(id)
-        if (p?.type === type) out += p.text
+        if (p?.type === type && !('parentToolUseId' in p && p.parentToolUseId)) {
+          out += p.text
+        }
       }
       return out
     },

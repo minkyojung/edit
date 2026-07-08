@@ -3,7 +3,7 @@
 // A `propose_edit` carries an explicit (before → after). The model
 // often expresses an INSERTION as a replace whose `before` is the
 // anchor line and whose `after` is that same line plus the new
-// content — e.g. before "성별: 남자", after "성별: 남자\n직업: 청소부".
+// content — e.g. before "name: Alice", after "name: Alice\njob: janitor".
 // Rendering the whole `before` as removed and the whole `after` as
 // added then double-shows the unchanged anchor (struck red AND green).
 //
