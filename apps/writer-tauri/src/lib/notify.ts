@@ -53,8 +53,13 @@ export const notify = {
    * the vault is unreachable / full / read-only. Copy names the real
    * cause and the real-world fix — this is NOT a "click save" prompt (the
    * app auto-saves; the user can't save manually). A single stable toast
-   * id collapses the N-slugs-failing-at-once case into one toast and lets
-   * `saveFailedResolved` dismiss it when writes recover. */
+   * id collapses the N-slugs-failing-at-once case into one toast; the
+   * docFileSync reconciler updates its copy as the cause changes and
+   * dismisses it via `saveFailedResolved` when writes recover.
+   *
+   * `dismissible: false` — the user must not be able to swipe away a live
+   * "your edits aren't saving" warning and then keep typing into a void.
+   * It clears only when the condition actually resolves (reconciler). */
   saveFailed(cause: SaveFailureCause, opts?: RetryOpts) {
     const copy: Record<SaveFailureCause, { title: string; description: string }> = {
       unreachable: {
@@ -79,6 +84,7 @@ export const notify = {
       id: 'save-failure',
       description: c.description,
       duration: Infinity,
+      dismissible: false,
       action: retryAction(opts?.onRetry),
     })
   },

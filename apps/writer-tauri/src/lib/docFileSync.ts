@@ -401,23 +401,33 @@ function classifySaveError(err: unknown): SaveFailureCause {
   return 'unknown'
 }
 
-/** Record a failed vault write; when the streak becomes persistent, fire
- * one actionable toast (Retry re-runs the flush). Transient blips stay
- * silent — the slug is left dirty and the next tick retries. */
+/** Record a failed vault write. Surfacing is the reconciler's job (below);
+ * this only mutates state. Transient blips stay silent — a slug that
+ * recovers or is removed leaves the dirty set and gets pruned by the
+ * end-of-pass `reconcile`, so it never reaches the persistence threshold. */
 function reportSaveFailure(slug: string, err: unknown): void {
-  const cause = classifySaveError(err)
-  const { justCrossed } = useSaveFailureStore.getState().recordFailure(slug, cause)
-  if (justCrossed) notify.saveFailed(cause, { onRetry: () => void flushDirty() })
+  useSaveFailureStore.getState().recordFailure(slug, classifySaveError(err))
 }
 
-/** Record a successful write; once nothing is persistently failing, clear
- * the failure toast. */
-function reportSaveSuccess(slug: string): void {
+// ── Save-failure toast: one declarative reconciler ───────────────────
+// The store is the single source of truth; this subscription maps its
+// state onto the toast (show / update-copy / dismiss). Level-triggered, so
+// the copy always follows the current worst cause (#8) and the toast
+// clears the instant the last persistent failure resolves. A signature
+// guard makes redundant store ticks no-ops. The toast is non-dismissible
+// while active (see notify.saveFailed), so a user can't swipe away a live
+// data-loss warning and end up editing into a void (#1). Registered once
+// for the app's lifetime — the store is a session singleton.
+let saveToastCause: SaveFailureCause | null = null
+function reconcileSaveToast(): void {
   const store = useSaveFailureStore.getState()
-  const wasPersistent = store.hasPersistentFailure()
-  store.recordSuccess(slug)
-  if (wasPersistent && !store.hasPersistentFailure()) notify.saveFailedResolved()
+  const cause = store.hasPersistentFailure() ? store.worstCause() : null
+  if (cause === saveToastCause) return
+  saveToastCause = cause
+  if (cause) notify.saveFailed(cause, { onRetry: () => void flushDirty() })
+  else notify.saveFailedResolved()
 }
+useSaveFailureStore.subscribe(reconcileSaveToast)
 
 /** Public flush entry point with single-flight guard. See the
  * `flushInProgress` / `flushQueued` comment above for the contract.
@@ -496,7 +506,6 @@ async function flushDirtyOnce(): Promise<void> {
         const merged = await mergeSidecar(metaPath, metaOnly)
         await writeVaultFile(metaPath, JSON.stringify(merged, null, 2))
         clearDirty(slug)
-        reportSaveSuccess(slug)
       } catch (err) {
         console.error('[vault:flush] meta-only write failed for', slug, err)
         reportSaveFailure(slug, err)
@@ -604,7 +613,6 @@ async function flushDirtyOnce(): Promise<void> {
       }
       lastWrittenPath.set(slug, mdPath)
       clearDirty(slug)
-      reportSaveSuccess(slug)
       if (known.type.startsWith('wiki:')) wikiTouched = true
     } catch (err) {
       // Error (not warn) — this is a data-durability failure path.
@@ -618,6 +626,12 @@ async function flushDirtyOnce(): Promise<void> {
       // Leave dirty so the next tick retries.
     }
   }
+  // Prune failure entries for every slug that left the dirty set this pass
+  // (saved, deleted, archived, handle torn down). This is the single
+  // success/cleanup path — keeping `failures ⊆ dirty` — so a recovered or
+  // removed slug can never strand a stale entry, and the toast reconciler
+  // dismisses the moment the last persistent failure clears.
+  useSaveFailureStore.getState().reconcile(getDirtySlugs())
   if (wikiTouched) invalidateWikiIndex()
 }
 
