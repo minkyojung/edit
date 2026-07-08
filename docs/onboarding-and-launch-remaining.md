@@ -32,6 +32,12 @@ Flow: **P1 Welcome/trust → P2 Connect Claude (skippable) → P3 Folder (mandat
 - [x] `seedWelcomeNote`: seed `Welcome.md` into a brand-new vault (CLAUDE.md
   absent) so first run opens on content, not a blank editor. (CLAUDE.md itself
   was already seeded by `seedWikiDefaults`.)
+- [x] **Handoff ordering (#7):** `openProject` now awaits `openProjectWindow`
+  BEFORE recording the project / marking `bootstrapCompleted`. A spawn failure
+  leaves onboarding intact (user retries) instead of stranding a first-run user
+  on the empty picker; and because the launcher is hidden before the flag flips,
+  the VaultLauncher no longer flashes. Added a `busy` guard (no double-open) +
+  retry-able error line on `DonePanel`. (commit `8e98a612`)
 
 ### Remaining — polish
 - [~] **P2 Connect: real OAuth wiring.** Buttons currently just advance. Wire
@@ -56,22 +62,62 @@ Flow: **P1 Welcome/trust → P2 Connect Claude (skippable) → P3 Folder (mandat
   bug's canonical fix — currently the error still surfaces if the user skipped
   connect and hasn't connected.)
 
+### Remaining — from the code review (not yet done)
+- [ ] **Window height clamp (#10):** `ONBOARDING_H = 580`
+  (`OnboardingLauncher.tsx`) is below the window `minHeight: 600`
+  (`tauri.conf.json`), so `setSize` is clamped to 900×600 — the live launcher is
+  20px taller than the fixed-580 `/onboard` preview frame
+  (`OnboardingPreview.tsx`), so the preview misrepresents the real layout. Fix:
+  one shared `ONBOARDING_SIZE` constant (height ≥ minHeight) used by both, or
+  lower `minHeight`.
+- [ ] **Dev routes ungated in prod (#9):** `/onboard` (and `/gallery`) routes +
+  their Sidebar entries have no `import.meta.env.DEV` guard, so end users can
+  open the design preview / component gallery. Gate behind DEV. (Also in §4 P2.)
+  Relatedly, `OnboardingDialog` is now dead in-app (App.tsx dropped its only
+  usage) and survives only via `GalleryPage` — delete it if the new flow fully
+  replaces it.
+- [ ] **`folderName` duplicated (cleanup):** `OnboardingLauncher.tsx`
+  re-implements the identical `folderName(path)` from `VaultLauncher.tsx` (same
+  regex + fallback). Export one and reuse so they can't drift.
+
 ---
 
-## 2. Security lockdown (done — verify on packaged build)
-- [x] Sidecar OS sandbox (block network egress + secret-file reads: ~/.ssh,
-  ~/.aws, tokens) + deny rules for curl/wget/nc; all chat runs; Settings toggle
-  ("Protect secrets & block data exfiltration", default on).
-- [x] Capture/intake runs least-privilege builtins (Read/Glob/Grep, no Bash).
-- [x] Verified headlessly: `ls ~/.ssh` and `curl` blocked even under bypass.
-- [ ] Confirm the sandbox actually initialises in the **packaged** app (dev uses
-  raw sidecar; release uses `sidecar-pkg` — run `pack:sidecar`). Consider
-  flipping `failIfUnavailable: true` once confirmed for a hard guarantee.
-- [ ] Broaden the secret deny-list review (.env, *.pem, .npmrc, kube config…).
+## 2. Security lockdown (done — reworked per the Claude Code SDK docs)
+- [x] **Secret reads via permission rules.** The SDK is explicit that the sandbox
+  `filesystem.denyRead` only confines subprocesses — the in-process `Read`/`Glob`
+  tools obey PERMISSION rules. So secrets are now blocked by `Read(~/…)`/`Edit(~/…)`
+  deny rules (`secretDenyRules()`), with the sandbox `denyRead` kept as the
+  subprocess backstop (`Grep`/ripgrep, `Bash`). ~/.ssh, ~/.aws, ~/.gnupg,
+  ~/.config/{gh,gcloud}, ~/.kube, ~/.npmrc, the app token store.
+- [x] Network egress blocked (`allowedDomains: []`) + `Bash(curl|wget|nc|…)` deny
+  rules; `allowUnsandboxedCommands: false` closes the `dangerouslyDisableSandbox`
+  escape. Settings toggle ("Protect secrets & block data exfiltration", default on).
+- [x] Capture/intake least-privilege builtins (Read/Glob/Grep, no Bash) AND
+  `allowDelegation: false` so the sidecar can't re-add `Task`/`Skill` and let
+  injected content delegate to a full-toolset subagent.
+- [x] **Verified live** (`sidecar/scripts/verify-secret-lockdown.mjs`, 2026-07-08):
+  under bypassPermissions the model's `Read` of a sentinel secret is blocked by
+  the deny rule — PASS (Read attempted, sentinel not leaked).
+- [ ] Confirm the OS sandbox actually initialises in the **packaged** app (dev uses
+  raw sidecar; release uses `sidecar-pkg`). Then flip `failIfUnavailable: true`
+  for a hard guarantee (currently false so a sandbox that can't start degrades to
+  the permission-rule layer instead of breaking chat).
+- [ ] Broaden the secret list (.env, *.pem, custom key paths) OR switch to a
+  vault-whitelist model (deny all of `~/`, allow only the vault) so no list needs
+  maintaining. See memory `reference_claude_code_sandbox_security_model`.
 
-## 3. Save safety (done)
+## 3. Save safety (done — reliability rework this session)
 - [x] `saveFailureStore` + cause-classified toasts + unsaved-changes quit gate.
 - [x] Checkpoint flush on blur / visibilitychange / doc-switch.
+- [x] **Declarative save-failure toast:** store is the single source of truth; a
+  level-triggered reconciler maps state→toast (show/update-cause/dismiss), and
+  the live toast is `dismissible:false`. Fixes: dismissed-toast-never-returns
+  (silent data loss), stranded failure entries (now pruned by an end-of-pass
+  `reconcile(dirtySlugs)` keeping `failures ⊆ dirty`), stale cause copy. Unit
+  tested (`saveFailureStore.test.ts`). (commits `0df05184`)
+- [x] **Quit gate keyed on real write failures**, not the raw dirty set — a slug
+  stays dirty for benign reasons (conflict / not-ready / deferred), which used to
+  false-fire the "couldn't be saved" dialog and block quit. (commit `c4b849db`)
 
 ---
 
