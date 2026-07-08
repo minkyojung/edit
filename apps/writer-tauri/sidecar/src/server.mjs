@@ -796,6 +796,13 @@ export class Server {
       // prompt injection in captured content can't exfiltrate. Defaults ON
       // (secure by default); the host forwards the user's Settings toggle.
       sandboxEnabled = true,
+      // Whether this run may DELEGATE (Task) or activate skills (Skill).
+      // Defaults ON for the trusted chat/plan surfaces. The host sets it
+      // false for untrusted-content shapes (capture/intake): those pass a
+      // deliberately narrow builtinTools allowlist, and re-adding Task here
+      // would let injected content spawn a full-toolset subagent, defeating
+      // the least-privilege set. Least privilege must be transitive.
+      allowDelegation = true,
     } = params
 
     // Plan-mode interactive gate (canUseTool) state. `awaitingDecision` pauses
@@ -1098,8 +1105,11 @@ export class Server {
         // shape passes an explicit builtinTools allowlist
         // (['Read','Glob','Grep','Bash']) that omits both; the preset shape
         // ({type:'preset',...}) already includes them, so only the array case
-        // needs patching.
-        if (Array.isArray(options.tools)) {
+        // needs patching. Gated on `allowDelegation`: an untrusted-content
+        // shape (intake) withholds Task on purpose, and we must NOT re-add it
+        // here — otherwise injected content could Task-delegate to a
+        // full-toolset subagent and escape the least-privilege set.
+        if (allowDelegation && Array.isArray(options.tools)) {
           for (const t of ['Skill', 'Task']) {
             if (!options.tools.includes(t)) options.tools = [...options.tools, t]
           }

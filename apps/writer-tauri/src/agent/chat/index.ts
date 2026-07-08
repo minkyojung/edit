@@ -100,6 +100,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     permissionMode,
     autoAcceptEdits = false,
     builtinTools,
+    allowDelegation,
     fastMode,
     attachments,
     signal,
@@ -743,6 +744,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // Security lockdown (block network egress + secret reads). Forwarded
         // to the sidecar's `sandboxEnabled`; default ON, user-toggleable.
         sandboxEnabled: getSandboxEnabled(),
+        // Whether this run may delegate (Task) / activate skills. Omitted for
+        // chat/plan (sidecar defaults ON); intake passes false so its narrow
+        // builtin set can't be widened back to include Task.
+        allowDelegation,
         effort,
         // Forwarded to the SDK's settings.fastMode. The caller already gated on
         // model support; only send `true` so non-fast runs stay clean.

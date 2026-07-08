@@ -92,6 +92,12 @@ export interface RunChatArgs {
   /** Built-in SDK tool names to expose. Omit for the edit default
    * (Read/Glob/Grep/Bash). Plan turns pass ['Read','Glob','Grep']. */
   builtinTools?: string[]
+  /** Whether this run may delegate (Task) or activate skills (Skill).
+   * Omit (default true) for the trusted chat/plan surfaces. Set false for
+   * untrusted-content shapes (capture/intake) so the sidecar won't re-add
+   * Task to their narrow builtin allowlist — otherwise injected content
+   * could Task-delegate to a full-toolset subagent. See sidecar server.mjs. */
+  allowDelegation?: boolean
   /** When true (default) the document text is appended to the system
    * prompt under a `--- DOCUMENT ---` header. Slash commands that already
    * embed `{{document}}` in their body should pass false to avoid the

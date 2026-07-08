@@ -53,6 +53,11 @@ export async function runIntake(args: IntakeArgs): Promise<RunChatResult> {
     // reviewed propose_* relays below. (Without this, runChat's default
     // grants the full set INCLUDING Bash.)
     builtinTools: ['Read', 'Glob', 'Grep'],
+    // …and no delegation: without this, the sidecar re-adds `Task` (+`Skill`)
+    // whenever the vault has an agent plugin, letting injected content
+    // delegate to a full-toolset subagent and escape the allowlist above.
+    // Least privilege must be transitive.
+    allowDelegation: false,
     // Write-side tools the agent proposes through. `move_note` files the raw
     // note out of the capture folder once its knowledge is in the wiki
     // (auto-applied).

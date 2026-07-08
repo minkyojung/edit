@@ -83,6 +83,13 @@ pub struct ChatStartArgs {
     /// default); the frontend forwards the user's Settings toggle.
     #[serde(default)]
     pub sandbox_enabled: Option<bool>,
+    /// Whether this run may delegate (Task) or activate skills (Skill).
+    /// Omitted → the sidecar defaults it ON for the trusted chat/plan
+    /// surfaces. The frontend sends `Some(false)` for untrusted-content
+    /// shapes (capture/intake) so injected content can't Task-delegate to a
+    /// full-toolset subagent and escape the least-privilege builtin set.
+    #[serde(default)]
+    pub allow_delegation: Option<bool>,
     /// Request fast mode (faster output) for this run. Forwarded to the
     /// sidecar which sets the SDK's `settings.fastMode`. The frontend only
     /// sends `Some(true)` after gating on model support; `None` = off.
@@ -186,6 +193,9 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     }
     if let Some(se) = args.sandbox_enabled {
         params["sandboxEnabled"] = json!(se);
+    }
+    if let Some(ad) = args.allow_delegation {
+        params["allowDelegation"] = json!(ad);
     }
     if let Some(fm) = args.fast_mode {
         params["fastMode"] = json!(fm);
