@@ -4,7 +4,8 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
@@ -29,6 +30,56 @@ impl Mode {
             Mode::Title => "title",
         }
     }
+}
+
+// Crash-loop supervision. A sidecar that dies is respawned, but a sidecar that
+// dies *immediately and repeatedly* (e.g. a broken bundle in a packaged build)
+// must not hot-loop forever pegging the CPU and flooding logs. Each respawn
+// waits an exponentially growing backoff, and after too many consecutive fast
+// deaths we stop trying and surface a terminal `sidecar:died { fatal: true }`.
+const MAX_CONSECUTIVE_RESTARTS: u32 = 5;
+/// An instance that lived at least this long before dying is treated as a
+/// healthy process that eventually died — not a crash loop — so its death
+/// resets the consecutive counter instead of escalating it.
+const HEALTHY_UPTIME: Duration = Duration::from_secs(60);
+const RESTART_BACKOFF_BASE_MS: u64 = 500;
+const RESTART_BACKOFF_CAP_MS: u64 = 30_000;
+
+/// Per-mode crash-loop state. `consecutive` counts back-to-back fast deaths;
+/// `last_spawn` dates the current instance so `handle_exit` can tell a loop
+/// from an isolated death.
+struct RestartGuard {
+    consecutive: u32,
+    last_spawn: Instant,
+}
+
+enum RestartAction {
+    /// Wait this long, then respawn.
+    Backoff(Duration),
+    /// Too many consecutive fast deaths — stop trying.
+    GiveUp,
+}
+
+/// Pure crash-loop policy. Given the consecutive-fast-death count so far and
+/// how long the just-dead instance lived, return the updated count and what to
+/// do next. Extracted from `handle_exit` so the escalation math is unit-tested
+/// without spawning real processes.
+fn restart_decision(prev_consecutive: u32, lived: Duration) -> (u32, RestartAction) {
+    // A death after a healthy run is an isolated incident, not a loop: reset
+    // the streak (this death counts as the first restart).
+    let consecutive = if lived >= HEALTHY_UPTIME {
+        1
+    } else {
+        prev_consecutive.saturating_add(1)
+    };
+    if consecutive > MAX_CONSECUTIVE_RESTARTS {
+        return (consecutive, RestartAction::GiveUp);
+    }
+    let shift = consecutive.saturating_sub(1).min(20);
+    let ms = RESTART_BACKOFF_BASE_MS
+        .saturating_mul(1u64 << shift)
+        .min(RESTART_BACKOFF_CAP_MS);
+    (consecutive, RestartAction::Backoff(Duration::from_millis(ms)))
 }
 
 /// How a sidecar is launched. Captured at startup so restarts use the same
@@ -58,6 +109,8 @@ pub struct SidecarManager {
     notification_handler: NotificationHandler,
     launcher: Launcher,
     app: AppHandle,
+    chat_restart: Mutex<RestartGuard>,
+    title_restart: Mutex<RestartGuard>,
 }
 
 impl SidecarManager {
@@ -102,6 +155,8 @@ impl SidecarManager {
             notification_handler: handler,
             launcher,
             app: app.clone(),
+            chat_restart: Mutex::new(RestartGuard { consecutive: 0, last_spawn: Instant::now() }),
+            title_restart: Mutex::new(RestartGuard { consecutive: 0, last_spawn: Instant::now() }),
         });
 
         // Wire the self-ref so the exit closures can find us when they fire.
@@ -166,6 +221,64 @@ impl SidecarManager {
         Ok(())
     }
 
+    fn restart_guard(&self, mode: Mode) -> &Mutex<RestartGuard> {
+        match mode {
+            Mode::Chat => &self.chat_restart,
+            Mode::Title => &self.title_restart,
+        }
+    }
+
+    /// Called from the exit handler when a sidecar dies. Applies crash-loop
+    /// supervision — exponential backoff between respawns, and a hard cap on
+    /// consecutive fast deaths — then respawns (or gives up terminally).
+    async fn handle_exit(&self, mode: Mode) {
+        // Decide backoff vs give-up from how the just-dead instance behaved.
+        // The lock is released at the end of this block, before any await.
+        let (give_up, delay) = {
+            let mut g = self.restart_guard(mode).lock().unwrap();
+            let (next, action) = restart_decision(g.consecutive, g.last_spawn.elapsed());
+            g.consecutive = next;
+            match action {
+                RestartAction::GiveUp => (true, Duration::ZERO),
+                RestartAction::Backoff(d) => (false, d),
+            }
+        };
+
+        if give_up {
+            eprintln!(
+                "[sidecar manager] {} sidecar crash-looped past {} restarts; giving up",
+                mode.as_str(),
+                MAX_CONSECUTIVE_RESTARTS,
+            );
+            let _ = self
+                .app
+                .emit("sidecar:died", json!({ "mode": mode.as_str(), "fatal": true }));
+            return;
+        }
+
+        if !delay.is_zero() {
+            eprintln!(
+                "[sidecar manager] {} sidecar respawn backoff {}ms",
+                mode.as_str(),
+                delay.as_millis(),
+            );
+            tokio::time::sleep(delay).await;
+        }
+
+        if let Err(e) = self.restart(mode).await {
+            // The respawn itself failed, so no new exit handler was armed —
+            // nothing will retry. Surface a terminal signal instead of leaving
+            // the sidecar silently dead.
+            eprintln!(
+                "[sidecar manager] {} sidecar restart failed: {e}",
+                mode.as_str()
+            );
+            let _ = self
+                .app
+                .emit("sidecar:died", json!({ "mode": mode.as_str(), "fatal": true }));
+        }
+    }
+
     async fn restart(&self, mode: Mode) -> Result<(), SidecarError> {
         eprintln!("[sidecar manager] {} sidecar exited; respawning", mode.as_str());
         let exit_handler = build_exit(self.self_ref.clone(), mode, self.app.clone());
@@ -190,6 +303,9 @@ impl SidecarManager {
                 .request("setToken", Some(json!({ "token": token })))
                 .await?;
         }
+
+        // Date the fresh instance so the next death can measure its uptime.
+        self.restart_guard(mode).lock().unwrap().last_spawn = Instant::now();
 
         eprintln!("[sidecar manager] {} sidecar respawned", mode.as_str());
         Ok(())
@@ -290,12 +406,7 @@ fn build_exit(self_ref: SelfRef, mode: Mode, app: AppHandle) -> ExitHandler {
                 }
             };
             let Some(manager) = weak.upgrade() else { return };
-            if let Err(e) = manager.restart(mode).await {
-                eprintln!(
-                    "[sidecar manager] {} sidecar restart failed: {e}",
-                    mode.as_str()
-                );
-            }
+            manager.handle_exit(mode).await;
         });
     })
 }
@@ -513,5 +624,46 @@ mod dev_paths {
             }
         }
         PathBuf::from(".")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn backoff_ms(prev: u32, lived: Duration) -> u64 {
+        match restart_decision(prev, lived).1 {
+            RestartAction::Backoff(d) => d.as_millis() as u64,
+            RestartAction::GiveUp => panic!("expected Backoff, got GiveUp"),
+        }
+    }
+
+    #[test]
+    fn fast_deaths_escalate_backoff() {
+        // A fresh crash loop: each fast death grows the delay 0.5→1→2→4→8s.
+        let fast = Duration::from_secs(1);
+        assert_eq!(restart_decision(0, fast).0, 1);
+        assert_eq!(backoff_ms(0, fast), 500);
+        assert_eq!(backoff_ms(1, fast), 1000);
+        assert_eq!(backoff_ms(2, fast), 2000);
+        assert_eq!(backoff_ms(3, fast), 4000);
+        assert_eq!(backoff_ms(4, fast), 8000);
+    }
+
+    #[test]
+    fn gives_up_past_the_cap() {
+        // The 6th consecutive fast death (prev = MAX = 5) stops the loop.
+        let (next, action) = restart_decision(MAX_CONSECUTIVE_RESTARTS, Duration::from_secs(1));
+        assert_eq!(next, MAX_CONSECUTIVE_RESTARTS + 1);
+        assert!(matches!(action, RestartAction::GiveUp));
+    }
+
+    #[test]
+    fn healthy_run_resets_the_streak() {
+        // A death after a healthy uptime drops the streak back to 1 and the
+        // shortest backoff, even if the prior streak was near the cap.
+        let (next, action) = restart_decision(MAX_CONSECUTIVE_RESTARTS, HEALTHY_UPTIME);
+        assert_eq!(next, 1);
+        assert!(matches!(action, RestartAction::Backoff(d) if d == Duration::from_millis(500)));
     }
 }
