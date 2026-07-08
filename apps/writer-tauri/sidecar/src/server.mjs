@@ -66,19 +66,25 @@ function secretPaths() {
   return SECRET_HOME_RELATIVE.map((rel) => `${home}/${rel}`)
 }
 
-/** Permission deny rules for the secret locations. Per the SDK, filesystem
- * access for the in-process file tools is restricted by PERMISSION RULES,
- * not by the sandbox settings (those only confine subprocesses) —
- * sdk.d.ts: "Filesystem access: Use `Read` and `Edit` permission rules."
- * So the sandbox `denyRead` above is insufficient on its own: without
- * these the built-in `Read`/`Glob` tools happily read `~/.ssh/id_rsa`.
- * Covers the file-pattern tools that read or write (`Grep` shells out to
- * ripgrep, so the sandbox `denyRead` catches it instead). Both the path
- * and its contents (`/**`); `~/`-relative per the SDK rule grammar. */
+/** Permission deny rules for the secret locations. Per the Claude Code
+ * docs, the built-in file tools use the PERMISSION system, not the sandbox
+ * ("Read, Edit, and Write use the permission system directly rather than
+ * running through the sandbox") — so the sandbox `denyRead` above does NOT
+ * stop them; without these rules the `Read` tool reads `~/.ssh/id_rsa`
+ * straight into context.
+ *
+ * `Read` + `Edit` are the two canonical rule families and cover the whole
+ * surface: a `Read` deny is applied best-effort to every read tool (`Read`,
+ * and `Grep`/`Glob`), and an `Edit` deny to every write tool (`Edit`,
+ * `Write`, `MultiEdit`, `NotebookEdit`) — and both also catch the file
+ * commands Claude Code recognises in Bash (`cat`/`head`/`sed`). Arbitrary
+ * subprocess reads (a python script) are caught by the sandbox `denyRead`
+ * instead. Rules follow the gitignore-style grammar: `~/`-relative, plus a
+ * `/**` variant so both the directory and everything under it match. */
 function secretDenyRules() {
   const rules = []
   for (const rel of SECRET_HOME_RELATIVE) {
-    for (const tool of ['Read', 'Glob', 'Edit', 'Write']) {
+    for (const tool of ['Read', 'Edit']) {
       rules.push(`${tool}(~/${rel})`)
       rules.push(`${tool}(~/${rel}/**)`)
     }
@@ -100,16 +106,32 @@ function egressDenyRules() {
 }
 
 /** OS-sandbox config: block outbound network from tool subprocesses and
- * deny reads of the secret locations. Graceful (failIfUnavailable:false)
- * so it can never break the chat. */
+ * deny reads of the secret locations. */
 function sandboxLockdown() {
   return {
     enabled: true,
+    // failIfUnavailable:false → a host where the sandbox can't initialise
+    // degrades to a warning instead of breaking chat. The Claude Code docs
+    // recommend `true` for a hard security gate; deferred until the
+    // packaged build confirms Seatbelt initialises there. Safe to defer:
+    // the permission deny rules (secret + egress) are sandbox-INDEPENDENT
+    // and still apply, and the only untrusted-content shape (intake) has no
+    // Bash at all — the residual (arbitrary-subprocess reads/egress with the
+    // sandbox down) is reachable only from the trusted, user-driven chat.
     failIfUnavailable: false,
-    // No allowed domains → tool subprocesses get no network egress.
-    // (The SDK↔model API channel and server-side WebSearch/WebFetch run
-    // OUTSIDE this sandbox, so live web research still works.)
+    // Ignore the model's `dangerouslyDisableSandbox` escape hatch — a
+    // sandboxed command that fails must NOT silently retry unsandboxed.
+    // ("the dangerouslyDisableSandbox parameter is completely ignored and
+    // all commands must run sandboxed" — Claude Code sandbox docs.)
+    allowUnsandboxedCommands: false,
+    // No allowed domains → tool subprocesses get no network egress (the
+    // proxy pre-allows nothing, so every new host is blocked in headless).
+    // The SDK↔model API channel and server-side WebSearch/WebFetch run
+    // OUTSIDE this sandbox, so live web research still works.
     network: { allowedDomains: [] },
+    // OS-level backstop for the SUBPROCESS reads the permission rules can't
+    // reach (a python/node script opening a file itself). The tool-level
+    // block lives in secretDenyRules().
     filesystem: { denyRead: secretPaths() },
   }
 }
