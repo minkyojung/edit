@@ -27,31 +27,63 @@ import {
 // resort": if credentials can't be reached and egress is blocked, a
 // successful injection is harmless.
 //
-// Two overlapping layers, because neither alone is complete:
+// Two overlapping layers, because they govern DIFFERENT surfaces (per the
+// SDK, tool access is controlled by permission rules, while the sandbox
+// confines subprocesses — sdk.d.ts: "Filesystem and network restrictions
+// are configured via permission rules, not via these sandbox settings"):
 //   • deny RULES (settings.permissions.deny) — evaluated BEFORE the
-//     canUseTool gate (and win even under bypass), so they hard-block
-//     the common network shells. Syntactically standard, zero
-//     dependency. Leaky on their own (a shell has other egress paths).
+//     canUseTool gate (and win even under bypass). This is the ONLY thing
+//     that stops the in-process file tools (`Read`, `Glob`) from reading
+//     `~/.ssh/id_rsa`, and it hard-blocks the common network shells. It
+//     also holds when the sandbox can't initialise. Zero dependency.
 //   • OS SANDBOX (options.sandbox) — kernel-level (macOS Seatbelt),
-//     confines the Bash SUBPROCESS itself, closing the leaks the deny
-//     rules can't. `failIfUnavailable: false` so a sandbox that can't
-//     initialise degrades to the deny-rule layer instead of breaking
-//     chat.
+//     confines the tool SUBPROCESSES (`Bash`, and `Grep`/ripgrep): blocks
+//     their network egress and (via `filesystem.denyRead`) their reads of
+//     the same secret paths — closing the shell leaks the deny rules
+//     can't. `failIfUnavailable: false` so a sandbox that can't initialise
+//     degrades to the permission-rule layer instead of breaking chat.
 
-/** Home-relative secret locations the agent must never read. */
+/** Home-relative secret locations the agent must never read or write.
+ * `~`-relative so the same list feeds both the sandbox (absolute paths)
+ * and the permission rules (SDK `~/…` grammar). */
+const SECRET_HOME_RELATIVE = [
+  '.ssh',
+  '.aws',
+  '.gnupg',
+  '.config/gh',
+  '.config/gcloud',
+  '.kube',
+  '.npmrc',
+  // The app's own encrypted OAuth/token store.
+  'Library/Application Support/com.minkyojung.octave',
+]
+
+/** Absolute secret locations for the OS sandbox's `filesystem.denyRead`.
+ * That layer confines only the tool SUBPROCESSES (Bash, and Grep — which
+ * shells out to ripgrep); it does NOT govern the in-process file tools. */
 function secretPaths() {
   const home = homedir()
-  return [
-    `${home}/.ssh`,
-    `${home}/.aws`,
-    `${home}/.gnupg`,
-    `${home}/.config/gh`,
-    `${home}/.config/gcloud`,
-    `${home}/.kube`,
-    `${home}/.npmrc`,
-    // The app's own encrypted OAuth/token store.
-    `${home}/Library/Application Support/com.minkyojung.octave`,
-  ]
+  return SECRET_HOME_RELATIVE.map((rel) => `${home}/${rel}`)
+}
+
+/** Permission deny rules for the secret locations. Per the SDK, filesystem
+ * access for the in-process file tools is restricted by PERMISSION RULES,
+ * not by the sandbox settings (those only confine subprocesses) —
+ * sdk.d.ts: "Filesystem access: Use `Read` and `Edit` permission rules."
+ * So the sandbox `denyRead` above is insufficient on its own: without
+ * these the built-in `Read`/`Glob` tools happily read `~/.ssh/id_rsa`.
+ * Covers the file-pattern tools that read or write (`Grep` shells out to
+ * ripgrep, so the sandbox `denyRead` catches it instead). Both the path
+ * and its contents (`/**`); `~/`-relative per the SDK rule grammar. */
+function secretDenyRules() {
+  const rules = []
+  for (const rel of SECRET_HOME_RELATIVE) {
+    for (const tool of ['Read', 'Glob', 'Edit', 'Write']) {
+      rules.push(`${tool}(~/${rel})`)
+      rules.push(`${tool}(~/${rel}/**)`)
+    }
+  }
+  return rules
 }
 
 /** Deny rules that hard-block network-egress shells before any gate. */
@@ -860,8 +892,13 @@ export class Server {
         autoCompactEnabled: true,
         ...(fastMode ? { fastMode: true } : {}),
         // Deny rules win before the canUseTool gate (and under bypass) —
-        // hard-block the network-egress shells regardless of mode.
-        ...(sandboxEnabled ? { permissions: { deny: egressDenyRules() } } : {}),
+        // hard-block the network-egress shells AND secret-file reads
+        // regardless of mode. The secret rules are what actually stop the
+        // in-process Read/Glob tools (the sandbox denyRead only reaches
+        // subprocesses); they also hold when the sandbox can't initialise.
+        ...(sandboxEnabled
+          ? { permissions: { deny: [...egressDenyRules(), ...secretDenyRules()] } }
+          : {}),
       },
       // Disable the SDK's filesystem settings auto-load (CLAUDE.md,
       // .claude/settings.json, etc.). The host injects the vault's
