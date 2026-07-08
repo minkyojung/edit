@@ -19,7 +19,7 @@ import {
 import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useCloseConfirmStore } from '@/state/closeConfirmStore'
-import { flushDirty } from '@/lib/docFileSync'
+import { flushDirty, getDirtySlugs } from '@/lib/docFileSync'
 
 export function useWindowClose() {
   useEffect(() => {
@@ -55,8 +55,19 @@ export function useWindowClose() {
             (w) => w.label !== current.label && w.label.startsWith('project-'),
           )
           if (others.length === 0) {
+            // Last window HIDES (buffer preserved in memory) — no data
+            // loss even with a failed flush, so no gate needed.
             await current.hide()
           } else {
+            // Real destroy loses this window's in-memory buffer. If the
+            // flush above left edits unsaved (write failing), confirm.
+            const unsaved = getDirtySlugs().length
+            if (unsaved > 0) {
+              const proceed = await useCloseConfirmStore
+                .getState()
+                .confirmUnsaved(unsaved)
+              if (!proceed) return
+            }
             await current.destroy()
           }
         } catch (e) {

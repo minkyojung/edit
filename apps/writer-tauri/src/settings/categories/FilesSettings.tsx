@@ -23,6 +23,8 @@ export function FilesSettings() {
   const setIntakeModel = useSettingsStore((s) => s.setIntakeModel)
   const inboxAutoOrganize = useSettingsStore((s) => s.inboxAutoOrganize)
   const setInboxAutoOrganize = useSettingsStore((s) => s.setInboxAutoOrganize)
+  const sandboxEnabled = useSettingsStore((s) => s.sandboxEnabled)
+  const setSandboxEnabled = useSettingsStore((s) => s.setSandboxEnabled)
   const vaultPath = useSettingsStore((s) => s.vaultPaths[s.activeVaultIndex] ?? '')
 
   // Options: every real folder, plus 'inbox' (the default landing zone) and the current
@@ -84,6 +86,12 @@ export function FilesSettings() {
           checked={inboxAutoOrganize}
           onCheckedChange={setInboxAutoOrganize}
         />
+      </SettingRow>
+      <SettingRow
+        title="Protect secrets & block data exfiltration"
+        description="Stops the AI from sending data to the internet or reading secret files (SSH keys, tokens, credentials) — so a malicious instruction hidden in a captured web page or transcript can't leak your data. Leave on unless you know you need it off."
+      >
+        <Switch checked={sandboxEnabled} onCheckedChange={setSandboxEnabled} />
       </SettingRow>
     </section>
   )

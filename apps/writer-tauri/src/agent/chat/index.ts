@@ -23,7 +23,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { navigateToNoteBySlug } from '@/editor/cmNav'
 import { assembleContext } from '@/agent/contextPipeline'
-import { getActiveVaultPath, getDefaultNoteFolder } from '@/state/settingsStore'
+import { getActiveVaultPath, getDefaultNoteFolder, getSandboxEnabled } from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { pathForDoc } from '@/lib/docPaths'
 import { useChatRuns } from '@/stores/chatRuns'
@@ -740,6 +740,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // folder. Undefined when no vault selected — the sidecar
         // then skips registering filesystem tools (warns once).
         vaultPath: getActiveVaultPath() ?? undefined,
+        // Security lockdown (block network egress + secret reads). Forwarded
+        // to the sidecar's `sandboxEnabled`; default ON, user-toggleable.
+        sandboxEnabled: getSandboxEnabled(),
         effort,
         // Forwarded to the SDK's settings.fastMode. The caller already gated on
         // model support; only send `true` so non-fast runs stay clean.

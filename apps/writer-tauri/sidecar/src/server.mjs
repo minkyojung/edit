@@ -1,6 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { join, normalize, relative, isAbsolute, resolve as resolvePath } from 'node:path'
-import { tmpdir } from 'node:os'
+import { tmpdir, homedir } from 'node:os'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import {
@@ -16,6 +16,71 @@ import {
   NO_TOKEN,
 } from './jsonrpc.mjs'
 
+
+// ── Security lockdown ────────────────────────────────────────────
+//
+// "Close the exits": the agent may edit files locally (that's the
+// product), but two things must never be possible even if untrusted
+// captured content (a web page / transcript) carries a prompt
+// injection — (1) sending data OUT to the network, and (2) reading
+// the user's SECRETS. This is Anthropic's "containment of last
+// resort": if credentials can't be reached and egress is blocked, a
+// successful injection is harmless.
+//
+// Two overlapping layers, because neither alone is complete:
+//   • deny RULES (settings.permissions.deny) — evaluated BEFORE the
+//     canUseTool gate (and win even under bypass), so they hard-block
+//     the common network shells. Syntactically standard, zero
+//     dependency. Leaky on their own (a shell has other egress paths).
+//   • OS SANDBOX (options.sandbox) — kernel-level (macOS Seatbelt),
+//     confines the Bash SUBPROCESS itself, closing the leaks the deny
+//     rules can't. `failIfUnavailable: false` so a sandbox that can't
+//     initialise degrades to the deny-rule layer instead of breaking
+//     chat.
+
+/** Home-relative secret locations the agent must never read. */
+function secretPaths() {
+  const home = homedir()
+  return [
+    `${home}/.ssh`,
+    `${home}/.aws`,
+    `${home}/.gnupg`,
+    `${home}/.config/gh`,
+    `${home}/.config/gcloud`,
+    `${home}/.kube`,
+    `${home}/.npmrc`,
+    // The app's own encrypted OAuth/token store.
+    `${home}/Library/Application Support/com.minkyojung.octave`,
+  ]
+}
+
+/** Deny rules that hard-block network-egress shells before any gate. */
+function egressDenyRules() {
+  return [
+    'Bash(curl:*)',
+    'Bash(wget:*)',
+    'Bash(nc:*)',
+    'Bash(ncat:*)',
+    'Bash(telnet:*)',
+    'Bash(scp:*)',
+    'Bash(sftp:*)',
+  ]
+}
+
+/** OS-sandbox config: block outbound network from tool subprocesses and
+ * deny reads of the secret locations. Graceful (failIfUnavailable:false)
+ * so it can never break the chat. */
+function sandboxLockdown() {
+  return {
+    enabled: true,
+    failIfUnavailable: false,
+    // No allowed domains → tool subprocesses get no network egress.
+    // (The SDK↔model API channel and server-side WebSearch/WebFetch run
+    // OUTSIDE this sandbox, so live web research still works.)
+    network: { allowedDomains: [] },
+    filesystem: { denyRead: secretPaths() },
+  }
+}
 
 /** Resolve a model-supplied file_path (absolute OR vault-relative) to an absolute
  * path inside the vault, or null if it escapes the vault. */
@@ -727,6 +792,10 @@ export class Server {
       resume,
       maxTurns,
       builtinTools,
+      // Security lockdown: block network egress + secret-file reads so a
+      // prompt injection in captured content can't exfiltrate. Defaults ON
+      // (secure by default); the host forwards the user's Settings toggle.
+      sandboxEnabled = true,
     } = params
 
     // Plan-mode interactive gate (canUseTool) state. `awaitingDecision` pauses
@@ -780,7 +849,13 @@ export class Server {
       // fastMode (faster output on supporting models) is a `Settings` member,
       // same layer as autoCompactEnabled. Only set when requested; the host
       // already gated on model support.
-      settings: { autoCompactEnabled: true, ...(fastMode ? { fastMode: true } : {}) },
+      settings: {
+        autoCompactEnabled: true,
+        ...(fastMode ? { fastMode: true } : {}),
+        // Deny rules win before the canUseTool gate (and under bypass) —
+        // hard-block the network-egress shells regardless of mode.
+        ...(sandboxEnabled ? { permissions: { deny: egressDenyRules() } } : {}),
+      },
       // Disable the SDK's filesystem settings auto-load (CLAUDE.md,
       // .claude/settings.json, etc.). The host injects the vault's
       // CLAUDE.md explicitly as part of `systemPrompt` so the cache
@@ -791,6 +866,9 @@ export class Server {
       // own schema-injection pipeline.
       settingSources: [],
     }
+    // OS sandbox (kernel-level) — closes the shell-egress paths the deny
+    // rules can't (nc, python -c, etc.) and denies secret-file reads.
+    if (sandboxEnabled) options.sandbox = sandboxLockdown()
     if (model) options.model = model
     if (systemPrompt) options.systemPrompt = systemPrompt
     // First-class SDK option since claude-agent-sdk@0.2.x. Accepts

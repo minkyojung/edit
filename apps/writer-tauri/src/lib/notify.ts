@@ -3,6 +3,7 @@
 // happen in one place and call sites stay readable (no inline strings).
 
 import { toast } from 'sonner'
+import type { SaveFailureCause } from '@/state/saveFailureStore'
 
 type RetryOpts = { onRetry?: () => void }
 
@@ -47,6 +48,43 @@ export const notify = {
     toast.error("Couldn't save the AI's change", {
       description: 'The file may be locked or unwritable',
     })
+  },
+  /** Auto-save has failed for ~1.5 s straight (persistent, not a blip):
+   * the vault is unreachable / full / read-only. Copy names the real
+   * cause and the real-world fix — this is NOT a "click save" prompt (the
+   * app auto-saves; the user can't save manually). A single stable toast
+   * id collapses the N-slugs-failing-at-once case into one toast and lets
+   * `saveFailedResolved` dismiss it when writes recover. */
+  saveFailed(cause: SaveFailureCause, opts?: RetryOpts) {
+    const copy: Record<SaveFailureCause, { title: string; description: string }> = {
+      unreachable: {
+        title: "Can't reach your vault folder",
+        description: 'The drive may be disconnected. Recent changes are not saved yet.',
+      },
+      'disk-full': {
+        title: 'Not enough disk space to save',
+        description: 'Free up some space, then your changes will save automatically.',
+      },
+      permission: {
+        title: "Can't save — permission denied",
+        description: 'Check the folder permissions. Recent changes are not saved yet.',
+      },
+      unknown: {
+        title: "Couldn't save your changes",
+        description: 'If this keeps happening, please restart the app.',
+      },
+    }
+    const c = copy[cause]
+    toast.error(c.title, {
+      id: 'save-failure',
+      description: c.description,
+      duration: Infinity,
+      action: retryAction(opts?.onRetry),
+    })
+  },
+  /** Writes recovered — clear the persistent save-failure toast. */
+  saveFailedResolved() {
+    toast.dismiss('save-failure')
   },
   /** Keep/Reject clicked on a suggestion that was ALREADY decided a split
    * second earlier on another surface (the review tray, or the in-buffer

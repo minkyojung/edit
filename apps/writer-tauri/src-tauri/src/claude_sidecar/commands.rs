@@ -77,6 +77,12 @@ pub struct ChatStartArgs {
     /// review.
     #[serde(default)]
     pub builtin_tools: Option<Vec<String>>,
+    /// Security lockdown: block network egress + secret-file reads (SDK
+    /// sandbox + deny rules) so a prompt injection in captured content
+    /// can't exfiltrate. Omitted → the sidecar defaults it ON (secure by
+    /// default); the frontend forwards the user's Settings toggle.
+    #[serde(default)]
+    pub sandbox_enabled: Option<bool>,
     /// Request fast mode (faster output) for this run. Forwarded to the
     /// sidecar which sets the SDK's `settings.fastMode`. The frontend only
     /// sends `Some(true)` after gating on model support; `None` = off.
@@ -177,6 +183,9 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     }
     if let Some(bt) = args.builtin_tools {
         params["builtinTools"] = json!(bt);
+    }
+    if let Some(se) = args.sandbox_enabled {
+        params["sandboxEnabled"] = json!(se);
     }
     if let Some(fm) = args.fast_mode {
         params["fastMode"] = json!(fm);

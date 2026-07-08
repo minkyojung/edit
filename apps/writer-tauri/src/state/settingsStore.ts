@@ -111,6 +111,14 @@ interface SettingsState {
   notificationSound: NotificationSound
   /** Set the completion-notification sound. */
   setNotificationSound: (sound: NotificationSound) => void
+
+  /** Security lockdown: block the AI from sending data to the network and
+   * from reading secret files (SSH keys, tokens, credentials). Makes a
+   * prompt injection in captured content harmless. Default ON (secure by
+   * default); turning it off is an advanced choice. */
+  sandboxEnabled: boolean
+  /** Toggle the security lockdown. */
+  setSandboxEnabled: (enabled: boolean) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -125,7 +133,9 @@ export const useSettingsStore = create<SettingsState>()(
       sidebarVibrancyEnabled: true,
       editorTextAlign: 'justify',
       notificationSound: 'Glass',
+      sandboxEnabled: true,
       setNotificationSound: (sound) => set({ notificationSound: sound }),
+      setSandboxEnabled: (enabled) => set({ sandboxEnabled: enabled }),
       recentProjects: [],
       setActiveVaultPath: (path) =>
         set({ vaultPaths: [path], activeVaultIndex: 0 }),
@@ -161,6 +171,7 @@ export const useSettingsStore = create<SettingsState>()(
         inboxAutoOrganize: s.inboxAutoOrganize,
         sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
         editorTextAlign: s.editorTextAlign,
+        sandboxEnabled: s.sandboxEnabled,
         recentProjects: s.recentProjects,
       }),
     },
@@ -195,4 +206,11 @@ export function getIntakeModel(): ChatModel {
  * idle trigger. */
 export function getInboxAutoOrganize(): boolean {
   return useSettingsStore.getState().inboxAutoOrganize
+}
+
+/** Whether the security lockdown (block network egress + secret-file reads)
+ * is enabled. Non-React read for the chat runner, which forwards it to the
+ * sidecar's `sandboxEnabled`. Default ON. */
+export function getSandboxEnabled(): boolean {
+  return useSettingsStore.getState().sandboxEnabled
 }

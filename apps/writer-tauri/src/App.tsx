@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from 'react-error-boundary'
 import { ThemeProvider } from '@/components/theme-provider'
 import { FontProvider } from '@/components/font-provider'
 import { AppToaster } from '@/components/AppToaster'
 import { BootGate } from '@/components/BootGate'
+import { OnboardingPreview } from '@/profile/ui/onboarding/OnboardingPreview'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { FullPageErrorFallback } from '@/components/ErrorFallback'
 import { AppShell } from '@/layout/AppShell'
@@ -16,7 +17,6 @@ import { RoutinesPage } from '@/layout/RoutinesPage'
 import { AgentsPage } from '@/layout/AgentsPage'
 import { GalleryPage } from '@/layout/GalleryPage'
 import { CommandPalette } from '@/layout/CommandPalette'
-import { OnboardingDialog } from '@/profile/ui/OnboardingDialog'
 import { SaveArticleDialog } from '@/components/SaveArticleDialog'
 import { SettingsDialog } from '@/settings/SettingsDialog'
 import { ConfirmDialogHost } from '@/components/ConfirmDialogHost'
@@ -105,6 +105,10 @@ export function App() {
         <TooltipProvider delayDuration={200}>
           <HashRouter>
             <Routes>
+              {/* Design-preview page for the onboarding flow — standalone, so
+                  it renders WITHOUT BootGate/AppShell (no sidebar/editor). More
+                  specific than "*", so React Router matches it first. */}
+              <Route path="/onboard" element={<OnboardingPreview />} />
               <Route
                 path="*"
                 element={
@@ -233,14 +237,9 @@ function AppContent() {
     usePendingChangesStore.getState().markPageViewed(activeSlug)
   }, [activeSlug])
 
-  // First-run onboarding trigger. We read bootstrapCompleted from the
-  // persisted settings store as the initial value so a returning user
-  // never sees a flash of the dialog. The state is local — once
-  // OnboardingDialog calls markBootstrapCompleted, this component
-  // doesn't need to know; the next launch starts with the flag true.
-  const [onboardingOpen, setOnboardingOpen] = useState(
-    () => !useSettingsStore.getState().bootstrapCompleted,
-  )
+  // First-run onboarding now lives in the LAUNCHER window (BootGate →
+  // OnboardingLauncher), BEFORE the picker — so by the time a project window
+  // renders this shell, onboarding is already done. Nothing to gate here.
 
   const activeHandle = activeSlug ? handles[activeSlug] ?? null : null
   const activeStatus = activeSlug ? statusMap[activeSlug] ?? 'loading' : 'loading'
@@ -289,10 +288,6 @@ function AppContent() {
           </Routes>
         </AppShell>
         <CommandPalette />
-        <OnboardingDialog
-          open={onboardingOpen}
-          onClose={() => setOnboardingOpen(false)}
-        />
         <SaveArticleDialog />
         <SettingsDialog />
         <ConfirmDialogHost />

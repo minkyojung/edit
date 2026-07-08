@@ -42,9 +42,9 @@ interface Props {
   onClose: () => void
 }
 
-type Stage = 'input' | 'running' | 'done' | 'failed'
+export type Stage = 'input' | 'running' | 'done' | 'failed'
 
-interface SectionStatus {
+export interface SectionStatus {
   status: 'pending' | 'loading' | 'done'
 }
 
@@ -221,7 +221,7 @@ export function OnboardingDialog({ open, onClose }: Props) {
   )
 }
 
-function InputStage({
+export function InputStage({
   url,
   setUrl,
   onAnalyze,
@@ -256,7 +256,7 @@ function InputStage({
   )
 }
 
-function RunningStage({
+export function RunningStage({
   discoveryLabel,
   sectionStatus,
 }: {
@@ -305,7 +305,7 @@ function ProgressLine({
   )
 }
 
-function DoneStage({ onOpen }: { onOpen: () => void }) {
+export function DoneStage({ onOpen }: { onOpen: () => void }) {
   return (
     <div className="flex flex-col gap-3">
       <p className="text-body text-muted-foreground">
@@ -320,7 +320,7 @@ function DoneStage({ onOpen }: { onOpen: () => void }) {
   )
 }
 
-function FailedStage({
+export function FailedStage({
   message,
   onRetry,
   onSkip,

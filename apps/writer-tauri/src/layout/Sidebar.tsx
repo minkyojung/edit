@@ -10,6 +10,8 @@ import {
   IconBolt,
   IconRobot,
   IconRoute,
+  IconPalette,
+  IconSparkles,
 } from '@tabler/icons-react'
 import { FolderTree } from './FolderTree'
 import { useDocsStore } from '@/state/docsStore'
@@ -90,6 +92,8 @@ export function AppSidebar() {
   const skillsActive = pathname === '/skills' || inSurface('_system/agent/skills')
   const commandActive =
     pathname === '/routines' || inSurface('_system/agent/commands')
+  const galleryActive = pathname === '/gallery'
+  const onboardActive = pathname === '/onboard'
 
   // Profile is lazily created — ensure the note exists, then open it in the
   // editor. `busy` guards the async gap so a double-click can't spawn two.
@@ -291,6 +295,24 @@ export function AppSidebar() {
           >
             <IconRoute size={18} stroke={1.75} className="shrink-0" />
             <span className="flex-1 truncate text-left">Routine</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/gallery')}
+            data-active={galleryActive || undefined}
+            className={NAV_ROW}
+          >
+            <IconPalette size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Gallery</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/onboard')}
+            data-active={onboardActive || undefined}
+            className={NAV_ROW}
+          >
+            <IconSparkles size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Onboarding</span>
           </button>
         </nav>
 

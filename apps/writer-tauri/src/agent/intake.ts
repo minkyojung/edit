@@ -45,9 +45,17 @@ export async function runIntake(args: IntakeArgs): Promise<RunChatResult> {
     // Empty (not undefined) so runChat keeps an empty systemBody instead of
     // falling back to the chat persona (FREE_CHAT_PROMPT).
     systemPrompt: args.systemPrompt ?? '',
-    // Read/Glob/Grep come from the built-in preset; these are the write-side
-    // tools the agent proposes through. `move_note` files the raw note out of
-    // the capture folder once its knowledge is in the wiki (auto-applied).
+    // Least-privilege builtin set for untrusted-content processing. Capture
+    // is exactly the moment attacker-influenceable content (a web page /
+    // transcript) is in context, so the ingest agent gets ONLY read/search
+    // tools — no Bash, no network — and can't act on a hidden injected
+    // instruction beyond reading. Disk changes still flow through the
+    // reviewed propose_* relays below. (Without this, runChat's default
+    // grants the full set INCLUDING Bash.)
+    builtinTools: ['Read', 'Glob', 'Grep'],
+    // Write-side tools the agent proposes through. `move_note` files the raw
+    // note out of the capture folder once its knowledge is in the wiki
+    // (auto-applied).
     relayTools: ['propose_edit', 'propose_multi_edit', 'propose_write', 'move_note'],
   })
 }

@@ -26,9 +26,10 @@ import { Spinner } from '@/components/ui/spinner'
 import { useDocsStore } from '@/state/docsStore'
 import { useThreadsStore } from '@/state/threadsStore'
 import { useVaultCommands } from '@/state/vaultCommandsStore'
-import { getActiveVaultPath } from '@/state/settingsStore'
+import { getActiveVaultPath, useSettingsStore } from '@/state/settingsStore'
 import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { VaultLauncher } from '@/components/VaultLauncher'
+import { OnboardingLauncher } from '@/components/OnboardingLauncher'
 import { resolveWindowMode } from '@/hooks/useWindowModeSync'
 import { exists } from '@tauri-apps/plugin-fs'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
@@ -98,6 +99,11 @@ export function BootGate({ children }: Props) {
   // launcher spawns a separate window per project; getActiveVaultPath() in a
   // project window returns its WINDOW_ROOT.
   const [hasVault, setHasVault] = useState(() => WINDOW_ROOT !== null)
+
+  // First-run gate flag. Read reactively so that when onboarding marks it
+  // completed (choose folder / skip), the launcher window re-renders from the
+  // OnboardingLauncher to the normal VaultLauncher.
+  const bootstrapCompleted = useSettingsStore((s) => s.bootstrapCompleted)
 
   // Resolve the compact/full window mode from the real window size BEFORE the
   // app UI paints, so an editor window that was compact at reload renders
@@ -208,9 +214,12 @@ export function BootGate({ children }: Props) {
   if (!vaultChecked) return loadingView
 
   // Launcher window (no `?root`) → project picker. It spawns a separate
-  // window per project and never boots a vault itself.
+  // window per project and never boots a vault itself. On the very first run
+  // the onboarding owns this window BEFORE the picker: it welcomes the user
+  // and folds the folder choice into its flow, then hands off to a project
+  // window. Once complete (or skipped), later launches show the picker.
   if (!hasVault) {
-    return <VaultLauncher />
+    return bootstrapCompleted ? <VaultLauncher /> : <OnboardingLauncher />
   }
 
   // Hold the app UI until the window mode is known too, so it never paints

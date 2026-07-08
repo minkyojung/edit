@@ -26,7 +26,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 import { useDocStatsStore, computeDocStats } from '@/state/docStatsStore'
 import { registerCmEditor, unregisterCmEditor } from '@/state/activeCmEditor'
-import { markSlugDirty } from '@/lib/docFileSync'
+import { markSlugDirty, flushDirty } from '@/lib/docFileSync'
 import { cmPrototypeTheme } from '@/prototypes/cmTheme'
 import { livePreviewV2, taskCheckboxClick, wikilinkKnown } from '@/prototypes/v2/livePreview'
 import { blocksV2 } from '@/prototypes/v2/blocks'
@@ -291,6 +291,13 @@ export function CmEditor({ handle, header }: Props) {
 
     return () => {
       mounted = false
+      // Checkpoint flush: this cleanup runs on doc switch AND editor
+      // unmount. The updateListener has already mirrored the latest
+      // keystrokes into handle.bodyMarkdown, so flushing here shrinks
+      // the 500 ms auto-flush window to ~0 for the leaving doc — the
+      // Obsidian "save on note switch" behaviour. Fire-and-forget: the
+      // single-flight guard serialises it against the timer.
+      void flushDirty()
       document.removeEventListener('keydown', onKeyDown)
       if (handle) unregisterCmEditor(handle.slug)
       useEditorSelectionStore.getState().setSelection(null)

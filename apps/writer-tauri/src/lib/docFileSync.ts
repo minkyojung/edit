@@ -36,6 +36,8 @@ import {
   writeVaultFile,
 } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
+import { notify } from '@/lib/notify'
+import { useSaveFailureStore, type SaveFailureCause } from '@/state/saveFailureStore'
 
 /** Merge `next` over the existing `.meta.json` at `metaPath` so a
  * flush preserves fields this layer doesn't track (aiSummary written
@@ -375,6 +377,48 @@ let flushQueued = false
  *                                    placement — e.g. 'writing')
  *   - serializeDocToFiles null     → skip (active not ready,
  *                                    transient — wait for view) */
+/** Best-effort classification of a vault write error into an actionable
+ * cause. Tauri's fs plugin surfaces OS errors as strings, so match on the
+ * common substrings and fall back to 'unknown' (still actionable copy). */
+function classifySaveError(err: unknown): SaveFailureCause {
+  const msg = String(err instanceof Error ? err.message : err).toLowerCase()
+  if (msg.includes('no space') || msg.includes('enospc')) return 'disk-full'
+  if (
+    msg.includes('permission denied') ||
+    msg.includes('eacces') ||
+    msg.includes('read-only') ||
+    msg.includes('erofs')
+  )
+    return 'permission'
+  if (
+    msg.includes('no such file') ||
+    msg.includes('not found') ||
+    msg.includes('enoent') ||
+    msg.includes('cannot find') ||
+    msg.includes('not allowed') // tauri fs scope / vanished parent dir
+  )
+    return 'unreachable'
+  return 'unknown'
+}
+
+/** Record a failed vault write; when the streak becomes persistent, fire
+ * one actionable toast (Retry re-runs the flush). Transient blips stay
+ * silent — the slug is left dirty and the next tick retries. */
+function reportSaveFailure(slug: string, err: unknown): void {
+  const cause = classifySaveError(err)
+  const { justCrossed } = useSaveFailureStore.getState().recordFailure(slug, cause)
+  if (justCrossed) notify.saveFailed(cause, { onRetry: () => void flushDirty() })
+}
+
+/** Record a successful write; once nothing is persistently failing, clear
+ * the failure toast. */
+function reportSaveSuccess(slug: string): void {
+  const store = useSaveFailureStore.getState()
+  const wasPersistent = store.hasPersistentFailure()
+  store.recordSuccess(slug)
+  if (wasPersistent && !store.hasPersistentFailure()) notify.saveFailedResolved()
+}
+
 /** Public flush entry point with single-flight guard. See the
  * `flushInProgress` / `flushQueued` comment above for the contract.
  * The actual work lives in `flushDirtyOnce` below. */
@@ -452,8 +496,10 @@ async function flushDirtyOnce(): Promise<void> {
         const merged = await mergeSidecar(metaPath, metaOnly)
         await writeVaultFile(metaPath, JSON.stringify(merged, null, 2))
         clearDirty(slug)
+        reportSaveSuccess(slug)
       } catch (err) {
         console.error('[vault:flush] meta-only write failed for', slug, err)
+        reportSaveFailure(slug, err)
         // Leave dirty so the next tick retries.
       }
       continue
@@ -558,6 +604,7 @@ async function flushDirtyOnce(): Promise<void> {
       }
       lastWrittenPath.set(slug, mdPath)
       clearDirty(slug)
+      reportSaveSuccess(slug)
       if (known.type.startsWith('wiki:')) wikiTouched = true
     } catch (err) {
       // Error (not warn) — this is a data-durability failure path.
@@ -567,10 +614,25 @@ async function flushDirtyOnce(): Promise<void> {
       // shows in red in the dev console and any future telemetry
       // pipeline can filter on it.
       console.error('[vault:flush] write failed for', slug, err)
+      reportSaveFailure(slug, err)
       // Leave dirty so the next tick retries.
     }
   }
   if (wikiTouched) invalidateWikiIndex()
+}
+
+/** Checkpoint flush on window blur / hide. The 500 ms timer is the
+ * steady-state safety net; these events catch the "user tabbed away to
+ * another app / minimised" moments so unsaved edits land immediately
+ * instead of waiting for the next tick (the Obsidian "flush on focus
+ * loss" behaviour). Fire-and-forget — the single-flight guard
+ * serialises them against the timer, and the no-op skip makes an
+ * already-clean flush free. */
+function onWindowBlur(): void {
+  void flushDirty()
+}
+function onVisibilityChange(): void {
+  if (document.visibilityState === 'hidden') void flushDirty()
 }
 
 /** Begin the periodic flush loop. Idempotent — calling twice is a
@@ -580,6 +642,8 @@ export function startAutoFlush(): void {
   flushTimerId = window.setInterval(() => {
     void flushDirty()
   }, FLUSH_INTERVAL_MS)
+  window.addEventListener('blur', onWindowBlur)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 }
 
 /** Stop the periodic flush loop. Idempotent. Called on app teardown
@@ -587,6 +651,8 @@ export function startAutoFlush(): void {
  * window. CloseConfirmDialog drives a final `flushDirty()` before
  * calling this so unsaved dirty slugs land on disk before exit. */
 export function stopAutoFlush(): void {
+  window.removeEventListener('blur', onWindowBlur)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   if (flushTimerId === null) return
   window.clearInterval(flushTimerId)
   flushTimerId = null

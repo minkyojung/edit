@@ -1,0 +1,79 @@
+// Design-preview page for the onboarding flow — like the gallery, but with no
+// sidebar or editor. Renders each onboarding step centred inside a fixed frame
+// that mimics the compact onboarding window (900×580), so the layout reads at
+// true proportions. Flip through steps with Prev/Next — no app restart needed.
+//
+// Steps render their PRESENTATIONAL panels with no-op handlers (no window
+// resize, no real folder-pick), so iterating here has zero side effects. Add a
+// step to STEPS as the flow grows; it appears in the flipper automatically.
+//
+// Reached via the sidebar "Onboarding" entry (a standalone top-level route, so
+// it paints without the app chrome). A "Back to app" button returns.
+
+import { useState, type ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { WelcomePanel } from '@/profile/ui/onboarding/WelcomePanel'
+import { Button } from '@/components/ui/button'
+
+const noop = () => {}
+
+const ONBOARDING_W = 900
+const ONBOARDING_H = 580
+
+const STEPS: { key: string; label: string; render: () => ReactNode }[] = [
+  {
+    key: 'welcome',
+    label: 'Welcome + folder',
+    render: () => (
+      <WelcomePanel onChooseFolder={noop} onNewTranslation={noop} onSkip={noop} />
+    ),
+  },
+  // Next steps land here as they're built: Connect Claude, seeded first note, …
+]
+
+export function OnboardingPreview() {
+  const [i, setI] = useState(0)
+  const navigate = useNavigate()
+  const step = STEPS[i]
+  const atStart = i === 0
+  const atEnd = i === STEPS.length - 1
+
+  return (
+    <div className="flex h-screen w-screen flex-col items-center justify-center gap-6 bg-muted/40">
+      {/* Frame mimicking the compact onboarding window */}
+      <div
+        className="overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
+        style={{ width: ONBOARDING_W, height: ONBOARDING_H }}
+      >
+        {step.render()}
+      </div>
+
+      {/* Step flipper */}
+      <div className="flex items-center gap-4 text-footnote text-muted-foreground">
+        <button
+          type="button"
+          onClick={() => setI((n) => Math.max(0, n - 1))}
+          disabled={atStart}
+          className="rounded px-2 py-1 hover:text-foreground disabled:opacity-30"
+        >
+          ← Prev
+        </button>
+        <span className="tabular-nums">
+          {i + 1} / {STEPS.length} · {step.label}
+        </span>
+        <button
+          type="button"
+          onClick={() => setI((n) => Math.min(STEPS.length - 1, n + 1))}
+          disabled={atEnd}
+          className="rounded px-2 py-1 hover:text-foreground disabled:opacity-30"
+        >
+          Next →
+        </button>
+      </div>
+
+      <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
+        Back to app
+      </Button>
+    </div>
+  )
+}

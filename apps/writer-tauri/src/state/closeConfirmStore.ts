@@ -8,27 +8,44 @@
 
 import { create } from 'zustand'
 
+/** Why we're asking before closing:
+ *   - 'chat'    → a response is streaming and would be cancelled
+ *   - 'unsaved' → the final flush failed, so quitting loses recent edits */
+export type CloseConfirmVariant = 'chat' | 'unsaved'
+
 interface CloseConfirmState {
   open: boolean
-  /** How many chats are in flight — drives the dialog copy. */
-  activeCount: number
+  variant: CloseConfirmVariant
+  /** For 'chat': chats in flight. For 'unsaved': notes that failed to save.
+   * Drives the dialog copy. */
+  count: number
   _resolve: ((proceed: boolean) => void) | null
-  /** Open the dialog and resolve true (proceed to close) / false (keep open).
-   * If a confirm is already pending, the previous one resolves false first so
-   * there's never a dangling promise. */
+  /** Open the "chats are streaming" confirm. Resolves true (proceed to
+   * close) / false (keep open). If a confirm is already pending, the
+   * previous one resolves false first so there's never a dangling promise. */
   confirmClose: (activeCount: number) => Promise<boolean>
+  /** Open the "changes couldn't be saved" confirm (quit-time data-loss
+   * gate). Same promise contract as confirmClose. */
+  confirmUnsaved: (count: number) => Promise<boolean>
   /** Called by the dialog buttons (and on dismiss) to settle the promise. */
   resolve: (proceed: boolean) => void
 }
 
 export const useCloseConfirmStore = create<CloseConfirmState>((set, get) => ({
   open: false,
-  activeCount: 0,
+  variant: 'chat',
+  count: 0,
   _resolve: null,
   confirmClose: (activeCount) => {
     get()._resolve?.(false)
     return new Promise<boolean>((resolve) => {
-      set({ open: true, activeCount, _resolve: resolve })
+      set({ open: true, variant: 'chat', count: activeCount, _resolve: resolve })
+    })
+  },
+  confirmUnsaved: (count) => {
+    get()._resolve?.(false)
+    return new Promise<boolean>((resolve) => {
+      set({ open: true, variant: 'unsaved', count, _resolve: resolve })
     })
   },
   resolve: (proceed) => {

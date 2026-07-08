@@ -21,7 +21,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useCloseConfirmStore } from '@/state/closeConfirmStore'
-import { flushDirty, stopAutoFlush } from '@/lib/docFileSync'
+import { flushDirty, stopAutoFlush, getDirtySlugs } from '@/lib/docFileSync'
 import { stopGitHubSync } from '@/lib/githubSync'
 
 async function quitApp() {
@@ -33,7 +33,8 @@ async function quitApp() {
 
 export function CloseConfirmDialog() {
   const open = useCloseConfirmStore((s) => s.open)
-  const activeCount = useCloseConfirmStore((s) => s.activeCount)
+  const variant = useCloseConfirmStore((s) => s.variant)
+  const count = useCloseConfirmStore((s) => s.count)
   const resolve = useCloseConfirmStore((s) => s.resolve)
 
   // App-quit path (⌘Q / dock / menu → app:close-requested). Distinct from
@@ -43,6 +44,14 @@ export function CloseConfirmDialog() {
     listen('app:close-requested', async () => {
       // Flush first so edits typed right before quit reach disk.
       await flushDirty()
+      // Data-loss gate: if the flush left slugs dirty, a write is failing
+      // (disk full, vault disconnected, …). Quitting now drops those
+      // in-memory edits, so confirm before tearing the app down.
+      const unsaved = getDirtySlugs().length
+      if (unsaved > 0) {
+        const proceed = await useCloseConfirmStore.getState().confirmUnsaved(unsaved)
+        if (!proceed) return
+      }
       const active = useChatActivity.getState().activeCount
       if (active > 0) {
         const proceed = await useCloseConfirmStore.getState().confirmClose(active)
@@ -67,19 +76,25 @@ export function CloseConfirmDialog() {
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>A chat is in progress.</DialogTitle>
+          <DialogTitle>
+            {variant === 'unsaved'
+              ? "Some changes couldn't be saved"
+              : 'A chat is in progress.'}
+          </DialogTitle>
           <DialogDescription>
-            {activeCount === 1
-              ? 'Closing now will cancel the response.'
-              : `Closing now will cancel ${activeCount} responses in progress.`}
+            {variant === 'unsaved'
+              ? "Octave can't write to your vault right now (the folder may be disconnected). Quitting now will lose your most recent edits."
+              : count === 1
+                ? 'Closing now will cancel the response.'
+                : `Closing now will cancel ${count} responses in progress.`}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={() => resolve(false)} autoFocus>
-            Wait
+            {variant === 'unsaved' ? 'Keep app open' : 'Wait'}
           </Button>
           <Button variant="destructive" onClick={() => resolve(true)}>
-            Close anyway
+            {variant === 'unsaved' ? 'Quit anyway' : 'Close anyway'}
           </Button>
         </DialogFooter>
       </DialogContent>
