@@ -8,9 +8,15 @@ import { Button } from '@/components/ui/button'
 
 interface Props {
   onEnter: () => void
+  /** Disable the action while the project window is opening — prevents a
+   * double-click from spawning two windows across the async gap. */
+  busy?: boolean
+  /** Set when the previous open attempt failed, so the user can retry
+   * instead of being stranded with a button that silently did nothing. */
+  error?: string | null
 }
 
-export function DonePanel({ onEnter }: Props) {
+export function DonePanel({ onEnter, busy, error }: Props) {
   return (
     <div className="grid h-full w-full grid-cols-2 bg-background">
       {/* Left: copy + action */}
@@ -22,9 +28,10 @@ export function DonePanel({ onEnter }: Props) {
           Your vault is ready. Octave will open it in a fresh window — a welcome
           note is waiting to show you around. Start writing whenever you like.
         </p>
-        <Button className="w-fit px-8" onClick={onEnter}>
-          Open Octave
+        <Button className="w-fit px-8" onClick={onEnter} disabled={busy}>
+          {busy ? 'Opening…' : 'Open Octave'}
         </Button>
+        {error && <p className="mt-3 text-footnote text-destructive">{error}</p>}
       </div>
 
       {/* Right: preview panel (placeholder — swap for a real image later) */}

@@ -35,6 +35,8 @@ export function OnboardingLauncher() {
 
   const [step, setStep] = useState<Step>('welcome')
   const [chosen, setChosen] = useState<{ path: string; type: ProjectType } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   // Shrink + centre the window for onboarding; restore the previous size when
   // we leave (project window opened).
@@ -69,13 +71,29 @@ export function OnboardingLauncher() {
     setStep('done')
   }, [])
 
-  // Finish: record the project, mark onboarding done, open it in its own window.
+  // Finish: open the project window, THEN record it + mark onboarding done.
+  // The order matters — openProjectWindow resolves only after the window is
+  // actually created (and hides this launcher on success):
+  //   • On failure we DON'T mark bootstrap complete, so onboarding stays put
+  //     and the user can retry — instead of being stranded on an empty picker
+  //     with onboarding already flagged done.
+  //   • Marking complete only AFTER the launcher is hidden means BootGate's
+  //     re-render to VaultLauncher never flashes on screen.
+  // `busy` guards the async gap so a double-click can't spawn two windows.
   const openProject = useCallback(async () => {
-    if (!chosen) return
-    addRecentProject(chosen.path, chosen.type)
-    markBootstrapCompleted()
-    await openProjectWindow(chosen.path, folderName(chosen.path))
-  }, [chosen, addRecentProject, markBootstrapCompleted])
+    if (!chosen || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await openProjectWindow(chosen.path, folderName(chosen.path))
+      addRecentProject(chosen.path, chosen.type)
+      markBootstrapCompleted()
+    } catch (err) {
+      console.error('[onboarding] failed to open project window', err)
+      setError("Couldn't open your vault. Please try again.")
+      setBusy(false)
+    }
+  }, [chosen, busy, addRecentProject, markBootstrapCompleted])
 
   if (step === 'welcome') {
     return <WelcomePanel onGetStarted={() => setStep('connect')} />
@@ -93,7 +111,7 @@ export function OnboardingLauncher() {
   if (step === 'folder') {
     return <FolderPanel onChooseFolder={() => void chooseFolder()} />
   }
-  return <DonePanel onEnter={() => void openProject()} />
+  return <DonePanel onEnter={() => void openProject()} busy={busy} error={error} />
 }
 
 /** Last path segment, for the project's display name. */
