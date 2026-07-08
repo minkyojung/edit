@@ -38,6 +38,14 @@ export function projectWindowLabel(path: string): string {
   return `project-${hashPath(path)}`
 }
 
+/** Last path segment of `path`, used as a project window's display title.
+ * Shared by every caller of {@link openProjectWindow} so the derivation can't
+ * drift between the launcher and onboarding. */
+export function folderName(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? path
+}
+
 /** Open `path` in a project window. Focuses the existing window if this
  * project is already open; otherwise spawns a new one and waits for it to
  * be created (so creation errors surface instead of failing silently). */

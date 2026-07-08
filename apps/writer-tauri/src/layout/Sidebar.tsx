@@ -296,24 +296,30 @@ export function AppSidebar() {
             <IconRoute size={18} stroke={1.75} className="shrink-0" />
             <span className="flex-1 truncate text-left">Routine</span>
           </button>
-          <button
-            type="button"
-            onClick={() => navigate('/gallery')}
-            data-active={galleryActive || undefined}
-            className={NAV_ROW}
-          >
-            <IconPalette size={18} stroke={1.75} className="shrink-0" />
-            <span className="flex-1 truncate text-left">Gallery</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/onboard')}
-            data-active={onboardActive || undefined}
-            className={NAV_ROW}
-          >
-            <IconSparkles size={18} stroke={1.75} className="shrink-0" />
-            <span className="flex-1 truncate text-left">Onboarding</span>
-          </button>
+          {/* DEV-only design tools — the gallery + onboarding preview are for
+              iterating on UI, never shown to end users. */}
+          {import.meta.env.DEV && (
+            <>
+              <button
+                type="button"
+                onClick={() => navigate('/gallery')}
+                data-active={galleryActive || undefined}
+                className={NAV_ROW}
+              >
+                <IconPalette size={18} stroke={1.75} className="shrink-0" />
+                <span className="flex-1 truncate text-left">Gallery</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/onboard')}
+                data-active={onboardActive || undefined}
+                className={NAV_ROW}
+              >
+                <IconSparkles size={18} stroke={1.75} className="shrink-0" />
+                <span className="flex-1 truncate text-left">Onboarding</span>
+              </button>
+            </>
+          )}
         </nav>
 
         {/* Section label for the vault's notes, mirroring the "Assistant"

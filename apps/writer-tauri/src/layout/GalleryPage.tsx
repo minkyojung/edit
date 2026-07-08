@@ -7,14 +7,7 @@
 // (via `var(--…)`) and components so it can never drift from production.
 // Step 1 ships Foundations → Color only; later steps append sections.
 
-import { useState, type ReactNode } from 'react'
-import {
-  OnboardingDialog,
-  InputStage,
-  RunningStage,
-  DoneStage,
-  FailedStage,
-} from '@/profile/ui/OnboardingDialog'
+import { type ReactNode } from 'react'
 import { IconPlus, IconBrain, IconFileText, IconAlertTriangle, IconPlayerStopFilled } from '@tabler/icons-react'
 import type { ChatTurn, MessagePart } from '@/chat/types'
 import { MessageRow } from '@/chat/messages/MessageRow'
@@ -538,34 +531,11 @@ function GalleryNav() {
   )
 }
 
-/** A stage of the onboarding modal, boxed at the real dialog width so the
- * design reads the same as in the live modal. */
-function OnbStageCard({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="w-[440px]">
-      <div className="mb-1.5 text-xs text-muted-foreground">{label}</div>
-      <div className="rounded-xl border border-border bg-background p-4">
-        <div className="mb-3">
-          <div className="text-body font-semibold text-foreground">Tell us where you write</div>
-          <div className="text-footnote text-muted-foreground">
-            We&apos;ll read a few recent posts and draft a profile page you can edit.
-          </div>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
-}
-
 export function GalleryPage() {
-  const [liveOnboarding, setLiveOnboarding] = useState(false)
   return (
     // pt clears the absolutely-positioned EditorHeader AppShell overlays
     // (matches SkillsPage).
     <div className="mx-auto flex w-full max-w-5xl gap-10 px-6 pb-16 pt-[calc(var(--header-h)+8px)]">
-      {liveOnboarding && (
-        <OnboardingDialog open onClose={() => setLiveOnboarding(false)} />
-      )}
       <GalleryNav />
       <div className="min-w-0 max-w-3xl flex-1">
       <h1 className="mb-8 text-lg font-semibold text-foreground">Gallery</h1>
@@ -1369,47 +1339,6 @@ export function GalleryPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-        </Subgroup>
-      </Section>
-
-      <Section title="Surfaces · Onboarding">
-        <p className="text-[13px] text-muted-foreground">
-          First-run modal — one dialog, 4 stages. The <code>input</code> stage&apos;s
-          Analyze calls the AI directly; with no login step, an unauthenticated new
-          user hits the raw <code>no claude token</code> error shown in stage 4. The
-          fix is to add a Connect-Claude step before Analyze runs.
-        </p>
-        <Subgroup title="Stages (design preview)">
-          <div className="flex flex-wrap gap-6">
-            <OnbStageCard label="1 · input">
-              <InputStage url="" setUrl={noop} onAnalyze={noop} onSkip={noop} />
-            </OnbStageCard>
-            <OnbStageCard label="2 · running">
-              <RunningStage
-                discoveryLabel="Found 8 posts via RSS"
-                sectionStatus={{
-                  voice: { status: 'done' },
-                  themes: { status: 'loading' },
-                  about: { status: 'pending' },
-                }}
-              />
-            </OnbStageCard>
-            <OnbStageCard label="3 · done">
-              <DoneStage onOpen={noop} />
-            </OnbStageCard>
-            <OnbStageCard label="4 · failed (current bug)">
-              <FailedStage
-                message="invoke: no claude token — user must sign in"
-                onRetry={noop}
-                onSkip={noop}
-              />
-            </OnbStageCard>
-          </div>
-        </Subgroup>
-        <Subgroup title="Live test (real modal)">
-          <Button variant="outline" onClick={() => setLiveOnboarding(true)}>
-            Launch onboarding modal
-          </Button>
         </Subgroup>
       </Section>
 

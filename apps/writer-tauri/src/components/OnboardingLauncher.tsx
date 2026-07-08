@@ -16,16 +16,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { pickVault } from '@/lib/vaultPicker'
 import { isTranslationProject } from '@/lib/translationProject'
-import { openProjectWindow } from '@/lib/projectWindow'
+import { openProjectWindow, folderName } from '@/lib/projectWindow'
+import { useGoogleAuth } from '@/hooks/useGoogleAuth'
 import { useSettingsStore, type ProjectType } from '@/state/settingsStore'
 import { WelcomePanel } from '@/profile/ui/onboarding/WelcomePanel'
 import { ConnectPanel } from '@/profile/ui/onboarding/ConnectPanel'
 import { FolderPanel } from '@/profile/ui/onboarding/FolderPanel'
 import { DonePanel } from '@/profile/ui/onboarding/DonePanel'
-
-// Compact onboarding window (width ≥ the 800 min in tauri.conf.json).
-const ONBOARDING_W = 900
-const ONBOARDING_H = 580
+import { ONBOARDING_W, ONBOARDING_H } from '@/profile/ui/onboarding/onboardingWindow'
 
 type Step = 'welcome' | 'connect' | 'folder' | 'done'
 
@@ -33,10 +31,13 @@ export function OnboardingLauncher() {
   const addRecentProject = useSettingsStore((s) => s.addRecentProject)
   const markBootstrapCompleted = useSettingsStore((s) => s.markBootstrapCompleted)
 
+  const { connect: connectGoogle, connecting: googleConnecting } = useGoogleAuth()
+
   const [step, setStep] = useState<Step>('welcome')
   const [chosen, setChosen] = useState<{ path: string; type: ProjectType } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [connectError, setConnectError] = useState<string | null>(null)
 
   // Shrink + centre the window for onboarding; restore the previous size when
   // we leave (project window opened).
@@ -99,12 +100,25 @@ export function OnboardingLauncher() {
     return <WelcomePanel onGetStarted={() => setStep('connect')} />
   }
   if (step === 'connect') {
-    // Rough: both actions advance. Real OAuth wiring (ConnectClaudeDialog) lands
-    // in polish.
+    // Google sign-in (identity). On success advance to folder; on failure stay
+    // so the user can retry. "Start without an account" skips — Claude (the AI
+    // engine) is connected just-in-time later, not here.
+    const signIn = async () => {
+      setConnectError(null)
+      try {
+        await connectGoogle()
+        setStep('folder')
+      } catch (e) {
+        console.error('[onboarding] google sign-in failed', e)
+        setConnectError("Couldn't sign in with Google. Please try again.")
+      }
+    }
     return (
       <ConnectPanel
-        onConnect={() => setStep('folder')}
+        onContinue={() => void signIn()}
         onLater={() => setStep('folder')}
+        connecting={googleConnecting}
+        error={connectError}
       />
     )
   }
@@ -112,10 +126,4 @@ export function OnboardingLauncher() {
     return <FolderPanel onChooseFolder={() => void chooseFolder()} />
   }
   return <DonePanel onEnter={() => void openProject()} busy={busy} error={error} />
-}
-
-/** Last path segment, for the project's display name. */
-function folderName(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean)
-  return parts[parts.length - 1] ?? path
 }

@@ -1,6 +1,7 @@
 # Remaining work — onboarding redesign + launch readiness
 
-_Last updated: 2026-07-08. Branch: `minkyojung/agent-memory-seam`._
+_Last updated: 2026-07-08 (Google login + launch-hygiene pass). Branch:
+`minkyojung/onboarding-sdk-deploy-prep`._
 
 Living checklist. `[x]` done this session, `[ ]` remaining, `[~]` partial/rough.
 
@@ -40,9 +41,17 @@ Flow: **P1 Welcome/trust → P2 Connect Claude (skippable) → P3 Folder (mandat
   retry-able error line on `DonePanel`. (commit `8e98a612`)
 
 ### Remaining — polish
-- [~] **P2 Connect: real OAuth wiring.** Buttons currently just advance. Wire
-  `ConnectPanel.onConnect` to the real connect flow (`ConnectClaudeDialog` /
-  `useClaudeAuth`); keep "I'll do this later" as advance.
+- [x] **P2 Connect → Google sign-in (real OAuth wiring).** Decision: P2 is now
+  the *identity* step (Google one-click loopback → name/email/picture), NOT
+  Claude. Claude (the AI engine) moved to JIT (see P4 below). Backend
+  `google_oauth.rs` (PKCE + loopback auto-complete, profile in the token blob,
+  `secure_storage`), `useGoogleAuth` hook, `ConnectPanel` rewired to
+  "Continue with Google" + "Start without an account" skip, and a Google row in
+  Settings → Connections. Verified live (signed in, name/email shown, disconnect
+  works). Google Cloud: project `Octave-note`, Desktop client, scopes
+  `openid email profile` (Gmail deferred). Client id/secret are consts in
+  `google_oauth.rs` (private repo; Desktop secret is not confidential per RFC
+  8252 — PKCE is the guard).
 - [ ] **Image assets.** Right column is a "Preview image" placeholder in all
   panels — swap for real illustrations/screenshots.
 - [ ] **Copy / spacing / column ratio** pass on all 4 panels.
@@ -56,29 +65,25 @@ Flow: **P1 Welcome/trust → P2 Connect Claude (skippable) → P3 Folder (mandat
 - [ ] **P3 landing empty-state**: in a fresh/empty editor, show first-action
   suggestion cards — the profile "aha" ("Let AI draft your profile from your
   writing") prominent, plus "summarize / organize". Non-blocking.
-- [ ] **P4 Connect Claude JIT**: every AI entry point (chat, Analyze, capture
-  organize) shows a proper "Connect Claude" CTA instead of the raw
-  `no claude token` error when unauthenticated. (This is the original onboarding
-  bug's canonical fix — currently the error still surfaces if the user skipped
-  connect and hasn't connected.)
+- [x] **P4 Connect Claude JIT** — already handled; verified 2026-07-08. Audit of
+  every AI entry point found no raw-error gap: **chat** shows a full "Connect
+  Claude" overlay + CTA when `!account.connected` (`ChatPanel.tsx:631`, reuses
+  the sidebar `ConnectClaudeDialog`); **organize** (idle inbox pass) swallows
+  failures with a `console.warn` (unprompted background — silent is correct);
+  **generateAiSummary** is fire-and-forget (keeps the old sidecar value). The
+  "Analyze" the original note flagged lived in the now-deleted `OnboardingDialog`
+  (dead code — see §Remaining-from-code-review). Nothing to build.
 
-### Remaining — from the code review (not yet done)
-- [ ] **Window height clamp (#10):** `ONBOARDING_H = 580`
-  (`OnboardingLauncher.tsx`) is below the window `minHeight: 600`
-  (`tauri.conf.json`), so `setSize` is clamped to 900×600 — the live launcher is
-  20px taller than the fixed-580 `/onboard` preview frame
-  (`OnboardingPreview.tsx`), so the preview misrepresents the real layout. Fix:
-  one shared `ONBOARDING_SIZE` constant (height ≥ minHeight) used by both, or
-  lower `minHeight`.
-- [ ] **Dev routes ungated in prod (#9):** `/onboard` (and `/gallery`) routes +
-  their Sidebar entries have no `import.meta.env.DEV` guard, so end users can
-  open the design preview / component gallery. Gate behind DEV. (Also in §4 P2.)
-  Relatedly, `OnboardingDialog` is now dead in-app (App.tsx dropped its only
-  usage) and survives only via `GalleryPage` — delete it if the new flow fully
-  replaces it.
-- [ ] **`folderName` duplicated (cleanup):** `OnboardingLauncher.tsx`
-  re-implements the identical `folderName(path)` from `VaultLauncher.tsx` (same
-  regex + fallback). Export one and reuse so they can't drift.
+### Remaining — from the code review
+- [x] **Window height clamp (#10):** shared `ONBOARDING_W/H` in
+  `profile/ui/onboarding/onboardingWindow.ts` (H=600 = `minHeight`), imported by
+  both `OnboardingLauncher` and `OnboardingPreview` — no more clamp, preview
+  matches the live window.
+- [x] **Dev routes ungated in prod (#9):** `/onboard` + `/gallery` routes
+  (`App.tsx`) and their Sidebar entries are now behind `import.meta.env.DEV`.
+  Dead `OnboardingDialog` **deleted** (+ its `GalleryPage` showcase section).
+- [x] **`folderName` duplicated (cleanup):** single `folderName` exported from
+  `lib/projectWindow.ts`; `OnboardingLauncher` + `VaultLauncher` import it.
 
 ---
 

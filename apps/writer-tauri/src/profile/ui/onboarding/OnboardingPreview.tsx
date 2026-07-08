@@ -1,6 +1,6 @@
 // Design-preview page for the onboarding flow — like the gallery, but with no
 // sidebar or editor. Renders each onboarding step centred inside a fixed frame
-// that mimics the compact onboarding window (900×580), so the layout reads at
+// that mimics the compact onboarding window (900×600), so the layout reads at
 // true proportions. Flip through steps with Prev/Next — no app restart needed.
 //
 // Steps render their PRESENTATIONAL panels with no-op handlers (no window
@@ -17,11 +17,9 @@ import { ConnectPanel } from '@/profile/ui/onboarding/ConnectPanel'
 import { FolderPanel } from '@/profile/ui/onboarding/FolderPanel'
 import { DonePanel } from '@/profile/ui/onboarding/DonePanel'
 import { Button } from '@/components/ui/button'
+import { ONBOARDING_W, ONBOARDING_H } from '@/profile/ui/onboarding/onboardingWindow'
 
 const noop = () => {}
-
-const ONBOARDING_W = 900
-const ONBOARDING_H = 580
 
 const STEPS: { key: string; label: string; render: () => ReactNode }[] = [
   {
@@ -31,8 +29,8 @@ const STEPS: { key: string; label: string; render: () => ReactNode }[] = [
   },
   {
     key: 'connect',
-    label: 'Connect Claude',
-    render: () => <ConnectPanel onConnect={noop} onLater={noop} />,
+    label: 'Sign in with Google',
+    render: () => <ConnectPanel onContinue={noop} onLater={noop} />,
   },
   {
     key: 'folder',

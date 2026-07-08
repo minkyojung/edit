@@ -107,8 +107,11 @@ export function App() {
             <Routes>
               {/* Design-preview page for the onboarding flow — standalone, so
                   it renders WITHOUT BootGate/AppShell (no sidebar/editor). More
-                  specific than "*", so React Router matches it first. */}
-              <Route path="/onboard" element={<OnboardingPreview />} />
+                  specific than "*", so React Router matches it first.
+                  DEV-only: a design tool, never shipped to end users. */}
+              {import.meta.env.DEV && (
+                <Route path="/onboard" element={<OnboardingPreview />} />
+              )}
               <Route
                 path="*"
                 element={
@@ -284,7 +287,10 @@ function AppContent() {
             <Route path="/skills" element={<SkillsPage />} />
             <Route path="/routines" element={<RoutinesPage />} />
             <Route path="/agents" element={<AgentsPage />} />
-            <Route path="/gallery" element={<GalleryPage />} />
+            {/* DEV-only: the design-system gallery is a dev tool, not shipped. */}
+            {import.meta.env.DEV && (
+              <Route path="/gallery" element={<GalleryPage />} />
+            )}
           </Routes>
         </AppShell>
         <CommandPalette />
