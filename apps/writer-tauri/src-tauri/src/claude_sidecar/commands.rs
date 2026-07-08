@@ -152,10 +152,11 @@ fn get_manager(app: &AppHandle) -> Result<Arc<SidecarManager>, String> {
 #[tauri::command]
 pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Value, String> {
     let manager = get_manager(&app)?;
-    // Push the freshest token before every chat — handles silent rotation
-    // without requiring a sidecar restart.
+    // Push the freshest token to the CHAT sidecar before every chat — handles
+    // silent rotation without a restart. Chat-only so a title sidecar that's
+    // mid-restart can't block a chat start.
     manager
-        .try_inject_token(&app)
+        .try_inject_token_chat(&app)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -214,8 +215,10 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
 #[tauri::command]
 pub async fn claude_list_models(app: AppHandle) -> Result<Value, String> {
     let manager = get_manager(&app)?;
+    // Chat-only injection: models is answered by the chat sidecar, so it must
+    // not depend on the title sidecar being healthy.
     manager
-        .try_inject_token(&app)
+        .try_inject_token_chat(&app)
         .await
         .map_err(|e| e.to_string())?;
     let chat = manager.chat_client().await;
@@ -280,8 +283,10 @@ pub async fn claude_chat_edit_ack(app: AppHandle, args: ChatEditAckArgs) -> Resu
 #[tauri::command]
 pub async fn claude_title(app: AppHandle, args: TitleArgs) -> Result<Value, String> {
     let manager = get_manager(&app)?;
+    // Title-only injection: this runs on the title sidecar, so a chat sidecar
+    // mid-restart must not block it (and vice versa).
     manager
-        .try_inject_token(&app)
+        .try_inject_token_title(&app)
         .await
         .map_err(|e| e.to_string())?;
 

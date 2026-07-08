@@ -190,20 +190,49 @@ impl SidecarManager {
         self.title.read().await.clone()
     }
 
-    /// Reads the latest OAuth token (auto-refreshing if near expiry) and
-    /// pushes it to both sidecars. Returns Ok(true) if a token was injected,
-    /// Ok(false) if no token is available.
-    pub async fn try_inject_token(&self, app: &AppHandle) -> Result<bool, SidecarError> {
-        let token = match crate::oauth::get_claude_token(app.clone()).await {
+    /// Read the latest OAuth token (auto-refreshing if near expiry). A read
+    /// failure logs and yields None rather than propagating — callers treat
+    /// "no token" and "couldn't read the token" the same (chat fails cleanly).
+    async fn read_token(&self, app: &AppHandle) -> Option<String> {
+        match crate::oauth::get_claude_token(app.clone()).await {
             Ok(opt) => opt,
             Err(e) => {
                 eprintln!("[sidecar manager] failed to read OAuth token: {e}");
-                return Ok(false);
+                None
             }
-        };
-        match token {
+        }
+    }
+
+    /// Reads the latest token and pushes it to BOTH sidecars. Used at startup
+    /// and on `auth/refreshNeeded` — best-effort, not tied to a single request.
+    /// Returns Ok(true) if a token was injected, Ok(false) if none is available.
+    pub async fn try_inject_token(&self, app: &AppHandle) -> Result<bool, SidecarError> {
+        match self.read_token(app).await {
             Some(t) => {
                 self.set_token(&t).await?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Inject the current token into ONLY the chat sidecar. Called before a
+    /// chat start so a title sidecar that's mid-restart (or crash-looping)
+    /// can't block a chat request — the two hold their tokens independently.
+    pub async fn try_inject_token_chat(&self, app: &AppHandle) -> Result<bool, SidecarError> {
+        self.try_inject_token_for(app, Mode::Chat).await
+    }
+
+    /// Inject the current token into ONLY the title sidecar. Symmetric to
+    /// `try_inject_token_chat` — a title request doesn't depend on chat health.
+    pub async fn try_inject_token_title(&self, app: &AppHandle) -> Result<bool, SidecarError> {
+        self.try_inject_token_for(app, Mode::Title).await
+    }
+
+    async fn try_inject_token_for(&self, app: &AppHandle, mode: Mode) -> Result<bool, SidecarError> {
+        match self.read_token(app).await {
+            Some(t) => {
+                self.set_token_on(mode, &t).await?;
                 Ok(true)
             }
             None => Ok(false),
@@ -213,11 +242,20 @@ impl SidecarManager {
     /// Sends `setToken` to both sidecars. Idempotent — safe to call repeatedly
     /// to rotate the OAuth token without restarting either process.
     pub async fn set_token(&self, token: &str) -> Result<(), SidecarError> {
-        let params = Some(json!({ "token": token }));
-        let chat = self.chat_client().await;
-        let title = self.title_client().await;
-        let _: Value = chat.request("setToken", params.clone()).await?;
-        let _: Value = title.request("setToken", params).await?;
+        self.set_token_on(Mode::Chat, token).await?;
+        self.set_token_on(Mode::Title, token).await?;
+        Ok(())
+    }
+
+    /// Sends `setToken` to a single sidecar.
+    async fn set_token_on(&self, mode: Mode, token: &str) -> Result<(), SidecarError> {
+        let client = match mode {
+            Mode::Chat => self.chat_client().await,
+            Mode::Title => self.title_client().await,
+        };
+        let _: Value = client
+            .request("setToken", Some(json!({ "token": token })))
+            .await?;
         Ok(())
     }
 
