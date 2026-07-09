@@ -18,41 +18,28 @@ interface Props {
   error?: string | null
 }
 
-export function ConnectPanel({ onContinue, onLater, connecting, error }: Props) {
+export function ConnectPanel({ onContinue, connecting, error }: Props) {
   return (
     <div className="grid h-full w-full grid-cols-2 bg-background">
-      {/* Left: copy + actions */}
-      <div className="flex flex-col justify-center px-10 py-8">
-        <h1 className="mb-2 text-2xl font-semibold tracking-tight text-foreground">
+      {/* Left: copy + actions anchored to the top. No brand mark past the
+          welcome step — the flow stays focused on the single action. */}
+      <div className="flex h-full flex-col justify-start px-4 py-4">
+        <h1 className="mb-3 text-2xl font-semibold tracking-tight text-foreground">
           Sign in to Octave
         </h1>
-        <p className="mb-8 text-body leading-relaxed text-muted-foreground">
-          Sign in with Google so Octave knows who you are — your name and email
-          personalize your workspace. It only takes a click, and you can do it
-          later.
+        <p className="mb-6 text-body leading-relaxed text-muted-foreground">
+          Use your Google account to personalize your workspace.
         </p>
-        <div className="flex flex-col gap-2">
-          <Button className="w-full gap-2" onClick={onContinue} disabled={connecting}>
-            <GoogleGlyph />
-            {connecting ? 'Waiting for Google…' : 'Continue with Google'}
-          </Button>
-        </div>
+        <Button className="w-full gap-2 rounded-2xl" onClick={onContinue} disabled={connecting}>
+          <GoogleGlyph />
+          {connecting ? 'Waiting for Google…' : 'Continue with Google'}
+        </Button>
         {error && <p className="mt-3 text-footnote text-destructive">{error}</p>}
-        <button
-          type="button"
-          onClick={onLater}
-          disabled={connecting}
-          className="mt-6 self-start text-footnote text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
-        >
-          Start without an account
-        </button>
       </div>
 
       {/* Right: preview panel (placeholder — swap for a real image later) */}
-      <div className="flex items-center justify-center p-4">
-        <div className="flex h-full w-full items-center justify-center rounded-2xl bg-gradient-to-br from-muted/60 to-muted/20">
-          <span className="text-footnote text-muted-foreground/60">Preview image</span>
-        </div>
+      <div className="flex items-center justify-center bg-gradient-to-br from-muted/60 to-muted/20">
+        <span className="text-footnote text-muted-foreground/60">Preview image</span>
       </div>
     </div>
   )

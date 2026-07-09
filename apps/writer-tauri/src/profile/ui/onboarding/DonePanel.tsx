@@ -20,7 +20,7 @@ export function DonePanel({ onEnter, busy, error }: Props) {
   return (
     <div className="grid h-full w-full grid-cols-2 bg-background">
       {/* Left: copy + action */}
-      <div className="flex flex-col justify-center px-10 py-8">
+      <div className="flex flex-col justify-center px-4 py-4">
         <h1 className="mb-2 text-2xl font-semibold tracking-tight text-foreground">
           You&apos;re all set
         </h1>
@@ -35,10 +35,8 @@ export function DonePanel({ onEnter, busy, error }: Props) {
       </div>
 
       {/* Right: preview panel (placeholder — swap for a real image later) */}
-      <div className="flex items-center justify-center p-4">
-        <div className="flex h-full w-full items-center justify-center rounded-2xl bg-gradient-to-br from-muted/60 to-muted/20">
-          <span className="text-footnote text-muted-foreground/60">Preview image</span>
-        </div>
+      <div className="flex items-center justify-center bg-gradient-to-br from-muted/60 to-muted/20">
+        <span className="text-footnote text-muted-foreground/60">Preview image</span>
       </div>
     </div>
   )

@@ -49,6 +49,10 @@ export function OnboardingLauncher() {
         const size = await win.innerSize()
         const scale = await win.scaleFactor()
         prev = new LogicalSize(size.width / scale, size.height / scale)
+        // Lower the window min so the compact onboarding size isn't clamped by
+        // the launcher's configured 800×600 minimum (tauri.conf.json). Restored
+        // on exit — the project/picker windows keep their own minimum.
+        await win.setMinSize(new LogicalSize(ONBOARDING_W, ONBOARDING_H))
         await win.setSize(new LogicalSize(ONBOARDING_W, ONBOARDING_H))
         await win.center()
       } catch {
@@ -56,7 +60,15 @@ export function OnboardingLauncher() {
       }
     })()
     return () => {
-      if (prev) void win.setSize(prev).catch(() => {})
+      void (async () => {
+        try {
+          // Restore the launcher's configured minimum (tauri.conf.json main window).
+          await win.setMinSize(new LogicalSize(800, 600))
+          if (prev) await win.setSize(prev)
+        } catch {
+          // ignore — window may already be gone.
+        }
+      })()
     }
   }, [])
 

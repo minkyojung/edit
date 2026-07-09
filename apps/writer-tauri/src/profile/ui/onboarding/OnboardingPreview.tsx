@@ -53,9 +53,11 @@ export function OnboardingPreview() {
 
   return (
     <div className="flex h-screen w-screen flex-col items-center justify-center gap-6 bg-muted/40">
-      {/* Frame mimicking the compact onboarding window */}
+      {/* Frame mimicking the compact onboarding window. Corner matches the real
+          window's native radius (--window-radius = the objc2 NSToolbar corner,
+          ~26px on macOS Tahoe) so the preview reads at true curvature. */}
       <div
-        className="overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
+        className="overflow-hidden rounded-[var(--window-radius)] border border-border bg-background shadow-2xl"
         style={{ width: ONBOARDING_W, height: ONBOARDING_H }}
       >
         {step.render()}
