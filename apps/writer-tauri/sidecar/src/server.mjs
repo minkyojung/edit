@@ -105,6 +105,19 @@ function egressDenyRules() {
   ]
 }
 
+/** Deny the commands that dump the process environment, where the SDK-required
+ * CLAUDE_CODE_OAUTH_TOKEN lives (the CLI must receive it via env; Bash children
+ * inherit it). This is defense-in-depth, NOT a complete boundary: it stops the
+ * literal `printenv CLAUDE_CODE_OAUTH_TOKEN` / `env` probe an injected note is
+ * likely to use, but shell expansion (`echo $CLAUDE_CODE_OAUTH_TOKEN`) can't be
+ * caught by a command-name rule. The real closure is the sandbox blocking
+ * network egress (so a read token can't leave the machine) — see sandboxLockdown
+ * / failIfUnavailable. `set`/`export` are intentionally omitted: prefix-denying
+ * them would break legitimate `set -e` / `export FOO=…` usage for little gain. */
+function envDumpDenyRules() {
+  return ['Bash(printenv:*)', 'Bash(env:*)']
+}
+
 /** OS-sandbox config: block outbound network from tool subprocesses and
  * deny reads of the secret locations. */
 function sandboxLockdown() {
@@ -888,7 +901,11 @@ export class Server {
         // in-process Read/Glob tools (the sandbox denyRead only reaches
         // subprocesses); they also hold when the sandbox can't initialise.
         ...(sandboxEnabled
-          ? { permissions: { deny: [...egressDenyRules(), ...secretDenyRules()] } }
+          ? {
+              permissions: {
+                deny: [...egressDenyRules(), ...envDumpDenyRules(), ...secretDenyRules()],
+              },
+            }
           : {}),
       },
       // Disable the SDK's filesystem settings auto-load (CLAUDE.md,
