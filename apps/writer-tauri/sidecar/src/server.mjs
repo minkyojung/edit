@@ -522,6 +522,19 @@ const PLAN_MODE_INSTRUCTIONS = [
 // PLAN_MODE_INSTRUCTIONS, not a file on disk.)
 const PLAN_MODE_PLANS_DIR = join(tmpdir(), 'writer-tauri-plans')
 
+/** True only if `filePath` resolves to a location genuinely inside the plans
+ * dir. Mirrors `resolveVaultFile`'s idiom: normalise first (collapsing `..`),
+ * then boundary-check via `relative`. A raw `startsWith(PLAN_MODE_PLANS_DIR)`
+ * is traversal-vulnerable — `<plansdir>/../../.zshrc` passes the prefix but
+ * escapes the dir — which would let plan mode (nominally read-only) write
+ * outside the vault. */
+function isInsidePlansDir(filePath) {
+  const raw = String(filePath ?? '').trim()
+  if (!raw) return false
+  const rel = relative(PLAN_MODE_PLANS_DIR, resolvePath(raw))
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
 /** Dump a thrown error's full context to stderr so the Rust supervisor's
  * stderr drain (and the dev console downstream) can see what actually
  * happened. The user-facing chat/error notification stays terse — this
@@ -1014,7 +1027,7 @@ export class Server {
           toolName === 'NotebookEdit'
         ) {
           const filePath = typeof input?.file_path === 'string' ? input.file_path : ''
-          if (filePath.startsWith(PLAN_MODE_PLANS_DIR)) {
+          if (isInsidePlansDir(filePath)) {
             return { behavior: 'allow', updatedInput: input }
           }
           return {
