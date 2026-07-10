@@ -14,6 +14,7 @@ import { useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { WelcomePanel } from '@/profile/ui/onboarding/WelcomePanel'
 import { ConnectPanel } from '@/profile/ui/onboarding/ConnectPanel'
+import { ClaudeConnectPanel } from '@/profile/ui/onboarding/ClaudeConnectPanel'
 import { FolderPanel } from '@/profile/ui/onboarding/FolderPanel'
 import { DonePanel } from '@/profile/ui/onboarding/DonePanel'
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,18 @@ const STEPS: { key: string; label: string; render: () => ReactNode }[] = [
     label: 'Sign in with Google',
     render: () => (
       <ConnectPanel onContinue={noop} onLater={noop} progress={<StepDots step="connect" />} />
+    ),
+  },
+  {
+    key: 'claude',
+    label: 'Connect Claude',
+    render: () => (
+      <ClaudeConnectPanel
+        onStart={async () => {}}
+        onSubmit={async () => {}}
+        onLater={noop}
+        progress={<StepDots step="claude" />}
+      />
     ),
   },
   {

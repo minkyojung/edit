@@ -26,11 +26,12 @@ import { useSettingsStore, type ProjectType } from '@/state/settingsStore'
 import { StepDots } from '@/profile/ui/onboarding/StepDots'
 import { WelcomePanel } from '@/profile/ui/onboarding/WelcomePanel'
 import { ConnectPanel } from '@/profile/ui/onboarding/ConnectPanel'
+import { ClaudeConnectPanel } from '@/profile/ui/onboarding/ClaudeConnectPanel'
 import { FolderPanel } from '@/profile/ui/onboarding/FolderPanel'
 import { DonePanel } from '@/profile/ui/onboarding/DonePanel'
 import { ONBOARDING_W, ONBOARDING_H } from '@/profile/ui/onboarding/onboardingWindow'
 
-type Step = 'welcome' | 'connect' | 'folder' | 'done'
+type Step = 'welcome' | 'connect' | 'claude' | 'folder' | 'done'
 
 export function OnboardingLauncher() {
   const addRecentProject = useSettingsStore((s) => s.addRecentProject)
@@ -182,7 +183,7 @@ export function OnboardingLauncher() {
           void invoke('notify_signup').catch((e) =>
             console.warn('[onboarding] signup relay failed', e),
           )
-          setStep('folder')
+          setStep('claude')
         } catch (e) {
           console.error('[onboarding] google sign-in failed', e)
           setConnectError("Couldn't sign in with Google. Please try again.")
@@ -191,9 +192,27 @@ export function OnboardingLauncher() {
       return (
         <ConnectPanel
           onContinue={() => void signIn()}
-          onLater={() => setStep('folder')}
+          onLater={() => setStep('claude')}
           connecting={googleConnecting}
           error={connectError}
+          progress={dots}
+        />
+      )
+    }
+    if (step === 'claude') {
+      // Connect Claude (the AI engine) via the existing OAuth commands — browser
+      // authorize + paste the code (same backend as ConnectClaudeDialog / oauth.rs).
+      // Skippable; the chat panel re-prompts sign-in later if the user skips here.
+      return (
+        <ClaudeConnectPanel
+          onStart={async () => {
+            await invoke('start_claude_oauth')
+          }}
+          onSubmit={async (code) => {
+            await invoke('complete_claude_oauth', { pasted: code })
+            setStep('folder')
+          }}
+          onLater={() => setStep('folder')}
           progress={dots}
         />
       )
