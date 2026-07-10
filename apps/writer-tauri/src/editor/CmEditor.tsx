@@ -19,7 +19,7 @@ import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@cod
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
 import { markdown, deleteMarkupBackward } from '@codemirror/lang-markdown'
-import { autocompletion } from '@codemirror/autocomplete'
+import { autocompletion, acceptCompletion } from '@codemirror/autocomplete'
 import { GFM } from '@lezer/markdown'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
@@ -155,6 +155,14 @@ export function CmEditor({ handle, header }: Props) {
             // and cursor movement stay intact.
             slashMenu,
             slashKeymap,
+            // `[[` wikilink autocomplete: Enter must CONFIRM the highlighted note.
+            // CM's own completion keymap (also Prec.highest) is registered further
+            // down via autocompletion(), i.e. AFTER smartEnter — so without this,
+            // smartEnter claims Enter first and the pick never lands (just a
+            // newline). Mirror slashKeymap: claim Enter ahead of smartEnter, but
+            // only when a completion is open — acceptCompletion returns false with
+            // no active popup, so plain Enter falls through to smartEnter intact.
+            Prec.highest(keymap.of([{ key: 'Enter', run: acceptCompletion }])),
             // ENTER — one deterministic handler at Prec.highest: tight list continuation
             // / clean exit, blockquote continuation, else plain newline. Must beat every
             // other Enter handler so CM's loose-list inference never runs.
