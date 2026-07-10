@@ -67,6 +67,7 @@ import { imeListContinue } from '@/prototypes/imeListContinue'
 import { clearTopLevelMarkerBackward } from '@/prototypes/listBackspace'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
 import { richTextCopy } from './cmRichCopy'
+import { htmlPaste } from './cmHtmlPaste'
 import { importMediaToVault } from '@/editor/cmMedia'
 
 interface Props {
@@ -215,6 +216,7 @@ export function CmEditor({ handle, header }: Props) {
             timestampSeekClick, // plain-click a YouTube timestamp → seek the embed
             linkClick(openLinkSafely), // Cmd/Ctrl-click [text](url) → open (safe schemes)
             mediaDropPaste(importMediaToVault), // drop/paste media → vault + insert
+            htmlPaste, // paste rich web HTML → markdown (after media: files win)
             richTextCopy, // Cmd+C/X → clipboard carries html + markdown
             cmInBufferReview(handle.slug), // AI suggestions → in-buffer red/green (Option B)
             // Save: mirror the doc text into the handle cache + flag dirty. The flush
