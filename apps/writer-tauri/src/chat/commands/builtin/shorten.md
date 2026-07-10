@@ -2,7 +2,7 @@
 name: shorten
 description: Shorten the selected text by ~30% without losing meaning
 kind: document-edit
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 effort: low
 scope: selection
 argument-hint: target length or focus

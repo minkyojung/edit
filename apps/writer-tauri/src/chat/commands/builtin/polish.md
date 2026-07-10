@@ -2,7 +2,7 @@
 name: polish
 description: Polish grammar and tone in the selected text
 kind: document-edit
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 effort: low
 scope: selection
 argument-hint: optional style note

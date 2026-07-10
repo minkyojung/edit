@@ -2,7 +2,7 @@
 name: expand
 description: Expand the selected text with examples and detail
 kind: document-edit
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 effort: medium
 scope: selection
 argument-hint: angle or details to add

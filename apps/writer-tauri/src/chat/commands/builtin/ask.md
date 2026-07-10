@@ -2,7 +2,7 @@
 name: ask
 description: Answer a question grounded in your wiki (cite pages)
 kind: chat-message
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 effort: medium
 scope: none
 argument-hint: your question

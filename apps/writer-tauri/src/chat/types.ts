@@ -18,25 +18,30 @@
  * round-tripping through agent ids. The sidecar accepts the raw id. */
 export type ChatModel =
   | 'claude-haiku-4-5'
-  | 'claude-sonnet-4-6'
+  | 'claude-sonnet-5'
   | 'claude-opus-4-8'
   | 'claude-fable-5'
+  // Legacy — kept selectable for threads created before Sonnet 5, but listed
+  // last and not the default.
+  | 'claude-sonnet-4-6'
 
 export const CHAT_MODELS: readonly ChatModel[] = [
   'claude-haiku-4-5',
-  'claude-sonnet-4-6',
+  'claude-sonnet-5',
   'claude-opus-4-8',
   'claude-fable-5',
+  'claude-sonnet-4-6',
 ] as const
 
 export const CHAT_MODEL_LABELS: Record<ChatModel, string> = {
   'claude-haiku-4-5': 'Haiku 4.5',
-  'claude-sonnet-4-6': 'Sonnet 4.6',
+  'claude-sonnet-5': 'Sonnet 5',
   'claude-opus-4-8': 'Opus 4.8',
   'claude-fable-5': 'Fable 5',
+  'claude-sonnet-4-6': 'Sonnet 4.6',
 }
 
-export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-4-6'
+export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-5'
 
 /** One model the account can actually use, as reported by the Claude Agent
  * SDK's session-init handshake (query.supportedModels()). Only `value` is
@@ -76,9 +81,10 @@ export function modelSupportsFastMode(model: ChatModel): boolean {
 export type FastModeState = 'off' | 'cooldown' | 'on'
 
 /** Reasoning effort the model puts into a turn. Mirrors the Claude Agent
- * SDK's first-class `effort` option. `xhigh` is Opus-only — the SDK falls
- * back to `high` on other models, so we only offer it where it's real (see
- * EFFORTS_BY_MODEL). `max` is intentionally not exposed: its token/time cost
+ * SDK's first-class `effort` option. `xhigh` is only on the higher tiers
+ * (Sonnet 5, Opus 4.8, Fable 5) — the SDK falls back to `high` on models
+ * without it, so we only offer it where it's real (see EFFORTS_BY_MODEL).
+ * `max` is intentionally not exposed: its token/time cost
  * is disproportionate for a writing tool. */
 export type ChatEffort = 'low' | 'medium' | 'high' | 'xhigh'
 
@@ -92,9 +98,12 @@ export const CHAT_EFFORTS: readonly ChatEffort[] = ['low', 'medium', 'high', 'xh
  * one ring per entry, so this also drives how many circles the icon shows. */
 export const EFFORTS_BY_MODEL: Record<ChatModel, readonly ChatEffort[]> = {
   'claude-haiku-4-5': ['low', 'medium', 'high'],
-  'claude-sonnet-4-6': ['low', 'medium', 'high'],
+  // Sonnet 5 is the first Sonnet-tier model to expose the extra `xhigh` gear;
+  // Sonnet 4.6 tops out at `high`.
+  'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh'],
   'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh'],
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh'],
+  'claude-sonnet-4-6': ['low', 'medium', 'high'],
 }
 
 export function effortsForModel(model: ChatModel): readonly ChatEffort[] {

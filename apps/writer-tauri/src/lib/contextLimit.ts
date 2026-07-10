@@ -5,8 +5,9 @@
 // migration lands (STEP 3), query.getContextUsage() returns the authoritative
 // `maxTokens` and this estimate is no longer the source of truth.
 //
-// Sonnet 4.6 / Opus 4.8 / Fable 5 expose a native 1M-token window at standard
-// pricing (no beta flag, no long-context premium); Haiku 4.5 tops out at 200k.
+// Sonnet 5 / Sonnet 4.6 / Opus 4.8 / Fable 5 expose a native 1M-token window at
+// standard pricing (no beta flag, no long-context premium); Haiku 4.5 tops out
+// at 200k.
 // Unknown ids fall back to the conservative 200k so the gauge never
 // under-reports how full the window is.
 
@@ -17,6 +18,7 @@ const MILLION = 1_000_000
  * sidecar; anything else uses DEFAULT_CONTEXT_LIMIT. */
 const CONTEXT_LIMITS: Record<string, number> = {
   'claude-haiku-4-5': 200_000,
+  'claude-sonnet-5': MILLION,
   'claude-sonnet-4-6': MILLION,
   'claude-opus-4-8': MILLION,
   'claude-fable-5': MILLION,
