@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, access } from 'node:fs/promises'
 import { join, normalize, relative, isAbsolute, resolve as resolvePath } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
@@ -147,6 +147,35 @@ function sandboxLockdown() {
     // block lives in secretDenyRules().
     filesystem: { denyRead: secretPaths() },
   }
+}
+
+/** True if the SDK has persisted a session with this id to disk. The SDK writes
+ * each session as `~/.claude/projects/<cwd-encoded>/<sessionId>.jsonl`; the
+ * <cwd-encoded> segment mangles the path (slashes → dashes, and dotfiles too),
+ * so rather than reproduce that encoding we scan the project dirs for the
+ * `<sessionId>.jsonl` file — the id is a UUID, so a match is unambiguous.
+ * Used by the AUTH-retry path to decide resume-vs-recreate: we only `resume`
+ * a session that actually exists, so a first attempt that 401'd before any
+ * session file was written falls back to a clean create instead of erroring on
+ * a missing session. Best-effort: any fs error reads as "not persisted". */
+async function sessionPersisted(sessionId) {
+  if (!sessionId) return false
+  const base = join(homedir(), '.claude', 'projects')
+  let dirs
+  try {
+    dirs = await readdir(base)
+  } catch {
+    return false
+  }
+  for (const dir of dirs) {
+    try {
+      await access(join(base, dir, `${sessionId}.jsonl`))
+      return true
+    } catch {
+      // Not in this project dir — keep looking.
+    }
+  }
+  return false
 }
 
 /** Resolve a model-supplied file_path (absolute OR vault-relative) to an absolute
@@ -1490,6 +1519,17 @@ export class Server {
           this.emit(notification('auth/refreshNeeded', { runId }))
           try {
             await this.#waitForTokenUpdate(5000)
+            // Continue the session instead of recreating it: if attempt 1 got
+            // far enough to persist the session, switch create→resume so we
+            // pick up after the last saved turn (no re-streamed/duplicated
+            // output, no same-id create collision — R2/R3). We only do this
+            // when the session file is actually on disk; otherwise there's
+            // nothing to resume, so we recreate exactly as before. Worst case
+            // is unchanged from today (retry fails → 2-attempt cap).
+            if (options.sessionId && (await sessionPersisted(options.sessionId))) {
+              options.resume = options.sessionId
+              delete options.sessionId
+            }
             continue // attempt 2 with the rotated token
           } catch {
             // No fresh token in time; fall through to error.
