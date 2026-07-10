@@ -12,22 +12,29 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState } from 'react'
-import { IconCheck, IconPencil } from '@tabler/icons-react'
+import { IconCheck, IconPencil, IconSearch, IconFileText, IconQuote } from '@tabler/icons-react'
 import { InlineCard } from '@/chat/ui/InlineCard'
+import { ActivityRow } from '@/chat/parts/ActivityRow'
+import { ProcessGroup } from '@/chat/parts/ProcessGroup'
 import { cn } from '@/lib/utils'
 import { SuggestionSwap, type SwapState } from '@/profile/ui/onboarding/SuggestionSwap'
 
 const SCRIPT = {
   // What the user asks for (typed out in beat 1).
   request: 'Have I written about solitude before?',
-  // The librarian's reasoning, revealed one line at a time (beat 2).
+  // The librarian's reasoning, revealed one line at a time (beat 2). Each line
+  // carries its own icon (search → find → quote).
   thinking: [
-    'Searching 1,240 notes for “solitude”…',
-    'Found it in Quiet Mornings (2021)',
-    'Your own phrasing fits here',
+    { icon: IconSearch, text: 'Searching 1,240 notes for “solitude”…' },
+    { icon: IconFileText, text: 'Found it in Quiet Mornings (2021)' },
+    { icon: IconQuote, text: 'Your own phrasing fits here' },
   ],
+  // Folded-turn summary (shown once the thinking settles).
+  summary: 'Searched 1,240 notes → Quiet Mornings',
   // The note being edited (beats 3–5).
   file: 'essays/solitude.md',
+  // Caption under the diff — how the AI describes the edit.
+  caption: 'Rewrote the opening in your own words, from Quiet Mornings (2021).',
   // The edit as a line diff. `prefix` is unchanged (stays plain); only the tail
   // swaps: `before` (old, red) → `after` (new, green — from the user's own past
   // essay).
@@ -72,9 +79,12 @@ export function OnboardingDemo() {
     return () => clearInterval(id)
   }, [beat])
 
+  // Reserve the fully-expanded height (min-h) and centre THAT block, so the
+  // content builds top-down and lands centred once everything is shown — instead
+  // of the whole thing growing out from the middle each beat.
   return (
-    <div className="flex h-full w-full items-center justify-center p-6">
-      <div className="w-full max-w-[300px] space-y-3">
+    <div className="flex h-full w-full items-center justify-center px-6">
+      <div className="w-full max-w-[300px] min-h-[280px] space-y-5">
         {/* Request bubble — appears first, stays for the rest of the loop. */}
         <div
           className={cn(
@@ -85,26 +95,27 @@ export function OnboardingDemo() {
           {SCRIPT.request}
         </div>
 
-        {/* Thinking — the librarian's reasoning, one line at a time. */}
-        {beat === 'thinking' && (
-          <div className="space-y-1.5 text-footnote text-muted-foreground">
-            {SCRIPT.thinking.slice(0, revealed).map((line) => (
+        {/* Process — the librarian's reasoning. Streams open (one row at a time)
+            during 'thinking', then folds into a summary dropdown once the answer
+            begins, exactly like a settled assistant turn. */}
+        {beat !== 'request' && (
+          <ProcessGroup summary={SCRIPT.summary} isStreaming={beat === 'thinking'}>
+            {(beat === 'thinking' ? SCRIPT.thinking.slice(0, revealed) : SCRIPT.thinking).map((t) => (
               <div
-                key={line}
-                className="flex items-start gap-1.5 duration-300 animate-in fade-in-0 slide-in-from-bottom-1"
+                key={t.text}
+                className="duration-300 animate-in fade-in-0 slide-in-from-bottom-1"
               >
-                <span className="mt-1.5 size-1 shrink-0 rounded-full bg-muted-foreground/60" />
-                <span>{line}</span>
+                <ActivityRow icon={<t.icon size={15} stroke={1.75} />} label={t.text} />
               </div>
             ))}
-          </div>
+          </ProcessGroup>
         )}
 
         {/* Editor with the inline suggestion (red strike → green insert), then
             applied — same note surface throughout so it reads as one edit. The
             Keep/Reject actions sit OUTSIDE the note, below it. */}
         {(suggesting || beat === 'done') && (
-          <div className="space-y-2 duration-500 animate-in fade-in-0">
+          <div className="space-y-3 duration-500 animate-in fade-in-0">
             <InlineCard className="text-footnote">
               <div className="flex items-center gap-1.5 border-b border-border px-3 py-2 text-muted-foreground">
                 {beat === 'done' ? (
@@ -123,6 +134,10 @@ export function OnboardingDemo() {
                 />
               </p>
             </InlineCard>
+
+            {/* The assistant's written answer — prose OUTSIDE the tool card, the
+                way the SDK streams model output alongside tool results. */}
+            <p className="text-[15px] leading-relaxed text-foreground">{SCRIPT.caption}</p>
           </div>
         )}
       </div>

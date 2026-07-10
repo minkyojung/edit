@@ -9,7 +9,9 @@
 // (the loopback sign-in), `connecting`, and any `error`. The /onboard preview
 // passes no-ops.
 
+import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { Button } from '@/components/ui/button'
+import { OnboardingDemo } from '@/profile/ui/onboarding/OnboardingDemo'
 
 interface Props {
   onContinue: () => void
@@ -21,25 +23,52 @@ interface Props {
 export function ConnectPanel({ onContinue, connecting, error }: Props) {
   return (
     <div className="grid h-full w-full grid-cols-2 bg-background">
-      {/* Left: copy + actions anchored to the top. No brand mark past the
-          welcome step — the flow stays focused on the single action. */}
-      <div className="flex h-full flex-col justify-start px-4 py-4">
-        <h1 className="mb-3 text-2xl font-semibold tracking-tight text-foreground">
-          Sign in to Octave
-        </h1>
-        <p className="mb-6 text-body leading-relaxed text-muted-foreground">
-          Use your Google account to personalize your workspace.
-        </p>
-        <Button className="w-full gap-2 rounded-2xl" onClick={onContinue} disabled={connecting}>
-          <GoogleGlyph />
-          {connecting ? 'Waiting for Google…' : 'Continue with Google'}
-        </Button>
-        {error && <p className="mt-3 text-footnote text-destructive">{error}</p>}
+      {/* Left: headline + copy anchored top, CTA pinned bottom — matches the
+          WelcomePanel layout. */}
+      <div className="flex h-full flex-col justify-between px-8 py-8">
+        <div>
+          <h1 className="mb-4 text-3xl font-bold leading-tight tracking-tight text-foreground">
+            Sign in to Octave
+          </h1>
+          <p className="text-body leading-relaxed text-muted-foreground">
+            Use your Google account to personalize your workspace.
+          </p>
+        </div>
+        <div>
+          <Button
+            className="h-12 w-full gap-2 rounded-xl"
+            onClick={onContinue}
+            disabled={connecting}
+          >
+            <GoogleGlyph />
+            {connecting ? 'Waiting for Google…' : 'Continue with Google'}
+          </Button>
+          {error && <p className="mt-3 text-footnote text-destructive">{error}</p>}
+          <p className="mt-3 text-center text-footnote leading-relaxed text-muted-foreground/70">
+            By continuing, you agree to our{' '}
+            <button
+              type="button"
+              onClick={() => void openUrl('https://octave.run/terms')}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              Terms
+            </button>{' '}
+            and{' '}
+            <button
+              type="button"
+              onClick={() => void openUrl('https://octave.run/privacy')}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              Privacy Policy
+            </button>
+            .
+          </p>
+        </div>
       </div>
 
-      {/* Right: preview panel (placeholder — swap for a real image later) */}
-      <div className="flex items-center justify-center bg-gradient-to-br from-muted/60 to-muted/20">
-        <span className="text-footnote text-muted-foreground/60">Preview image</span>
+      {/* Right: same auto-playing product demo as the welcome step. */}
+      <div className="bg-gradient-to-br from-muted/60 to-muted/20">
+        <OnboardingDemo />
       </div>
     </div>
   )

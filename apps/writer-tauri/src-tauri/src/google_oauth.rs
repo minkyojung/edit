@@ -39,6 +39,9 @@ fn client_secret() -> &'static str {
 const AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v3/userinfo";
+// Cloudflare Worker that relays the sign-up to Loops (holds the Loops key). It
+// re-verifies the Google token itself, so we just forward the access token.
+const SIGNUP_RELAY_URL: &str = "https://loops-relay.flowcap.workers.dev";
 const SCOPE: &str = "openid email profile";
 const STORAGE_NAME: &str = "google-oauth";
 
@@ -364,6 +367,33 @@ async fn fetch_profile(access_token: &str) -> Result<GoogleProfile, String> {
     resp.json::<GoogleProfile>()
         .await
         .map_err(|e| format!("userinfo parse failed: {e}"))
+}
+
+// Tell the Loops relay a user just signed up (so the welcome email goes out).
+// Called once from onboarding after a successful Google sign-in — NOT from the
+// settings reconnect path, so re-connecting never re-sends the welcome. Sends
+// the stored access token (the relay re-verifies it with Google) + display name.
+// Best-effort: the caller fires this and ignores the result, so a relay outage
+// never blocks or breaks onboarding.
+#[tauri::command]
+pub async fn notify_signup(app: AppHandle) -> Result<(), String> {
+    let Some(stored) = load_stored(&app)? else {
+        return Ok(()); // not signed in — nothing to relay
+    };
+    let resp = reqwest::Client::new()
+        .post(SIGNUP_RELAY_URL)
+        .json(&serde_json::json!({
+            "token": stored.access_token,
+            "name": stored.profile.name,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("signup relay request failed: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        return Err(format!("signup relay {status}: {}", resp.text().await.unwrap_or_default()));
+    }
+    Ok(())
 }
 
 #[tauri::command]

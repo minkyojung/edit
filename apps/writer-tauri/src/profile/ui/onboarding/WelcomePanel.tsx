@@ -6,8 +6,11 @@
 // access — that's where it lands. The real launcher advances to the folder step
 // on "Get started"; the /onboard preview renders it with a no-op.
 
+import { IconCheck } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { OnboardingDemo } from '@/profile/ui/onboarding/OnboardingDemo'
+
+const FEATURES = ['Local only', 'Plain Markdown', 'Grounded in your notes', 'Powered by your AI subscription']
 
 interface Props {
   onGetStarted: () => void
@@ -20,13 +23,19 @@ export function WelcomePanel({ onGetStarted }: Props) {
           (justify-between). Generous padding gives the content room to breathe. */}
       <div className="flex h-full flex-col justify-between px-8 py-8">
         <div>
-          <h1 className="mb-4 text-3xl font-bold leading-tight tracking-tight text-foreground">
-            Delegate to yourself.
+          <h1 className="mb-8 text-3xl font-bold leading-tight tracking-tight text-foreground">
+            The more you write,
+            <br />
+            the sharper it edits.
           </h1>
-          <p className="text-body leading-relaxed text-muted-foreground">
-            Years of your writing — Obsidian, Substack, notes — become an AI that
-            thinks in your voice and takes work off your hands.
-          </p>
+          <ul className="space-y-2 text-body text-muted-foreground">
+            {FEATURES.map((f) => (
+              <li key={f} className="flex items-center gap-2">
+                <IconCheck size={16} stroke={2} className="shrink-0 text-muted-foreground" />
+                {f}
+              </li>
+            ))}
+          </ul>
         </div>
         <Button className="h-12 w-full rounded-xl" onClick={onGetStarted}>
           Get started

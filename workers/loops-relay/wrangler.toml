@@ -1,0 +1,12 @@
+name = "loops-relay"
+main = "src/index.ts"
+compatibility_date = "2024-11-06"
+
+[vars]
+# The Loops transactional email id for the welcome email. Create the email in
+# Loops (Transactional → new → publish), then paste its transactionalId here.
+# Not a secret.
+LOOPS_WELCOME_ID = "cmrdbrdgv13n30jx6bm9f16xv"
+
+# LOOPS_API_KEY is a SECRET — do NOT put it here. Set it with:
+#   npx wrangler secret put LOOPS_API_KEY

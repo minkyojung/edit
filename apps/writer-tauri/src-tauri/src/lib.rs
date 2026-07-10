@@ -338,6 +338,7 @@ pub fn run() {
             google_oauth::get_google_account,
             google_oauth::disconnect_google,
             google_oauth::get_google_token,
+            google_oauth::notify_signup,
             claude_sidecar::commands::claude_chat_start,
             claude_sidecar::commands::claude_list_models,
             claude_sidecar::commands::claude_chat_cancel,

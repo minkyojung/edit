@@ -13,6 +13,7 @@
 // folder-pick / project-open behaviour.
 
 import { useCallback, useEffect, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { pickVault } from '@/lib/vaultPicker'
 import { isTranslationProject } from '@/lib/translationProject'
@@ -119,6 +120,11 @@ export function OnboardingLauncher() {
       setConnectError(null)
       try {
         await connectGoogle()
+        // Fire the sign-up relay (welcome email) — best-effort, never blocks the
+        // flow. Onboarding-only, so re-connecting from settings won't re-welcome.
+        void invoke('notify_signup').catch((e) =>
+          console.warn('[onboarding] signup relay failed', e),
+        )
         setStep('folder')
       } catch (e) {
         console.error('[onboarding] google sign-in failed', e)
