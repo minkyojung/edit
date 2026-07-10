@@ -684,7 +684,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
             />
             <p className="text-title-3 font-semibold text-foreground">Ask anything</p>
             <p className="max-w-xs text-center text-body text-muted-foreground">
-              Type a message or try a slash command like /proofread.
+              Type a message, or type / for commands.
             </p>
           </div>
         )}
