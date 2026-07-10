@@ -19,8 +19,19 @@ use tauri::{Emitter, Manager};
 // + IDB. Removing the spawn eliminates the `[collab] failed to derive
 // markdown` log class and shaves ~0.5s off cold boot.
 
+/// Quit funnel. Every quit route (⌘Q, dock quit, the frontend confirm dialog)
+/// ends here, so this is where we tear the sidecars down *before* exiting.
+/// `app.exit(0)` ends in `std::process::exit`, which skips `Drop` — so
+/// `kill_on_drop` never fires and the Node sidecars (plus their `claude` CLI
+/// grandchildren) would be orphaned. Awaiting a graceful shutdown first lets
+/// each sidecar reap its CLI child and flush its session (resume stays intact),
+/// then we exit cleanly.
 #[tauri::command]
-fn app_quit(app: tauri::AppHandle) {
+async fn app_quit(app: tauri::AppHandle) {
+    use claude_sidecar::manager::SidecarManager;
+    if let Some(mgr) = app.try_state::<std::sync::Arc<SidecarManager>>() {
+        mgr.shutdown_all(std::time::Duration::from_millis(700)).await;
+    }
     app.exit(0);
 }
 

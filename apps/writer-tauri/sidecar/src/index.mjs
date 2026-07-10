@@ -45,13 +45,13 @@ process.stdin.on('data', (chunk) => {
   }
 })
 
-process.stdin.on('end', () => {
-  // Parent closed our stdin — quit gracefully.
-  process.exit(0)
-})
-
-process.on('SIGTERM', () => process.exit(0))
-process.on('SIGINT', () => process.exit(0))
+// Graceful teardown on every exit trigger: abort in-flight chats so the SDK
+// reaps its `claude` CLI child (no orphan) and flushes the session (resume
+// stays intact), then exit. Bare `process.exit(0)` skipped that, leaving the
+// grandchild running when the host killed us.
+process.stdin.on('end', () => server.shutdown())
+process.on('SIGTERM', () => server.shutdown())
+process.on('SIGINT', () => server.shutdown())
 
 // Last-chance diagnostics. Unhandled errors in async code paths inside the
 // SDK / our handlers would otherwise tear down the process with no stderr

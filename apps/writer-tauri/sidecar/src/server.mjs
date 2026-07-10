@@ -1639,10 +1639,21 @@ export class Server {
   }
 
   async #handleShutdown(id) {
+    if (id !== undefined) this.emit(response(id, null))
+    this.shutdown()
+  }
+
+  /** Graceful teardown, reused by the `shutdown` RPC (host quit) AND the
+   * process-signal handlers in index.mjs. Aborting each in-flight chat lets the
+   * SDK tear down its `claude` CLI subprocess (so it isn't orphaned) and flush
+   * session state to ~/.claude/projects (so resume stays intact), then we exit
+   * after a short flush window. Idempotent. */
+  shutdown() {
+    if (this.shuttingDown) return
     this.shuttingDown = true
     for (const [, rec] of this.activeChats) rec.controller.abort()
-    if (id !== undefined) this.emit(response(id, null))
-    // Give in-flight chats a moment to flush their CANCELLED notifications.
+    // Give in-flight chats a moment to flush their CANCELLED notifications and
+    // let the SDK reap the CLI child before we exit.
     setTimeout(() => process.exit(0), 250)
   }
 }

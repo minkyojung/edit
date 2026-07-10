@@ -190,6 +190,38 @@ impl SidecarManager {
         self.title.read().await.clone()
     }
 
+    /// Gracefully tears down both sidecars on app quit. We send each a
+    /// `shutdown` notification so its Node process aborts in-flight chats —
+    /// which lets the SDK reap its `claude` CLI grandchild (no orphan) and
+    /// flush the session to ~/.claude/projects (so resume stays intact) —
+    /// then wait a bounded grace for the processes to actually exit.
+    ///
+    /// This is the graceful path, and it's the fix for the observed orphans:
+    /// app quit ends in `std::process::exit`, which skips `Drop` so
+    /// `kill_on_drop` never fires. Telling the sidecars to leave *before* we
+    /// exit is what tears the process tree down cleanly. After the grace we
+    /// hard-kill each process group as a backstop, so a hung sidecar (or a CLI
+    /// grandchild the graceful path didn't reap in time) still can't outlive us.
+    pub async fn shutdown_all(&self, grace: std::time::Duration) {
+        let chat = self.chat_client().await;
+        let title = self.title_client().await;
+
+        // Fire-and-forget: a notification has no id, so the Node router runs its
+        // graceful shutdown and exits without owing us a response.
+        let _ = chat.notify("shutdown", None).await;
+        let _ = title.notify("shutdown", None).await;
+
+        // Let the graceful exit + session flush complete before the caller
+        // proceeds to process exit. The Node side flushes then exits within
+        // ~250ms; the grace gives margin without stalling quit noticeably.
+        tokio::time::sleep(grace).await;
+
+        // Backstop: SIGKILL each process group. No-op for the already-exited
+        // common case; the guarantee for the hung / slow-reap case.
+        chat.hard_kill();
+        title.hard_kill();
+    }
+
     /// Read the latest OAuth token (auto-refreshing if near expiry). A read
     /// failure logs and yields None rather than propagating — callers treat
     /// "no token" and "couldn't read the token" the same (chat fails cleanly).
