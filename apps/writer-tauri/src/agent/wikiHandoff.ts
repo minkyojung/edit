@@ -11,6 +11,16 @@
 import { runIntake } from '@/agent/intake'
 import type { RunChatResult } from '@/agent/chat/types'
 
+// Role-framed routing brain (was the `/chat-to-wiki` command body). Leans on the
+// vault's CLAUDE.md — injected alongside — for the mechanics (index navigation,
+// append via propose_*, [[...]] links); this states the agent's role and WHAT to
+// keep, not the procedure. The chat content arrives as the appended DOCUMENT.
+const CHAT_TO_WIKI_BRAIN = `You are the wiki maintainer, tending the user's second brain. Your job right now: take the message below — content the user filed from a chat — and move its durable knowledge into the wiki, per the vault's CLAUDE.md schema and editing rules.
+
+Keep only what's worth re-finding later — a specific, non-obvious fact about an entity (a person, book, project, idea), or a concept, framework, or method. Drop the chat narrative, the assistant's own phrasing, and transient remarks. Skip anything the wiki already holds.
+
+Propose your additions through the approval queue; if nothing is durable, propose nothing.`
+
 export interface ChatHandoffArgs {
   /** Assistant or user message body to file. Empty / whitespace-only inputs
    * short-circuit with a null result. */
@@ -30,12 +40,12 @@ export async function runChatToWikiHandoff(
   const trimmed = args.messageContent.trim()
   if (!trimmed) return null
 
-  // Native: expand the `/chat-to-wiki` plugin command into the user turn; the
-  // chat content rides along as the appended DOCUMENT block (no path argument —
-  // the command body reads "the document below").
+  // The routing brain rides as the system prompt; the chat content rides along
+  // as the appended DOCUMENT block (the brain reads "the message below").
   return runIntake({
     slug: args.threadId,
-    prompt: '/chat-to-wiki',
+    systemPrompt: CHAT_TO_WIKI_BRAIN,
+    prompt: 'File the durable knowledge from the message below into the wiki.',
     content: trimmed,
   })
 }

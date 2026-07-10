@@ -16,12 +16,8 @@ describe('bundled defaults', () => {
     expect(undo!.body).toContain("git log --grep='(ai):'")
   })
 
-  it('loads the three routine commands with $ARGUMENTS / createdAt', () => {
-    expect(DEFAULT_COMMANDS.map((c) => c.name)).toEqual([
-      'chat-to-wiki',
-      'daily-ingest',
-      'organize',
-    ])
+  it('ships only the organize routine (chat-to-wiki / daily-ingest are now inline brains)', () => {
+    expect(DEFAULT_COMMANDS.map((c) => c.name)).toEqual(['organize'])
     const organize = DEFAULT_COMMANDS.find((c) => c.name === 'organize')!
     expect(organize.body).toContain('$ARGUMENTS')
     expect(organize.body).toContain('createdAt')

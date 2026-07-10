@@ -12,10 +12,9 @@ import { listRoutines } from '@/lib/routinesLib'
 import type { LoadedCommand } from '@/chat/commands'
 
 /** Routine commands that exist in the vault but are NOT offered in the chat
- * composer. `chat-to-wiki` operates on chat content (fired by the background
- * handoff), not a note the user is looking at, so a manual `/chat-to-wiki` has
- * nothing to act on — the ambient "proactive memory" behavior covers that job. */
-const COMPOSER_HIDDEN = new Set(['chat-to-wiki'])
+ * composer. Currently none — kept as the hook for routines that should run only
+ * via a background handoff rather than a user-typed `/command`. */
+const COMPOSER_HIDDEN = new Set<string>()
 
 /** Adapt a vault routine into a palette command. `kind` / `scope` / `body` are
  * unused for vault commands (they run natively via the SDK), so they carry
