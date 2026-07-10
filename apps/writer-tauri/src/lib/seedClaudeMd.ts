@@ -11,8 +11,10 @@
 // Vault selection is required. Without one we silently skip; the
 // next boot retries once the user has picked a folder.
 
+import { invoke } from '@tauri-apps/api/core'
 import { vaultFileExists, writeVaultFile } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
+import { todayLocalDate } from '@/hooks/useDocMeta'
 import { DEFAULT_CLAUDE_MD } from '@/agent/defaults'
 
 const CLAUDE_MD_REL = 'CLAUDE.md'
@@ -43,6 +45,45 @@ export async function seedWelcomeNote(): Promise<void> {
   if (await vaultFileExists(WELCOME_REL)) return
   await writeVaultFile(WELCOME_REL, WELCOME_NOTE)
   console.log('[seed Welcome.md] wrote starter note to fresh vault')
+}
+
+/** Seed today's daily note into a brand-new vault with a short, personal
+ * welcome, so the timeline opens on "your day already started" instead of
+ * an empty axis. Same freshness gate as seedWelcomeNote (CLAUDE.md absent
+ * = never-opened vault) — so it MUST run BEFORE seedClaudeMd. Idempotent:
+ * skips if today's daily already exists. The daily is recognized on the
+ * next scan purely by its `daily/<date>.md` path (no sidecar needed). */
+export async function seedFirstDaily(): Promise<void> {
+  const vault = getActiveVaultPath()
+  if (!vault) return
+  if (await vaultFileExists(CLAUDE_MD_REL)) return // not a fresh vault
+  const rel = `daily/${todayLocalDate()}.md`
+  if (await vaultFileExists(rel)) return
+  await writeVaultFile(rel, firstDailyNote(await firstName()))
+  console.log('[seed daily] wrote welcome daily to fresh vault')
+}
+
+/** The signed-in Google display name's first token, or null when there's
+ * no account (the user skipped sign-in). Best-effort — a lookup failure
+ * just drops the personalization. */
+async function firstName(): Promise<string | null> {
+  try {
+    const acc = await invoke<{ name: string | null }>('get_google_account')
+    const full = acc?.name?.trim()
+    return full ? full.split(/\s+/)[0] : null
+  } catch {
+    return null
+  }
+}
+
+function firstDailyNote(name: string | null): string {
+  const hello = name ? `Welcome, ${name}.` : 'Welcome.'
+  return `${hello} Today is where it begins.
+
+This is your **daily note**. From now on, whenever you write something or save an article, it lands in the note for that day. No setup. Each day fills itself in as you go.
+
+Start below, or open the chat and ask the AI for a hand.
+`
 }
 
 const WELCOME_NOTE = `# Welcome to Octave

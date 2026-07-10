@@ -32,7 +32,7 @@ import { VaultLauncher } from '@/components/VaultLauncher'
 import { OnboardingLauncher } from '@/components/OnboardingLauncher'
 import { resolveWindowMode } from '@/hooks/useWindowModeSync'
 import { exists } from '@tauri-apps/plugin-fs'
-import { seedClaudeMd, seedWelcomeNote } from '@/lib/seedClaudeMd'
+import { seedClaudeMd, seedWelcomeNote, seedFirstDaily } from '@/lib/seedClaudeMd'
 import { seedRoutines } from '@/lib/routinesLib'
 import { seedAgents } from '@/lib/agentsLib'
 import { seedSkills } from '@/lib/skillsLib'
@@ -56,6 +56,14 @@ async function seedWikiDefaults(): Promise<void> {
     await seedWelcomeNote()
   } catch (err) {
     console.warn('[boot] Welcome.md seed failed', err)
+  }
+  // Seed today's daily with a personal welcome (fresh vaults only, before
+  // seedClaudeMd — same CLAUDE.md-absence freshness gate). Gives the
+  // timeline a first entry instead of an empty axis.
+  try {
+    await seedFirstDaily()
+  } catch (err) {
+    console.warn('[boot] first daily seed failed', err)
   }
   // Seed `CLAUDE.md` at the vault root if missing — the schema document the
   // agent reads every chat. Idempotent by file existence; never overwrites
