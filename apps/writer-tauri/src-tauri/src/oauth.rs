@@ -220,7 +220,17 @@ struct RefreshRequest<'a> {
 }
 
 async fn do_refresh(app: &AppHandle, refresh_token: &str) -> Result<TokenResponse, String> {
-    let resp = reqwest::Client::new()
+    // Bounded timeouts are load-bearing here: do_refresh runs while holding
+    // REFRESH_LOCK, so a POST that connects but never responds (flaky network)
+    // would block EVERY get_claude_token caller — every chat/title/models start
+    // hangs with no error path. On timeout we fail into the existing
+    // clear-and-return-None path instead. reqwest defaults to no timeout.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("refresh client build failed: {e}"))?;
+    let resp = client
         .post(TOKEN_URL)
         .json(&RefreshRequest {
             grant_type: "refresh_token",
