@@ -1,4 +1,5 @@
 import { markdownToHtml } from './markdownToHtml'
+import { embedLocalImages } from './embedLocalImages'
 
 // Copy markdown to the clipboard in BOTH flavors so it survives a paste
 // anywhere. Rich editors (Substack, Notion, Google Docs, CodeMirror,
@@ -15,7 +16,9 @@ export async function copyAsRichText(markdown: string): Promise<boolean> {
   const md = markdown.trim()
   if (!md) return false
 
-  const html = markdownToHtml(md)
+  // Inline vault-local images so they survive the paste; remote images
+  // and everything else pass through untouched.
+  const html = await embedLocalImages(markdownToHtml(md))
   try {
     await navigator.clipboard.write([
       new ClipboardItem({
