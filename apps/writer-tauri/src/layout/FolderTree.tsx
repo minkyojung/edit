@@ -27,8 +27,8 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core'
 import {
-  IconChevronRight,
   IconFolder,
+  IconFolderOpen,
   IconPhoto,
   IconFileTypePdf,
   IconMusic,
@@ -372,12 +372,29 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
                   aria-label={isOpen ? 'Collapse' : 'Expand'}
                   onClick={(e: MouseEvent) => e.stopPropagation()}
                 >
-                  <IconChevronRight
-                    size={16}
-                    stroke={1.75}
-                    className="transition-transform"
-                    style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
-                  />
+                  <span
+                    className="relative block size-[18px]"
+                    style={{ perspective: '80px' }}
+                  >
+                    <IconFolder
+                      stroke={1.75}
+                      className="absolute inset-0 text-muted-foreground transition-all duration-150 ease-out"
+                      style={{
+                        transformOrigin: 'center top',
+                        transform: isOpen ? 'rotateX(-35deg)' : 'rotateX(0deg)',
+                        opacity: isOpen ? 0 : 1,
+                      }}
+                    />
+                    <IconFolderOpen
+                      stroke={1.75}
+                      className="absolute inset-0 text-muted-foreground transition-all duration-150 ease-out"
+                      style={{
+                        transformOrigin: 'center top',
+                        transform: isOpen ? 'rotateX(0deg)' : 'rotateX(35deg)',
+                        opacity: isOpen ? 1 : 0,
+                      }}
+                    />
+                  </span>
                 </TreeRowLead>
               </CollapsibleTrigger>
               {isEditing ? (
