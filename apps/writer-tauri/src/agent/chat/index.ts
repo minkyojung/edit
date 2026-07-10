@@ -652,11 +652,21 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           const payloadRl = e.payload.rateLimit
           const snapshotRl = parser.rateLimitInfo()
           if (e.payload.code === 'RATE_LIMIT' && (payloadRl || snapshotRl)) {
-            // SDK reports `resetsAt` in seconds since epoch. The UI works in ms
-            // (Date.now() math) so we normalize at the boundary.
-            const resetsAtSec = payloadRl?.resetsAt ?? snapshotRl?.resetsAt
+            // SDK reports `resetsAt` in seconds since epoch (its type leaves the
+            // unit undocumented); the UI works in ms (Date.now() math). Normalize
+            // by magnitude so we're correct either way: a seconds value (~1.7e9)
+            // is scaled ×1000, but an already-ms value (~1.7e12) is passed through
+            // — a seconds epoch won't cross 1e12 until the year ~33658, so the
+            // threshold cleanly separates the two.
+            const resetsAtRaw = payloadRl?.resetsAt ?? snapshotRl?.resetsAt
+            const resetsAt =
+              typeof resetsAtRaw !== 'number'
+                ? undefined
+                : resetsAtRaw > 1e12
+                  ? resetsAtRaw
+                  : resetsAtRaw * 1000
             ;(err as Error & { rateLimit?: ChatErrorRateLimit }).rateLimit = {
-              resetsAt: typeof resetsAtSec === 'number' ? resetsAtSec * 1000 : undefined,
+              resetsAt,
               rateLimitType: payloadRl?.rateLimitType ?? snapshotRl?.rateLimitType,
               overageDisabledReason: payloadRl?.overageDisabledReason,
             }
