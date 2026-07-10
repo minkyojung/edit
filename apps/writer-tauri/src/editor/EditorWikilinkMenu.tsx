@@ -4,7 +4,7 @@
 // product. Pure presentational: `wikilinkMenu.tsx` owns state + positioning.
 
 import { useEffect, useRef } from 'react'
-import { Link2, Plus } from 'lucide-react'
+import { FileText, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { WikilinkItem } from './wikilinkMenu'
 
@@ -29,7 +29,7 @@ export function EditorWikilinkMenu({ items, selectedIndex, onSelect, onHover }: 
     <div className="w-72 overflow-hidden rounded-xl border border-border bg-popover shadow-md">
       <div ref={listRef} className="max-h-72 overflow-y-auto p-1">
         {items.map((it, i) => {
-          const Icon = it.create ? Plus : Link2
+          const Icon = it.create ? Plus : FileText
           const selected = i === selectedIndex
           return (
             <button
