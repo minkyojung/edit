@@ -6,6 +6,7 @@
 // can be layered on later). Pure view: the launcher wires the pick; the /onboard
 // preview renders it with a no-op.
 
+import type { ReactNode } from 'react'
 import { IconFolder } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 
@@ -14,12 +15,15 @@ interface Props {
   /** True while a folder is being dragged over the window — highlights the drop
    * target. Wired by the launcher; the /onboard preview leaves it off. */
   dragActive?: boolean
+  /** Step-progress indicator, rendered (centred) above the headline. */
+  progress?: ReactNode
 }
 
-export function FolderPanel({ onChooseFolder, dragActive }: Props) {
+export function FolderPanel({ onChooseFolder, dragActive, progress }: Props) {
   return (
     <div className="flex h-full w-full items-center justify-center bg-background px-8">
       <div className="w-full max-w-[420px] text-center">
+        {progress && <div className="mb-6 flex justify-center">{progress}</div>}
         <h1 className="mb-3 text-3xl font-bold leading-tight tracking-tight text-foreground">
           Where should your notes live?
         </h1>

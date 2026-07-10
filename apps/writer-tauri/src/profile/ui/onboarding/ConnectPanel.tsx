@@ -9,6 +9,7 @@
 // (the loopback sign-in), `connecting`, and any `error`. The /onboard preview
 // passes no-ops.
 
+import type { ReactNode } from 'react'
 import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { Button } from '@/components/ui/button'
 import { OnboardingDemo } from '@/profile/ui/onboarding/OnboardingDemo'
@@ -18,15 +19,18 @@ interface Props {
   onLater: () => void
   connecting?: boolean
   error?: string | null
+  /** Step-progress indicator, rendered above the headline. */
+  progress?: ReactNode
 }
 
-export function ConnectPanel({ onContinue, connecting, error }: Props) {
+export function ConnectPanel({ onContinue, connecting, error, progress }: Props) {
   return (
     <div className="grid h-full w-full grid-cols-2 bg-background">
       {/* Left: headline + copy anchored top, CTA pinned bottom — matches the
           WelcomePanel layout. */}
       <div className="flex h-full flex-col justify-between px-8 py-8">
         <div>
+          {progress && <div className="mb-7">{progress}</div>}
           <h1 className="mb-4 text-3xl font-bold leading-tight tracking-tight text-foreground">
             Sign in to Octave
           </h1>

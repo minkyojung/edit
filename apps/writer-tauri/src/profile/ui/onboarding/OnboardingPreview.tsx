@@ -18,6 +18,7 @@ import { FolderPanel } from '@/profile/ui/onboarding/FolderPanel'
 import { DonePanel } from '@/profile/ui/onboarding/DonePanel'
 import { Button } from '@/components/ui/button'
 import { ONBOARDING_W, ONBOARDING_H } from '@/profile/ui/onboarding/onboardingWindow'
+import { StepDots } from '@/profile/ui/onboarding/StepDots'
 
 const noop = () => {}
 
@@ -25,17 +26,19 @@ const STEPS: { key: string; label: string; render: () => ReactNode }[] = [
   {
     key: 'welcome',
     label: 'Welcome + trust',
-    render: () => <WelcomePanel onGetStarted={noop} />,
+    render: () => <WelcomePanel onGetStarted={noop} progress={<StepDots step="welcome" />} />,
   },
   {
     key: 'connect',
     label: 'Sign in with Google',
-    render: () => <ConnectPanel onContinue={noop} onLater={noop} />,
+    render: () => (
+      <ConnectPanel onContinue={noop} onLater={noop} progress={<StepDots step="connect" />} />
+    ),
   },
   {
     key: 'folder',
     label: 'Choose folder',
-    render: () => <FolderPanel onChooseFolder={noop} />,
+    render: () => <FolderPanel onChooseFolder={noop} progress={<StepDots step="folder" />} />,
   },
   {
     key: 'done',

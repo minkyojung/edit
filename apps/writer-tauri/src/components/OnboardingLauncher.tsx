@@ -23,6 +23,7 @@ import { isTranslationProject } from '@/lib/translationProject'
 import { openProjectWindow, folderName } from '@/lib/projectWindow'
 import { useGoogleAuth } from '@/hooks/useGoogleAuth'
 import { useSettingsStore, type ProjectType } from '@/state/settingsStore'
+import { StepDots } from '@/profile/ui/onboarding/StepDots'
 import { WelcomePanel } from '@/profile/ui/onboarding/WelcomePanel'
 import { ConnectPanel } from '@/profile/ui/onboarding/ConnectPanel'
 import { FolderPanel } from '@/profile/ui/onboarding/FolderPanel'
@@ -162,48 +163,59 @@ export function OnboardingLauncher() {
     }
   }, [chosen, busy, addRecentProject, markBootstrapCompleted])
 
-  if (step === 'welcome') {
-    return <WelcomePanel onGetStarted={() => setStep('connect')} />
-  }
-  if (step === 'connect') {
-    // Google sign-in (identity). On success advance to folder; on failure stay
-    // so the user can retry. "Start without an account" skips — Claude (the AI
-    // engine) is connected just-in-time later, not here.
-    const signIn = async () => {
-      setConnectError(null)
-      try {
-        await connectGoogle()
-        // Fire the sign-up relay (welcome email) — best-effort, never blocks the
-        // flow. Onboarding-only, so re-connecting from settings won't re-welcome.
-        void invoke('notify_signup').catch((e) =>
-          console.warn('[onboarding] signup relay failed', e),
-        )
-        setStep('folder')
-      } catch (e) {
-        console.error('[onboarding] google sign-in failed', e)
-        setConnectError("Couldn't sign in with Google. Please try again.")
+  const dots = <StepDots step={step} />
+
+  const panel = (() => {
+    if (step === 'welcome') {
+      return <WelcomePanel onGetStarted={() => setStep('connect')} progress={dots} />
+    }
+    if (step === 'connect') {
+      // Google sign-in (identity). On success advance to folder; on failure stay
+      // so the user can retry. "Start without an account" skips — Claude (the AI
+      // engine) is connected just-in-time later, not here.
+      const signIn = async () => {
+        setConnectError(null)
+        try {
+          await connectGoogle()
+          // Fire the sign-up relay (welcome email) — best-effort, never blocks
+          // the flow. Onboarding-only, so a settings reconnect won't re-welcome.
+          void invoke('notify_signup').catch((e) =>
+            console.warn('[onboarding] signup relay failed', e),
+          )
+          setStep('folder')
+        } catch (e) {
+          console.error('[onboarding] google sign-in failed', e)
+          setConnectError("Couldn't sign in with Google. Please try again.")
+        }
       }
+      return (
+        <ConnectPanel
+          onContinue={() => void signIn()}
+          onLater={() => setStep('folder')}
+          connecting={googleConnecting}
+          error={connectError}
+          progress={dots}
+        />
+      )
+    }
+    if (step === 'folder') {
+      return (
+        <FolderPanel
+          onChooseFolder={() => void chooseFolder()}
+          dragActive={dragActive}
+          progress={dots}
+        />
+      )
     }
     return (
-      <ConnectPanel
-        onContinue={() => void signIn()}
-        onLater={() => setStep('folder')}
-        connecting={googleConnecting}
-        error={connectError}
+      <DonePanel
+        onEnter={() => void openProject()}
+        vaultName={chosen ? folderName(chosen.path) : undefined}
+        busy={busy}
+        error={error}
       />
     )
-  }
-  if (step === 'folder') {
-    return (
-      <FolderPanel onChooseFolder={() => void chooseFolder()} dragActive={dragActive} />
-    )
-  }
-  return (
-    <DonePanel
-      onEnter={() => void openProject()}
-      vaultName={chosen ? folderName(chosen.path) : undefined}
-      busy={busy}
-      error={error}
-    />
-  )
+  })()
+
+  return panel
 }
