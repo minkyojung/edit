@@ -1418,8 +1418,15 @@ export class Server {
           // futile retries. A non-rejected event (allowed_warning) is just a
           // heads-up — keep it for settle-time but don't abort.
           if (event?.type === 'rate_limit_event' && event.rate_limit_info) {
-            lastRateLimitInfo = event.rate_limit_info
-            if (event.rate_limit_info.status === 'rejected') {
+            const info = event.rate_limit_info
+            lastRateLimitInfo = info
+            // Fail fast on a hard cap that won't clear within the SDK's retry
+            // window: the windowed limit is `rejected`, OR the overage (paid)
+            // budget is actively in use and itself `rejected`. The overageInUse
+            // guard keeps a mere overage warning (while the windowed budget
+            // still has room) from wrongly aborting a chat that would succeed.
+            const overageBlocked = info.overageInUse && info.overageStatus === 'rejected'
+            if (info.status === 'rejected' || overageBlocked) {
               rateLimitRejected = true
               controller.abort()
               break
@@ -1743,8 +1750,17 @@ const NON_RETRYABLE_CODES = new Set(['AUTH', 'INVALID', 'BILLING', 'BUDGET'])
 // undefined when there's nothing to carry so the field is simply absent.
 function rateLimitPayload(info) {
   if (!info) return undefined
+  // When the block is on the overage (paid) budget, the reset lives in
+  // `overageResetsAt`, not `resetsAt` (sdk.d.ts SDKRateLimitInfo) — fall back to
+  // it so an overage rejection still shows a countdown instead of a blank one.
+  const resetsAt =
+    typeof info.resetsAt === 'number'
+      ? info.resetsAt
+      : typeof info.overageResetsAt === 'number'
+        ? info.overageResetsAt
+        : undefined
   return {
-    resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt : undefined,
+    resetsAt,
     rateLimitType: info.rateLimitType,
     overageDisabledReason: info.overageDisabledReason,
   }
