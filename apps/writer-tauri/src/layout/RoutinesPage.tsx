@@ -16,6 +16,7 @@ import { buildViewUrl } from '@/lib/viewUrl'
 import { listRoutines, COMMANDS_REL, type VaultRoutine } from '@/lib/routinesLib'
 import { deleteAssetByPath } from '@/lib/deleteAsset'
 import { confirm } from '@/state/confirmStore'
+import { notify } from '@/lib/notify'
 
 export function RoutinesPage() {
   const [routines, setRoutines] = useState<VaultRoutine[]>([])
@@ -49,6 +50,7 @@ export function RoutinesPage() {
       setRoutines((cur) => cur.filter((r) => r.fileName !== routine.fileName))
     } catch (err) {
       console.warn('[routines] delete failed', routine.fileName, err)
+      notify.cantDeleteAsset({ onRetry: () => void remove(routine) })
     }
   }
 

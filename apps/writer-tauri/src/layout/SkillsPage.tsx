@@ -13,6 +13,7 @@ import { buildViewUrl } from '@/lib/viewUrl'
 import { listSkills, SKILLS_REL, type VaultSkill } from '@/lib/skillsLib'
 import { deleteAssetByPath } from '@/lib/deleteAsset'
 import { confirm } from '@/state/confirmStore'
+import { notify } from '@/lib/notify'
 
 export function SkillsPage() {
   const [skills, setSkills] = useState<VaultSkill[]>([])
@@ -46,6 +47,7 @@ export function SkillsPage() {
       setSkills((cur) => cur.filter((s) => s.dir !== skill.dir))
     } catch (err) {
       console.warn('[skills] delete failed', skill.dir, err)
+      notify.cantDeleteAsset({ onRetry: () => void remove(skill) })
     }
   }
 

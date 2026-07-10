@@ -23,15 +23,8 @@ describe('bundled defaults', () => {
     expect(organize.body).toContain('createdAt')
   })
 
-  it('loads the four agent roles, carrying the model frontmatter', () => {
-    expect(DEFAULT_AGENTS.map((a) => a.name)).toEqual([
-      'default',
-      'proofreader',
-      'researcher',
-      'translator',
-    ])
-    expect(DEFAULT_AGENTS.find((a) => a.name === 'researcher')!.model).toBe('opus')
-    expect(DEFAULT_AGENTS.find((a) => a.name === 'translator')!.model).toBeUndefined()
+  it('ships only the default agent role (starter roles removed)', () => {
+    expect(DEFAULT_AGENTS.map((a) => a.name)).toEqual(['default'])
   })
 
   it('loads CLAUDE.md with the Preferences section inlined', () => {

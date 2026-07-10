@@ -13,6 +13,7 @@ import { buildViewUrl } from '@/lib/viewUrl'
 import { listAgents, AGENTS_REL, type VaultAgent } from '@/lib/agentsLib'
 import { deleteAssetByPath } from '@/lib/deleteAsset'
 import { confirm } from '@/state/confirmStore'
+import { notify } from '@/lib/notify'
 
 export function AgentsPage() {
   const [agents, setAgents] = useState<VaultAgent[]>([])
@@ -46,6 +47,7 @@ export function AgentsPage() {
       setAgents((cur) => cur.filter((a) => a.fileName !== agent.fileName))
     } catch (err) {
       console.warn('[agents] delete failed', agent.fileName, err)
+      notify.cantDeleteAsset({ onRetry: () => void remove(agent) })
     }
   }
 

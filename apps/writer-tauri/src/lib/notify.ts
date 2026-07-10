@@ -140,6 +140,14 @@ export const notify = {
       action: retryAction(opts.onRetry),
     })
   },
+  /** Deleting a skill / routine / agent asset threw (disk error, blocked
+   * path). Surfaced so the row staying put isn't a silent no-op. */
+  cantDeleteAsset(opts: RetryOpts = {}) {
+    toast.error("Couldn't delete this", {
+      description: 'See console for details.',
+      action: retryAction(opts.onRetry),
+    })
+  },
 
   // ── Editor ────────────────────────────────────────────────────
   /** Milkdown's Editor.make().create() chain rejected. The doc loaded

@@ -83,9 +83,9 @@ async function seedWikiDefaults(): Promise<void> {
   // Load the seeded routine commands into the slash palette (organize /
   // daily-ingest / chat-to-wiki + any the user added). Best-effort.
   await useVaultCommands.getState().refresh()
-  // Seed default agent roles (`_system/agent/agents/*.md`) — the editable chat
-  // personas. `default` is the main persona (from FREE_CHAT_PROMPT) made
-  // editable; the rest are starter roles the user can edit or delete.
+  // Seed the default agent role (`_system/agent/agents/default.md`) — the
+  // editable chat persona (from FREE_CHAT_PROMPT). The only role shipped by
+  // default; the user can add their own.
   try {
     await seedAgents(DEFAULT_AGENTS)
   } catch (err) {
