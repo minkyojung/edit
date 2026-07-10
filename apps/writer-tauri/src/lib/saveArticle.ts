@@ -1,7 +1,8 @@
 // Read-it-later save orchestration: URL → article doc + daily breadcrumb.
 //
 //   1. extractPage(url)  — defuddle fetch + clean Markdown + metadata
-//   2. createArticle(...) — new `article` doc at articles/<title>.md
+//   2. createArticle(...) — new note at inbox/<title>.md (images
+//      localize into images/<slug>/ in the background)
 //   3. append `- [[Title]]` to today's daily note (bottom)
 //   4. toast
 //
