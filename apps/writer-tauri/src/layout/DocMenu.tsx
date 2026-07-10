@@ -18,11 +18,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { isAgentAssetPath, deleteAssetByPath } from '@/lib/deleteAsset'
+import { copyAsRichText } from '@/lib/copyAsRichText'
 import { confirm } from '@/state/confirmStore'
 import { DocumentInfoDialog } from './DocumentInfoDialog'
 
@@ -54,6 +56,21 @@ export function DocMenu() {
       }),
     )
   }
+  // Copy the whole note to the clipboard with its formatting intact, so
+  // pasting into an external rich editor (Substack, Notion, Docs) keeps
+  // headings / bullets / bold rather than dumping raw markdown source.
+  // Reads the live body cache — the CM change listener keeps it current.
+  const handleCopyRichText = async () => {
+    if (!activeSlug) return
+    const md = useDocsStore.getState().handles[activeSlug]?.bodyMarkdown ?? ''
+    if (!md.trim()) {
+      toast.info('Nothing to copy')
+      return
+    }
+    const rich = await copyAsRichText(md)
+    toast.success(rich ? 'Copied with formatting' : 'Copied as text')
+  }
+
   const handleDelete = async () => {
     if (!activeSlug || !activeDoc) return
     const rel = activeDoc.relPath
@@ -94,6 +111,12 @@ export function DocMenu() {
         <DropdownMenuContent align="end" sideOffset={6} className="w-56">
           <DropdownMenuItem disabled={!activeSlug} onSelect={() => setInfoOpen(true)}>
             Document info
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!activeSlug}
+            onSelect={() => void handleCopyRichText()}
+          >
+            Copy as rich text
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={deleteDisabled}
