@@ -19,7 +19,6 @@ import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@cod
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
 import { markdown, deleteMarkupBackward } from '@codemirror/lang-markdown'
-import { autocompletion, acceptCompletion } from '@codemirror/autocomplete'
 import { GFM } from '@lezer/markdown'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
@@ -60,8 +59,8 @@ import {
 import { CmHighlightBar } from '@/editor/CmHighlightBar'
 import { DocStatsPanel } from '@/editor/DocStatsPanel'
 import { openLinkSafely } from '@/editor/linkUtils'
-import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 import { slashMenu, slashKeymap } from '@/editor/slashMenu'
+import { wikilinkMenu, wikilinkKeymap } from '@/editor/wikilinkMenu'
 import { smartEnter } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
 import { clearTopLevelMarkerBackward } from '@/prototypes/listBackspace'
@@ -155,14 +154,12 @@ export function CmEditor({ handle, header }: Props) {
             // and cursor movement stay intact.
             slashMenu,
             slashKeymap,
-            // `[[` wikilink autocomplete: Enter must CONFIRM the highlighted note.
-            // CM's own completion keymap (also Prec.highest) is registered further
-            // down via autocompletion(), i.e. AFTER smartEnter — so without this,
-            // smartEnter claims Enter first and the pick never lands (just a
-            // newline). Mirror slashKeymap: claim Enter ahead of smartEnter, but
-            // only when a completion is open — acceptCompletion returns false with
-            // no active popup, so plain Enter falls through to smartEnter intact.
-            Prec.highest(keymap.of([{ key: 'Enter', run: acceptCompletion }])),
+            // `[[` wikilink picker: same owned-tooltip design as the `/` menu.
+            // `wikilinkKeymap` (Prec.highest) MUST precede smartEnter so it can
+            // claim Enter/Tab/↑/↓ while the menu is open; it returns false when
+            // closed, so smartEnter and cursor movement stay intact.
+            wikilinkMenu,
+            wikilinkKeymap,
             // ENTER — one deterministic handler at Prec.highest: tight list continuation
             // / clean exit, blockquote continuation, else plain newline. Must beat every
             // other Enter handler so CM's loose-list inference never runs.
@@ -187,7 +184,6 @@ export function CmEditor({ handle, header }: Props) {
             // so English prose hyphenates under justify; CJK is unaffected.
             EditorView.contentAttributes.of({ lang: 'en' }),
             markdown({ extensions: [GFM], addKeymap: false }),
-            autocompletion({ override: [cmWikilinkSource] }), // [[ notes ]] (slash menu is slashMenu, above)
             placeholder('Start writing…'),
             taskCheckboxClick,
             livePreviewV2,
