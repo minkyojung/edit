@@ -36,14 +36,20 @@ describe('bundled defaults', () => {
     ])
     expect(DEFAULT_AGENTS.find((a) => a.name === 'researcher')!.model).toBe('opus')
     expect(DEFAULT_AGENTS.find((a) => a.name === 'translator')!.model).toBeUndefined()
-    // the default persona carries the proactive-memory + undo nudges
-    expect(DEFAULT_AGENTS.find((a) => a.name === 'default')!.body).toContain('second brain')
-    expect(DEFAULT_AGENTS.find((a) => a.name === 'default')!.body).toContain('undo-ai-change')
   })
 
   it('loads CLAUDE.md with the Preferences section inlined', () => {
     expect(DEFAULT_CLAUDE_MD).toContain('# Wiki Maintainer')
     expect(DEFAULT_CLAUDE_MD).toContain('## Preferences')
     expect(DEFAULT_CLAUDE_MD).not.toContain('PREFERENCES_SECTION')
+  })
+
+  it('CLAUDE.md now owns the proactive-memory + undo nudges (moved off the persona)', () => {
+    expect(DEFAULT_CLAUDE_MD).toContain('second brain')
+    expect(DEFAULT_CLAUDE_MD).toContain('undo-ai-change')
+    // the chat persona no longer restates them
+    const persona = DEFAULT_AGENTS.find((a) => a.name === 'default')!.body
+    expect(persona).not.toContain('second brain')
+    expect(persona).not.toContain('undo-ai-change')
   })
 })
