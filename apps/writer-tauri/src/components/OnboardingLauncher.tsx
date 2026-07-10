@@ -15,6 +15,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { readDir } from '@tauri-apps/plugin-fs'
+import { toast } from 'sonner'
 import { pickVault } from '@/lib/vaultPicker'
 import { isTranslationProject } from '@/lib/translationProject'
 import { openProjectWindow, folderName } from '@/lib/projectWindow'
@@ -39,6 +42,7 @@ export function OnboardingLauncher() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [connectError, setConnectError] = useState<string | null>(null)
+  const [dragActive, setDragActive] = useState(false)
 
   // Shrink + centre the window for onboarding; restore the previous size when
   // we leave (project window opened).
@@ -73,17 +77,66 @@ export function OnboardingLauncher() {
     }
   }, [])
 
-  // Mandatory folder choice: pick (or create) a folder, remember it, and advance
-  // to the completion step. The native picker's "New Folder" affordance covers
-  // the create case. Detecting an existing translation project keeps that path
-  // working even though onboarding no longer scaffolds new ones.
-  const chooseFolder = useCallback(async () => {
-    const path = await pickVault()
-    if (!path) return
+  // Remember a chosen folder + advance to the completion step. Shared by the
+  // native picker and folder drag-and-drop. Detecting an existing translation
+  // project keeps that path working even though onboarding no longer scaffolds.
+  const acceptFolder = useCallback(async (path: string) => {
     const type: ProjectType = (await isTranslationProject(path)) ? 'translation' : 'wiki'
     setChosen({ path, type })
     setStep('done')
   }, [])
+
+  // Mandatory folder choice via the native picker. Its "New Folder" affordance
+  // covers the create case.
+  const chooseFolder = useCallback(async () => {
+    const path = await pickVault()
+    if (path) await acceptFolder(path)
+  }, [acceptFolder])
+
+  // Accept a folder dropped from Finder. readDir throws on a file / no access,
+  // so it doubles as a "is this a usable folder?" check.
+  const handleDroppedFolder = useCallback(
+    async (path: string) => {
+      try {
+        await readDir(path)
+      } catch {
+        toast.error('Please drop a folder', {
+          description: 'Drop a folder of notes, not a file.',
+        })
+        return
+      }
+      await acceptFolder(path)
+    },
+    [acceptFolder],
+  )
+
+  // Wire native folder drag-and-drop while the folder step is on screen. Tauri's
+  // drag-drop handler (dragDropEnabled) gives real paths; the HTML5 drop can't.
+  useEffect(() => {
+    if (step !== 'folder') return
+    let alive = true
+    let unlisten: (() => void) | undefined
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const p = event.payload
+        if (p.type === 'enter' || p.type === 'over') setDragActive(true)
+        else if (p.type === 'leave') setDragActive(false)
+        else if (p.type === 'drop') {
+          setDragActive(false)
+          const first = p.paths[0]
+          if (first) void handleDroppedFolder(first)
+        }
+      })
+      .then((u) => {
+        if (alive) unlisten = u
+        else u()
+      })
+    return () => {
+      alive = false
+      unlisten?.()
+      setDragActive(false)
+    }
+  }, [step, handleDroppedFolder])
 
   // Finish: open the project window, THEN record it + mark onboarding done.
   // The order matters — openProjectWindow resolves only after the window is
@@ -141,7 +194,16 @@ export function OnboardingLauncher() {
     )
   }
   if (step === 'folder') {
-    return <FolderPanel onChooseFolder={() => void chooseFolder()} />
+    return (
+      <FolderPanel onChooseFolder={() => void chooseFolder()} dragActive={dragActive} />
+    )
   }
-  return <DonePanel onEnter={() => void openProject()} busy={busy} error={error} />
+  return (
+    <DonePanel
+      onEnter={() => void openProject()}
+      vaultName={chosen ? folderName(chosen.path) : undefined}
+      busy={busy}
+      error={error}
+    />
+  )
 }
