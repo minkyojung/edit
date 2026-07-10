@@ -78,10 +78,11 @@ async function firstName(): Promise<string | null> {
 
 function firstDailyNote(name: string | null): string {
   const hello = name ? `Welcome, ${name}.` : 'Welcome.'
+  // Single newlines (not blank-line paragraph breaks): the editor draws a
+  // blank line as a real, cursor-able empty row, which reads as a stray
+  // line break in a short welcome. `\n` stacks the lines tightly instead.
   return `${hello} Today is where it begins.
-
 This is your **daily note**. From now on, whenever you write something or save an article, it lands in the note for that day. No setup. Each day fills itself in as you go.
-
 Start below, or open the chat and ask the AI for a hand.
 `
 }
