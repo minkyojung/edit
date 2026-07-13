@@ -57,7 +57,11 @@ else
       && pass "bun has $key" \
       || fail "bun MISSING $key (JIT will be denied)"
   done
-  codesign -dvvv "$BUN" 2>&1 | grep -q "flags=.*runtime" \
+  # Capture first, then grep — piping codesign straight into `grep -q` lets
+  # grep close the pipe on match, SIGPIPE-killing codesign, which pipefail then
+  # reports as failure (a false negative).
+  BUN_SIG="$(codesign -dvvv "$BUN" 2>&1 || true)"
+  echo "$BUN_SIG" | grep -q "flags=.*runtime" \
     && pass "bun hardened runtime" || fail "bun not hardened"
 fi
 
@@ -78,7 +82,8 @@ fi
 
 # 4. Gatekeeper acceptance (only passes AFTER notarize + staple) ------------
 echo "[4/4] Gatekeeper assessment (needs notarize + staple)"
-if spctl -a -vvv --type execute "$APP" 2>&1 | grep -qi "accepted"; then
+SPCTL_OUT="$(spctl -a -vvv --type execute "$APP" 2>&1 || true)"
+if echo "$SPCTL_OUT" | grep -qi "accepted"; then
   pass "Gatekeeper accepts the app (notarized + stapled)"
 else
   echo "  ⚠ not yet accepted — expected until the app is notarized and stapled"
