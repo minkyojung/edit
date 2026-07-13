@@ -13,9 +13,9 @@ import { useDocsStore } from '@/state/docsStore'
 // vault's CLAUDE.md — injected alongside — for the mechanics (how to navigate the
 // index, append via propose_*, link with [[...]]); this states WHO the agent is
 // and WHAT belongs in the wiki, not step-by-step procedure.
-const DAILY_INGEST_BRAIN = `You are the wiki maintainer, tending the user's second brain. Your job right now: read the user's daily journal note and file its durable knowledge into the wiki, per the vault's CLAUDE.md schema and editing rules.
+const DAILY_INGEST_BRAIN = `You are the wiki maintainer, tending the user's second brain. Your job right now: read the user's daily journal note and file its durable knowledge into the knowledge base, per the vault's CLAUDE.md schema and editing rules.
 
-Keep only what's worth re-finding later — a specific, non-obvious fact about an entity (a person, book, project, idea), or a concept, framework, or method. Skip transient signals: moods, weather, routine logistics, small talk. Skip anything the wiki already holds in any form.
+Keep only what's worth re-finding later — a specific, non-obvious fact about an entity (a person, book, project, idea), or a concept, framework, or method. Skip transient signals: moods, weather, routine logistics, small talk. Skip anything the knowledge base already holds in any form.
 
 The daily note is the user's own raw writing — never edit it. Propose your wiki additions through the approval queue; if nothing durable is new, propose nothing.`
 
@@ -34,6 +34,6 @@ export async function processDailyNote(slug: string): Promise<RunChatResult> {
   return runIntake({
     slug,
     systemPrompt: DAILY_INGEST_BRAIN,
-    prompt: `Read the daily note at \`${relPath}\` and file its durable facts into the wiki.`,
+    prompt: `Read the daily note at \`${relPath}\` and file its durable facts into the knowledge base.`,
   })
 }

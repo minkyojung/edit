@@ -20,7 +20,9 @@ describe('bundled defaults', () => {
     expect(DEFAULT_COMMANDS.map((c) => c.name)).toEqual(['organize'])
     const organize = DEFAULT_COMMANDS.find((c) => c.name === 'organize')!
     expect(organize.body).toContain('$ARGUMENTS')
-    expect(organize.body).toContain('createdAt')
+    // Role-based now (no wiki/daily hardcoding; time axis is the system timeline)
+    expect(organize.body).toContain('knowledge base')
+    expect(organize.body).not.toContain('daily/')
   })
 
   it('ships only the default agent role (starter roles removed)', () => {

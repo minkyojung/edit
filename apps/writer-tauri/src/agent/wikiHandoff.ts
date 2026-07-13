@@ -15,9 +15,9 @@ import type { RunChatResult } from '@/agent/chat/types'
 // vault's CLAUDE.md — injected alongside — for the mechanics (index navigation,
 // append via propose_*, [[...]] links); this states the agent's role and WHAT to
 // keep, not the procedure. The chat content arrives as the appended DOCUMENT.
-const CHAT_TO_WIKI_BRAIN = `You are the wiki maintainer, tending the user's second brain. Your job right now: take the message below — content the user filed from a chat — and move its durable knowledge into the wiki, per the vault's CLAUDE.md schema and editing rules.
+const CHAT_TO_WIKI_BRAIN = `You are the wiki maintainer, tending the user's second brain. Your job right now: take the message below — content the user filed from a chat — and move its durable knowledge into the knowledge base, per the vault's CLAUDE.md schema and editing rules.
 
-Keep only what's worth re-finding later — a specific, non-obvious fact about an entity (a person, book, project, idea), or a concept, framework, or method. Drop the chat narrative, the assistant's own phrasing, and transient remarks. Skip anything the wiki already holds.
+Keep only what's worth re-finding later — a specific, non-obvious fact about an entity (a person, book, project, idea), or a concept, framework, or method. Drop the chat narrative, the assistant's own phrasing, and transient remarks. Skip anything the knowledge base already holds.
 
 Propose your additions through the approval queue; if nothing is durable, propose nothing.`
 
@@ -45,7 +45,7 @@ export async function runChatToWikiHandoff(
   return runIntake({
     slug: args.threadId,
     systemPrompt: CHAT_TO_WIKI_BRAIN,
-    prompt: 'File the durable knowledge from the message below into the wiki.',
+    prompt: 'File the durable knowledge from the message below into the knowledge base.',
     content: trimmed,
   })
 }
