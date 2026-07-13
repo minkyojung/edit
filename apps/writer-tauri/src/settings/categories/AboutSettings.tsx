@@ -9,6 +9,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { getVersion } from '@tauri-apps/api/app'
 import { useUpdateStore } from '@/state/updateStore'
 import { updater, type UpdateState } from '@/lib/updater'
+import { CHANGELOG, changelogFor } from '@/lib/changelog'
+import { ReleaseNotesDialog } from '@/components/WhatsNew'
 import { Button } from '@/components/ui/button'
 import { SettingRow } from '../SettingRow'
 
@@ -69,7 +71,9 @@ function describe(state: UpdateState): { description: string; button: ReactNode 
 
 export function AboutSettings() {
   const [version, setVersion] = useState<string | null>(null)
+  const [notesOpen, setNotesOpen] = useState(false)
   const state = useUpdateStore((s) => s.state)
+  const notesEntry = (version ? changelogFor(version) : null) ?? CHANGELOG[0] ?? null
 
   useEffect(() => {
     let alive = true
@@ -101,6 +105,14 @@ export function AboutSettings() {
           {state.message}
         </p>
       )}
+      {notesEntry && (
+        <SettingRow title="Release notes" description="What changed in this version.">
+          <Button variant="outline" size="sm" onClick={() => setNotesOpen(true)}>
+            View
+          </Button>
+        </SettingRow>
+      )}
+      <ReleaseNotesDialog entry={notesEntry} open={notesOpen} onOpenChange={setNotesOpen} />
     </section>
   )
 }

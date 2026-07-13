@@ -61,6 +61,14 @@ interface SettingsState {
    * Finish / Skip. Idempotent. */
   markBootstrapCompleted: () => void
 
+  /** App version whose "What's new" note the user has already seen. When
+   * the running version differs (i.e. an update landed), the What's-new
+   * panel shows that version's changelog once, then this advances. Empty
+   * on a fresh install (set silently on first run — no panel). */
+  lastWhatsNewVersion: string
+  /** Record the version whose release notes have been shown. */
+  setLastWhatsNewVersion: (version: string) => void
+
   /** Projects shown in the launcher's "Recent" list, newest first.
    * Global (cross-window) app preference. */
   recentProjects: RecentProject[]
@@ -136,6 +144,7 @@ export const useSettingsStore = create<SettingsState>()(
       vaultPaths: [],
       activeVaultIndex: 0,
       bootstrapCompleted: false,
+      lastWhatsNewVersion: '',
       defaultNoteFolder: 'inbox',
       knowledgeBaseFolder: 'wiki',
       intakeModel: DEFAULT_CHAT_MODEL,
@@ -151,6 +160,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ vaultPaths: [path], activeVaultIndex: 0 }),
       clearVault: () => set({ vaultPaths: [], activeVaultIndex: 0 }),
       markBootstrapCompleted: () => set({ bootstrapCompleted: true }),
+      setLastWhatsNewVersion: (version) => set({ lastWhatsNewVersion: version }),
       addRecentProject: (path, type) =>
         set((s) => ({
           recentProjects: [
@@ -178,6 +188,7 @@ export const useSettingsStore = create<SettingsState>()(
         vaultPaths: s.vaultPaths,
         activeVaultIndex: s.activeVaultIndex,
         bootstrapCompleted: s.bootstrapCompleted,
+        lastWhatsNewVersion: s.lastWhatsNewVersion,
         defaultNoteFolder: s.defaultNoteFolder,
         knowledgeBaseFolder: s.knowledgeBaseFolder,
         intakeModel: s.intakeModel,

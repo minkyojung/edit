@@ -34,6 +34,7 @@ import { useWindowModeSync } from '@/hooks/useWindowModeSync'
 import { useCompactShortcut } from '@/hooks/useCompactShortcut'
 import { useWindowClose } from '@/hooks/useWindowClose'
 import { useUpdaterEvents } from '@/hooks/useUpdaterEvents'
+import { WhatsNewGate } from '@/components/WhatsNew'
 import {
   buildDayUrl,
   buildMonthUrl,
@@ -127,6 +128,7 @@ export function App() {
               />
             </Routes>
             <AppToaster />
+            <WhatsNewGate />
           </HashRouter>
         </TooltipProvider>
       </FontProvider>

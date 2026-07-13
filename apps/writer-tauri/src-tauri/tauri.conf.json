@@ -1,6 +1,6 @@
 {
   "productName": "Octave",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "identifier": "com.minkyojung.octave",
   "build": {
     "beforeDevCommand": "pnpm --filter writer-tauri setup:binaries && pnpm --filter writer-tauri pack:sidecar && pnpm --filter writer-tauri dev",

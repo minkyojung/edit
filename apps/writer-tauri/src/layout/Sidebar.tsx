@@ -38,8 +38,10 @@ import { useSortStore, SORT_LABELS, type SortMode } from '@/state/sortStore'
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarHeader,
 } from '@/components/ui/sidebar'
+import { UpdateFooter } from '@/components/WhatsNew'
 import { SIDEBAR_ROW_INTERACTION } from '@/components/ui/sidebarRow'
 import { cn } from '@/lib/utils'
 
@@ -331,6 +333,9 @@ export function AppSidebar() {
             the sidebar. (Replaced the day/week/month date views.) */}
         <FolderTree />
       </SidebarContent>
+      <SidebarFooter className="p-0">
+        <UpdateFooter />
+      </SidebarFooter>
       <ConnectClaudeDialog open={connectOpen} onOpenChange={setConnectOpen} onConnected={refresh} />
       <ConnectGitHubDialog
         open={githubConnectOpen}
