@@ -6,9 +6,15 @@
 
 import { cn } from '@/lib/utils'
 
-export type OnboardingStep = 'welcome' | 'connect' | 'claude' | 'folder' | 'done'
+export type OnboardingStep =
+  | 'welcome'
+  | 'connect'
+  | 'claude'
+  | 'folder'
+  | 'roles'
+  | 'done'
 
-const DOT_STEPS: OnboardingStep[] = ['welcome', 'connect', 'claude', 'folder']
+const DOT_STEPS: OnboardingStep[] = ['welcome', 'connect', 'claude', 'folder', 'roles']
 
 export function StepDots({ step }: { step: OnboardingStep }) {
   if (step === 'done') return null

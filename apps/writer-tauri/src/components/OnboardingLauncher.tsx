@@ -28,19 +28,32 @@ import { WelcomePanel } from '@/profile/ui/onboarding/WelcomePanel'
 import { ConnectPanel } from '@/profile/ui/onboarding/ConnectPanel'
 import { ClaudeConnectPanel } from '@/profile/ui/onboarding/ClaudeConnectPanel'
 import { FolderPanel } from '@/profile/ui/onboarding/FolderPanel'
+import { RolesPanel } from '@/profile/ui/onboarding/RolesPanel'
 import { DonePanel } from '@/profile/ui/onboarding/DonePanel'
+import {
+  folderOptions,
+  DEFAULT_CAPTURE,
+  DEFAULT_KNOWLEDGE_BASE,
+} from '@/profile/ui/onboarding/roleFolders'
 import { ONBOARDING_W, ONBOARDING_H } from '@/profile/ui/onboarding/onboardingWindow'
 
-type Step = 'welcome' | 'connect' | 'claude' | 'folder' | 'done'
+type Step = 'welcome' | 'connect' | 'claude' | 'folder' | 'roles' | 'done'
 
 export function OnboardingLauncher() {
   const addRecentProject = useSettingsStore((s) => s.addRecentProject)
   const markBootstrapCompleted = useSettingsStore((s) => s.markBootstrapCompleted)
+  const setKnowledgeBaseFolder = useSettingsStore((s) => s.setKnowledgeBaseFolder)
+  const setDefaultNoteFolder = useSettingsStore((s) => s.setDefaultNoteFolder)
 
   const { connect: connectGoogle, connecting: googleConnecting } = useGoogleAuth()
 
   const [step, setStep] = useState<Step>('welcome')
   const [chosen, setChosen] = useState<{ path: string; type: ProjectType } | null>(null)
+  // Role-step state: the folder options read off the picked vault, plus the
+  // user's current pick for each role (defaulted, editable in the dropdowns).
+  const [roleOptions, setRoleOptions] = useState<string[]>([])
+  const [knowledgeBase, setKnowledgeBase] = useState(DEFAULT_KNOWLEDGE_BASE)
+  const [capture, setCapture] = useState(DEFAULT_CAPTURE)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [connectError, setConnectError] = useState<string | null>(null)
@@ -79,14 +92,40 @@ export function OnboardingLauncher() {
     }
   }, [])
 
-  // Remember a chosen folder + advance to the completion step. Shared by the
-  // native picker and folder drag-and-drop. Detecting an existing translation
-  // project keeps that path working even though onboarding no longer scaffolds.
+  // Remember a chosen folder + advance. Shared by the native picker and folder
+  // drag-and-drop. Detecting an existing translation project keeps that path
+  // working even though onboarding no longer scaffolds.
+  //
+  // For a wiki vault, scan its top-level folders and go to the roles step so
+  // the user maps knowledge base + capture to real folders. Translation
+  // projects use a fixed manuscript/reference layout — the roles don't apply,
+  // so they skip straight to done.
   const acceptFolder = useCallback(async (path: string) => {
     const type: ProjectType = (await isTranslationProject(path)) ? 'translation' : 'wiki'
     setChosen({ path, type })
-    setStep('done')
+    if (type === 'translation') {
+      setStep('done')
+      return
+    }
+    let dirs: string[] = []
+    try {
+      const entries = await readDir(path)
+      dirs = entries.filter((e) => e.isDirectory).map((e) => e.name)
+    } catch {
+      // Unreadable folder — fall back to just the role defaults.
+    }
+    setRoleOptions(folderOptions(dirs))
+    setStep('roles')
   }, [])
+
+  // Save the role → folder mapping to settings (read every turn by the agent
+  // and by the index/timeline), then finish. Empty vault: the chosen folders
+  // come into existence on first write.
+  const confirmRoles = useCallback(() => {
+    setKnowledgeBaseFolder(knowledgeBase)
+    setDefaultNoteFolder(capture)
+    setStep('done')
+  }, [knowledgeBase, capture, setKnowledgeBaseFolder, setDefaultNoteFolder])
 
   // Mandatory folder choice via the native picker. Its "New Folder" affordance
   // covers the create case.
@@ -222,6 +261,19 @@ export function OnboardingLauncher() {
         <FolderPanel
           onChooseFolder={() => void chooseFolder()}
           dragActive={dragActive}
+          progress={dots}
+        />
+      )
+    }
+    if (step === 'roles') {
+      return (
+        <RolesPanel
+          options={roleOptions}
+          knowledgeBase={knowledgeBase}
+          capture={capture}
+          onKnowledgeBaseChange={setKnowledgeBase}
+          onCaptureChange={setCapture}
+          onContinue={confirmRoles}
           progress={dots}
         />
       )

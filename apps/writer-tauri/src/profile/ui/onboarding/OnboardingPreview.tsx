@@ -16,6 +16,7 @@ import { WelcomePanel } from '@/profile/ui/onboarding/WelcomePanel'
 import { ConnectPanel } from '@/profile/ui/onboarding/ConnectPanel'
 import { ClaudeConnectPanel } from '@/profile/ui/onboarding/ClaudeConnectPanel'
 import { FolderPanel } from '@/profile/ui/onboarding/FolderPanel'
+import { RolesPanel } from '@/profile/ui/onboarding/RolesPanel'
 import { DonePanel } from '@/profile/ui/onboarding/DonePanel'
 import { Button } from '@/components/ui/button'
 import { ONBOARDING_W, ONBOARDING_H } from '@/profile/ui/onboarding/onboardingWindow'
@@ -52,6 +53,21 @@ const STEPS: { key: string; label: string; render: () => ReactNode }[] = [
     key: 'folder',
     label: 'Choose folder',
     render: () => <FolderPanel onChooseFolder={noop} progress={<StepDots step="folder" />} />,
+  },
+  {
+    key: 'roles',
+    label: 'Map folders to roles',
+    render: () => (
+      <RolesPanel
+        options={['inbox', 'notes', 'research', 'wiki']}
+        knowledgeBase="wiki"
+        capture="inbox"
+        onKnowledgeBaseChange={noop}
+        onCaptureChange={noop}
+        onContinue={noop}
+        progress={<StepDots step="roles" />}
+      />
+    ),
   },
   {
     key: 'done',
