@@ -453,11 +453,15 @@ async function flushDirtyOnce(): Promise<void> {
   if (!getActiveVaultPath()) return
   const docs = useDocsStore.getState()
   const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
-  // Track whether this flush touched any wiki page so we can invalidate
-  // the Tier 1 index cache once at the end rather than per-doc. A wiki
-  // body / title change affects the index's summary + backlink columns
-  // for both the changed page and any pages it links to.
-  let wikiTouched = false
+  // Track whether this flush touched any page the vault index catalogs so
+  // we can invalidate the index cache once at the end rather than per-doc.
+  // The index maps the WHOLE vault (every folder), so any note change —
+  // wiki, daily, a generic note in an imported folder — shifts a row's
+  // summary / backlink columns or the catalog itself. Only `system:*`
+  // pages are excluded: the index page and its siblings are host-owned
+  // and never appear in their own catalog, so their writes must not
+  // re-trigger a rebuild (that would loop).
+  let indexTouched = false
   for (const slug of getDirtySlugs()) {
     // Skip slugs with an unresolved external-edit conflict. Writing
     // the live Y.Doc here would silently overwrite the external
@@ -613,7 +617,7 @@ async function flushDirtyOnce(): Promise<void> {
       }
       lastWrittenPath.set(slug, mdPath)
       clearDirty(slug)
-      if (known.type.startsWith('wiki:')) wikiTouched = true
+      if (!known.type.startsWith('system:')) indexTouched = true
     } catch (err) {
       // Error (not warn) — this is a data-durability failure path.
       // The slug stays dirty so the next auto-flush tick retries,
@@ -632,7 +636,7 @@ async function flushDirtyOnce(): Promise<void> {
   // removed slug can never strand a stale entry, and the toast reconciler
   // dismisses the moment the last persistent failure clears.
   useSaveFailureStore.getState().reconcile(getDirtySlugs())
-  if (wikiTouched) invalidateWikiIndex()
+  if (indexTouched) invalidateWikiIndex()
 }
 
 /** Checkpoint flush on window blur / hide. The 500 ms timer is the

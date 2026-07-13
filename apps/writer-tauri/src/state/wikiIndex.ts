@@ -1,26 +1,37 @@
-// Tier 1 of the context engineering pipeline — a system-generated
-// catalog of every wiki page, one line per page, kept fresh by the
-// vault dirty/flush cycle.
+// Tier 1 of the context engineering pipeline — a system-generated map
+// of the WHOLE vault, grouped by folder, one row per note, kept fresh
+// by the vault dirty/flush cycle. Written to `_system/index.md`.
 //
-// Replaces the prior ingest-edited `wiki:index` page: the LLM used to
-// re-author that page on every ingest pass, which was both expensive
-// (extra tokens per pass) and drift-prone (the model would sometimes
-// drop a line or invent a slug). The catalog now comes straight from
-// `knownDocs` + sidecars + body backlink counts — deterministic, free,
-// always current.
+// The map is the LLM's answer to "what exists, and where" — it Reads
+// this one file to orient before Glob/Read-ing the specific notes a
+// turn needs. So the folders the user actually has (including an
+// imported `research/`, a `projects/`, whatever they made) ARE the
+// index's sections: the map mirrors their structure rather than
+// imposing one. An earlier version listed only `wiki/` pages in a flat
+// table, which left every note outside the knowledge base invisible to
+// the model; this version catalogs the vault entire.
 //
-// Three responsibilities:
-//   1. countBacklinks — how many other wiki pages link to each target
-//      (used as the `linked: N` column in the index line).
-//   2. buildWikiIndex — assemble the full catalog string (this file's
-//      reason to exist; next sub-step).
-//   3. getWikiIndex + invalidateWikiIndex — memory cache so chat /
-//      lint / ingest can grab the catalog cheaply between vault
-//      changes (next sub-step).
+// Design principle (second brain): the map guarantees the LLM knows a
+// note EXISTS — a note is never dropped for length. Detail (the summary
+// column) is what compresses under scale, never the note's row. Dated
+// notes collapse into a single `daily/` section: their time axis is the
+// timeline's job (`_system/timeline.md`), not the space map's, so we
+// don't fragment the index into one section per day.
 //
-// Pure functions only here; the I/O side (reading bodies / writing
-// the persisted `wiki:index` file) lives in the buildWikiIndex layer
-// added in the next sub-step.
+// The catalog comes straight from `knownDocs` + sidecars + body
+// backlink counts — deterministic, free, always current. It replaces
+// the prior ingest-edited page (the LLM used to re-author it every
+// pass — expensive and drift-prone).
+//
+// Responsibilities:
+//   1. countBacklinks — how many other pages link to each target
+//      (the `Links` column).
+//   2. folderOf / orderSections / renderVaultIndex — pure grouping +
+//      rendering, unit-tested.
+//   3. buildWikiIndex — assemble the full map string from live state.
+//   4. getWikiIndex + invalidateWikiIndex — memory cache + debounced
+//      disk persist so chat / ingest grab the map cheaply between
+//      vault changes.
 
 import type { KnownDoc } from './docsStore'
 import { extractWikilinks } from '@/lib/wikilinkResolve'
@@ -36,7 +47,17 @@ import {
   vaultFileExists,
   writeVaultFile,
 } from '@/lib/vault'
+import { getDefaultNoteFolder } from './settingsStore'
 import { useDocsStore } from './docsStore'
+
+/** Vault-relative folder that holds synthesized knowledge-base pages.
+ * The CLAUDE.md "This vault" section binds the knowledge-base ROLE to
+ * this folder; the index uses it only to label + top-sort that
+ * section. Hard-coded to the default binding for now — U11 turns it
+ * into a user setting injected each turn, at which point this constant
+ * becomes a `getKnowledgeBaseFolder()` read (same shape as
+ * {@link getDefaultNoteFolder} for the capture folder below). */
+const KNOWLEDGE_BASE_FOLDER = 'wiki'
 
 const SUMMARY_MAX_LEN = 80
 const EMPTY_PLACEHOLDER = '(empty)'
@@ -154,79 +175,266 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max).trimEnd() + '…'
 }
 
-/** Assemble the Tier 1 wiki catalog — one row per non-archived wiki
- * page, rendered as a markdown table. Replaces the prior LLM-edited
- * `wiki:index` body with a fresh, deterministic snapshot.
+// ── Pure grouping + rendering ─────────────────────────────────────
+//
+// Split out from buildWikiIndex so the "which section does a note go
+// in / in what order / how does it render" contract is unit-testable
+// without store state or disk I/O.
+
+/** One note row in the vault index. `path` is the note's vault-
+ * relative address — the LLM feeds it straight back into Read/Edit
+ * (in the file-first model the PATH is the note's identity, so there's
+ * no separate type-id column anymore). */
+export interface IndexRow {
+  path: string
+  title: string
+  summary: string
+  links: number
+}
+
+/** A folder section: its vault-relative folder path (`''` = vault
+ * root), an optional role label (knowledge base / capture), the note
+ * rows inside it, and any non-note attachments (pdf/image/…) sitting
+ * in the same folder. A section with no rows and no attachments is an
+ * empty folder the user made — kept in the map because it encodes
+ * intent (a routing target waiting to be filled). */
+export interface IndexSection {
+  folder: string
+  role: 'knowledge base' | 'capture' | null
+  rows: IndexRow[]
+  attachments: string[]
+}
+
+/** Derive the index section key for a note's path.
  *
- * Table format:
- *   | Path | Type | Title | Summary | Links |
- *   |------|------|-------|---------|-------|
- *   | wiki/Sarah.md | wiki:custom-7n2... | Sarah | Senior engineer... | 3 |
+ * All `daily/**` notes collapse into one `daily` section — the dated
+ * stream is the timeline's axis, not the space map's, so we don't
+ * fragment the index into a section per calendar day. Every other note
+ * keys on its containing folder; a root-level note (`CLAUDE.md`) keys
+ * on `''`, rendered as the root section. */
+export function folderOf(path: string): string {
+  if (path === 'daily' || path.startsWith('daily/')) return 'daily'
+  const slash = path.lastIndexOf('/')
+  return slash === -1 ? '' : path.slice(0, slash)
+}
+
+/** Order the sections for display: knowledge base first (the folder
+ * the LLM works in most), then the capture inbox, then every other
+ * folder alphabetically, with the dated `daily` stream last (bulky,
+ * low-priority for the space map). Ties inside the "other" band break
+ * alphabetically. Pure + stable — same input yields the same order,
+ * so the persisted file doesn't churn between rebuilds. */
+export function orderSections(
+  sections: IndexSection[],
+  knowledgeFolder: string,
+  captureFolder: string,
+): IndexSection[] {
+  const rank = (s: IndexSection): number => {
+    if (s.folder === knowledgeFolder) return 0
+    if (s.folder === captureFolder) return 1
+    if (s.folder === 'daily') return 3
+    return 2
+  }
+  return [...sections].sort((a, b) => {
+    const ra = rank(a)
+    const rb = rank(b)
+    if (ra !== rb) return ra - rb
+    return a.folder.localeCompare(b.folder)
+  })
+}
+
+/** Render ordered sections to the markdown body of `_system/index.md`.
+ * Each section is a `## folder/` heading (with role label + note
+ * count) over a `| Path | Title | Summary | Links |` table, followed by
+ * an **Attachments** list for any non-note files, or an `_(empty
+ * folder)_` marker when the folder holds neither. No row cap: the
+ * map's contract is that the LLM can see every note EXISTS; only the
+ * summary column compresses (see {@link SUMMARY_MAX_LEN}). */
+export function renderVaultIndex(sections: IndexSection[]): string {
+  if (sections.length === 0) return '_The vault has no notes yet._'
+  const blocks: string[] = []
+  for (const s of sections) {
+    const label = s.folder === '' ? '/' : `${s.folder}/`
+    const role = s.role ? ` — ${s.role}` : ''
+    const parts: string[] = [`## ${escapeMdCell(label)}${role} (${s.rows.length})`]
+    if (s.rows.length > 0) {
+      parts.push(
+        [
+          '| Path | Title | Summary | Links |',
+          '|------|-------|---------|-------|',
+          ...s.rows.map(
+            (r) =>
+              `| ${escapeMdCell(r.path)} | ${escapeMdCell(r.title)} | ${escapeMdCell(r.summary)} | ${r.links} |`,
+          ),
+        ].join('\n'),
+      )
+    }
+    if (s.attachments.length > 0) {
+      parts.push(
+        ['**Attachments**', ...s.attachments.map((p) => `- ${escapeMdCell(p)}`)].join(
+          '\n',
+        ),
+      )
+    }
+    if (s.rows.length === 0 && s.attachments.length === 0) {
+      parts.push('_(empty folder)_')
+    }
+    blocks.push(parts.join('\n\n'))
+  }
+  return blocks.join('\n\n')
+}
+
+/** Filename (title fallback) for a note whose `KnownDoc.title` is
+ * empty — e.g. a `daily` doc, which carries a date rather than a
+ * title. The path basename minus `.md`. */
+function basenameNoExt(path: string): string {
+  const name = path.split('/').pop() ?? path
+  return name.replace(/\.md$/, '')
+}
+
+/** Assemble the whole-vault index — every non-archived note grouped by
+ * folder, rendered as folder sections of markdown tables, written to
+ * `_system/index.md`. Deterministic snapshot from live state.
  *
- * The path comes first because that's what the LLM needs to feed
- * back into the `read_page` / `search_wiki` tools. The Type column
- * carries the verbatim type-id the ingest LLM reads when constructing
- * a proposal's `target` — without it the model has no way to address
- * an existing page (file paths and titles aren't stable identifiers
- * across renames; type ids are). Title + Summary follow for
- * human-readable scanning; Links is the backlink count.
+ * Excluded from the catalog:
+ *   - `system:*` pages — host-owned bookkeeping (the index + timeline
+ *     themselves); they never appear in their own catalog.
+ *   - archived notes — restoring one re-introduces it on the next
+ *     rebuild.
  *
- * Why a table (not a bullet list, as it used to be):
- * the body is a list of records, and tables align columns so the
- * user can scan dozens of pages at a glance. The LLM also still
- * reads it fine — markdown table is a standard format. The editor
- * renders it as a real PM table (Milkdown GFM preset).
+ * Per-column source (mirrors the prior wiki-only builder so summaries
+ * stay stable across the widening):
+ *   - Path    : `pathForDoc(doc)` → the note's vault-relative address.
+ *   - Title   : `KnownDoc.title`, else the path basename (dailies).
+ *   - Summary : `sidecar.aiSummary` → body's first content line after
+ *               the title ({@link bodyExcerpt}) → `(empty)` placeholder
+ *               (the row still proves the note exists).
+ *   - Links   : backlink count from {@link countBacklinks}.
  *
- * Source preference for each column:
- *   - Path   : pathForDoc(doc) → e.g. `wiki/Sarah Kim.md`
- *   - Type   : `KnownDoc.type` → e.g. `wiki:custom-7n2dvj41`
- *   - Title  : `KnownDoc.title` (Bear/Obsidian first-body-line)
- *   - Summary: `sidecar.aiSummary` (populated by Phase A5 ingest hook)
- *              → fallback to the body's first content line after the
- *                title (see {@link bodyExcerpt})
- *              → fallback to `(empty)` placeholder so the LLM still
- *                sees that the page exists
- *   - Links  : backlink count from {@link countBacklinks}
- *
- * Pages without a resolvable path (shouldn't happen for non-archived
- * wiki entries, but defensive) are skipped silently. */
+ * Notes without a resolvable path (a writing whose parent daily is
+ * missing, etc.) are skipped silently. */
 export async function buildWikiIndex(): Promise<string> {
-  const catalog = useDocsStore.getState().knownDocs
-  const wikiPages = catalog.filter(
-    (d) => d.type.startsWith('wiki:') && !d.archivedAt,
+  const store = useDocsStore.getState()
+  const catalog = store.knownDocs
+  const getDoc = (slug: string) => catalog.find((d) => d.slug === slug)
+  // Everything the map catalogs: every non-archived note that isn't a
+  // host-owned system page.
+  const indexed = catalog.filter(
+    (d) => !d.archivedAt && !d.type.startsWith('system:'),
   )
 
-  // Pre-fetch bodies + sidecars. Bodies come from in-memory handles
-  // (sync); sidecars are tiny JSON files read in parallel.
+  // Pre-fetch bodies (in-memory handles, sync) for the WHOLE non-
+  // archived catalog — countBacklinks counts links FROM any page
+  // (including `system:log`, per its contract), so it needs more than
+  // the indexed subset as sources. Sidecars (tiny JSON) only for the
+  // indexed rows, read in parallel.
   const bodies: Record<string, string> = {}
-  for (const d of wikiPages) {
-    bodies[d.slug] = readWikiMarkdown(d.slug)
+  for (const d of catalog) {
+    if (!d.archivedAt) bodies[d.slug] = readWikiMarkdown(d.slug)
   }
-  const sidecars = await Promise.all(wikiPages.map((d) => readWikiSidecar(d)))
-
   const counts = countBacklinks(catalog, (slug) => bodies[slug])
+  const sidecars = await Promise.all(indexed.map((d) => readWikiSidecar(d)))
 
-  const rows: string[] = [
-    '| Path | Type | Title | Summary | Links |',
-    '|------|------|-------|---------|-------|',
-  ]
-  for (let i = 0; i < wikiPages.length; i++) {
-    const doc = wikiPages[i]
-    const path = computePathForDoc(doc)
+  const knowledgeFolder = KNOWLEDGE_BASE_FOLDER
+  const captureFolder = getDefaultNoteFolder()
+
+  // Bucket rows by folder section.
+  const bySection = new Map<string, IndexRow[]>()
+  for (let i = 0; i < indexed.length; i++) {
+    const doc = indexed[i]
+    const path = computePathForDoc(doc, getDoc)
     if (!path) continue
-    const sidecar = sidecars[i]
     const body = bodies[doc.slug] ?? ''
     const summary =
-      sidecar?.aiSummary?.trim() ||
-      bodyExcerpt(body) ||
-      EMPTY_PLACEHOLDER
-    const title = (doc.title ?? '').trim() || 'Untitled'
-    const linked = counts.get(doc.slug) ?? 0
-    rows.push(
-      `| ${escapeMdCell(path)} | ${escapeMdCell(doc.type)} | ${escapeMdCell(title)} | ${escapeMdCell(truncate(summary, SUMMARY_MAX_LEN))} | ${linked} |`,
-    )
+      sidecars[i]?.aiSummary?.trim() || bodyExcerpt(body) || EMPTY_PLACEHOLDER
+    const title = (doc.title ?? '').trim() || basenameNoExt(path)
+    const row: IndexRow = {
+      path,
+      title,
+      summary: truncate(summary, SUMMARY_MAX_LEN),
+      links: counts.get(doc.slug) ?? 0,
+    }
+    const key = folderOf(path)
+    let rows = bySection.get(key)
+    if (!rows) {
+      rows = []
+      bySection.set(key, rows)
+    }
+    rows.push(row)
   }
-  return rows.join('\n')
+
+  // Bucket non-note attachments (pdf/image/…) by the same folder key.
+  // `knownFiles` is already sidecar-free (see isAttachmentFile); we only
+  // drop host-owned areas the map doesn't catalog.
+  const attachBySection = new Map<string, string[]>()
+  for (const file of store.knownFiles) {
+    if (file.startsWith('_system/') || file.startsWith('threads/')) continue
+    const key = folderOf(file)
+    let list = attachBySection.get(key)
+    if (!list) {
+      list = []
+      attachBySection.set(key, list)
+    }
+    list.push(file)
+  }
+
+  // Folders the user made that hold no catalogued note or attachment —
+  // kept as empty sections because the folder itself is intent (a place
+  // to file into). `knownFolders` includes empties the file scan alone
+  // can't see.
+  const populated = new Set<string>([
+    ...bySection.keys(),
+    ...attachBySection.keys(),
+  ])
+  const emptyFolders = pickEmptyFolders(store.knownFolders, populated)
+
+  const folders = new Set<string>([...populated, ...emptyFolders])
+  const sections: IndexSection[] = [...folders].map((folder) => ({
+    folder,
+    role:
+      folder === knowledgeFolder
+        ? 'knowledge base'
+        : folder === captureFolder
+          ? 'capture'
+          : null,
+    // Stable within-section order so the persisted file doesn't churn.
+    rows: (bySection.get(folder) ?? []).sort((a, b) =>
+      a.title.localeCompare(b.title),
+    ),
+    attachments: (attachBySection.get(folder) ?? []).sort((a, b) =>
+      a.localeCompare(b),
+    ),
+  }))
+
+  return renderVaultIndex(
+    orderSections(sections, knowledgeFolder, captureFolder),
+  )
+}
+
+/** Pick the folders to render as empty sections: every known folder
+ * that (a) isn't already populated with notes/attachments, (b) has no
+ * populated folder nested under it (so a parent like `research/` isn't
+ * flagged empty just because its notes live in `research/2024/`), and
+ * (c) isn't a host-owned / dated area the map doesn't catalog
+ * (`_system`, `threads`, `daily` and its subfolders, and the vault
+ * root). Pure — exported for unit tests. */
+export function pickEmptyFolders(
+  knownFolders: string[],
+  populated: Set<string>,
+): string[] {
+  const hasPopulatedDescendant = (folder: string): boolean => {
+    const prefix = folder + '/'
+    for (const p of populated) if (p.startsWith(prefix)) return true
+    return false
+  }
+  return knownFolders.filter((folder) => {
+    if (folder === '' || folder === '_system' || folder === 'threads') return false
+    if (folder.startsWith('_system/') || folder.startsWith('threads/')) return false
+    if (folder === 'daily' || folder.startsWith('daily/')) return false
+    if (populated.has(folder)) return false
+    if (hasPopulatedDescendant(folder)) return false
+    return true
+  })
 }
 
 /** Escape a value for safe placement inside a markdown table cell.

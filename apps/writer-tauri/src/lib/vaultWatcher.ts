@@ -298,13 +298,23 @@ function dispatchEvent(event: { type: unknown }, paths: string[]): void {
     | undefined
   if (!type) return
 
-  // Any external change under `wiki/` shifts the Tier 1 index — body
-  // edits change summaries + backlink counts, create/remove change the
-  // catalog itself. Invalidate once per burst rather than per handler
-  // call so concurrent renames don't thrash the cache. Daily / writing
-  // changes don't affect the index (they aren't catalog targets), so
-  // we filter them out here.
-  if (paths.some((p) => p.startsWith('wiki/'))) {
+  // The vault index maps the WHOLE vault, so any external `.md` change —
+  // in any folder, not just `wiki/` — shifts it: body edits change a
+  // row's summary + backlink counts, create/remove change the catalog
+  // itself. Invalidate once per burst rather than per handler call so
+  // concurrent renames don't thrash the cache. Excluded: `_system/` (the
+  // index writes there itself — rebuilding on our own write would loop;
+  // our writes are already echo-filtered, this is belt-and-braces) and
+  // `threads/` (chat storage, never catalogued). Non-`.md` attachments
+  // don't carry summaries or backlinks, so they don't move the index.
+  if (
+    paths.some(
+      (p) =>
+        p.endsWith('.md') &&
+        !p.startsWith('_system/') &&
+        !p.startsWith('threads/'),
+    )
+  ) {
     invalidateWikiIndex()
   }
 
