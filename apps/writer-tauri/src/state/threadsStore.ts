@@ -37,6 +37,7 @@
 import { create } from 'zustand'
 import type { ChatTurn, ThreadMeta } from '@/chat/types'
 import { useContextUsageStore } from '@/state/contextUsageStore'
+import { useChatDraftStore } from '@/state/chatDraftStore'
 import {
   appendThreadTurn,
   appendThreadTurns,
@@ -193,6 +194,9 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
 
   removeThread: async (id) => {
     await deleteThreadFiles(id)
+    // Drop any unsent composer draft for this thread so it can't linger in
+    // memory (or resurface if the id were somehow reused).
+    useChatDraftStore.getState().remove(id)
     set((s) => {
       const threads = { ...s.threads }
       const turns = { ...s.turns }

@@ -16,7 +16,9 @@ describe('folderOptions', () => {
   })
 
   it('excludes app-managed and hidden folders', () => {
-    expect(folderOptions(['_system', 'threads', '.git', '.obsidian', 'research'])).toEqual([
+    // `_system` is app-managed; `.octave` / `.git` / `.obsidian` are hidden by
+    // the dot-prefix filter. All are dropped; only real user folders remain.
+    expect(folderOptions(['_system', '.octave', '.git', '.obsidian', 'research'])).toEqual([
       'inbox',
       'research',
       'wiki',

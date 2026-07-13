@@ -359,7 +359,7 @@ export async function buildWikiIndex(): Promise<string> {
   // drop host-owned areas the map doesn't catalog.
   const attachBySection = new Map<string, string[]>()
   for (const file of store.knownFiles) {
-    if (file.startsWith('_system/') || file.startsWith('threads/')) continue
+    if (file.startsWith('_system/')) continue
     const key = folderOf(file)
     let list = attachBySection.get(key)
     if (!list) {
@@ -419,8 +419,8 @@ export function pickEmptyFolders(
     return false
   }
   return knownFolders.filter((folder) => {
-    if (folder === '' || folder === '_system' || folder === 'threads') return false
-    if (folder.startsWith('_system/') || folder.startsWith('threads/')) return false
+    if (folder === '' || folder === '_system') return false
+    if (folder.startsWith('_system/')) return false
     if (folder === 'daily' || folder.startsWith('daily/')) return false
     if (populated.has(folder)) return false
     if (hasPopulatedDescendant(folder)) return false

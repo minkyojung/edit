@@ -185,7 +185,7 @@ export interface ThreadMeta {
   /** Slug of the doc this thread is anchored to. Threads always
    * belong to exactly one doc (wiki page / daily / system). When the
    * parent doc is archived the thread follows. The file-based layout
-   * uses a flat `threads/` folder, so this field — not directory
+   * uses a flat `.octave/threads/` folder, so this field — not directory
    * structure — carries the doc association. */
   parentSlug: string
   title: string                    // empty until Haiku titler fills it in
@@ -425,7 +425,7 @@ export type Attachment =
   | { type: 'file'; name: string; mediaType: string }
 
 /** A file the user attached to a chat turn for the model to read.
- * On attach we write the bytes into the vault's hidden `.attachments/`
+ * On attach we write the bytes into the vault's hidden `.octave/attachments/`
  * folder and carry only `path` (vault-relative) — the model Reads it on
  * demand, the same orientation-block channel @-mentions and the viewing
  * file use. No base64 rides through the prompt anymore. */
@@ -433,8 +433,8 @@ export interface FileAttachment {
   id: string
   name: string
   mediaType: string
-  /** Vault-relative path under `.attachments/` (e.g.
-   * `.attachments/<id>/Screenshot.png`). Hidden from the note tree/index
+  /** Vault-relative path under `.octave/attachments/` (e.g.
+   * `.octave/attachments/<id>/Screenshot.png`). Hidden from the note tree/index
    * (both filter dot-dirs) but Read-able by the agent. */
   path: string
 }

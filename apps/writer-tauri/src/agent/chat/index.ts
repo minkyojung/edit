@@ -145,7 +145,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // so behaviour is unchanged; the seam lets roles plug in later.
   const agent = await resolveAgent(useThreadsStore.getState().threads[threadId]?.agentId)
   const systemBody = systemPrompt ?? agent.systemPrompt
-  // Attachments now ride as vault paths (written to `.attachments/` on attach),
+  // Attachments now ride as vault paths (written to `.octave/attachments/` on attach),
   // injected as an orientation block the model Reads on demand — same channel
   // as @-mentions. No base64 in the prompt.
   const attachedFiles = (attachments ?? []).map((a) => a.path)

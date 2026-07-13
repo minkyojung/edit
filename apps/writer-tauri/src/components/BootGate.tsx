@@ -176,10 +176,11 @@ export function BootGate({ children }: Props) {
       // backup/push stays disabled. Runs for every project kind.
       try {
         await gitInit()
-        // Migrate existing vaults (whose .gitignore predates the rule) so chat
-        // attachment binaries under `.attachments/` stay out of history. New
-        // vaults get this from DEFAULT_GITIGNORE; best-effort either way.
-        await gitEnsureGitignoreEntries(['.attachments/'])
+        // Migrate existing vaults (whose .gitignore predates the rule) so all
+        // app-internal state under `.octave/` (chat threads + attachment
+        // binaries) stays out of history. New vaults get this from
+        // DEFAULT_GITIGNORE; best-effort either way.
+        await gitEnsureGitignoreEntries(['.octave/'])
       } catch (err) {
         console.warn('[boot] git init failed — checkpoints disabled', err)
       }
@@ -195,10 +196,10 @@ export function BootGate({ children }: Props) {
         await seedWikiDefaults()
       }
       bootstrap()
-      // Load chat thread metas + turns from `threads/`. Fires in
+      // Load chat thread metas + turns from `.octave/threads/`. Fires in
       // parallel with bootstrap because the two read disjoint paths
       // (docs read `wiki/` / `daily/` / `_system/`, threads read
-      // `threads/`). hydrate is idempotent so StrictMode's double-
+      // `.octave/threads/`). hydrate is idempotent so StrictMode's double-
       // mount is safe.
       void useThreadsStore.getState().hydrate()
     }

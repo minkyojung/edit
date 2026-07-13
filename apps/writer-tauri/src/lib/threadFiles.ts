@@ -1,11 +1,12 @@
 // Vault I/O for chat threads.
 //
-// Each thread occupies a pair of files in `threads/` at the vault root:
+// Each thread occupies a pair of files in `.octave/threads/` (the app's
+// hidden internal namespace — see lib/octave.ts):
 //
-//   threads/<id>.json         — ThreadMeta. Atomic rewrite on every
+//   <id>.json         — ThreadMeta. Atomic rewrite on every
 //                                metadata change (title, archived,
 //                                model, ...). Small; cost is irrelevant.
-//   threads/<id>.turns.jsonl  — ChatTurn per line, append-only. Long
+//   <id>.turns.jsonl  — ChatTurn per line, append-only. Long
 //                                threads stay cheap because we never
 //                                rewrite the whole file.
 //
@@ -33,7 +34,7 @@ import {
   writeVaultFile,
 } from '@/lib/vault'
 
-const THREADS_DIR = 'threads'
+import { OCTAVE_THREADS_DIR as THREADS_DIR } from '@/lib/octave'
 
 function metaPath(id: string): string {
   return `${THREADS_DIR}/${id}.json`

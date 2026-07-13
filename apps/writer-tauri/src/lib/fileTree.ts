@@ -16,15 +16,13 @@ import { pathForDoc } from '@/lib/docPaths'
 import type { SortMode } from '@/state/sortStore'
 
 /** Paths hidden from the sidebar tree: `_`-prefixed agent folders
- * (`_system/`) and `threads/` (chat-thread JSON, gitignored app state).
- * Mirrors Obsidian hiding `.obsidian/`. Exported so other surfaces (the
- * "Move to…" folder list) hide the same set. */
+ * (`_system/`) and every dot-prefixed folder (`.octave/` app state,
+ * `.git/`, …). Mirrors Obsidian hiding `.obsidian/`. Exported so other
+ * surfaces (the "Move to…" folder list) hide the same set. Catalog-derived
+ * paths already drop dot-entries upstream (scanVault), so the `.`-check is
+ * belt-and-braces for any raw folder/file list passed in. */
 export function isHiddenTreePath(path: string): boolean {
-  return (
-    path.startsWith('_') ||
-    path === 'threads' ||
-    path.startsWith('threads/')
-  )
+  return path.startsWith('_') || path.startsWith('.')
 }
 
 export interface TreeFile {

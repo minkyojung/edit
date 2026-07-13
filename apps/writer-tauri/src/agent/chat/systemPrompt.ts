@@ -95,7 +95,7 @@ export interface SystemBlocksArgs {
    * inline; otherwise the model is told to Read the path. */
   mentionFiles?: { path: string; body?: string }[]
   /** Vault-relative paths of files the user attached via the composer
-   * (paperclip / drag / paste). Written to the hidden `.attachments/` folder;
+   * (paperclip / drag / paste). Written to the hidden `.octave/attachments/` folder;
    * rendered in an `--- ATTACHED FILES ---` block that tells the model to Read
    * them BEFORE answering (unlike inline base64, a path is only "seen" once
    * Read). */

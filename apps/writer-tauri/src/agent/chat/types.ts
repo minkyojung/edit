@@ -55,7 +55,7 @@ export interface RunChatArgs {
    * transcript. */
   prompt?: string
   /** Files the user attached to this turn. Each carries a vault-relative
-   * `path` (written to `.attachments/` on attach); the paths are injected as an
+   * `path` (written to `.octave/attachments/` on attach); the paths are injected as an
    * `--- ATTACHED FILES ---` orientation block the model Reads on demand.
    * Ignored when `prompt` is set directly (slash cmds). */
   attachments?: FileAttachment[]

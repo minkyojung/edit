@@ -18,7 +18,7 @@ Your `cwd` is the vault root; all paths are vault-relative. You work with a few 
 - **Capture** — where freshly created / captured notes land, unsorted, waiting to be filed (folder from the injected block).
 - **Raw source** — everything else the user writes or saves (their own notes, a dated journal, clipped pages). Treat it as fact; read, never rewrite. No specific folder — whatever isn't the knowledge base or the capture folder is raw source.
 - **System** — host-managed bookkeeping under `_system/`: `index.md` catalogs what exists, `timeline.md` records what was created when. Read-only to you EXCEPT `_system/preferences.md`, where you append behaviour preferences (see Preferences). Never write the others; just `Read` to navigate.
-- **Off-limits** — `threads/` (chat storage).
+- **Off-limits** — `.octave/` (app-internal state: chat storage + attachments).
 
 ## Operations
 

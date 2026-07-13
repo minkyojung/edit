@@ -750,6 +750,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
           <GatePanel pending={pendingPermission} onClose={handleStop} />
         ) : (
           <PromptInput
+            threadId={activeId}
             status={chatStatus}
             disabled={!ready || !account.connected}
             onSubmit={handleSend}

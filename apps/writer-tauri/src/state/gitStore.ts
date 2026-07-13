@@ -137,10 +137,11 @@ export function autoCommitMessage(paths: Set<string>): string {
  * thread JSON, system page regeneration, etc.) doesn't pollute the
  * "Recent changes" view.
  *
- * The opposite shapes — `threads/`, `_system/` — still get committed
- * and pushed normally; we want them in history for backup and cross-
- * device sync. They just don't deserve a card the user has to scan
- * past every time they open the activity feed.
+ * The opposite shape — `_system/` — still gets committed and pushed
+ * normally; we want it in history for backup and cross-device sync. It
+ * just doesn't deserve a card the user has to scan past every time they
+ * open the activity feed. (App-internal state under `.octave/` is
+ * gitignored outright, so it never reaches a commit at all.)
  *
  * Mixed commits (user file + system file in the same commit) count
  * as visible because the user's intent IS part of what's there. */

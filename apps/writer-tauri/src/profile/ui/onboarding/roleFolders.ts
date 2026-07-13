@@ -10,10 +10,10 @@ export const DEFAULT_KNOWLEDGE_BASE = 'wiki'
 export const DEFAULT_CAPTURE = 'inbox'
 
 /** App-managed folders that are never role targets — excluded from the
- * dropdowns. `_system` (host bookkeeping) and `threads` (chat storage)
- * mirror the sidebar's hidden set; dot-folders (`.git`, `.obsidian`)
- * are filtered by name. */
-const EXCLUDED_ROLE_DIRS = new Set(['_system', 'threads'])
+ * dropdowns. `_system` (host bookkeeping) mirrors the sidebar's hidden
+ * set; dot-folders (`.octave` app state, `.git`, `.obsidian`) are filtered
+ * by name below. */
+const EXCLUDED_ROLE_DIRS = new Set(['_system'])
 
 /** Build the selectable folder list for the role dropdowns: the vault's
  * real top-level folders (minus app-managed + hidden ones) plus the two

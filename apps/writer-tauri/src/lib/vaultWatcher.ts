@@ -305,17 +305,11 @@ function dispatchEvent(event: { type: unknown }, paths: string[]): void {
   // itself. Invalidate once per burst rather than per handler call so
   // concurrent renames don't thrash the cache. Excluded: `_system/` (the
   // index writes there itself — rebuilding on our own write would loop;
-  // our writes are already echo-filtered, this is belt-and-braces) and
-  // `threads/` (chat storage, never catalogued). Non-`.md` attachments
+  // our writes are already echo-filtered, this is belt-and-braces). Chat
+  // storage under `.octave/` never reaches here — it holds no `.md` and the
+  // watcher's dot-segment filter drops it anyway. Non-`.md` attachments
   // don't carry summaries or backlinks, so they don't move the index.
-  if (
-    paths.some(
-      (p) =>
-        p.endsWith('.md') &&
-        !p.startsWith('_system/') &&
-        !p.startsWith('threads/'),
-    )
-  ) {
+  if (paths.some((p) => p.endsWith('.md') && !p.startsWith('_system/'))) {
     invalidateWikiIndex()
     invalidateVaultTimeline()
   }
