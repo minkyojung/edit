@@ -20,6 +20,7 @@
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
+import { invalidateVaultTimeline } from '@/state/vaultTimeline'
 import { hasExternalConflict } from '@/state/externalConflictStore'
 import {
   metaPathForDoc,
@@ -636,7 +637,13 @@ async function flushDirtyOnce(): Promise<void> {
   // removed slug can never strand a stale entry, and the toast reconciler
   // dismisses the moment the last persistent failure clears.
   useSaveFailureStore.getState().reconcile(getDirtySlugs())
-  if (indexTouched) invalidateWikiIndex()
+  if (indexTouched) {
+    invalidateWikiIndex()
+    // Timeline keys on creation date + title, which a body edit doesn't
+    // change — but create/rename land here too, so invalidate alongside
+    // the index; the timeline persist guards the redundant write.
+    invalidateVaultTimeline()
+  }
 }
 
 /** Checkpoint flush on window blur / hide. The 500 ms timer is the

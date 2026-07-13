@@ -36,6 +36,7 @@ import { useDocsStore } from '@/state/docsStore'
 import { findSlugByVaultPath } from '@/state/docsStore/helpers'
 import { pathForDoc } from '@/lib/docPaths'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
+import { invalidateVaultTimeline } from '@/state/vaultTimeline'
 import {
   isOurRecentWrite,
   listVaultTreeRecursive,
@@ -316,6 +317,7 @@ function dispatchEvent(event: { type: unknown }, paths: string[]): void {
     )
   ) {
     invalidateWikiIndex()
+    invalidateVaultTimeline()
   }
 
   if ('create' in type && type.create) {

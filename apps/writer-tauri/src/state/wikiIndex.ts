@@ -438,11 +438,12 @@ export function pickEmptyFolders(
 }
 
 /** Escape a value for safe placement inside a markdown table cell.
+ * Exported so sibling derived views (the timeline) escape identically.
  * Replaces pipe characters with `\|` (which most renderers parse as
  * a literal `|`) and collapses newlines to spaces — markdown table
  * cells can't carry line breaks without specialised extensions, so
  * a title or summary containing `\n` would otherwise split the row. */
-function escapeMdCell(value: string): string {
+export function escapeMdCell(value: string): string {
   return value
     .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')

@@ -56,6 +56,17 @@ const SYSTEM_PAGE_INDEX: SystemPageConfig = {
   title: 'index',
   initialBody: '',
 }
+/** System-owned timeline of the vault — every note listed by creation
+ * date (`state/vaultTimeline.ts` writes it deterministically). The time
+ * axis to the index's space axis: "when was this made" vs "what exists,
+ * and where". Same `system:*` treatment as the index (LLM never routes
+ * to it, catalog + palette exclude it, sidebar hides it). */
+const TIMELINE_TYPE = 'system:timeline' as const
+const SYSTEM_PAGE_TIMELINE: SystemPageConfig = {
+  type: TIMELINE_TYPE,
+  title: 'timeline',
+  initialBody: '',
+}
 // wiki:profile uses the SAME lazy-create helper despite the `wiki:`
 // prefix instead of `system:` — the only thing the helper cares
 // about is the type id + initial body. Profile body is populated
@@ -124,6 +135,14 @@ async function ensureSystemPage(
  * invalidation overwrites them). */
 export async function ensureIndexWikiSlug(): Promise<string | null> {
   return ensureSystemPage(SYSTEM_PAGE_INDEX)
+}
+
+/** Ensure `system:timeline` exists. Body is system-owned — see
+ * state/vaultTimeline.ts, which writes a deterministic by-date listing
+ * on every note change. Empty until the first persist tick; user edits
+ * are tolerated but transient (next invalidation overwrites them). */
+export async function ensureTimelineWikiSlug(): Promise<string | null> {
+  return ensureSystemPage(SYSTEM_PAGE_TIMELINE)
 }
 
 /** Ensure `wiki:profile` exists. The user's self-profile page —

@@ -148,6 +148,13 @@ export const createBootstrapSlice = (
       ).catch((err) =>
         console.error('[wiki] index invalidate failed', err),
       )
+      // Same for the timeline (the by-date derived view) — invalidating
+      // here writes the fresh `_system/timeline.md` on cold boot.
+      void import('../vaultTimeline').then(({ invalidateVaultTimeline }) =>
+        invalidateVaultTimeline(),
+      ).catch((err) =>
+        console.error('[wiki] timeline invalidate failed', err),
+      )
 
       set({ bootstrapping: false })
     } finally {
