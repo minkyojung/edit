@@ -3,24 +3,27 @@
 // The authority for update checking/downloading/installing lives here in
 // Rust, not in a webview: one process-wide state machine drives the whole
 // flow and broadcasts a single `updater:state` event to EVERY window. The
-// frontend is a pure renderer (see src/hooks/useUpdaterEvents.ts) plus
-// manual triggers (the About settings row + the "Check for Updates…" menu
+// frontend is a pure renderer (see src/hooks/useUpdaterEvents.ts) plus a
+// manual trigger (the About settings row + the "Check for Updates…" menu
 // item). Errors are a first-class state — never swallowed — which is the
 // core fix for the prior JS updater that hid every failure in console.warn
 // and only surfaced a toast after a successful install.
 //
-// Flow is notify-first (Sparkle/Electron convention): a check that finds a
-// newer version emits `available` and stops; the user clicks Download
-// (emits `downloading` with throttled progress) then Restart (relaunch).
-// The `Update` handle returned by check() is parked in `pending` between
-// the check and the download command — the reason this state is stateful.
+// Flow is auto-download (VS Code / Slack / Notion convention): a check that
+// finds a newer version downloads + installs it silently in the background,
+// then emits `ready`. The only user-facing moment is a single "restart to
+// update" prompt; a staged install applies on the next relaunch regardless,
+// so ignoring the prompt is safe (it lands next time the app is quit +
+// reopened). No "click to download" step, no progress prompt — download
+// progress is deliberately not surfaced anywhere prominent (the About row
+// may show it, but there is no toast/main-window indicator).
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_updater::{Update, UpdaterExt};
+use tauri_plugin_updater::UpdaterExt;
 
 /// The single event name every window listens on.
 const EVENT: &str = "updater:state";
@@ -40,22 +43,17 @@ pub enum UpdateState {
     Checking,
     /// Check completed; already on the newest version.
     UpToDate { checked_at: u64 },
-    /// A newer version exists. The `Update` handle is parked in `pending`
-    /// awaiting the user's Download action (notify-first).
-    Available {
-        version: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        notes: Option<String>,
-    },
-    /// Download in progress. `total`/`percent` are null when the server
-    /// omits content-length (indeterminate progress).
+    /// Auto-downloading in the background. Not surfaced as a toast; the
+    /// About row may render it. `total`/`percent` are null when the server
+    /// omits content-length (indeterminate).
     Downloading {
         version: String,
         downloaded: u64,
         total: Option<u64>,
         percent: Option<u8>,
     },
-    /// Downloaded + installed; a relaunch will apply it.
+    /// Downloaded + installed; a relaunch applies it (and it applies on the
+    /// next natural relaunch even if the user ignores the prompt).
     Ready { version: String },
     /// A failure at a named phase. `message` is already human-readable.
     Error { phase: &'static str, message: String },
@@ -66,14 +64,12 @@ pub enum UpdateState {
 
 #[derive(Default)]
 struct Inner {
-    /// A check or download is running — reject re-entry so a menu click,
+    /// A check/download is running — reject re-entry so a menu click,
     /// settings click, or loop tick can't overlap the in-flight work.
     busy: bool,
     /// Last emitted state, handed to windows that mount their listener
     /// after the last broadcast (via `updater_status`).
     last: Option<UpdateState>,
-    /// The handle from the most recent successful check, awaiting Download.
-    pending: Option<Update>,
     /// Version currently staged as `ready` — lets a later check short-
     /// circuit instead of re-downloading the same bundle.
     ready_version: Option<String>,
@@ -128,8 +124,16 @@ fn end(app: &AppHandle) {
     }
 }
 
-/// Check for an update. Emits `checking` → `upToDate` | `available` |
-/// `error{check}`. No-ops if already busy or a dev build.
+fn ready_version(app: &AppHandle) -> Option<String> {
+    app.try_state::<UpdaterState>()
+        .and_then(|s| s.inner.lock().ok().and_then(|i| i.ready_version.clone()))
+}
+
+/// Check for an update and, if one exists, download + install it in the
+/// background (auto-download). Emits `checking` → `upToDate` | `downloading`
+/// → `ready` | `error{check|download|install}`. No-ops if already busy or a
+/// dev build. Called by the startup loop, the menu item, and the About
+/// "Check now" button — all the same flow.
 pub async fn run_check(app: AppHandle) {
     if cfg!(debug_assertions) {
         set_state(
@@ -143,101 +147,43 @@ pub async fn run_check(app: AppHandle) {
     if !try_begin(&app) {
         return;
     }
-    do_check(&app).await;
+    do_run(&app).await;
     end(&app);
 }
 
-async fn do_check(app: &AppHandle) {
+async fn do_run(app: &AppHandle) {
     set_state(app, UpdateState::Checking);
 
     let updater = match app.updater() {
         Ok(u) => u,
         Err(e) => {
-            set_state(
-                app,
-                UpdateState::Error {
-                    phase: "check",
-                    message: e.to_string(),
-                },
-            );
+            set_state(app, UpdateState::Error { phase: "check", message: e.to_string() });
             return;
         }
     };
 
-    match updater.check().await {
-        Ok(None) => set_state(app, UpdateState::UpToDate { checked_at: now_ms() }),
-        Ok(Some(update)) => {
-            let version = update.version.clone();
-            let notes = update.body.clone();
-            // Already downloaded + staged this exact version — keep Ready
-            // instead of re-offering a download.
-            let already_ready = app
-                .try_state::<UpdaterState>()
-                .and_then(|s| s.inner.lock().ok().and_then(|i| i.ready_version.clone()))
-                .map(|v| v == version)
-                .unwrap_or(false);
-            if already_ready {
-                set_state(app, UpdateState::Ready { version });
-                return;
-            }
-            if let Some(s) = app.try_state::<UpdaterState>() {
-                if let Ok(mut inner) = s.inner.lock() {
-                    inner.pending = Some(update);
-                }
-            }
-            set_state(app, UpdateState::Available { version, notes });
+    let update = match updater.check().await {
+        Ok(None) => {
+            set_state(app, UpdateState::UpToDate { checked_at: now_ms() });
+            return;
         }
-        Err(e) => set_state(
-            app,
-            UpdateState::Error {
-                phase: "check",
-                message: e.to_string(),
-            },
-        ),
-    }
-}
-
-/// Download + install the update parked by the last check. Emits
-/// `downloading` (throttled) → `ready` | `error{download|install}`.
-/// No-ops if already busy, a dev build, or nothing is staged.
-pub async fn run_download(app: AppHandle) {
-    if cfg!(debug_assertions) {
-        set_state(
-            &app,
-            UpdateState::Unsupported {
-                reason: "Development build — updates are disabled.".into(),
-            },
-        );
-        return;
-    }
-    if !try_begin(&app) {
-        return;
-    }
-    do_download(&app).await;
-    end(&app);
-}
-
-async fn do_download(app: &AppHandle) {
-    // Clone the handle out (Update: Clone) so we don't hold the lock across
-    // the await; keep `pending` populated so a failed download can retry.
-    let update = app
-        .try_state::<UpdaterState>()
-        .and_then(|s| s.inner.lock().ok().and_then(|i| i.pending.clone()));
-    let update = match update {
-        Some(u) => u,
-        None => {
-            set_state(
-                app,
-                UpdateState::Error {
-                    phase: "download",
-                    message: "No update is staged — run a check first.".into(),
-                },
-            );
+        Ok(Some(u)) => u,
+        Err(e) => {
+            set_state(app, UpdateState::Error { phase: "check", message: e.to_string() });
             return;
         }
     };
 
     let version = update.version.clone();
+
+    // Already downloaded + staged this exact version — keep Ready instead of
+    // re-downloading the same bundle (e.g. a later check after the user
+    // ignored the restart prompt).
+    if ready_version(app).as_deref() == Some(version.as_str()) {
+        set_state(app, UpdateState::Ready { version });
+        return;
+    }
+
     set_state(
         app,
         UpdateState::Downloading {
@@ -292,59 +238,41 @@ async fn do_download(app: &AppHandle) {
     let bytes = match bytes {
         Ok(b) => b,
         Err(e) => {
-            set_state(
-                app,
-                UpdateState::Error {
-                    phase: "download",
-                    message: e.to_string(),
-                },
-            );
+            set_state(app, UpdateState::Error { phase: "download", message: e.to_string() });
             return;
         }
     };
 
-    // Install is a distinct phase: a failure here is almost always the
-    // app running from a read-only / quarantined location (the exact
-    // silent bug this rewrite fixes — now surfaced with a fix hint).
+    // Install is a distinct phase: a failure here is almost always the app
+    // running from a read-only / quarantined location (the exact silent bug
+    // this rewrite fixes — now surfaced with a fix hint).
     match update.install(bytes) {
         Ok(()) => {
             if let Some(s) = app.try_state::<UpdaterState>() {
                 if let Ok(mut inner) = s.inner.lock() {
                     inner.ready_version = Some(version.clone());
-                    inner.pending = None;
                 }
             }
             set_state(app, UpdateState::Ready { version });
         }
-        Err(e) => set_state(
-            app,
-            UpdateState::Error {
-                phase: "install",
-                message: e.to_string(),
-            },
-        ),
+        Err(e) => set_state(app, UpdateState::Error { phase: "install", message: e.to_string() }),
     }
 }
 
 // ── Commands ──────────────────────────────────────────────────────
 
-/// Manual/scheduled check. Drives `run_check`; errors surface as state, so
-/// the command itself only returns Err for the (rare) inability to start.
+/// Manual/scheduled check → auto-download → install. Drives `run_check`;
+/// errors surface as state, so the command itself only returns Err for the
+/// (rare) inability to start.
 #[tauri::command]
 pub async fn updater_check(app: AppHandle) -> Result<(), String> {
     run_check(app).await;
     Ok(())
 }
 
-/// Download + install the staged update (the "Download" action).
-#[tauri::command]
-pub async fn updater_download(app: AppHandle) -> Result<(), String> {
-    run_download(app).await;
-    Ok(())
-}
-
-/// Relaunch into the freshly-installed version (the "Restart now" action).
-/// Only meaningful when the state is `ready`. `restart()` never returns.
+/// Relaunch into the freshly-installed version (the "Restart to update"
+/// action). Only meaningful when the state is `ready`. `restart()` never
+/// returns.
 #[tauri::command]
 pub async fn updater_install(app: AppHandle) -> Result<(), String> {
     app.restart();

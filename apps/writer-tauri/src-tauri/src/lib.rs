@@ -442,7 +442,6 @@ pub fn run() {
             apply_window_chrome,
             set_window_compact,
             updater::updater_check,
-            updater::updater_download,
             updater::updater_install,
             updater::updater_status,
         ])

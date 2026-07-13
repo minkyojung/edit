@@ -14,19 +14,12 @@ import { updater, UPDATER_EVENT, type UpdateState } from '@/lib/updater'
 import { useUpdateStore } from '@/state/updateStore'
 import { notify } from '@/lib/notify'
 
-/** Drive the single lifecycle toast (`octave-update`) from state. Progress
- * updates fire on every `downloading` emit so the percentage ticks in place;
- * the others fire only on the transition INTO their status so they don't
- * re-animate (a repeated `available` from a later check won't re-pop). */
+/** Toast only the two user-facing moments, and only on the transition INTO
+ * them (so they don't re-animate). Auto-download is silent — `checking` and
+ * `downloading` never toast; the download just happens in the background. */
 function reflectToast(prev: UpdateState, next: UpdateState) {
-  if (next.status === 'downloading') {
-    notify.updateDownloading(next.percent)
-    return
-  }
   if (prev.status === next.status) return
-  if (next.status === 'available') {
-    notify.updateAvailable(next.version, { onDownload: () => void updater.download() })
-  } else if (next.status === 'ready') {
+  if (next.status === 'ready') {
     notify.updateReady(next.version, { onRestart: () => void updater.install() })
   } else if (next.status === 'error') {
     notify.updateFailed(next.phase)

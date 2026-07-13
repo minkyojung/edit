@@ -29,21 +29,12 @@ function describe(state: UpdateState): { description: string; button: ReactNode 
           </Button>
         ),
       }
-    case 'available':
-      return {
-        description: `Version ${state.version} is available.`,
-        button: (
-          <Button size="sm" onClick={() => void updater.download()}>
-            Download
-          </Button>
-        ),
-      }
     case 'downloading':
       return {
         description:
           state.percent != null ? `Downloading… ${state.percent}%` : 'Downloading…',
         button: (
-          <Button size="sm" disabled>
+          <Button variant="outline" size="sm" disabled>
             Downloading…
           </Button>
         ),

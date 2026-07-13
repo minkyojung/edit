@@ -6,12 +6,14 @@
 
 import { invoke } from '@tauri-apps/api/core'
 
-/** Mirror of the Rust `UpdateState` enum (serde tag = "status"). */
+/** Mirror of the Rust `UpdateState` enum (serde tag = "status"). Auto-
+ * download: there is no "available" step — a found update downloads +
+ * installs in the background, so the user-facing states are checking →
+ * (downloading) → ready. */
 export type UpdateState =
   | { status: 'idle' }
   | { status: 'checking' }
   | { status: 'upToDate'; checkedAt: number }
-  | { status: 'available'; version: string; notes?: string }
   | {
       status: 'downloading'
       version: string
@@ -27,14 +29,11 @@ export type UpdateState =
 export const UPDATER_EVENT = 'updater:state'
 
 export const updater = {
-  /** Check for a newer version (manual trigger — the menu item and the
-   * hourly loop call the same Rust flow). Emits checking → upToDate |
-   * available | error. */
+  /** Check → auto-download → install (one flow). The menu item, the About
+   * "Check now" button, and the hourly loop all call this. Emits
+   * checking → upToDate | downloading → ready | error. */
   check: () => invoke<void>('updater_check'),
-  /** Download + install the staged update (the "Download" action). Emits
-   * downloading → ready | error. */
-  download: () => invoke<void>('updater_download'),
-  /** Relaunch into the installed version (the "Restart now" action). */
+  /** Relaunch into the installed version (the "Restart to update" action). */
   install: () => invoke<void>('updater_install'),
   /** Current state snapshot — for a window that mounts after the last
    * broadcast. */

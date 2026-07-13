@@ -443,42 +443,25 @@ export const notify = {
   },
 
   // ── Auto-update ───────────────────────────────────────────────
-  // One toast id for the whole lifecycle (available → downloading → ready
-  // / error), so sonner morphs a SINGLE toast in place instead of stacking
-  // a separate "Download" then "Restart" toast. This matches the Sparkle /
-  // Electron convention where the one prompt becomes "Restart to update".
-  /** A newer version was found (notify-first). The action starts the
-   * download; the same toast then shows progress and finally the restart. */
-  updateAvailable(version: string, opts: { onDownload: () => void }) {
-    toast(`Octave ${version} available`, {
-      id: 'octave-update',
-      description: 'A new version is ready to download.',
-      duration: Infinity,
-      action: { label: 'Download', onClick: opts.onDownload },
-    })
-  },
-  /** Download in progress — updates the same toast in place with the
-   * percentage (or an indeterminate label when the size is unknown). */
-  updateDownloading(percent: number | null) {
-    toast.loading('Downloading update…', {
-      id: 'octave-update',
-      description: percent != null ? `${percent}%` : undefined,
-      duration: Infinity,
-    })
-  },
-  /** Downloaded + installed — the SAME toast becomes the restart prompt. */
+  // Auto-download: the update downloads + installs silently in the
+  // background, so there's exactly ONE user-facing prompt — "restart to
+  // update" — plus an error toast if something fails. No "available" /
+  // "downloading" toasts (the download isn't the user's concern).
+  /** Downloaded + installed in the background; a relaunch applies it.
+   * "Later" just dismisses — the staged install lands on the next natural
+   * quit + reopen anyway, so ignoring it is safe. */
   updateReady(version: string, opts: { onRestart: () => void }) {
     toast.success(`Octave ${version} ready`, {
       id: 'octave-update',
       description: 'Restart to finish updating.',
       duration: Infinity,
       action: { label: 'Restart to update', onClick: opts.onRestart },
+      cancel: { label: 'Later', onClick: () => {} },
     })
   },
-  /** An update step failed — morphs the same toast into the error. Copy
-   * names the likely real-world cause per phase (install failures are
-   * almost always a read-only / quarantined app location — the exact bug
-   * the old silent updater hid). */
+  /** An update step failed. Copy names the likely real-world cause per
+   * phase (install failures are almost always a read-only / quarantined
+   * app location — the exact bug the old silent updater hid). */
   updateFailed(phase: 'check' | 'download' | 'install') {
     const desc = {
       check: "Couldn't check for updates.",
