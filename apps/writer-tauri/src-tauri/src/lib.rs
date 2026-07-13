@@ -167,6 +167,49 @@ fn apply_toolbar_chrome(window: &tauri::WebviewWindow) {
     }
 }
 
+/// The window corner radius, matching CSS `--window-radius` (26px).
+#[cfg(target_os = "macos")]
+const WINDOW_CORNER_RADIUS: f64 = 26.0;
+
+/// Round the window corners to {@link WINDOW_CORNER_RADIUS} DIRECTLY, instead
+/// of relying on macOS's toolbar-window classifier (the `apply_toolbar_chrome`
+/// trick) to imply a large corner — which macOS 26 (Tahoe) stopped honoring,
+/// leaving the window with a small default radius. The window is `transparent`,
+/// so masking the content layer to a rounded rect rounds the whole visible app;
+/// the traffic lights live in the titlebar frame view (not the content view),
+/// so they're untouched. `invalidateShadow` re-fits the drop shadow to the
+/// new curve. Continuous (squircle) curve matches macOS's native corner shape.
+#[cfg(target_os = "macos")]
+fn apply_corner_radius(window: &tauri::WebviewWindow) {
+    let Ok(ns_window_ptr) = window.ns_window() else {
+        return;
+    };
+    use objc2::{class, msg_send, runtime::AnyObject};
+    let ns_window = ns_window_ptr as *mut AnyObject;
+    if ns_window.is_null() {
+        return;
+    }
+    unsafe {
+        let content: *mut AnyObject = msg_send![ns_window, contentView];
+        if content.is_null() {
+            return;
+        }
+        let _: () = msg_send![content, setWantsLayer: true];
+        let layer: *mut AnyObject = msg_send![content, layer];
+        if layer.is_null() {
+            return;
+        }
+        let _: () = msg_send![layer, setCornerRadius: WINDOW_CORNER_RADIUS];
+        let _: () = msg_send![layer, setMasksToBounds: true];
+        let cstr = b"continuous\0".as_ptr() as *const std::os::raw::c_char;
+        let curve: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: cstr];
+        if !curve.is_null() {
+            let _: () = msg_send![layer, setCornerCurve: curve];
+        }
+        let _: () = msg_send![ns_window, invalidateShadow];
+    }
+}
+
 /// Re-apply the native window chrome (NSToolbar corner radius + unified
 /// toolbar style) to the window with `label`. The frontend calls this after
 /// spawning a per-project window so it matches the config-defined `main`
@@ -177,7 +220,10 @@ fn apply_toolbar_chrome(window: &tauri::WebviewWindow) {
 fn apply_window_chrome(app: tauri::AppHandle, label: String) {
     if let Some(window) = app.get_webview_window(&label) {
         #[cfg(target_os = "macos")]
-        apply_toolbar_chrome(&window);
+        {
+            apply_toolbar_chrome(&window);
+            apply_corner_radius(&window);
+        }
         #[cfg(not(target_os = "macos"))]
         let _ = window;
     }
@@ -529,6 +575,15 @@ pub fn run() {
                 let _ = window.center();
                 let _ = window.show();
                 let _ = window.set_focus();
+                // Re-apply the native chrome AFTER show(): on macOS 26 the
+                // toolbar corner classification doesn't reliably take before
+                // the window is realized, and pin the radius directly so it no
+                // longer depends on that OS heuristic at all.
+                #[cfg(target_os = "macos")]
+                {
+                    apply_toolbar_chrome(&window);
+                    apply_corner_radius(&window);
+                }
             }
 
             // proof-server spawn removed (Phase 3.D). The app now boots
