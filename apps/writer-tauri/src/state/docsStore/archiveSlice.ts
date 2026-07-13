@@ -27,7 +27,7 @@
 
 import { notify } from '@/lib/notify'
 import { useChatRuns } from '@/stores/chatRuns'
-import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
+import { flushDirty, markSlugDirty, clearDirty } from '@/lib/docFileSync'
 import { trashVaultFile } from '@/lib/vault'
 import { pathForDoc } from '@/lib/docPaths'
 import { ensureNonEmptyTabStrip, getDocPolicy, isUserOwnedWiki, isWikiDoc } from './helpers'
@@ -298,20 +298,43 @@ export const createArchiveSlice = (
     const bySlug = new Map(state.knownDocs.map((d) => [d.slug, d]))
     const rel = pathForDoc(target, (s) => bySlug.get(s))
 
-    // Tear down in-memory FIRST so the flush loop can't recreate the
-    // file mid-move: destroying the handle clears its dirty flag, and
-    // dropping it from knownDocs makes flushDirty skip the slug.
+    // Do the recoverable OS-trash move FIRST; only tear down in-memory state
+    // AFTER it succeeds. The old order dropped the doc from knownDocs before
+    // the async trash, so a failed trash (e.g. the hardened-runtime AppleEvent
+    // block that made delete a no-op in the packaged app) left the catalog and
+    // disk disagreeing: the sidebar row vanished while the file lingered, so a
+    // follow-up Finder delete couldn't resolve the now-unknown slug and later
+    // edits to the doc were silently dropped by the flush ("!known → clear").
+    // Abort any run and clear the dirty flag first so a concurrent flush tick
+    // can't re-persist the file we're about to trash.
     useChatRuns.getState().abortBySlug(slug)
-    const nextHandles = { ...state.handles }
-    const nextStatus = { ...state.status }
+    clearDirty(slug)
+    if (rel) {
+      try {
+        await trashVaultFile(rel)
+        await trashVaultFile(rel.replace(/\.md$/, '.meta.json'))
+      } catch (err) {
+        console.error('[docs] deleteToTrash move failed', err)
+        // Nothing was torn down — the doc is fully intact and still editable.
+        // Re-mark dirty so any unsaved edits still flush, then bail.
+        markSlugDirty(slug)
+        notify.cantDeleteNote({ onRetry: () => get().deleteToTrash(slug) })
+        return slug
+      }
+    }
+
+    // Trash succeeded (or there was no on-disk file) — tear down in-memory now.
+    const live = get()
+    const nextHandles = { ...live.handles }
+    const nextStatus = { ...live.status }
     nextHandles[slug]?.destroy()
     delete nextHandles[slug]
     delete nextStatus[slug]
 
-    const nextOpen = state.openSlugs.filter((s) => s !== slug)
-    const nextExpanded = state.expandedDocSlugs.filter((s) => s !== slug)
-    const nextKnown = state.knownDocs.filter((d) => d.slug !== slug)
-    const postState: DocsState = { ...state, knownDocs: nextKnown }
+    const nextOpen = live.openSlugs.filter((s) => s !== slug)
+    const nextExpanded = live.expandedDocSlugs.filter((s) => s !== slug)
+    const nextKnown = live.knownDocs.filter((d) => d.slug !== slug)
+    const postState: DocsState = { ...live, knownDocs: nextKnown }
     const patch = ensureNonEmptyTabStrip(postState, {
       knownDocs: nextKnown,
       openSlugs: nextOpen,
@@ -320,20 +343,6 @@ export const createArchiveSlice = (
       status: nextStatus,
     })
     set(patch)
-
-    // Send the file (and any legacy `.meta.json` sidecar) to the OS
-    // trash — recoverable from Finder / Recycle Bin. Best-effort: on
-    // failure the file stays put and would re-surface on the next scan
-    // (fail-safe — no data loss), so we just notify.
-    if (rel) {
-      try {
-        await trashVaultFile(rel)
-        await trashVaultFile(rel.replace(/\.md$/, '.meta.json'))
-      } catch (err) {
-        console.error('[docs] deleteToTrash move failed', err)
-        notify.cantDeleteNote({ onRetry: () => get().deleteToTrash(slug) })
-      }
-    }
 
     const finalActive = (patch.openSlugs ?? nextOpen)[0] ?? null
     if (finalActive && !get().handles[finalActive]) {
@@ -357,23 +366,44 @@ export const createArchiveSlice = (
     // pages): refuse to delete a folder that contains them.
     if (affected.some((d) => !getDocPolicy(d).canArchive)) return null
 
-    // Tear down every contained doc (mirrors deleteToTrash, for a set).
     const group = new Set(affected.map((d) => d.slug))
-    const nextHandles = { ...state.handles }
-    const nextStatus = { ...state.status }
+
+    // Trash the whole folder FIRST; tear down in-memory only on success (same
+    // ordering fix as deleteToTrash — a failed trash must never leave the
+    // catalog and disk disagreeing). Abort runs and clear dirty flags up front
+    // so a concurrent flush can't re-persist a doc inside the folder we're
+    // trashing.
     for (const d of affected) {
       useChatRuns.getState().abortBySlug(d.slug)
+      clearDirty(d.slug)
+    }
+    try {
+      await trashVaultFile(folderPath)
+    } catch (err) {
+      console.error('[docs] deleteFolder move failed', err)
+      // Nothing torn down — folder + docs stay intact. Re-mark dirty so any
+      // unsaved edits still flush, then bail without changing the active doc.
+      for (const d of affected) markSlugDirty(d.slug)
+      notify.cantDeleteNote({ onRetry: () => get().deleteFolder(folderPath) })
+      return get().openSlugs[0] ?? null
+    }
+
+    // Trash succeeded — tear down every contained doc (mirrors deleteToTrash).
+    const live = get()
+    const nextHandles = { ...live.handles }
+    const nextStatus = { ...live.status }
+    for (const d of affected) {
       nextHandles[d.slug]?.destroy()
       delete nextHandles[d.slug]
       delete nextStatus[d.slug]
     }
-    const nextOpen = state.openSlugs.filter((s) => !group.has(s))
-    const nextExpanded = state.expandedDocSlugs.filter((s) => !group.has(s))
-    const nextKnown = state.knownDocs.filter((d) => !group.has(d.slug))
-    const nextFolders = state.knownFolders.filter(
+    const nextOpen = live.openSlugs.filter((s) => !group.has(s))
+    const nextExpanded = live.expandedDocSlugs.filter((s) => !group.has(s))
+    const nextKnown = live.knownDocs.filter((d) => !group.has(d.slug))
+    const nextFolders = live.knownFolders.filter(
       (f) => f !== folderPath && !f.startsWith(prefix),
     )
-    const postState: DocsState = { ...state, knownDocs: nextKnown }
+    const postState: DocsState = { ...live, knownDocs: nextKnown }
     const patch = ensureNonEmptyTabStrip(postState, {
       knownDocs: nextKnown,
       openSlugs: nextOpen,
@@ -383,15 +413,6 @@ export const createArchiveSlice = (
       knownFolders: nextFolders,
     })
     set(patch)
-
-    // Move the whole folder to the OS trash (recoverable). trash::delete
-    // handles directories. Best-effort — fail-safe (no data loss).
-    try {
-      await trashVaultFile(folderPath)
-    } catch (err) {
-      console.error('[docs] deleteFolder move failed', err)
-      notify.cantDeleteNote({ onRetry: () => get().deleteFolder(folderPath) })
-    }
 
     const finalActive = (patch.openSlugs ?? nextOpen)[0] ?? null
     if (finalActive && !get().handles[finalActive]) {

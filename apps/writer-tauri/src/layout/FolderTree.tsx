@@ -1,8 +1,8 @@
 // FolderTree — Obsidian-style sidebar tree built from the catalog.
 //
 // Folders expand/collapse; clicking a file opens it via the slug URL.
-// Files rename inline (double-click the name or right-click → Rename),
-// delete via right-click, and drag onto a folder row to move there.
+// Files rename inline (right-click → Rename), delete via right-click, and
+// drag onto a folder row to move there.
 // New folders are created inline via the header button (newFolderStore).
 //
 // Drag: dnd-kit. File rows are draggable; folder ROWS are drop targets
@@ -292,10 +292,7 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
               onCancel={ctx.onCancelRename}
             />
           ) : (
-            <TreeRowLabel
-              onClick={() => ctx.onOpen(node.slug)}
-              onDoubleClick={() => ctx.onStartRename(node.slug)}
-            >
+            <TreeRowLabel onClick={() => ctx.onOpen(node.slug)}>
               <span className="truncate">{node.name}</span>
             </TreeRowLabel>
           )}
@@ -408,7 +405,6 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
                   onClick={() =>
                     node.slug ? ctx.onOpen(node.slug) : ctx.onToggle(node.path)
                   }
-                  onDoubleClick={() => ctx.onStartFolderRename(node.path)}
                 >
                   <span className="truncate">{node.name}</span>
                 </TreeRowLabel>
