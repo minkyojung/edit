@@ -33,6 +33,7 @@ import { OnboardingLauncher } from '@/components/OnboardingLauncher'
 import { resolveWindowMode } from '@/hooks/useWindowModeSync'
 import { exists } from '@tauri-apps/plugin-fs'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
+import { importClaudeCode } from '@/lib/claudeImport'
 import { seedCommands } from '@/lib/commandsLib'
 import { seedAgents } from '@/lib/agentsLib'
 import { seedSkills } from '@/lib/skillsLib'
@@ -48,6 +49,15 @@ const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
  * littered with wiki scaffolding. Each step is best-effort: a failure logs and
  * the boot continues. */
 async function seedWikiDefaults(): Promise<void> {
+  // Import the user's existing Claude Code setup (`~/.claude` commands / agents
+  // / skills) FIRST — before the seeds below. Same skip-if-exists + tombstone
+  // contract, so an imported asset makes the matching seed a no-op (the user's
+  // own version wins). Best-effort: a missing `~/.claude` imports nothing.
+  try {
+    await importClaudeCode()
+  } catch (err) {
+    console.warn('[boot] claude-code import failed', err)
+  }
   // Seed `CLAUDE.md` at the vault root if missing — the schema document the
   // agent reads every chat. Idempotent by file existence; never overwrites
   // a user's edits.

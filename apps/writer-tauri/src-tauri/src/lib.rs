@@ -1,4 +1,5 @@
 mod appdata;
+mod claude_import;
 pub mod claude_sidecar;
 mod events;
 mod fetch_url;
@@ -345,6 +346,8 @@ pub fn run() {
             oauth::get_claude_token,
             oauth::get_claude_account,
             oauth::disconnect_claude,
+            claude_import::read_claude_code,
+            claude_import::copy_claude_skill,
             google_oauth::start_google_oauth,
             google_oauth::get_google_account,
             google_oauth::disconnect_google,
