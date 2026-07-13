@@ -1,0 +1,87 @@
+name: Release
+
+# Tag-driven release: push a version tag (e.g. v0.0.2) and this builds, signs,
+# notarizes, and publishes the macOS (Apple Silicon) app + the auto-updater
+# manifest to a GitHub Release. The installed app polls that release's
+# latest.json and self-updates.
+#
+# Bump apps/writer-tauri/src-tauri/tauri.conf.json `version` to match the tag
+# before tagging — the updater compares that version to decide "is there an
+# update".
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: Build · sign · notarize · publish (macOS arm64)
+    runs-on: macos-14 # Apple Silicon runner (arm64-only build)
+    permissions:
+      contents: write # create the GitHub Release + upload assets
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/writer-tauri/src-tauri
+
+      # Compile-time secrets baked in via include_str! (google_oauth.rs). These
+      # files are gitignored, so restore them from repo secrets or the Rust
+      # build can't find them.
+      - name: Restore compile-time secret files
+        working-directory: apps/writer-tauri/src-tauri
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          mkdir -p secrets
+          printf '%s' "$GOOGLE_CLIENT_ID" > secrets/google_client_id
+          printf '%s' "$GOOGLE_CLIENT_SECRET" > secrets/google_client_secret
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # tauri-action builds (running the configured beforeBuildCommand), imports
+      # the Developer ID cert from APPLE_CERTIFICATE into a temp keychain, signs
+      # with hardened runtime + Entitlements.plist, notarizes via the APPLE_*
+      # creds, signs the updater bundle with the minisign key, creates the
+      # release, and (includeUpdaterJson) generates + uploads latest.json.
+      - name: Build, sign, notarize, publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Apple code signing (cert imported from the base64-encoded .p12)
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Apple notarization
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Updater bundle signing (minisign / Tauri updater)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Release creation (auto-provided token)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/writer-tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: Octave ${{ github.ref_name }}
+          releaseBody: Automated release. The app auto-updates from this manifest.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
