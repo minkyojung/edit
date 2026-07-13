@@ -443,28 +443,42 @@ export const notify = {
   },
 
   // ── Auto-update ───────────────────────────────────────────────
-  /** A newer version was found (notify-first). Persistent until acted on;
-   * the action kicks off the download. */
+  // One toast id for the whole lifecycle (available → downloading → ready
+  // / error), so sonner morphs a SINGLE toast in place instead of stacking
+  // a separate "Download" then "Restart" toast. This matches the Sparkle /
+  // Electron convention where the one prompt becomes "Restart to update".
+  /** A newer version was found (notify-first). The action starts the
+   * download; the same toast then shows progress and finally the restart. */
   updateAvailable(version: string, opts: { onDownload: () => void }) {
     toast(`Octave ${version} available`, {
-      id: 'update-available',
+      id: 'octave-update',
       description: 'A new version is ready to download.',
       duration: Infinity,
       action: { label: 'Download', onClick: opts.onDownload },
     })
   },
-  /** The update is downloaded + installed; a relaunch applies it. */
-  updateReady(version: string, opts: { onRestart: () => void }) {
-    toast.success(`Octave ${version} ready`, {
-      id: 'update-ready',
-      description: 'Restart to apply the update.',
+  /** Download in progress — updates the same toast in place with the
+   * percentage (or an indeterminate label when the size is unknown). */
+  updateDownloading(percent: number | null) {
+    toast.loading('Downloading update…', {
+      id: 'octave-update',
+      description: percent != null ? `${percent}%` : undefined,
       duration: Infinity,
-      action: { label: 'Restart now', onClick: opts.onRestart },
     })
   },
-  /** An update step failed. Copy names the likely real-world cause per
-   * phase — install failures are almost always a read-only / quarantined
-   * app location (the exact bug the old silent updater hid). */
+  /** Downloaded + installed — the SAME toast becomes the restart prompt. */
+  updateReady(version: string, opts: { onRestart: () => void }) {
+    toast.success(`Octave ${version} ready`, {
+      id: 'octave-update',
+      description: 'Restart to finish updating.',
+      duration: Infinity,
+      action: { label: 'Restart to update', onClick: opts.onRestart },
+    })
+  },
+  /** An update step failed — morphs the same toast into the error. Copy
+   * names the likely real-world cause per phase (install failures are
+   * almost always a read-only / quarantined app location — the exact bug
+   * the old silent updater hid). */
   updateFailed(phase: 'check' | 'download' | 'install') {
     const desc = {
       check: "Couldn't check for updates.",
@@ -472,8 +486,9 @@ export const notify = {
       install: "Couldn't install — the app folder may be read-only or quarantined.",
     }[phase]
     toast.error('Update failed', {
-      id: 'update-failed',
+      id: 'octave-update',
       description: `${desc} See About in Settings for details.`,
+      duration: Infinity,
     })
   },
 }

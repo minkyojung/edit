@@ -53,7 +53,7 @@ function describe(state: UpdateState): { description: string; button: ReactNode 
         description: `Version ${state.version} is ready.`,
         button: (
           <Button size="sm" onClick={() => void updater.install()}>
-            Restart now
+            Restart to update
           </Button>
         ),
       }

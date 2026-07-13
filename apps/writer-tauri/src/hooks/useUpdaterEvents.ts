@@ -14,10 +14,15 @@ import { updater, UPDATER_EVENT, type UpdateState } from '@/lib/updater'
 import { useUpdateStore } from '@/state/updateStore'
 import { notify } from '@/lib/notify'
 
-/** Toast only on status *transitions* (not on every progress re-emit of the
- * same status), so a download doesn't spam and a repeated `available` from
- * a later check doesn't re-toast. */
-function toastOnTransition(prev: UpdateState, next: UpdateState) {
+/** Drive the single lifecycle toast (`octave-update`) from state. Progress
+ * updates fire on every `downloading` emit so the percentage ticks in place;
+ * the others fire only on the transition INTO their status so they don't
+ * re-animate (a repeated `available` from a later check won't re-pop). */
+function reflectToast(prev: UpdateState, next: UpdateState) {
+  if (next.status === 'downloading') {
+    notify.updateDownloading(next.percent)
+    return
+  }
   if (prev.status === next.status) return
   if (next.status === 'available') {
     notify.updateAvailable(next.version, { onDownload: () => void updater.download() })
@@ -46,7 +51,7 @@ export function useUpdaterEvents() {
       const prev = useUpdateStore.getState().state
       const next = event.payload
       useUpdateStore.getState().set(next)
-      toastOnTransition(prev, next)
+      reflectToast(prev, next)
     }).then((fn) => {
       if (disposed) fn()
       else unlisten = fn
