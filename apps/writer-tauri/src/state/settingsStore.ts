@@ -79,6 +79,15 @@ interface SettingsState {
   /** Set the default new-note folder. Trims slashes; empty → 'inbox'. */
   setDefaultNoteFolder: (folder: string) => void
 
+  /** Folder the agent files synthesized knowledge into — the "knowledge base"
+   * role bound to a concrete folder. Default 'wiki'. Injected into the prompt
+   * each turn (like the capture folder) so the model routes durable knowledge
+   * here, and used by the index/timeline to label + top-sort that section.
+   * User-changeable (settings modal); changing it takes effect next turn. */
+  knowledgeBaseFolder: string
+  /** Set the knowledge-base folder. Trims slashes; empty → 'wiki'. */
+  setKnowledgeBaseFolder: (folder: string) => void
+
   /** Model the Organize / intake agent runs on (filing notes into the
    * wiki / daily). Default Sonnet; switch to Haiku to cut cost on bulk
    * passes, or Opus for quality. User-changeable (settings modal). */
@@ -128,6 +137,7 @@ export const useSettingsStore = create<SettingsState>()(
       activeVaultIndex: 0,
       bootstrapCompleted: false,
       defaultNoteFolder: 'inbox',
+      knowledgeBaseFolder: 'wiki',
       intakeModel: DEFAULT_CHAT_MODEL,
       inboxAutoOrganize: true,
       sidebarVibrancyEnabled: true,
@@ -154,6 +164,8 @@ export const useSettingsStore = create<SettingsState>()(
         })),
       setDefaultNoteFolder: (folder) =>
         set({ defaultNoteFolder: folder.trim().replace(/^\/+|\/+$/g, '') || 'inbox' }),
+      setKnowledgeBaseFolder: (folder) =>
+        set({ knowledgeBaseFolder: folder.trim().replace(/^\/+|\/+$/g, '') || 'wiki' }),
       setIntakeModel: (model) => set({ intakeModel: model }),
       setInboxAutoOrganize: (enabled) => set({ inboxAutoOrganize: enabled }),
       setSidebarVibrancy: (enabled) => set({ sidebarVibrancyEnabled: enabled }),
@@ -167,6 +179,7 @@ export const useSettingsStore = create<SettingsState>()(
         activeVaultIndex: s.activeVaultIndex,
         bootstrapCompleted: s.bootstrapCompleted,
         defaultNoteFolder: s.defaultNoteFolder,
+        knowledgeBaseFolder: s.knowledgeBaseFolder,
         intakeModel: s.intakeModel,
         inboxAutoOrganize: s.inboxAutoOrganize,
         sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
@@ -195,6 +208,12 @@ export function getActiveVaultPath(): string | null {
  * chat materialiser (toPendingChange). */
 export function getDefaultNoteFolder(): string {
   return useSettingsStore.getState().defaultNoteFolder || 'inbox'
+}
+
+/** Folder the agent files synthesized knowledge into. Default 'wiki'. Non-React
+ * read for the prompt assembler (chat/index.ts) and the index/timeline builders. */
+export function getKnowledgeBaseFolder(): string {
+  return useSettingsStore.getState().knowledgeBaseFolder || 'wiki'
 }
 
 /** Model the Organize / intake agent runs on. Non-React read for runIntake. */

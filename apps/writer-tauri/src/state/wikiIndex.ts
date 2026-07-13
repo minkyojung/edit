@@ -47,17 +47,8 @@ import {
   vaultFileExists,
   writeVaultFile,
 } from '@/lib/vault'
-import { getDefaultNoteFolder } from './settingsStore'
+import { getDefaultNoteFolder, getKnowledgeBaseFolder } from './settingsStore'
 import { useDocsStore } from './docsStore'
-
-/** Vault-relative folder that holds synthesized knowledge-base pages.
- * The CLAUDE.md "This vault" section binds the knowledge-base ROLE to
- * this folder; the index uses it only to label + top-sort that
- * section. Hard-coded to the default binding for now — U11 turns it
- * into a user setting injected each turn, at which point this constant
- * becomes a `getKnowledgeBaseFolder()` read (same shape as
- * {@link getDefaultNoteFolder} for the capture folder below). */
-const KNOWLEDGE_BASE_FOLDER = 'wiki'
 
 const SUMMARY_MAX_LEN = 80
 const EMPTY_PLACEHOLDER = '(empty)'
@@ -335,7 +326,7 @@ export async function buildWikiIndex(): Promise<string> {
   const counts = countBacklinks(catalog, (slug) => bodies[slug])
   const sidecars = await Promise.all(indexed.map((d) => readWikiSidecar(d)))
 
-  const knowledgeFolder = KNOWLEDGE_BASE_FOLDER
+  const knowledgeFolder = getKnowledgeBaseFolder()
   const captureFolder = getDefaultNoteFolder()
 
   // Bucket rows by folder section.

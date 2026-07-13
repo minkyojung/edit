@@ -94,6 +94,12 @@ export interface SystemBlocksArgs {
    * it's the staging area to route notes OUT of — not a permanent home. Stable
    * for the session → sits in the cacheable prefix. */
   captureFolder?: string | null
+  /** The vault-relative knowledge-base folder (settings `knowledgeBaseFolder`,
+   * e.g. "wiki"). Injected so the model files durable synthesized knowledge
+   * here and treats it as authoritative over any folder named in the CLAUDE.md
+   * schema (the setting is what the user actually chose). Stable → cacheable
+   * prefix. */
+  knowledgeBaseFolder?: string | null
   /** When true (default for free chat) the document body is appended
    * past the SDK's cache boundary so it doesn't poison the cache key.
    * Slash commands that already embed `{{document}}` in their body
@@ -159,6 +165,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     ctx,
     vaultRoot,
     captureFolder,
+    knowledgeBaseFolder,
     appendDocument,
     currentFilePath,
     viewingFilePath,
@@ -201,6 +208,20 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `Treat it as a staging inbox, NOT a permanent home: when you file or organize, ` +
         `move a note OUT of \`${captureFolder}/\` into the folder that best fits it (per the ` +
         `CLAUDE.md rules above). Don't route notes back into \`${captureFolder}/\`.`,
+    )
+  }
+  // Name the knowledge-base folder — where durable, synthesized knowledge
+  // (entity / topic / concept pages) lives. This is the user's actual setting,
+  // so it's AUTHORITATIVE over any folder the CLAUDE.md schema names. Stable →
+  // cacheable prefix.
+  if (knowledgeBaseFolder) {
+    prefix.push(
+      `--- KNOWLEDGE BASE ---\n` +
+        `The knowledge base is \`${knowledgeBaseFolder}/\` — the home for durable, ` +
+        `synthesized knowledge (the entity / topic / concept pages you own and keep ` +
+        `coherent). When you file lasting knowledge from a capture or a chat, write or ` +
+        `update pages HERE. This is the user's configured location: if the CLAUDE.md ` +
+        `schema above names a different folder for the knowledge base, THIS setting wins.`,
     )
   }
 

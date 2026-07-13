@@ -23,7 +23,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { navigateToNoteBySlug } from '@/editor/cmNav'
 import { assembleContext } from '@/agent/contextPipeline'
-import { getActiveVaultPath, getDefaultNoteFolder, getSandboxEnabled } from '@/state/settingsStore'
+import {
+  getActiveVaultPath,
+  getDefaultNoteFolder,
+  getKnowledgeBaseFolder,
+  getSandboxEnabled,
+} from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { pathForDoc } from '@/lib/docPaths'
 import { useChatRuns } from '@/stores/chatRuns'
@@ -186,6 +191,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     // Name the configured capture folder so the model treats it as a staging
     // inbox to route notes OUT of (rename-safe — reads the setting).
     captureFolder: getDefaultNoteFolder(),
+    // Name the configured knowledge-base folder so the model files durable
+    // synthesized knowledge there (authoritative over the CLAUDE.md schema).
+    knowledgeBaseFolder: getKnowledgeBaseFolder(),
     // Viewing a non-markdown file (PDF/image/…) → there's no doc body to
     // pin, and `view` may still hold the previously-open note's text, so
     // suppress the DOCUMENT block to avoid feeding stale, wrong context.
