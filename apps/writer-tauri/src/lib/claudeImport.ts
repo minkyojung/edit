@@ -18,7 +18,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { join } from '@tauri-apps/api/path'
-import { writeVaultFile, vaultFileExists } from '@/lib/vault'
+import { readVaultFile, writeVaultFile, vaultFileExists } from '@/lib/vault'
 import { getActiveVaultPath } from '@/state/settingsStore'
 import { readTombstones } from '@/lib/assetTombstone'
 import { COMMANDS_REL } from '@/lib/commandsLib'
@@ -39,15 +39,51 @@ interface ClaudeCodeImport {
   skills: string[]
 }
 
-/** Copy the user's Claude Code commands / agents / skills into the active vault.
- * Best-effort and idempotent: a read failure or a missing `~/.claude` imports
- * nothing. Returns the number of assets actually written (skips existing /
- * tombstoned), so the caller can surface a one-line summary. */
+// One-time marker: import is a MIGRATION, not a live sync (matches Claude Code's
+// own model — personal `~/.claude` assets are read from a single source, not
+// re-copied per project). Once a vault has imported, we never import again, so a
+// later Claude Code edit/add doesn't silently leak into an existing vault. The
+// marker lives IN the vault so it travels with it: move the vault to another
+// machine and it won't re-import from that machine's unrelated `~/.claude`.
+//
+// NOT a dotfile: the Tauri fs capability `$HOME/**` scope doesn't match
+// dot-prefixed files, so a `.`-name would need explicit scope entries (as
+// `.deleted.json` has). A plain name is covered by `$HOME/**` for read / write /
+// rename, and `_system/` is already hidden from the file tree and watcher.
+const IMPORTED_MARKER_REL = '_system/agent/claude-imported.json'
+
+/** True once this vault has already run the Claude Code import. Uses
+ * readVaultFile (existence via read) to stay on the read/write scopes the
+ * marker path is covered by. */
+async function hasImported(): Promise<boolean> {
+  try {
+    await readVaultFile(IMPORTED_MARKER_REL)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Record that this vault has imported, so future boots skip it. */
+async function markImported(): Promise<void> {
+  await writeVaultFile(IMPORTED_MARKER_REL, '{"imported":true}\n')
+}
+
+/** Copy the user's Claude Code commands / agents / skills into the active vault,
+ * ONCE per vault (see {@link IMPORTED_MARKER_REL}). Best-effort: a read failure
+ * or a missing `~/.claude` imports nothing. Returns the number of assets written
+ * (skips existing / tombstoned), so the caller can surface a one-line summary. */
 export async function importClaudeCode(): Promise<number> {
+  // One-time gate: if this vault already imported, do nothing — not even the
+  // `~/.claude` read. This is what makes it a one-shot migration instead of a
+  // per-boot sync.
+  if (await hasImported()) return 0
+
   let manifest: ClaudeCodeImport
   try {
     manifest = await invoke<ClaudeCodeImport>('read_claude_code')
   } catch (err) {
+    // Read failed → don't mark; retry on the next boot.
     console.warn('[claude-import] read failed', err)
     return 0
   }
@@ -96,6 +132,17 @@ export async function importClaudeCode(): Promise<number> {
       console.warn('[claude-import] skill copy failed', name, err)
     }
   }
+
+  // Mark this vault as imported so future boots skip — but ONLY if `~/.claude`
+  // actually had something. If it was empty (no Claude Code yet), leave the vault
+  // unmarked so a user who installs Claude Code AFTER creating this vault still
+  // gets a one-time import on a later boot. (`written` can be 0 with assets
+  // present — e.g. all already existed — so gate on the manifest, not `written`.)
+  const hadAssets =
+    manifest.commands.length > 0 ||
+    manifest.agents.length > 0 ||
+    manifest.skills.length > 0
+  if (hadAssets) await markImported()
 
   if (written > 0) console.log('[claude-import] imported', written, 'asset(s)')
   return written
