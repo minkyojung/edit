@@ -15,15 +15,59 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { mdRelToKnownDoc } from './scanVault'
+import { mdRelToKnownDoc, mergeIndexMeta } from './scanVault'
 import {
   frontmatterToMeta,
   metaToFrontmatterFields,
   type DocMetaFile,
 } from './docPaths'
 import { composeFrontmatter, splitFrontmatter } from './frontmatter'
+import type { VaultIndexEntry } from './vaultIndex'
 
 const noChildren = new Map<string, string>()
+
+describe('mergeIndexMeta — index soft-state over frontmatter portable fields', () => {
+  it('layers index app-private fields while preserving frontmatter portable ones', () => {
+    // The dual-read crux: a note that is a saved web page (frontmatter) AND
+    // archived + summarised (index) must come back carrying BOTH.
+    const fmMeta: Partial<DocMetaFile> = {
+      sourceUrl: 'https://example.com',
+      siteName: 'Example',
+      createdAt: '2026-01-01T00:00:00Z',
+    }
+    const entry: VaultIndexEntry = {
+      slug: 'ix000001',
+      archivedAt: 123,
+      aiSummary: 'about the page',
+      aiImportance: 40,
+    }
+    expect(mergeIndexMeta(fmMeta, entry)).toEqual({
+      sourceUrl: 'https://example.com',
+      siteName: 'Example',
+      createdAt: '2026-01-01T00:00:00Z',
+      archivedAt: 123,
+      aiSummary: 'about the page',
+      aiImportance: 40,
+    })
+  })
+
+  it('is a no-op overlay when the index entry carries only a slug', () => {
+    // Slug-only entry ⇒ meta is exactly what the frontmatter said (the
+    // migration hasn't moved any soft-state into the index for this note).
+    const fmMeta: Partial<DocMetaFile> = { sourceUrl: 'https://x.test' }
+    expect(mergeIndexMeta(fmMeta, { slug: 'ix000002' })).toEqual({
+      sourceUrl: 'https://x.test',
+    })
+  })
+
+  it('does not clobber a frontmatter field with an absent index field', () => {
+    // entry has no aiSummary → the frontmatter value (if any) stays; here
+    // there is none, and nothing is invented.
+    expect(mergeIndexMeta({}, { slug: 'ix000003', archivedAt: 9 })).toEqual({
+      archivedAt: 9,
+    })
+  })
+})
 
 describe('mdRelToKnownDoc — wiki', () => {
   it('maps wiki/<title>.md to a wiki:custom-<slug> entry', () => {

@@ -35,6 +35,12 @@ import type { KnownDoc } from '@/state/docsStore'
 import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
 import { seedLastWrittenPath } from '@/lib/docFileSync'
 import { mergeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
+import {
+  getEntry,
+  readVaultIndex,
+  type VaultIndex,
+  type VaultIndexEntry,
+} from '@/lib/vaultIndex'
 
 /** Read the doc's persistent slug from its `.meta.json` sidecar, or
  * mint one + write the sidecar if missing. Two-tier lookup:
@@ -56,9 +62,33 @@ interface SidecarLoad {
   meta: Partial<DocMetaFile>
 }
 
-async function getOrAssignSlug(mdRel: string): Promise<SidecarLoad> {
-  // Frontmatter is the source of truth — read it first. A slug there means
-  // the `.md` fully describes the doc (no sidecar consulted).
+/** Layer an index entry's app-private soft state (archive flags, AI
+ * summary/importance) onto the portable meta read from frontmatter
+ * (sourceUrl, videoId, created, highlights, …). The index owns identity +
+ * app-private state; the `.md` owns everything portable — so a note that's
+ * archived in the index AND a saved web page in frontmatter comes back
+ * with both. Exported for unit tests. */
+export function mergeIndexMeta(
+  fmMeta: Partial<DocMetaFile>,
+  entry: VaultIndexEntry,
+): Partial<DocMetaFile> {
+  const merged: Partial<DocMetaFile> = { ...fmMeta }
+  if (entry.archivedAt !== undefined) merged.archivedAt = entry.archivedAt
+  if (entry.archivedFromParent !== undefined)
+    merged.archivedFromParent = entry.archivedFromParent
+  if (entry.aiSummary !== undefined) merged.aiSummary = entry.aiSummary
+  if (entry.aiImportance !== undefined) merged.aiImportance = entry.aiImportance
+  return merged
+}
+
+async function getOrAssignSlug(
+  mdRel: string,
+  index: VaultIndex,
+): Promise<SidecarLoad> {
+  // Read the `.md` first: even when the index owns identity, the portable
+  // fields (sourceUrl, videoId, created, highlights, …) live in the file,
+  // so we need them for the meta overlay. `data.slug` is the fallback
+  // identity used when the index has no entry for this path yet.
   let body = ''
   let rawFile = ''
   let data: Record<string, string> = {}
@@ -67,11 +97,23 @@ async function getOrAssignSlug(mdRel: string): Promise<SidecarLoad> {
     const split = splitFrontmatter(rawFile)
     data = split.data
     body = split.body
-    if (data.slug) {
-      return { slug: data.slug, meta: frontmatterToMeta(data) }
-    }
   } catch {
     // Unreadable `.md` — fall through.
+  }
+  const fmMeta = frontmatterToMeta(data)
+
+  // 0. Index wins for identity + app-private soft state (`.octave/
+  //    index.json`). Empty until the migration populates it, so today this
+  //    branch is inert: every note falls through to the frontmatter slug
+  //    below, identical to pre-index behaviour.
+  const entry = getEntry(index, mdRel)
+  if (entry) {
+    return { slug: entry.slug, meta: mergeIndexMeta(fmMeta, entry) }
+  }
+
+  // 1. Frontmatter slug — the `.md` fully describes the doc.
+  if (data.slug) {
+    return { slug: data.slug, meta: fmMeta }
   }
 
   // Legacy fallback: a `.meta.json` sidecar from before the frontmatter
@@ -279,6 +321,10 @@ export async function scanVault(): Promise<KnownDoc[]> {
   // relPath). Always on now that the folder tree is the only sidebar.
   const allMd = await listMdRecursive('')
 
+  // Read the app-private index ONCE for the whole scan (not per file) so
+  // slug + soft-state lookups don't re-read `.octave/index.json` N times.
+  const index = await readVaultIndex()
+
   // Pass 1: resolve slug + load sidecar metadata for every file in one
   // read. Done up-front because pass-2's writing-note resolution needs
   // the daily slug map, and pass-2 also needs the sidecar's soft-state
@@ -289,7 +335,7 @@ export async function scanVault(): Promise<KnownDoc[]> {
     meta: Partial<DocMetaFile>
   }> = []
   for (const mdRel of allMd) {
-    const { slug, meta } = await getOrAssignSlug(mdRel)
+    const { slug, meta } = await getOrAssignSlug(mdRel, index)
     scanned.push({ slug, mdRel, meta })
   }
 
@@ -341,7 +387,8 @@ export async function buildKnownDocForExternalPath(
   mdRel: string,
   catalog: KnownDoc[],
 ): Promise<KnownDoc | null> {
-  const { slug, meta } = await getOrAssignSlug(mdRel)
+  const index = await readVaultIndex()
+  const { slug, meta } = await getOrAssignSlug(mdRel, index)
   const dailySlugByDate = new Map<string, string>()
   for (const d of catalog) {
     if (d.type === 'daily' && d.date) dailySlugByDate.set(d.date, d.slug)
