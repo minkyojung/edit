@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useLayoutStore } from '@/state/layoutStore'
 import { notify } from '@/lib/notify'
-import { writeVaultBinary } from '@/lib/vault'
+import { writeVaultBinary, deleteVaultDir } from '@/lib/vault'
 import {
   IconArrowUp,
   IconAt,
@@ -262,6 +262,11 @@ export function PromptInput({
 
   function removeAttachment(id: string) {
     setAttachments((prev) => prev.filter((a) => a.id !== id))
+    // Drop the on-disk file too. State only holds not-yet-sent attachments
+    // (cleared on submit), so removing a chip here means the file was never
+    // referenced by a turn — safe to delete its `.attachments/<id>/` folder.
+    // Best-effort: a failed cleanup just leaves a harmless orphan.
+    void deleteVaultDir(`.attachments/${id}`).catch(() => {})
   }
 
   function removePastedText(id: string) {
@@ -327,7 +332,10 @@ export function PromptInput({
     [validate, trimmed],
   )
   const canSubmit =
-    !disabled && !isStreaming && (trimmed.length > 0 || pastedTexts.length > 0) && validation.ok
+    !disabled &&
+    !isStreaming &&
+    (trimmed.length > 0 || pastedTexts.length > 0 || attachments.length > 0) &&
+    validation.ok
 
   // Palette opens while the user is typing the command name itself —
   // before any space. Filter is the partial name (everything after `/`).

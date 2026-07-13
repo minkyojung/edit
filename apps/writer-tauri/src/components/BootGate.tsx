@@ -39,7 +39,7 @@ import { seedAgents } from '@/lib/agentsLib'
 import { seedSkills } from '@/lib/skillsLib'
 import { DEFAULT_SKILLS, DEFAULT_COMMANDS, DEFAULT_AGENTS } from '@/agent/defaults'
 import { isTranslationProject } from '@/lib/translationProject'
-import { gitInit } from '@/lib/git'
+import { gitInit, gitEnsureGitignoreEntries } from '@/lib/git'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
@@ -176,6 +176,10 @@ export function BootGate({ children }: Props) {
       // backup/push stays disabled. Runs for every project kind.
       try {
         await gitInit()
+        // Migrate existing vaults (whose .gitignore predates the rule) so chat
+        // attachment binaries under `.attachments/` stay out of history. New
+        // vaults get this from DEFAULT_GITIGNORE; best-effort either way.
+        await gitEnsureGitignoreEntries(['.attachments/'])
       } catch (err) {
         console.warn('[boot] git init failed — checkpoints disabled', err)
       }

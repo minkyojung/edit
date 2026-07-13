@@ -57,7 +57,12 @@ events.db-shm\n\
 # panel can resume mid-thread. Pure ephemeral state; users don't read\n\
 # it and committing it would flood every chat-driven git turn with\n\
 # noise alongside the real wiki/daily changes.\n\
-threads/\n";
+threads/\n\
+\n\
+# Chat attachments — binaries the user drops into the composer, kept so\n\
+# the agent can Read them on demand. Hidden per-session scratch; tracking\n\
+# them would bloat history with screenshots/PDFs the user never revisits.\n\
+.attachments/\n";
 
 /// One entry returned by `log_since_ref`. Pretty-printed by the
 /// frontend's ActivityView. Field names are camelCase via serde for
