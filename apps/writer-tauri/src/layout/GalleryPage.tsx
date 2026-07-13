@@ -7,7 +7,9 @@
 // (via `var(--…)`) and components so it can never drift from production.
 // Step 1 ships Foundations → Color only; later steps append sections.
 
-import { type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
+import { ReleaseNotes, ReleaseNotesDialog, UpdateFooter } from '@/components/WhatsNew'
+import { CHANGELOG } from '@/lib/changelog'
 import { IconPlus, IconBrain, IconFileText, IconAlertTriangle, IconPlayerStopFilled } from '@tabler/icons-react'
 import type { ChatTurn, MessagePart } from '@/chat/types'
 import { MessageRow } from '@/chat/messages/MessageRow'
@@ -499,10 +501,78 @@ const NAV: { group: string; titles: string[] }[] = [
       'Surfaces · Turn outcomes',
       'Surfaces · Save failures',
       'Surfaces · Onboarding',
+      'Surfaces · Updates',
     ],
   },
   { group: 'Consistency', titles: ['Consistency · Controls', 'Consistency · Panels'] },
 ]
+
+// A static visual proposal of a richer 3-action update toast (See changes /
+// Restart when idle / Restart), styled like the app's dark toaster — a design
+// reference to review, NOT wired. sonner's default toast supports one action +
+// one cancel; three actions would need a `toast.custom` component.
+function ProposedUpdateToast() {
+  return (
+    <div className="w-[380px] rounded-xl bg-popover p-4 shadow-lg ring-1 ring-border">
+      <div className="text-body font-semibold text-foreground">New update available</div>
+      <div className="mt-0.5 text-footnote text-muted-foreground">
+        Octave 0.0.7 — polish &amp; fixes
+      </div>
+      <div className="mt-3 flex gap-2">
+        <Button size="sm" variant="outline">
+          See changes
+        </Button>
+        <Button size="sm" variant="outline">
+          Restart when idle
+        </Button>
+        <Button size="sm">Restart</Button>
+      </div>
+    </div>
+  )
+}
+
+// The update-related surfaces, gathered for design review. Toasts fire the
+// REAL notify.* methods (they appear in the corner); the rest render inline.
+function UpdatesGallery() {
+  const [notesOpen, setNotesOpen] = useState(false)
+  const entry = CHANGELOG[0] ?? null
+  return (
+    <>
+      <Subgroup title="Toasts — current (click to fire)">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => notify.updateReady('0.0.7', { onRestart: () => {} })}
+        >
+          Update ready
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => notify.updateFailed('install')}>
+          Failed · install
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => notify.updateFailed('check')}>
+          Failed · check
+        </Button>
+      </Subgroup>
+      <Subgroup title="Toast — proposed (3 actions, static)">
+        <ProposedUpdateToast />
+      </Subgroup>
+      <Subgroup title="Release notes — read-only render">
+        <div className="w-[420px] rounded-lg border border-border p-4">
+          {entry && <ReleaseNotes notes={entry.notes} />}
+        </div>
+        <Button variant="outline" size="sm" onClick={() => setNotesOpen(true)}>
+          Open dialog
+        </Button>
+        <ReleaseNotesDialog entry={entry} open={notesOpen} onOpenChange={setNotesOpen} />
+      </Subgroup>
+      <Subgroup title="Sidebar footer">
+        <div className="w-56 rounded-lg border border-border bg-sidebar">
+          <UpdateFooter />
+        </div>
+      </Subgroup>
+    </>
+  )
+}
 
 function GalleryNav() {
   const go = (title: string) =>
@@ -1383,6 +1453,10 @@ export function GalleryPage() {
             <TooltipContent>Compare this radius</TooltipContent>
           </Tooltip>
         </div>
+      </Section>
+
+      <Section title="Surfaces · Updates">
+        <UpdatesGallery />
       </Section>
       </div>
     </div>
