@@ -33,7 +33,7 @@ import { OnboardingLauncher } from '@/components/OnboardingLauncher'
 import { resolveWindowMode } from '@/hooks/useWindowModeSync'
 import { exists } from '@tauri-apps/plugin-fs'
 import { seedClaudeMd } from '@/lib/seedClaudeMd'
-import { seedRoutines } from '@/lib/routinesLib'
+import { seedCommands } from '@/lib/commandsLib'
 import { seedAgents } from '@/lib/agentsLib'
 import { seedSkills } from '@/lib/skillsLib'
 import { DEFAULT_SKILLS, DEFAULT_COMMANDS, DEFAULT_AGENTS } from '@/agent/defaults'
@@ -43,7 +43,7 @@ import { gitInit } from '@/lib/git'
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
 /** Wiki-vault boot steps: seed the default files a wiki vault needs (CLAUDE.md,
- * routine commands, agent roles). Only wiki vaults get these — a translation
+ * commands, agent roles). Only wiki vaults get these — a translation
  * project (a folder with `manuscript/`) has its own layout and would just get
  * littered with wiki scaffolding. Each step is best-effort: a failure logs and
  * the boot continues. */
@@ -56,14 +56,14 @@ async function seedWikiDefaults(): Promise<void> {
   } catch (err) {
     console.warn('[boot] CLAUDE.md seed failed', err)
   }
-  // Seed default routine command files (`.claude/commands/*.md`) — the editable
+  // Seed default command files (`_system/agent/commands/*.md`) — the editable
   // task brains. Idempotent by file existence; never overwrites the user's edits.
   try {
-    await seedRoutines(DEFAULT_COMMANDS)
+    await seedCommands(DEFAULT_COMMANDS)
   } catch (err) {
-    console.warn('[boot] routines seed failed', err)
+    console.warn('[boot] commands seed failed', err)
   }
-  // Load the seeded routine commands into the slash palette (organize /
+  // Load the seeded commands into the slash palette (organize /
   // daily-ingest / chat-to-wiki + any the user added). Best-effort.
   await useVaultCommands.getState().refresh()
   // Seed the default agent role (`_system/agent/agents/default.md`) — the

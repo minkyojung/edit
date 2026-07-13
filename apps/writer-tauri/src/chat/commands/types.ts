@@ -31,7 +31,7 @@ export interface LoadedCommand {
   description: string
   /** Which engine runs this command. `builtin` (default) = the client-side
    * editor actions bundled under `commands/builtin/` (this file's `kind` /
-   * `body` drive them). `vault` = a routine command living in the vault's agent
+   * `body` drive them). `vault` = a command living in the vault's agent
    * plugin (`_system/agent/commands/`); it's executed NATIVELY by sending
    * `/<name> <args>` to the SDK, so the `kind` / `body` fields are unused. */
   source?: 'builtin' | 'vault'

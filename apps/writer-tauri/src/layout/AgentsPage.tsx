@@ -1,6 +1,6 @@
 // Agents page — the main-area entry point for the agent "roles" the user can
 // pick for a chat (researcher, translator, proofreader, …). Mirrors
-// SkillsPage / RoutinesPage: a grouped list where clicking a row opens that
+// SkillsPage / CommandsPage: a grouped list where clicking a row opens that
 // role's markdown (`_system/agent/agents/*.md`) in the editor — the files are
 // catalogued as notes, so they auto-save like any note. Sits in the AppShell
 // content column like any note view.

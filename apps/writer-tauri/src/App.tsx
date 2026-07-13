@@ -13,7 +13,7 @@ import { Page } from '@/layout/Page'
 import { ReadLaterQueue } from '@/layout/ReadLaterQueue'
 import { FileViewer } from '@/layout/FileViewer'
 import { SkillsPage } from '@/layout/SkillsPage'
-import { RoutinesPage } from '@/layout/RoutinesPage'
+import { CommandsPage } from '@/layout/CommandsPage'
 import { AgentsPage } from '@/layout/AgentsPage'
 import { GalleryPage } from '@/layout/GalleryPage'
 import { CommandPalette } from '@/layout/CommandPalette'
@@ -150,7 +150,7 @@ export function App() {
 // render their own React surface instead of a document) must be exempt —
 // otherwise the self-heal reads their null slug as "broken" and bounces
 // the user back to today's daily.
-const SLUGLESS_ROUTES = new Set(['/read-later', '/skills', '/routines', '/agents', '/gallery'])
+const SLUGLESS_ROUTES = new Set(['/read-later', '/skills', '/commands', '/agents', '/gallery'])
 
 function RouteSyncBridge() {
   useRouteSync()
@@ -285,7 +285,7 @@ function AppContent() {
             <Route path="/file/:rel" element={<FileViewer />} />
             <Route path="/read-later" element={<ReadLaterQueue />} />
             <Route path="/skills" element={<SkillsPage />} />
-            <Route path="/routines" element={<RoutinesPage />} />
+            <Route path="/commands" element={<CommandsPage />} />
             <Route path="/agents" element={<AgentsPage />} />
             {/* DEV-only: the design-system gallery is a dev tool, not shipped. */}
             {import.meta.env.DEV && (

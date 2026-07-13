@@ -16,7 +16,7 @@ import { getIntakeModel } from '@/state/settingsStore'
 export interface IntakeArgs {
   /** Doc slug to attribute the run to (proposals route through it). */
   slug: string
-  /** The routing brain as a system prompt. Native routines OMIT this — the
+  /** The routing brain as a system prompt. Native commands OMIT this — the
    * brain arrives by expanding a `/command` slash command in `prompt` (the SDK
    * loads the command from the vault's agent plugin); CLAUDE.md still lands via
    * ctx. Left empty, the run carries no persona system block. */

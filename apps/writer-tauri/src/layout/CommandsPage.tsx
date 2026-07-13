@@ -1,25 +1,25 @@
-// Routines page — the main-area entry point for the agent's editable task
+// Commands page — the main-area entry point for the agent's editable task
 // "brains" (`_system/agent/commands/*.md`: how it organizes the inbox, files
 // the daily, saves a chat to the wiki). Mirrors SkillsPage: a grouped list
-// where clicking a row opens that routine's markdown in the editor (the files
+// where clicking a row opens that command's markdown in the editor (the files
 // are catalogued as notes, so they auto-save like any note). Sits in the
 // AppShell content column like any note view — not a modal.
 //
-// "Routine" is our product label; the file is a Claude Code-style command,
-// loaded via the same `_system/agent` plugin path skills use.
+// "Command" is our product label; the file is a Claude Code-style slash
+// command, loaded via the same `_system/agent` plugin path skills use.
 
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { IconChevronRight, IconRoute, IconTrash } from '@tabler/icons-react'
+import { IconChevronRight, IconTerminal2, IconTrash } from '@tabler/icons-react'
 import { useDocsStore } from '@/state/docsStore'
 import { buildViewUrl } from '@/lib/viewUrl'
-import { listRoutines, COMMANDS_REL, type VaultRoutine } from '@/lib/routinesLib'
+import { listCommands, COMMANDS_REL, type VaultCommand } from '@/lib/commandsLib'
 import { deleteAssetByPath } from '@/lib/deleteAsset'
 import { confirm } from '@/state/confirmStore'
 import { notify } from '@/lib/notify'
 
-export function RoutinesPage() {
-  const [routines, setRoutines] = useState<VaultRoutine[]>([])
+export function CommandsPage() {
+  const [commands, setCommands] = useState<VaultCommand[]>([])
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
   const sidebarTab = useDocsStore((s) => s.sidebarTab)
@@ -28,9 +28,9 @@ export function RoutinesPage() {
 
   useEffect(() => {
     setLoading(true)
-    listRoutines()
-      .then(setRoutines)
-      .catch(() => setRoutines([]))
+    listCommands()
+      .then(setCommands)
+      .catch(() => setCommands([]))
       .finally(() => setLoading(false))
   }, [])
 
@@ -39,35 +39,35 @@ export function RoutinesPage() {
     navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
   }
 
-  const remove = async (routine: VaultRoutine) => {
+  const remove = async (command: VaultCommand) => {
     const ok = await confirm({
-      title: `Delete “${routine.name}”?`,
+      title: `Delete “${command.name}”?`,
       description: 'This cannot be undone.',
     })
     if (!ok) return
     try {
-      await deleteAssetByPath(`${COMMANDS_REL}/${routine.fileName}`)
-      setRoutines((cur) => cur.filter((r) => r.fileName !== routine.fileName))
+      await deleteAssetByPath(`${COMMANDS_REL}/${command.fileName}`)
+      setCommands((cur) => cur.filter((c) => c.fileName !== command.fileName))
     } catch (err) {
-      console.warn('[routines] delete failed', routine.fileName, err)
-      notify.cantDeleteAsset({ onRetry: () => void remove(routine) })
+      console.warn('[commands] delete failed', command.fileName, err)
+      notify.cantDeleteAsset({ onRetry: () => void remove(command) })
     }
   }
 
   return (
     // pt clears the absolutely-positioned EditorHeader AppShell overlays.
     <div className="mx-auto w-full max-w-2xl px-6 pb-16 pt-[calc(var(--header-h)+8px)]">
-      <h1 className="mb-4 text-lg font-semibold text-foreground">Routines</h1>
+      <h1 className="mb-4 text-lg font-semibold text-foreground">Commands</h1>
 
       {loading ? (
         <p className="py-10 text-center text-body text-muted-foreground">Loading…</p>
-      ) : routines.length === 0 ? (
+      ) : commands.length === 0 ? (
         <p className="py-10 text-center text-body text-muted-foreground">
-          No routines yet. Opening a vault adds the defaults.
+          No commands yet. Opening a vault adds the defaults.
         </p>
       ) : (
         <ul className="overflow-hidden rounded-[10px] border border-border/60 bg-card">
-          {routines.map((r, i) => (
+          {commands.map((r, i) => (
             <li key={r.fileName} className="group relative">
               <button
                 type="button"
@@ -76,7 +76,7 @@ export function RoutinesPage() {
                 className="flex w-full items-center gap-3 pl-3 pr-3.5 text-left transition-colors hover:bg-accent/50 disabled:cursor-default disabled:hover:bg-transparent"
               >
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-secondary text-secondary-foreground">
-                  <IconRoute size={16} stroke={2} />
+                  <IconTerminal2 size={16} stroke={2} />
                 </span>
                 <span
                   className={`flex min-w-0 flex-1 items-center py-2.5 ${

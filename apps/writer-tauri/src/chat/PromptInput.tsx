@@ -321,7 +321,7 @@ export function PromptInput({
   // before any space. Filter is the partial name (everything after `/`).
   const slashMatch = !isStreaming ? SLASH_RE.exec(value) : null
   const slashQuery = slashMatch?.[1] ?? ''
-  // Builtin editor actions (bundled) + the vault's routine commands (organize /
+  // Builtin editor actions (bundled) + the vault's commands (organize /
   // daily-ingest / … from the agent plugin). Both share the palette; execution
   // diverges by `source` in ChatPanel.
   const vaultCommands = useVaultCommands((s) => s.commands)

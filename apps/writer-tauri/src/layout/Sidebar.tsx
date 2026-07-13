@@ -9,7 +9,7 @@ import {
   IconUser,
   IconBolt,
   IconRobot,
-  IconRoute,
+  IconTerminal2,
   IconPalette,
   IconSparkles,
 } from '@tabler/icons-react'
@@ -91,7 +91,7 @@ export function AppSidebar() {
   const agentsActive = pathname === '/agents' || inSurface('_system/agent/agents')
   const skillsActive = pathname === '/skills' || inSurface('_system/agent/skills')
   const commandActive =
-    pathname === '/routines' || inSurface('_system/agent/commands')
+    pathname === '/commands' || inSurface('_system/agent/commands')
   const galleryActive = pathname === '/gallery'
   const onboardActive = pathname === '/onboard'
 
@@ -289,12 +289,12 @@ export function AppSidebar() {
           </button>
           <button
             type="button"
-            onClick={() => navigate('/routines')}
+            onClick={() => navigate('/commands')}
             data-active={commandActive || undefined}
             className={NAV_ROW}
           >
-            <IconRoute size={18} stroke={1.75} className="shrink-0" />
-            <span className="flex-1 truncate text-left">Routine</span>
+            <IconTerminal2 size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Commands</span>
           </button>
           {/* DEV-only design tools — the gallery + onboarding preview are for
               iterating on UI, never shown to end users. */}

@@ -388,7 +388,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     await runSlashCommand(threadId, cmd, args, userTurn, [...turnsHook.turns, userTurn])
   }
 
-  /** Run a vault routine command (organize / daily-ingest / …) NATIVELY: send
+  /** Run a vault command (organize / daily-ingest / …) NATIVELY: send
    * `/<name> <arg>` as the prompt so the SDK expands the plugin command. The arg
    * defaults to the open note's path — the "organize what I'm looking at"
    * default — unless the user typed one. No client system prompt: the command
@@ -466,7 +466,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
           await executeCommand(threadId, cmd, slash.args, text)
           return
         }
-        // Not a builtin editor action — is it a vault routine command? Those
+        // Not a builtin editor action — is it a vault command? Those
         // run natively (the SDK expands the plugin command).
         if (useVaultCommands.getState().get(slash.name)) {
           const userTurn: ChatTurn = {
@@ -571,7 +571,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
           )
           return
         }
-        // Vault routine command → rerun natively.
+        // Vault command → rerun natively.
         if (useVaultCommands.getState().get(lastUser.slashInvocation.name)) {
           await runVaultCommand(
             threadId,
@@ -606,7 +606,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       const hasSpace = m[2].length > 0
       const cmd = getCommand(m[1])
       if (!cmd) {
-        // Vault routine commands are valid too — they execute natively.
+        // Vault commands are valid too — they execute natively.
         if (useVaultCommands.getState().get(m[1])) return { ok: true as const }
         return hasSpace
           ? { ok: false as const, message: `Unknown command: /${m[1]}` }

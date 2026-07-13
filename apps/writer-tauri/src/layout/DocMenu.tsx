@@ -42,7 +42,7 @@ export function DocMenu() {
   // refuses, but keep the menu honest.
   const deleteDisabled = !activeDoc || activeDoc.type === 'daily'
 
-  // Delete the active doc. Skills / routines / agents route through the shared
+  // Delete the active doc. Skills / commands / agents route through the shared
   // asset-delete path (folder-aware for skills, tombstoned so seeded defaults
   // don't resurrect); every other note is a plain trash. Both ask first.
   const navigateTo = (slug: string) => {

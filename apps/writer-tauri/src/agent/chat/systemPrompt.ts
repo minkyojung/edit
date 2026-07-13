@@ -173,7 +173,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   // self-profile and CLAUDE.md schema below are per-vault and swappable. Putting
   // the invariant block first means switching vaults only invalidates the cache
   // from the profile byte onward, not the persona above it.
-  // Native routine runs (slash-command intake) carry their brain in the USER
+  // Native command runs (slash-command intake) carry their brain in the USER
   // turn, so they pass an empty systemBody — skip it rather than push a blank
   // block. Chat always has a non-empty persona, so this is a no-op there.
   if (systemBody) prefix.push(systemBody)
@@ -274,7 +274,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   // A single-element prefix means only systemBody fired (chat with no context
   // blocks) — return it bare so the SDK caches a plain string. Anything else
   // (CLAUDE.md, workspace, etc. — always present for vault runs) returns the
-  // block array. `systemBody` is '' only for native routine runs, which always
+  // block array. `systemBody` is '' only for native command runs, which always
   // have those blocks, so the bare fallback never yields an empty prompt.
   if (prefix.length > 1) return prefix
   return systemBody

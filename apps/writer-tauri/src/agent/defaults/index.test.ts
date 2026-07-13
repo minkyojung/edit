@@ -16,7 +16,7 @@ describe('bundled defaults', () => {
     expect(undo!.body).toContain("git log --grep='(ai):'")
   })
 
-  it('ships only the organize routine (chat-to-wiki / daily-ingest are now inline brains)', () => {
+  it('ships only the organize command (chat-to-wiki / daily-ingest are now inline brains)', () => {
     expect(DEFAULT_COMMANDS.map((c) => c.name)).toEqual(['organize'])
     const organize = DEFAULT_COMMANDS.find((c) => c.name === 'organize')!
     expect(organize.body).toContain('$ARGUMENTS')
