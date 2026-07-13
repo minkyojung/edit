@@ -19,6 +19,7 @@
     "setup:binaries:all": "bash scripts/setup-binaries.sh --all-targets",
     "pack:sidecar": "bash scripts/pack-sidecar.sh",
     "verify:signing": "bash scripts/verify-macos-signing.sh",
+    "release": "bash scripts/build-release.sh",
     "postinstall": "bash scripts/setup-binaries.sh"
   },
   "devDependencies": {

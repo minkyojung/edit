@@ -8,3 +8,8 @@ sidecar-pkg/
 # out of git (see src-tauri/secrets/README.md). Values only, never the README.
 src-tauri/secrets/google_client_id
 src-tauri/secrets/google_client_secret
+
+# Notarization secrets for `pnpm release` — real values live here (or in
+# 1Password). Only the .example template is committed.
+.env.signing
+.env.signing.op
