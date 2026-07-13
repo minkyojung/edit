@@ -60,7 +60,7 @@ import {
 } from './types'
 import { resolveAgent } from '../agents'
 import {
-  buildUserContent,
+  buildUserPrompt,
   composeSystemBlocks,
   shouldResumeSession,
   truncateDocForPrompt,
@@ -145,7 +145,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // so behaviour is unchanged; the seam lets roles plug in later.
   const agent = await resolveAgent(useThreadsStore.getState().threads[threadId]?.agentId)
   const systemBody = systemPrompt ?? agent.systemPrompt
-  const prompt = promptOverride ?? buildUserContent(history ?? [], attachments)
+  const prompt = promptOverride ?? buildUserPrompt(history ?? [])
+  // Attachments now ride as vault paths (written to `.attachments/` on attach),
+  // injected as an orientation block the model Reads on demand — same channel
+  // as @-mentions. No base64 in the prompt.
+  const attachedFiles = (attachments ?? []).map((a) => a.path)
 
   // Chat mode — Karpathy / Claude Code shape: only the always-on
   // schema (CLAUDE.md + profile) lands in the system prompt. The wiki
@@ -203,6 +207,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     viewingFilePath,
     selectionText,
     mentionFiles,
+    attachedFiles,
     vizEditTarget,
     today: todayLocalDate(),
   })

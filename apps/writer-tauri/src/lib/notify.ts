@@ -436,6 +436,11 @@ export const notify = {
       description: 'Remove an attachment to add another',
     })
   },
+  attachmentSaveFailed(name: string) {
+    toast.error(`Couldn't attach ${name}`, {
+      description: 'Failed to save the file — try again',
+    })
+  },
 
   // ── Auto-update ───────────────────────────────────────────────
   /** A newer version was found (notify-first). Persistent until acted on;

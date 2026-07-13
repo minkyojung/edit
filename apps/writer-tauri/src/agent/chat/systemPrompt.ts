@@ -12,13 +12,8 @@
 // network. The engine (chat/index.ts) does the I/O (ctx assembly,
 // view doc extraction) and feeds the results in.
 
-import type { ChatTurn, FileAttachment } from '@/chat/types'
+import type { ChatTurn } from '@/chat/types'
 import { DOC_CHAR_CAP, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type VizEditTarget } from './types'
-
-type TextBlock = { type: 'text'; text: string }
-type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
-type DocumentBlock = { type: 'document'; source: { type: 'base64'; media_type: string; data: string } }
-type ContentBlock = TextBlock | ImageBlock | DocumentBlock
 
 /** Derive the user prompt for the current SDK call from the thread
  * history. SDK session resume keeps prior turns server-side — we
@@ -33,31 +28,6 @@ export function buildUserPrompt(history: ChatTurn[]): string {
   const turns = history.filter((t) => !t.synthetic && t.content.trim().length > 0)
   if (turns.length === 0) return ''
   return turns[turns.length - 1].content
-}
-
-/** Build the user message content for the SDK call. When attachments are
- * present, returns a ContentBlock[] so the model receives both the text and
- * the files; otherwise falls back to a plain string to keep the common path
- * clean. The sidecar's makeInput yields this as MessageParam.content, which
- * the Anthropic SDK accepts as either form. */
-export function buildUserContent(
-  history: ChatTurn[],
-  attachments?: FileAttachment[],
-): string | ContentBlock[] {
-  const text = buildUserPrompt(history)
-  if (!attachments || attachments.length === 0) return text
-
-  const blocks: ContentBlock[] = [{ type: 'text', text }]
-  for (const att of attachments) {
-    // data URLs are "data:<mediaType>;base64,<data>" — strip the prefix.
-    const base64 = att.dataUrl.split(',')[1] ?? ''
-    if (att.mediaType.startsWith('image/')) {
-      blocks.push({ type: 'image', source: { type: 'base64', media_type: att.mediaType, data: base64 } })
-    } else {
-      blocks.push({ type: 'document', source: { type: 'base64', media_type: att.mediaType, data: base64 } })
-    }
-  }
-  return blocks
 }
 
 /** Slice the doc text down to {@link DOC_CHAR_CAP} characters from
@@ -124,6 +94,12 @@ export interface SystemBlocksArgs {
    * / loaded, so its in-memory content is fresher than disk) it's injected
    * inline; otherwise the model is told to Read the path. */
   mentionFiles?: { path: string; body?: string }[]
+  /** Vault-relative paths of files the user attached via the composer
+   * (paperclip / drag / paste). Written to the hidden `.attachments/` folder;
+   * rendered in an `--- ATTACHED FILES ---` block that tells the model to Read
+   * them BEFORE answering (unlike inline base64, a path is only "seen" once
+   * Read). */
+  attachedFiles?: string[]
   /** When set, a high-salience block naming the visualization being edited
    * (id + current spec) is pinned past the cache boundary, instructing the
    * model to apply changes via the edit_visualization tool. */
@@ -172,6 +148,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     viewingFilePath,
     selectionText,
     mentionFiles,
+    attachedFiles,
     vizEditTarget,
     today,
   } = args
@@ -293,6 +270,16 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `The user @-mentioned these files in their message. Treat them as ` +
         `attached context for this turn — use them before answering, even if ` +
         `the message doesn't name them again:\n\n${blocks.join('\n\n')}`,
+    )
+  }
+  if (attachedFiles && attachedFiles.length > 0) {
+    const list = attachedFiles.map((p) => `\`${p}\``).join('\n')
+    dynamic.push(
+      `--- ATTACHED FILES ---\n` +
+        `The user attached these files to THIS message. Before answering, Read ` +
+        `each one — they are the subject of the request even if the message ` +
+        `doesn't name them (Read ingests PDFs and images directly). Do not answer ` +
+        `about their contents without reading them first:\n\n${list}`,
     )
   }
   if (appendDocument) dynamic.push(`--- DOCUMENT ---\n${docForPrompt}`)

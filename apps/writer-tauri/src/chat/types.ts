@@ -425,14 +425,18 @@ export type Attachment =
   | { type: 'file'; name: string; mediaType: string }
 
 /** A file the user attached to a chat turn for the model to read.
- * `dataUrl` carries the full base64-encoded content; it is NOT stored
- * in the ChatTurn (too large for JSONL) — it flows only through the
- * live run path (PromptInput → useChatRunner → runChat → sidecar). */
+ * On attach we write the bytes into the vault's hidden `.attachments/`
+ * folder and carry only `path` (vault-relative) — the model Reads it on
+ * demand, the same orientation-block channel @-mentions and the viewing
+ * file use. No base64 rides through the prompt anymore. */
 export interface FileAttachment {
   id: string
   name: string
   mediaType: string
-  dataUrl: string
+  /** Vault-relative path under `.attachments/` (e.g.
+   * `.attachments/<id>/Screenshot.png`). Hidden from the note tree/index
+   * (both filter dot-dirs) but Read-able by the agent. */
+  path: string
 }
 
 export interface ToolCall {

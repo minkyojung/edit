@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useLayoutStore } from '@/state/layoutStore'
 import { notify } from '@/lib/notify'
+import { writeVaultBinary } from '@/lib/vault'
 import {
   IconArrowUp,
   IconAt,
@@ -67,7 +68,7 @@ const MENTION_RECENTS = 8
 const MENTION_RESULTS = 12
 
 const MAX_FILES = 5
-const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB — Claude API image limit
+const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB — Read/vision ingestion limit
 const PASTE_AS_CHIP_THRESHOLD = 500 // chars; long pasted text becomes a context chip
 
 // Detect Mac so we render the correct modifier glyph in shortcut hints.
@@ -225,21 +226,32 @@ export function PromptInput({
     }
     if (valid.length === 0) return
 
-    const results = await Promise.all(
-      valid.map((file) =>
-        new Promise<FileAttachment>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = () =>
-            resolve({
-              id: crypto.randomUUID(),
+    // Write each file into the vault's hidden `.attachments/<id>/` folder and
+    // keep only its path. The agent Reads it on demand (same channel as
+    // @-mentions / the viewing file) — no base64 rides through the prompt. A
+    // per-file `<id>/` wrapper sidesteps name collisions. Failed writes drop to
+    // null and are filtered out.
+    const results = (
+      await Promise.all(
+        valid.map(async (file): Promise<FileAttachment | null> => {
+          const id = crypto.randomUUID()
+          const path = `.attachments/${id}/${file.name}`
+          try {
+            const bytes = new Uint8Array(await file.arrayBuffer())
+            await writeVaultBinary(path, bytes)
+            return {
+              id,
               name: file.name,
               mediaType: file.type || 'application/octet-stream',
-              dataUrl: reader.result as string,
-            })
-          reader.readAsDataURL(file)
+              path,
+            }
+          } catch {
+            notify.attachmentSaveFailed(file.name)
+            return null
+          }
         }),
-      ),
-    )
+      )
+    ).filter((r): r is FileAttachment => r !== null)
 
     setAttachments((prev) => {
       const slots = MAX_FILES - prev.length
