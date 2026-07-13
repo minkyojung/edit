@@ -13,6 +13,7 @@
 import { generateClientSlug } from '@/lib/slug'
 import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
 import { sanitizeFilename } from '@/lib/docPaths'
+import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 
 export interface ArticleInput {
@@ -41,7 +42,7 @@ export async function createArticle(
     slug,
     type: 'note',
     title,
-    relPath: `inbox/${sanitizeFilename(title)}.md`,
+    relPath: `${getDefaultNoteFolder()}/${sanitizeFilename(title)}.md`,
     createdAt: now,
     savedAt: input.savedAt ?? now,
     sourceUrl: input.sourceUrl,
