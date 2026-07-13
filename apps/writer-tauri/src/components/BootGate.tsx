@@ -32,7 +32,7 @@ import { VaultLauncher } from '@/components/VaultLauncher'
 import { OnboardingLauncher } from '@/components/OnboardingLauncher'
 import { resolveWindowMode } from '@/hooks/useWindowModeSync'
 import { exists } from '@tauri-apps/plugin-fs'
-import { seedClaudeMd } from '@/lib/seedClaudeMd'
+import { migrateClaudeMdPreferences } from '@/lib/seedClaudeMd'
 import { importClaudeCode } from '@/lib/claudeImport'
 import { seedCommands } from '@/lib/commandsLib'
 import { seedAgents } from '@/lib/agentsLib'
@@ -58,13 +58,14 @@ async function seedWikiDefaults(): Promise<void> {
   } catch (err) {
     console.warn('[boot] claude-code import failed', err)
   }
-  // Seed `CLAUDE.md` at the vault root if missing — the schema document the
-  // agent reads every chat. Idempotent by file existence; never overwrites
-  // a user's edits.
+  // The agent schema is app-owned now (bundled + injected), so there's no
+  // CLAUDE.md to seed. One-shot: migrate a legacy vault's user preferences
+  // out of its old CLAUDE.md into `_system/preferences.md`. Additive; never
+  // deletes the old file.
   try {
-    await seedClaudeMd()
+    await migrateClaudeMdPreferences()
   } catch (err) {
-    console.warn('[boot] CLAUDE.md seed failed', err)
+    console.warn('[boot] preference migration failed', err)
   }
   // Seed default command files (`_system/agent/commands/*.md`) — the editable
   // task brains. Idempotent by file existence; never overwrites the user's edits.

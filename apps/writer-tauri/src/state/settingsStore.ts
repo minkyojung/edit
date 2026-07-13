@@ -204,6 +204,19 @@ export function getActiveVaultPath(): string | null {
   return vaultPaths[activeVaultIndex] ?? null
 }
 
+/** Project type of the active vault, resolved from the recent-projects
+ * list by path. Defaults to `'wiki'` when the path isn't recorded (the
+ * common case + fresh vaults). The agent-schema injector uses this to pick
+ * the wiki bundle schema vs a translation project's own routing brain. */
+export function getActiveProjectType(): ProjectType {
+  const path = getActiveVaultPath()
+  if (!path) return 'wiki'
+  return (
+    useSettingsStore.getState().recentProjects.find((p) => p.path === path)
+      ?.type ?? 'wiki'
+  )
+}
+
 /** Folder new chat-created notes land in. Default 'inbox'. Non-React read for the
  * chat materialiser (toPendingChange). */
 export function getDefaultNoteFolder(): string {

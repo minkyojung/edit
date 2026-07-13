@@ -81,6 +81,7 @@ export interface SystemBlocksArgs {
   ctx: {
     selfProfile: string
     claudeMd: string
+    preferences: string
   }
   /** Absolute path of the vault root. The model's file tools (Read/Glob/Grep/the
    * propose_* edit tools) take absolute paths, but a custom string systemPrompt
@@ -188,6 +189,13 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
   }
   if (ctx.claudeMd) prefix.push(ctx.claudeMd)
+  // User behaviour preferences — the "how you should act" rules the schema
+  // above points at. Separate per-user slice (from _system/preferences.md) so
+  // it can grow without touching the app-owned schema. Empty until the user
+  // sets any, in which case the block is dropped.
+  if (ctx.preferences) {
+    prefix.push(`--- PREFERENCES ---\n${ctx.preferences}`)
+  }
   // Ground the model's file tools in the real vault root (stable → stays in the
   // cacheable prefix). Without it the first Read guesses a wrong absolute path.
   if (vaultRoot) {

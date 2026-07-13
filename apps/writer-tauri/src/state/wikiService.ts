@@ -22,10 +22,16 @@ import {
 } from './docsStore'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
-import { getDefaultNoteFolder } from '@/state/settingsStore'
+import { getDefaultNoteFolder, getActiveProjectType } from '@/state/settingsStore'
+import { DEFAULT_CLAUDE_MD } from '@/agent/defaults'
 
 // PROOF_BASE_URL removed (Phase 3.A.2). All wiki body reads go
 // through the local Y.Doc + Milkdown serializer now.
+
+/** Vault-relative path of the user's behaviour-preferences file. Lives
+ * under `_system/` (app-managed area) but is the ONE file there the agent
+ * may append to — see the schema's Editing-rules exception. */
+export const PREFERENCES_REL = '_system/preferences.md'
 
 /** System-owned summary index of every wiki page. Karpathy's
  * `index.md` pattern — one line per page, lets the ingest LLM see
@@ -166,34 +172,54 @@ export async function readSelfProfile(): Promise<string> {
   return readWikiMarkdown(doc.slug)
 }
 
-/** Read the vault's `CLAUDE.md` schema document. This is the Karpathy
- * / Claude Code convention: a single user-editable file at the vault
- * root that tells the LLM how the vault is laid out and how it should
- * behave (operations, tool usage rules, conventions, citations, memory).
+/** The agent's schema document — vault layout, role model, operations,
+ * tool-usage rules, conventions, citations. This is APP-OWNED and ships
+ * in the app bundle (`DEFAULT_CLAUDE_MD`), NOT the vault. Injecting it
+ * straight from the bundle means an improved schema reaches every vault
+ * on the next build, and the user's files are never overwritten. The
+ * per-vault / per-user slices that used to live in this file are injected
+ * separately: folder bindings from settings (WORKSPACE / CAPTURE FOLDER /
+ * KNOWLEDGE BASE blocks) and behaviour rules from {@link readPreferences}.
  *
- * `CLAUDE.md` is just an ordinary root-level note in the catalog
- * (scanVault registers it as a `note` with `relPath: 'CLAUDE.md'`), so
- * it's editable in the normal editor like any note. We prefer the live
- * catalog body (`readWikiMarkdown`, which serializes the open editor or
- * the cached handle and strips frontmatter) so the user's in-app edits
- * take effect on the very next turn. When the handle isn't hydrated yet
- * (early boot, or the catalog hasn't picked up the freshly-seeded file),
- * we fall back to reading the raw file and stripping its frontmatter.
- * Returns '' on the rare failure paths and the caller drops the block. */
+ * Translation projects are the exception: they carry their own small
+ * routing-brain `CLAUDE.md` at the project root (see translationProject.ts),
+ * so for those we keep reading the vault file. The bundled wiki schema only
+ * applies to wiki vaults.
+ *
+ * Kept async so the `assembleContext` call site is unchanged. */
 export async function readClaudeMd(): Promise<string> {
+  if (getActiveProjectType() === 'translation') {
+    try {
+      if (await vaultFileExists('CLAUDE.md')) {
+        return splitFrontmatter(await readVaultFile('CLAUDE.md')).body.trim()
+      }
+    } catch (err) {
+      console.warn('[wiki] readClaudeMd (translation) failed', err)
+    }
+    return ''
+  }
+  return DEFAULT_CLAUDE_MD
+}
+
+/** Read the user's behaviour preferences (`_system/preferences.md`) —
+ * the how-you-should-act rules the agent appends to via the proposal
+ * flow. Prefer the live catalog body so an in-app edit takes effect on
+ * the next turn; fall back to the raw file. Returns '' when the file
+ * doesn't exist yet (no preferences set) and the caller drops the block. */
+export async function readPreferences(): Promise<string> {
   try {
     const doc = useDocsStore
       .getState()
-      .knownDocs.find((d) => d.relPath === 'CLAUDE.md' && !d.archivedAt)
+      .knownDocs.find((d) => d.relPath === PREFERENCES_REL && !d.archivedAt)
     if (doc) {
       const body = readWikiMarkdown(doc.slug)
       if (body) return body
       // Handle not hydrated yet — fall through to the raw-file read.
     }
-    if (!(await vaultFileExists('CLAUDE.md'))) return ''
-    return splitFrontmatter(await readVaultFile('CLAUDE.md')).body.trim()
+    if (!(await vaultFileExists(PREFERENCES_REL))) return ''
+    return splitFrontmatter(await readVaultFile(PREFERENCES_REL)).body.trim()
   } catch (err) {
-    console.warn('[wiki] readClaudeMd failed', err)
+    console.warn('[wiki] readPreferences failed', err)
     return ''
   }
 }
