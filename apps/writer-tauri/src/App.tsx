@@ -33,6 +33,7 @@ import { useVibrancy } from '@/hooks/useVibrancy'
 import { useWindowModeSync } from '@/hooks/useWindowModeSync'
 import { useCompactShortcut } from '@/hooks/useCompactShortcut'
 import { useWindowClose } from '@/hooks/useWindowClose'
+import { useUpdaterEvents } from '@/hooks/useUpdaterEvents'
 import {
   buildDayUrl,
   buildMonthUrl,
@@ -94,6 +95,10 @@ startPendingChangesApplier()
 startGitHubSync()
 
 export function App() {
+  // Subscribe this window to the Rust update state machine (mirrors state
+  // into the store + toasts on transitions). At the App root so every
+  // window — launcher and project alike — renders update status.
+  useUpdaterEvents()
   // HashRouter sits above BootGate so anything router-aware (useActiveSlug,
   // useNavigate, useLocation) can be called from anywhere inside the app
   // — including AppContent itself. BootGate is router-agnostic; it only

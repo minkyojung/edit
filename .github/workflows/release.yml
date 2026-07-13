@@ -32,6 +32,29 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      # Version discipline: the updater only offers a build whose version is
+      # strictly higher than the installed one, so a forgotten bump ships a
+      # release nobody can update to (exactly the bug that stranded 0.0.2).
+      # Fail the release unless tauri.conf.json and package.json agree, and —
+      # on a tag push — the tag matches them too.
+      - name: Verify version matches tag
+        working-directory: apps/writer-tauri
+        run: |
+          CONF=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          PKG=$(node -p "require('./package.json').version")
+          echo "tauri.conf=$CONF package.json=$PKG ref=$GITHUB_REF"
+          if [ "$CONF" != "$PKG" ]; then
+            echo "::error::Version mismatch — tauri.conf.json=$CONF, package.json=$PKG. Bump both to the same value." >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            if [ "$TAG" != "$CONF" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME != version $CONF. Bump the version to match the tag before tagging." >&2
+              exit 1
+            fi
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin

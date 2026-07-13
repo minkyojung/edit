@@ -1,66 +1,42 @@
-import { check } from '@tauri-apps/plugin-updater'
-import { relaunch } from '@tauri-apps/plugin-process'
-import { toast } from 'sonner'
+// Thin invoke wrappers over the Rust-owned update state machine
+// (src-tauri/src/updater.rs). All logic — checking, downloading, progress,
+// error handling, the hourly loop — lives in Rust now; this module is just
+// the typed frontend surface. State arrives via the `updater:state` event
+// (see src/hooks/useUpdaterEvents.ts), NOT from these calls' return values.
 
-// How often to re-check after the initial startup check.
-const CHECK_INTERVAL_MS = 60 * 60 * 1000 // 1 hour
+import { invoke } from '@tauri-apps/api/core'
 
-// Guard so a slow check can't overlap with the next interval tick, and so a
-// version we've already staged doesn't get downloaded / toasted twice.
-let checking = false
-let stagedVersion: string | null = null
+/** Mirror of the Rust `UpdateState` enum (serde tag = "status"). */
+export type UpdateState =
+  | { status: 'idle' }
+  | { status: 'checking' }
+  | { status: 'upToDate'; checkedAt: number }
+  | { status: 'available'; version: string; notes?: string }
+  | {
+      status: 'downloading'
+      version: string
+      downloaded: number
+      total: number | null
+      percent: number | null
+    }
+  | { status: 'ready'; version: string }
+  | { status: 'error'; phase: 'check' | 'download' | 'install'; message: string }
+  | { status: 'unsupported'; reason: string }
 
-/**
- * Check the GitHub Releases manifest for a newer signed build. If one exists,
- * download + install it in the background, then surface a non-blocking toast
- * offering an immediate restart. Ignoring the toast is fine — the staged
- * version applies on the next app launch.
- *
- * Failures (offline, no release yet, signature mismatch) are swallowed: the
- * next interval tick retries. The updater verifies the bundle signature
- * against the pubkey in tauri.conf.json before installing, so a tampered
- * manifest is discarded here, not surfaced.
- */
-async function checkOnce(): Promise<void> {
-  if (checking) return
-  checking = true
-  try {
-    const update = await check()
-    if (!update) return
-    if (update.version === stagedVersion) return
+/** The event every window listens on for state transitions. */
+export const UPDATER_EVENT = 'updater:state'
 
-    await update.downloadAndInstall()
-    stagedVersion = update.version
-
-    toast(`Octave ${update.version} ready`, {
-      description: 'Restart to apply the update.',
-      duration: Infinity,
-      action: {
-        label: 'Restart now',
-        onClick: () => {
-          void relaunch()
-        },
-      },
-    })
-  } catch (err) {
-    // Best-effort: log for dogfooding telemetry, stay silent to the user.
-    console.warn('[updater] check failed', err)
-  } finally {
-    checking = false
-  }
-}
-
-/**
- * Start auto-update: one check shortly after launch, then hourly. Returns a
- * disposer (currently unused — the app lives for the whole process).
- */
-export function startAutoUpdate(): () => void {
-  // Defer the first check a few seconds so it never competes with cold-start
-  // work (session restore, sidecar boot).
-  const startTimer = setTimeout(() => void checkOnce(), 5000)
-  const interval = setInterval(() => void checkOnce(), CHECK_INTERVAL_MS)
-  return () => {
-    clearTimeout(startTimer)
-    clearInterval(interval)
-  }
+export const updater = {
+  /** Check for a newer version (manual trigger — the menu item and the
+   * hourly loop call the same Rust flow). Emits checking → upToDate |
+   * available | error. */
+  check: () => invoke<void>('updater_check'),
+  /** Download + install the staged update (the "Download" action). Emits
+   * downloading → ready | error. */
+  download: () => invoke<void>('updater_download'),
+  /** Relaunch into the installed version (the "Restart now" action). */
+  install: () => invoke<void>('updater_install'),
+  /** Current state snapshot — for a window that mounts after the last
+   * broadcast. */
+  status: () => invoke<UpdateState>('updater_status'),
 }

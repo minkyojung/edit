@@ -436,6 +436,41 @@ export const notify = {
       description: 'Remove an attachment to add another',
     })
   },
+
+  // ── Auto-update ───────────────────────────────────────────────
+  /** A newer version was found (notify-first). Persistent until acted on;
+   * the action kicks off the download. */
+  updateAvailable(version: string, opts: { onDownload: () => void }) {
+    toast(`Octave ${version} available`, {
+      id: 'update-available',
+      description: 'A new version is ready to download.',
+      duration: Infinity,
+      action: { label: 'Download', onClick: opts.onDownload },
+    })
+  },
+  /** The update is downloaded + installed; a relaunch applies it. */
+  updateReady(version: string, opts: { onRestart: () => void }) {
+    toast.success(`Octave ${version} ready`, {
+      id: 'update-ready',
+      description: 'Restart to apply the update.',
+      duration: Infinity,
+      action: { label: 'Restart now', onClick: opts.onRestart },
+    })
+  },
+  /** An update step failed. Copy names the likely real-world cause per
+   * phase — install failures are almost always a read-only / quarantined
+   * app location (the exact bug the old silent updater hid). */
+  updateFailed(phase: 'check' | 'download' | 'install') {
+    const desc = {
+      check: "Couldn't check for updates.",
+      download: 'The download failed.',
+      install: "Couldn't install — the app folder may be read-only or quarantined.",
+    }[phase]
+    toast.error('Update failed', {
+      id: 'update-failed',
+      description: `${desc} See About in Settings for details.`,
+    })
+  },
 }
 
 // Dev-only console handle so smoke testing can fire each toast without

@@ -11,6 +11,7 @@ mod os_trash;
 mod reveal;
 mod sound;
 mod secure_storage;
+mod updater;
 mod vault_sync;
 
 use tauri::{Emitter, Manager};
@@ -340,6 +341,7 @@ pub fn run() {
         .manage(oauth::PendingOAuth::default())
         .manage(github::PendingGitHubAuth::default())
         .manage(CompactFrames::default())
+        .manage(updater::UpdaterState::default())
         .invoke_handler(tauri::generate_handler![
             oauth::start_claude_oauth,
             oauth::complete_claude_oauth,
@@ -393,6 +395,10 @@ pub fn run() {
             get_traffic_light_y,
             apply_window_chrome,
             set_window_compact,
+            updater::updater_check,
+            updater::updater_download,
+            updater::updater_install,
+            updater::updater_status,
         ])
         .setup(|app| {
             // Resolve the per-device app-data base once, up front: git history
@@ -421,10 +427,16 @@ pub fn run() {
                     .id("close-window")
                     .accelerator("CmdOrCtrl+W")
                     .build(app)?;
+                // Manual update check — drives the same backend flow as the
+                // startup loop and the About settings row.
+                let check_updates_item = MenuItemBuilder::new("Check for Updates…")
+                    .id("check-for-updates")
+                    .build(app)?;
 
                 // Octave (app menu)
                 let app_submenu = SubmenuBuilder::new(app, "Octave")
                     .item(&PredefinedMenuItem::about(app, None, None)?)
+                    .item(&check_updates_item)
                     .separator()
                     .item(&PredefinedMenuItem::hide(app, None)?)
                     .item(&PredefinedMenuItem::hide_others(app, None)?)
@@ -482,6 +494,15 @@ pub fn run() {
                                 let _ = window.close();
                             }
                         }
+                        // Menu "Check for Updates…" — run the same check flow
+                        // the startup loop uses (busy-guarded, so it can't
+                        // overlap an in-flight check/download).
+                        "check-for-updates" => {
+                            let app = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                updater::run_check(app).await;
+                            });
+                        }
                         _ => {}
                     }
                 });
@@ -533,6 +554,24 @@ pub fn run() {
             #[cfg(debug_assertions)]
             if let Some(window) = app.get_webview_window("main") {
                 window.open_devtools();
+            }
+
+            // Auto-update: one process-wide checker in the Rust runtime — runs
+            // regardless of which/how many windows are open (fixing the old
+            // launcher-window-only gating). A first check ~5s after launch (so
+            // it doesn't compete with cold start), then hourly. Notify-first:
+            // the loop only CHECKS; the user drives download + restart. Release
+            // builds only — dev has no installed bundle to replace.
+            #[cfg(not(debug_assertions))]
+            {
+                let updater_app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    loop {
+                        updater::run_check(updater_app.clone()).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
+                    }
+                });
             }
 
             Ok(())

@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { App } from './App'
 import { LAST_PATH_STORAGE_KEY } from './hooks/usePersistLastPath'
-import { projectStorageKey, WINDOW_ROOT } from './lib/windowRoot'
+import { projectStorageKey } from './lib/windowRoot'
 import './index.css'
 
 // Session restore: if the WebView came up with an empty / root hash
@@ -52,15 +52,10 @@ if (import.meta.env.DEV) {
   void import('./state/youtubeService')
 }
 
-// Auto-update: run the check loop only in the launcher window (no `root`
-// param), and only in production builds. All windows of the app share one
-// process and one app bundle, so a single checker is enough — gating to one
-// window avoids redundant downloads and concurrent installs replacing the
-// same .app. Dev builds skip it: there's no installed bundle to replace and
-// no release to find, so check() would just spam the network and warn.
-if (WINDOW_ROOT === null && import.meta.env.PROD) {
-  void import('./lib/updater').then(({ startAutoUpdate }) => startAutoUpdate())
-}
+// Auto-update now lives in Rust (src-tauri/src/updater.rs): a single
+// process-wide checker runs in the backend regardless of which window is
+// open, and every window subscribes via useUpdaterEvents() in App(). No
+// startup wiring needed here anymore.
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
