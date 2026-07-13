@@ -34,7 +34,7 @@ import {
 import type { KnownDoc } from '@/state/docsStore'
 import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
 import { seedLastWrittenPath } from '@/lib/docFileSync'
-import { composeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
+import { mergeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
 
 /** Read the doc's persistent slug from its `.meta.json` sidecar, or
  * mint one + write the sidecar if missing. Two-tier lookup:
@@ -60,9 +60,11 @@ async function getOrAssignSlug(mdRel: string): Promise<SidecarLoad> {
   // Frontmatter is the source of truth — read it first. A slug there means
   // the `.md` fully describes the doc (no sidecar consulted).
   let body = ''
+  let rawFile = ''
   let data: Record<string, string> = {}
   try {
-    const split = splitFrontmatter(await readVaultFile(mdRel))
+    rawFile = await readVaultFile(mdRel)
+    const split = splitFrontmatter(rawFile)
     data = split.data
     body = split.body
     if (data.slug) {
@@ -88,10 +90,12 @@ async function getOrAssignSlug(mdRel: string): Promise<SidecarLoad> {
   }
 
   // Neither: mint a slug and persist it INTO the file's frontmatter
-  // (no sidecar), so identity is stable on the next scan.
+  // (no sidecar), so identity is stable on the next scan. Merge (not
+  // compose) so a foreign file's list/nested frontmatter survives the
+  // slug write verbatim instead of being flattened away.
   const slug = generateClientSlug()
   try {
-    await writeVaultFile(mdRel, composeFrontmatter({ ...data, slug }, body))
+    await writeVaultFile(mdRel, mergeFrontmatter(rawFile, { slug }, body))
   } catch (err) {
     console.warn('[scan] could not write slug frontmatter for', mdRel, err)
   }

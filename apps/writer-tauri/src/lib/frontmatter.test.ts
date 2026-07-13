@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { composeFrontmatter, splitFrontmatter } from './frontmatter'
+import {
+  composeFrontmatter,
+  mergeFrontmatter,
+  splitFrontmatter,
+} from './frontmatter'
 
 describe('composeFrontmatter', () => {
   it('emits a block followed by the body', () => {
@@ -94,5 +98,76 @@ describe('round-trip', () => {
     expect(data).toEqual({ slug: 'abc', title: 'A: tricky #title', archivedAt: '1718000000000' })
     // compose guarantees the file ends in a newline; split reads it back faithfully
     expect(body).toBe('The body.\nSecond line.\n')
+  })
+})
+
+describe('mergeFrontmatter', () => {
+  it('is byte-identical to composeFrontmatter for an app-only file', () => {
+    // The flush guard (fileContentEquals) relies on this: rewriting a doc
+    // whose frontmatter the app fully owns must not change a single byte,
+    // or every doc surfaces as a phantom change.
+    const existing = composeFrontmatter({ slug: 'abc123' }, 'old body')
+    expect(mergeFrontmatter(existing, { slug: 'abc123' }, 'new body')).toBe(
+      composeFrontmatter({ slug: 'abc123' }, 'new body'),
+    )
+  })
+
+  it('preserves a YAML list the flat parser cannot represent', () => {
+    const existing =
+      '---\ntags:\n  - project\n  - draft\nslug: old\n---\n\nObsidian note'
+    const out = mergeFrontmatter(existing, { slug: 'new' }, 'edited body')
+    // The list survives verbatim; the app key is replaced, not duplicated.
+    expect(out).toBe(
+      '---\ntags:\n  - project\n  - draft\nslug: new\n---\n\nedited body\n',
+    )
+  })
+
+  it('preserves nested maps, aliases, and comments verbatim', () => {
+    const existing = [
+      '---',
+      '# user metadata',
+      'aliases: [foo, bar]',
+      'cssclasses:',
+      '  - wide',
+      'slug: keepme',
+      '---',
+      '',
+      'body',
+    ].join('\n')
+    const out = mergeFrontmatter(existing, { slug: 'keepme' }, 'body')
+    expect(out).toBe(
+      [
+        '---',
+        '# user metadata',
+        'aliases: [foo, bar]',
+        'cssclasses:',
+        '  - wide',
+        'slug: keepme',
+        '---',
+        '',
+        'body\n',
+      ].join('\n'),
+    )
+  })
+
+  it('appends app fields when the file had no frontmatter', () => {
+    expect(mergeFrontmatter('just a body', { slug: 'x' }, 'just a body')).toBe(
+      '---\nslug: x\n---\n\njust a body\n',
+    )
+  })
+
+  it('drops an app key whose new value is empty (removal)', () => {
+    const existing = '---\ntitle: Keep\narchivedAt: 123\n---\n\nb'
+    // archivedAt owned by app + now empty → removed; user title preserved.
+    expect(mergeFrontmatter(existing, { archivedAt: undefined }, 'b')).toBe(
+      '---\ntitle: Keep\n---\n\nb\n',
+    )
+  })
+
+  it('does not treat a colon inside a value as a new key boundary', () => {
+    const existing = "---\ntitle: 'A: a #1'\nslug: s\n---\n\nb"
+    expect(mergeFrontmatter(existing, { slug: 's' }, 'b')).toBe(
+      "---\ntitle: 'A: a #1'\nslug: s\n---\n\nb\n",
+    )
   })
 })

@@ -29,7 +29,7 @@ import {
   usesFrontmatter,
   type DocMetaFile,
 } from '@/lib/docPaths'
-import { composeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
+import { mergeFrontmatter } from '@/lib/frontmatter'
 import {
   readVaultFile,
   renameVaultFile,
@@ -578,22 +578,27 @@ async function flushDirtyOnce(): Promise<void> {
       // (skills / commands / agents) keep meaningful frontmatter like
       // `name` / `description` / `model` there, and stripping it on every save
       // would silently erase the user's role metadata.
-      let fields = metaToFrontmatterFields(result.meta)
+      let fileContent: string
       if (frontmatterDoc) {
+        // Overlay the app's own fields while preserving every other key in
+        // the existing block verbatim — lists, nested maps, comments the
+        // flat scalar view can't represent. Byte-identical to the old
+        // split→compose path for app-authored files, so the equality guard
+        // below still short-circuits untouched docs.
+        let existing = ''
         try {
-          const { data } = splitFrontmatter(await readVaultFile(mdPath))
-          const preserved: Record<string, string> = {}
-          for (const [k, v] of Object.entries(data)) {
-            if (!(k in fields)) preserved[k] = v
-          }
-          if (Object.keys(preserved).length > 0) fields = { ...preserved, ...fields }
+          existing = await readVaultFile(mdPath)
         } catch {
           // New file or unreadable — nothing to preserve.
         }
+        fileContent = mergeFrontmatter(
+          existing,
+          metaToFrontmatterFields(result.meta),
+          result.md,
+        )
+      } else {
+        fileContent = result.md
       }
-      const fileContent = frontmatterDoc
-        ? composeFrontmatter(fields, result.md)
-        : result.md
       // Skip the write when the serialized output is byte-identical to
       // what's already on disk. Opening a doc marks it dirty
       // (installDocSync) even when the user never edits it; without this

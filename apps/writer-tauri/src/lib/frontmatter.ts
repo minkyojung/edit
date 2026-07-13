@@ -80,6 +80,76 @@ export function splitFrontmatter(raw: string): SplitDoc {
   return { data, body: (m[2] ?? '').replace(/^(?:\r?\n)+/, '') }
 }
 
+/**
+ * Rewrite a `.md` file's frontmatter: overlay the app's own scalar
+ * fields (`slug`, `archivedAt`, …) while preserving EVERY other key in
+ * the existing block **verbatim** — including lists, nested maps, and
+ * comments that {@link splitFrontmatter}'s flat scalar view can't
+ * represent.
+ *
+ * This is the write path for docs the app didn't originate (an Obsidian
+ * page a user dropped in, a note with `tags:\n  - a\n  - b`). The naive
+ * split→re-compose round-trip would flatten those structures to `''` and
+ * silently destroy them; here the original lines are copied byte-for-byte
+ * and only the app-owned keys are replaced/appended.
+ *
+ * Byte-stable for app-authored files: when the existing block contains
+ * ONLY app keys, the output is identical to `composeFrontmatter(appFields,
+ * newBody)`, so the flush's content-equality guard still short-circuits and
+ * no phantom churn is introduced.
+ *
+ * @param existingFile  the current on-disk file (frontmatter is mined from
+ *                      it; its body is ignored).
+ * @param appFields     the app-owned fields to set. A key present here is
+ *                      owned by the app: its old value in the file is
+ *                      dropped, and it is re-emitted only when its value
+ *                      survives the same `undefined/null/''` filter
+ *                      `composeFrontmatter` uses.
+ * @param newBody       the body to write below the block.
+ */
+export function mergeFrontmatter(
+  existingFile: string,
+  appFields: Record<string, FrontmatterScalar | undefined | null>,
+  newBody: string,
+): string {
+  const m = FRONTMATTER_RE.exec(existingFile)
+  const appKeys = new Set(Object.keys(appFields))
+
+  // Preserve every original line whose owning top-level key the app does
+  // NOT manage. Lines are grouped by top-level key so a multi-line value
+  // (list / nested map) travels with its key; floating comments and blank
+  // lines (key === null) are always kept in place.
+  const preserved: string[] = []
+  if (m) {
+    let ownedByApp = false
+    for (const line of m[1].split(/\r?\n/)) {
+      const keyMatch = /^([^\s#][^:]*?):(?:\s|$)/.exec(line)
+      if (keyMatch) {
+        ownedByApp = appKeys.has(keyMatch[1].trim())
+        if (!ownedByApp) preserved.push(line)
+      } else if (!ownedByApp) {
+        // Continuation (indented), comment, blank, or top-level list item —
+        // belongs to the current key's group (or floats). Keep unless the
+        // current group is an app-owned key being dropped.
+        preserved.push(line)
+      }
+    }
+  }
+
+  const appLines = Object.entries(appFields)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `${k}: ${escapeYamlValue(String(v))}`)
+
+  const lines = [...preserved, ...appLines]
+  const trimmedBody = newBody.replace(/^\n+/, '')
+  if (lines.length === 0) {
+    return trimmedBody.endsWith('\n') ? trimmedBody : `${trimmedBody}\n`
+  }
+  return `---\n${lines.join('\n')}\n---\n\n${trimmedBody}${
+    trimmedBody.endsWith('\n') ? '' : '\n'
+  }`
+}
+
 // ── YAML scalar escaping ──────────────────────────────────────────────
 // Mirrors profile/sources.ts: we quote only when a value would otherwise
 // be misread, and double single-quotes inside per YAML. Not full YAML —
