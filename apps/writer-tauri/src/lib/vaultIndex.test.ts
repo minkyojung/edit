@@ -16,13 +16,13 @@ describe('parseVaultIndex', () => {
     const raw = JSON.stringify({
       version: 1,
       entries: {
-        'wiki/A.md': { slug: 'aaa11111', archivedAt: 123, aiImportance: 42 },
+        'wiki/A.md': { slug: 'aaa11111', aiSummary: 'about A', aiImportance: 42 },
       },
     })
     expect(parseVaultIndex(raw)).toEqual({
       version: 1,
       entries: {
-        'wiki/A.md': { slug: 'aaa11111', archivedAt: 123, aiImportance: 42 },
+        'wiki/A.md': { slug: 'aaa11111', aiSummary: 'about A', aiImportance: 42 },
       },
     })
   })
@@ -41,7 +41,7 @@ describe('parseVaultIndex', () => {
       version: 1,
       entries: {
         'good.md': { slug: 'ok111111' },
-        'noSlug.md': { archivedAt: 1 },
+        'noSlug.md': { aiImportance: 1 },
         'emptySlug.md': { slug: '' },
       },
     })
@@ -51,7 +51,7 @@ describe('parseVaultIndex', () => {
   it('ignores fields of the wrong type instead of trusting them', () => {
     const raw = JSON.stringify({
       version: 1,
-      entries: { 'a.md': { slug: 's1234567', archivedAt: 'nope', aiSummary: 5 } },
+      entries: { 'a.md': { slug: 's1234567', aiImportance: 'nope', aiSummary: 5 } },
     })
     expect(parseVaultIndex(raw).entries['a.md']).toEqual({ slug: 's1234567' })
   })
@@ -65,8 +65,6 @@ describe('serialize → parse round-trip', () => {
         'daily/2026-01-01.md': { slug: 'day00001' },
         'wiki/B.md': {
           slug: 'bbb22222',
-          archivedAt: 999,
-          archivedFromParent: 'day00001',
           aiSummary: 'about B',
           aiImportance: 10,
         },
@@ -115,44 +113,40 @@ describe('upsertEntry (field-level merge, two independent writers)', () => {
   })
 
   it('preserves fields the patch does not mention', () => {
-    // Summary writer sets aiSummary; the flush later sets archive state.
-    // Neither should wipe the other.
+    // Summary writer sets aiSummary; the importance pass later sets
+    // aiImportance. Neither should wipe the other.
     const withSummary = upsertEntry(emptyVaultIndex(), 'a.md', {
       slug: 'aaa11111',
       aiSummary: 'about A',
+    })
+    const withImportance = upsertEntry(withSummary, 'a.md', {
+      slug: 'aaa11111',
       aiImportance: 30,
     })
-    const withArchive = upsertEntry(withSummary, 'a.md', {
-      slug: 'aaa11111',
-      archivedAt: 555,
-    })
-    expect(withArchive.entries['a.md']).toEqual({
+    expect(withImportance.entries['a.md']).toEqual({
       slug: 'aaa11111',
       aiSummary: 'about A',
       aiImportance: 30,
-      archivedAt: 555,
     })
   })
 
-  it('deletes a field set to undefined (unarchive clears the marker)', () => {
-    const archived = upsertEntry(emptyVaultIndex(), 'a.md', {
+  it('deletes a field set to undefined', () => {
+    const withBoth = upsertEntry(emptyVaultIndex(), 'a.md', {
       slug: 'aaa11111',
-      archivedAt: 555,
-      archivedFromParent: 'p1',
+      aiImportance: 555,
       aiSummary: 'keep me',
     })
-    const live = upsertEntry(archived, 'a.md', {
+    const cleared = upsertEntry(withBoth, 'a.md', {
       slug: 'aaa11111',
-      archivedAt: undefined,
-      archivedFromParent: undefined,
+      aiImportance: undefined,
     })
-    // Archive markers gone; the AI field (not in the patch) survives.
-    expect(live.entries['a.md']).toEqual({ slug: 'aaa11111', aiSummary: 'keep me' })
+    // aiImportance gone; the summary field (not in the patch) survives.
+    expect(cleared.entries['a.md']).toEqual({ slug: 'aaa11111', aiSummary: 'keep me' })
   })
 
   it('does not mutate the input index', () => {
     const base: VaultIndex = { version: 1, entries: { 'a.md': { slug: 'aaa11111' } } }
-    upsertEntry(base, 'a.md', { slug: 'aaa11111', archivedAt: 1 })
+    upsertEntry(base, 'a.md', { slug: 'aaa11111', aiImportance: 1 })
     expect(base.entries['a.md']).toEqual({ slug: 'aaa11111' })
   })
 })
@@ -161,14 +155,14 @@ describe('rekeyEntry (rename / move)', () => {
   const base: VaultIndex = {
     version: 1,
     entries: {
-      'wiki/Old.md': { slug: 'keep0001', archivedAt: 7 },
+      'wiki/Old.md': { slug: 'keep0001', aiImportance: 7 },
       'other.md': { slug: 'other001' },
     },
   }
 
   it('moves the record, preserving slug + soft state', () => {
     const next = rekeyEntry(base, 'wiki/Old.md', 'wiki/New.md')
-    expect(next.entries['wiki/New.md']).toEqual({ slug: 'keep0001', archivedAt: 7 })
+    expect(next.entries['wiki/New.md']).toEqual({ slug: 'keep0001', aiImportance: 7 })
     expect('wiki/Old.md' in next.entries).toBe(false)
     expect(next.entries['other.md']).toEqual({ slug: 'other001' }) // untouched
   })
@@ -183,6 +177,6 @@ describe('rekeyEntry (rename / move)', () => {
 
   it('overwrites the destination when a move lands on an existing path', () => {
     const next = rekeyEntry(base, 'wiki/Old.md', 'other.md')
-    expect(next.entries['other.md']).toEqual({ slug: 'keep0001', archivedAt: 7 })
+    expect(next.entries['other.md']).toEqual({ slug: 'keep0001', aiImportance: 7 })
   })
 })

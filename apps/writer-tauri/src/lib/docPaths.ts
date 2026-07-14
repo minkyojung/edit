@@ -61,16 +61,6 @@ export interface DocMetaFile {
    * backlink count + recency; not user-editable. Absent on old
    * sidecars — treated as 0 (lowest priority) by the selector. */
   aiImportance?: number
-  /** Soft-delete timestamp (epoch ms). Set when the user archives the
-   * doc, cleared on unarchive. Persisted here because the catalog is
-   * rebuilt from disk on every boot (Path C — vault is the source of
-   * truth); without this field, archive state would silently revert
-   * to "live" on app restart. */
-  archivedAt?: number
-  /** Pre-archive `parentId` snapshot, so unarchive can restore the
-   * cascade group's tree structure. Lives in the same sidecar as
-   * `archivedAt` to keep the archive state self-contained. */
-  archivedFromParent?: string
   /** ISO timestamp recorded when the doc was first created. Migrated
    * out of `Y.Map('meta')` in Phase 5b of the Yjs-removal migration —
    * the Y.Map was the prior home for this field, but it's the only
@@ -169,11 +159,6 @@ export function frontmatterToMeta(
   const meta: Partial<DocMetaFile> = {}
   if (data.slug) meta.slug = data.slug
   if (data.createdAt) meta.createdAt = data.createdAt
-  if (data.archivedAt) {
-    const n = Number(data.archivedAt)
-    if (Number.isFinite(n)) meta.archivedAt = n
-  }
-  if (data.archivedFromParent) meta.archivedFromParent = data.archivedFromParent
   if (data.aiSummary) meta.aiSummary = data.aiSummary
   if (data.aiImportance) {
     const n = Number(data.aiImportance)
@@ -223,8 +208,6 @@ export function metaToFrontmatterFields(
   return {
     slug: meta.slug,
     createdAt: meta.createdAt,
-    archivedAt: meta.archivedAt,
-    archivedFromParent: meta.archivedFromParent,
     aiSummary: meta.aiSummary,
     aiImportance: meta.aiImportance,
     sourceUrl: meta.sourceUrl,
@@ -248,9 +231,9 @@ export function metaToFrontmatterFields(
  * human can read them — created date, capture source, video metadata, and
  * the user's own highlights.
  *
- * Excludes the app-private identity + soft state (`slug`, `archivedAt`,
- * `archivedFromParent`, `aiSummary`, `aiImportance`), which now live in
- * `.octave/index.json` instead of polluting the note. Used by the flush so
+ * Excludes the app-private identity + soft state (`slug`, `aiSummary`,
+ * `aiImportance`), which now live in `.octave/index.json` instead of
+ * polluting the note. Used by the flush so
  * a saved `.md` carries only what's genuinely the user's. Kept in lockstep
  * with metaToFrontmatterFields — the two must not disagree on where a
  * field belongs. */
@@ -324,19 +307,14 @@ export function ydocPathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null
  * (defensive — KnownDoc invariants forbid it, but we don't want a
  * pathological catalog to lock up the call site).
  *
- * Archived writings have their `parentId` cleared (so the tree UI
- * doesn't show them under a live daily) and the original parent
- * snapshotted in `archivedFromParent`. We fall back to that snapshot
- * so the archived doc still resolves to its on-disk location — the
- * sidecar lives next to the body file, and the flush needs the path
- * to write the archive marker. */
+ */
 function findDailyAncestor(doc: KnownDoc, getDoc: DocLookup): KnownDoc | null {
   const visited = new Set<string>()
   let current: KnownDoc | undefined = doc
   while (current && !visited.has(current.slug)) {
     visited.add(current.slug)
     if (current.type === 'daily') return current
-    const parentId = current.parentId ?? current.archivedFromParent
+    const parentId = current.parentId
     if (!parentId) return null
     current = getDoc(parentId)
   }

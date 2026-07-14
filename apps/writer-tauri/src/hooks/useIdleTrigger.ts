@@ -48,7 +48,6 @@ async function runIngestForSlug(slug: string, opts: RunOptions = {}): Promise<nu
   // Agent-managed pages (system:* + wiki:*) are LLM output, not input —
   // ingesting one would feed the wiki's content back into itself.
   if (isWikiDoc(known)) return 0
-  if (known.archivedAt) return 0
 
   const length = readDocLength(slug)
   if (length === 0) return 0
@@ -95,7 +94,7 @@ function findTodayDaily(): { slug: string } | null {
   const today = todayLocalDate()
   const docs = useDocsStore.getState()
   const found = docs.knownDocs.find(
-    (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
+    (d) => d.type === 'daily' && d.date === today,
   )
   return found ? { slug: found.slug } : null
 }

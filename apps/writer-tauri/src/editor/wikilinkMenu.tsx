@@ -54,7 +54,7 @@ function liveTitles(): string[] {
   const seen = new Set<string>()
   const out: string[] = []
   for (const d of useDocsStore.getState().knownDocs) {
-    if (d.archivedAt || d.type.startsWith('system:')) continue
+    if (d.type.startsWith('system:')) continue
     const title = (d.title ?? '').trim()
     if (!title) continue
     const key = title.toLowerCase()

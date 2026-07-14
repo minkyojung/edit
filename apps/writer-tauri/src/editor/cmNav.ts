@@ -14,7 +14,7 @@ export function navigateToNoteByTitle(title: string): void {
   if (!key) return
   const store = useDocsStore.getState()
   const target = store.knownDocs.find(
-    (d) => !d.archivedAt && !d.type.startsWith('system:') && (d.title ?? '').trim().toLowerCase() === key,
+    (d) => !d.type.startsWith('system:') && (d.title ?? '').trim().toLowerCase() === key,
   )
   if (!target) return
   window.location.hash = buildViewUrl({
@@ -32,7 +32,7 @@ export function navigateToNoteByTitle(title: string): void {
  * navigated. Sets the URL hash, the single source of truth for the active doc. */
 export function navigateToNoteBySlug(slug: string): boolean {
   const store = useDocsStore.getState()
-  const target = store.knownDocs.find((d) => d.slug === slug && !d.archivedAt)
+  const target = store.knownDocs.find((d) => d.slug === slug)
   if (!target) return false
   window.location.hash = buildViewUrl({
     tab: store.sidebarTab,
@@ -52,6 +52,6 @@ export function isKnownNoteTitle(title: string): boolean {
   return useDocsStore
     .getState()
     .knownDocs.some(
-      (d) => !d.archivedAt && !d.type.startsWith('system:') && (d.title ?? '').trim().toLowerCase() === key,
+      (d) => !d.type.startsWith('system:') && (d.title ?? '').trim().toLowerCase() === key,
     )
 }

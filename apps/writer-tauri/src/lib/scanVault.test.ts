@@ -28,12 +28,10 @@ import type { VaultIndexEntry } from './vaultIndex'
 const noChildren = new Map<string, string>()
 
 describe('portableFrontmatterFields — what stays in the user .md', () => {
-  it('excludes every app-private field (slug, archive, AI)', () => {
+  it('excludes every app-private field (slug, AI)', () => {
     const fields = portableFrontmatterFields({
       version: 1,
       slug: 'abc12345',
-      archivedAt: 111,
-      archivedFromParent: 'p1',
       aiSummary: 'summary',
       aiImportance: 50,
       createdAt: '2026-01-01',
@@ -43,8 +41,6 @@ describe('portableFrontmatterFields — what stays in the user .md', () => {
     expect(fields.createdAt).toBe('2026-01-01')
     expect(fields.sourceUrl).toBe('https://x.test')
     expect('slug' in fields).toBe(false)
-    expect('archivedAt' in fields).toBe(false)
-    expect('archivedFromParent' in fields).toBe(false)
     expect('aiSummary' in fields).toBe(false)
     expect('aiImportance' in fields).toBe(false)
   })
@@ -61,7 +57,7 @@ describe('portableFrontmatterFields — what stays in the user .md', () => {
 describe('mergeIndexMeta — index soft-state over frontmatter portable fields', () => {
   it('layers index app-private fields while preserving frontmatter portable ones', () => {
     // The dual-read crux: a note that is a saved web page (frontmatter) AND
-    // archived + summarised (index) must come back carrying BOTH.
+    // summarised (index) must come back carrying BOTH.
     const fmMeta: Partial<DocMetaFile> = {
       sourceUrl: 'https://example.com',
       siteName: 'Example',
@@ -69,7 +65,6 @@ describe('mergeIndexMeta — index soft-state over frontmatter portable fields',
     }
     const entry: VaultIndexEntry = {
       slug: 'ix000001',
-      archivedAt: 123,
       aiSummary: 'about the page',
       aiImportance: 40,
     }
@@ -77,7 +72,6 @@ describe('mergeIndexMeta — index soft-state over frontmatter portable fields',
       sourceUrl: 'https://example.com',
       siteName: 'Example',
       createdAt: '2026-01-01T00:00:00Z',
-      archivedAt: 123,
       aiSummary: 'about the page',
       aiImportance: 40,
     })
@@ -95,8 +89,8 @@ describe('mergeIndexMeta — index soft-state over frontmatter portable fields',
   it('does not clobber a frontmatter field with an absent index field', () => {
     // entry has no aiSummary → the frontmatter value (if any) stays; here
     // there is none, and nothing is invented.
-    expect(mergeIndexMeta({}, { slug: 'ix000003', archivedAt: 9 })).toEqual({
-      archivedAt: 9,
+    expect(mergeIndexMeta({}, { slug: 'ix000003', aiImportance: 9 })).toEqual({
+      aiImportance: 9,
     })
   })
 })
@@ -288,24 +282,21 @@ describe('frontmatterToMeta', () => {
       frontmatterToMeta({
         slug: 'abc123',
         createdAt: '2026-06-11T00:00:00.000Z',
-        archivedFromParent: 'daily-xyz',
       }),
     ).toEqual({
       slug: 'abc123',
       createdAt: '2026-06-11T00:00:00.000Z',
-      archivedFromParent: 'daily-xyz',
     })
   })
 
   it('coerces numeric fields from their string form', () => {
-    expect(frontmatterToMeta({ archivedAt: '1718000000000', aiImportance: '72' })).toEqual({
-      archivedAt: 1718000000000,
+    expect(frontmatterToMeta({ aiImportance: '72' })).toEqual({
       aiImportance: 72,
     })
   })
 
-  it('drops a non-numeric archivedAt rather than storing NaN', () => {
-    expect(frontmatterToMeta({ slug: 'x', archivedAt: 'oops' })).toEqual({ slug: 'x' })
+  it('drops a non-numeric aiImportance rather than storing NaN', () => {
+    expect(frontmatterToMeta({ slug: 'x', aiImportance: 'oops' })).toEqual({ slug: 'x' })
   })
 
   it('restores article source metadata', () => {
@@ -330,13 +321,12 @@ describe('frontmatterToMeta', () => {
 })
 
 describe('frontmatter → KnownDoc (read path logic)', () => {
-  it('rebuilds an archived article from its frontmatter block', () => {
+  it('rebuilds a saved article from its frontmatter block', () => {
     const md = [
       '---',
       'slug: art-1',
       'sourceUrl: https://example.com/post',
       'siteName: Example',
-      'archivedAt: 1718000000000',
       '---',
       '',
       'Article body here.',
@@ -352,7 +342,6 @@ describe('frontmatter → KnownDoc (read path logic)', () => {
       relPath: 'articles/My Saved Post.md',
       sourceUrl: 'https://example.com/post',
       siteName: 'Example',
-      archivedAt: 1718000000000,
     })
   })
 
@@ -391,16 +380,6 @@ describe('meta ⇄ frontmatter round-trip', () => {
 
     expect(frontmatterToMeta(data)).toEqual(meta)
     expect(body).toBe('The note body.\n')
-  })
-
-  it('round-trips the archive markers (number coercion survives)', () => {
-    const meta: Partial<DocMetaFile> = {
-      slug: 'arch-1',
-      archivedAt: 1718000000000,
-      archivedFromParent: 'daily-2',
-    }
-    const { data } = splitFrontmatter(composeFrontmatter(metaToFrontmatterFields(meta), 'b'))
-    expect(frontmatterToMeta(data)).toEqual(meta)
   })
 
   it('round-trips youtube capture fields (durationSec stays numeric)', () => {

@@ -44,7 +44,7 @@ export function WikiLink(props: Props) {
       onClick={() => {
         const store = useDocsStore.getState()
         const target = store.knownDocs.find((d) => d.slug === slug)
-        if (!target || target.archivedAt) return
+        if (!target) return
         navigate(
           buildViewUrl({
             tab: store.sidebarTab,

@@ -42,7 +42,7 @@ export async function autoOrganizeInbox(): Promise<{
   const now = Date.now()
   const activeSlug = getActiveSlugFromHash()
   const fresh = useDocsStore.getState().knownDocs.filter((d) => {
-    if (!d.relPath?.startsWith(capturePrefix) || d.archivedAt) return false
+    if (!d.relPath?.startsWith(capturePrefix)) return false
     const ingestedAt = ingest.lastIngestedAt[d.slug] ?? 0
     const editedAt = ingest.lastEditedAt[d.slug] ?? 0
     // Has new content to file? (never ingested, or edited since last ingest)

@@ -95,7 +95,6 @@ export function countBacklinks(
   // archived + system:* pages don't participate in linking.
   const titleToSlug = new Map<string, string>()
   for (const doc of catalog) {
-    if (doc.archivedAt) continue
     if (doc.type.startsWith('system:')) continue
     const title = (doc.title ?? '').trim()
     if (!title) continue
@@ -108,7 +107,6 @@ export function countBacklinks(
 
   const counts = new Map<string, number>()
   for (const doc of catalog) {
-    if (doc.archivedAt) continue
     const body = bodyOf(doc.slug)
     if (!body) continue
     const tokens = extractWikilinks(body)
@@ -311,7 +309,7 @@ export async function buildWikiIndex(): Promise<string> {
   // Everything the map catalogs: every non-archived note that isn't a
   // host-owned system page.
   const indexed = catalog.filter(
-    (d) => !d.archivedAt && !d.type.startsWith('system:'),
+    (d) => !d.type.startsWith('system:'),
   )
 
   // Pre-fetch bodies (in-memory handles, sync) for the WHOLE non-
@@ -321,7 +319,7 @@ export async function buildWikiIndex(): Promise<string> {
   // indexed rows, read in parallel.
   const bodies: Record<string, string> = {}
   for (const d of catalog) {
-    if (!d.archivedAt) bodies[d.slug] = readWikiMarkdown(d.slug)
+    bodies[d.slug] = readWikiMarkdown(d.slug)
   }
   const counts = countBacklinks(catalog, (slug) => bodies[slug])
   const sidecars = await Promise.all(indexed.map((d) => readWikiSidecar(d)))
@@ -531,12 +529,12 @@ function scheduleWikiIndexPersist(): void {
 async function persistWikiIndexNow(): Promise<void> {
   let indexDoc = useDocsStore
     .getState()
-    .knownDocs.find((d) => d.type === 'system:index' && !d.archivedAt)
+    .knownDocs.find((d) => d.type === 'system:index')
   if (!indexDoc) {
     await ensureIndexWikiSlug()
     indexDoc = useDocsStore
       .getState()
-      .knownDocs.find((d) => d.type === 'system:index' && !d.archivedAt)
+      .knownDocs.find((d) => d.type === 'system:index')
     if (!indexDoc) return // ensure failed; bail and let next tick retry
   }
 

@@ -188,7 +188,7 @@ function RouteSyncBridge() {
     // today's daily hasn't been re-ensured yet.
     const today = todayLocalDate()
     const todaysDaily = knownDocs.find(
-      (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
+      (d) => d.type === 'daily' && d.date === today,
     )
     const fallbackSlug = todaysDaily?.slug ?? openSlugs[0]
     if (!fallbackSlug) return

@@ -58,7 +58,7 @@ export async function applyToWikiPage(
   changeId?: string,
 ): Promise<boolean> {
   const docs = useDocsStore.getState()
-  const known = docs.knownDocs.find((d) => d.slug === slug && !d.archivedAt)
+  const known = docs.knownDocs.find((d) => d.slug === slug)
   if (!known) {
     console.warn('[apply] unknown slug', slug)
     return false

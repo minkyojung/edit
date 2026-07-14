@@ -58,18 +58,6 @@ export interface KnownDoc {
    * rename-on-change machinery in `docFileSync.flushDirty`. Daily
    * entries don't use this — their label derives from `date`. */
   title?: string
-  /** Archive timestamp (ms since epoch). Set when the user archives
-   * the doc; cleared when restored. Archived docs stay in knownDocs
-   * so they can be restored, but are filtered out of sidebar tree,
-   * wikilink palette, and search. A cascade-archive writes the same
-   * timestamp to a parent and all its descendants so the group can
-   * be restored together. Mirrors the threads-archive pattern from
-   * useThreads — same word, same shape. */
-  archivedAt?: number
-  /** Snapshot of `parentId` taken at archive time so restore can put
-   * the doc back where it was. While archived, `parentId` is left
-   * undefined so the doc doesn't pollute the live tree index. */
-  archivedFromParent?: string
   /** ISO timestamp recorded when the doc was first created. Phase 5b
    * of the Yjs-removal migration lifted this off `Y.Map('meta')` and
    * onto the catalog / `.meta.json` sidecar — see DocMetaFile in
@@ -267,22 +255,6 @@ export interface DocsState {
   /** Toggle the sidebar fold for a given doc. */
   toggleExpanded: (slug: string) => void
   reorder: (slugs: string[]) => void
-  /** Archive `slug` and all its descendants (cascade). Closes any
-   * open tabs in the group, tears down their handles, and reassigns
-   * activeSlug if needed. The group is tagged with a single
-   * timestamp so restore can move them back together. Refuses to
-   * act on daily entries. Returns true on success. */
-  archiveDoc: (slug: string) => string | null
-  /** Restore an archived group identified by `slug` (any group
-   * member works). Re-points each parentId to its pre-archive
-   * value via `archivedFromParent`. */
-  unarchiveDoc: (slug: string) => void
-  /** Permanently delete an archived group: hits the sidecar DELETE
-   * for each member, removes them from knownDocs / openSlugs /
-   * handles. No-op if the slug isn't archived. */
-  deleteForever: (slug: string) => Promise<string | null>
-  /** Permanently delete every archived doc (sidecar + local state). */
-  emptyArchive: () => Promise<string | null>
   /** Delete a user doc by moving its file to the OS trash (recoverable)
    * and dropping it from the catalog / tabs / handles. Returns the slug
    * to navigate to next, or null. */

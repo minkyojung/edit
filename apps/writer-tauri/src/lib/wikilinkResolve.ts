@@ -46,7 +46,6 @@ export function resolveWikilinksInMarkdown(md: string): string {
     .getState()
     .knownDocs.filter(
       (d) =>
-        !d.archivedAt &&
         // System pages (system:conventions / log / index) are agent
         // meta surfaces — the user isn't expected to author links
         // pointing at them, and the LLM was told the same via the
@@ -109,13 +108,13 @@ if (import.meta.env.DEV) {
       slug: d.slug,
       title: d.title ?? '',
       type: d.type,
-      archived: !!d.archivedAt,
+      archived: false,
     }))
   w.__wikiTitleMap = () => {
     const docs = useDocsStore
       .getState()
       .knownDocs.filter(
-        (d) => !d.archivedAt && !d.type.startsWith('system:'),
+        (d) => !d.type.startsWith('system:'),
       )
     const out: Record<string, string> = {}
     for (const d of docs) {

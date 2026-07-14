@@ -106,7 +106,6 @@ export function buildFileTree(
   }
 
   for (const doc of docs) {
-    if (doc.archivedAt) continue
     const path = pathForDoc(doc, getDoc)
     if (!path) continue
     if (isHiddenTreePath(path)) continue

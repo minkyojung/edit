@@ -94,7 +94,7 @@ async function ensureSystemPage(
 ): Promise<string | null> {
   const existing = useDocsStore
     .getState()
-    .knownDocs.find((d) => d.type === config.type && !d.archivedAt)
+    .knownDocs.find((d) => d.type === config.type)
   if (existing) {
     // Legacy fix-up: a page created during the Phase 3.B window
     // (before this transaction-style seed) is still blank in its
@@ -167,7 +167,7 @@ export async function ensureProfileWikiSlug(): Promise<string | null> {
 export async function readSelfProfile(): Promise<string> {
   const doc = useDocsStore
     .getState()
-    .knownDocs.find((d) => d.type === 'wiki:profile' && !d.archivedAt)
+    .knownDocs.find((d) => d.type === 'wiki:profile')
   if (!doc) return ''
   return readWikiMarkdown(doc.slug)
 }
@@ -210,7 +210,7 @@ export async function readPreferences(): Promise<string> {
   try {
     const doc = useDocsStore
       .getState()
-      .knownDocs.find((d) => d.relPath === PREFERENCES_REL && !d.archivedAt)
+      .knownDocs.find((d) => d.relPath === PREFERENCES_REL)
     if (doc) {
       const body = readWikiMarkdown(doc.slug)
       if (body) return body

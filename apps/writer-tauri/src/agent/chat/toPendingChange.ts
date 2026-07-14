@@ -76,7 +76,6 @@ export function mapChatEditToPendingChange(
       toolName: payload.toolName,
       filePath,
       knownPaths: ctx.knownDocs
-        .filter((d) => !d.archivedAt)
         .map((d) => pathForDoc(d, getDoc))
         .filter(Boolean),
     })
@@ -269,7 +268,6 @@ function resolveSlugForVaultPath(
   if (!relative) return null
   const getDoc = (s: string) => knownDocs.find((d) => d.slug === s)
   for (const doc of knownDocs) {
-    if (doc.archivedAt) continue
     const docPath = pathForDoc(doc, getDoc)
     if (docPath && docPath === relative) return doc.slug
   }

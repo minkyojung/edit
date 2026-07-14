@@ -44,10 +44,6 @@ export interface VaultIndexEntry {
   /** Stable surrogate key for the note. Minted once, never derived from
    * the (mutable) path, so it survives rename/move. */
   slug: string
-  /** Soft-delete timestamp (epoch ms). Present ⇒ archived. */
-  archivedAt?: number
-  /** Pre-archive parent slug, so unarchive can restore tree structure. */
-  archivedFromParent?: string
   /** One-line LLM summary feeding the wiki index. Recomputable, but cached
    * here so boot doesn't re-summarise every page. */
   aiSummary?: string
@@ -99,9 +95,6 @@ export function parseVaultIndex(raw: string): VaultIndex {
     if (typeof slug !== 'string' || slug.length === 0) continue
     const entry: VaultIndexEntry = { slug }
     const v = value as Record<string, unknown>
-    if (typeof v.archivedAt === 'number') entry.archivedAt = v.archivedAt
-    if (typeof v.archivedFromParent === 'string')
-      entry.archivedFromParent = v.archivedFromParent
     if (typeof v.aiSummary === 'string') entry.aiSummary = v.aiSummary
     if (typeof v.aiImportance === 'number') entry.aiImportance = v.aiImportance
     entries[path] = entry
@@ -148,14 +141,10 @@ export function removeEntry(index: VaultIndex, path: string): VaultIndex {
  * with no surrogate key is meaningless, and every writer knows the doc's
  * slug.
  *
- * The delete-on-undefined semantics matter for two independent writers of
- * the same entry:
- *   - the flush owns `slug` + `archivedAt`/`archivedFromParent` — passing
- *     `archivedAt: undefined` on a live doc clears a stale archive marker
- *     without touching the AI fields;
- *   - the summary pass owns `aiSummary`/`aiImportance` — writing them must
- *     not wipe the archive state.
- * Because each writer passes ONLY the keys it owns, absent keys survive.
+ * The delete-on-undefined semantics matter when independent writers touch
+ * the same entry: the flush owns `slug`, while the summary pass owns
+ * `aiSummary`/`aiImportance`. Because each writer passes ONLY the keys it
+ * owns, absent keys survive and a writer never wipes another's field.
  */
 export function upsertEntry(
   index: VaultIndex,
@@ -166,9 +155,6 @@ export function upsertEntry(
   // Rebuild explicitly so `undefined`-valued keys drop out (both from the
   // in-memory object and, therefore, the serialized JSON).
   const clean: VaultIndexEntry = { slug: patch.slug }
-  if (merged.archivedAt !== undefined) clean.archivedAt = merged.archivedAt
-  if (merged.archivedFromParent !== undefined)
-    clean.archivedFromParent = merged.archivedFromParent
   if (merged.aiSummary !== undefined) clean.aiSummary = merged.aiSummary
   if (merged.aiImportance !== undefined) clean.aiImportance = merged.aiImportance
   return { ...index, entries: { ...index.entries, [path]: clean } }

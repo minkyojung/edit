@@ -52,9 +52,8 @@ import {
  * `.meta.json` during the prior scan, so the legacy reader had no
  * remaining work. */
 /** Returned by {@link getOrAssignSlug}: the slug to use plus the rest
- * of the sidecar payload so callers can hydrate non-identity fields
- * (archivedAt, archivedFromParent, aiSummary, …) without a second
- * file read. Empty when the sidecar was just minted. */
+ * of the payload so callers can hydrate non-identity fields
+ * (aiSummary, sourceUrl, …) without a second file read. */
 interface SidecarLoad {
   slug: string
   meta: Partial<DocMetaFile>
@@ -75,9 +74,6 @@ export function mergeIndexMeta(
   entry: VaultIndexEntry,
 ): Partial<DocMetaFile> {
   const merged: Partial<DocMetaFile> = { ...fmMeta }
-  if (entry.archivedAt !== undefined) merged.archivedAt = entry.archivedAt
-  if (entry.archivedFromParent !== undefined)
-    merged.archivedFromParent = entry.archivedFromParent
   if (entry.aiSummary !== undefined) merged.aiSummary = entry.aiSummary
   if (entry.aiImportance !== undefined) merged.aiImportance = entry.aiImportance
   return merged
@@ -186,12 +182,6 @@ export function mdRelToKnownDoc(
   // state (archive flag, title intent) survives the boot rebuild that
   // would otherwise only see the filesystem.
   const overlay: Partial<KnownDoc> = {}
-  if (typeof meta.archivedAt === 'number') {
-    overlay.archivedAt = meta.archivedAt
-  }
-  if (typeof meta.archivedFromParent === 'string') {
-    overlay.archivedFromParent = meta.archivedFromParent
-  }
   // Phase 5b of the Yjs-removal migration: the doc's creation time
   // used to live in `Y.Map('meta').createdAt`; we now read it off
   // the sidecar so the catalog has it without touching Y.Doc.

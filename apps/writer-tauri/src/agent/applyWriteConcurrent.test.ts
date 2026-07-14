@@ -21,7 +21,7 @@ vi.mock('@/lib/docFileSync', () => ({ markSlugDirty: () => {} }))
 vi.mock('@/state/docsStore', () => ({
   useDocsStore: {
     getState: () => ({
-      knownDocs: [{ slug: 'note', archivedAt: null }],
+      knownDocs: [{ slug: 'note' }],
       ensureHandle: async () => {},
       handles: { note: handle },
     }),

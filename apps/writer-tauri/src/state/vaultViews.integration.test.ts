@@ -14,7 +14,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 // A realistic vault: knowledge base (wiki), capture (inbox), an imported
 // nested folder with an attachment, a daily, a root note, an empty
-// folder, plus an archived note and a system page that must NOT appear.
+// folder, plus a system page that must NOT appear.
 const { state, bodies } = vi.hoisted(() => ({
   state: {
     knownDocs: [
@@ -30,7 +30,6 @@ const { state, bodies } = vi.hoisted(() => ({
       },
       { slug: 'd1', type: 'daily', date: '2026-07-12', createdAt: '2026-07-12T09:00:00.000Z' },
       { slug: 'c1', type: 'note', title: 'CLAUDE', relPath: 'CLAUDE.md' },
-      { slug: 'a1', type: 'note', title: 'Old', relPath: 'inbox/Old.md', archivedAt: 111 },
       { slug: 's1', type: 'system:index', title: 'index' },
     ],
     knownFolders: [
@@ -103,9 +102,8 @@ describe('buildWikiIndex — whole-vault map (integration)', () => {
     expect(out).toContain('## / (1)') // CLAUDE.md at the vault root
   })
 
-  it('excludes archived notes and system pages', async () => {
+  it('excludes system pages', async () => {
     const out = await buildWikiIndex()
-    expect(out).not.toContain('Old')
     expect(out).not.toContain('_system')
     expect(out).not.toContain('| index ')
   })

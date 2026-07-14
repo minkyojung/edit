@@ -108,7 +108,6 @@ function splitTextNode(
 function buildTitleIndex(): Map<string, string> {
   const out = new Map<string, string>()
   for (const d of useDocsStore.getState().knownDocs) {
-    if (d.archivedAt) continue
     if (d.type.startsWith('system:')) continue
     const title = (d.title ?? '').trim()
     if (!title) continue

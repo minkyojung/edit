@@ -101,30 +101,6 @@ describe('countBacklinks', () => {
     expect(countBacklinks(catalog, (s) => bodies[s]).has('a')).toBe(false)
   })
 
-  it('excludes archived targets from the resolution map', () => {
-    const catalog = [
-      wiki('a', 'Sarah', { archivedAt: 1700000000000 }),
-      wiki('b', 'Notes'),
-    ]
-    const bodies: Record<string, string> = {
-      a: '',
-      b: '[[Sarah]] is archived, this should not count.',
-    }
-    expect(countBacklinks(catalog, (s) => bodies[s]).has('a')).toBe(false)
-  })
-
-  it('excludes archived sources', () => {
-    const catalog = [
-      wiki('a', 'Sarah'),
-      wiki('b', 'Notes', { archivedAt: 1700000000000 }),
-    ]
-    const bodies: Record<string, string> = {
-      a: '',
-      b: '[[Sarah]] mention from an archived doc.',
-    }
-    expect(countBacklinks(catalog, (s) => bodies[s]).has('a')).toBe(false)
-  })
-
   it('excludes system:* pages from the resolution map', () => {
     const catalog = [
       system('cv', 'Conventions'),

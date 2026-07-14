@@ -79,7 +79,7 @@ export function AppSidebar() {
   const activeSlug = useActiveSlug()
   const activeDoc = knownDocs.find((d) => d.slug === activeSlug)
   const profileSlug = knownDocs.find(
-    (d) => d.type === 'wiki:profile' && !d.archivedAt,
+    (d) => d.type === 'wiki:profile',
   )?.slug
   const profileActive = !!profileSlug && profileSlug === activeSlug
 

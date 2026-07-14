@@ -155,15 +155,8 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
 
 /** Compose the sidecar payload from the in-memory `KnownDoc`. Shared
  * between the full-flush path (`serializeDocToFiles`) and the
- * meta-only path (`flushDirty` for archived docs whose handle has
- * been torn down).
- *
- * `archivedAt`/`archivedFromParent` are emitted explicitly (including
- * the `undefined` case for live docs) so `mergeSidecar` can clear
- * stale archive markers on unarchive: a spread of an `undefined` key
- * over an existing value, then JSON.stringify, drops the field from
- * the on-disk JSON. Without the explicit key the merge would preserve
- * the pre-unarchive value. */
+ * meta-only path (`flushDirty` for docs whose handle has been torn
+ * down). */
 function buildMetaForKnownDoc(
   slug: string,
   known: KnownDoc | undefined,
@@ -171,8 +164,6 @@ function buildMetaForKnownDoc(
   return {
     version: 1,
     slug,
-    archivedAt: known?.archivedAt,
-    archivedFromParent: known?.archivedFromParent,
     // Phase 5b of the Yjs-removal migration: createdAt now lives on
     // the catalog (sourced from `.meta.json` by scanVault, or set by
     // createSlice for new docs). flushDirty writes it back via
@@ -500,25 +491,9 @@ async function flushDirtyOnce(): Promise<void> {
       // soft-state is persisted while it's open, by the body flush below
       // that embeds it in the frontmatter block.
       if (usesFrontmatter(known)) {
-        // Archived frontmatter doc: archive destroys the handle BEFORE it
-        // marks the slug dirty, so this flush can't re-serialise the body.
-        // The note carries no app-private fields anyway — its archive state
-        // must reach the index instead. This is the sole persistence point
-        // for archive when the handle is already gone.
-        const metaOnly = serializeMetaOnly(slug)
-        if (metaOnly) {
-          try {
-            await updateVaultIndex(mdPath, {
-              slug: metaOnly.slug,
-              archivedAt: metaOnly.archivedAt,
-              archivedFromParent: metaOnly.archivedFromParent,
-            })
-          } catch (err) {
-            console.error('[vault:flush] archive index write failed for', slug, err)
-            reportSaveFailure(slug, err)
-            continue // leave dirty so the next tick retries
-          }
-        }
+        // Frontmatter docs keep their metadata inside the `.md`; with the
+        // handle gone we can't re-serialise the body, and there's no
+        // app-private soft state left to persist separately. Nothing to do.
         clearDirty(slug)
         continue
       }
@@ -631,14 +606,12 @@ async function flushDirtyOnce(): Promise<void> {
         await writeVaultFile(mdPath, fileContent)
       }
       if (frontmatterDoc) {
-        // Identity + app-private soft state (slug, archive) live in the
-        // index now, not the note. Written here (not embedded in the `.md`)
-        // so the file stays the user's; updateVaultIndex no-ops when the
-        // record is unchanged, so a routine body edit doesn't churn it.
+        // Identity (slug) lives in the index now, not the note. Written here
+        // (not embedded in the `.md`) so the file stays the user's;
+        // updateVaultIndex no-ops when the record is unchanged, so a routine
+        // body edit doesn't churn it.
         await updateVaultIndex(mdPath, {
           slug: result.meta.slug,
-          archivedAt: result.meta.archivedAt,
-          archivedFromParent: result.meta.archivedFromParent,
         })
       }
       if (!frontmatterDoc) {

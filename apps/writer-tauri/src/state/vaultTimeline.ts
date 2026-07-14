@@ -147,7 +147,7 @@ export async function buildVaultTimeline(): Promise<string> {
   const catalog = useDocsStore.getState().knownDocs
   const getDoc: DocLookup = (slug) => catalog.find((d) => d.slug === slug)
   const indexed = catalog.filter(
-    (d) => !d.archivedAt && !d.type.startsWith('system:'),
+    (d) => !d.type.startsWith('system:'),
   )
 
   const rows: TimelineRow[] = []
@@ -223,12 +223,12 @@ function scheduleTimelinePersist(): void {
 async function persistTimelineNow(): Promise<void> {
   let doc = useDocsStore
     .getState()
-    .knownDocs.find((d) => d.type === 'system:timeline' && !d.archivedAt)
+    .knownDocs.find((d) => d.type === 'system:timeline')
   if (!doc) {
     await ensureTimelineWikiSlug()
     doc = useDocsStore
       .getState()
-      .knownDocs.find((d) => d.type === 'system:timeline' && !d.archivedAt)
+      .knownDocs.find((d) => d.type === 'system:timeline')
     if (!doc) return // ensure failed; next tick retries
   }
 

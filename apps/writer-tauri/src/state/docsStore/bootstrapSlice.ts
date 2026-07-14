@@ -34,7 +34,7 @@ import type { GetDocsState, KnownDoc, SetDocsState } from './types'
  * holds nothing openable. */
 function pickDefaultSlug(scanned: KnownDoc[]): string | null {
   const live = scanned.filter(
-    (d) => !d.archivedAt && !d.type.startsWith('system:'),
+    (d) => !d.type.startsWith('system:'),
   )
   const today = todayLocalDate()
   const todaysDaily = live.find((d) => d.type === 'daily' && d.date === today)

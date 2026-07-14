@@ -146,7 +146,6 @@ export function findSlugByVaultPath(
   const bySlug = new Map(knownDocs.map((d) => [d.slug, d]))
   const getDoc = (slug: string) => bySlug.get(slug)
   for (const doc of knownDocs) {
-    if (doc.archivedAt) continue
     if (pathForDoc(doc, getDoc) === rel) return doc.slug
   }
   return null
@@ -207,7 +206,7 @@ export function ensureNonEmptyTabStrip(
 ): Partial<DocsState> {
   const nextOpen = patch.openSlugs ?? state.openSlugs
   if (nextOpen.length > 0) return patch
-  const fallback = state.knownDocs.find((d) => !d.archivedAt)
+  const fallback = state.knownDocs[0]
   if (!fallback) return patch
   return {
     ...patch,

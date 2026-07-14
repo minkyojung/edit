@@ -395,7 +395,7 @@ export function PromptInput({
   const mentionCandidates = useMemo<MentionItem[]>(() => {
     const lookup = new Map(knownDocs.map((d) => [d.slug, d]))
     return knownDocs
-      .filter((d) => !d.archivedAt && !d.type.startsWith('system:'))
+      .filter((d) => !d.type.startsWith('system:'))
       .map((d) => {
         const path = pathForDoc(d, (slug) => lookup.get(slug))
         return path

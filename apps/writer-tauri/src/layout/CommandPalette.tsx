@@ -86,7 +86,7 @@ export function CommandPalette() {
   const renameableDoc = useMemo(() => {
     if (!activeSlug) return null
     const d = knownDocs.find((x) => x.slug === activeSlug)
-    if (!d || d.archivedAt) return null
+    if (!d) return null
     if (
       d.type !== 'note' &&
       d.type !== 'writing' &&
@@ -118,7 +118,7 @@ export function CommandPalette() {
   const liveDocs = useMemo(
     () =>
       knownDocs.filter(
-        (d) => !d.archivedAt && !d.type.startsWith('system:'),
+        (d) => !d.type.startsWith('system:'),
       ),
     [knownDocs],
   )
