@@ -20,6 +20,7 @@
 import { scanVault } from '@/lib/scanVault'
 import { listVaultTreeRecursive } from '@/lib/vault'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
+import { pathToKnownSlug } from '@/lib/docPaths'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
@@ -105,14 +106,16 @@ export const createBootstrapSlice = (
         console.warn('[boot] tree scan failed', err)
       }
 
-      // Validate persisted tab state against the freshly hydrated
-      // catalog. Slugs that don't have a backing KnownDoc are
-      // dropped — they refer to docs deleted externally between
-      // sessions (or remembered from a pre-Path-C build where
-      // knownDocs persisted and could diverge from disk).
+      // Resolve the persisted tab strip (stored as PATHS, since the slug is
+      // an ephemeral per-boot handle) back to this boot's fresh slugs against
+      // the scanned catalog. Paths with no backing doc — a note deleted or
+      // moved-while-closed externally — drop out. Then clear the transient
+      // landing field.
       const knownSlugs = new Set(scanned.map((d) => d.slug))
-      const openSlugs = get().openSlugs.filter((s) => knownSlugs.has(s))
-      set({ openSlugs })
+      const openSlugs = get()
+        .openPaths.map((path) => pathToKnownSlug(path, scanned))
+        .filter((s): s is string => s !== null)
+      set({ openSlugs, openPaths: [] })
 
       // Eagerly connect the slug AppContent will render on first paint.
       // The URL is the source of truth: prefer its slug when it points

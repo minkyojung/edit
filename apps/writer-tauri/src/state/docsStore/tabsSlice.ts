@@ -28,8 +28,11 @@ import type { GetDocsState, SetDocsState } from './types'
 
 export interface TabsSlice {
   /** Slugs currently in the tab strip, in user-visible order.
-   * Persisted. */
+   * Persisted (as paths — see persistConfig). */
   openSlugs: string[]
+  /** Transient landing field for the persisted (path-keyed) tab strip;
+   * populated on rehydrate, drained by `bootstrap`. See DocsState. */
+  openPaths: string[]
 
   /** Promote `slug` into the tab strip (if not already there) and
    * warm its collab handle. Does NOT change which doc the user is
@@ -53,6 +56,7 @@ export const createTabsSlice = (
   get: GetDocsState,
 ): TabsSlice => ({
   openSlugs: [],
+  openPaths: [],
 
   ensureOpen: (slug) => {
     // Refuse unknown slugs so a stale UI ref can't corrupt the strip.

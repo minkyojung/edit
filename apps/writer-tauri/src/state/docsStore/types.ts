@@ -143,8 +143,14 @@ export interface DocPolicy {
  * interface; the combined creator in `index.ts` spreads them into a
  * single zustand store. */
 export interface DocsState {
-  // Persisted
+  // Persisted (projected to PATHS on the way out — see persistConfig)
   openSlugs: string[]
+  /** Transient landing field for the persisted tab strip. Rehydrate lands
+   * the persisted vault-relative PATHS here (before scanVault has run, so
+   * they can't be resolved yet); `bootstrap` resolves them to slugs against
+   * the freshly-scanned catalog, sets `openSlugs`, and clears this. Never
+   * persisted from state — `partialize` recomputes it from `openSlugs`. */
+  openPaths: string[]
   knownDocs: KnownDoc[]
   /** Vault-relative paths of every folder on disk (recursive). Runtime-
    * only, rebuilt by bootstrap's scan. Lets the sidebar tree show empty
