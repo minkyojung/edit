@@ -41,7 +41,7 @@ import {
   SidebarFooter,
   SidebarHeader,
 } from '@/components/ui/sidebar'
-import { UpdateFooter } from '@/components/WhatsNew'
+import { WhatsNewSidebar } from '@/components/WhatsNew'
 import { SIDEBAR_ROW_INTERACTION } from '@/components/ui/sidebarRow'
 import { cn } from '@/lib/utils'
 
@@ -334,7 +334,7 @@ export function AppSidebar() {
         <FolderTree />
       </SidebarContent>
       <SidebarFooter className="p-0">
-        <UpdateFooter />
+        <WhatsNewSidebar />
       </SidebarFooter>
       <ConnectClaudeDialog open={connectOpen} onOpenChange={setConnectOpen} onConnected={refresh} />
       <ConnectGitHubDialog

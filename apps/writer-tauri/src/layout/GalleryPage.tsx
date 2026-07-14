@@ -7,8 +7,9 @@
 // (via `var(--…)`) and components so it can never drift from production.
 // Step 1 ships Foundations → Color only; later steps append sections.
 
-import { useState, type ReactNode } from 'react'
-import { ReleaseNotes, ReleaseNotesDialog, UpdateFooter } from '@/components/WhatsNew'
+import { type ReactNode } from 'react'
+import { ComposerLab } from '@/chat/PromptInputLab'
+import { ReleaseNotes, WhatsNewCard } from '@/components/WhatsNew'
 import { CHANGELOG } from '@/lib/changelog'
 import { IconPlus, IconBrain, IconFileText, IconAlertTriangle, IconPlayerStopFilled } from '@tabler/icons-react'
 import type { ChatTurn, MessagePart } from '@/chat/types'
@@ -505,6 +506,7 @@ const NAV: { group: string; titles: string[] }[] = [
     ],
   },
   { group: 'Consistency', titles: ['Consistency · Controls', 'Consistency · Panels'] },
+  { group: 'Lab', titles: ['Lab · Composer'] },
 ]
 
 // A static visual proposal of a richer 3-action update toast (See changes /
@@ -534,7 +536,6 @@ function ProposedUpdateToast() {
 // The update-related surfaces, gathered for design review. Toasts fire the
 // REAL notify.* methods (they appear in the corner); the rest render inline.
 function UpdatesGallery() {
-  const [notesOpen, setNotesOpen] = useState(false)
   const entry = CHANGELOG[0] ?? null
   return (
     <>
@@ -556,18 +557,14 @@ function UpdatesGallery() {
       <Subgroup title="Toast — proposed (3 actions, static)">
         <ProposedUpdateToast />
       </Subgroup>
+      <Subgroup title="What's new — sidebar card (after an update)">
+        <div className="w-64 rounded-lg bg-sidebar">
+          {entry && <WhatsNewCard entry={entry} onDismiss={() => {}} />}
+        </div>
+      </Subgroup>
       <Subgroup title="Release notes — read-only render">
         <div className="w-[420px] rounded-lg border border-border p-4">
           {entry && <ReleaseNotes notes={entry.notes} />}
-        </div>
-        <Button variant="outline" size="sm" onClick={() => setNotesOpen(true)}>
-          Open dialog
-        </Button>
-        <ReleaseNotesDialog entry={entry} open={notesOpen} onOpenChange={setNotesOpen} />
-      </Subgroup>
-      <Subgroup title="Sidebar footer">
-        <div className="w-56 rounded-lg border border-border bg-sidebar">
-          <UpdateFooter />
         </div>
       </Subgroup>
     </>
@@ -609,6 +606,10 @@ export function GalleryPage() {
       <GalleryNav />
       <div className="min-w-0 max-w-3xl flex-1">
       <h1 className="mb-8 text-lg font-semibold text-foreground">Gallery</h1>
+
+      <Section title="Lab · Composer">
+        <ComposerLab />
+      </Section>
 
       <Section title="Foundations · Color">
         {COLOR_GROUPS.map((g) => (
