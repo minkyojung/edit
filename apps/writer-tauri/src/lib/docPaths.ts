@@ -42,25 +42,10 @@ import type { FrontmatterScalar } from '@/lib/frontmatter'
  * Bumping `version` is the migration lever — a future field addition
  * reads as `undefined` on old files and the migrate step rewrites
  * with the new shape.
- *
- * `aiSummary` / `aiImportance` feed the Tier 1 wiki index without
- * forcing the index builder to LLM-summarise every page on every
- * boot. They're populated by the ingest post-pass; a missing value
- * falls back to the page's first non-empty body line at index time.
  */
 export interface DocMetaFile {
   version: 1
   slug: string
-  /** One-line LLM-generated summary used by the wiki index. ~80 chars.
-   * Absent on old sidecars and freshly-minted docs; the index builder
-   * falls back to the body's first non-empty line until ingest writes
-   * a real summary. */
-  aiSummary?: string
-  /** 0–100 score used to rank pages when the Tier 2 hot-context
-   * selector has to drop pages to stay under budget. Computed from
-   * backlink count + recency; not user-editable. Absent on old
-   * sidecars — treated as 0 (lowest priority) by the selector. */
-  aiImportance?: number
   /** ISO timestamp recorded when the doc was first created. Migrated
    * out of `Y.Map('meta')` in Phase 5b of the Yjs-removal migration —
    * the Y.Map was the prior home for this field, but it's the only
@@ -159,11 +144,6 @@ export function frontmatterToMeta(
   const meta: Partial<DocMetaFile> = {}
   if (data.slug) meta.slug = data.slug
   if (data.createdAt) meta.createdAt = data.createdAt
-  if (data.aiSummary) meta.aiSummary = data.aiSummary
-  if (data.aiImportance) {
-    const n = Number(data.aiImportance)
-    if (Number.isFinite(n)) meta.aiImportance = n
-  }
   if (data.sourceUrl) meta.sourceUrl = data.sourceUrl
   if (data.siteName) meta.siteName = data.siteName
   if (data.faviconUrl) meta.faviconUrl = data.faviconUrl
@@ -208,8 +188,6 @@ export function metaToFrontmatterFields(
   return {
     slug: meta.slug,
     createdAt: meta.createdAt,
-    aiSummary: meta.aiSummary,
-    aiImportance: meta.aiImportance,
     sourceUrl: meta.sourceUrl,
     siteName: meta.siteName,
     faviconUrl: meta.faviconUrl,
@@ -231,12 +209,11 @@ export function metaToFrontmatterFields(
  * human can read them — created date, capture source, video metadata, and
  * the user's own highlights.
  *
- * Excludes the app-private identity + soft state (`slug`, `aiSummary`,
- * `aiImportance`), which now live in `.octave/index.json` instead of
- * polluting the note. Used by the flush so
- * a saved `.md` carries only what's genuinely the user's. Kept in lockstep
- * with metaToFrontmatterFields — the two must not disagree on where a
- * field belongs. */
+ * Excludes the app-private `slug` — an ephemeral per-boot handle that is
+ * never persisted (identity across restarts is the file path). Used by the
+ * flush so a saved `.md` carries only what's genuinely the user's. Kept in
+ * lockstep with metaToFrontmatterFields — the two must not disagree on where
+ * a field belongs. */
 export function portableFrontmatterFields(
   meta: Partial<DocMetaFile>,
 ): Record<string, FrontmatterScalar | undefined> {

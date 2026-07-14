@@ -31,99 +31,26 @@ import type { KnownDoc } from '@/state/docsStore'
 import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
 import { seedLastWrittenPath } from '@/lib/docFileSync'
 import { splitFrontmatter } from '@/lib/frontmatter'
-import {
-  getEntry,
-  readVaultIndex,
-  upsertEntry,
-  writeVaultIndex,
-  type VaultIndex,
-  type VaultIndexEntry,
-} from '@/lib/vaultIndex'
 
-/** Read the doc's persistent slug from its `.meta.json` sidecar, or
- * mint one + write the sidecar if missing. Two-tier lookup:
+/** Mint a fresh slug for `mdRel` and load its portable frontmatter meta.
  *
- *   1. `.meta.json` exists with a `slug` field — return it.
- *   2. Sidecar missing (vim / git created a `.md` directly, or first
- *      scan of a brand-new doc) — mint a slug, persist it.
- *
- * The Stage 3.2 `.marks.json` migration tier was removed in the
- * `export/` cleanup: by that point every doc had already received a
- * `.meta.json` during the prior scan, so the legacy reader had no
- * remaining work. */
-/** Returned by {@link getOrAssignSlug}: the slug to use plus the rest
- * of the payload so callers can hydrate non-identity fields
- * (aiSummary, sourceUrl, …) without a second file read. */
-interface SidecarLoad {
-  slug: string
-  meta: Partial<DocMetaFile>
-  /** True when the slug was freshly minted (no index/frontmatter/sidecar
-   * identity found). The caller persists it to the index — mint no longer
-   * writes the file, so foreign files stay byte-for-byte the user's. */
-  minted: boolean
-}
-
-/** Layer an index entry's app-private soft state (archive flags, AI
- * summary/importance) onto the portable meta read from frontmatter
- * (sourceUrl, videoId, created, highlights, …). The index owns identity +
- * app-private state; the `.md` owns everything portable — so a note that's
- * archived in the index AND a saved web page in frontmatter comes back
- * with both. Exported for unit tests. */
-export function mergeIndexMeta(
-  fmMeta: Partial<DocMetaFile>,
-  entry: VaultIndexEntry,
-): Partial<DocMetaFile> {
-  const merged: Partial<DocMetaFile> = { ...fmMeta }
-  if (entry.aiSummary !== undefined) merged.aiSummary = entry.aiSummary
-  if (entry.aiImportance !== undefined) merged.aiImportance = entry.aiImportance
-  return merged
-}
-
-async function getOrAssignSlug(
+ * The slug is an EPHEMERAL in-session handle — re-minted on every scan,
+ * never persisted, never written to the file. Identity across restarts is
+ * the file PATH (the persisted UI state is path-keyed — see persistConfig /
+ * lib/lastView); the slug only has to be stable within one session, which
+ * it is. `meta` carries the portable frontmatter fields (sourceUrl, videoId,
+ * created, highlights, …); the file is never mutated here, so foreign notes
+ * stay byte-for-byte the user's. */
+async function mintDocMeta(
   mdRel: string,
-  index: VaultIndex,
-): Promise<SidecarLoad> {
-  // Read the `.md` for its portable fields (sourceUrl, videoId, created,
-  // highlights, …) plus the fallback `data.slug` used when the index has
-  // no entry for this path yet.
+): Promise<{ slug: string; meta: Partial<DocMetaFile> }> {
   let data: Record<string, string> = {}
   try {
     data = splitFrontmatter(await readVaultFile(mdRel)).data
   } catch {
-    // Unreadable `.md` — fall through.
+    // Unreadable `.md` — mint anyway with empty meta.
   }
-  const fmMeta = frontmatterToMeta(data)
-
-  // 0. Index owns identity + app-private soft state (`.octave/index.json`).
-  const entry = getEntry(index, mdRel)
-  if (entry) {
-    return { slug: entry.slug, meta: mergeIndexMeta(fmMeta, entry), minted: false }
-  }
-
-  // 1. Frontmatter slug — a note authored before the index existed (or one
-  //    still carrying a legacy `slug:` the migration hasn't lifted out).
-  if (data.slug) {
-    return { slug: data.slug, meta: fmMeta, minted: false }
-  }
-
-  // 2. Legacy `.meta.json` sidecar from before the frontmatter switch.
-  const metaRel = mdRel.replace(/\.md$/, '.meta.json')
-  if (await vaultFileExists(metaRel)) {
-    try {
-      const parsed = JSON.parse(await readVaultFile(metaRel)) as Partial<DocMetaFile>
-      if (typeof parsed.slug === 'string' && parsed.slug.length > 0) {
-        return { slug: parsed.slug, meta: parsed, minted: false }
-      }
-    } catch {
-      // Corrupted sidecar — fall through to mint.
-    }
-  }
-
-  // 3. No identity anywhere: mint a fresh slug. The caller persists it to
-  //    the INDEX (not the file) so a foreign note dropped into the vault
-  //    stays byte-for-byte the user's — the surrogate key lives outside.
-  const slug = generateClientSlug()
-  return { slug, meta: { slug }, minted: true }
+  return { slug: generateClientSlug(), meta: frontmatterToMeta(data) }
 }
 
 /** Walk a vault subdirectory recursively and return every body-.md
@@ -286,8 +213,8 @@ function mdRelToBaseDoc(
 
 /** Scan the active vault and return every recognised doc as a
  * KnownDoc. Empty array when no vault is selected — caller decides
- * whether to prompt for one. Idempotent: re-running on the same vault
- * produces the same slugs (sidecars persist them). */
+ * whether to prompt for one. Slugs are ephemeral: each scan mints fresh
+ * ones (identity across restarts is the file path, not the slug). */
 export async function scanVault(): Promise<KnownDoc[]> {
   if (!getActiveVaultPath()) return []
 
@@ -297,31 +224,18 @@ export async function scanVault(): Promise<KnownDoc[]> {
   // relPath). Always on now that the folder tree is the only sidebar.
   const allMd = await listMdRecursive('')
 
-  // Read the app-private index ONCE for the whole scan (not per file) so
-  // slug + soft-state lookups don't re-read `.octave/index.json` N times.
-  // Minted slugs accumulate in memory and are flushed back in a single
-  // write after the pass — no per-file index write.
-  let index = await readVaultIndex()
-  let indexDirty = false
-
-  // Pass 1: resolve slug + load sidecar metadata for every file in one
-  // read. Done up-front because pass-2's writing-note resolution needs
-  // the daily slug map, and pass-2 also needs the sidecar's soft-state
-  // fields (archivedAt, …) to layer onto the path-derived KnownDoc.
+  // Pass 1: mint a fresh ephemeral slug + load portable meta for every
+  // file. Done up-front because pass-2's writing-note resolution needs the
+  // daily date→slug map built from this pass.
   const scanned: Array<{
     slug: string
     mdRel: string
     meta: Partial<DocMetaFile>
   }> = []
   for (const mdRel of allMd) {
-    const { slug, meta, minted } = await getOrAssignSlug(mdRel, index)
-    if (minted) {
-      index = upsertEntry(index, mdRel, { slug })
-      indexDirty = true
-    }
+    const { slug, meta } = await mintDocMeta(mdRel)
     scanned.push({ slug, mdRel, meta })
   }
-  if (indexDirty) await writeVaultIndex(index)
 
   // Daily index: date → slug. Built from the same scan so writings
   // resolve their parent without a second filesystem pass.
@@ -357,9 +271,8 @@ export async function scanVault(): Promise<KnownDoc[]> {
  * single path instead of the whole tree.
  *
  * Returns null when the path doesn't fit any placement rule (oddly-
- * located file the watcher should ignore). Mints + persists a fresh
- * `.meta.json` when none exists, so the next scan / restart reads
- * the same slug.
+ * located file the watcher should ignore). Mints a fresh ephemeral slug
+ * (nothing persisted — identity is the path).
  *
  * For `writing` types the function needs to find the parent daily's
  * slug. Rather than re-scanning the disk we accept the live
@@ -371,9 +284,7 @@ export async function buildKnownDocForExternalPath(
   mdRel: string,
   catalog: KnownDoc[],
 ): Promise<KnownDoc | null> {
-  const index = await readVaultIndex()
-  const { slug, meta, minted } = await getOrAssignSlug(mdRel, index)
-  if (minted) await writeVaultIndex(upsertEntry(index, mdRel, { slug }))
+  const { slug, meta } = await mintDocMeta(mdRel)
   const dailySlugByDate = new Map<string, string>()
   for (const d of catalog) {
     if (d.type === 'daily' && d.date) dailySlugByDate.set(d.date, d.slug)

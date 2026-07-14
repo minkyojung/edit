@@ -30,7 +30,6 @@ import {
   type DocMetaFile,
 } from '@/lib/docPaths'
 import { mergeFrontmatter } from '@/lib/frontmatter'
-import { updateVaultIndex } from '@/lib/vaultIndex'
 import {
   readVaultFile,
   renameVaultFile,
@@ -605,15 +604,8 @@ async function flushDirtyOnce(): Promise<void> {
       if (!(await fileContentEquals(mdPath, fileContent))) {
         await writeVaultFile(mdPath, fileContent)
       }
-      if (frontmatterDoc) {
-        // Identity (slug) lives in the index now, not the note. Written here
-        // (not embedded in the `.md`) so the file stays the user's;
-        // updateVaultIndex no-ops when the record is unchanged, so a routine
-        // body edit doesn't churn it.
-        await updateVaultIndex(mdPath, {
-          slug: result.meta.slug,
-        })
-      }
+      // Slug is an ephemeral per-boot handle — persisted nowhere (identity
+      // across restarts is the file path). Nothing to write beyond the `.md`.
       if (!frontmatterDoc) {
         // Sidecar carries identity (version + slug) plus opt-in context
         // metadata other code paths populate (aiSummary, aiImportance,

@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { mdRelToKnownDoc, mergeIndexMeta } from './scanVault'
+import { mdRelToKnownDoc } from './scanVault'
 import {
   frontmatterToMeta,
   metaToFrontmatterFields,
@@ -23,26 +23,21 @@ import {
   type DocMetaFile,
 } from './docPaths'
 import { composeFrontmatter, splitFrontmatter } from './frontmatter'
-import type { VaultIndexEntry } from './vaultIndex'
 
 const noChildren = new Map<string, string>()
 
 describe('portableFrontmatterFields — what stays in the user .md', () => {
-  it('excludes every app-private field (slug, AI)', () => {
+  it('excludes the app-private slug', () => {
     const fields = portableFrontmatterFields({
       version: 1,
       slug: 'abc12345',
-      aiSummary: 'summary',
-      aiImportance: 50,
       createdAt: '2026-01-01',
       sourceUrl: 'https://x.test',
     })
-    // Present: portable. Absent (or undefined): app-private.
+    // Present: portable. Absent: app-private (slug).
     expect(fields.createdAt).toBe('2026-01-01')
     expect(fields.sourceUrl).toBe('https://x.test')
     expect('slug' in fields).toBe(false)
-    expect('aiSummary' in fields).toBe(false)
-    expect('aiImportance' in fields).toBe(false)
   })
 
   it('serializes highlights to a single JSON scalar, dropping an empty list', () => {
@@ -51,47 +46,6 @@ describe('portableFrontmatterFields — what stays in the user .md', () => {
       JSON.stringify(h),
     )
     expect(portableFrontmatterFields({ slug: 's', highlights: [] }).highlights).toBeUndefined()
-  })
-})
-
-describe('mergeIndexMeta — index soft-state over frontmatter portable fields', () => {
-  it('layers index app-private fields while preserving frontmatter portable ones', () => {
-    // The dual-read crux: a note that is a saved web page (frontmatter) AND
-    // summarised (index) must come back carrying BOTH.
-    const fmMeta: Partial<DocMetaFile> = {
-      sourceUrl: 'https://example.com',
-      siteName: 'Example',
-      createdAt: '2026-01-01T00:00:00Z',
-    }
-    const entry: VaultIndexEntry = {
-      slug: 'ix000001',
-      aiSummary: 'about the page',
-      aiImportance: 40,
-    }
-    expect(mergeIndexMeta(fmMeta, entry)).toEqual({
-      sourceUrl: 'https://example.com',
-      siteName: 'Example',
-      createdAt: '2026-01-01T00:00:00Z',
-      aiSummary: 'about the page',
-      aiImportance: 40,
-    })
-  })
-
-  it('is a no-op overlay when the index entry carries only a slug', () => {
-    // Slug-only entry ⇒ meta is exactly what the frontmatter said (the
-    // migration hasn't moved any soft-state into the index for this note).
-    const fmMeta: Partial<DocMetaFile> = { sourceUrl: 'https://x.test' }
-    expect(mergeIndexMeta(fmMeta, { slug: 'ix000002' })).toEqual({
-      sourceUrl: 'https://x.test',
-    })
-  })
-
-  it('does not clobber a frontmatter field with an absent index field', () => {
-    // entry has no aiSummary → the frontmatter value (if any) stays; here
-    // there is none, and nothing is invented.
-    expect(mergeIndexMeta({}, { slug: 'ix000003', aiImportance: 9 })).toEqual({
-      aiImportance: 9,
-    })
   })
 })
 
@@ -290,13 +244,13 @@ describe('frontmatterToMeta', () => {
   })
 
   it('coerces numeric fields from their string form', () => {
-    expect(frontmatterToMeta({ aiImportance: '72' })).toEqual({
-      aiImportance: 72,
+    expect(frontmatterToMeta({ durationSec: '72' })).toEqual({
+      durationSec: 72,
     })
   })
 
-  it('drops a non-numeric aiImportance rather than storing NaN', () => {
-    expect(frontmatterToMeta({ slug: 'x', aiImportance: 'oops' })).toEqual({ slug: 'x' })
+  it('drops a non-numeric numeric field rather than storing NaN', () => {
+    expect(frontmatterToMeta({ slug: 'x', durationSec: 'oops' })).toEqual({ slug: 'x' })
   })
 
   it('restores article source metadata', () => {
@@ -366,8 +320,6 @@ describe('meta ⇄ frontmatter round-trip', () => {
     const meta: Partial<DocMetaFile> = {
       slug: 'note-9',
       createdAt: '2026-06-11T00:00:00.000Z',
-      aiSummary: 'A one: line summary #with punctuation',
-      aiImportance: 64,
       sourceUrl: 'https://example.com/watch?v=abc',
       siteName: 'Example',
       savedAt: '2026-06-10T09:00:00.000Z',

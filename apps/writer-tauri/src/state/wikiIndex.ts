@@ -37,16 +37,8 @@ import type { KnownDoc } from './docsStore'
 import { extractWikilinks } from '@/lib/wikilinkResolve'
 import { isEffectivelyEmpty } from '@/lib/markdownText'
 import { ensureIndexWikiSlug, readWikiMarkdown } from './wikiService'
-import {
-  metaPathForDoc,
-  pathForDoc as computePathForDoc,
-  type DocMetaFile,
-} from '@/lib/docPaths'
-import {
-  readVaultFile,
-  vaultFileExists,
-  writeVaultFile,
-} from '@/lib/vault'
+import { pathForDoc as computePathForDoc } from '@/lib/docPaths'
+import { writeVaultFile } from '@/lib/vault'
 import { getDefaultNoteFolder, getKnowledgeBaseFolder } from './settingsStore'
 import { useDocsStore } from './docsStore'
 
@@ -121,20 +113,6 @@ export function countBacklinks(
 }
 
 /** Read a wiki doc's `.meta.json` sidecar and return the parsed
- * payload. Returns null when the file doesn't exist or doesn't parse
- * — the caller falls back to body-derived fields. */
-async function readWikiSidecar(doc: KnownDoc): Promise<Partial<DocMetaFile> | null> {
-  const path = metaPathForDoc(doc)
-  if (!path) return null
-  if (!(await vaultFileExists(path))) return null
-  try {
-    const raw = await readVaultFile(path)
-    return JSON.parse(raw) as Partial<DocMetaFile>
-  } catch {
-    return null
-  }
-}
-
 /** Pull a one-line excerpt suitable for the index summary column.
  * Bear/Obsidian convention: the body's first non-empty line IS the
  * title. The index already shows the title separately, so we skip
@@ -295,9 +273,9 @@ function basenameNoExt(path: string): string {
  * stay stable across the widening):
  *   - Path    : `pathForDoc(doc)` → the note's vault-relative address.
  *   - Title   : `KnownDoc.title`, else the path basename (dailies).
- *   - Summary : `sidecar.aiSummary` → body's first content line after
- *               the title ({@link bodyExcerpt}) → `(empty)` placeholder
- *               (the row still proves the note exists).
+ *   - Summary : body's first content line after the title
+ *               ({@link bodyExcerpt}) → `(empty)` placeholder (the row
+ *               still proves the note exists).
  *   - Links   : backlink count from {@link countBacklinks}.
  *
  * Notes without a resolvable path (a writing whose parent daily is
@@ -322,7 +300,6 @@ export async function buildWikiIndex(): Promise<string> {
     bodies[d.slug] = readWikiMarkdown(d.slug)
   }
   const counts = countBacklinks(catalog, (slug) => bodies[slug])
-  const sidecars = await Promise.all(indexed.map((d) => readWikiSidecar(d)))
 
   const knowledgeFolder = getKnowledgeBaseFolder()
   const captureFolder = getDefaultNoteFolder()
@@ -334,8 +311,7 @@ export async function buildWikiIndex(): Promise<string> {
     const path = computePathForDoc(doc, getDoc)
     if (!path) continue
     const body = bodies[doc.slug] ?? ''
-    const summary =
-      sidecars[i]?.aiSummary?.trim() || bodyExcerpt(body) || EMPTY_PLACEHOLDER
+    const summary = bodyExcerpt(body) || EMPTY_PLACEHOLDER
     const title = (doc.title ?? '').trim() || basenameNoExt(path)
     const row: IndexRow = {
       path,
