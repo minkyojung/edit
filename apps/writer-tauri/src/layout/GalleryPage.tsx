@@ -8,7 +8,6 @@
 // Step 1 ships Foundations → Color only; later steps append sections.
 
 import { type ReactNode } from 'react'
-import { ComposerLab } from '@/chat/PromptInputLab'
 import { ReleaseNotes, WhatsNewCard } from '@/components/WhatsNew'
 import { UpdateReadyToast, showUpdateReadyToast } from '@/components/UpdateReadyToast'
 import { CHANGELOG } from '@/lib/changelog'
@@ -507,7 +506,6 @@ const NAV: { group: string; titles: string[] }[] = [
     ],
   },
   { group: 'Consistency', titles: ['Consistency · Controls', 'Consistency · Panels'] },
-  { group: 'Lab', titles: ['Lab · Composer'] },
 ]
 
 // The update-related surfaces, gathered for design review. Toasts fire the
@@ -595,10 +593,6 @@ export function GalleryPage() {
       <GalleryNav />
       <div className="min-w-0 max-w-3xl flex-1">
       <h1 className="mb-8 text-lg font-semibold text-foreground">Gallery</h1>
-
-      <Section title="Lab · Composer">
-        <ComposerLab />
-      </Section>
 
       <Section title="Foundations · Color">
         {COLOR_GROUPS.map((g) => (
