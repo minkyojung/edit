@@ -361,6 +361,20 @@ fn set_window_compact(
     }
 }
 
+/// Whether the window is currently in the compact panel.
+///
+/// `CompactFrames` holds a stashed full frame IFF the window is compact, so the
+/// presence of this window's entry is the durable truth. Rust state outlives
+/// the webview, so this survives a webview reload — letting the frontend
+/// re-hydrate `mode` after a reload without ever measuring the window size.
+#[tauri::command]
+fn is_window_compact(
+    window: tauri::WebviewWindow,
+    frames: tauri::State<'_, CompactFrames>,
+) -> bool {
+    frames.0.lock().unwrap().contains_key(window.label())
+}
+
 /// Hand control of the close decision to the frontend by emitting
 /// `app:close-requested`. If the emit itself fails we exit immediately to
 /// avoid stranding the user on a window they can't dismiss.
@@ -441,6 +455,7 @@ pub fn run() {
             get_traffic_light_y,
             apply_window_chrome,
             set_window_compact,
+            is_window_compact,
             updater::updater_check,
             updater::updater_install,
             updater::updater_status,

@@ -30,7 +30,6 @@ import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { usePersistLastPath } from '@/hooks/usePersistLastPath'
 import { useWindowChrome } from '@/hooks/useWindowChrome'
 import { useVibrancy } from '@/hooks/useVibrancy'
-import { useWindowModeSync } from '@/hooks/useWindowModeSync'
 import { useCompactShortcut } from '@/hooks/useCompactShortcut'
 import { useWindowClose } from '@/hooks/useWindowClose'
 import { useUpdaterEvents } from '@/hooks/useUpdaterEvents'
@@ -229,7 +228,6 @@ function AppContent() {
   useIdleTrigger()
   useWindowChrome()
   useVibrancy()
-  useWindowModeSync()
   useCompactShortcut()
   useWindowClose()
 
