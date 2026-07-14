@@ -22,12 +22,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { readWikiMarkdown } from '@/state/wikiService'
 import { useDocsStore } from '@/state/docsStore'
-import { metaPathForDoc, type DocMetaFile } from '@/lib/docPaths'
-import {
-  readVaultFile,
-  vaultFileExists,
-  writeVaultFile,
-} from '@/lib/vault'
+import { pathForDoc } from '@/lib/docPaths'
+import { updateVaultIndex } from '@/lib/vaultIndex'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
 
 const MODEL = 'claude-haiku-4-5'
@@ -135,35 +131,18 @@ async function callSummarizer(body: string): Promise<string | null> {
   })
 }
 
-/** Read the existing sidecar (if any) and merge the new aiSummary
- * field. Mirrors the docFileSync.mergeSidecar pattern — preserve
- * everything else (slug, version, future fields) and update only
- * aiSummary. Silently returns when the doc has no resolvable path
- * (archived between trigger and disk write, vault unmounted, etc.). */
+/** Persist the summary as app-private soft state in `.octave/index.json`,
+ * keyed by the doc's vault-relative path. `updateVaultIndex` merges just
+ * the `aiSummary` field (leaving slug/archive/importance intact) and is
+ * serialized against the flush's own index writes, so there's no
+ * read-modify-write race. Silently returns when the doc has no resolvable
+ * path (archived between trigger and write, vault unmounted, etc.). */
 async function writeAiSummary(slug: string, summary: string): Promise<void> {
   const doc = useDocsStore.getState().knownDocs.find((d) => d.slug === slug)
   if (!doc) return
-  const path = metaPathForDoc(doc)
+  const path = pathForDoc(doc)
   if (!path) return
-
-  let existing: Partial<DocMetaFile> = {}
-  if (await vaultFileExists(path)) {
-    try {
-      const raw = await readVaultFile(path)
-      existing = JSON.parse(raw) as Partial<DocMetaFile>
-    } catch {
-      // Corrupt sidecar — fall through to write fresh; A0 fields are
-      // optional and the docFileSync flush will populate version+slug
-      // anyway.
-    }
-  }
-  const merged: DocMetaFile = {
-    version: 1,
-    slug: existing.slug ?? slug,
-    ...existing,
-    aiSummary: summary,
-  }
-  await writeVaultFile(path, JSON.stringify(merged, null, 2) + '\n')
+  await updateVaultIndex(path, { slug: doc.slug, aiSummary: summary })
 }
 
 /** Public entry: read the doc's current body (in-memory PM state),

@@ -26,18 +26,16 @@ import { readDir } from '@tauri-apps/plugin-fs'
 import { join } from '@tauri-apps/api/path'
 import { generateClientSlug } from '@/lib/slug'
 import { getActiveVaultPath } from '@/state/settingsStore'
-import {
-  readVaultFile,
-  vaultFileExists,
-  writeVaultFile,
-} from '@/lib/vault'
+import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import type { KnownDoc } from '@/state/docsStore'
 import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
 import { seedLastWrittenPath } from '@/lib/docFileSync'
-import { mergeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
+import { splitFrontmatter } from '@/lib/frontmatter'
 import {
   getEntry,
   readVaultIndex,
+  upsertEntry,
+  writeVaultIndex,
   type VaultIndex,
   type VaultIndexEntry,
 } from '@/lib/vaultIndex'
@@ -60,6 +58,10 @@ import {
 interface SidecarLoad {
   slug: string
   meta: Partial<DocMetaFile>
+  /** True when the slug was freshly minted (no index/frontmatter/sidecar
+   * identity found). The caller persists it to the index — mint no longer
+   * writes the file, so foreign files stay byte-for-byte the user's. */
+  minted: boolean
 }
 
 /** Layer an index entry's app-private soft state (archive flags, AI
@@ -85,63 +87,47 @@ async function getOrAssignSlug(
   mdRel: string,
   index: VaultIndex,
 ): Promise<SidecarLoad> {
-  // Read the `.md` first: even when the index owns identity, the portable
-  // fields (sourceUrl, videoId, created, highlights, …) live in the file,
-  // so we need them for the meta overlay. `data.slug` is the fallback
-  // identity used when the index has no entry for this path yet.
-  let body = ''
-  let rawFile = ''
+  // Read the `.md` for its portable fields (sourceUrl, videoId, created,
+  // highlights, …) plus the fallback `data.slug` used when the index has
+  // no entry for this path yet.
   let data: Record<string, string> = {}
   try {
-    rawFile = await readVaultFile(mdRel)
-    const split = splitFrontmatter(rawFile)
-    data = split.data
-    body = split.body
+    data = splitFrontmatter(await readVaultFile(mdRel)).data
   } catch {
     // Unreadable `.md` — fall through.
   }
   const fmMeta = frontmatterToMeta(data)
 
-  // 0. Index wins for identity + app-private soft state (`.octave/
-  //    index.json`). Empty until the migration populates it, so today this
-  //    branch is inert: every note falls through to the frontmatter slug
-  //    below, identical to pre-index behaviour.
+  // 0. Index owns identity + app-private soft state (`.octave/index.json`).
   const entry = getEntry(index, mdRel)
   if (entry) {
-    return { slug: entry.slug, meta: mergeIndexMeta(fmMeta, entry) }
+    return { slug: entry.slug, meta: mergeIndexMeta(fmMeta, entry), minted: false }
   }
 
-  // 1. Frontmatter slug — the `.md` fully describes the doc.
+  // 1. Frontmatter slug — a note authored before the index existed (or one
+  //    still carrying a legacy `slug:` the migration hasn't lifted out).
   if (data.slug) {
-    return { slug: data.slug, meta: fmMeta }
+    return { slug: data.slug, meta: fmMeta, minted: false }
   }
 
-  // Legacy fallback: a `.meta.json` sidecar from before the frontmatter
-  // switch, for docs not yet re-saved. We read its slug but never write
-  // sidecars anymore; the next flush migrates the doc to frontmatter.
+  // 2. Legacy `.meta.json` sidecar from before the frontmatter switch.
   const metaRel = mdRel.replace(/\.md$/, '.meta.json')
   if (await vaultFileExists(metaRel)) {
     try {
       const parsed = JSON.parse(await readVaultFile(metaRel)) as Partial<DocMetaFile>
       if (typeof parsed.slug === 'string' && parsed.slug.length > 0) {
-        return { slug: parsed.slug, meta: parsed }
+        return { slug: parsed.slug, meta: parsed, minted: false }
       }
     } catch {
       // Corrupted sidecar — fall through to mint.
     }
   }
 
-  // Neither: mint a slug and persist it INTO the file's frontmatter
-  // (no sidecar), so identity is stable on the next scan. Merge (not
-  // compose) so a foreign file's list/nested frontmatter survives the
-  // slug write verbatim instead of being flattened away.
+  // 3. No identity anywhere: mint a fresh slug. The caller persists it to
+  //    the INDEX (not the file) so a foreign note dropped into the vault
+  //    stays byte-for-byte the user's — the surrogate key lives outside.
   const slug = generateClientSlug()
-  try {
-    await writeVaultFile(mdRel, mergeFrontmatter(rawFile, { slug }, body))
-  } catch (err) {
-    console.warn('[scan] could not write slug frontmatter for', mdRel, err)
-  }
-  return { slug, meta: { slug } }
+  return { slug, meta: { slug }, minted: true }
 }
 
 /** Walk a vault subdirectory recursively and return every body-.md
@@ -323,7 +309,10 @@ export async function scanVault(): Promise<KnownDoc[]> {
 
   // Read the app-private index ONCE for the whole scan (not per file) so
   // slug + soft-state lookups don't re-read `.octave/index.json` N times.
-  const index = await readVaultIndex()
+  // Minted slugs accumulate in memory and are flushed back in a single
+  // write after the pass — no per-file index write.
+  let index = await readVaultIndex()
+  let indexDirty = false
 
   // Pass 1: resolve slug + load sidecar metadata for every file in one
   // read. Done up-front because pass-2's writing-note resolution needs
@@ -335,9 +324,14 @@ export async function scanVault(): Promise<KnownDoc[]> {
     meta: Partial<DocMetaFile>
   }> = []
   for (const mdRel of allMd) {
-    const { slug, meta } = await getOrAssignSlug(mdRel, index)
+    const { slug, meta, minted } = await getOrAssignSlug(mdRel, index)
+    if (minted) {
+      index = upsertEntry(index, mdRel, { slug })
+      indexDirty = true
+    }
     scanned.push({ slug, mdRel, meta })
   }
+  if (indexDirty) await writeVaultIndex(index)
 
   // Daily index: date → slug. Built from the same scan so writings
   // resolve their parent without a second filesystem pass.
@@ -388,7 +382,8 @@ export async function buildKnownDocForExternalPath(
   catalog: KnownDoc[],
 ): Promise<KnownDoc | null> {
   const index = await readVaultIndex()
-  const { slug, meta } = await getOrAssignSlug(mdRel, index)
+  const { slug, meta, minted } = await getOrAssignSlug(mdRel, index)
+  if (minted) await writeVaultIndex(upsertEntry(index, mdRel, { slug }))
   const dailySlugByDate = new Map<string, string>()
   for (const d of catalog) {
     if (d.type === 'daily' && d.date) dailySlugByDate.set(d.date, d.slug)

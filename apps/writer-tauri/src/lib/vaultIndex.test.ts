@@ -7,6 +7,7 @@ import {
   removeEntry,
   serializeVaultIndex,
   setEntry,
+  upsertEntry,
   type VaultIndex,
 } from './vaultIndex'
 
@@ -104,6 +105,55 @@ describe('pure mutators are immutable', () => {
   it('removeEntry drops the path and is a no-op when absent', () => {
     expect(removeEntry(base, 'a.md').entries).toEqual({})
     expect(removeEntry(base, 'missing.md')).toBe(base) // same ref, no churn
+  })
+})
+
+describe('upsertEntry (field-level merge, two independent writers)', () => {
+  it('creates an entry when the path is new', () => {
+    const next = upsertEntry(emptyVaultIndex(), 'a.md', { slug: 'aaa11111' })
+    expect(next.entries['a.md']).toEqual({ slug: 'aaa11111' })
+  })
+
+  it('preserves fields the patch does not mention', () => {
+    // Summary writer sets aiSummary; the flush later sets archive state.
+    // Neither should wipe the other.
+    const withSummary = upsertEntry(emptyVaultIndex(), 'a.md', {
+      slug: 'aaa11111',
+      aiSummary: 'about A',
+      aiImportance: 30,
+    })
+    const withArchive = upsertEntry(withSummary, 'a.md', {
+      slug: 'aaa11111',
+      archivedAt: 555,
+    })
+    expect(withArchive.entries['a.md']).toEqual({
+      slug: 'aaa11111',
+      aiSummary: 'about A',
+      aiImportance: 30,
+      archivedAt: 555,
+    })
+  })
+
+  it('deletes a field set to undefined (unarchive clears the marker)', () => {
+    const archived = upsertEntry(emptyVaultIndex(), 'a.md', {
+      slug: 'aaa11111',
+      archivedAt: 555,
+      archivedFromParent: 'p1',
+      aiSummary: 'keep me',
+    })
+    const live = upsertEntry(archived, 'a.md', {
+      slug: 'aaa11111',
+      archivedAt: undefined,
+      archivedFromParent: undefined,
+    })
+    // Archive markers gone; the AI field (not in the patch) survives.
+    expect(live.entries['a.md']).toEqual({ slug: 'aaa11111', aiSummary: 'keep me' })
+  })
+
+  it('does not mutate the input index', () => {
+    const base: VaultIndex = { version: 1, entries: { 'a.md': { slug: 'aaa11111' } } }
+    upsertEntry(base, 'a.md', { slug: 'aaa11111', archivedAt: 1 })
+    expect(base.entries['a.md']).toEqual({ slug: 'aaa11111' })
   })
 })
 

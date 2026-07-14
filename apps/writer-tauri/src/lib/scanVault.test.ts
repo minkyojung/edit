@@ -19,12 +19,44 @@ import { mdRelToKnownDoc, mergeIndexMeta } from './scanVault'
 import {
   frontmatterToMeta,
   metaToFrontmatterFields,
+  portableFrontmatterFields,
   type DocMetaFile,
 } from './docPaths'
 import { composeFrontmatter, splitFrontmatter } from './frontmatter'
 import type { VaultIndexEntry } from './vaultIndex'
 
 const noChildren = new Map<string, string>()
+
+describe('portableFrontmatterFields — what stays in the user .md', () => {
+  it('excludes every app-private field (slug, archive, AI)', () => {
+    const fields = portableFrontmatterFields({
+      version: 1,
+      slug: 'abc12345',
+      archivedAt: 111,
+      archivedFromParent: 'p1',
+      aiSummary: 'summary',
+      aiImportance: 50,
+      createdAt: '2026-01-01',
+      sourceUrl: 'https://x.test',
+    })
+    // Present: portable. Absent (or undefined): app-private.
+    expect(fields.createdAt).toBe('2026-01-01')
+    expect(fields.sourceUrl).toBe('https://x.test')
+    expect('slug' in fields).toBe(false)
+    expect('archivedAt' in fields).toBe(false)
+    expect('archivedFromParent' in fields).toBe(false)
+    expect('aiSummary' in fields).toBe(false)
+    expect('aiImportance' in fields).toBe(false)
+  })
+
+  it('serializes highlights to a single JSON scalar, dropping an empty list', () => {
+    const h = [{ id: 'h1', text: 'x' }] as unknown as DocMetaFile['highlights']
+    expect(portableFrontmatterFields({ slug: 's', highlights: h }).highlights).toBe(
+      JSON.stringify(h),
+    )
+    expect(portableFrontmatterFields({ slug: 's', highlights: [] }).highlights).toBeUndefined()
+  })
+})
 
 describe('mergeIndexMeta — index soft-state over frontmatter portable fields', () => {
   it('layers index app-private fields while preserving frontmatter portable ones', () => {

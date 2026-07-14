@@ -142,6 +142,39 @@ export function removeEntry(index: VaultIndex, path: string): VaultIndex {
 }
 
 /**
+ * Field-level merge upsert: overlay `patch` onto the record at `path`,
+ * preserving any soft-state field the patch doesn't mention and DELETING
+ * any field the patch sets to `undefined`. `slug` is required — an entry
+ * with no surrogate key is meaningless, and every writer knows the doc's
+ * slug.
+ *
+ * The delete-on-undefined semantics matter for two independent writers of
+ * the same entry:
+ *   - the flush owns `slug` + `archivedAt`/`archivedFromParent` — passing
+ *     `archivedAt: undefined` on a live doc clears a stale archive marker
+ *     without touching the AI fields;
+ *   - the summary pass owns `aiSummary`/`aiImportance` — writing them must
+ *     not wipe the archive state.
+ * Because each writer passes ONLY the keys it owns, absent keys survive.
+ */
+export function upsertEntry(
+  index: VaultIndex,
+  path: string,
+  patch: Partial<VaultIndexEntry> & { slug: string },
+): VaultIndex {
+  const merged = { ...index.entries[path], ...patch }
+  // Rebuild explicitly so `undefined`-valued keys drop out (both from the
+  // in-memory object and, therefore, the serialized JSON).
+  const clean: VaultIndexEntry = { slug: patch.slug }
+  if (merged.archivedAt !== undefined) clean.archivedAt = merged.archivedAt
+  if (merged.archivedFromParent !== undefined)
+    clean.archivedFromParent = merged.archivedFromParent
+  if (merged.aiSummary !== undefined) clean.aiSummary = merged.aiSummary
+  if (merged.aiImportance !== undefined) clean.aiImportance = merged.aiImportance
+  return { ...index, entries: { ...index.entries, [path]: clean } }
+}
+
+/**
  * Move a record from `fromPath` to `toPath`, preserving its slug + soft
  * state. This is the rename/move re-key: the note is the same note (same
  * surrogate key), only its natural key (path) changed. No-op when
@@ -183,4 +216,44 @@ export async function readVaultIndex(): Promise<VaultIndex> {
  * `.octave/` folder on demand (recursive mkdir). */
 export async function writeVaultIndex(index: VaultIndex): Promise<void> {
   await writeVaultFile(VAULT_INDEX_REL, serializeVaultIndex(index))
+}
+
+// Serializes all `updateVaultIndex` calls into one chain. Multiple runtime
+// writers (the flush, the summary pass, the watcher's external-add) each do
+// a read-modify-write of the whole index file; without serialization two
+// concurrent updates to different paths could interleave read→read→write→
+// write and the second would clobber the first's change (lost update). One
+// user, small file, rare concurrency — a promise chain is the right weight.
+let indexWriteChain: Promise<unknown> = Promise.resolve()
+
+/** Read → {@link upsertEntry} → write, for single-doc updates (note
+ * creation, archive toggle, summary write). Serialized against every other
+ * `updateVaultIndex` call so concurrent updates can't clobber each other.
+ *
+ * Callers that mutate many entries in one pass (the boot scan) should
+ * batch: upsert into an in-memory index and {@link writeVaultIndex} once,
+ * rather than paying a read+write per doc. */
+export function updateVaultIndex(
+  path: string,
+  patch: Partial<VaultIndexEntry> & { slug: string },
+): Promise<void> {
+  const run = indexWriteChain.then(async () => {
+    const index = await readVaultIndex()
+    const next = upsertEntry(index, path, patch)
+    // Skip the write when this path's record is unchanged. A live doc's
+    // routine flush (opened → marked dirty, no archive/AI change) resolves
+    // to the same entry it already had; without this guard every flush would
+    // rewrite `.octave/index.json`, reintroducing churn the file guard was
+    // added to avoid.
+    if (
+      JSON.stringify(next.entries[path]) === JSON.stringify(index.entries[path])
+    ) {
+      return
+    }
+    await writeVaultIndex(next)
+  })
+  // Keep the chain alive even if this run rejects, so one failed write
+  // doesn't wedge every subsequent update.
+  indexWriteChain = run.catch(() => {})
+  return run
 }

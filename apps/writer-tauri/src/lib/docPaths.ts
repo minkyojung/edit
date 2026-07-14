@@ -243,6 +243,38 @@ export function metaToFrontmatterFields(
   }
 }
 
+/** The portable subset of {@link metaToFrontmatterFields}: the fields that
+ * belong in the user's `.md` because another tool (Obsidian, git) or a
+ * human can read them — created date, capture source, video metadata, and
+ * the user's own highlights.
+ *
+ * Excludes the app-private identity + soft state (`slug`, `archivedAt`,
+ * `archivedFromParent`, `aiSummary`, `aiImportance`), which now live in
+ * `.octave/index.json` instead of polluting the note. Used by the flush so
+ * a saved `.md` carries only what's genuinely the user's. Kept in lockstep
+ * with metaToFrontmatterFields — the two must not disagree on where a
+ * field belongs. */
+export function portableFrontmatterFields(
+  meta: Partial<DocMetaFile>,
+): Record<string, FrontmatterScalar | undefined> {
+  return {
+    createdAt: meta.createdAt,
+    sourceUrl: meta.sourceUrl,
+    siteName: meta.siteName,
+    faviconUrl: meta.faviconUrl,
+    savedAt: meta.savedAt,
+    readAt: meta.readAt,
+    videoId: meta.videoId,
+    durationSec: meta.durationSec,
+    thumbnailUrl: meta.thumbnailUrl,
+    description: meta.description,
+    highlights:
+      meta.highlights && meta.highlights.length
+        ? JSON.stringify(meta.highlights)
+        : undefined,
+  }
+}
+
 /** Reverse of {@link pathForDoc}: given a vault-relative path,
  * return the matching doc's slug, or null when no known doc maps
  * to it. O(n) over `knownDocs` — fine for the intended callers

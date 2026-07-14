@@ -24,12 +24,13 @@ import { invalidateVaultTimeline } from '@/state/vaultTimeline'
 import { hasExternalConflict } from '@/state/externalConflictStore'
 import {
   metaPathForDoc,
-  metaToFrontmatterFields,
+  portableFrontmatterFields,
   pathForDoc,
   usesFrontmatter,
   type DocMetaFile,
 } from '@/lib/docPaths'
 import { mergeFrontmatter } from '@/lib/frontmatter'
+import { updateVaultIndex } from '@/lib/vaultIndex'
 import {
   readVaultFile,
   renameVaultFile,
@@ -499,6 +500,25 @@ async function flushDirtyOnce(): Promise<void> {
       // soft-state is persisted while it's open, by the body flush below
       // that embeds it in the frontmatter block.
       if (usesFrontmatter(known)) {
+        // Archived frontmatter doc: archive destroys the handle BEFORE it
+        // marks the slug dirty, so this flush can't re-serialise the body.
+        // The note carries no app-private fields anyway — its archive state
+        // must reach the index instead. This is the sole persistence point
+        // for archive when the handle is already gone.
+        const metaOnly = serializeMetaOnly(slug)
+        if (metaOnly) {
+          try {
+            await updateVaultIndex(mdPath, {
+              slug: metaOnly.slug,
+              archivedAt: metaOnly.archivedAt,
+              archivedFromParent: metaOnly.archivedFromParent,
+            })
+          } catch (err) {
+            console.error('[vault:flush] archive index write failed for', slug, err)
+            reportSaveFailure(slug, err)
+            continue // leave dirty so the next tick retries
+          }
+        }
         clearDirty(slug)
         continue
       }
@@ -593,7 +613,7 @@ async function flushDirtyOnce(): Promise<void> {
         }
         fileContent = mergeFrontmatter(
           existing,
-          metaToFrontmatterFields(result.meta),
+          portableFrontmatterFields(result.meta),
           result.md,
         )
       } else {
@@ -609,6 +629,17 @@ async function flushDirtyOnce(): Promise<void> {
       // fall through to writing so a transient read never strands an edit.
       if (!(await fileContentEquals(mdPath, fileContent))) {
         await writeVaultFile(mdPath, fileContent)
+      }
+      if (frontmatterDoc) {
+        // Identity + app-private soft state (slug, archive) live in the
+        // index now, not the note. Written here (not embedded in the `.md`)
+        // so the file stays the user's; updateVaultIndex no-ops when the
+        // record is unchanged, so a routine body edit doesn't churn it.
+        await updateVaultIndex(mdPath, {
+          slug: result.meta.slug,
+          archivedAt: result.meta.archivedAt,
+          archivedFromParent: result.meta.archivedFromParent,
+        })
       }
       if (!frontmatterDoc) {
         // Sidecar carries identity (version + slug) plus opt-in context
