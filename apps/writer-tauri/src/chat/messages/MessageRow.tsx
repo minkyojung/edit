@@ -238,8 +238,6 @@ export const MessageRow = React.memo(function MessageRow({
           durationLabel={durationLabel}
           stopReasonLabel={stopReasonLabel}
           canCopy={canCopy}
-          canRegenerate={canRegenerate}
-          onRegenerate={onRegenerate}
           threadId={threadId}
           threadTitle={threadTitle}
         />
