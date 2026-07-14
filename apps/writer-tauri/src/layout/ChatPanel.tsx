@@ -66,9 +66,9 @@ function parseSlashInvocation(text: string): { name: string; args: string } | nu
 interface Props {
   slug: string | null
   // Threads + active id are owned by RightPanel (so the picker can sit
-  // in the shared top bar) and passed down here. `slug` is still passed
-  // independently — it's informational, stamping `parentSlug` on newly-
-  // created threads — and feeds the run dispatcher.
+  // in the shared top bar) and passed down here. `slug` is the note the
+  // user is currently on — passed independently as per-turn run context
+  // (the "current page" the agent sees), not as thread ownership.
   threads: UseThreadsResult
   activeId: string | null
 }

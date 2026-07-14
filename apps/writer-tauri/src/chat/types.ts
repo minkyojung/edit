@@ -182,12 +182,6 @@ export interface ContextSnapshot {
 
 export interface ThreadMeta {
   id: string
-  /** Slug of the doc this thread is anchored to. Threads always
-   * belong to exactly one doc (wiki page / daily / system). When the
-   * parent doc is archived the thread follows. The file-based layout
-   * uses a flat `.octave/threads/` folder, so this field — not directory
-   * structure — carries the doc association. */
-  parentSlug: string
   title: string                    // empty until Haiku titler fills it in
   createdAt: number
   updatedAt: number

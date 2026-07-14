@@ -2,12 +2,10 @@
 // zustand store that mirrors the on-disk `threads/<id>.json` +
 // `threads/<id>.turns.jsonl` pair (Phase 4.F file-based layout).
 //
-// Phase H (Cursor-style threads): threads are GLOBAL. They no
-// longer filter by `parentSlug` — the active thread persists
-// across page navigation and lives across the whole app. The
-// optional `currentSlug` argument only feeds new-thread creation
-// so we still stamp the doc the user was on as informational
-// provenance; it does NOT affect the returned list.
+// Threads are GLOBAL and not owned by any note (Cursor-style): the
+// active thread persists across page navigation and lives across the
+// whole app. A conversation references notes only as content (@-mentions,
+// attachments), never by ownership.
 
 import { useCallback, useMemo } from 'react'
 import {
@@ -41,12 +39,9 @@ export interface UseThreadsResult {
   markSessionStarted: (id: string) => void
 }
 
-/** Global thread surface. `currentSlug` is purely informational — it
- * stamps `parentSlug` on newly-created threads so the user can see
- * "this conversation started while I was on the X page", but the
- * returned thread list is the same regardless of which page the
- * user is on. */
-export function useThreads(currentSlug: string | null = null): UseThreadsResult {
+/** Global thread surface. Threads are not owned by any note — the list
+ * is the same regardless of which page the user is on. */
+export function useThreads(): UseThreadsResult {
   const hydrated = useThreadsStore((s) => s.hydrated)
   const threadsById = useThreadsStore((s) => s.threads)
 
@@ -60,9 +55,6 @@ export function useThreads(currentSlug: string | null = null): UseThreadsResult 
       const now = Date.now()
       const meta: ThreadMeta = {
         id: crypto.randomUUID(),
-        // Informational only post-Phase H. Empty string when the user
-        // creates a thread without an active page (rare).
-        parentSlug: currentSlug ?? '',
         title: initialTitle,
         createdAt: now,
         updatedAt: now,
@@ -81,7 +73,7 @@ export function useThreads(currentSlug: string | null = null): UseThreadsResult 
       await useThreadsStore.getState().createThread(meta)
       return meta.id
     },
-    [currentSlug, threads],
+    [threads],
   )
 
   const archiveThread = useCallback<UseThreadsResult['archiveThread']>(
