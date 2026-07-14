@@ -13,7 +13,7 @@
 
 import { useRef, useState } from 'react'
 import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
-import { RichTextArea, type RichTextAreaHandle } from '@/chat/RichTextArea'
+import { RichTextArea, type RichTextAreaHandle, type ChipData } from '@/chat/RichTextArea'
 import { IconPaperclip } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { DEFAULT_MODEL } from '@/agent/chat/types'
@@ -89,6 +89,76 @@ export function ComposerLab() {
 
       <div className="my-2 border-t border-border/60" />
       <TextParityLab />
+
+      <div className="my-2 border-t border-border/60" />
+      <InlineChipLab />
+    </div>
+  )
+}
+
+// ── Phase 2 · inline attachment chips ─────────────────────────────────
+// Chips live INSIDE the text now (RichTextArea.insertChip). "Read content"
+// serializes to { text (chips excluded), chips (paths, in order) } — exactly
+// the { text, attachmentPaths } a real submit will need.
+function InlineChipLab() {
+  const ref = useRef<RichTextAreaHandle>(null)
+  const chipSeq = useRef(0)
+  const [out, setOut] = useState<{ text: string; chips: ChipData[] } | null>(null)
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-footnote text-muted-foreground">
+        Phase 2 · inline chips — put the caret mid-sentence, insert a chip, keep
+        typing. Backspace deletes a chip whole. Caret must NOT grow.
+      </div>
+
+      <div className="rounded-3xl border-[0.5px] border-border bg-muted p-2.5">
+        <RichTextArea ref={ref} placeholder="Type, then drop a chip mid-sentence…" />
+        <div className="flex items-center gap-2 px-1 pt-1">
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              chipSeq.current += 1
+              const n = chipSeq.current
+              ref.current?.insertChip({
+                id: `lab-${n}`,
+                kind: 'file',
+                label: `Screenshot-${n}.png`,
+                value: `.octave/attachments/lab-${n}/Screenshot-${n}.png`,
+              })
+            }}
+            className="rounded-full px-2 py-1 text-footnote text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            🖼 Insert file chip
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() =>
+              setOut({ text: ref.current?.getText() ?? '', chips: ref.current?.getChips() ?? [] })
+            }
+            className="rounded-full px-2 py-1 text-footnote text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            Read content
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-lg border-[0.5px] border-border bg-muted/40 p-3 text-footnote">
+        <div className="mb-1 font-medium text-muted-foreground">Serialized</div>
+        {out ? (
+          <pre className="whitespace-pre-wrap break-words text-foreground/80">
+            {JSON.stringify(
+              { text: out.text, attachmentPaths: out.chips.map((c) => c.value) },
+              null,
+              2,
+            )}
+          </pre>
+        ) : (
+          <span className="text-muted-foreground">Press “Read content”.</span>
+        )}
+      </div>
     </div>
   )
 }

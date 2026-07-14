@@ -30,10 +30,24 @@ import {
 } from 'react'
 import { cn } from '@/lib/utils'
 
+/** An inline, non-editable token embedded in the text flow (attachment or
+ * @-mention). `value` is the vault path the chip maps back to on submit. */
+export interface ChipData {
+  id: string
+  kind: 'file' | 'mention'
+  label: string
+  value: string
+}
+
 export interface RichTextAreaHandle {
   focus: () => void
   clear: () => void
+  /** Plain text with chips EXCLUDED — attachments/mentions ride as paths. */
   getText: () => string
+  /** Chips in document order, for the attachment/mention path lists. */
+  getChips: () => ChipData[]
+  /** Insert an inline chip at the caret (or at the end if unfocused). */
+  insertChip: (chip: ChipData) => void
 }
 
 interface Props {
@@ -59,6 +73,8 @@ function serialize(root: HTMLElement): string {
       return
     }
     if (node instanceof HTMLElement) {
+      // Chips carry their content as a path, not message text — skip entirely.
+      if (node.dataset.chipId) return
       if (node.tagName === 'BR') {
         parts.push('\n')
         return
@@ -103,7 +119,68 @@ export const RichTextArea = forwardRef<RichTextAreaHandle, Props>(function RichT
       }
     },
     getText: () => (editorRef.current ? serialize(editorRef.current) : ''),
+    getChips: () => {
+      const editor = editorRef.current
+      if (!editor) return []
+      return Array.from(editor.querySelectorAll<HTMLElement>('[data-chip-id]')).map((el) => ({
+        id: el.dataset.chipId ?? '',
+        kind: (el.dataset.chipKind as ChipData['kind']) ?? 'file',
+        label: el.dataset.chipLabel ?? el.textContent ?? '',
+        value: el.dataset.chipValue ?? '',
+      }))
+    },
+    insertChip: (chip) => insertChipAtCaret(chip),
   }))
+
+  function insertChipAtCaret(chip: ChipData) {
+    const editor = editorRef.current
+    if (!editor) return
+    editor.focus()
+    const sel = window.getSelection()
+    const range = document.createRange()
+    // Use the live caret when it's inside the editor; otherwise append at end.
+    if (sel && sel.rangeCount > 0 && sel.anchorNode && editor.contains(sel.anchorNode)) {
+      const live = sel.getRangeAt(0)
+      range.setStart(live.startContainer, live.startOffset)
+      range.collapse(true)
+    } else {
+      range.selectNodeContents(editor)
+      range.collapse(false)
+    }
+    range.deleteContents()
+
+    const span = document.createElement('span')
+    span.contentEditable = 'false'
+    span.dataset.chipId = chip.id
+    span.dataset.chipKind = chip.kind
+    span.dataset.chipLabel = chip.label
+    span.dataset.chipValue = chip.value
+    // Zero line-shift recipe: the chip must sit ENTIRELY within the text's line
+    // box or it nudges the baseline. So —
+    //   • display:inline + leading-none → the chip's inline box is just its
+    //     13px glyphs, smaller than the 15px text box; align-baseline drops it
+    //     inside without pushing the line.
+    //   • NO vertical padding (that can perturb the baseline); the pill's
+    //     vertical body is drawn by box-shadow spread, which is paint-only and
+    //     never affects layout.
+    //   • horizontal px is safe (never affects line height/baseline).
+    //   • no emoji — emoji glyph metrics inflate the line's ascent.
+    span.className =
+      'mx-0.5 inline whitespace-nowrap rounded-[5px] bg-accent px-1.5 align-baseline text-[13px] leading-none text-foreground'
+    span.style.boxShadow = '0 0 0 2px var(--accent)'
+    span.textContent = chip.kind === 'mention' ? `@${chip.label}` : chip.label
+    range.insertNode(span)
+
+    // Trailing space so the caret can sit after the chip and typing continues.
+    const space = document.createTextNode(' ')
+    span.after(space)
+    const after = document.createRange()
+    after.setStartAfter(space)
+    after.collapse(true)
+    sel?.removeAllRanges()
+    sel?.addRange(after)
+    emitChange()
+  }
 
   function emitChange() {
     const editor = editorRef.current
