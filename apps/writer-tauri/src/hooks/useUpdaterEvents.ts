@@ -12,6 +12,9 @@ import { useEffect } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { updater, UPDATER_EVENT, type UpdateState } from '@/lib/updater'
 import { useUpdateStore } from '@/state/updateStore'
+import { useWhatsNewStore } from '@/state/whatsNewStore'
+import { showUpdateReadyToast } from '@/components/UpdateReadyToast'
+import { armRestartWhenIdle } from '@/lib/restartWhenIdle'
 import { notify } from '@/lib/notify'
 
 /** Toast only the two user-facing moments, and only on the transition INTO
@@ -20,7 +23,17 @@ import { notify } from '@/lib/notify'
 function reflectToast(prev: UpdateState, next: UpdateState) {
   if (prev.status === next.status) return
   if (next.status === 'ready') {
-    notify.updateReady(next.version, { onRestart: () => void updater.install() })
+    const { version, notes } = next
+    showUpdateReadyToast({
+      version,
+      onSeeChanges: () =>
+        useWhatsNewStore.getState().pin({
+          version,
+          notes: notes?.trim() || 'No release notes for this version.',
+        }),
+      onRestartIdle: () => armRestartWhenIdle(),
+      onRestart: () => void updater.install(),
+    })
   } else if (next.status === 'error') {
     notify.updateFailed(next.phase)
   }

@@ -53,8 +53,14 @@ pub enum UpdateState {
         percent: Option<u8>,
     },
     /// Downloaded + installed; a relaunch applies it (and it applies on the
-    /// next natural relaunch even if the user ignores the prompt).
-    Ready { version: String },
+    /// next natural relaunch even if the user ignores the prompt). `notes` is
+    /// the incoming version's release notes from the update manifest, for the
+    /// toast's "See changes".
+    Ready {
+        version: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        notes: Option<String>,
+    },
     /// A failure at a named phase. `message` is already human-readable.
     Error { phase: &'static str, message: String },
     /// Dev build — the updater is intentionally disabled (no bundle to
@@ -73,6 +79,8 @@ struct Inner {
     /// Version currently staged as `ready` — lets a later check short-
     /// circuit instead of re-downloading the same bundle.
     ready_version: Option<String>,
+    /// Release notes of the staged version, re-emitted on the short-circuit.
+    ready_notes: Option<String>,
 }
 
 /// Managed via `.manage(UpdaterState::default())` in lib.rs.
@@ -129,6 +137,11 @@ fn ready_version(app: &AppHandle) -> Option<String> {
         .and_then(|s| s.inner.lock().ok().and_then(|i| i.ready_version.clone()))
 }
 
+fn ready_notes(app: &AppHandle) -> Option<String> {
+    app.try_state::<UpdaterState>()
+        .and_then(|s| s.inner.lock().ok().and_then(|i| i.ready_notes.clone()))
+}
+
 /// Check for an update and, if one exists, download + install it in the
 /// background (auto-download). Emits `checking` → `upToDate` | `downloading`
 /// → `ready` | `error{check|download|install}`. No-ops if already busy or a
@@ -175,12 +188,13 @@ async fn do_run(app: &AppHandle) {
     };
 
     let version = update.version.clone();
+    let notes = update.body.clone();
 
     // Already downloaded + staged this exact version — keep Ready instead of
     // re-downloading the same bundle (e.g. a later check after the user
     // ignored the restart prompt).
     if ready_version(app).as_deref() == Some(version.as_str()) {
-        set_state(app, UpdateState::Ready { version });
+        set_state(app, UpdateState::Ready { version, notes: ready_notes(app) });
         return;
     }
 
@@ -251,9 +265,10 @@ async fn do_run(app: &AppHandle) {
             if let Some(s) = app.try_state::<UpdaterState>() {
                 if let Ok(mut inner) = s.inner.lock() {
                     inner.ready_version = Some(version.clone());
+                    inner.ready_notes = notes.clone();
                 }
             }
-            set_state(app, UpdateState::Ready { version });
+            set_state(app, UpdateState::Ready { version, notes });
         }
         Err(e) => set_state(app, UpdateState::Error { phase: "install", message: e.to_string() }),
     }

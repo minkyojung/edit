@@ -10,6 +10,7 @@
 import { type ReactNode } from 'react'
 import { ComposerLab } from '@/chat/PromptInputLab'
 import { ReleaseNotes, WhatsNewCard } from '@/components/WhatsNew'
+import { UpdateReadyToast, showUpdateReadyToast } from '@/components/UpdateReadyToast'
 import { CHANGELOG } from '@/lib/changelog'
 import { IconPlus, IconBrain, IconFileText, IconAlertTriangle, IconPlayerStopFilled } from '@tabler/icons-react'
 import type { ChatTurn, MessagePart } from '@/chat/types'
@@ -509,43 +510,26 @@ const NAV: { group: string; titles: string[] }[] = [
   { group: 'Lab', titles: ['Lab · Composer'] },
 ]
 
-// A static visual proposal of a richer 3-action update toast (See changes /
-// Restart when idle / Restart), styled like the app's dark toaster — a design
-// reference to review, NOT wired. sonner's default toast supports one action +
-// one cancel; three actions would need a `toast.custom` component.
-function ProposedUpdateToast() {
-  return (
-    <div className="w-[380px] rounded-xl bg-popover p-4 shadow-lg ring-1 ring-border">
-      <div className="text-body font-semibold text-foreground">New update available</div>
-      <div className="mt-0.5 text-footnote text-muted-foreground">
-        Octave 0.0.7 — polish &amp; fixes
-      </div>
-      <div className="mt-3 flex gap-2">
-        <Button size="sm" variant="outline">
-          See changes
-        </Button>
-        <Button size="sm" variant="outline">
-          Restart when idle
-        </Button>
-        <Button size="sm">Restart</Button>
-      </div>
-    </div>
-  )
-}
-
 // The update-related surfaces, gathered for design review. Toasts fire the
-// REAL notify.* methods (they appear in the corner); the rest render inline.
+// REAL methods (they appear in the corner); the rest render inline.
 function UpdatesGallery() {
   const entry = CHANGELOG[0] ?? null
   return (
     <>
-      <Subgroup title="Toasts — current (click to fire)">
+      <Subgroup title="Update-ready toast — 3 actions (click to fire)">
         <Button
           variant="outline"
           size="sm"
-          onClick={() => notify.updateReady('0.0.7', { onRestart: () => {} })}
+          onClick={() =>
+            showUpdateReadyToast({
+              version: '0.0.7',
+              onSeeChanges: () => {},
+              onRestartIdle: () => {},
+              onRestart: () => {},
+            })
+          }
         >
-          Update ready
+          Fire toast
         </Button>
         <Button variant="outline" size="sm" onClick={() => notify.updateFailed('install')}>
           Failed · install
@@ -554,8 +538,13 @@ function UpdatesGallery() {
           Failed · check
         </Button>
       </Subgroup>
-      <Subgroup title="Toast — proposed (3 actions, static)">
-        <ProposedUpdateToast />
+      <Subgroup title="Update-ready toast — inline">
+        <UpdateReadyToast
+          version="0.0.7"
+          onSeeChanges={() => {}}
+          onRestartIdle={() => {}}
+          onRestart={() => {}}
+        />
       </Subgroup>
       <Subgroup title="What's new — sidebar card (after an update)">
         <div className="w-64 rounded-lg bg-sidebar">

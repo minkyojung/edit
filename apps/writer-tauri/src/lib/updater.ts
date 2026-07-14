@@ -21,7 +21,7 @@ export type UpdateState =
       total: number | null
       percent: number | null
     }
-  | { status: 'ready'; version: string }
+  | { status: 'ready'; version: string; notes?: string }
   | { status: 'error'; phase: 'check' | 'download' | 'install'; message: string }
   | { status: 'unsupported'; reason: string }
 

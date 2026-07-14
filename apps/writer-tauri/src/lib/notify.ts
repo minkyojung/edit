@@ -444,21 +444,9 @@ export const notify = {
 
   // ── Auto-update ───────────────────────────────────────────────
   // Auto-download: the update downloads + installs silently in the
-  // background, so there's exactly ONE user-facing prompt — "restart to
-  // update" — plus an error toast if something fails. No "available" /
-  // "downloading" toasts (the download isn't the user's concern).
-  /** Downloaded + installed in the background; a relaunch applies it.
-   * "Later" just dismisses — the staged install lands on the next natural
-   * quit + reopen anyway, so ignoring it is safe. */
-  updateReady(version: string, opts: { onRestart: () => void }) {
-    toast.success(`Octave ${version} ready`, {
-      id: 'octave-update',
-      description: 'Restart to finish updating.',
-      duration: Infinity,
-      action: { label: 'Restart to update', onClick: opts.onRestart },
-      cancel: { label: 'Later', onClick: () => {} },
-    })
-  },
+  // background. The "ready" prompt is a custom 3-action toast (See changes /
+  // Restart when idle / Restart) — see components/UpdateReadyToast. Only the
+  // failure path stays here (a plain toast).
   /** An update step failed. Copy names the likely real-world cause per
    * phase (install failures are almost always a read-only / quarantined
    * app location — the exact bug the old silent updater hid). */

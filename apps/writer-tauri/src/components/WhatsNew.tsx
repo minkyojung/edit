@@ -10,6 +10,7 @@ import { IconX } from '@tabler/icons-react'
 import { getVersion } from '@tauri-apps/api/app'
 import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { useSettingsStore } from '@/state/settingsStore'
+import { useWhatsNewStore } from '@/state/whatsNewStore'
 import { changelogFor, type ChangelogEntry } from '@/lib/changelog'
 
 // No typography plugin in this app, so map the handful of elements release
@@ -92,6 +93,8 @@ export function WhatsNewSidebar() {
   const lastSeen = useSettingsStore((s) => s.lastWhatsNewVersion)
   const setLastSeen = useSettingsStore((s) => s.setLastWhatsNewVersion)
   const bootstrapCompleted = useSettingsStore((s) => s.bootstrapCompleted)
+  const pinned = useWhatsNewStore((s) => s.pinned)
+  const clearPinned = useWhatsNewStore((s) => s.clear)
   const [entry, setEntry] = useState<ChangelogEntry | null>(null)
 
   useEffect(() => {
@@ -111,6 +114,16 @@ export function WhatsNewSidebar() {
     // Mount-once by design: read lastSeen at mount; advancing it on dismiss.
   }, [])
 
+  // "See changes" (the toast) pins the incoming version's notes — that takes
+  // priority over the post-update auto card.
+  if (pinned) {
+    return (
+      <WhatsNewCard
+        entry={{ version: pinned.version, notes: pinned.notes }}
+        onDismiss={clearPinned}
+      />
+    )
+  }
   if (!entry) return null
   return (
     <WhatsNewCard
