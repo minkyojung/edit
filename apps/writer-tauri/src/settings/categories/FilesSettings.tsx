@@ -13,10 +13,13 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { Button } from '@/components/ui/button'
+import { seedStarterTemplates, STARTER_TEMPLATES_FOLDER } from '@/lib/templates'
 import { SettingRow } from '../SettingRow'
 
 export function FilesSettings() {
   const knownFolders = useDocsStore((s) => s.knownFolders)
+  const createFolder = useDocsStore((s) => s.createFolder)
   const defaultNoteFolder = useSettingsStore((s) => s.defaultNoteFolder)
   const setDefaultNoteFolder = useSettingsStore((s) => s.setDefaultNoteFolder)
   const knowledgeBaseFolder = useSettingsStore((s) => s.knowledgeBaseFolder)
@@ -53,6 +56,16 @@ export function FilesSettings() {
   // placeholder until the user makes (or picks) a real folder, at which point
   // it appears here and reads as selected.
   const templateOptions = [...realFolders].sort((a, b) => a.localeCompare(b))
+
+  // "Set up" is offered until a real templates folder is configured. One click
+  // creates the folder, seeds the onboarding guide, and points the setting at
+  // it — the editor picks it up live (CmEditor watches templatesFolder).
+  const templatesConfigured = Boolean(templatesFolder) && realFolders.includes(templatesFolder)
+  const onSetupTemplates = async () => {
+    await createFolder(STARTER_TEMPLATES_FOLDER) // mkdir + knownFolders (picker/sidebar)
+    await seedStarterTemplates() // guide page, skipped if present
+    setTemplatesFolder(STARTER_TEMPLATES_FOLDER)
+  }
 
   return (
     <section>
@@ -103,18 +116,25 @@ export function FilesSettings() {
         title="Templates folder"
         description="Where your template notes live. Their markdown feeds the editor's / menu (insert at cursor) and ⌘K's New from template. An empty or missing folder just shows no templates."
       >
-        <Select value={templatesFolder} onValueChange={setTemplatesFolder}>
-          <SelectTrigger className="w-48">
-            <SelectValue placeholder="None yet" />
-          </SelectTrigger>
-          <SelectContent>
-            {templateOptions.map((f) => (
-              <SelectItem key={f} value={f}>
-                {f}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Select value={templatesFolder} onValueChange={setTemplatesFolder}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="None yet" />
+            </SelectTrigger>
+            <SelectContent>
+              {templateOptions.map((f) => (
+                <SelectItem key={f} value={f}>
+                  {f}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {!templatesConfigured && (
+            <Button variant="outline" size="sm" onClick={onSetupTemplates}>
+              Create folder
+            </Button>
+          )}
+        </div>
       </SettingRow>
       <SettingRow
         title="Organize model"
