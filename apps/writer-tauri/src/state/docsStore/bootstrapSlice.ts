@@ -19,8 +19,9 @@
 
 import { scanVault } from '@/lib/scanVault'
 import { listVaultTreeRecursive } from '@/lib/vault'
-import { getActiveSlugFromHash } from '@/lib/viewUrl'
+import { getActiveSlugFromHash, buildViewUrl } from '@/lib/viewUrl'
 import { pathToKnownSlug } from '@/lib/docPaths'
+import { readLastView } from '@/lib/lastView'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
@@ -124,11 +125,32 @@ export const createBootstrapSlice = (
       // vault default (pickDefaultSlug — today's daily, never a stray
       // `_system/*` page). Null only when the vault is empty — the app
       // shows an empty state until the user creates / opens a note.
+      // Priority:
+      //   1. a live deep-link slug already in the hash (valid this session)
+      //   2. the last-viewed doc, resolved from its persisted PATH to this
+      //      boot's fresh slug — and we set the hash to its rebuilt URL so
+      //      HashRouter shows it (main.tsx no longer pre-restores)
+      //   3. a restored tab, else the deterministic vault default — the hash
+      //      stays root and RouteSyncBridge self-heals to today's daily
       const urlSlug = getActiveSlugFromHash()
-      const slugToOpen =
-        urlSlug && knownSlugs.has(urlSlug)
-          ? urlSlug
-          : openSlugs[0] ?? pickDefaultSlug(scanned)
+      const last = readLastView()
+      const lastSlug = last ? pathToKnownSlug(last.path, scanned) : null
+      let slugToOpen: string | null
+      if (urlSlug && knownSlugs.has(urlSlug)) {
+        slugToOpen = urlSlug
+      } else if (last && lastSlug) {
+        slugToOpen = lastSlug
+        // Set the hash while `bootstrapping` is still true so RouteSyncBridge
+        // (gated on it) wakes to a valid URL instead of self-healing over us.
+        window.location.hash = buildViewUrl({
+          tab: last.tab,
+          dayAnchor: last.dayAnchor,
+          monthAnchor: last.monthAnchor,
+          slug: lastSlug,
+        })
+      } else {
+        slugToOpen = openSlugs[0] ?? pickDefaultSlug(scanned)
+      }
       if (slugToOpen) {
         await get().ensureHandle(slugToOpen)
       }

@@ -1,39 +1,42 @@
 /**
- * usePersistLastPath — write the current pathname to localStorage on
- * every change, so the next cold boot can restore it before React
- * mounts (see main.tsx).
+ * usePersistLastPath — remember the last-viewed doc so the next cold boot
+ * can reopen it.
  *
- * Why a separate concern from docsStore.persist: this is session-
- * restore state, not domain state. Keeping it out of the zustand
- * persist blob avoids a schema migration and lets the boot-time
- * restorer run *before* React mounts (zustand rehydrate fires during
- * module init, but the URL needs to be set on window.location.hash
- * before HashRouter reads it).
- *
- * Skips slug-less roots (`/`, `/notes`) — those are redirect targets
- * and persisting them would round-trip the user to "today's daily"
- * even when they had a real note open last session.
+ * Persists the doc's vault-relative PATH (+ the view shape), NOT the raw
+ * URL: the URL carries the slug, which is an ephemeral per-boot handle and
+ * would be stale next launch. `bootstrap` resolves the path back to a fresh
+ * slug after the vault scan and rebuilds the route (see lib/lastView + the
+ * restore in bootstrapSlice). This is why restore moved out of main.tsx's
+ * pre-mount IIFE — path→slug needs the scanned catalog, which only exists
+ * post-scan.
  */
 
 import { useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
-import { projectStorageKey } from '@/lib/windowRoot'
-
-/** Base key. Per-project last-viewed doc is namespaced per window via
- * {@link projectStorageKey} so two project windows don't restore each
- * other's last doc. */
-export const LAST_PATH_STORAGE_KEY = 'writer-tauri:lastPath'
+import { parseSlugFromPath, type SidebarTab } from '@/lib/viewUrl'
+import { pathForDoc } from '@/lib/docPaths'
+import { useDocsStore } from '@/state/docsStore'
+import { writeLastView } from '@/lib/lastView'
 
 export function usePersistLastPath() {
   const { pathname } = useLocation()
   useEffect(() => {
-    if (pathname === '/' || pathname === '/notes') return
-    try {
-      localStorage.setItem(projectStorageKey(LAST_PATH_STORAGE_KEY), pathname)
-    } catch {
-      // localStorage write can throw under private browsing / quota —
-      // session restore is a nice-to-have, not a correctness requirement,
-      // so we swallow.
-    }
+    // Only day/week/month routes carry a doc slug; roots, /notes, and
+    // /file/* return null and leave the last view untouched.
+    const slug = parseSlugFromPath(pathname)
+    if (!slug) return
+    const { knownDocs } = useDocsStore.getState()
+    const doc = knownDocs.find((d) => d.slug === slug)
+    if (!doc) return
+    const path = pathForDoc(doc, (s) => knownDocs.find((d) => d.slug === s))
+    if (!path) return
+    const parts = pathname.split('/').filter(Boolean)
+    const tab = parts[0] as SidebarTab
+    writeLastView({
+      path,
+      tab,
+      dayAnchor: tab === 'day' ? (parts[1] ?? '') : '',
+      monthAnchor: tab === 'month' ? (parts[1] ?? '') : '',
+    })
   }, [pathname])
 }
