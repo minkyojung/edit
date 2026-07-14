@@ -14,6 +14,7 @@
 import { useRef, useState } from 'react'
 import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
 import { RichTextArea, type RichTextAreaHandle, type ChipData } from '@/chat/RichTextArea'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { IconPaperclip } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { DEFAULT_MODEL } from '@/agent/chat/types'
@@ -92,6 +93,177 @@ export function ComposerLab() {
 
       <div className="my-2 border-t border-border/60" />
       <InlineChipLab />
+
+      <div className="my-2 border-t border-border/60" />
+      <PaletteLab />
+    </div>
+  )
+}
+
+// ── Phase 3 · slash / mention palettes on contenteditable ─────────────
+// Same regexes as prod PromptInput, but run on RichTextArea's text-before-caret
+// (via onCaretContext) instead of textarea.value. Slash pick → setText; mention
+// pick → replaceBeforeCaretWithChip (inline mention chip). Nav keys are claimed
+// through the onKeyDown passthrough before the editor's Enter=submit.
+const LAB_SLASH_RE = /^\/([a-z][a-z0-9-]*)?$/
+const LAB_AT_RE = /(?:^|\s)@([^\s@]*)$/
+const LAB_COMMANDS = ['organize', 'daily-ingest', 'summarize', 'chat-to-wiki']
+const LAB_NOTES = [
+  { title: 'Project Atlas', path: 'wiki/Project Atlas.md' },
+  { title: 'Meeting 2026-07-14', path: 'daily/2026-07-14.md' },
+  { title: 'Reading list', path: 'inbox/Reading list.md' },
+]
+
+function PaletteLab() {
+  const ref = useRef<RichTextAreaHandle>(null)
+  const chipSeq = useRef(0)
+  const [before, setBefore] = useState('')
+  const [caretRect, setCaretRect] = useState<DOMRect | null>(null)
+  const [idx, setIdx] = useState(0)
+  const [out, setOut] = useState<{ text: string; chips: ChipData[] } | null>(null)
+
+  const slashMatch = LAB_SLASH_RE.exec(before)
+  const atMatch = LAB_AT_RE.exec(before)
+  const slashOpen = slashMatch !== null
+  const mentionOpen = atMatch !== null && !slashOpen
+
+  const commands = slashOpen
+    ? LAB_COMMANDS.filter((c) => c.startsWith(slashMatch![1] ?? ''))
+    : []
+  const notes = mentionOpen
+    ? LAB_NOTES.filter((n) =>
+        n.title.toLowerCase().includes((atMatch![1] ?? '').toLowerCase()),
+      )
+    : []
+  const list: string[] = slashOpen ? commands : notes.map((n) => n.title)
+  const safeIdx = list.length === 0 ? 0 : Math.min(idx, list.length - 1)
+  const paletteOpen = (slashOpen || mentionOpen) && list.length > 0
+
+  function pickSlash(name: string) {
+    ref.current?.setText(`/${name} `)
+    setIdx(0)
+  }
+  function pickNote(note: { title: string; path: string }) {
+    chipSeq.current += 1
+    ref.current?.replaceBeforeCaretWithChip((atMatch![1] ?? '').length + 1, {
+      id: `mention-${chipSeq.current}`,
+      kind: 'mention',
+      label: note.title,
+      value: note.path,
+    })
+    setIdx(0)
+  }
+
+  // Claim palette-nav keys before the editor's Enter=submit.
+  function onEditorKeyDown(e: React.KeyboardEvent<HTMLDivElement>): boolean {
+    if ((!slashOpen && !mentionOpen) || list.length === 0) return false
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setIdx((i) => (i + 1) % list.length)
+      return true
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setIdx((i) => (i - 1 + list.length) % list.length)
+      return true
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      if (e.nativeEvent.isComposing) return false
+      e.preventDefault()
+      if (slashOpen) pickSlash(commands[safeIdx])
+      else pickNote(notes[safeIdx])
+      return true
+    }
+    return false
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-footnote text-muted-foreground">
+        Phase 3 · palettes — type <code>/</code> (command) or <code>@</code>{' '}
+        (note). ↑↓ to move, Enter/Tab to pick. Slash → text, mention → inline chip.
+      </div>
+
+      <div className="rounded-3xl border-[0.5px] border-border bg-muted p-2.5">
+        {/* Caret-following palette, done the canonical way: a 0-size virtual
+            anchor pinned to the caret rect + a Radix Popover that positions
+            itself (flip/shift for free). onOpenAutoFocus is prevented so focus
+            stays in the editor — nav still comes through onEditorKeyDown. */}
+        <Popover open={paletteOpen} onOpenChange={() => {}}>
+          {caretRect && (
+            <PopoverAnchor asChild>
+              <span
+                aria-hidden
+                style={{
+                  position: 'fixed',
+                  left: caretRect.left,
+                  top: caretRect.top,
+                  width: 0,
+                  height: caretRect.height,
+                }}
+              />
+            </PopoverAnchor>
+          )}
+          <PopoverContent
+            side="top"
+            align="start"
+            sideOffset={6}
+            onOpenAutoFocus={(e) => e.preventDefault()}
+            onCloseAutoFocus={(e) => e.preventDefault()}
+            className="w-56 gap-0 p-1"
+          >
+            {list.map((label, i) => (
+              <button
+                key={label}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setIdx(i)}
+                onClick={() => (slashOpen ? pickSlash(commands[i]) : pickNote(notes[i]))}
+                className={cn(
+                  'block w-full rounded-md px-2.5 py-1.5 text-left text-footnote',
+                  i === safeIdx ? 'bg-accent text-foreground' : 'text-muted-foreground',
+                )}
+              >
+                {slashOpen ? `/${label}` : `@ ${label}`}
+              </button>
+            ))}
+          </PopoverContent>
+        </Popover>
+        <RichTextArea
+          ref={ref}
+          placeholder="Type / or @ …"
+          onCaretContext={(ctx) => {
+            setBefore(ctx.before)
+            setCaretRect(ctx.rect)
+          }}
+          onKeyDown={onEditorKeyDown}
+        />
+      </div>
+
+      <div className="rounded-lg border-[0.5px] border-border bg-muted/40 p-3 text-footnote">
+        <div className="mb-1 font-medium text-muted-foreground">
+          before-caret: <span className="text-foreground/60">{JSON.stringify(before)}</span>
+        </div>
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() =>
+            setOut({ text: ref.current?.getText() ?? '', chips: ref.current?.getChips() ?? [] })
+          }
+          className="mb-1 rounded-full px-2 py-1 text-footnote text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          Read content
+        </button>
+        {out && (
+          <pre className="whitespace-pre-wrap break-words text-foreground/80">
+            {JSON.stringify(
+              { text: out.text, mentionPaths: out.chips.map((c) => c.value) },
+              null,
+              2,
+            )}
+          </pre>
+        )}
+      </div>
     </div>
   )
 }

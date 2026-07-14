@@ -48,6 +48,12 @@ export interface RichTextAreaHandle {
   getChips: () => ChipData[]
   /** Insert an inline chip at the caret (or at the end if unfocused). */
   insertChip: (chip: ChipData) => void
+  /** Replace the entire text content with `text`, caret at end. Used by the
+   * slash-command pick (`/name `). */
+  setText: (text: string) => void
+  /** Delete `backCount` characters before the caret (the `@query` incl. the
+   * `@`) and drop a chip in their place. Used by the mention pick. */
+  replaceBeforeCaretWithChip: (backCount: number, chip: ChipData) => void
 }
 
 interface Props {
@@ -59,6 +65,17 @@ interface Props {
   onChange?: (text: string) => void
   /** Enter with no Shift and not composing. */
   onSubmit?: () => void
+  /** Fired whenever the caret context may have changed (input / click / arrow).
+   * `before` is the plain text from the block start up to the caret — the
+   * parent runs its slash / mention regexes on it (the contenteditable
+   * equivalent of `textarea.value` up to `selectionStart`). `rect` is the
+   * caret's viewport rect, for anchoring a caret-following palette. */
+  onCaretContext?: (ctx: { before: string; rect: DOMRect | null }) => void
+  /** Called before the editor's own keydown handling. Return true to signal the
+   * parent consumed the event (e.g. palette nav) — the editor then skips its
+   * Enter/submit logic. Mirrors the textarea path where palette nav intercepts
+   * keys before submit. */
+  onKeyDown?: (e: KeyboardEvent<HTMLDivElement>) => boolean
   className?: string
 }
 
@@ -94,7 +111,16 @@ function serialize(root: HTMLElement): string {
 }
 
 export const RichTextArea = forwardRef<RichTextAreaHandle, Props>(function RichTextArea(
-  { initialValue = '', placeholder, disabled, onChange, onSubmit, className },
+  {
+    initialValue = '',
+    placeholder,
+    disabled,
+    onChange,
+    onSubmit,
+    onCaretContext,
+    onKeyDown,
+    className,
+  },
   ref,
 ) {
   const editorRef = useRef<HTMLDivElement>(null)
@@ -130,7 +156,76 @@ export const RichTextArea = forwardRef<RichTextAreaHandle, Props>(function RichT
       }))
     },
     insertChip: (chip) => insertChipAtCaret(chip),
+    setText: (text) => {
+      const editor = editorRef.current
+      if (!editor) return
+      editor.textContent = text
+      editor.focus()
+      const sel = window.getSelection()
+      const r = document.createRange()
+      r.selectNodeContents(editor)
+      r.collapse(false)
+      sel?.removeAllRanges()
+      sel?.addRange(r)
+      emitChange()
+    },
+    replaceBeforeCaretWithChip: (backCount, chip) => {
+      const editor = editorRef.current
+      const sel = window.getSelection()
+      if (!editor || !sel || sel.rangeCount === 0) return
+      const r = sel.getRangeAt(0)
+      const node = r.endContainer
+      const end = r.endOffset
+      // The `@query` is plain typed text at the caret, so it lives in a single
+      // text node — delete `backCount` chars back, then insert the chip there.
+      if (node.nodeType === Node.TEXT_NODE && end >= backCount) {
+        const del = document.createRange()
+        del.setStart(node, end - backCount)
+        del.setEnd(node, end)
+        del.deleteContents()
+        const caret = document.createRange()
+        caret.setStart(node, end - backCount)
+        caret.collapse(true)
+        sel.removeAllRanges()
+        sel.addRange(caret)
+      }
+      insertChipAtCaret(chip)
+    },
   }))
+
+  /** Plain text from the block start up to the caret (chips contribute their
+   * label text, but the regexes only care about the tail near the caret). */
+  function getTextBeforeCaret(): string {
+    const editor = editorRef.current
+    const sel = window.getSelection()
+    if (!editor || !sel || sel.rangeCount === 0) return ''
+    const r = sel.getRangeAt(0)
+    if (!editor.contains(r.endContainer)) return ''
+    const pre = r.cloneRange()
+    pre.selectNodeContents(editor)
+    pre.setEnd(r.endContainer, r.endOffset)
+    return pre.toString()
+  }
+
+  /** The caret's viewport rect, for positioning a caret-following palette. A
+   * collapsed caret has a valid client rect once there's a character before it
+   * (which is always true when a `/`/`@` trigger is active), so no marker-span
+   * hack is needed here. */
+  function getCaretRect(): DOMRect | null {
+    const editor = editorRef.current
+    const sel = window.getSelection()
+    if (!editor || !sel || sel.rangeCount === 0) return null
+    const range = sel.getRangeAt(0)
+    if (!editor.contains(range.endContainer)) return null
+    const rects = range.getClientRects()
+    if (rects.length > 0) return rects[0]
+    const r = range.getBoundingClientRect()
+    return r.top || r.left || r.width || r.height ? r : null
+  }
+
+  function emitCaretContext() {
+    onCaretContext?.({ before: getTextBeforeCaret(), rect: getCaretRect() })
+  }
 
   function insertChipAtCaret(chip: ChipData) {
     const editor = editorRef.current
@@ -193,9 +288,13 @@ export const RichTextArea = forwardRef<RichTextAreaHandle, Props>(function RichT
     // non-disruptive.
     if (text === '' && editor.innerHTML !== '') editor.innerHTML = ''
     onChange?.(text)
+    emitCaretContext()
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    // Let the parent claim palette-nav keys (↑↓/Enter/Tab/Esc) BEFORE our own
+    // Enter=submit logic — same ordering as the textarea path.
+    if (onKeyDown?.(e)) return
     if (e.key !== 'Enter') return
     // IME-safe: never act on Enter mid-composition (Korean/Japanese).
     if (composingRef.current || e.nativeEvent.isComposing) return
@@ -227,6 +326,10 @@ export const RichTextArea = forwardRef<RichTextAreaHandle, Props>(function RichT
       data-placeholder={placeholder}
       onInput={emitChange}
       onKeyDown={handleKeyDown}
+      // Caret can move without an edit (arrows, click) — keep the parent's
+      // slash/mention context in sync on those too.
+      onKeyUp={emitCaretContext}
+      onMouseUp={emitCaretContext}
       onPaste={handlePaste}
       onCompositionStart={() => {
         composingRef.current = true
