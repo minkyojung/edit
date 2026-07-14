@@ -13,6 +13,7 @@
 
 import { useRef, useState } from 'react'
 import { PromptInput, type PromptStatus } from '@/chat/PromptInput'
+import { RichTextArea, type RichTextAreaHandle } from '@/chat/RichTextArea'
 import { IconPaperclip } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { DEFAULT_MODEL } from '@/agent/chat/types'
@@ -85,6 +86,47 @@ export function ComposerLab() {
 
       <div className="my-2 border-t border-border/60" />
       <RichComposerLab />
+
+      <div className="my-2 border-t border-border/60" />
+      <TextParityLab />
+    </div>
+  )
+}
+
+// ── Phase 1 · text parity ─────────────────────────────────────────────
+// Exercises RichTextArea as a full drop-in for the <textarea>: typing (한글),
+// Enter=submit, Shift+Enter=newline, paste-strips-formatting, placeholder,
+// auto-grow, stable caret. No chips yet — that's Phase 2.
+function TextParityLab() {
+  const ref = useRef<RichTextAreaHandle>(null)
+  const [text, setText] = useState('')
+  const [submitted, setSubmitted] = useState<string | null>(null)
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-footnote text-muted-foreground">
+        Phase 1 · text parity — 한글 OK · Enter=submit · Shift+Enter=newline ·
+        paste strips formatting.
+      </div>
+
+      <div className="rounded-3xl border-[0.5px] border-border bg-muted p-2.5">
+        <RichTextArea
+          ref={ref}
+          placeholder="Ask anything…  (Enter 전송 · Shift+Enter 줄바꿈)"
+          onChange={setText}
+          onSubmit={() => {
+            setSubmitted(ref.current?.getText() ?? '')
+            ref.current?.clear()
+          }}
+        />
+      </div>
+
+      <div className="rounded-lg border-[0.5px] border-border bg-muted/40 p-3 text-footnote">
+        <div className="mb-1 font-medium text-muted-foreground">Live text · {text.length} chars</div>
+        <pre className="whitespace-pre-wrap break-words text-foreground/80">{text || '—'}</pre>
+        <div className="mb-1 mt-3 font-medium text-muted-foreground">Last submit</div>
+        <pre className="whitespace-pre-wrap break-words text-foreground/80">{submitted ?? '—'}</pre>
+      </div>
     </div>
   )
 }
