@@ -42,6 +42,7 @@ import {
   DEFAULT_CHAT_MODE,
   clampEffort,
   normalizeModel,
+  type Attachment,
   type ChatTurn,
   type FileAttachment,
 } from '@/chat/types'
@@ -446,6 +447,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     text: string,
     attachments: FileAttachment[] = [],
     mentionPaths: string[] = [],
+    pastedTexts: { preview: string; content: string }[] = [],
   ) {
     if (!ready || chatStatus === 'streaming') return
     // Latch BEFORE any await / state set so a fast double-Enter can't
@@ -492,14 +494,24 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       // any stale arm so it can't leak into this send.
       editingVizRef.current = null
 
+      // Snapshot every composer context chip onto the turn so the bubble renders
+      // what was sent. The prop-backed ones (selection, viewing file) are the
+      // fix here — they used to leak because nothing committed them. Read fresh
+      // is unnecessary (handleSend closes over the current render's values).
+      const turnAttachments: Attachment[] = [
+        ...attachments.map((f) => ({ type: 'file' as const, name: f.name, mediaType: f.mediaType })),
+        ...pastedTexts.map((p) => ({ type: 'pasted' as const, preview: p.preview, content: p.content })),
+        ...(selectionText
+          ? [{ type: 'selection' as const, label: selectionLabel ?? 'Selection', preview: selectionText }]
+          : []),
+        ...(viewingFilePath ? [{ type: 'viewing-file' as const, path: viewingFilePath }] : []),
+      ]
       const userTurn: ChatTurn = {
         id: crypto.randomUUID(),
         role: 'user',
         content: text,
         ts: Date.now(),
-        attachments: attachments.length > 0
-          ? attachments.map(f => ({ type: 'file' as const, name: f.name, mediaType: f.mediaType }))
-          : undefined,
+        attachments: turnAttachments.length > 0 ? turnAttachments : undefined,
         mentions: mentionPaths.length > 0
           ? mentionPaths.map((path) => ({ path }))
           : undefined,
@@ -521,6 +533,14 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
 
       // The user's turn is finished text — push to Yjs once and let it sync.
       turnsHook.appendTurn(userTurn)
+
+      // Detach the one-shot context chips now that they're committed to the turn
+      // (draft chips — text/attachments/mentions — were already cleared by the
+      // composer's submit). Selection collapses in the editor (its listener then
+      // publishes the empty selection, hiding the chip); the viewing file is
+      // dismissed until the route changes to another file.
+      if (selectionText) useEditorSelectionStore.getState().collapse?.()
+      if (viewingFilePath) setFileChipDismissed(true)
 
       await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, undefined, attachments, mentionPaths)
     } finally {

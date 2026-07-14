@@ -99,7 +99,12 @@ interface Props {
   status: PromptStatus
   disabled?: boolean
   placeholder?: string
-  onSubmit: (text: string, attachments: FileAttachment[], mentionPaths: string[]) => void
+  onSubmit: (
+    text: string,
+    attachments: FileAttachment[],
+    mentionPaths: string[],
+    pastedTexts: { preview: string; content: string }[],
+  ) => void
   onStop?: () => void
   model: ChatModel
   onModelChange: (model: ChatModel) => void
@@ -460,11 +465,16 @@ export function PromptInput({
 
   function submit() {
     if (!canSubmit) return
-    const context = pastedTexts.map((t) => t.content).join('\n\n')
-    const finalText = context && trimmed ? `${context}\n\n${trimmed}` : context || trimmed
-    // @-mentioned notes ride along as vault paths via a separate channel (the
-    // system prompt), NOT the visible message — so they don't clutter the bubble.
-    onSubmit(finalText, attachments, mentions.map((m) => m.path))
+    // Pasted text now rides as a chip (committed onto the turn), NOT folded into
+    // the visible message — so the bubble shows a compact chip, not a wall of
+    // text. buildUserPrompt reattaches its content to the model prompt.
+    // @-mentioned notes likewise ride as vault paths via the system prompt.
+    onSubmit(
+      trimmed,
+      attachments,
+      mentions.map((m) => m.path),
+      pastedTexts.map((t) => ({ preview: t.preview, content: t.content })),
+    )
     // Clear this thread's draft only — a submit from thread A must not wipe
     // an unsent draft sitting in thread B.
     useChatDraftStore.getState().clear(draftKey)

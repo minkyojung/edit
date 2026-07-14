@@ -12,7 +12,7 @@
 // network. The engine (chat/index.ts) does the I/O (ctx assembly,
 // view doc extraction) and feeds the results in.
 
-import type { ChatTurn } from '@/chat/types'
+import type { Attachment, ChatTurn } from '@/chat/types'
 import { DOC_CHAR_CAP, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type VizEditTarget } from './types'
 
 /** Derive the user prompt for the current SDK call from the thread
@@ -25,9 +25,23 @@ export function buildUserPrompt(history: ChatTurn[]): string {
   // only — the model already received that answer via the tool result, so
   // they must never become the prompt (Regenerate would otherwise re-send
   // the chosen answer text as a fresh question).
-  const turns = history.filter((t) => !t.synthetic && t.content.trim().length > 0)
+  // A turn is "real" if it has typed text OR a pasted-text chip (a pasted-only
+  // send has empty content but must still become the prompt).
+  const pastedOf = (t: ChatTurn) =>
+    (t.attachments ?? [])
+      .filter((a): a is Extract<Attachment, { type: 'pasted' }> => a.type === 'pasted')
+      .map((a) => a.content)
+      .join('\n\n')
+  const turns = history.filter(
+    (t) => !t.synthetic && (t.content.trim().length > 0 || pastedOf(t).length > 0),
+  )
   if (turns.length === 0) return ''
-  return turns[turns.length - 1].content
+  const last = turns[turns.length - 1]
+  // Reattach pasted text (kept off the visible message as a chip) so the model
+  // still receives it, prepended like the composer used to fold it in.
+  const pasted = pastedOf(last)
+  if (!pasted) return last.content
+  return last.content.trim() ? `${pasted}\n\n${last.content}` : pasted
 }
 
 /** Slice the doc text down to {@link DOC_CHAR_CAP} characters from

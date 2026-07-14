@@ -414,9 +414,21 @@ export interface RetryPart {
   error?: string
 }
 
+/** A piece of context committed onto a user turn — snapshotted from the
+ * composer at send time so the bubble can render exactly what was attached
+ * (and the live composer chips are cleared). */
 export type Attachment =
-  | { type: 'selection'; from: number; to: number; preview: string }
+  // Editor selection the message was about: `label` is the composer's chip
+  // label ("Note · L10–14"), `preview` the selected text (tooltip).
+  | { type: 'selection'; label: string; preview: string }
+  // A file the user uploaded (name + media type for the chip glyph).
   | { type: 'file'; name: string; mediaType: string }
+  // The non-markdown file the chat was viewing (vault-relative path).
+  | { type: 'viewing-file'; path: string }
+  // Long pasted text kept as a chip (not folded into the message). `preview`
+  // is the chip label; `content` is the full text — buildUserPrompt reattaches
+  // it to the model prompt so the model still receives it.
+  | { type: 'pasted'; preview: string; content: string }
 
 /** A file the user attached to a chat turn for the model to read.
  * On attach we write the bytes into the vault's hidden `.octave/attachments/`
