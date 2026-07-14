@@ -16,6 +16,7 @@ import {
   IconBookmarks,
   IconEdit,
   IconFileDescription,
+  IconFilePlus,
   IconFolderOpen,
   IconSettings,
 } from '@tabler/icons-react'
@@ -38,6 +39,7 @@ import { useCommandPaletteStore } from '@/state/commandPaletteStore'
 import { openSettings } from '@/settings/useSettingsDialog'
 import { focusLauncher } from '@/lib/projectWindow'
 import { buildViewUrl } from '@/lib/viewUrl'
+import { loadTemplates, type Template } from '@/lib/templates'
 
 interface DocResult {
   doc: KnownDoc
@@ -59,8 +61,23 @@ export function CommandPalette() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const activeSlug = useActiveSlug()
   const renameDoc = useDocsStore((s) => s.renameDoc)
+  const createFromTemplate = useDocsStore((s) => s.createFromTemplate)
   const openSaveArticle = useSaveArticleDialogStore((s) => s.openDialog)
   const navigate = useNavigate()
+
+  // Vault templates, loaded each time the palette opens (they're `.md` files
+  // the user can add/edit anytime). Empty when there's no `templates/` folder.
+  const [templates, setTemplates] = useState<Template[]>([])
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void loadTemplates().then((t) => {
+      if (!cancelled) setTemplates(t)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
 
   // Renameable active doc — generic notes, writing notes, AND
   // user-owned wiki pages. System pages (fixed names) and dailies
@@ -121,6 +138,31 @@ export function CommandPalette() {
       .slice(0, 12)
       .map((doc) => ({ doc }))
   }, [liveDocs, query])
+
+  // Templates matching the query (by name, or the word "template"). Shown as a
+  // "New from template" group — selecting one creates a note seeded with it.
+  const shownTemplates = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return templates
+    return templates.filter(
+      (t) => t.name.toLowerCase().includes(q) || 'template'.includes(q),
+    )
+  }, [templates, query])
+
+  const onSelectTemplate = (t: Template) => {
+    setOpen(false)
+    void createFromTemplate(t).then((slug) => {
+      const store = useDocsStore.getState()
+      navigate(
+        buildViewUrl({
+          tab: store.sidebarTab,
+          dayAnchor: store.dayAnchor,
+          monthAnchor: store.monthAnchor,
+          slug,
+        }),
+      )
+    })
+  }
 
   const onSelect = (r: DocResult) => {
     setOpen(false)
@@ -223,6 +265,20 @@ export function CommandPalette() {
             </CommandItem>
           )}
         </CommandGroup>
+        {shownTemplates.length > 0 && (
+          <CommandGroup heading="New from template">
+            {shownTemplates.map((t) => (
+              <CommandItem
+                key={`tmpl-${t.name}`}
+                value={`template:${t.name}`}
+                onSelect={() => onSelectTemplate(t)}
+              >
+                <IconFilePlus size={16} stroke={1.75} />
+                <span className="flex-1 truncate">{t.name}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
         {docResults.length > 0 && (
           <CommandGroup heading={query.trim() ? 'Notes' : 'Recent'}>
             {docResults.map((r) => (

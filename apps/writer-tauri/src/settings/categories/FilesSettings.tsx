@@ -21,6 +21,8 @@ export function FilesSettings() {
   const setDefaultNoteFolder = useSettingsStore((s) => s.setDefaultNoteFolder)
   const knowledgeBaseFolder = useSettingsStore((s) => s.knowledgeBaseFolder)
   const setKnowledgeBaseFolder = useSettingsStore((s) => s.setKnowledgeBaseFolder)
+  const templatesFolder = useSettingsStore((s) => s.templatesFolder)
+  const setTemplatesFolder = useSettingsStore((s) => s.setTemplatesFolder)
   const intakeModel = useSettingsStore((s) => s.intakeModel)
   const setIntakeModel = useSettingsStore((s) => s.setIntakeModel)
   const inboxAutoOrganize = useSettingsStore((s) => s.inboxAutoOrganize)
@@ -29,20 +31,28 @@ export function FilesSettings() {
   const setSandboxEnabled = useSettingsStore((s) => s.setSandboxEnabled)
   const vaultPath = useSettingsStore((s) => s.vaultPaths[s.activeVaultIndex] ?? '')
 
-  // Options: every real folder, plus the role defaults ('inbox' capture, 'wiki'
-  // knowledge base) and both current values — so each select always shows a
-  // valid, selectable current choice even before those folders exist on disk.
-  const options = [
-    ...new Set([
-      'inbox',
-      'wiki',
-      defaultNoteFolder,
-      knowledgeBaseFolder,
-      ...knownFolders,
-    ]),
+  // Only real, user-facing folders belong in these pickers. Hide the
+  // agent-owned `_system` tree and any other internal folder (any segment
+  // starting with `_` or `.`) — you never file notes / knowledge / templates
+  // into those.
+  const isInternalFolder = (f: string) =>
+    f.split('/').some((seg) => seg.startsWith('_') || seg.startsWith('.'))
+  const realFolders = knownFolders.filter((f) => f && !isInternalFolder(f))
+
+  // New-note / knowledge-base pickers keep their role defaults ('inbox', 'wiki')
+  // plus the current value always selectable, so the control renders a choice
+  // even before those (scaffolded) folders exist on disk.
+  const roleOptions = [
+    ...new Set(['inbox', 'wiki', defaultNoteFolder, knowledgeBaseFolder, ...realFolders]),
   ]
-    .filter(Boolean)
+    .filter((f) => f && !isInternalFolder(f))
     .sort((a, b) => a.localeCompare(b))
+
+  // Templates picker lists ONLY folders that actually exist. A not-yet-created
+  // templates folder must not masquerade as real — the select shows a
+  // placeholder until the user makes (or picks) a real folder, at which point
+  // it appears here and reads as selected.
+  const templateOptions = [...realFolders].sort((a, b) => a.localeCompare(b))
 
   return (
     <section>
@@ -64,7 +74,7 @@ export function FilesSettings() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {options.map((f) => (
+            {roleOptions.map((f) => (
               <SelectItem key={f} value={f}>
                 {f}
               </SelectItem>
@@ -81,7 +91,24 @@ export function FilesSettings() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {options.map((f) => (
+            {roleOptions.map((f) => (
+              <SelectItem key={f} value={f}>
+                {f}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </SettingRow>
+      <SettingRow
+        title="Templates folder"
+        description="Where your template notes live. Their markdown feeds the editor's / menu (insert at cursor) and ⌘K's New from template. An empty or missing folder just shows no templates."
+      >
+        <Select value={templatesFolder} onValueChange={setTemplatesFolder}>
+          <SelectTrigger className="w-48">
+            <SelectValue placeholder="None yet" />
+          </SelectTrigger>
+          <SelectContent>
+            {templateOptions.map((f) => (
               <SelectItem key={f} value={f}>
                 {f}
               </SelectItem>

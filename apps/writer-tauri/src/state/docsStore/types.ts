@@ -23,6 +23,7 @@
 
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import type { HighlightRecord } from '@/lib/highlightTypes'
+import type { Template } from '@/lib/templates'
 
 /** Slim metadata read straight from the on-disk `.meta.json` sidecar
  * (via scanVault at boot) and persisted back through the flush loop's
@@ -228,6 +229,8 @@ export interface DocsState {
   ensureOpen: (slug: string) => void
   closeDoc: (slug: string) => string | null
   createNew: () => Promise<string>
+  /** Create a new note seeded with a template's body, then return its slug. */
+  createFromTemplate: (template: Template) => Promise<string>
   /** Create a folder on disk at `relPath` and add it to knownFolders.
    * Idempotent; returns false on a filesystem error. */
   createFolder: (relPath: string) => Promise<boolean>

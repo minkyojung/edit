@@ -26,6 +26,8 @@ import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
 import { createVaultFolder, readVaultFile } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
 import { applyMarkdownToActiveCmEditor } from '../activeCmEditor'
+import { interpolate, CURSOR_TOKEN } from '@/lib/interpolate'
+import type { Template } from '@/lib/templates'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
 export interface CreateSlice {
@@ -35,6 +37,11 @@ export interface CreateSlice {
    * (URL is the source of truth — the store no longer sets activeSlug
    * on its own). */
   createNew: () => Promise<string>
+  /** Create a new note seeded with a template's body. Same placement +
+   * lifecycle as {@link createNew} (blank `inbox/Untitled.md`), then the
+   * template body is seeded in. Returns the new slug for post-create
+   * navigation. */
+  createFromTemplate: (template: Template) => Promise<string>
   /** Create a folder on disk at `relPath` and add it to knownFolders so
    * the sidebar tree shows it immediately. Idempotent. Returns false on
    * a filesystem error. */
@@ -121,6 +128,20 @@ export const createCreateSlice = (
     // before the first edit — mirrors createArticle's explicit flush.
     markSlugDirty(slug)
     void flushDirty()
+    return slug
+  },
+
+  createFromTemplate: async (template) => {
+    // Reuse createNew's placement + flush lifecycle (blank inbox note), then
+    // seed the template body. seedDocBody only fills empty docs, so the fresh
+    // note takes the body cleanly; the seed is cached before the caller
+    // navigates, so the editor mounts already populated.
+    //
+    // Tokens are interpolated at create time. {{cursor}} has no meaning here (no
+    // live caret) so it's just stripped.
+    const body = interpolate(template.body).split(CURSOR_TOKEN).join('')
+    const slug = await get().createNew()
+    await get().seedDocBody(slug, body)
     return slug
   },
 

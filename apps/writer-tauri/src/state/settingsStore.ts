@@ -96,6 +96,15 @@ interface SettingsState {
   /** Set the knowledge-base folder. Trims slashes; empty → 'wiki'. */
   setKnowledgeBaseFolder: (folder: string) => void
 
+  /** Folder holding user-authored templates (Obsidian's "Template folder
+   * location"). Default 'templates'. Its `.md` files feed the editor slash
+   * menu and the command-palette "New from template" group. A folder that
+   * doesn't exist simply yields zero templates. User-changeable (settings
+   * modal). */
+  templatesFolder: string
+  /** Set the templates folder. Trims slashes; empty string = none configured. */
+  setTemplatesFolder: (folder: string) => void
+
   /** Model the Organize / intake agent runs on (filing notes into the
    * wiki / daily). Default Sonnet; switch to Haiku to cut cost on bulk
    * passes, or Opus for quality. User-changeable (settings modal). */
@@ -147,6 +156,10 @@ export const useSettingsStore = create<SettingsState>()(
       lastWhatsNewVersion: '',
       defaultNoteFolder: 'inbox',
       knowledgeBaseFolder: 'wiki',
+      // Empty = no templates folder configured yet. We deliberately do NOT
+      // default to a concrete name like 'templates' — that would claim a folder
+      // that may not exist. The user points this at a real folder in Settings.
+      templatesFolder: '',
       intakeModel: DEFAULT_CHAT_MODEL,
       inboxAutoOrganize: true,
       sidebarVibrancyEnabled: true,
@@ -176,6 +189,8 @@ export const useSettingsStore = create<SettingsState>()(
         set({ defaultNoteFolder: folder.trim().replace(/^\/+|\/+$/g, '') || 'inbox' }),
       setKnowledgeBaseFolder: (folder) =>
         set({ knowledgeBaseFolder: folder.trim().replace(/^\/+|\/+$/g, '') || 'wiki' }),
+      setTemplatesFolder: (folder) =>
+        set({ templatesFolder: folder.trim().replace(/^\/+|\/+$/g, '') }),
       setIntakeModel: (model) => set({ intakeModel: model }),
       setInboxAutoOrganize: (enabled) => set({ inboxAutoOrganize: enabled }),
       setSidebarVibrancy: (enabled) => set({ sidebarVibrancyEnabled: enabled }),
@@ -191,6 +206,7 @@ export const useSettingsStore = create<SettingsState>()(
         lastWhatsNewVersion: s.lastWhatsNewVersion,
         defaultNoteFolder: s.defaultNoteFolder,
         knowledgeBaseFolder: s.knowledgeBaseFolder,
+        templatesFolder: s.templatesFolder,
         intakeModel: s.intakeModel,
         inboxAutoOrganize: s.inboxAutoOrganize,
         sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
@@ -238,6 +254,12 @@ export function getDefaultNoteFolder(): string {
  * read for the prompt assembler (chat/index.ts) and the index/timeline builders. */
 export function getKnowledgeBaseFolder(): string {
   return useSettingsStore.getState().knowledgeBaseFolder || 'wiki'
+}
+
+/** Folder holding user-authored templates, or '' when none is configured.
+ * Non-React read for the template loader (lib/templates). */
+export function getTemplatesFolder(): string {
+  return useSettingsStore.getState().templatesFolder
 }
 
 /** Model the Organize / intake agent runs on. Non-React read for runIntake. */

@@ -60,6 +60,7 @@ import { CmHighlightBar } from '@/editor/CmHighlightBar'
 import { DocStatsPanel } from '@/editor/DocStatsPanel'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { slashMenu, slashKeymap } from '@/editor/slashMenu'
+import { refreshTemplateSlashItems } from '@/lib/templates'
 import { wikilinkMenu, wikilinkKeymap } from '@/editor/wikilinkMenu'
 import { smartEnter } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
@@ -111,6 +112,15 @@ export function CmEditor({ handle, header }: Props) {
   // changing it re-renders the wrapper CSS vars and CM's resize observer re-wraps
   // lines automatically — no editor remount.
   const textAlign = useSettingsStore((s) => s.editorTextAlign)
+  const templatesFolder = useSettingsStore((s) => s.templatesFolder)
+
+  // Load the templates folder into the slash menu. Re-runs when the configured
+  // folder changes (Settings → Templates folder) so switching it takes effect
+  // live, without a restart. Fire-and-forget: a slow/absent folder just leaves
+  // the built-in blocks.
+  useEffect(() => {
+    void refreshTemplateSlashItems()
+  }, [templatesFolder])
 
   useEffect(() => {
     const parent = rootRef.current
