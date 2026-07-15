@@ -17,6 +17,7 @@ import { Facet, type EditorState, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
 import { isKnownNote } from '../wikilinkComplete'
 import { inProofRawRange } from '@/editor/proofRawRanges'
+import { cursorInRange } from '@/editor/cmRanges'
 
 const HIDE = Decoration.replace({})
 
@@ -79,15 +80,6 @@ class CheckboxWidget extends WidgetType {
   ignoreEvent() {
     return true
   }
-}
-
-/** Any selection range touches [from, to] (inclusive — an edge counts, so a
- * just-typed marker stays raw until the caret moves off). */
-function cursorInRange(state: EditorState, from: number, to: number): boolean {
-  for (const r of state.selection.ranges) {
-    if (r.from <= to && from <= r.to) return true
-  }
-  return false
 }
 
 /** lezer parses `[[Title]]` as a `Link` ([Title]) wrapped in an extra `[`…`]`.
