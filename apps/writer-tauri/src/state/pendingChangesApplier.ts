@@ -380,6 +380,10 @@ export function startPendingChangesApplier(): void {
             // (resolved, drops from pending).
             notify.markCantApply()
             console.info('[applier] suggestion outdated — kept user text', c.id)
+            // Record that this accepted change never reached disk so the
+            // edit-outcome feedback note can correct the model's belief
+            // that its proposal landed (status stays 'accepted').
+            usePendingChangesStore.getState().markApplyFailed(c.id)
           }
           // Commit at accept time for BOTH sources — Keep is when the
           // disk actually changes. The coordinator debounces a burst of

@@ -59,6 +59,7 @@ import {
   type RunChatResult,
 } from './types'
 import { resolveAgent } from '../agents'
+import { buildEditOutcomeNote } from './buildEditOutcomeNote'
 import {
   buildUserPrompt,
   composeSystemBlocks,
@@ -153,9 +154,19 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // fall back to a minimal instruction so the ATTACHED FILES block has a turn to
   // act on. Harmless for the normal path (buildUserPrompt is non-empty there).
   const derivedPrompt = buildUserPrompt(history ?? [])
-  const prompt =
+  const basePrompt =
     promptOverride ??
     (derivedPrompt || (attachedFiles.length > 0 ? 'Look at the attached file(s).' : derivedPrompt))
+
+  // Correct the model's record for edits it proposed on a PRIOR turn that
+  // never landed (user rejected, or the accept failed on a stale anchor).
+  // The sidecar told it "success" immediately (so the run didn't stall), so
+  // without this it keeps believing those edits are in the files. Skip on
+  // special flows (Regenerate / bootstrap) that pass an explicit prompt.
+  // `outcomeIds` is stamped delivered only after the run actually starts,
+  // so a failed start doesn't silently consume the outcomes.
+  const outcome = promptOverride ? { note: null, ids: [] } : buildEditOutcomeNote(threadId)
+  const prompt = outcome.note ? `${outcome.note}\n\n${basePrompt}` : basePrompt
 
   // Chat mode — Karpathy / Claude Code shape: only the always-on
   // schema (CLAUDE.md + profile) lands in the system prompt. The wiki
@@ -785,6 +796,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         resume: isResume ? threadId : undefined,
       },
     })
+    // The run is underway with the outcome note in its prompt — stamp those
+    // changes delivered so the same reject / failure isn't reported again.
+    if (outcome.ids.length > 0) {
+      usePendingChangesStore.getState().markFeedbackDelivered(outcome.ids)
+    }
   } catch (e) {
     cleanup()
     throw e

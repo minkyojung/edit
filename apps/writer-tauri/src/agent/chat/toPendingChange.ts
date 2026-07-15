@@ -56,7 +56,7 @@ interface MapContext {
 export function mapChatEditToPendingChange(
   payload: ChatEditPendingPayload,
   ctx: MapContext,
-): Omit<PendingChange, 'status' | 'decidedAt' | 'viewedAt'> | null {
+): Omit<PendingChange, 'status' | 'decidedAt' | 'viewedAt' | 'feedbackDeliveredAt'> | null {
   const filePath = readString(payload.input.file_path)
   if (!filePath) {
     console.warn('[map] miss: no file_path', { toolName: payload.toolName })
@@ -189,7 +189,7 @@ function newFileContentFor(toolName: string, input: Record<string, unknown>): st
 export async function materializeChatNewWikiPage(
   payload: ChatEditPendingPayload,
   ctx: MapContext,
-): Promise<Omit<PendingChange, 'status' | 'decidedAt' | 'viewedAt'> | null> {
+): Promise<Omit<PendingChange, 'status' | 'decidedAt' | 'viewedAt' | 'feedbackDeliveredAt'> | null> {
   const filePath = readString(payload.input.file_path)
   if (!filePath) return null
   const content = newFileContentFor(payload.toolName, payload.input)

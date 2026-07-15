@@ -154,6 +154,21 @@ export interface PendingChange {
    * compat with already-persisted entries; the panel falls back to
    * the live `bodyMarkdown` when absent. */
   pageMarkdownSnapshot?: string
+  /** Set true by the applier when an ACCEPTED change failed to write
+   * to disk (its `before` anchor was gone — the user's text won, per
+   * Cursor's rule). The change stays `status: 'accepted'` (it's
+   * resolved and drops from pending), but nothing landed, so the
+   * model's "edit succeeded" belief is now wrong. This flags the
+   * change for the edit-outcome feedback note. Absent = applied
+   * cleanly (or still pending / rejected). */
+  applyFailed?: boolean
+  /** ms since epoch when this change's NON-LANDING outcome (rejected,
+   * or accepted-but-apply-failed) was folded into a follow-up chat
+   * prompt so the model learns its proposal didn't take. Null = not
+   * yet delivered (collectable); a timestamp = already told the model,
+   * don't repeat. Accepted-and-applied changes match the model's
+   * belief, so they are never collected and this stays null for them. */
+  feedbackDeliveredAt: number | null
 }
 
 interface PendingChangesState {
@@ -174,7 +189,7 @@ interface PendingChangesState {
   push: (
     change: Omit<
       PendingChange,
-      'status' | 'decidedAt' | 'createdAt' | 'viewedAt'
+      'status' | 'decidedAt' | 'createdAt' | 'viewedAt' | 'feedbackDeliveredAt'
     > & {
       createdAt?: number
     },
@@ -199,6 +214,20 @@ interface PendingChangesState {
    * would just re-fail on the same stale anchor in a loop.) Returns false
    * (no-op) unless the change is currently decided. */
   reopen: (id: string) => boolean
+
+  /** Flag an accepted change whose disk write failed (stale anchor).
+   * Called by the applier when `applyAcceptedChange` returns false.
+   * Keeps `status: 'accepted'` (the change is resolved) but records
+   * that nothing landed, so the edit-outcome feedback note can tell
+   * the model its proposal didn't take. Idempotent; a no-op if the
+   * change is gone. */
+  markApplyFailed: (id: string) => void
+
+  /** Stamp `feedbackDeliveredAt` on the given changes once their
+   * non-landing outcome has been folded into a follow-up prompt, so
+   * the model isn't told about the same reject / failure twice.
+   * Idempotent; skips ids that are absent or already stamped. */
+  markFeedbackDelivered: (ids: readonly string[]) => void
 
   /** Reject every still-pending change in a group. Used by the
    * page-level "AI made this page — reject everything" affordance
@@ -279,6 +308,7 @@ export const usePendingChangesStore = create<PendingChangesState>()(
             decidedAt: null,
             viewedAt: null,
             pageMarkdownSnapshot: snapshot,
+            feedbackDeliveredAt: null,
           }
           return { byId: { ...s.byId, [change.id]: next } }
         })
@@ -343,6 +373,33 @@ export const usePendingChangesStore = create<PendingChangesState>()(
           for (const [id, c] of Object.entries(s.byId)) {
             if (c.pageSlug === pageSlug && c.viewedAt === null) {
               next[id] = { ...c, viewedAt: now }
+              changed = true
+            } else {
+              next[id] = c
+            }
+          }
+          return changed ? { byId: next } : s
+        })
+      },
+
+      markApplyFailed: (id) => {
+        set((s) => {
+          const existing = s.byId[id]
+          if (!existing || existing.applyFailed) return s
+          return {
+            byId: { ...s.byId, [id]: { ...existing, applyFailed: true } },
+          }
+        })
+      },
+
+      markFeedbackDelivered: (ids) => {
+        set((s) => {
+          const now = Date.now()
+          const next: Record<string, PendingChange> = {}
+          let changed = false
+          for (const [id, c] of Object.entries(s.byId)) {
+            if (ids.includes(id) && c.feedbackDeliveredAt === null) {
+              next[id] = { ...c, feedbackDeliveredAt: now }
               changed = true
             } else {
               next[id] = c
@@ -430,7 +487,7 @@ export const usePendingChangesStore = create<PendingChangesState>()(
     {
       // Per-project: pending edits target a specific vault's files.
       name: projectStorageKey('writer-tauri:pending-changes'),
-      version: 2,
+      version: 3,
       // Persist the queue across reloads so a user who closes the
       // app mid-review doesn't lose pending changes. Only the data
       // — not the selector functions — survives serialisation.
@@ -440,13 +497,22 @@ export const usePendingChangesStore = create<PendingChangesState>()(
       // the app open while they queued; treat them as already viewed
       // (timestamp = now) so they don't all flash blue post-upgrade.
       migrate: (persisted, fromVersion) => {
-        if (fromVersion < 2 && persisted && typeof persisted === 'object') {
+        if (persisted && typeof persisted === 'object') {
           const s = persisted as { byId?: Record<string, PendingChange> }
           if (s.byId) {
             const now = Date.now()
             for (const c of Object.values(s.byId)) {
-              if ((c as PendingChange).viewedAt === undefined) {
+              // v1 → v2: introduced `viewedAt`.
+              if (fromVersion < 2 && (c as PendingChange).viewedAt === undefined) {
                 ;(c as PendingChange).viewedAt = now
+              }
+              // v2 → v3: introduced `feedbackDeliveredAt`. Entries queued
+              // before this channel existed must NOT be retroactively
+              // reported to the model — stamp them as already delivered so
+              // the outcome note only ever covers rejects/failures that
+              // happen from here on.
+              if (fromVersion < 3 && (c as PendingChange).feedbackDeliveredAt === undefined) {
+                ;(c as PendingChange).feedbackDeliveredAt = now
               }
             }
           }
