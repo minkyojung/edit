@@ -10,9 +10,30 @@
 // serialisation these tests fail (a turn goes missing).
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { ChatTurn } from '@/chat/types'
+import type { ChatTurn, ThreadMeta } from '@/chat/types'
 
-const store = vi.hoisted(() => ({ files: new Map<string, string>() }))
+const store = vi.hoisted(() => ({
+  files: new Map<string, string>(),
+  // Live count of writers inside a vault op + the peak seen. If serialisation
+  // holds, no two ops on the same file overlap, so peak stays 1.
+  active: 0,
+  peak: 0,
+  order: [] as string[],
+}))
+
+// Wrap a mock op so we can observe overlap (concurrency) and a gap opens the
+// race window — a read-modify-write / rewrite that overlaps drops or corrupts.
+async function tracked<T>(label: string, fn: () => T): Promise<T> {
+  store.active += 1
+  store.peak = Math.max(store.peak, store.active)
+  store.order.push(label)
+  try {
+    await new Promise((r) => setTimeout(r, 5))
+    return fn()
+  } finally {
+    store.active -= 1
+  }
+}
 
 vi.mock('@/lib/vault', () => ({
   vaultFileExists: async (p: string) => store.files.has(p),
@@ -24,11 +45,12 @@ vi.mock('@/lib/vault', () => ({
   // Faithful read-modify-write with an await gap — this is where the race lives.
   appendVaultFile: async (p: string, content: string) => {
     const existing = store.files.get(p) ?? ''
-    await new Promise((r) => setTimeout(r, 5))
-    store.files.set(p, existing + content)
+    await tracked('turn', () => store.files.set(p, existing + content))
   },
+  // Full rewrite (meta .json, rewriteThreadTurns). Also gapped so a meta-write
+  // race can overlap without serialisation.
   writeVaultFile: async (p: string, content: string) => {
-    store.files.set(p, content)
+    await tracked('meta', () => store.files.set(p, content))
   },
   deleteVaultFile: async (p: string) => {
     store.files.delete(p)
@@ -39,16 +61,24 @@ vi.mock('@/lib/vault', () => ({
 import {
   appendThreadTurn,
   appendThreadTurns,
+  readThreadMeta,
   readThreadTurns,
   rewriteThreadTurns,
+  writeThreadMeta,
 } from './threadFiles'
 
 function turn(id: string, content: string): ChatTurn {
   return { id, role: 'user', content, ts: 1 }
 }
+function meta(id: string, title: string): ThreadMeta {
+  return { id, title, createdAt: 1, updatedAt: 1, archived: false }
+}
 
 beforeEach(() => {
   store.files.clear()
+  store.active = 0
+  store.peak = 0
+  store.order = []
 })
 
 describe('threadFiles turn-write serialisation', () => {
@@ -96,5 +126,42 @@ describe('threadFiles turn-write serialisation', () => {
     ])
     expect((await readThreadTurns('t1')).map((t) => t.id)).toEqual(['a', 'c'])
     expect((await readThreadTurns('t2')).map((t) => t.id)).toEqual(['b'])
+  })
+})
+
+describe('threadFiles meta-write serialisation', () => {
+  it('concurrent meta writes to one thread never overlap; last wins', async () => {
+    const a = writeThreadMeta(meta('t1', 'first'))
+    const b = writeThreadMeta(meta('t1', 'second'))
+    await Promise.all([a, b])
+
+    // The two writes to the same .json must not run at once (shared tmp +
+    // out-of-order rename would corrupt / clobber otherwise).
+    expect(store.peak).toBe(1)
+    // Newest snapshot persisted.
+    expect((await readThreadMeta('t1'))?.title).toBe('second')
+  })
+
+  it('meta write and turn write on one thread stay ordered (meta before turns)', async () => {
+    // The store issues materialize (meta) then appendThreadTurn (turns) on the
+    // first turn; both share the per-id queue, so the meta file must land first
+    // — the boot scan keys on it.
+    const m = writeThreadMeta(meta('t1', 'x'))
+    const t = appendThreadTurn('t1', turn('a', 'hi'))
+    await Promise.all([m, t])
+
+    expect(store.peak).toBe(1)
+    expect(store.order).toEqual(['meta', 'turn'])
+  })
+
+  it('meta writes on different threads run in parallel (per-id, not global)', async () => {
+    await Promise.all([
+      writeThreadMeta(meta('t1', 'a')),
+      writeThreadMeta(meta('t2', 'b')),
+    ])
+    // Different files → allowed to overlap.
+    expect(store.peak).toBe(2)
+    expect((await readThreadMeta('t1'))?.title).toBe('a')
+    expect((await readThreadMeta('t2'))?.title).toBe('b')
   })
 })

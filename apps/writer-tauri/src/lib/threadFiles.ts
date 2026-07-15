@@ -91,9 +91,16 @@ export async function readThreadMeta(id: string): Promise<ThreadMeta | null> {
  * mutation: rename, archive, model/effort switch, sessionStarted
  * flip. Body of the JSON is the same `ThreadMeta` shape the rest of
  * the app sees, so we round-trip without a separate file shape. */
-export async function writeThreadMeta(meta: ThreadMeta): Promise<void> {
-  const path = metaPath(meta.id)
-  await writeVaultFile(path, JSON.stringify(meta, null, 2) + '\n')
+export function writeThreadMeta(meta: ThreadMeta): Promise<void> {
+  // Same per-id queue as the turn writes. The meta file is a full rewrite over
+  // a shared `<path>.tmp`, so two concurrent writes (title vs archive vs the
+  // agent's contextUsage, all fire-and-forget) would corrupt it or land an
+  // older snapshot last. Serialising per thread id makes each write a clean,
+  // ordered full-snapshot — last write wins with the newest state.
+  return runExclusive(meta.id, async () => {
+    const path = metaPath(meta.id)
+    await writeVaultFile(path, JSON.stringify(meta, null, 2) + '\n')
+  })
 }
 
 /** Read every turn of a thread, in order. Each line is one ChatTurn
