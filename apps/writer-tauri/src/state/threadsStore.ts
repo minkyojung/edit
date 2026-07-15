@@ -62,15 +62,28 @@ interface ThreadsState {
    * auto-create. */
   hydrated: boolean
 
+  /** Ids of threads that live in memory but have NOT been written to disk
+   * yet — "draft" new chats. A thread materialises (its meta file is
+   * written) on its first turn. Lazy materialisation is the Claude Code
+   * model: an empty conversation isn't a persisted session, so blank chats
+   * can't pile up as dead files or eat the active-thread budget. Emptied
+   * on materialise / discard. */
+  draftIds: Set<string>
+
   /** Boot-time disk scan. Idempotent: a second call is a no-op so
    * App.tsx + StrictMode double-mount are both safe. */
   hydrate: () => Promise<void>
 
-  /** Persist a new thread to disk and add it to the store. Caller
-   * supplies the full meta (id already minted, defaults filled in)
-   * so this layer doesn't need to know about the various default
-   * sources (per-thread model, effort, etc.). */
+  /** Add a new thread as a DRAFT: in memory only, no disk write. It
+   * materialises (meta file written) on its first turn via appendTurn, or
+   * explicitly via {@link materialize}. Caller supplies the full meta (id
+   * minted, defaults filled). Never touches disk, so an unused draft leaves
+   * nothing behind. */
   createThread: (meta: ThreadMeta) => Promise<void>
+
+  /** Write a draft's meta file to disk and drop it from draftIds. No-op
+   * when the id is already materialised or unknown. */
+  materialize: (id: string) => Promise<void>
 
   /** Patch a thread's metadata, persisting the merged record to
    * disk. No-op when the id is unknown. */
@@ -104,6 +117,7 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
   threads: {},
   turns: {},
   hydrated: false,
+  draftIds: new Set(),
 
   hydrate: async () => {
     if (get().hydrated) return
@@ -140,21 +154,38 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
   },
 
   createThread: async (meta) => {
-    await writeThreadMeta(meta)
+    // DRAFT: memory only, no disk write. Materialises on first turn.
     set((s) => ({
       threads: { ...s.threads, [meta.id]: meta },
       // Initialise the turns slot so consumers reading
       // `turns[id] ?? []` always see an array and not undefined.
       turns: { ...s.turns, [meta.id]: [] },
+      draftIds: new Set(s.draftIds).add(meta.id),
     }))
+  },
+
+  materialize: async (id) => {
+    if (!get().draftIds.has(id)) return
+    const meta = get().threads[id]
+    if (!meta) return
+    // Write the meta file FIRST — it's the canonical marker the boot scan
+    // keys on (listThreadIds), so a turns file must never precede it.
+    await writeThreadMeta(meta)
+    set((s) => {
+      const draftIds = new Set(s.draftIds)
+      draftIds.delete(id)
+      return { draftIds }
+    })
   },
 
   updateMeta: async (id, patch) => {
     const current = get().threads[id]
     if (!current) return
     const next: ThreadMeta = { ...current, ...patch }
-    await writeThreadMeta(next)
     set((s) => ({ threads: { ...s.threads, [id]: next } }))
+    // Draft edits (model/effort tweaks before the first send) stay in memory;
+    // materialize flushes the full meta once the first turn lands.
+    if (!get().draftIds.has(id)) await writeThreadMeta(next)
   },
 
   appendTurn: async (id, turn) => {
@@ -168,6 +199,9 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
       turns: { ...s.turns, [id]: [...(s.turns[id] ?? []), turn] },
     }))
     try {
+      // First turn of a draft: write the meta file before the turn (materialize
+      // is a no-op once persisted), so the thread exists on disk atomically.
+      await get().materialize(id)
       await appendThreadTurn(id, turn)
     } catch (e) {
       console.error('[threadsStore] appendTurn persist failed', e)
@@ -180,6 +214,7 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
       turns: { ...s.turns, [id]: [...(s.turns[id] ?? []), ...turns] },
     }))
     try {
+      await get().materialize(id)
       await appendThreadTurns(id, turns)
     } catch (e) {
       console.error('[threadsStore] appendTurns persist failed', e)
@@ -193,6 +228,8 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
   },
 
   removeThread: async (id) => {
+    // No-op on disk for a draft (no files written yet); deletes both files
+    // for a materialised thread.
     await deleteThreadFiles(id)
     // Drop any unsent composer draft for this thread so it can't linger in
     // memory (or resurface if the id were somehow reused).
@@ -202,7 +239,9 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
       const turns = { ...s.turns }
       delete threads[id]
       delete turns[id]
-      return { threads, turns }
+      const draftIds = new Set(s.draftIds)
+      draftIds.delete(id)
+      return { threads, turns, draftIds }
     })
   },
 }))

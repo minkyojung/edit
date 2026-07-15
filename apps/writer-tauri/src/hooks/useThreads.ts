@@ -49,6 +49,18 @@ export function useThreads(): UseThreadsResult {
 
   const createThread = useCallback<UseThreadsResult['createThread']>(
     async (initialTitle = '') => {
+      // Reuse an existing empty draft (an unmaterialised new chat) instead of
+      // stacking blank tabs — the Claude Code / ChatGPT "new chat" behaviour.
+      // A draft has no turns and isn't on disk yet, so there's never more than
+      // one; switching to it is the whole "create" the user needs.
+      const store = useThreadsStore.getState()
+      const existingDraft = Object.values(store.threads).find(
+        (t) => !t.archived && store.draftIds.has(t.id),
+      )
+      if (existingDraft) return existingDraft.id
+
+      // Cap counts only materialised (real) conversations — a draft never
+      // reaches this branch (reused above), so this is the real-thread count.
       const activeCount = threads.filter((t) => !t.archived).length
       if (activeCount >= MAX_ACTIVE_THREADS) return null
 
@@ -85,6 +97,12 @@ export function useThreads(): UseThreadsResult {
       // caller of archiveThread benefits, regardless of which UI
       // path triggered it.
       useChatRuns.getState().abortByThread(id)
+      // A draft (opened but never sent) has no file and no history — discard it
+      // outright rather than leaving a blank archived entry behind.
+      if (useThreadsStore.getState().draftIds.has(id)) {
+        void useThreadsStore.getState().removeThread(id)
+        return
+      }
       void useThreadsStore.getState().updateMeta(id, {
         archived: true,
         archivedAt: Date.now(),
