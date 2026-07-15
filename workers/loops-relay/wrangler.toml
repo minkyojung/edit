@@ -10,3 +10,22 @@ LOOPS_WELCOME_ID = "cmrdbrdgv13n30jx6bm9f16xv"
 
 # LOOPS_API_KEY is a SECRET — do NOT put it here. Set it with:
 #   npx wrangler secret put LOOPS_API_KEY
+
+# GOOGLE_CLIENT_ID is the app's OAuth client_id (comma-separate if more than
+# one). Tokens whose audience isn't one of these are rejected, so a stray or
+# leaked Google token from another app can't drive this endpoint. The repo keeps
+# the client_id out of git (src-tauri/secrets/), so set it as a secret too:
+#   npx wrangler secret put GOOGLE_CLIENT_ID
+
+# Native rate limiting — no KV/DO needed. period must be 10 or 60 (seconds).
+[[unsafe.bindings]]
+name = "IP_LIMITER"
+type = "ratelimit"
+namespace_id = "2001"
+simple = { limit = 20, period = 60 }
+
+[[unsafe.bindings]]
+name = "EMAIL_LIMITER"
+type = "ratelimit"
+namespace_id = "2002"
+simple = { limit = 3, period = 60 }
