@@ -3,7 +3,7 @@
 // wikilinkClickPlugin (the ProseMirror path) exactly, so both editors behave the same.
 
 import { useDocsStore } from '@/state/docsStore'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 
 /** Resolve a wikilink title to a LIVE doc slug (case-insensitive; archived + system
  * pages excluded) and navigate via the URL hash — the single source of truth for the
@@ -17,12 +17,7 @@ export function navigateToNoteByTitle(title: string): void {
     (d) => !d.type.startsWith('system:') && (d.title ?? '').trim().toLowerCase() === key,
   )
   if (!target) return
-  window.location.hash = buildViewUrl({
-    tab: store.sidebarTab,
-    dayAnchor: store.dayAnchor,
-    monthAnchor: store.monthAnchor,
-    slug: target.slug,
-  })
+  openDoc(target.slug)
 }
 
 /** Navigate to a note by its slug (the card already holds one — no title resolution
@@ -34,12 +29,7 @@ export function navigateToNoteBySlug(slug: string): boolean {
   const store = useDocsStore.getState()
   const target = store.knownDocs.find((d) => d.slug === slug)
   if (!target) return false
-  window.location.hash = buildViewUrl({
-    tab: store.sidebarTab,
-    dayAnchor: store.dayAnchor,
-    monthAnchor: store.monthAnchor,
-    slug,
-  })
+  openDoc(slug)
   return true
 }
 

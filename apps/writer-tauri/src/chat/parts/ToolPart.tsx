@@ -17,7 +17,7 @@ import { FileChip } from '@/chat/parts/FileChip'
 import { CodeBlock } from '@/components/ai-elements/code-block'
 import { humanizeToolCall, readOutputText } from '@/chat/humanizers'
 import { useDocsStore } from '@/state/docsStore'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { pathToKnownSlug } from '@/lib/docPaths'
 
 // Cap the success-output text so a giant result (a long Bash log, a big search)
@@ -116,13 +116,7 @@ export function ToolPart({ part }: { part: ToolPartType }) {
                 // The row is itself a trigger; stop propagation so the icon
                 // click stays a navigation action and doesn't toggle the body.
                 e.stopPropagation()
-                const store = useDocsStore.getState()
-                window.location.hash = buildViewUrl({
-                  tab: store.sidebarTab,
-                  dayAnchor: store.dayAnchor,
-                  monthAnchor: store.monthAnchor,
-                  slug: openSlug,
-                })
+                openDoc(openSlug)
               }}
               aria-label="Open page in editor"
               className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
