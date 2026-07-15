@@ -12,6 +12,7 @@
 import { applyMarkdownToActiveCmEditor } from '@/state/activeCmEditor'
 import { useDocsStore } from '@/state/docsStore'
 import { markSlugDirty } from '@/lib/docFileSync'
+import { runExclusive } from '@/lib/keyedMutex'
 import { looseReplace } from '@/lib/looseMatch'
 import { splitFrontmatter } from '@/lib/frontmatter'
 import { appendToBackground } from '@/profile/markers'
@@ -52,7 +53,23 @@ import { appendToBackground } from '@/profile/markers'
  * Returns false on hard failures only (unknown slug, ensureHandle
  * failure, parser missing for an active doc); a no-op transform
  * still returns true. */
-export async function applyToWikiPage(
+export function applyToWikiPage(
+  slug: string,
+  transform: (currentMd: string) => string,
+  changeId?: string,
+): Promise<boolean> {
+  // Serialize per-slug: applyToWikiPageImpl is a read-modify-write on
+  // handle.bodyMarkdown with awaits BEFORE the read (ensureHandle /
+  // contentReady). Two concurrent applies to the SAME slug — e.g. several
+  // auto-accepted edits to one note in a single turn — would each read the same
+  // old body, and the later write would clobber the earlier: a silently dropped
+  // edit that also desyncs the model's assumed content (its next replace's
+  // old_string then fails to match → "not found"). Different slugs still run in
+  // parallel.
+  return runExclusive(slug, () => applyToWikiPageImpl(slug, transform, changeId))
+}
+
+async function applyToWikiPageImpl(
   slug: string,
   transform: (currentMd: string) => string,
   changeId?: string,
