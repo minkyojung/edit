@@ -84,10 +84,10 @@ export function SuggestionSwap({
             exit={{ opacity: 0, width: 0 }}
             transition={{ duration: 0.2 }}
           >
-            <span className="rounded border border-border bg-background px-1 text-[10px] leading-tight text-emerald-500">
+            <span className="rounded border border-border bg-background px-1 text-caption leading-tight text-emerald-500">
               ✓
             </span>
-            <span className="rounded border border-border bg-background px-1 text-[10px] leading-tight text-destructive">
+            <span className="rounded border border-border bg-background px-1 text-caption leading-tight text-destructive">
               ✕
             </span>
           </motion.span>

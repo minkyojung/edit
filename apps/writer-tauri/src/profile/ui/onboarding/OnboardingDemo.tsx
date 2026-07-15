@@ -123,7 +123,7 @@ export function OnboardingDemo() {
                 ) : (
                   <IconPencil size={13} />
                 )}
-                <span className="truncate font-mono text-[11px]">{SCRIPT.file}</span>
+                <span className="truncate font-mono text-caption">{SCRIPT.file}</span>
               </div>
               <p className="px-3 py-2.5 leading-relaxed text-foreground">
                 <SuggestionSwap
