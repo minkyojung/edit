@@ -16,9 +16,8 @@
 // at mdast time, but knownDocs can change between render and click).
 
 import type { ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useDocsStore } from '@/state/docsStore'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 
 interface Props {
   'data-wikilink-slug'?: string
@@ -30,7 +29,6 @@ export function WikiLink(props: Props) {
   const rawSlug = props['data-wikilink-slug']
   const slug = rawSlug && rawSlug.length > 0 ? rawSlug : undefined
   const broken = props['data-wikilink-broken'] === 'true'
-  const navigate = useNavigate()
 
   if (!slug || broken) {
     // Render the citation as visible bracketed text so the reader
@@ -45,14 +43,7 @@ export function WikiLink(props: Props) {
         const store = useDocsStore.getState()
         const target = store.knownDocs.find((d) => d.slug === slug)
         if (!target) return
-        navigate(
-          buildViewUrl({
-            tab: store.sidebarTab,
-            dayAnchor: store.dayAnchor,
-            monthAnchor: store.monthAnchor,
-            slug,
-          }),
-        )
+        openDoc(slug)
       }}
       className="inline text-foreground underline decoration-foreground/40 underline-offset-2 hover:decoration-foreground"
     >

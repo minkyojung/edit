@@ -11,7 +11,6 @@
 // expose, reusing the docsStore `setArticleRead`.
 
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   IconBrandYoutube,
   IconCircleCheck,
@@ -22,7 +21,7 @@ import {
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useSaveArticleDialogStore } from '@/state/saveArticleDialogStore'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -52,12 +51,8 @@ function savedDateLabel(savedAt?: string): string {
 export function ReadLaterQueue() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const activeSlug = useActiveSlug()
-  const sidebarTab = useDocsStore((s) => s.sidebarTab)
-  const dayAnchor = useDocsStore((s) => s.dayAnchor)
-  const monthAnchor = useDocsStore((s) => s.monthAnchor)
   const setArticleRead = useDocsStore((s) => s.setArticleRead)
   const openSaveArticle = useSaveArticleDialogStore((s) => s.openDialog)
-  const navigate = useNavigate()
 
   const [filter, setFilter] = useState<Filter>('unread')
   const [query, setQuery] = useState('')
@@ -89,7 +84,7 @@ export function ReadLaterQueue() {
   }, [articles, filter, query])
 
   const openArticle = (slug: string) => {
-    navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
+    openDoc(slug)
   }
 
   return (

@@ -4,7 +4,6 @@
 // spine.
 
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { IconDots } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -22,7 +21,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { isAgentAssetPath, deleteAssetByPath } from '@/lib/deleteAsset'
 import { copyAsRichText } from '@/lib/copyAsRichText'
 import { confirm } from '@/state/confirmStore'
@@ -34,7 +33,6 @@ export function DocMenu() {
     activeSlug ? s.knownDocs.find((d) => d.slug === activeSlug) : null,
   )
   const deleteToTrash = useDocsStore((s) => s.deleteToTrash)
-  const navigate = useNavigate()
   const [infoOpen, setInfoOpen] = useState(false)
 
   // Daily entries are the time-axis spine; deleting them would tear the
@@ -46,15 +44,7 @@ export function DocMenu() {
   // asset-delete path (folder-aware for skills, tombstoned so seeded defaults
   // don't resurrect); every other note is a plain trash. Both ask first.
   const navigateTo = (slug: string) => {
-    const store = useDocsStore.getState()
-    navigate(
-      buildViewUrl({
-        tab: store.sidebarTab,
-        dayAnchor: store.dayAnchor,
-        monthAnchor: store.monthAnchor,
-        slug,
-      }),
-    )
+    openDoc(slug)
   }
   // Copy the whole note to the clipboard with its formatting intact, so
   // pasting into an external rich editor (Substack, Notion, Docs) keeps

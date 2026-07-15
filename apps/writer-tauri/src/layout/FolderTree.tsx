@@ -49,7 +49,7 @@ import {
   type TreeNode,
 } from '@/lib/fileTree'
 import { classifyAsset } from '@/lib/attachments'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { openVaultFile, revealVaultFile, vaultAbsPath } from '@/lib/vault'
 import { pathForDoc, sanitizeFilename } from '@/lib/docPaths'
 import { planFolderMove } from '@/lib/folderMove'
@@ -522,9 +522,6 @@ export function FolderTree() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const knownFolders = useDocsStore((s) => s.knownFolders)
   const knownFiles = useDocsStore((s) => s.knownFiles)
-  const sidebarTab = useDocsStore((s) => s.sidebarTab)
-  const dayAnchor = useDocsStore((s) => s.dayAnchor)
-  const monthAnchor = useDocsStore((s) => s.monthAnchor)
   const renameDoc = useDocsStore((s) => s.renameDoc)
   const deleteToTrash = useDocsStore((s) => s.deleteToTrash)
   const createFolder = useDocsStore((s) => s.createFolder)
@@ -606,8 +603,7 @@ export function FolderTree() {
       else next.add(path)
       return next
     })
-  const onOpen = (slug: string) =>
-    navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
+  const onOpen = (slug: string) => openDoc(slug)
   // Attachments open the in-app file viewer, keyed by path (encode so a
   // nested path's slashes survive as one route param).
   const onOpenFile = (relPath: string) =>
@@ -618,7 +614,7 @@ export function FolderTree() {
   }
   const onDelete = (slug: string) => {
     void deleteToTrash(slug).then((next) => {
-      if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
+      if (next) openDoc(next)
     })
   }
   const onCreateFolder = (name: string) => {
@@ -632,7 +628,7 @@ export function FolderTree() {
   }
   const onDeleteFolder = (path: string) => {
     void deleteFolder(path).then((next) => {
-      if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
+      if (next) openDoc(next)
     })
   }
   const onStartCreateSubfolder = (parentPath: string) => {
@@ -657,7 +653,7 @@ export function FolderTree() {
     moveDocToFolder(slug, folderPath)
   const onDuplicate = (slug: string) => {
     void duplicateDoc(slug).then((next) => {
-      if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
+      if (next) openDoc(next)
     })
   }
   const onCopyPath = (relPath: string) => {

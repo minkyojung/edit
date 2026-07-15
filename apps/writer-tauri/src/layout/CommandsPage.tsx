@@ -9,10 +9,8 @@
 // command, loaded via the same `_system/agent` plugin path skills use.
 
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { IconChevronRight, IconTerminal2, IconTrash } from '@tabler/icons-react'
-import { useDocsStore } from '@/state/docsStore'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { listCommands, COMMANDS_REL, type VaultCommand } from '@/lib/commandsLib'
 import { deleteAssetByPath } from '@/lib/deleteAsset'
 import { confirm } from '@/state/confirmStore'
@@ -21,10 +19,6 @@ import { notify } from '@/lib/notify'
 export function CommandsPage() {
   const [commands, setCommands] = useState<VaultCommand[]>([])
   const [loading, setLoading] = useState(true)
-  const navigate = useNavigate()
-  const sidebarTab = useDocsStore((s) => s.sidebarTab)
-  const dayAnchor = useDocsStore((s) => s.dayAnchor)
-  const monthAnchor = useDocsStore((s) => s.monthAnchor)
 
   useEffect(() => {
     setLoading(true)
@@ -36,7 +30,7 @@ export function CommandsPage() {
 
   const open = (slug: string) => {
     if (!slug) return
-    navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
+    openDoc(slug)
   }
 
   const remove = async (command: VaultCommand) => {

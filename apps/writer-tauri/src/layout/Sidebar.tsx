@@ -20,7 +20,7 @@ import { useNewFolderStore } from '@/state/newFolderStore'
 import { openSettings } from '@/settings/useSettingsDialog'
 import { ensureProfileWikiSlug } from '@/state/wikiService'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
@@ -106,37 +106,21 @@ export function AppSidebar() {
     try {
       const slug = await ensureProfileWikiSlug()
       if (!slug) return
-      const store = useDocsStore.getState()
-      navigate(
-        buildViewUrl({
-          tab: store.sidebarTab,
-          dayAnchor: store.dayAnchor,
-          monthAnchor: store.monthAnchor,
-          slug,
-        }),
-      )
+      openDoc(slug)
     } catch (err) {
       console.warn('[sidebar] open profile failed', err)
     } finally {
       setProfileBusy(false)
     }
-  }, [profileBusy, navigate])
+  }, [profileBusy])
 
   // New flat note (lands at inbox/Untitled.md) → open it. Shared by the
   // header "+" button and the ⌘N shortcut so there's one code path.
   const handleCreateNew = useCallback(() => {
     createNew().then((slug) => {
-      const store = useDocsStore.getState()
-      navigate(
-        buildViewUrl({
-          tab: store.sidebarTab,
-          dayAnchor: store.dayAnchor,
-          monthAnchor: store.monthAnchor,
-          slug,
-        }),
-      )
+      openDoc(slug)
     }).catch((err) => console.error('[docs] createNew failed', err))
-  }, [createNew, navigate])
+  }, [createNew])
 
   // ⌘N → new note. The vault is flat now, so a new note no longer nests
   // under today's daily — it's just a fresh file.

@@ -38,7 +38,7 @@ import { useSaveArticleDialogStore } from '@/state/saveArticleDialogStore'
 import { useCommandPaletteStore } from '@/state/commandPaletteStore'
 import { openSettings } from '@/settings/useSettingsDialog'
 import { focusLauncher } from '@/lib/projectWindow'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { loadTemplates, type Template } from '@/lib/templates'
 
 interface DocResult {
@@ -152,29 +152,13 @@ export function CommandPalette() {
   const onSelectTemplate = (t: Template) => {
     setOpen(false)
     void createFromTemplate(t).then((slug) => {
-      const store = useDocsStore.getState()
-      navigate(
-        buildViewUrl({
-          tab: store.sidebarTab,
-          dayAnchor: store.dayAnchor,
-          monthAnchor: store.monthAnchor,
-          slug,
-        }),
-      )
+      openDoc(slug)
     })
   }
 
   const onSelect = (r: DocResult) => {
     setOpen(false)
-    const store = useDocsStore.getState()
-    navigate(
-      buildViewUrl({
-        tab: store.sidebarTab,
-        dayAnchor: store.dayAnchor,
-        monthAnchor: store.monthAnchor,
-        slug: r.doc.slug,
-      }),
-    )
+    openDoc(r.doc.slug)
   }
 
   return (

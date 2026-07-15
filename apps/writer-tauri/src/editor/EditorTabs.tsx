@@ -8,13 +8,12 @@
 // active-state and the ⌘⇧[ / ⌘⇧] cycle shortcut kept below.
 
 import { useCallback, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { IconFileDescription } from '@tabler/icons-react'
 import { useDocsStore } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { useChatRunningForSlug } from '@/hooks/useChatRunningForSlug'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { ChatRunningIcon } from '@/components/icons/ChatRunningIcon'
 import { usePageHeaderStore } from '@/state/pageHeaderStore'
 import { cn } from '@/lib/utils'
@@ -22,10 +21,6 @@ import { cn } from '@/lib/utils'
 export function EditorTabs({ pinned = false }: { pinned?: boolean }) {
   const openSlugs = useDocsStore((s) => s.openSlugs)
   const activeSlug = useActiveSlug()
-  const sidebarTab = useDocsStore((s) => s.sidebarTab)
-  const dayAnchor = useDocsStore((s) => s.dayAnchor)
-  const monthAnchor = useDocsStore((s) => s.monthAnchor)
-  const navigate = useNavigate()
 
   const activeLabel = useDocLabel(activeSlug ?? '')
   const isRunning = useChatRunningForSlug(activeSlug)
@@ -38,12 +33,9 @@ export function EditorTabs({ pinned = false }: { pinned?: boolean }) {
   // in-body title is hidden so the header is the single title surface).
   const showHeaderTitle = pinned || !titleInView
 
-  const goToSlug = useCallback(
-    (slug: string) => {
-      navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
-    },
-    [navigate, sidebarTab, dayAnchor, monthAnchor],
-  )
+  const goToSlug = useCallback((slug: string) => {
+    openDoc(slug)
+  }, [])
 
   // ⌘⇧[ / ⌘⇧] cycles between open docs. The visual tab strip is gone
   // but the cycle behavior stays — feedback is the sidebar TreeRow's
