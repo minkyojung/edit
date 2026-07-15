@@ -163,11 +163,29 @@ function RouteSyncBridge() {
   const bootstrapping = useDocsStore((s) => s.bootstrapping)
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const openSlugs = useDocsStore((s) => s.openSlugs)
+  const pendingRestoreUrl = useDocsStore((s) => s.pendingRestoreUrl)
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
   useEffect(() => {
     if (bootstrapping) return
+    // Boot restore (one-shot): the last-viewed doc, rebuilt for this boot's
+    // fresh slug. While it's pending we SUPPRESS the self-heal below and only
+    // navigate — clearing the flag via setState here would re-run this effect
+    // before navigate() reaches useLocation, and that intermediate run (flag
+    // cleared, pathname still the stale/invalid boot slug) would self-heal to
+    // today's daily and clobber the restore. Clear only once the URL is valid
+    // (i.e. navigate has landed), detected by slug validity so encoded slugs
+    // still match.
+    if (pendingRestoreUrl) {
+      const curSlug = parseSlugFromPath(pathname)
+      if (curSlug !== null && knownDocs.some((d) => d.slug === curSlug)) {
+        useDocsStore.setState({ pendingRestoreUrl: null })
+        return
+      }
+      navigate(pendingRestoreUrl, { replace: true })
+      return
+    }
     // Slug-less first-class routes (the Read Later queue) are valid
     // WITHOUT a document. Without this guard the self-heal below sees a
     // null slug, judges the URL "broken", and bounces back to today's
@@ -196,7 +214,7 @@ function RouteSyncBridge() {
     // /week/<bad>, fall back to /week/<good>, not /day/<today>/<good>.
     // For roots / unknown shapes we default to today's day view.
     navigate(buildFallbackUrl(pathname, fallbackSlug), { replace: true })
-  }, [bootstrapping, pathname, knownDocs, openSlugs, navigate])
+  }, [bootstrapping, pathname, knownDocs, openSlugs, navigate, pendingRestoreUrl])
 
   return null
 }

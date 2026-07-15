@@ -173,6 +173,8 @@ export interface DocsState {
   status: Record<string, CollabStatus>
   /** Set during bootstrap; turns to false when initial restore is done. */
   bootstrapping: boolean
+  /** One-shot restore URL for RouteSyncBridge (last-viewed doc). Runtime-only. */
+  pendingRestoreUrl: string | null
   /** Which sidebar date view is showing. Runtime-only — every session
    * starts on 'day' so the app reads as "you're here, now" on launch. */
   sidebarTab: 'day' | 'week' | 'month'
