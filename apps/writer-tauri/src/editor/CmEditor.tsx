@@ -129,6 +129,16 @@ export function CmEditor({ handle, header }: Props) {
     let view: EditorView | null = null
     let mounted = true
 
+    // Word/char counts are display-only (floating stats panel), so recomputing them
+    // (trim + split the WHOLE doc) on every keystroke is wasted work on a large note.
+    // Debounce to the next idle moment; the save mirror below stays synchronous
+    // (persistence must never lag a keystroke). Cleared on unmount.
+    let statsTimer: ReturnType<typeof setTimeout> | undefined
+    const publishStatsDebounced = (text: string) => {
+      clearTimeout(statsTimer)
+      statsTimer = setTimeout(() => useDocStatsStore.getState().setStats(computeDocStats(text)), 150)
+    }
+
     // Cmd-Z / Cmd-Shift-Z router. Accept/Reject from the CHAT PANEL lands an undoable
     // entry in THIS editor's history, but the click leaves focus on the chat button, so
     // a plain Cmd-Z never reaches CM. We catch it at the document level and forward to
@@ -248,8 +258,8 @@ export function CmEditor({ handle, header }: Props) {
               if (!u.docChanged && !isDecisionTx(u.transactions)) return
               const text = u.state.doc.toString()
               // Publish live word/char counts for the floating stats panel —
-              // on every doc change, including programmatic loads.
-              useDocStatsStore.getState().setStats(computeDocStats(text))
+              // debounced (display-only; see publishStatsDebounced above).
+              publishStatsDebounced(text)
               if (u.transactions.some((t) => t.annotation(externalBody))) return
               const h = useDocsStore.getState().handles[handle.slug]
               // Exclude pending green (proposal) text from the saved body — disk
@@ -323,6 +333,7 @@ export function CmEditor({ handle, header }: Props) {
       // Obsidian "save on note switch" behaviour. Fire-and-forget: the
       // single-flight guard serialises it against the timer.
       void flushDirty()
+      clearTimeout(statsTimer)
       document.removeEventListener('keydown', onKeyDown)
       if (handle) unregisterCmEditor(handle.slug)
       useEditorSelectionStore.getState().setSelection(null)
