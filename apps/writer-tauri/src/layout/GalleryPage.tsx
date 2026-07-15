@@ -7,10 +7,12 @@
 // (via `var(--…)`) and components so it can never drift from production.
 // Step 1 ships Foundations → Color only; later steps append sections.
 
-import { type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ReleaseNotes, WhatsNewCard } from '@/components/WhatsNew'
 import { UpdateReadyToast, showUpdateReadyToast } from '@/components/UpdateReadyToast'
+import { WhatsNewPage } from '@/layout/WhatsNewPage'
 import { CHANGELOG } from '@/lib/changelog'
+import { IconChevronLeft } from '@tabler/icons-react'
 import { IconPlus, IconBrain, IconFileText, IconAlertTriangle, IconPlayerStopFilled } from '@tabler/icons-react'
 import type { ChatTurn, MessagePart } from '@/chat/types'
 import { MessageRow } from '@/chat/messages/MessageRow'
@@ -510,10 +512,51 @@ const NAV: { group: string; titles: string[] }[] = [
 
 // The update-related surfaces, gathered for design review. Toasts fire the
 // REAL methods (they appear in the corner); the rest render inline.
+// Interactive demo of the teaser → page flow, self-contained so it works
+// inside the gallery (real navigation would leave the page). A framed "device"
+// shows the sidebar teaser; clicking it swaps to the full What's-new page,
+// with a Back to return.
+function UpdateFlowDemo() {
+  const [view, setView] = useState<'teaser' | 'page'>('teaser')
+  const entry = CHANGELOG[0]
+  if (!entry) return null
+  return (
+    <div className="w-[560px] overflow-hidden rounded-xl border border-border bg-background shadow-sm">
+      <div className="border-b border-border/60 px-3 py-1.5 text-footnote text-muted-foreground">
+        {view === 'teaser' ? 'Sidebar bottom — click the teaser →' : "What's new page"}
+      </div>
+      {view === 'teaser' ? (
+        <div className="flex h-80 flex-col justify-end bg-sidebar">
+          <WhatsNewCard
+            version={entry.version}
+            headline={entry.headline}
+            onOpen={() => setView('page')}
+            onDismiss={() => {}}
+          />
+        </div>
+      ) : (
+        <div className="h-80 overflow-y-auto">
+          <button
+            type="button"
+            onClick={() => setView('teaser')}
+            className="sticky top-0 z-10 flex w-full items-center gap-1 border-b border-border/60 bg-background/90 px-4 py-2 text-footnote text-muted-foreground backdrop-blur transition-colors hover:text-foreground"
+          >
+            <IconChevronLeft size={14} /> Back to teaser
+          </button>
+          <WhatsNewPage />
+        </div>
+      )}
+    </div>
+  )
+}
+
 function UpdatesGallery() {
   const entry = CHANGELOG[0] ?? null
   return (
     <>
+      <Subgroup title="What's new — teaser → page flow (interactive)">
+        <UpdateFlowDemo />
+      </Subgroup>
       <Subgroup title="Update-ready toast — 3 actions (click to fire)">
         <Button
           variant="outline"
