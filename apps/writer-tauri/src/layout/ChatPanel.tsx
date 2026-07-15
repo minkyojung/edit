@@ -9,7 +9,7 @@
 // `/review` runs the copyeditor pass and drops inline comment marks; the
 // user is directed back to the body to act on individual highlights.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { parseFilePathFromPath } from '@/lib/viewUrl'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
@@ -32,6 +32,7 @@ import {
 import { useChatRuns } from '@/stores/chatRuns'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { useFastModeStore } from '@/state/fastModeStore'
+import { useChatScrollMode } from '@/state/chatScrollModeStore'
 import { usePendingPermissions } from '@/state/pendingPermissionsStore'
 import { usePermissionGate } from '@/chat/hooks/usePermissionGate'
 import { GatePanel } from '@/chat/GatePanel'
@@ -131,6 +132,17 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // auto-scroll behavior so the two never disagree.
   const [pinned, setPinned] = useState(true)
 
+  // Auto-scroll behaviour, toggled from the panel header. 'follow' = the
+  // long-standing stick-to-bottom effect below; 'anchor' = pin the just-sent
+  // message to the top of the viewport (ChatGPT-style). See chatScrollModeStore.
+  const scrollMode = useChatScrollMode((s) => s.mode)
+  // The turn currently anchored to the top of the viewport (anchor mode only;
+  // null in follow mode). Its presence renders the CSS spacer that guarantees a
+  // viewport of scroll room below the message so it CAN reach the top, and the
+  // effect below scrolls it into view. Set on send, cleared on mode/thread
+  // change — it deliberately survives streaming so the message stays pinned.
+  const [anchorId, setAnchorId] = useState<string | null>(null)
+
   // Active thread's preferred model / effort. Threads created before these
   // fields existed return undefined; fall back to the defaults in that case.
   // normalizeModel coerces a retired stored id (e.g. claude-opus-4-7) to a
@@ -224,15 +236,40 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     }
   }, [threads])
 
-  // Auto-scroll only when the user is already pinned to the bottom — if they
-  // scrolled up to read history, leave them alone. Streaming uses 'auto' (no
-  // animation) so rapid token deltas don't fight an in-flight smooth scroll.
+  // FOLLOW mode: auto-scroll only when the user is already pinned to the bottom
+  // — if they scrolled up to read history, leave them alone. Streaming uses
+  // 'auto' (no animation) so rapid token deltas don't fight an in-flight smooth
+  // scroll. Disabled in 'anchor' mode, which owns the scroll position itself.
   useEffect(() => {
+    if (scrollMode !== 'follow') return
     if (!pinned) return
     bottomRef.current?.scrollIntoView({
       behavior: streaming ? 'auto' : 'smooth',
     })
-  }, [turnsHook.turns, streaming, pinned])
+  }, [turnsHook.turns, streaming, pinned, scrollMode])
+
+  // ANCHOR mode: scroll the just-sent bubble to the top. No measurement and no
+  // manual scrollTop math — the last turn's min-height (see the render) reserves
+  // a viewport of room below the message, and scroll-margin-top on the wrapper
+  // makes scrollIntoView land it exactly under the glass band. anchorId
+  // deliberately outlives streaming, so the message stays pinned as the reply
+  // grows below it. Smooth so the bubble glides up rather than jumping —
+  // honouring prefers-reduced-motion, which snaps instantly instead.
+  useLayoutEffect(() => {
+    if (!anchorId) return
+    const el = scrollRef.current?.querySelector<HTMLElement>(
+      `[data-turn-id="${anchorId}"]`,
+    )
+    if (!el) return
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' })
+  }, [anchorId])
+
+  // Clear the anchor when leaving anchor mode or switching threads, so no
+  // reserved room / scroll position bleeds across.
+  useEffect(() => {
+    setAnchorId(null)
+  }, [scrollMode, activeId])
 
   // An open doc (`slug`) is enough — edits flow through pendingChangesStore, not
   // a live editor view. The queue route is read-only Q&A; the FileViewer route
@@ -390,6 +427,8 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       slashInvocation: { name: cmd.name, args },
     }
     turnsHook.appendTurn(userTurn)
+    // ANCHOR mode: mark this turn so the layout effect scrolls it to the top.
+    if (scrollMode === 'anchor') setAnchorId(userTurn.id)
     await runSlashCommand(threadId, cmd, args, userTurn, [...turnsHook.turns, userTurn])
   }
 
@@ -507,6 +546,8 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
             slashInvocation: { name: slash.name, args: slash.args },
           }
           turnsHook.appendTurn(userTurn)
+          // ANCHOR mode: mark this turn so the layout effect scrolls it to the top.
+          if (scrollMode === 'anchor') setAnchorId(userTurn.id)
           resetContextChips()
           await runVaultCommand(threadId, slash.name, slash.args, [
             ...turnsHook.turns,
@@ -560,6 +601,8 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
 
       // The user's turn is finished text — push to Yjs once and let it sync.
       turnsHook.appendTurn(userTurn)
+      // ANCHOR mode: mark this turn so the layout effect scrolls it to the top.
+      if (scrollMode === 'anchor') setAnchorId(userTurn.id)
 
       // Detach the one-shot prop-backed chips now that they're committed to the
       // turn (draft chips were already cleared by the composer's submit).
@@ -719,9 +762,11 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         // px-1.5 (6px) = --surface-inset + 1rem from the card edge, so this
         // tracks the gap automatically.
         className="flex min-h-0 flex-1 flex-col overflow-y-auto px-[calc(var(--surface-inset)_+_1rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*+*]:mt-6"
-        // Top: clear the overlay header (content scrolls behind it).
+        // Top: clear the glass fade band (RightPanel) — same --chat-top-inset
+        // token, so content begins exactly where the band goes transparent and
+        // the first message is never painted over.
         // Bottom: clear the floating composer so the last message isn't hidden.
-        style={{ paddingTop: 'calc(var(--header-h) + 0.25rem)', paddingBottom: footerHeight + 12 }}
+        style={{ paddingTop: 'var(--chat-top-inset)', paddingBottom: footerHeight + 12 }}
       >
         {renderedTurns.length === 0 && (
           // ContentUnavailableView pattern (macOS 14+/iOS 17+):
@@ -740,21 +785,42 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
             </p>
           </div>
         )}
-        {renderedTurns.map((turn) => (
-          <MessageRow
+        {renderedTurns.map((turn, i) => (
+          // data-turn-id lets the anchor effect find this bubble to scroll it to
+          // the top. scroll-margin-top = --chat-top-inset so scrollIntoView lands
+          // it just under the glass band, not beneath it. The wrapper is the
+          // scroll container's direct child, so [&>*+*]:mt-6 still spaces turns.
+          //
+          // ANCHOR mode reserves a viewport of scroll room by giving the LAST
+          // turn's wrapper a min-height. Pure CSS, self-trimming: a short reply
+          // is padded so the anchored message can sit at the top; a reply that
+          // already fills the viewport doesn't grow the wrapper, so there's no
+          // trailing void. min-height on the wrapper (not the bubble) keeps the
+          // bubble its natural size at the top of the padded box.
+          <div
             key={turn.id}
-            turn={turn}
-            threadId={activeId}
-            threadTitle={activeThread?.title ?? ''}
-            onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
-            // While a plan is parked for approval, its plan lives in the
-            // approval card — hide the (redundant) answer text so the plan
-            // isn't shown twice.
-            hideText={
-              turn.status === 'streaming' &&
-              pendingPermission?.toolName === 'ExitPlanMode'
-            }
-          />
+            data-turn-id={turn.id}
+            style={{
+              scrollMarginTop: 'var(--chat-top-inset)',
+              ...(anchorId && i === renderedTurns.length - 1
+                ? { minHeight: 'calc(100dvh - var(--chat-top-inset))' }
+                : {}),
+            }}
+          >
+            <MessageRow
+              turn={turn}
+              threadId={activeId}
+              threadTitle={activeThread?.title ?? ''}
+              onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
+              // While a plan is parked for approval, its plan lives in the
+              // approval card — hide the (redundant) answer text so the plan
+              // isn't shown twice.
+              hideText={
+                turn.status === 'streaming' &&
+                pendingPermission?.toolName === 'ExitPlanMode'
+              }
+            />
+          </div>
         ))}
         {pendingPlanText && (
           <div className="px-1 text-[15px] leading-relaxed text-foreground">

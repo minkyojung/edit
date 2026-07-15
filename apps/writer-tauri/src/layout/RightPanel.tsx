@@ -12,13 +12,22 @@
 // reopening shows the last-active mode without a re-mount flicker.
 
 import { useEffect } from 'react'
+import { IconArrowBarToDown, IconArrowBarToUp } from '@tabler/icons-react'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useThreads, type UseThreadsResult } from '@/hooks/useThreads'
 import { useActiveThread } from '@/hooks/useActiveThread'
 import { useThreadsStore } from '@/state/threadsStore'
 import { useSeenThreads } from '@/state/seenThreadsStore'
+import { useChatScrollMode } from '@/state/chatScrollModeStore'
 import { ChatTabs } from '@/chat/ChatTabs'
 import { ArchivedThreadsPopover } from '@/chat/ArchivedThreadsPopover'
+import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { notify } from '@/lib/notify'
 import { ChatPanel } from './ChatPanel'
 
@@ -62,7 +71,7 @@ export function RightPanel({ slug }: Props) {
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 z-sticky bg-background/90"
         style={{
-          height: 'calc(var(--header-h) + 2rem)',
+          height: 'var(--chat-top-inset)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
           maskImage:
@@ -81,6 +90,39 @@ export function RightPanel({ slug }: Props) {
         />
       </div>
     </div>
+  )
+}
+
+// Temporary A/B toggle for the two auto-scroll behaviours (see
+// chatScrollModeStore). 'follow' shows the down-bar icon (stick to bottom);
+// 'anchor' shows the up-bar icon (pin the sent message to the top).
+function ScrollModeToggle() {
+  const mode = useChatScrollMode((s) => s.mode)
+  const toggle = useChatScrollMode((s) => s.toggle)
+  const anchor = mode === 'anchor'
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="iconGhost"
+            size="icon-sm"
+            className="shrink-0 self-center"
+            aria-label={anchor ? 'Scroll: anchor to top' : 'Scroll: follow bottom'}
+            onClick={toggle}
+          >
+            {anchor ? (
+              <IconArrowBarToUp size={16} stroke={1.75} />
+            ) : (
+              <IconArrowBarToDown size={16} stroke={1.75} />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {anchor ? 'Anchor sent message to top' : 'Follow newest (stick to bottom)'}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 
@@ -124,6 +166,7 @@ function RightPanelHeader({
       />
       {/* Panel controls grouped on the right; the tabs sit on the left. */}
       <div className="ml-auto flex items-center gap-0.5">
+        <ScrollModeToggle />
         <ArchivedThreadsPopover
           archived={threads.archived}
           activeCount={threads.active.length}
