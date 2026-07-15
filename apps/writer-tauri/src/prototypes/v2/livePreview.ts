@@ -11,7 +11,7 @@
 //   • atomicRanges (caret skipping hidden markers) — step 2b
 //   • IME composition freeze (replace near composing text) — step 2c
 
-import { syntaxTree } from '@codemirror/language'
+import { syntaxTree, forceParsing } from '@codemirror/language'
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { Facet, type EditorState, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
@@ -78,10 +78,6 @@ function buildDecos(
   // lists, quotes, tasks, inline marks) through this one predicate is what makes
   // an unfocused editor render uniformly clean.
   const caretIn = (from: number, to: number) => focused && cursorInRange(state, from, to)
-  // Lines whose list marker the Lezer `ListMark` branch already styled, so the
-  // immediate-marker fallback (after the tree walk) doesn't double-decorate once
-  // the parser catches up a keystroke later.
-  const listLinesDone = new Set<number>()
   const tree = syntaxTree(state)
   const mark = (from: number, to: number, cls: string) => {
     if (to > from) out.push(Decoration.mark({ class: cls }).range(from, to))
@@ -253,7 +249,6 @@ function buildDecos(
           }
           const level = Math.max(0, depth - 1)
           const line = state.doc.lineAt(nf)
-          listLinesDone.add(line.from)
           out.push(
             Decoration.line({
               class: 'cm-list-line',
@@ -333,62 +328,6 @@ function buildDecos(
         hide(innerTo, end)
       }
     }
-
-    // Immediate list markers — the Lezer `ListMark`/`BulletList` node only forms
-    // once the item has content, so a just-typed `- ` / `1. ` stays raw until the
-    // parser catches up a keystroke later (its own comment notes this for tasks).
-    // Decorate any list-shaped line the tree walk didn't already cover, so the
-    // bullet / number appears on the keystroke — mirrors the task-marker regex
-    // trick above. Marks only (no replace) → IME-safe, same as the Lezer path.
-    if (!inlineOnly) {
-      const firstLine = state.doc.lineAt(from).number
-      const lastLine = state.doc.lineAt(Math.min(to, state.doc.length)).number
-      for (let ln = firstLine; ln <= lastLine; ln++) {
-        const line = state.doc.line(ln)
-        if (listLinesDone.has(line.from)) continue // Lezer already styled this line
-        const lm = /^(\s*)([-*+]|\d+[.)])\s/.exec(line.text)
-        if (!lm) continue
-        if (/^[-*_ ]+$/.test(line.text.trim())) continue // `---` / `* * *` = rule, not list
-        if (inCodeContext(state, line.from)) continue // `- ` inside a code fence is literal
-        const indent = lm[1].length
-        const markerFrom = line.from + indent
-        const markerTo = markerFrom + lm[2].length
-        const isNum = /\d/.test(lm[2])
-        // Hanging indent — match the ListMark branch so the body doesn't shift when
-        // Lezer catches up. Depth from indentation (exact for top level; transient).
-        const level = Math.floor(indent / 2)
-        out.push(
-          Decoration.line({
-            class: 'cm-list-line',
-            attributes: {
-              style: `padding-left:${(level + 1) * LIST_INDENT}em;text-indent:-${LIST_INDENT}em`,
-            },
-          }).range(line.from),
-        )
-        const tm = isNum ? null : /^ \[([ xX])\]/.exec(state.doc.sliceString(markerTo, markerTo + 4))
-        if (tm) {
-          const taskTo = markerTo + 4
-          const checked = /[xX]/.test(tm[1])
-          mark(
-            markerFrom,
-            taskTo,
-            caretIn(markerFrom, taskTo)
-              ? 'cm-list-marker'
-              : `cm-list-marker cm-task-marker${checked ? ' cm-task-marker-checked' : ''}`,
-          )
-        } else if (isNum) {
-          mark(markerFrom, markerTo, 'cm-list-marker cm-list-num')
-        } else {
-          mark(
-            markerFrom,
-            markerTo,
-            caretIn(markerFrom, markerTo)
-              ? 'cm-list-marker'
-              : 'cm-list-marker cm-list-bullet',
-          )
-        }
-      }
-    }
   }
   return out
 }
@@ -411,6 +350,13 @@ function previewPlugin(inlineOnly: boolean) {
         this.deco = this.build(view)
       }
       build(view: EditorView): DecorationSet {
+        // Ensure the Lezer tree is current for the visible range BEFORE we read it.
+        // The incremental parser runs in idle time, so a just-typed `- ` / `1. ` can
+        // lag one keystroke behind — which used to force a hand-rolled regex fallback
+        // to paint the marker on the keystroke. Forcing the parse (bounded to the
+        // viewport + a small budget) makes `syntaxTree(state)` authoritative, so the
+        // single Lezer `ListMark` branch below is the ONE source of list styling.
+        forceParsing(view, view.viewport.to, 50)
         // Cell mode reveals by focus (a single-line cell is always "on its line").
         const revealAll = inlineOnly ? view.hasFocus : undefined
         return Decoration.set(
