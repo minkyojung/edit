@@ -27,7 +27,7 @@ import { useDocStatsStore, computeDocStats } from '@/state/docStatsStore'
 import { registerCmEditor, unregisterCmEditor } from '@/state/activeCmEditor'
 import { markSlugDirty, flushDirty } from '@/lib/docFileSync'
 import { cmPrototypeTheme } from '@/prototypes/cmTheme'
-import { livePreviewV2, taskCheckboxClick, wikilinkKnown } from '@/prototypes/v2/livePreview'
+import { livePreviewV2, wikilinkKnown } from '@/prototypes/v2/livePreview'
 import { blocksV2 } from '@/prototypes/v2/blocks'
 import { tableArrowEntry } from '@/prototypes/v2/editableTable'
 import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
@@ -196,7 +196,6 @@ export function CmEditor({ handle, header }: Props) {
             EditorView.contentAttributes.of({ lang: 'en' }),
             markdown({ extensions: [GFM], addKeymap: false }),
             placeholder('Start writing…'),
-            taskCheckboxClick,
             livePreviewV2,
             blocksV2,
             youtubeCards, // a bare youtube URL line → inline player

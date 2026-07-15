@@ -261,16 +261,11 @@ export const cmPrototypeTheme = EditorView.theme({
     textDecoration: 'line-through',
     color: 'var(--muted-foreground)',
   },
-  // Task checkbox (v2 step 5) — OVERLAY: keep the `- [ ]` source but
-  // visibility:hidden and draw the box with a position:absolute ::after (out of
-  // flow → no reflow, no paint lag). The fixed `.cm-list-marker` column pins the
-  // box at the right edge regardless of `[ ]` vs `[x]` width.
-  '.cm-task-marker': {
-    visibility: 'hidden',
-  },
-  '.cm-task-marker::after': {
-    content: '""',
-    visibility: 'visible',
+  // Task checkbox — a REAL element (CheckboxWidget in livePreview.ts) inside the
+  // fixed `.cm-list-marker` column, so it receives the click natively (no CSS
+  // `::after` + coordinate hit-testing). position:absolute → out of flow, no
+  // reflow; the column pins it at the right edge regardless of `[ ]` vs `[x]`.
+  '.cm-task-box': {
     position: 'absolute',
     right: '0.15em',
     top: '50%',
@@ -285,7 +280,7 @@ export const cmPrototypeTheme = EditorView.theme({
   // Checked → fill + a checkmark drawn as a centred SVG BACKGROUND (not the `✓`
   // glyph, whose font metrics pushed it to the box's top-left). background-position
   // center is pixel-exact and font-independent.
-  '.cm-task-marker-checked::after': {
+  '.cm-task-box-checked': {
     background:
       "var(--info) url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12.5l4.5 4.5L19 7'/></svg>\") center / 0.72em no-repeat",
     borderColor: 'var(--info)',

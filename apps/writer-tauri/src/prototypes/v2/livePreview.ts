@@ -12,7 +12,7 @@
 //   • IME composition freeze (replace near composing text) — step 2c
 
 import { syntaxTree, forceParsing } from '@codemirror/language'
-import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
+import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { Facet, type EditorState, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
 import { isKnownNote } from '../wikilinkComplete'
@@ -31,6 +31,55 @@ export const wikilinkKnown = Facet.define<(title: string) => boolean, (title: st
 // the `.cm-list-marker` inline-block width (CSS, cmTheme) MUST match this value so
 // the marker fills its column and body text lands exactly at the column edge.
 const LIST_INDENT = 1.8
+
+// A task line's `- [ ]`/`- [x]` prefix: m[1] = up to and including `[`, m[2] = the
+// status char. Shared by the checkbox widget's click handler.
+const TASK_RE = /^(\s*[-*+] \[)([ xX])\]/
+
+// Task checkbox — a REAL, clickable widget replacing the `- [ ]` / `- [x]` prefix
+// when the caret is off it. Clicking toggles `[ ]`↔`[x]` as a 1-char doc change
+// (the text is the source of truth; the decoration re-renders the box from it).
+// Drawn as a WidgetType (not a CSS `::after` on hidden text) so the box receives
+// the click NATIVELY — no coordinate hit-testing tied to CSS constants. A single-
+// line inline replace is legal from a ViewPlugin, and IME-safe (the marker column
+// is never where prose is typed). No atomicRanges: moving the caret onto the prefix
+// reveals the raw markdown (caretIn below), so the marker stays editable like a
+// bullet — an atomic range would make it unreachable.
+class CheckboxWidget extends WidgetType {
+  constructor(readonly checked: boolean) {
+    super()
+  }
+  eq(o: CheckboxWidget) {
+    return o.checked === this.checked
+  }
+  toDOM(view: EditorView) {
+    const marker = document.createElement('span')
+    marker.className = 'cm-list-marker'
+    const box = document.createElement('span')
+    box.className = this.checked ? 'cm-task-box cm-task-box-checked' : 'cm-task-box'
+    box.setAttribute('role', 'checkbox')
+    box.setAttribute('aria-checked', String(this.checked))
+    box.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      // Resolve the toggle position LIVE from the widget's DOM, so an edit above
+      // that shifted this line can't write the wrong offset (no stored position).
+      const pos = view.posAtDOM(box)
+      const line = view.state.doc.lineAt(pos)
+      const m = TASK_RE.exec(line.text)
+      if (!m) return
+      const statusPos = line.from + m[1].length // the ` `/`x` inside `[ ]`
+      view.dispatch({
+        changes: { from: statusPos, to: statusPos + 1, insert: /[xX]/.test(m[2]) ? ' ' : 'x' },
+      })
+    })
+    marker.appendChild(box)
+    return marker
+  }
+  ignoreEvent() {
+    return true
+  }
+}
 
 /** Any selection range touches [from, to] (inclusive — an edge counts, so a
  * just-typed marker stays raw until the caret moves off). */
@@ -258,26 +307,20 @@ function buildDecos(
             }).range(line.from),
           )
 
-          // Task `- [ ] ` → draw a checkbox over the `- [ ]` prefix. Detect by the
-          // text after the dash (regex), NOT the lezer `Task` node (which only forms
-          // once the item has content → a keystroke late). OVERLAY, not replace: the
-          // marker box is the fixed-width `.cm-list-marker`, and the checkbox is a
-          // position:absolute ::after on `.cm-task-marker` (out of flow → no reflow,
-          // no paint lag). The fixed column also pins the box and body regardless of
-          // `[ ]` vs `[x]` width, so the old per-char monospace hack is gone.
+          // Task `- [ ] ` → draw a clickable checkbox over the `- [ ]` prefix. Detect
+          // by the text after the dash (regex), NOT the lezer `Task` node (which only
+          // forms once the item has content). Caret ON the prefix → show it raw
+          // (editable); otherwise REPLACE it with the CheckboxWidget so the box is a
+          // real element that receives the click (see CheckboxWidget). The fixed
+          // `.cm-list-marker` column pins box + body regardless of `[ ]` vs `[x]`.
           if (item?.parent?.name === 'BulletList') {
             const tm = /^ \[([ xX])\]/.exec(state.doc.sliceString(nt, nt + 4))
             if (tm) {
               const markerTo = nt + 4 // after `]`
               const checked = /[xX]/.test(tm[1])
               const revealed = caretIn(nf, markerTo) // caret on `- [ ]` → raw
-              mark(
-                nf,
-                markerTo,
-                revealed
-                  ? 'cm-list-marker'
-                  : `cm-list-marker cm-task-marker${checked ? ' cm-task-marker-checked' : ''}`,
-              )
+              if (revealed) mark(nf, markerTo, 'cm-list-marker')
+              else out.push(Decoration.replace({ widget: new CheckboxWidget(checked) }).range(nf, markerTo))
               // Completed task → strike + mute the body (kept while editing, like
               // Obsidian). Start at the first non-space AFTER the marker so the
               // strike doesn't run through the gap between the checkbox and the text.
@@ -389,39 +432,3 @@ export const livePreviewInline = previewPlugin(true)
 // Test-only: the pure decoration builder, so reveal behavior can be asserted
 // headlessly (the ViewPlugin's composing-freeze needs a real browser).
 export { buildDecos as _buildDecos, HIDE as _HIDE }
-
-// Click the drawn checkbox → toggle `[ ]`↔`[x]`. The box is a CSS `::after`
-// pseudo-element, so it can't be an event target. Instead we hit-test the click
-// against the box's rect — derived from the marker's end coordinate (the right
-// edge of the hidden `- [ ]`) plus the known CSS geometry (right:0.15em, 1.05em
-// square, vertically centred) — at the editor level, which always receives the
-// event. ONLY a hit inside the box toggles; anything else falls through to normal
-// caret placement, so "box only" is honoured. Toggling = a 1-char doc change
-// (text is the source of truth); the decoration re-renders the box from it.
-const TASK_RE = /^(\s*[-*+] \[)([ xX])\]/
-export const taskCheckboxClick = EditorView.domEventHandlers({
-  mousedown(event, view) {
-    if (event.button !== 0) return false
-    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
-    if (pos == null) return false
-    const line = view.state.doc.lineAt(pos)
-    const m = TASK_RE.exec(line.text)
-    if (!m) return false
-    const markerStart = line.from + (m[1].length - 3) // the `-`
-    const markerTo = line.from + m[0].length // just after `]`
-    if (cursorInRange(view.state, markerStart, markerTo)) return false // revealed → no box
-    const end = view.coordsAtPos(markerTo) // right edge of the hidden marker
-    if (!end) return false
-    const fs = parseFloat(getComputedStyle(view.contentDOM).fontSize) || 16
-    const boxRight = end.left - 0.15 * fs
-    const boxLeft = boxRight - 1.05 * fs
-    const cy = (end.top + end.bottom) / 2
-    const halfH = 0.525 * fs + 2 // +2px vertical tolerance
-    if (event.clientX < boxLeft || event.clientX > boxRight) return false
-    if (event.clientY < cy - halfH || event.clientY > cy + halfH) return false
-    event.preventDefault()
-    const statusPos = line.from + m[1].length // the space / `x`
-    view.dispatch({ changes: { from: statusPos, to: statusPos + 1, insert: /[xX]/.test(m[2]) ? ' ' : 'x' } })
-    return true
-  },
-})
