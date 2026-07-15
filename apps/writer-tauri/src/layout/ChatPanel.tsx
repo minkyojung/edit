@@ -529,7 +529,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       // selection/viewing-file via the shared helper (same commit boundary the
       // slash paths use).
       const turnAttachments: Attachment[] = [
-        ...attachments.map((f) => ({ type: 'file' as const, name: f.name, mediaType: f.mediaType })),
+        ...attachments.map((f) => ({ type: 'file' as const, name: f.name, mediaType: f.mediaType, path: f.path })),
         ...pastedTexts.map((p) => ({ type: 'pasted' as const, preview: p.preview, content: p.content })),
         ...captureContextChips(),
       ]
@@ -627,7 +627,16 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         // Command was renamed / removed since the original send; fall back
         // to plain chat so the rerun at least produces something.
       }
-      await runner.run(threadId, history)
+      // Re-derive the turn's file attachments + @-mentions from what was
+      // committed onto it, so the rerun sees the same context as the original
+      // send (without this, regenerate silently dropped them). Pasted text +
+      // selection ride on turn.content / buildUserPrompt already. Old turns
+      // predate persisted paths — skip any file attachment missing one.
+      const regenAttachments: FileAttachment[] = (lastUser.attachments ?? [])
+        .filter((a): a is Extract<Attachment, { type: 'file' }> => a.type === 'file' && !!a.path)
+        .map((a) => ({ id: crypto.randomUUID(), name: a.name, mediaType: a.mediaType, path: a.path }))
+      const regenMentions = (lastUser.mentions ?? []).map((m) => m.path)
+      await runner.run(threadId, history, undefined, undefined, regenAttachments, regenMentions)
     } finally {
       sendInFlightRef.current = false
     }

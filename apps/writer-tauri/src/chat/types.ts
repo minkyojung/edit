@@ -421,8 +421,10 @@ export type Attachment =
   // Editor selection the message was about: `label` is the composer's chip
   // label ("Note · L10–14"), `preview` the selected text (tooltip).
   | { type: 'selection'; label: string; preview: string }
-  // A file the user uploaded (name + media type for the chip glyph).
-  | { type: 'file'; name: string; mediaType: string }
+  // A file the user uploaded. `path` (vault-relative, under .octave/attachments/)
+  // makes the turn self-contained: regenerate re-sends it, and the attachment GC
+  // can tell a live file from an orphan. `name`/`mediaType` drive the chip glyph.
+  | { type: 'file'; name: string; mediaType: string; path: string }
   // The non-markdown file the chat was viewing (vault-relative path).
   | { type: 'viewing-file'; path: string }
   // Long pasted text kept as a chip (not folded into the message). `preview`

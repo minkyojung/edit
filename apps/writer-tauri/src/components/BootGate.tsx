@@ -40,6 +40,7 @@ import { seedSkills } from '@/lib/skillsLib'
 import { DEFAULT_SKILLS, DEFAULT_COMMANDS, DEFAULT_AGENTS } from '@/agent/defaults'
 import { isTranslationProject } from '@/lib/translationProject'
 import { gitInit, gitEnsureGitignoreEntries } from '@/lib/git'
+import { sweepOrphanAttachments } from '@/lib/attachmentGc'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
@@ -202,6 +203,9 @@ export function BootGate({ children }: Props) {
       // `.octave/threads/`). hydrate is idempotent so StrictMode's double-
       // mount is safe.
       void useThreadsStore.getState().hydrate()
+      // Sweep orphaned chat attachment files (sends never cleaned, abandoned
+      // drafts, deleted threads). Background + best-effort — never blocks boot.
+      void sweepOrphanAttachments().catch(() => {})
     }
     void init()
   }, [hasVault, vaultChecked, bootstrap])
