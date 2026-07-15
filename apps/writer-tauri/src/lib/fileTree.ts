@@ -20,9 +20,19 @@ import type { SortMode } from '@/state/sortStore'
  * `.git/`, …). Mirrors Obsidian hiding `.obsidian/`. Exported so other
  * surfaces (the "Move to…" folder list) hide the same set. Catalog-derived
  * paths already drop dot-entries upstream (scanVault), so the `.`-check is
- * belt-and-braces for any raw folder/file list passed in. */
+ * belt-and-braces for any raw folder/file list passed in.
+ *
+ * `threads/` is chat-thread storage. New vaults keep it under `.octave/`
+ * (hidden by the `.`-check), but a pre-`.octave` vault still has a
+ * top-level `threads/` that was never migrated — keep hiding that too so
+ * the app-internal thread JSON never leaks into the tree. */
 export function isHiddenTreePath(path: string): boolean {
-  return path.startsWith('_') || path.startsWith('.')
+  return (
+    path.startsWith('_') ||
+    path.startsWith('.') ||
+    path === 'threads' ||
+    path.startsWith('threads/')
+  )
 }
 
 export interface TreeFile {

@@ -184,4 +184,14 @@ describe('buildFileTree — attachments (non-md files)', () => {
     const tree = buildFileTree([], [], 'name-asc', ['_system/secret.png', 'ok.png'])
     expect(tree.map((n) => n.name)).toEqual(['ok.png'])
   })
+
+  it('hides legacy top-level threads/ (folder + chat JSON) from the tree', () => {
+    const tree = buildFileTree(
+      [],
+      ['threads'],
+      'name-asc',
+      ['threads/abc.json', 'threads/abc.turns.jsonl', 'ok.png'],
+    )
+    expect(tree.map((n) => n.name)).toEqual(['ok.png'])
+  })
 })

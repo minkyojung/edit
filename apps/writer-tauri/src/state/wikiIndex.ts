@@ -38,6 +38,7 @@ import { extractWikilinks } from '@/lib/wikilinkResolve'
 import { isEffectivelyEmpty } from '@/lib/markdownText'
 import { ensureIndexWikiSlug, readWikiMarkdown } from './wikiService'
 import { pathForDoc as computePathForDoc } from '@/lib/docPaths'
+import { isHiddenTreePath } from '@/lib/fileTree'
 import { writeVaultFile } from '@/lib/vault'
 import { getDefaultNoteFolder, getKnowledgeBaseFolder } from './settingsStore'
 import { useDocsStore } from './docsStore'
@@ -330,10 +331,11 @@ export async function buildWikiIndex(): Promise<string> {
 
   // Bucket non-note attachments (pdf/image/…) by the same folder key.
   // `knownFiles` is already sidecar-free (see isAttachmentFile); we only
-  // drop host-owned areas the map doesn't catalog.
+  // drop host-owned areas the map doesn't catalog (`_system/`, `.`-dirs,
+  // and legacy top-level `threads/` chat JSON — same set the tree hides).
   const attachBySection = new Map<string, string[]>()
   for (const file of store.knownFiles) {
-    if (file.startsWith('_system/')) continue
+    if (isHiddenTreePath(file)) continue
     const key = folderOf(file)
     let list = attachBySection.get(key)
     if (!list) {
@@ -396,6 +398,7 @@ export function pickEmptyFolders(
     if (folder === '' || folder === '_system') return false
     if (folder.startsWith('_system/')) return false
     if (folder === 'daily' || folder.startsWith('daily/')) return false
+    if (folder === 'threads' || folder.startsWith('threads/')) return false
     if (populated.has(folder)) return false
     if (hasPopulatedDescendant(folder)) return false
     return true
