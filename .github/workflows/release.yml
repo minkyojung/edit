@@ -23,9 +23,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm version comes from the root package.json `packageManager` field
+      # (the monorepo pins pnpm@10.x). Specifying it here too triggers
+      # action-setup's "Multiple versions of pnpm" error, so don't.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
