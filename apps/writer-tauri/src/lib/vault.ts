@@ -180,6 +180,16 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
     .join('')
 }
 
+/** Hash arbitrary UTF-8 text (a doc's body) for the watcher's move/rename
+ * correlation — same SHA-256 the echo layer uses. Body-only on both sides:
+ * an external move fires remove(old)+add(new); the removed doc's live body
+ * (`handle.bodyMarkdown`, frontmatter already stripped) is hashed against the
+ * new file's `splitFrontmatter(raw).body`, so the surrogate slug can follow
+ * the file instead of being re-minted. */
+export async function hashContent(text: string): Promise<string> {
+  return sha256Hex(new TextEncoder().encode(text))
+}
+
 /** Record the hash of bytes we just wrote so the watcher can
  * recognise the resulting fsevent as our own and suppress it.
  * Called from inside each `writeVault*` helper *before* the actual

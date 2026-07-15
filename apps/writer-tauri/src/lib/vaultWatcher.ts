@@ -38,10 +38,13 @@ import { pathForDoc } from '@/lib/docPaths'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
 import { invalidateVaultTimeline } from '@/state/vaultTimeline'
 import {
+  hashContent,
   isOurRecentWrite,
   listVaultTreeRecursive,
+  readVaultFile,
   vaultFileExists,
 } from './vault'
+import { splitFrontmatter } from './frontmatter'
 import { isDirty } from './docFileSync'
 import { buildKnownDocForExternalPath } from './scanVault'
 import { useExternalConflictStore } from '@/state/externalConflictStore'
@@ -418,6 +421,47 @@ function handleExternalReload(rel: string): void {
  *      sidebar selector re-renders on the next zustand notify and
  *      the doc appears under its placement group.
  */
+/** Pure move-correlation: given the body-hashes of currently-open docs and
+ * the newly-appeared file's body-hash, return the slug of the open doc that
+ * was moved/renamed here (content match), or null. Extracted so the
+ * correlation is unit-testable without the fs event stream. */
+export function matchMovedDoc(
+  openDocHashes: ReadonlyArray<{ slug: string; hash: string }>,
+  newBodyHash: string,
+): string | null {
+  const hit = openDocHashes.find((d) => d.hash === newBodyHash)
+  return hit ? hit.slug : null
+}
+
+/** A file appeared at `rel`. Find an OPEN doc whose live body matches it —
+ * that doc was moved/renamed here from another path. Only open docs (a live
+ * handle with `bodyMarkdown`) can be correlated, which is exactly the set
+ * with a tab/handle worth preserving; a closed doc being moved has no tab to
+ * lose. Both sides hash BODY-ONLY (the new file carries a frontmatter block,
+ * `bodyMarkdown` doesn't). Returns the moved doc's slug, or null.
+ *
+ * Order-independent: the remove leg defers its delete 150ms, so the old doc
+ * is still in the catalog (with its handle) whether the add or remove event
+ * arrives first — this scan finds it either way. The dirty case is the one
+ * miss: an open doc with unsaved edits has `bodyMarkdown` ≠ its on-disk
+ * bytes, so a raw move won't hash-match and falls back to add. */
+async function findMovedOpenDocSlug(rel: string): Promise<string | null> {
+  let body: string
+  try {
+    body = splitFrontmatter(await readVaultFile(rel)).body
+  } catch {
+    return null
+  }
+  const newHash = await hashContent(body)
+  const { handles } = useDocsStore.getState()
+  const openDocHashes = await Promise.all(
+    Object.entries(handles)
+      .filter((e): e is [string, NonNullable<(typeof e)[1]>] => !!e[1])
+      .map(async ([slug, h]) => ({ slug, hash: await hashContent(h.bodyMarkdown) })),
+  )
+  return matchMovedDoc(openDocHashes, newHash)
+}
+
 function handleExternalAdd(rel: string): void {
   // Track the new file for the next commit so a sidecar-created wiki
   // page (or one made by an external tool like Obsidian) flows into
@@ -427,34 +471,39 @@ function handleExternalAdd(rel: string): void {
   }
   const state = useDocsStore.getState()
   if (findSlugByVaultPath(state.knownDocs, rel)) return
-  void buildKnownDocForExternalPath(rel, state.knownDocs)
-    .then((doc) => {
-      if (!doc) return
-      const live = useDocsStore.getState()
-      const existing = live.knownDocs.find((d) => d.slug === doc.slug)
-      const plan = planReappear(existing, doc)
-      if (plan.kind === 'add') {
-        console.log('[vault:add] external doc added', { rel, slug: doc.slug })
-        live.addKnownDoc(doc)
-        return
-      }
-      // Same note (frontmatter slug) reappearing = an external
-      // move/rename. Cancel any pending delete for it (the remove leg of
-      // the move) so the open tab + handle survive, then update its
-      // placement IN PLACE when it actually shifted. For a generic note
-      // both the placement (`relPath`) AND the sidebar label (`title`,
-      // derived from the filename) follow the rename — a pure folder move
-      // keeps the filename so only relPath changes, but a rename changes
-      // the title too, and without refreshing it the row would keep the
-      // old name. A `noop` plan (echo: same path + title) skips the write.
-      cancelPendingRemove(doc.slug)
-      if (plan.kind === 'update') {
-        live.updateKnownDocPath(doc.slug, plan.relPath, plan.title)
-      }
-    })
-    .catch((err) => {
-      console.warn('[vault:add] failed to build KnownDoc', { rel, err })
-    })
+  void (async () => {
+    // Move/rename correlation (VS Code-style): if an OPEN doc's body matches
+    // the new file, it was moved here. Reuse its slug via updateKnownDocPath
+    // so the tab + handle follow, and cancel the remove leg's pending delete
+    // (its path re-check would otherwise fire). This replaces the pre-Phase-2
+    // frontmatter-slug match, which broke once mint stopped recovering slugs.
+    const movedSlug = await findMovedOpenDocSlug(rel)
+    if (movedSlug) {
+      cancelPendingRemove(movedSlug)
+      const title = rel.split('/').pop()!.replace(/\.md$/, '')
+      useDocsStore.getState().updateKnownDocPath(movedSlug, rel, title)
+      console.log('[vault:move] open tab followed', { rel, slug: movedSlug })
+      return
+    }
+    // Genuine new file → build + add (or the planReappear update/noop echo
+    // race for a doc that reappears at a path already mapped to its slug).
+    const doc = await buildKnownDocForExternalPath(rel, useDocsStore.getState().knownDocs)
+    if (!doc) return
+    const live = useDocsStore.getState()
+    const existing = live.knownDocs.find((d) => d.slug === doc.slug)
+    const plan = planReappear(existing, doc)
+    if (plan.kind === 'add') {
+      console.log('[vault:add] external doc added', { rel, slug: doc.slug })
+      live.addKnownDoc(doc)
+      return
+    }
+    cancelPendingRemove(doc.slug)
+    if (plan.kind === 'update') {
+      live.updateKnownDocPath(doc.slug, plan.relPath, plan.title)
+    }
+  })().catch((err) => {
+    console.warn('[vault:add] failed to process external add', { rel, err })
+  })
 }
 
 /** A watched `.md` disappeared from disk. Decision tree:
