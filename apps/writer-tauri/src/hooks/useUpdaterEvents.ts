@@ -15,7 +15,7 @@ import { useUpdateStore } from '@/state/updateStore'
 import { useWhatsNewStore } from '@/state/whatsNewStore'
 import { showUpdateReadyToast } from '@/components/UpdateReadyToast'
 import { armRestartWhenIdle } from '@/lib/restartWhenIdle'
-import { appNavigate } from '@/lib/appNavigate'
+import { openSettings } from '@/settings/useSettingsDialog'
 import { notify } from '@/lib/notify'
 
 /** Toast only the two user-facing moments, and only on the transition INTO
@@ -32,7 +32,7 @@ function reflectToast(prev: UpdateState, next: UpdateState) {
           version,
           notes: notes?.trim() || 'No release notes for this version.',
         })
-        appNavigate('/whats-new')
+        openSettings('about')
       },
       onRestartIdle: () => armRestartWhenIdle(),
       onRestart: () => void updater.install(),

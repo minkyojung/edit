@@ -9,6 +9,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { getVersion } from '@tauri-apps/api/app'
 import { useUpdateStore } from '@/state/updateStore'
 import { updater, type UpdateState } from '@/lib/updater'
+import { ReleaseNotesHistory } from '@/components/WhatsNew'
 import { Button } from '@/components/ui/button'
 import { SettingRow } from '../SettingRow'
 
@@ -101,6 +102,9 @@ export function AboutSettings() {
           {state.message}
         </p>
       )}
+
+      <h2 className="mt-8 mb-3 text-body font-semibold text-foreground">Release notes</h2>
+      <ReleaseNotesHistory />
     </section>
   )
 }

@@ -8,9 +8,8 @@
 // Step 1 ships Foundations → Color only; later steps append sections.
 
 import { useState, type ReactNode } from 'react'
-import { ReleaseNotes, WhatsNewCard } from '@/components/WhatsNew'
+import { ReleaseNotes, ReleaseNotesHistory, WhatsNewCard } from '@/components/WhatsNew'
 import { UpdateReadyToast, showUpdateReadyToast } from '@/components/UpdateReadyToast'
-import { WhatsNewPage } from '@/layout/WhatsNewPage'
 import { CHANGELOG } from '@/lib/changelog'
 import { IconChevronLeft } from '@tabler/icons-react'
 import { IconPlus, IconBrain, IconFileText, IconAlertTriangle, IconPlayerStopFilled } from '@tabler/icons-react'
@@ -512,25 +511,27 @@ const NAV: { group: string; titles: string[] }[] = [
 
 // The update-related surfaces, gathered for design review. Toasts fire the
 // REAL methods (they appear in the corner); the rest render inline.
-// Interactive demo of the teaser → page flow, self-contained so it works
-// inside the gallery (real navigation would leave the page). A framed "device"
-// shows the sidebar teaser; clicking it swaps to the full What's-new page,
-// with a Back to return.
+// Interactive demo of the teaser → settings flow, self-contained so it works
+// inside the gallery (really opening settings would cover the page). A framed
+// "device" shows the sidebar teaser; clicking it swaps to the Settings ▸ About
+// "Release notes" section, with a Back to return.
 function UpdateFlowDemo() {
-  const [view, setView] = useState<'teaser' | 'page'>('teaser')
+  const [view, setView] = useState<'teaser' | 'notes'>('teaser')
   const entry = CHANGELOG[0]
   if (!entry) return null
   return (
     <div className="w-[560px] overflow-hidden rounded-xl border border-border bg-background shadow-sm">
       <div className="border-b border-border/60 px-3 py-1.5 text-footnote text-muted-foreground">
-        {view === 'teaser' ? 'Sidebar bottom — click the teaser →' : "What's new page"}
+        {view === 'teaser'
+          ? 'Sidebar bottom — click the teaser →'
+          : 'Settings ▸ About ▸ Release notes'}
       </div>
       {view === 'teaser' ? (
         <div className="flex h-80 flex-col justify-end bg-sidebar">
           <WhatsNewCard
             version={entry.version}
             headline={entry.headline}
-            onOpen={() => setView('page')}
+            onOpen={() => setView('notes')}
             onDismiss={() => {}}
           />
         </div>
@@ -543,7 +544,10 @@ function UpdateFlowDemo() {
           >
             <IconChevronLeft size={14} /> Back to teaser
           </button>
-          <WhatsNewPage />
+          <div className="px-5 py-4">
+            <h2 className="mb-3 text-body font-semibold text-foreground">Release notes</h2>
+            <ReleaseNotesHistory />
+          </div>
         </div>
       )}
     </div>

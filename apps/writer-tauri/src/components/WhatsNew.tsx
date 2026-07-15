@@ -1,17 +1,19 @@
 // Release-notes UI. After an update lands, a small TEASER card (one headline)
-// pins to the sidebar bottom; clicking it opens the full What's-new PAGE
-// (/whats-new) — not a modal, not the whole changelog crammed into the card.
-// ReleaseNotes (the read-only rich render) is used by that page + the gallery.
+// pins to the sidebar bottom; clicking it opens Settings ▸ About, whose
+// "Release notes" section shows the full history — not a modal, not the whole
+// changelog crammed into the card. ReleaseNotesHistory renders that section
+// (reused by the gallery).
 
 import { useEffect, useState, type ComponentPropsWithoutRef } from 'react'
-import { useNavigate } from 'react-router-dom'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { IconX, IconChevronRight } from '@tabler/icons-react'
 import { getVersion } from '@tauri-apps/api/app'
 import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { useSettingsStore } from '@/state/settingsStore'
-import { changelogFor, type ChangelogEntry } from '@/lib/changelog'
+import { useWhatsNewStore } from '@/state/whatsNewStore'
+import { openSettings } from '@/settings/useSettingsDialog'
+import { CHANGELOG, changelogFor, type ChangelogEntry } from '@/lib/changelog'
 
 // No typography plugin, so map the elements release notes use to tailwind
 // classes. `node` is dropped so it never lands on a DOM attribute. Sized for
@@ -52,6 +54,37 @@ export function ReleaseNotes({ notes }: { notes: string }) {
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
       {notes}
     </ReactMarkdown>
+  )
+}
+
+/** The full release-notes history: the incoming version's notes at top when
+ * pinned (pre-install, from the update toast's "See changes"), then every
+ * bundled version newest-first. Rendered inside the About settings section
+ * (always reachable) and previewed in the gallery. */
+export function ReleaseNotesHistory() {
+  const pinned = useWhatsNewStore((s) => s.pinned)
+  return (
+    <div className="space-y-8">
+      {pinned && (
+        <section className="rounded-lg border border-border bg-muted/30 p-4">
+          <div className="mb-1 text-footnote font-medium text-muted-foreground">
+            Coming in Octave {pinned.version}
+          </div>
+          <ReleaseNotes notes={pinned.notes} />
+        </section>
+      )}
+      {CHANGELOG.map((entry) => (
+        <section key={entry.version}>
+          <div className="mb-1.5 flex items-baseline gap-2 border-b border-border/60 pb-1">
+            <h3 className="text-body font-semibold text-foreground">Octave {entry.version}</h3>
+            {entry.date && (
+              <span className="text-footnote text-muted-foreground">{entry.date}</span>
+            )}
+          </div>
+          <ReleaseNotes notes={entry.notes} />
+        </section>
+      ))}
+    </div>
   )
 }
 
@@ -97,15 +130,14 @@ export function WhatsNewCard({
 }
 
 /** Show the sidebar teaser once per version after an update lands (running
- * version differs from the last one acknowledged). Clicking opens /whats-new;
- * either that or the × marks the version seen. Suppressed during onboarding /
+ * version differs from the last one acknowledged). Clicking opens Settings ▸
+ * About; either that or the × marks the version seen. Suppressed during onboarding /
  * fresh installs and in per-project windows. Renders nothing when nothing's
  * new. */
 export function WhatsNewSidebar() {
   const lastSeen = useSettingsStore((s) => s.lastWhatsNewVersion)
   const setLastSeen = useSettingsStore((s) => s.setLastWhatsNewVersion)
   const bootstrapCompleted = useSettingsStore((s) => s.bootstrapCompleted)
-  const navigate = useNavigate()
   const [entry, setEntry] = useState<ChangelogEntry | null>(null)
 
   useEffect(() => {
@@ -133,7 +165,7 @@ export function WhatsNewSidebar() {
       onOpen={() => {
         setLastSeen(entry.version)
         setEntry(null)
-        navigate('/whats-new')
+        openSettings('about')
       }}
       onDismiss={() => {
         setLastSeen(entry.version)
