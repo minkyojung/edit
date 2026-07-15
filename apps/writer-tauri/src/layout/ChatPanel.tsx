@@ -51,6 +51,14 @@ import { useVaultCommands } from '@/state/vaultCommandsStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
+import {
+  REPLY_GAP,
+  bottomScrollTop,
+  computeAnchorScrollTop,
+  nextModeOnScroll,
+  shouldFollowFromAnchor,
+  type ScrollMode,
+} from '@/chat/scroll/scrollMath'
 import { ReviewTray } from '@/chat/ReviewTray'
 import { SkillProposalTray } from '@/chat/SkillProposalTray'
 
@@ -109,7 +117,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   const { account } = useClaudeAuth()
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const turnsHook = useThreadTurns(activeId)
-  const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   // The composer floats over the transcript (absolute) so chat content can
   // scroll behind its rounded corners instead of being cut off in a straight
@@ -124,20 +131,35 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // ref flips immediately on the same tick, so the second call short-
   // circuits before any side effects (turn append, sidecar request).
   const sendInFlightRef = useRef(false)
-  // Whether the user is currently pinned to the bottom of the transcript.
-  // Single source of truth shared by the auto-scroll effect (which only
-  // chases new content while pinned) and the scroll-to-bottom button (which
-  // only shows when *not* pinned). 80px threshold matches the pre-existing
-  // auto-scroll behavior so the two never disagree.
-  const [pinned, setPinned] = useState(true)
 
-  // The turn anchored to the top of the viewport: on send, the just-sent message
-  // is pinned to the top (ChatGPT-style) and the reply streams into the space
-  // below it. Its presence gives the last turn a min-height (see render) that
-  // reserves a viewport of scroll room so the message CAN reach the top, and the
-  // effect below scrolls it there. Set on send, cleared on thread change — it
-  // deliberately survives streaming so the message stays pinned.
+  // Single owner of the transcript's scroll position. Every auto-scroll flows
+  // through one layout effect that reads this mode — so the bottom-follow and
+  // send-anchor behaviours can never issue competing scrollTo()s and race.
+  //   FOLLOW_BOTTOM: stick to the bottom, chase new/streamed content (default).
+  //   ANCHORED:      pin the just-sent question near the top; reply fills below.
+  //   FREE:          user scrolled away to read history — no auto-scroll.
+  const [scrollMode, setScrollMode] = useState<ScrollMode>('FOLLOW_BOTTOM')
+
+  // The turn ANCHORED pins to the top. Subordinate data for that mode: which
+  // bubble to scroll to. Set alongside ANCHORED on send, cleared on thread
+  // switch. `lastScrolledAnchorRef` makes the anchor jump fire once per id, so
+  // streaming re-renders don't re-scroll a message that's already in place.
   const [anchorId, setAnchorId] = useState<string | null>(null)
+  const lastScrolledAnchorRef = useRef<string | null>(null)
+  // Tracks streaming truthiness across renders so we can detect the settle
+  // edge (truthy → null) and release a still-ANCHORED short reply.
+  const prevStreamingRef = useRef(false)
+
+  // Suppress `handleScroll` while WE are the one scrolling. A programmatic
+  // *smooth* scroll fires intermediate `scroll` events whose positions look
+  // like "the user scrolled away", which would clobber the mode mid-animation.
+  // We set this before such scrolls and clear it on `scrollend` (with a
+  // timeout fallback for engines — WKWebView — that don't fire scrollend).
+  // Streaming's instant bottom-scrolls are NOT suppressed: they land at the
+  // bottom so handleScroll re-affirms FOLLOW_BOTTOM on its own, and leaving
+  // them unsuppressed is what lets the user scroll up to pause following.
+  const suppressScrollRef = useRef(false)
+  const suppressTimerRef = useRef<number | undefined>(undefined)
 
   // Active thread's preferred model / effort. Threads created before these
   // fields existed return undefined; fall back to the defaults in that case.
@@ -202,10 +224,48 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   const { status: chatStatus, streaming } = runner
 
   const handleScroll = useCallback(() => {
+    // Ignore our own smooth scrolls (see suppressScrollRef); only genuine user
+    // scrolls change the mode.
+    if (suppressScrollRef.current) return
     const c = scrollRef.current
     if (!c) return
     const distance = c.scrollHeight - c.scrollTop - c.clientHeight
-    setPinned(distance < 80)
+    setScrollMode(nextModeOnScroll(distance))
+  }, [])
+
+  // Issue a programmatic scroll, marking it so handleScroll ignores the
+  // resulting events. Streaming's instant bottom-follow passes suppress=false.
+  const doScroll = useCallback(
+    (c: HTMLElement, top: number, smooth: boolean, suppress: boolean) => {
+      if (suppress) {
+        suppressScrollRef.current = true
+        if (suppressTimerRef.current) window.clearTimeout(suppressTimerRef.current)
+        suppressTimerRef.current = window.setTimeout(
+          () => {
+            suppressScrollRef.current = false
+          },
+          smooth ? 700 : 150,
+        )
+      }
+      c.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' })
+    },
+    [],
+  )
+
+  // Position the transcript for a just-sent turn. The FIRST turn in an empty
+  // thread follows the bottom instead of anchoring: there's nothing above to
+  // scroll past, so pinning a lone bubble to the top over an empty reserved
+  // viewport reads as broken — let the reply stream in above the composer.
+  // Every later send anchors: sets the target + mode together so the single
+  // scroll effect owns the jump. Used by every send path (free chat, slash,
+  // vault); pass `isFirstTurn` captured BEFORE the turn is appended.
+  const anchorSentTurn = useCallback((turnId: string, isFirstTurn: boolean) => {
+    if (isFirstTurn) {
+      setScrollMode('FOLLOW_BOTTOM')
+    } else {
+      setAnchorId(turnId)
+      setScrollMode('ANCHORED')
+    }
   }, [])
 
   // Track the floating composer's height so the transcript's bottom padding
@@ -232,42 +292,127 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     }
   }, [threads])
 
-  // Stick to the bottom while the user is pinned there — so opening a thread
-  // shows the latest turn, and staying at the bottom follows new content. Left
-  // alone once they scroll up to read history. A send flips `pinned` false (the
-  // anchor effect below), so this never fights the anchor-to-top scroll.
-  useEffect(() => {
-    if (!pinned) return
-    bottomRef.current?.scrollIntoView({
-      behavior: streaming ? 'auto' : 'smooth',
-    })
-  }, [turnsHook.turns, streaming, pinned])
-
-  // On send: scroll the just-sent bubble to the top and unpin, so the reply
-  // streams into the space below it. The last turn's min-height (see render)
-  // reserves a viewport of room; here we OWN the scroll position rather than
-  // trusting scrollIntoView to honour scroll-margin-top — WKWebView drops that
-  // offset on smooth scrolls, dumping the message behind the opaque header band.
-  // Subtracting the container's own paddingTop (= --chat-top-inset) lands the
-  // bubble exactly where the glass band goes transparent, in any engine.
-  // anchorId outlives streaming, so the message stays pinned as the reply grows.
+  // THE single scroll owner. Reads `scrollMode` and issues at most one
+  // scrollTo per run — so bottom-follow and send-anchor can never race. Runs
+  // as a layout effect (measures rects, sets scrollTop before paint to avoid a
+  // flash) and re-fires whenever the mode, anchor, turns, or streaming buffer
+  // change. During streaming, `streaming` is the only dep that ticks (~120ms).
   useLayoutEffect(() => {
-    if (!anchorId) return
     const c = scrollRef.current
-    const el = c?.querySelector<HTMLElement>(`[data-turn-id="${anchorId}"]`)
-    if (!c || !el) return
-    setPinned(false)
-    const inset = parseFloat(getComputedStyle(c).paddingTop) || 0
-    const top =
-      c.scrollTop + el.getBoundingClientRect().top - c.getBoundingClientRect().top - inset
+    if (!c) return
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    c.scrollTo({ top, behavior: reduceMotion ? 'auto' : 'smooth' })
-  }, [anchorId])
 
-  // Clear the anchor on thread switch so no reserved room / scroll position
-  // bleeds across; the new thread opens pinned to its latest turn.
+    if (scrollMode === 'ANCHORED' && anchorId) {
+      const wrapper = c.querySelector<HTMLElement>(`[data-turn-id="${anchorId}"]`)
+      if (!wrapper) return // not committed yet — retry on the next render
+      const containerRect = c.getBoundingClientRect()
+      const footerH = footerRef.current?.offsetHeight ?? 0
+
+      if (lastScrolledAnchorRef.current !== anchorId) {
+        // First time for this turn: fire the anchor jump. Measure the inner
+        // content, not the wrapper — the wrapper carries the min-height
+        // reservation (see render) which would inflate its rect.
+        const content = (wrapper.firstElementChild as HTMLElement | null) ?? wrapper
+        lastScrolledAnchorRef.current = anchorId
+        const insetTop = parseFloat(getComputedStyle(c).paddingTop) || 0
+        const contentRect = content.getBoundingClientRect()
+        const top = computeAnchorScrollTop({
+          scrollTop: c.scrollTop,
+          containerTop: containerRect.top,
+          clientHeight: c.clientHeight,
+          insetTop,
+          footerHeight: footerH,
+          bubbleTop: contentRect.top,
+          bubbleBottom: contentRect.bottom,
+        })
+        // Always suppress: after landing, the distance-from-bottom is
+        // legitimately large, so an unsuppressed scroll event would flip the
+        // mode to FREE and drop the reservation. The send jump is always smooth
+        // (unless reduce-motion) — `streaming` is already truthy here because
+        // runner.run seeds it synchronously, so we cannot key off it.
+        doScroll(c, top, !reduceMotion, true)
+        return
+      }
+
+      // Already anchored: each streaming tick, check whether the reply has
+      // grown enough to fill the viewport, and if so hand off to bottom-follow
+      // so the streaming tail stays visible. Skip while our anchor scroll is
+      // still animating (suppressScrollRef) — the transient scroll position
+      // would misread. Measure the LAST turn's inner content (the reply).
+      if (suppressScrollRef.current) return
+      const wrappers = c.querySelectorAll<HTMLElement>('[data-turn-id]')
+      const lastWrapper = wrappers[wrappers.length - 1]
+      const lastContent =
+        (lastWrapper?.firstElementChild as HTMLElement | null) ?? lastWrapper
+      if (!lastContent) return
+      if (
+        shouldFollowFromAnchor({
+          contentBottom: lastContent.getBoundingClientRect().bottom,
+          containerTop: containerRect.top,
+          clientHeight: c.clientHeight,
+          footerHeight: footerH,
+          replyGap: REPLY_GAP,
+        })
+      ) {
+        setScrollMode('FOLLOW_BOTTOM')
+      }
+      return
+    }
+
+    if (scrollMode === 'FOLLOW_BOTTOM') {
+      lastScrolledAnchorRef.current = null
+      const isStreaming = !!streaming
+      // Streaming → instant + unsuppressed (self-correcting, lets the user
+      // scroll up to pause). Otherwise smooth + suppressed.
+      doScroll(
+        c,
+        bottomScrollTop(c.scrollHeight, c.clientHeight),
+        !isStreaming && !reduceMotion,
+        !isStreaming,
+      )
+    }
+    // FREE: nobody auto-scrolls.
+  }, [scrollMode, anchorId, turnsHook.turns, streaming, doScroll])
+
+  // Clear the programmatic-scroll suppression as soon as our smooth scroll
+  // settles (the timeout in doScroll is only a fallback for engines without
+  // scrollend). Also tears down a pending fallback timer on unmount.
+  useEffect(() => {
+    const c = scrollRef.current
+    if (!c) return
+    const onScrollEnd = () => {
+      suppressScrollRef.current = false
+      if (suppressTimerRef.current) window.clearTimeout(suppressTimerRef.current)
+    }
+    c.addEventListener('scrollend', onScrollEnd)
+    return () => {
+      c.removeEventListener('scrollend', onScrollEnd)
+      if (suppressTimerRef.current) window.clearTimeout(suppressTimerRef.current)
+    }
+  }, [])
+
+  // When a turn settles (streaming truthy → null) while still ANCHORED, the
+  // reply was short enough that it never overflowed into bottom-follow. Leaving
+  // it ANCHORED would keep the min-height reservation — a dead viewport of
+  // scroll room below a finished short answer, which strands the scroll-to-
+  // bottom button and lets the composer's glass band shadow the emptiness.
+  // Release to FOLLOW_BOTTOM: the reservation drops and the settled transcript
+  // rests naturally (a short answer that fits doesn't move).
+  useEffect(() => {
+    const wasStreaming = prevStreamingRef.current
+    const nowStreaming = !!streaming
+    prevStreamingRef.current = nowStreaming
+    if (wasStreaming && !nowStreaming && scrollMode === 'ANCHORED') {
+      setScrollMode('FOLLOW_BOTTOM')
+    }
+  }, [streaming, scrollMode])
+
+  // Reset scroll ownership on thread switch so no anchor / reserved room / mode
+  // bleeds across; the new thread opens following its latest turn.
   useEffect(() => {
     setAnchorId(null)
+    setScrollMode('FOLLOW_BOTTOM')
+    lastScrolledAnchorRef.current = null
   }, [activeId])
 
   // An open doc (`slug`) is enough — edits flow through pendingChangesStore, not
@@ -425,9 +570,10 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       // replaying the literal "/proofread" text as plain chat.
       slashInvocation: { name: cmd.name, args },
     }
+    const isFirstTurn = turnsHook.turns.length === 0
     turnsHook.appendTurn(userTurn)
-    // Pin this turn to the top; the layout effect scrolls it there.
-    setAnchorId(userTurn.id)
+    // First turn follows the bottom; later turns anchor to the top.
+    anchorSentTurn(userTurn.id, isFirstTurn)
     await runSlashCommand(threadId, cmd, args, userTurn, [...turnsHook.turns, userTurn])
   }
 
@@ -544,9 +690,10 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
             attachments: chips.length > 0 ? chips : undefined,
             slashInvocation: { name: slash.name, args: slash.args },
           }
+          const isFirstTurn = turnsHook.turns.length === 0
           turnsHook.appendTurn(userTurn)
-          // Pin this turn to the top; the layout effect scrolls it there.
-          setAnchorId(userTurn.id)
+          // First turn follows the bottom; later turns anchor to the top.
+          anchorSentTurn(userTurn.id, isFirstTurn)
           resetContextChips()
           await runVaultCommand(threadId, slash.name, slash.args, [
             ...turnsHook.turns,
@@ -600,8 +747,8 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
 
       // The user's turn is finished text — push to Yjs once and let it sync.
       turnsHook.appendTurn(userTurn)
-      // Pin this turn to the top; the layout effect scrolls it there.
-      setAnchorId(userTurn.id)
+      // First turn follows the bottom; later turns anchor to the top.
+      anchorSentTurn(userTurn.id, isFirstTurn)
 
       // Detach the one-shot prop-backed chips now that they're committed to the
       // turn (draft chips were already cleared by the composer's submit).
@@ -643,6 +790,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       // turn no longer leaves marks behind, so the cleanup loop is
       // unnecessary — just remove the assistant turn and rerun.
       turnsHook.removeTurn(assistantTurnId)
+      // Follow the bottom as the reply re-streams in place — no re-anchor jump,
+      // which would yank a settled transcript around.
+      setScrollMode('FOLLOW_BOTTOM')
 
       if (lastUser.slashInvocation) {
         const cmd = getCommand(lastUser.slashInvocation.name)
@@ -764,8 +914,11 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         // Top: clear the glass fade band (RightPanel) — same --chat-top-inset
         // token, so content begins exactly where the band goes transparent and
         // the first message is never painted over.
-        // Bottom: clear the floating composer so the last message isn't hidden.
-        style={{ paddingTop: 'var(--chat-top-inset)', paddingBottom: footerHeight + 12 }}
+        // Bottom: clear the composer AND its glass fade band (footerHeight + 48
+        // below) so the resting last message isn't shadowed by the fade. Must
+        // match that band height; content still dissolves under it while
+        // scrolling, but nothing rests inside the fade.
+        style={{ paddingTop: 'var(--chat-top-inset)', paddingBottom: footerHeight + 48 }}
       >
         {renderedTurns.length === 0 && (
           // ContentUnavailableView pattern (macOS 14+/iOS 17+):
@@ -799,7 +952,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
             key={turn.id}
             data-turn-id={turn.id}
             style={
-              anchorId && i === renderedTurns.length - 1
+              scrollMode === 'ANCHORED' && i === renderedTurns.length - 1
                 ? { minHeight: 'calc(100dvh - var(--chat-top-inset))' }
                 : undefined
             }
@@ -824,7 +977,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
             <StreamingMarkdown content={pendingPlanText} isStreaming={false} />
           </div>
         )}
-        <div ref={bottomRef} />
       </div>
 
       {/* Glass fade band: the transcript dissolves into the composer instead
@@ -850,8 +1002,11 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         className="absolute bottom-0 left-0 right-0 px-[var(--surface-inset)] pb-[var(--surface-inset)]"
       >
         <ScrollToBottomButton
-          visible={!pinned && renderedTurns.length > 0}
-          onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
+          // Only when the user has deliberately scrolled up (FREE) — never
+          // during an ANCHORED send (the pin is intentional; there's no real
+          // content below to jump to).
+          visible={scrollMode === 'FREE' && renderedTurns.length > 0}
+          onClick={() => setScrollMode('FOLLOW_BOTTOM')}
         />
         {/* Pending AI changes, grouped by file — sits above the input, hides when empty. */}
         <ReviewTray />
