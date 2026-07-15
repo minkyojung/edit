@@ -254,8 +254,12 @@ fn percent_decode(input: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
-                out.push(byte);
+            // Parse the two hex digits from the byte slice, not the &str:
+            // slicing `input[i + 1..i + 3]` by byte offsets panics when a
+            // literal '%' is followed by a multi-byte UTF-8 char (the range
+            // would fall inside a char boundary).
+            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                out.push(hi << 4 | lo);
                 i += 3;
                 continue;
             }
@@ -264,6 +268,15 @@ fn percent_decode(input: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 // ── The flow ────────────────────────────────────────────────────────────────
@@ -447,7 +460,16 @@ async fn do_refresh(
     refresh_token: &str,
     profile: &GoogleProfile,
 ) -> Result<String, String> {
-    let resp = reqwest::Client::new()
+    // Bounded timeouts are load-bearing here: do_refresh runs while holding
+    // REFRESH_LOCK, so a POST that connects but never responds (flaky network)
+    // would block EVERY get_google_token caller with no error path. On timeout
+    // we fail out and fall back to the stored token. reqwest defaults to none.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("refresh client build failed: {e}"))?;
+    let resp = client
         .post(TOKEN_URL)
         .form(&[
             ("client_id", client_id()),
