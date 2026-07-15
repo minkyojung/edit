@@ -1,3 +1,4 @@
 packages:
   - 'apps/writer-tauri'
   - 'apps/writer-tauri/sidecar'
+  - 'apps/landing'
