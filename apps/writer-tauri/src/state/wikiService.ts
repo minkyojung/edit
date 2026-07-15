@@ -22,10 +22,16 @@ import {
 } from './docsStore'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
-import { getDefaultNoteFolder } from '@/state/settingsStore'
+import { getDefaultNoteFolder, getActiveProjectType } from '@/state/settingsStore'
+import { DEFAULT_CLAUDE_MD } from '@/agent/defaults'
 
 // PROOF_BASE_URL removed (Phase 3.A.2). All wiki body reads go
 // through the local Y.Doc + Milkdown serializer now.
+
+/** Vault-relative path of the user's behaviour-preferences file. Lives
+ * under `_system/` (app-managed area) but is the ONE file there the agent
+ * may append to — see the schema's Editing-rules exception. */
+export const PREFERENCES_REL = '_system/preferences.md'
 
 /** System-owned summary index of every wiki page. Karpathy's
  * `index.md` pattern — one line per page, lets the ingest LLM see
@@ -56,6 +62,17 @@ const SYSTEM_PAGE_INDEX: SystemPageConfig = {
   title: 'index',
   initialBody: '',
 }
+/** System-owned timeline of the vault — every note listed by creation
+ * date (`state/vaultTimeline.ts` writes it deterministically). The time
+ * axis to the index's space axis: "when was this made" vs "what exists,
+ * and where". Same `system:*` treatment as the index (LLM never routes
+ * to it, catalog + palette exclude it, sidebar hides it). */
+const TIMELINE_TYPE = 'system:timeline' as const
+const SYSTEM_PAGE_TIMELINE: SystemPageConfig = {
+  type: TIMELINE_TYPE,
+  title: 'timeline',
+  initialBody: '',
+}
 // wiki:profile uses the SAME lazy-create helper despite the `wiki:`
 // prefix instead of `system:` — the only thing the helper cares
 // about is the type id + initial body. Profile body is populated
@@ -77,7 +94,7 @@ async function ensureSystemPage(
 ): Promise<string | null> {
   const existing = useDocsStore
     .getState()
-    .knownDocs.find((d) => d.type === config.type && !d.archivedAt)
+    .knownDocs.find((d) => d.type === config.type)
   if (existing) {
     // Legacy fix-up: a page created during the Phase 3.B window
     // (before this transaction-style seed) is still blank in its
@@ -126,6 +143,14 @@ export async function ensureIndexWikiSlug(): Promise<string | null> {
   return ensureSystemPage(SYSTEM_PAGE_INDEX)
 }
 
+/** Ensure `system:timeline` exists. Body is system-owned — see
+ * state/vaultTimeline.ts, which writes a deterministic by-date listing
+ * on every note change. Empty until the first persist tick; user edits
+ * are tolerated but transient (next invalidation overwrites them). */
+export async function ensureTimelineWikiSlug(): Promise<string | null> {
+  return ensureSystemPage(SYSTEM_PAGE_TIMELINE)
+}
+
 /** Ensure `wiki:profile` exists. The user's self-profile page —
  * populated by the onboarding pipeline (URL → adapters → analyzers
  * → markdown body) or lazily on first need if the user skipped
@@ -142,39 +167,59 @@ export async function ensureProfileWikiSlug(): Promise<string | null> {
 export async function readSelfProfile(): Promise<string> {
   const doc = useDocsStore
     .getState()
-    .knownDocs.find((d) => d.type === 'wiki:profile' && !d.archivedAt)
+    .knownDocs.find((d) => d.type === 'wiki:profile')
   if (!doc) return ''
   return readWikiMarkdown(doc.slug)
 }
 
-/** Read the vault's `CLAUDE.md` schema document. This is the Karpathy
- * / Claude Code convention: a single user-editable file at the vault
- * root that tells the LLM how the vault is laid out and how it should
- * behave (operations, tool usage rules, conventions, citations, memory).
+/** The agent's schema document — vault layout, role model, operations,
+ * tool-usage rules, conventions, citations. This is APP-OWNED and ships
+ * in the app bundle (`DEFAULT_CLAUDE_MD`), NOT the vault. Injecting it
+ * straight from the bundle means an improved schema reaches every vault
+ * on the next build, and the user's files are never overwritten. The
+ * per-vault / per-user slices that used to live in this file are injected
+ * separately: folder bindings from settings (WORKSPACE / CAPTURE FOLDER /
+ * KNOWLEDGE BASE blocks) and behaviour rules from {@link readPreferences}.
  *
- * `CLAUDE.md` is just an ordinary root-level note in the catalog
- * (scanVault registers it as a `note` with `relPath: 'CLAUDE.md'`), so
- * it's editable in the normal editor like any note. We prefer the live
- * catalog body (`readWikiMarkdown`, which serializes the open editor or
- * the cached handle and strips frontmatter) so the user's in-app edits
- * take effect on the very next turn. When the handle isn't hydrated yet
- * (early boot, or the catalog hasn't picked up the freshly-seeded file),
- * we fall back to reading the raw file and stripping its frontmatter.
- * Returns '' on the rare failure paths and the caller drops the block. */
+ * Translation projects are the exception: they carry their own small
+ * routing-brain `CLAUDE.md` at the project root (see translationProject.ts),
+ * so for those we keep reading the vault file. The bundled wiki schema only
+ * applies to wiki vaults.
+ *
+ * Kept async so the `assembleContext` call site is unchanged. */
 export async function readClaudeMd(): Promise<string> {
+  if (getActiveProjectType() === 'translation') {
+    try {
+      if (await vaultFileExists('CLAUDE.md')) {
+        return splitFrontmatter(await readVaultFile('CLAUDE.md')).body.trim()
+      }
+    } catch (err) {
+      console.warn('[wiki] readClaudeMd (translation) failed', err)
+    }
+    return ''
+  }
+  return DEFAULT_CLAUDE_MD
+}
+
+/** Read the user's behaviour preferences (`_system/preferences.md`) —
+ * the how-you-should-act rules the agent appends to via the proposal
+ * flow. Prefer the live catalog body so an in-app edit takes effect on
+ * the next turn; fall back to the raw file. Returns '' when the file
+ * doesn't exist yet (no preferences set) and the caller drops the block. */
+export async function readPreferences(): Promise<string> {
   try {
     const doc = useDocsStore
       .getState()
-      .knownDocs.find((d) => d.relPath === 'CLAUDE.md' && !d.archivedAt)
+      .knownDocs.find((d) => d.relPath === PREFERENCES_REL)
     if (doc) {
       const body = readWikiMarkdown(doc.slug)
       if (body) return body
       // Handle not hydrated yet — fall through to the raw-file read.
     }
-    if (!(await vaultFileExists('CLAUDE.md'))) return ''
-    return splitFrontmatter(await readVaultFile('CLAUDE.md')).body.trim()
+    if (!(await vaultFileExists(PREFERENCES_REL))) return ''
+    return splitFrontmatter(await readVaultFile(PREFERENCES_REL)).body.trim()
   } catch (err) {
-    console.warn('[wiki] readClaudeMd failed', err)
+    console.warn('[wiki] readPreferences failed', err)
     return ''
   }
 }
@@ -235,18 +280,6 @@ export async function createCustomWikiPage(
   if (initialBody) {
     try {
       await useDocsStore.getState().seedDocBody(slug, initialBody)
-      // Fire-and-forget: kick off an aiSummary generation for the
-      // Tier 1 catalog. New pages start with the ingest-provided
-      // body, so a summary here captures the page's initial nature
-      // before the user has navigated to it. Failure (sidecar down,
-      // network, etc.) leaves sidecar.aiSummary unset and the index
-      // falls back to bodyExcerpt — no correctness impact.
-      void (async () => {
-        const { regenerateAiSummaryForSlug } = await import(
-          '@/agent/generateAiSummary'
-        )
-        await regenerateAiSummaryForSlug(slug)
-      })()
     } catch (err) {
       console.warn('[wiki] createCustomWikiPage seed failed', err)
     }

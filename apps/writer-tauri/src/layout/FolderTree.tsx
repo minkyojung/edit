@@ -1,8 +1,8 @@
 // FolderTree — Obsidian-style sidebar tree built from the catalog.
 //
 // Folders expand/collapse; clicking a file opens it via the slug URL.
-// Files rename inline (double-click the name or right-click → Rename),
-// delete via right-click, and drag onto a folder row to move there.
+// Files rename inline (right-click → Rename), delete via right-click, and
+// drag onto a folder row to move there.
 // New folders are created inline via the header button (newFolderStore).
 //
 // Drag: dnd-kit. File rows are draggable; folder ROWS are drop targets
@@ -27,8 +27,8 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core'
 import {
-  IconChevronRight,
   IconFolder,
+  IconFolderOpen,
   IconPhoto,
   IconFileTypePdf,
   IconMusic,
@@ -49,7 +49,7 @@ import {
   type TreeNode,
 } from '@/lib/fileTree'
 import { classifyAsset } from '@/lib/attachments'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { openVaultFile, revealVaultFile, vaultAbsPath } from '@/lib/vault'
 import { pathForDoc, sanitizeFilename } from '@/lib/docPaths'
 import { planFolderMove } from '@/lib/folderMove'
@@ -292,10 +292,7 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
               onCancel={ctx.onCancelRename}
             />
           ) : (
-            <TreeRowLabel
-              onClick={() => ctx.onOpen(node.slug)}
-              onDoubleClick={() => ctx.onStartRename(node.slug)}
-            >
+            <TreeRowLabel onClick={() => ctx.onOpen(node.slug)}>
               <span className="truncate">{node.name}</span>
             </TreeRowLabel>
           )}
@@ -372,12 +369,29 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
                   aria-label={isOpen ? 'Collapse' : 'Expand'}
                   onClick={(e: MouseEvent) => e.stopPropagation()}
                 >
-                  <IconChevronRight
-                    size={16}
-                    stroke={1.75}
-                    className="transition-transform"
-                    style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
-                  />
+                  <span
+                    className="relative block size-[18px]"
+                    style={{ perspective: '80px' }}
+                  >
+                    <IconFolder
+                      stroke={1.75}
+                      className="absolute inset-0 text-muted-foreground transition-all duration-150 ease-out"
+                      style={{
+                        transformOrigin: 'center top',
+                        transform: isOpen ? 'rotateX(-35deg)' : 'rotateX(0deg)',
+                        opacity: isOpen ? 0 : 1,
+                      }}
+                    />
+                    <IconFolderOpen
+                      stroke={1.75}
+                      className="absolute inset-0 text-muted-foreground transition-all duration-150 ease-out"
+                      style={{
+                        transformOrigin: 'center top',
+                        transform: isOpen ? 'rotateX(0deg)' : 'rotateX(35deg)',
+                        opacity: isOpen ? 1 : 0,
+                      }}
+                    />
+                  </span>
                 </TreeRowLead>
               </CollapsibleTrigger>
               {isEditing ? (
@@ -391,7 +405,6 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
                   onClick={() =>
                     node.slug ? ctx.onOpen(node.slug) : ctx.onToggle(node.path)
                   }
-                  onDoubleClick={() => ctx.onStartFolderRename(node.path)}
                 >
                   <span className="truncate">{node.name}</span>
                 </TreeRowLabel>
@@ -509,9 +522,6 @@ export function FolderTree() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const knownFolders = useDocsStore((s) => s.knownFolders)
   const knownFiles = useDocsStore((s) => s.knownFiles)
-  const sidebarTab = useDocsStore((s) => s.sidebarTab)
-  const dayAnchor = useDocsStore((s) => s.dayAnchor)
-  const monthAnchor = useDocsStore((s) => s.monthAnchor)
   const renameDoc = useDocsStore((s) => s.renameDoc)
   const deleteToTrash = useDocsStore((s) => s.deleteToTrash)
   const createFolder = useDocsStore((s) => s.createFolder)
@@ -593,8 +603,7 @@ export function FolderTree() {
       else next.add(path)
       return next
     })
-  const onOpen = (slug: string) =>
-    navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
+  const onOpen = (slug: string) => openDoc(slug)
   // Attachments open the in-app file viewer, keyed by path (encode so a
   // nested path's slashes survive as one route param).
   const onOpenFile = (relPath: string) =>
@@ -605,7 +614,7 @@ export function FolderTree() {
   }
   const onDelete = (slug: string) => {
     void deleteToTrash(slug).then((next) => {
-      if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
+      if (next) openDoc(next)
     })
   }
   const onCreateFolder = (name: string) => {
@@ -619,7 +628,7 @@ export function FolderTree() {
   }
   const onDeleteFolder = (path: string) => {
     void deleteFolder(path).then((next) => {
-      if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
+      if (next) openDoc(next)
     })
   }
   const onStartCreateSubfolder = (parentPath: string) => {
@@ -644,7 +653,7 @@ export function FolderTree() {
     moveDocToFolder(slug, folderPath)
   const onDuplicate = (slug: string) => {
     void duplicateDoc(slug).then((next) => {
-      if (next) navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug: next }))
+      if (next) openDoc(next)
     })
   }
   const onCopyPath = (relPath: string) => {

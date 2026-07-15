@@ -1,15 +1,17 @@
-mod anthropic;
 mod appdata;
+mod claude_import;
 pub mod claude_sidecar;
 mod events;
 mod fetch_url;
 mod git;
 mod github;
+mod google_oauth;
 mod oauth;
 mod os_trash;
 mod reveal;
 mod sound;
 mod secure_storage;
+mod updater;
 mod vault_sync;
 
 use tauri::{Emitter, Manager};
@@ -19,8 +21,19 @@ use tauri::{Emitter, Manager};
 // + IDB. Removing the spawn eliminates the `[collab] failed to derive
 // markdown` log class and shaves ~0.5s off cold boot.
 
+/// Quit funnel. Every quit route (⌘Q, dock quit, the frontend confirm dialog)
+/// ends here, so this is where we tear the sidecars down *before* exiting.
+/// `app.exit(0)` ends in `std::process::exit`, which skips `Drop` — so
+/// `kill_on_drop` never fires and the Node sidecars (plus their `claude` CLI
+/// grandchildren) would be orphaned. Awaiting a graceful shutdown first lets
+/// each sidecar reap its CLI child and flush its session (resume stays intact),
+/// then we exit cleanly.
 #[tauri::command]
-fn app_quit(app: tauri::AppHandle) {
+async fn app_quit(app: tauri::AppHandle) {
+    use claude_sidecar::manager::SidecarManager;
+    if let Some(mgr) = app.try_state::<std::sync::Arc<SidecarManager>>() {
+        mgr.shutdown_all(std::time::Duration::from_millis(700)).await;
+    }
     app.exit(0);
 }
 
@@ -154,6 +167,49 @@ fn apply_toolbar_chrome(window: &tauri::WebviewWindow) {
     }
 }
 
+/// The window corner radius, matching CSS `--window-radius` (26px).
+#[cfg(target_os = "macos")]
+const WINDOW_CORNER_RADIUS: f64 = 26.0;
+
+/// Round the window corners to {@link WINDOW_CORNER_RADIUS} DIRECTLY, instead
+/// of relying on macOS's toolbar-window classifier (the `apply_toolbar_chrome`
+/// trick) to imply a large corner — which macOS 26 (Tahoe) stopped honoring,
+/// leaving the window with a small default radius. The window is `transparent`,
+/// so masking the content layer to a rounded rect rounds the whole visible app;
+/// the traffic lights live in the titlebar frame view (not the content view),
+/// so they're untouched. `invalidateShadow` re-fits the drop shadow to the
+/// new curve. Continuous (squircle) curve matches macOS's native corner shape.
+#[cfg(target_os = "macos")]
+fn apply_corner_radius(window: &tauri::WebviewWindow) {
+    let Ok(ns_window_ptr) = window.ns_window() else {
+        return;
+    };
+    use objc2::{class, msg_send, runtime::AnyObject};
+    let ns_window = ns_window_ptr as *mut AnyObject;
+    if ns_window.is_null() {
+        return;
+    }
+    unsafe {
+        let content: *mut AnyObject = msg_send![ns_window, contentView];
+        if content.is_null() {
+            return;
+        }
+        let _: () = msg_send![content, setWantsLayer: true];
+        let layer: *mut AnyObject = msg_send![content, layer];
+        if layer.is_null() {
+            return;
+        }
+        let _: () = msg_send![layer, setCornerRadius: WINDOW_CORNER_RADIUS];
+        let _: () = msg_send![layer, setMasksToBounds: true];
+        let cstr = b"continuous\0".as_ptr() as *const std::os::raw::c_char;
+        let curve: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: cstr];
+        if !curve.is_null() {
+            let _: () = msg_send![layer, setCornerCurve: curve];
+        }
+        let _: () = msg_send![ns_window, invalidateShadow];
+    }
+}
+
 /// Re-apply the native window chrome (NSToolbar corner radius + unified
 /// toolbar style) to the window with `label`. The frontend calls this after
 /// spawning a per-project window so it matches the config-defined `main`
@@ -164,7 +220,10 @@ fn apply_toolbar_chrome(window: &tauri::WebviewWindow) {
 fn apply_window_chrome(app: tauri::AppHandle, label: String) {
     if let Some(window) = app.get_webview_window(&label) {
         #[cfg(target_os = "macos")]
-        apply_toolbar_chrome(&window);
+        {
+            apply_toolbar_chrome(&window);
+            apply_corner_radius(&window);
+        }
         #[cfg(not(target_os = "macos"))]
         let _ = window;
     }
@@ -302,6 +361,20 @@ fn set_window_compact(
     }
 }
 
+/// Whether the window is currently in the compact panel.
+///
+/// `CompactFrames` holds a stashed full frame IFF the window is compact, so the
+/// presence of this window's entry is the durable truth. Rust state outlives
+/// the webview, so this survives a webview reload — letting the frontend
+/// re-hydrate `mode` after a reload without ever measuring the window size.
+#[tauri::command]
+fn is_window_compact(
+    window: tauri::WebviewWindow,
+    frames: tauri::State<'_, CompactFrames>,
+) -> bool {
+    frames.0.lock().unwrap().contains_key(window.label())
+}
+
 /// Hand control of the close decision to the frontend by emitting
 /// `app:close-requested`. If the emit itself fails we exit immediately to
 /// avoid stranding the user on a window they can't dismiss.
@@ -328,12 +401,20 @@ pub fn run() {
         .manage(oauth::PendingOAuth::default())
         .manage(github::PendingGitHubAuth::default())
         .manage(CompactFrames::default())
+        .manage(updater::UpdaterState::default())
         .invoke_handler(tauri::generate_handler![
             oauth::start_claude_oauth,
             oauth::complete_claude_oauth,
             oauth::get_claude_token,
             oauth::get_claude_account,
             oauth::disconnect_claude,
+            claude_import::read_claude_code,
+            claude_import::copy_claude_skill,
+            google_oauth::start_google_oauth,
+            google_oauth::get_google_account,
+            google_oauth::disconnect_google,
+            google_oauth::get_google_token,
+            google_oauth::notify_signup,
             claude_sidecar::commands::claude_chat_start,
             claude_sidecar::commands::claude_list_models,
             claude_sidecar::commands::claude_chat_cancel,
@@ -346,7 +427,6 @@ pub fn run() {
             os_trash::move_to_trash,
             reveal::reveal_in_finder,
             sound::play_system_sound,
-            anthropic::anthropic_messages_create,
             git::git_init,
             git::git_commit,
             git::git_log_since_ref,
@@ -375,6 +455,10 @@ pub fn run() {
             get_traffic_light_y,
             apply_window_chrome,
             set_window_compact,
+            is_window_compact,
+            updater::updater_check,
+            updater::updater_install,
+            updater::updater_status,
         ])
         .setup(|app| {
             // Resolve the per-device app-data base once, up front: git history
@@ -403,10 +487,16 @@ pub fn run() {
                     .id("close-window")
                     .accelerator("CmdOrCtrl+W")
                     .build(app)?;
+                // Manual update check — drives the same backend flow as the
+                // startup loop and the About settings row.
+                let check_updates_item = MenuItemBuilder::new("Check for Updates…")
+                    .id("check-for-updates")
+                    .build(app)?;
 
                 // Octave (app menu)
                 let app_submenu = SubmenuBuilder::new(app, "Octave")
                     .item(&PredefinedMenuItem::about(app, None, None)?)
+                    .item(&check_updates_item)
                     .separator()
                     .item(&PredefinedMenuItem::hide(app, None)?)
                     .item(&PredefinedMenuItem::hide_others(app, None)?)
@@ -464,6 +554,15 @@ pub fn run() {
                                 let _ = window.close();
                             }
                         }
+                        // Menu "Check for Updates…" — run the same check flow
+                        // the startup loop uses (busy-guarded, so it can't
+                        // overlap an in-flight check/download).
+                        "check-for-updates" => {
+                            let app = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                updater::run_check(app).await;
+                            });
+                        }
                         _ => {}
                     }
                 });
@@ -490,6 +589,15 @@ pub fn run() {
                 let _ = window.center();
                 let _ = window.show();
                 let _ = window.set_focus();
+                // Re-apply the native chrome AFTER show(): on macOS 26 the
+                // toolbar corner classification doesn't reliably take before
+                // the window is realized, and pin the radius directly so it no
+                // longer depends on that OS heuristic at all.
+                #[cfg(target_os = "macos")]
+                {
+                    apply_toolbar_chrome(&window);
+                    apply_corner_radius(&window);
+                }
             }
 
             // proof-server spawn removed (Phase 3.D). The app now boots
@@ -515,6 +623,24 @@ pub fn run() {
             #[cfg(debug_assertions)]
             if let Some(window) = app.get_webview_window("main") {
                 window.open_devtools();
+            }
+
+            // Auto-update: one process-wide checker in the Rust runtime — runs
+            // regardless of which/how many windows are open (fixing the old
+            // launcher-window-only gating). A first check ~5s after launch (so
+            // it doesn't compete with cold start), then hourly. Notify-first:
+            // the loop only CHECKS; the user drives download + restart. Release
+            // builds only — dev has no installed bundle to replace.
+            #[cfg(not(debug_assertions))]
+            {
+                let updater_app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    loop {
+                        updater::run_check(updater_app.clone()).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
+                    }
+                });
             }
 
             Ok(())

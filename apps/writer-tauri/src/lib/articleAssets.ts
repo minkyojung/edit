@@ -6,10 +6,12 @@
 // Scope (MVP): images only. Other attachments (PDF, etc.) and remote
 // media embeds are left as remote links.
 //
-// Storage: articles/assets/<slug>/<contentHash>.<ext>. Content-hash
-// filenames dedupe identical images within an article and keep names
-// stable across re-saves. Per-article folder so an article + its assets
-// can be reasoned about (and later cleaned up) together.
+// Storage: images/<slug>/<contentHash>.<ext> — the same top-level
+// `images/` folder the editor drops pasted media into, so a saved
+// article doesn't spawn a separate `articles/` tree. The per-article
+// <slug> subfolder keeps an article's assets grouped (and cleanable)
+// together; content-hash filenames dedupe identical images and keep
+// names stable across re-saves.
 //
 // Robustness: every download is best-effort. A failed image keeps its
 // original remote URL — saving an article never fails because an asset
@@ -111,7 +113,7 @@ function rewriteImageLinks(markdown: string, map: Map<string, string>): string {
   )
 }
 
-/** Download an article's images into articles/assets/<slug>/ and return
+/** Download an article's images into images/<slug>/ and return
  * the Markdown with image links rewritten to the local copies. Returns
  * the input unchanged when there's nothing to localize. Best-effort:
  * failed images keep their remote URL.
@@ -126,7 +128,7 @@ export async function localizeArticleImages(
   const urls = extractImageUrls(markdown).slice(0, MAX_ASSETS_PER_ARTICLE)
   if (urls.length === 0) return markdown
 
-  const dir = `articles/assets/${slug}`
+  const dir = `images/${slug}`
   const map = new Map<string, string>()
 
   for (const url of urls) {

@@ -23,13 +23,17 @@
  */
 
 import { useChatRuns } from '@/stores/chatRuns'
+import { useExternalConflictStore } from '@/state/externalConflictStore'
 import { ensureNonEmptyTabStrip } from './helpers'
 import type { GetDocsState, SetDocsState } from './types'
 
 export interface TabsSlice {
   /** Slugs currently in the tab strip, in user-visible order.
-   * Persisted. */
+   * Persisted (as paths — see persistConfig). */
   openSlugs: string[]
+  /** Transient landing field for the persisted (path-keyed) tab strip;
+   * populated on rehydrate, drained by `bootstrap`. See DocsState. */
+  openPaths: string[]
 
   /** Promote `slug` into the tab strip (if not already there) and
    * warm its collab handle. Does NOT change which doc the user is
@@ -53,6 +57,7 @@ export const createTabsSlice = (
   get: GetDocsState,
 ): TabsSlice => ({
   openSlugs: [],
+  openPaths: [],
 
   ensureOpen: (slug) => {
     // Refuse unknown slugs so a stale UI ref can't corrupt the strip.
@@ -88,6 +93,13 @@ export const createTabsSlice = (
     if (handle) {
       handle.destroy()
     }
+    // The editing session for this slug is over — drop any external-edit
+    // conflict so a stale entry can't gate flushDirty when the doc is reopened
+    // (the reopened handle hydrates fresh from disk, so there's nothing to
+    // protect). The handle is already destroyed above, so the CmEditor unmount's
+    // checkpoint flush finds no handle and writes nothing — clearing here does
+    // NOT resurrect a local-over-external write.
+    useExternalConflictStore.getState().resolveConflict(slug)
     const nextHandles = { ...handles }
     delete nextHandles[slug]
     const nextStatus = { ...get().status }

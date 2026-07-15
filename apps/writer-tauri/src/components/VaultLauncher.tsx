@@ -17,7 +17,7 @@ import {
   isTranslationProject,
   scaffoldTranslationProject,
 } from '@/lib/translationProject'
-import { openProjectWindow } from '@/lib/projectWindow'
+import { openProjectWindow, folderName } from '@/lib/projectWindow'
 import {
   useSettingsStore,
   type ProjectType,
@@ -119,10 +119,4 @@ export function VaultLauncher() {
       </div>
     </div>
   )
-}
-
-/** Last path segment, for the project's display name. */
-function folderName(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean)
-  return parts[parts.length - 1] ?? path
 }

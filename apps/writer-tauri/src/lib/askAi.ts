@@ -8,6 +8,6 @@ import { useWindowModeStore } from '@/state/windowModeStore'
 
 export function askAi() {
   useLayoutStore.getState().openRightPanelInMode('chat')
-  void useWindowModeStore.getState().toggle() // compact → full
+  void useWindowModeStore.getState().setCompact(false) // always land in full
   useLayoutStore.getState().requestChatInputFocus()
 }

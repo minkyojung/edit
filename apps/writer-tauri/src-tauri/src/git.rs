@@ -53,11 +53,11 @@ events.db\n\
 events.db-wal\n\
 events.db-shm\n\
 \n\
-# Chat thread state — per-session JSON the app stores so the Chat\n\
-# panel can resume mid-thread. Pure ephemeral state; users don't read\n\
-# it and committing it would flood every chat-driven git turn with\n\
-# noise alongside the real wiki/daily changes.\n\
-threads/\n";
+# App-internal state — Octave's private namespace. Chat session JSON and\n\
+# chat attachment binaries the user drops into the composer. Pure ephemeral\n\
+# scratch the user never reads; committing it would flood every chat-driven\n\
+# git turn with noise (and bloat history with screenshots/PDFs).\n\
+.octave/\n";
 
 /// One entry returned by `log_since_ref`. Pretty-printed by the
 /// frontend's ActivityView. Field names are camelCase via serde for

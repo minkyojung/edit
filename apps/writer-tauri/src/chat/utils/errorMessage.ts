@@ -46,7 +46,15 @@ export function humanizeError(e: unknown): string {
       const detail = raw.replace(/^EXEC:\s*/, '').trim()
       return detail ? `Stopped on an error: ${detail}` : 'Stopped on an error'
     }
+    case 'INTERNAL':
+      // classifyError's catch-all: an unclassified stream error whose raw
+      // detail is an internal SDK/CLI string, not user copy. Keep it generic —
+      // the full detail is in the sidecar stderr (logErrorContext) for debugging.
+      return 'Something went wrong — please try again'
   }
+  // Transport-level RPC failures (client.rs `rpc error: <code> <message>`) can
+  // reach here verbatim; they carry no user-actionable detail, so genericize.
+  if (/^rpc error:/i.test(raw)) return 'Something went wrong — please try again'
   let msg = raw.replace(/^Error:\s*/i, '').trim()
   if (msg.length === 0) return 'Something went wrong'
   if (msg.length > 240) msg = msg.slice(0, 237) + '…'

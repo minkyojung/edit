@@ -61,6 +61,14 @@ interface SettingsState {
    * Finish / Skip. Idempotent. */
   markBootstrapCompleted: () => void
 
+  /** App version whose "What's new" note the user has already seen. When
+   * the running version differs (i.e. an update landed), the What's-new
+   * panel shows that version's changelog once, then this advances. Empty
+   * on a fresh install (set silently on first run — no panel). */
+  lastWhatsNewVersion: string
+  /** Record the version whose release notes have been shown. */
+  setLastWhatsNewVersion: (version: string) => void
+
   /** Projects shown in the launcher's "Recent" list, newest first.
    * Global (cross-window) app preference. */
   recentProjects: RecentProject[]
@@ -78,6 +86,24 @@ interface SettingsState {
   defaultNoteFolder: string
   /** Set the default new-note folder. Trims slashes; empty → 'inbox'. */
   setDefaultNoteFolder: (folder: string) => void
+
+  /** Folder the agent files synthesized knowledge into — the "knowledge base"
+   * role bound to a concrete folder. Default 'wiki'. Injected into the prompt
+   * each turn (like the capture folder) so the model routes durable knowledge
+   * here, and used by the index/timeline to label + top-sort that section.
+   * User-changeable (settings modal); changing it takes effect next turn. */
+  knowledgeBaseFolder: string
+  /** Set the knowledge-base folder. Trims slashes; empty → 'wiki'. */
+  setKnowledgeBaseFolder: (folder: string) => void
+
+  /** Folder holding user-authored templates (Obsidian's "Template folder
+   * location"). Default 'templates'. Its `.md` files feed the editor slash
+   * menu and the command-palette "New from template" group. A folder that
+   * doesn't exist simply yields zero templates. User-changeable (settings
+   * modal). */
+  templatesFolder: string
+  /** Set the templates folder. Trims slashes; empty string = none configured. */
+  setTemplatesFolder: (folder: string) => void
 
   /** Model the Organize / intake agent runs on (filing notes into the
    * wiki / daily). Default Sonnet; switch to Haiku to cut cost on bulk
@@ -127,7 +153,13 @@ export const useSettingsStore = create<SettingsState>()(
       vaultPaths: [],
       activeVaultIndex: 0,
       bootstrapCompleted: false,
+      lastWhatsNewVersion: '',
       defaultNoteFolder: 'inbox',
+      knowledgeBaseFolder: 'wiki',
+      // Empty = no templates folder configured yet. We deliberately do NOT
+      // default to a concrete name like 'templates' — that would claim a folder
+      // that may not exist. The user points this at a real folder in Settings.
+      templatesFolder: '',
       intakeModel: DEFAULT_CHAT_MODEL,
       inboxAutoOrganize: true,
       sidebarVibrancyEnabled: true,
@@ -141,6 +173,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ vaultPaths: [path], activeVaultIndex: 0 }),
       clearVault: () => set({ vaultPaths: [], activeVaultIndex: 0 }),
       markBootstrapCompleted: () => set({ bootstrapCompleted: true }),
+      setLastWhatsNewVersion: (version) => set({ lastWhatsNewVersion: version }),
       addRecentProject: (path, type) =>
         set((s) => ({
           recentProjects: [
@@ -154,6 +187,10 @@ export const useSettingsStore = create<SettingsState>()(
         })),
       setDefaultNoteFolder: (folder) =>
         set({ defaultNoteFolder: folder.trim().replace(/^\/+|\/+$/g, '') || 'inbox' }),
+      setKnowledgeBaseFolder: (folder) =>
+        set({ knowledgeBaseFolder: folder.trim().replace(/^\/+|\/+$/g, '') || 'wiki' }),
+      setTemplatesFolder: (folder) =>
+        set({ templatesFolder: folder.trim().replace(/^\/+|\/+$/g, '') }),
       setIntakeModel: (model) => set({ intakeModel: model }),
       setInboxAutoOrganize: (enabled) => set({ inboxAutoOrganize: enabled }),
       setSidebarVibrancy: (enabled) => set({ sidebarVibrancyEnabled: enabled }),
@@ -166,7 +203,10 @@ export const useSettingsStore = create<SettingsState>()(
         vaultPaths: s.vaultPaths,
         activeVaultIndex: s.activeVaultIndex,
         bootstrapCompleted: s.bootstrapCompleted,
+        lastWhatsNewVersion: s.lastWhatsNewVersion,
         defaultNoteFolder: s.defaultNoteFolder,
+        knowledgeBaseFolder: s.knowledgeBaseFolder,
+        templatesFolder: s.templatesFolder,
         intakeModel: s.intakeModel,
         inboxAutoOrganize: s.inboxAutoOrganize,
         sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
@@ -191,10 +231,35 @@ export function getActiveVaultPath(): string | null {
   return vaultPaths[activeVaultIndex] ?? null
 }
 
+/** Project type of the active vault, resolved from the recent-projects
+ * list by path. Defaults to `'wiki'` when the path isn't recorded (the
+ * common case + fresh vaults). The agent-schema injector uses this to pick
+ * the wiki bundle schema vs a translation project's own routing brain. */
+export function getActiveProjectType(): ProjectType {
+  const path = getActiveVaultPath()
+  if (!path) return 'wiki'
+  return (
+    useSettingsStore.getState().recentProjects.find((p) => p.path === path)
+      ?.type ?? 'wiki'
+  )
+}
+
 /** Folder new chat-created notes land in. Default 'inbox'. Non-React read for the
  * chat materialiser (toPendingChange). */
 export function getDefaultNoteFolder(): string {
   return useSettingsStore.getState().defaultNoteFolder || 'inbox'
+}
+
+/** Folder the agent files synthesized knowledge into. Default 'wiki'. Non-React
+ * read for the prompt assembler (chat/index.ts) and the index/timeline builders. */
+export function getKnowledgeBaseFolder(): string {
+  return useSettingsStore.getState().knowledgeBaseFolder || 'wiki'
+}
+
+/** Folder holding user-authored templates, or '' when none is configured.
+ * Non-React read for the template loader (lib/templates). */
+export function getTemplatesFolder(): string {
+  return useSettingsStore.getState().templatesFolder
 }
 
 /** Model the Organize / intake agent runs on. Non-React read for runIntake. */

@@ -7,9 +7,11 @@
 // Anything more exotic (nested objects, multiline) is rejected — built-in
 // .md files are written by us and don't need YAML's full surface.
 //
-// User-provided .md files (added later) flow through the same loader, so
-// any silent fallback here would mask their mistakes. We prefer loud
-// errors at load time over surprising defaults at run time.
+// Frontmatter is OPTIONAL, following the Claude Code slash-command convention
+// so `.claude/commands/*.md` files import as-is: when it's absent, `name` comes
+// from the filename and `description` from the first body line. A present-but-
+// malformed frontmatter block, or an invalid field value, is still a loud
+// load-time error — we relax the *required*-ness, not the validation.
 
 import {
   type CommandKindId,
@@ -35,22 +37,34 @@ export class CommandParseError extends Error {
   }
 }
 
-/** Parses a full .md document. `source` is a label used only for errors
- * (typically the file path) so failures point at the offending file. */
+/** Parses a full .md document. `source` is the file path — used both to derive
+ * the command name (filename stem) when frontmatter omits it, and as a label in
+ * error messages so failures point at the offending file. */
 export function parseCommand(raw: string, source: string): LoadedCommand {
   const m = FRONTMATTER_RE.exec(raw)
-  if (!m) {
-    throw new CommandParseError(source, 'missing or malformed frontmatter (expected --- ... ---)')
+  let fm: FmObject = {}
+  let body = raw
+  if (m) {
+    fm = parseFrontmatter(m[1], source)
+    body = m[2] ?? ''
+  } else if (/^---\r?\n/.test(raw)) {
+    // Opened a frontmatter block but never closed it — a real mistake, not a
+    // body-only file. Fail loudly rather than swallow the `---` into the body.
+    throw new CommandParseError(source, 'malformed frontmatter (opening --- without a closing ---)')
   }
-  const fm = parseFrontmatter(m[1], source)
-  const body = m[2] ?? ''
 
-  const name = requireString(fm, 'name', source)
+  // Name: frontmatter `name` wins (back-compat); otherwise the filename stem,
+  // matching Claude Code where the filename IS the command name.
+  const fileStem = source.split(/[\\/]/).pop()?.replace(/\.md$/i, '') ?? ''
+  const name = optionalString(fm, 'name', source) ?? fileStem
   if (!/^[a-z][a-z0-9-]*$/.test(name)) {
     throw new CommandParseError(source, `name "${name}" must be lowercase kebab-case`)
   }
 
-  const description = requireString(fm, 'description', source)
+  // Description: frontmatter `description`, else the first non-empty body line
+  // (Claude Code's fallback), else the name so it is never empty.
+  const description =
+    optionalString(fm, 'description', source) ?? firstBodyLine(body) ?? name
 
   const kindRaw = (fm.kind as string | undefined) ?? 'chat-message'
   if (!KIND_IDS.includes(kindRaw as CommandKindId)) {
@@ -114,12 +128,14 @@ function unquote(raw: string, source: string, key: string): string {
   return raw
 }
 
-function requireString(fm: FmObject, key: string, source: string): string {
-  const v = fm[key]
-  if (typeof v !== 'string' || !v) {
-    throw new CommandParseError(source, `missing required string field "${key}"`)
+/** First non-empty body line, stripped of a leading markdown heading marker —
+ * Claude Code's default command description when frontmatter omits one. */
+function firstBodyLine(body: string): string | undefined {
+  for (const line of body.split(/\r?\n/)) {
+    const t = line.trim().replace(/^#+\s*/, '')
+    if (t) return t
   }
-  return v
+  return undefined
 }
 
 function optionalString(fm: FmObject, key: string, source: string): string | undefined {

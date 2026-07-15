@@ -21,6 +21,7 @@ import {
   Minus,
   Code2,
   Image,
+  FileText,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { SlashItem } from '@/prototypes/slashCommands'
@@ -60,7 +61,9 @@ export function EditorSlashMenu({ items, selectedIndex, onSelect, onHover }: Pro
     <div className="w-72 overflow-hidden rounded-xl border border-border bg-popover shadow-md">
       <div ref={listRef} className="max-h-72 overflow-y-auto p-1">
         {items.map((it, i) => {
-          const Icon = ICONS[it.id]
+          // Templates get a generic file icon (their id is dynamic:
+          // `tmpl:<name>`); built-in blocks look up by their fixed id.
+          const Icon = it.kind === 'template' ? FileText : ICONS[it.id]
           const selected = i === selectedIndex
           return (
             <button

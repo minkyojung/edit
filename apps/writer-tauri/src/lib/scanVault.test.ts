@@ -19,11 +19,35 @@ import { mdRelToKnownDoc } from './scanVault'
 import {
   frontmatterToMeta,
   metaToFrontmatterFields,
+  portableFrontmatterFields,
   type DocMetaFile,
 } from './docPaths'
 import { composeFrontmatter, splitFrontmatter } from './frontmatter'
 
 const noChildren = new Map<string, string>()
+
+describe('portableFrontmatterFields — what stays in the user .md', () => {
+  it('excludes the app-private slug', () => {
+    const fields = portableFrontmatterFields({
+      version: 1,
+      slug: 'abc12345',
+      createdAt: '2026-01-01',
+      sourceUrl: 'https://x.test',
+    })
+    // Present: portable. Absent: app-private (slug).
+    expect(fields.createdAt).toBe('2026-01-01')
+    expect(fields.sourceUrl).toBe('https://x.test')
+    expect('slug' in fields).toBe(false)
+  })
+
+  it('serializes highlights to a single JSON scalar, dropping an empty list', () => {
+    const h = [{ id: 'h1', text: 'x' }] as unknown as DocMetaFile['highlights']
+    expect(portableFrontmatterFields({ slug: 's', highlights: h }).highlights).toBe(
+      JSON.stringify(h),
+    )
+    expect(portableFrontmatterFields({ slug: 's', highlights: [] }).highlights).toBeUndefined()
+  })
+})
 
 describe('mdRelToKnownDoc — wiki', () => {
   it('maps wiki/<title>.md to a wiki:custom-<slug> entry', () => {
@@ -212,24 +236,21 @@ describe('frontmatterToMeta', () => {
       frontmatterToMeta({
         slug: 'abc123',
         createdAt: '2026-06-11T00:00:00.000Z',
-        archivedFromParent: 'daily-xyz',
       }),
     ).toEqual({
       slug: 'abc123',
       createdAt: '2026-06-11T00:00:00.000Z',
-      archivedFromParent: 'daily-xyz',
     })
   })
 
   it('coerces numeric fields from their string form', () => {
-    expect(frontmatterToMeta({ archivedAt: '1718000000000', aiImportance: '72' })).toEqual({
-      archivedAt: 1718000000000,
-      aiImportance: 72,
+    expect(frontmatterToMeta({ durationSec: '72' })).toEqual({
+      durationSec: 72,
     })
   })
 
-  it('drops a non-numeric archivedAt rather than storing NaN', () => {
-    expect(frontmatterToMeta({ slug: 'x', archivedAt: 'oops' })).toEqual({ slug: 'x' })
+  it('drops a non-numeric numeric field rather than storing NaN', () => {
+    expect(frontmatterToMeta({ slug: 'x', durationSec: 'oops' })).toEqual({ slug: 'x' })
   })
 
   it('restores article source metadata', () => {
@@ -254,13 +275,12 @@ describe('frontmatterToMeta', () => {
 })
 
 describe('frontmatter → KnownDoc (read path logic)', () => {
-  it('rebuilds an archived article from its frontmatter block', () => {
+  it('rebuilds a saved article from its frontmatter block', () => {
     const md = [
       '---',
       'slug: art-1',
       'sourceUrl: https://example.com/post',
       'siteName: Example',
-      'archivedAt: 1718000000000',
       '---',
       '',
       'Article body here.',
@@ -276,7 +296,6 @@ describe('frontmatter → KnownDoc (read path logic)', () => {
       relPath: 'articles/My Saved Post.md',
       sourceUrl: 'https://example.com/post',
       siteName: 'Example',
-      archivedAt: 1718000000000,
     })
   })
 
@@ -301,8 +320,6 @@ describe('meta ⇄ frontmatter round-trip', () => {
     const meta: Partial<DocMetaFile> = {
       slug: 'note-9',
       createdAt: '2026-06-11T00:00:00.000Z',
-      aiSummary: 'A one: line summary #with punctuation',
-      aiImportance: 64,
       sourceUrl: 'https://example.com/watch?v=abc',
       siteName: 'Example',
       savedAt: '2026-06-10T09:00:00.000Z',
@@ -315,16 +332,6 @@ describe('meta ⇄ frontmatter round-trip', () => {
 
     expect(frontmatterToMeta(data)).toEqual(meta)
     expect(body).toBe('The note body.\n')
-  })
-
-  it('round-trips the archive markers (number coercion survives)', () => {
-    const meta: Partial<DocMetaFile> = {
-      slug: 'arch-1',
-      archivedAt: 1718000000000,
-      archivedFromParent: 'daily-2',
-    }
-    const { data } = splitFrontmatter(composeFrontmatter(metaToFrontmatterFields(meta), 'b'))
-    expect(frontmatterToMeta(data)).toEqual(meta)
   })
 
   it('round-trips youtube capture fields (durationSec stays numeric)', () => {

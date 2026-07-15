@@ -61,7 +61,11 @@ function scheduleAutoCommit(relPath: string): void {
 
 /** Four subdirectories the app expects inside a vault. Created on
  * first run via {@link ensureVaultStructure}. */
-export const VAULT_SUBDIRS = ['wiki', 'daily', '_system', 'threads'] as const
+// `threads` and attachments are NOT scaffolded here — they live under the
+// hidden `.octave/` namespace and are created lazily on first write (same as
+// `.attachments/` always was), which also keeps the one-time octave migration
+// from racing an eagerly-created empty destination.
+export const VAULT_SUBDIRS = ['wiki', 'daily', '_system'] as const
 
 /** Custom error thrown when no vault has been selected. Callers
  * gate on {@link getActiveVaultPath} before calling these helpers,
@@ -174,6 +178,16 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(buffer))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')
+}
+
+/** Hash arbitrary UTF-8 text (a doc's body) for the watcher's move/rename
+ * correlation — same SHA-256 the echo layer uses. Body-only on both sides:
+ * an external move fires remove(old)+add(new); the removed doc's live body
+ * (`handle.bodyMarkdown`, frontmatter already stripped) is hashed against the
+ * new file's `splitFrontmatter(raw).body`, so the surrogate slug can follow
+ * the file instead of being re-minted. */
+export async function hashContent(text: string): Promise<string> {
+  return sha256Hex(new TextEncoder().encode(text))
 }
 
 /** Record the hash of bytes we just wrote so the watcher can

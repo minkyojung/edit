@@ -9,7 +9,7 @@
 // `/review` runs the copyeditor pass and drops inline comment marks; the
 // user is directed back to the body to act on individual highlights.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { parseFilePathFromPath } from '@/lib/viewUrl'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
@@ -42,6 +42,7 @@ import {
   DEFAULT_CHAT_MODE,
   clampEffort,
   normalizeModel,
+  type Attachment,
   type ChatTurn,
   type FileAttachment,
 } from '@/chat/types'
@@ -50,6 +51,14 @@ import { useVaultCommands } from '@/state/vaultCommandsStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
+import {
+  REPLY_GAP,
+  bottomScrollTop,
+  computeAnchorScrollTop,
+  nextModeOnScroll,
+  shouldFollowFromAnchor,
+  type ScrollMode,
+} from '@/chat/scroll/scrollMath'
 import { ReviewTray } from '@/chat/ReviewTray'
 import { SkillProposalTray } from '@/chat/SkillProposalTray'
 
@@ -66,9 +75,9 @@ function parseSlashInvocation(text: string): { name: string; args: string } | nu
 interface Props {
   slug: string | null
   // Threads + active id are owned by RightPanel (so the picker can sit
-  // in the shared top bar) and passed down here. `slug` is still passed
-  // independently — it's informational, stamping `parentSlug` on newly-
-  // created threads — and feeds the run dispatcher.
+  // in the shared top bar) and passed down here. `slug` is the note the
+  // user is currently on — passed independently as per-turn run context
+  // (the "current page" the agent sees), not as thread ownership.
   threads: UseThreadsResult
   activeId: string | null
 }
@@ -108,7 +117,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   const { account } = useClaudeAuth()
   const setConnectOpen = useConnectDialog((s) => s.setOpen)
   const turnsHook = useThreadTurns(activeId)
-  const bottomRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   // The composer floats over the transcript (absolute) so chat content can
   // scroll behind its rounded corners instead of being cut off in a straight
@@ -123,12 +131,35 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // ref flips immediately on the same tick, so the second call short-
   // circuits before any side effects (turn append, sidecar request).
   const sendInFlightRef = useRef(false)
-  // Whether the user is currently pinned to the bottom of the transcript.
-  // Single source of truth shared by the auto-scroll effect (which only
-  // chases new content while pinned) and the scroll-to-bottom button (which
-  // only shows when *not* pinned). 80px threshold matches the pre-existing
-  // auto-scroll behavior so the two never disagree.
-  const [pinned, setPinned] = useState(true)
+
+  // Single owner of the transcript's scroll position. Every auto-scroll flows
+  // through one layout effect that reads this mode — so the bottom-follow and
+  // send-anchor behaviours can never issue competing scrollTo()s and race.
+  //   FOLLOW_BOTTOM: stick to the bottom, chase new/streamed content (default).
+  //   ANCHORED:      pin the just-sent question near the top; reply fills below.
+  //   FREE:          user scrolled away to read history — no auto-scroll.
+  const [scrollMode, setScrollMode] = useState<ScrollMode>('FOLLOW_BOTTOM')
+
+  // The turn ANCHORED pins to the top. Subordinate data for that mode: which
+  // bubble to scroll to. Set alongside ANCHORED on send, cleared on thread
+  // switch. `lastScrolledAnchorRef` makes the anchor jump fire once per id, so
+  // streaming re-renders don't re-scroll a message that's already in place.
+  const [anchorId, setAnchorId] = useState<string | null>(null)
+  const lastScrolledAnchorRef = useRef<string | null>(null)
+  // Tracks streaming truthiness across renders so we can detect the settle
+  // edge (truthy → null) and release a still-ANCHORED short reply.
+  const prevStreamingRef = useRef(false)
+
+  // Suppress `handleScroll` while WE are the one scrolling. A programmatic
+  // *smooth* scroll fires intermediate `scroll` events whose positions look
+  // like "the user scrolled away", which would clobber the mode mid-animation.
+  // We set this before such scrolls and clear it on `scrollend` (with a
+  // timeout fallback for engines — WKWebView — that don't fire scrollend).
+  // Streaming's instant bottom-scrolls are NOT suppressed: they land at the
+  // bottom so handleScroll re-affirms FOLLOW_BOTTOM on its own, and leaving
+  // them unsuppressed is what lets the user scroll up to pause following.
+  const suppressScrollRef = useRef(false)
+  const suppressTimerRef = useRef<number | undefined>(undefined)
 
   // Active thread's preferred model / effort. Threads created before these
   // fields existed return undefined; fall back to the defaults in that case.
@@ -193,10 +224,48 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   const { status: chatStatus, streaming } = runner
 
   const handleScroll = useCallback(() => {
+    // Ignore our own smooth scrolls (see suppressScrollRef); only genuine user
+    // scrolls change the mode.
+    if (suppressScrollRef.current) return
     const c = scrollRef.current
     if (!c) return
     const distance = c.scrollHeight - c.scrollTop - c.clientHeight
-    setPinned(distance < 80)
+    setScrollMode(nextModeOnScroll(distance))
+  }, [])
+
+  // Issue a programmatic scroll, marking it so handleScroll ignores the
+  // resulting events. Streaming's instant bottom-follow passes suppress=false.
+  const doScroll = useCallback(
+    (c: HTMLElement, top: number, smooth: boolean, suppress: boolean) => {
+      if (suppress) {
+        suppressScrollRef.current = true
+        if (suppressTimerRef.current) window.clearTimeout(suppressTimerRef.current)
+        suppressTimerRef.current = window.setTimeout(
+          () => {
+            suppressScrollRef.current = false
+          },
+          smooth ? 700 : 150,
+        )
+      }
+      c.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' })
+    },
+    [],
+  )
+
+  // Position the transcript for a just-sent turn. The FIRST turn in an empty
+  // thread follows the bottom instead of anchoring: there's nothing above to
+  // scroll past, so pinning a lone bubble to the top over an empty reserved
+  // viewport reads as broken — let the reply stream in above the composer.
+  // Every later send anchors: sets the target + mode together so the single
+  // scroll effect owns the jump. Used by every send path (free chat, slash,
+  // vault); pass `isFirstTurn` captured BEFORE the turn is appended.
+  const anchorSentTurn = useCallback((turnId: string, isFirstTurn: boolean) => {
+    if (isFirstTurn) {
+      setScrollMode('FOLLOW_BOTTOM')
+    } else {
+      setAnchorId(turnId)
+      setScrollMode('ANCHORED')
+    }
   }, [])
 
   // Track the floating composer's height so the transcript's bottom padding
@@ -223,15 +292,128 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     }
   }, [threads])
 
-  // Auto-scroll only when the user is already pinned to the bottom — if they
-  // scrolled up to read history, leave them alone. Streaming uses 'auto' (no
-  // animation) so rapid token deltas don't fight an in-flight smooth scroll.
+  // THE single scroll owner. Reads `scrollMode` and issues at most one
+  // scrollTo per run — so bottom-follow and send-anchor can never race. Runs
+  // as a layout effect (measures rects, sets scrollTop before paint to avoid a
+  // flash) and re-fires whenever the mode, anchor, turns, or streaming buffer
+  // change. During streaming, `streaming` is the only dep that ticks (~120ms).
+  useLayoutEffect(() => {
+    const c = scrollRef.current
+    if (!c) return
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+    if (scrollMode === 'ANCHORED' && anchorId) {
+      const wrapper = c.querySelector<HTMLElement>(`[data-turn-id="${anchorId}"]`)
+      if (!wrapper) return // not committed yet — retry on the next render
+      const containerRect = c.getBoundingClientRect()
+      const footerH = footerRef.current?.offsetHeight ?? 0
+
+      if (lastScrolledAnchorRef.current !== anchorId) {
+        // First time for this turn: fire the anchor jump. Measure the inner
+        // content, not the wrapper — the wrapper carries the min-height
+        // reservation (see render) which would inflate its rect.
+        const content = (wrapper.firstElementChild as HTMLElement | null) ?? wrapper
+        lastScrolledAnchorRef.current = anchorId
+        const insetTop = parseFloat(getComputedStyle(c).paddingTop) || 0
+        const contentRect = content.getBoundingClientRect()
+        const top = computeAnchorScrollTop({
+          scrollTop: c.scrollTop,
+          containerTop: containerRect.top,
+          clientHeight: c.clientHeight,
+          insetTop,
+          footerHeight: footerH,
+          bubbleTop: contentRect.top,
+          bubbleBottom: contentRect.bottom,
+        })
+        // Always suppress: after landing, the distance-from-bottom is
+        // legitimately large, so an unsuppressed scroll event would flip the
+        // mode to FREE and drop the reservation. The send jump is always smooth
+        // (unless reduce-motion) — `streaming` is already truthy here because
+        // runner.run seeds it synchronously, so we cannot key off it.
+        doScroll(c, top, !reduceMotion, true)
+        return
+      }
+
+      // Already anchored: each streaming tick, check whether the reply has
+      // grown enough to fill the viewport, and if so hand off to bottom-follow
+      // so the streaming tail stays visible. Skip while our anchor scroll is
+      // still animating (suppressScrollRef) — the transient scroll position
+      // would misread. Measure the LAST turn's inner content (the reply).
+      if (suppressScrollRef.current) return
+      const wrappers = c.querySelectorAll<HTMLElement>('[data-turn-id]')
+      const lastWrapper = wrappers[wrappers.length - 1]
+      const lastContent =
+        (lastWrapper?.firstElementChild as HTMLElement | null) ?? lastWrapper
+      if (!lastContent) return
+      if (
+        shouldFollowFromAnchor({
+          contentBottom: lastContent.getBoundingClientRect().bottom,
+          containerTop: containerRect.top,
+          clientHeight: c.clientHeight,
+          footerHeight: footerH,
+          replyGap: REPLY_GAP,
+        })
+      ) {
+        setScrollMode('FOLLOW_BOTTOM')
+      }
+      return
+    }
+
+    if (scrollMode === 'FOLLOW_BOTTOM') {
+      lastScrolledAnchorRef.current = null
+      const isStreaming = !!streaming
+      // Streaming → instant + unsuppressed (self-correcting, lets the user
+      // scroll up to pause). Otherwise smooth + suppressed.
+      doScroll(
+        c,
+        bottomScrollTop(c.scrollHeight, c.clientHeight),
+        !isStreaming && !reduceMotion,
+        !isStreaming,
+      )
+    }
+    // FREE: nobody auto-scrolls.
+  }, [scrollMode, anchorId, turnsHook.turns, streaming, doScroll])
+
+  // Clear the programmatic-scroll suppression as soon as our smooth scroll
+  // settles (the timeout in doScroll is only a fallback for engines without
+  // scrollend). Also tears down a pending fallback timer on unmount.
   useEffect(() => {
-    if (!pinned) return
-    bottomRef.current?.scrollIntoView({
-      behavior: streaming ? 'auto' : 'smooth',
-    })
-  }, [turnsHook.turns, streaming, pinned])
+    const c = scrollRef.current
+    if (!c) return
+    const onScrollEnd = () => {
+      suppressScrollRef.current = false
+      if (suppressTimerRef.current) window.clearTimeout(suppressTimerRef.current)
+    }
+    c.addEventListener('scrollend', onScrollEnd)
+    return () => {
+      c.removeEventListener('scrollend', onScrollEnd)
+      if (suppressTimerRef.current) window.clearTimeout(suppressTimerRef.current)
+    }
+  }, [])
+
+  // When a turn settles (streaming truthy → null) while still ANCHORED, the
+  // reply was short enough that it never overflowed into bottom-follow. Leaving
+  // it ANCHORED would keep the min-height reservation — a dead viewport of
+  // scroll room below a finished short answer, which strands the scroll-to-
+  // bottom button and lets the composer's glass band shadow the emptiness.
+  // Release to FOLLOW_BOTTOM: the reservation drops and the settled transcript
+  // rests naturally (a short answer that fits doesn't move).
+  useEffect(() => {
+    const wasStreaming = prevStreamingRef.current
+    const nowStreaming = !!streaming
+    prevStreamingRef.current = nowStreaming
+    if (wasStreaming && !nowStreaming && scrollMode === 'ANCHORED') {
+      setScrollMode('FOLLOW_BOTTOM')
+    }
+  }, [streaming, scrollMode])
+
+  // Reset scroll ownership on thread switch so no anchor / reserved room / mode
+  // bleeds across; the new thread opens following its latest turn.
+  useEffect(() => {
+    setAnchorId(null)
+    setScrollMode('FOLLOW_BOTTOM')
+    lastScrolledAnchorRef.current = null
+  }, [activeId])
 
   // An open doc (`slug`) is enough — edits flow through pendingChangesStore, not
   // a live editor view. The queue route is read-only Q&A; the FileViewer route
@@ -373,22 +555,29 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     cmd: LoadedCommand,
     args: string,
     userText: string,
+    contextChips: Attachment[] = [],
   ) {
     const userTurn: ChatTurn = {
       id: crypto.randomUUID(),
       role: 'user',
       content: userText,
       ts: Date.now(),
+      // The command acts on the same selection/viewing-file it consumed via the
+      // {{selection}} template — show it in the bubble like the normal path.
+      attachments: contextChips.length > 0 ? contextChips : undefined,
       // Stamp so handleRegenerate can rerun this turn through the same
       // command path (system prompt + relayTools + summarize) instead of
       // replaying the literal "/proofread" text as plain chat.
       slashInvocation: { name: cmd.name, args },
     }
+    const isFirstTurn = turnsHook.turns.length === 0
     turnsHook.appendTurn(userTurn)
+    // First turn follows the bottom; later turns anchor to the top.
+    anchorSentTurn(userTurn.id, isFirstTurn)
     await runSlashCommand(threadId, cmd, args, userTurn, [...turnsHook.turns, userTurn])
   }
 
-  /** Run a vault routine command (organize / daily-ingest / …) NATIVELY: send
+  /** Run a vault command (organize / daily-ingest / …) NATIVELY: send
    * `/<name> <arg>` as the prompt so the SDK expands the plugin command. The arg
    * defaults to the open note's path — the "organize what I'm looking at"
    * default — unless the user typed one. No client system prompt: the command
@@ -442,10 +631,32 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     })
   }
 
+  // Prop-backed context chips (selection + viewing file) snapshotted as turn
+  // attachments, so EVERY send path (normal, slash, vault command) can commit
+  // them onto its turn uniformly. The draft-backed chips (file / pasted /
+  // mentions) are cleared by the composer's own submit, so they never leak.
+  function captureContextChips(): Attachment[] {
+    const chips: Attachment[] = []
+    if (selectionText) {
+      chips.push({ type: 'selection', label: selectionLabel ?? 'Selection', preview: selectionText })
+    }
+    if (viewingFilePath) chips.push({ type: 'viewing-file', path: viewingFilePath })
+    return chips
+  }
+  // Detach the one-shot prop-backed chips once a send has committed them.
+  // Selection collapses in the editor (its listener republishes the now-empty
+  // selection, hiding the chip); the viewing file is dismissed until the route
+  // changes to another file.
+  function resetContextChips() {
+    if (selectionText) useEditorSelectionStore.getState().collapse?.()
+    if (viewingFilePath) setFileChipDismissed(true)
+  }
+
   async function handleSend(
     text: string,
     attachments: FileAttachment[] = [],
     mentionPaths: string[] = [],
+    pastedTexts: { preview: string; content: string }[] = [],
   ) {
     if (!ready || chatStatus === 'streaming') return
     // Latch BEFORE any await / state set so a fast double-Enter can't
@@ -463,26 +674,34 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       if (slash) {
         const cmd = getCommand(slash.name)
         if (cmd) {
-          await executeCommand(threadId, cmd, slash.args, text)
+          await executeCommand(threadId, cmd, slash.args, text, captureContextChips())
+          resetContextChips()
           return
         }
-        // Not a builtin editor action — is it a vault routine command? Those
+        // Not a builtin editor action — is it a vault command? Those
         // run natively (the SDK expands the plugin command).
         if (useVaultCommands.getState().get(slash.name)) {
+          const chips = captureContextChips()
           const userTurn: ChatTurn = {
             id: crypto.randomUUID(),
             role: 'user',
             content: text,
             ts: Date.now(),
+            attachments: chips.length > 0 ? chips : undefined,
             slashInvocation: { name: slash.name, args: slash.args },
           }
+          const isFirstTurn = turnsHook.turns.length === 0
           turnsHook.appendTurn(userTurn)
+          // First turn follows the bottom; later turns anchor to the top.
+          anchorSentTurn(userTurn.id, isFirstTurn)
+          resetContextChips()
           await runVaultCommand(threadId, slash.name, slash.args, [
             ...turnsHook.turns,
             userTurn,
           ])
           return
         }
+        // Unknown command — an error, not a send: leave the chips armed.
         appendInlineError(threadId, text, `Unknown command: /${slash.name}`)
         return
       }
@@ -492,14 +711,21 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       // any stale arm so it can't leak into this send.
       editingVizRef.current = null
 
+      // Snapshot every composer context chip onto the turn so the bubble renders
+      // what was sent: draft-backed file/pasted here + the prop-backed
+      // selection/viewing-file via the shared helper (same commit boundary the
+      // slash paths use).
+      const turnAttachments: Attachment[] = [
+        ...attachments.map((f) => ({ type: 'file' as const, name: f.name, mediaType: f.mediaType, path: f.path })),
+        ...pastedTexts.map((p) => ({ type: 'pasted' as const, preview: p.preview, content: p.content })),
+        ...captureContextChips(),
+      ]
       const userTurn: ChatTurn = {
         id: crypto.randomUUID(),
         role: 'user',
         content: text,
         ts: Date.now(),
-        attachments: attachments.length > 0
-          ? attachments.map(f => ({ type: 'file' as const, name: f.name, mediaType: f.mediaType }))
-          : undefined,
+        attachments: turnAttachments.length > 0 ? turnAttachments : undefined,
         mentions: mentionPaths.length > 0
           ? mentionPaths.map((path) => ({ path }))
           : undefined,
@@ -521,6 +747,12 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
 
       // The user's turn is finished text — push to Yjs once and let it sync.
       turnsHook.appendTurn(userTurn)
+      // First turn follows the bottom; later turns anchor to the top.
+      anchorSentTurn(userTurn.id, isFirstTurn)
+
+      // Detach the one-shot prop-backed chips now that they're committed to the
+      // turn (draft chips were already cleared by the composer's submit).
+      resetContextChips()
 
       await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, undefined, attachments, mentionPaths)
     } finally {
@@ -558,6 +790,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       // turn no longer leaves marks behind, so the cleanup loop is
       // unnecessary — just remove the assistant turn and rerun.
       turnsHook.removeTurn(assistantTurnId)
+      // Follow the bottom as the reply re-streams in place — no re-anchor jump,
+      // which would yank a settled transcript around.
+      setScrollMode('FOLLOW_BOTTOM')
 
       if (lastUser.slashInvocation) {
         const cmd = getCommand(lastUser.slashInvocation.name)
@@ -571,7 +806,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
           )
           return
         }
-        // Vault routine command → rerun natively.
+        // Vault command → rerun natively.
         if (useVaultCommands.getState().get(lastUser.slashInvocation.name)) {
           await runVaultCommand(
             threadId,
@@ -584,7 +819,16 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         // Command was renamed / removed since the original send; fall back
         // to plain chat so the rerun at least produces something.
       }
-      await runner.run(threadId, history)
+      // Re-derive the turn's file attachments + @-mentions from what was
+      // committed onto it, so the rerun sees the same context as the original
+      // send (without this, regenerate silently dropped them). Pasted text +
+      // selection ride on turn.content / buildUserPrompt already. Old turns
+      // predate persisted paths — skip any file attachment missing one.
+      const regenAttachments: FileAttachment[] = (lastUser.attachments ?? [])
+        .filter((a): a is Extract<Attachment, { type: 'file' }> => a.type === 'file' && !!a.path)
+        .map((a) => ({ id: crypto.randomUUID(), name: a.name, mediaType: a.mediaType, path: a.path }))
+      const regenMentions = (lastUser.mentions ?? []).map((m) => m.path)
+      await runner.run(threadId, history, undefined, undefined, regenAttachments, regenMentions)
     } finally {
       sendInFlightRef.current = false
     }
@@ -606,7 +850,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       const hasSpace = m[2].length > 0
       const cmd = getCommand(m[1])
       if (!cmd) {
-        // Vault routine commands are valid too — they execute natively.
+        // Vault commands are valid too — they execute natively.
         if (useVaultCommands.getState().get(m[1])) return { ok: true as const }
         return hasSpace
           ? { ok: false as const, message: `Unknown command: /${m[1]}` }
@@ -667,9 +911,14 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         // px-1.5 (6px) = --surface-inset + 1rem from the card edge, so this
         // tracks the gap automatically.
         className="flex min-h-0 flex-1 flex-col overflow-y-auto px-[calc(var(--surface-inset)_+_1rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*+*]:mt-6"
-        // Top: clear the overlay header (content scrolls behind it).
-        // Bottom: clear the floating composer so the last message isn't hidden.
-        style={{ paddingTop: 'calc(var(--header-h) + 0.25rem)', paddingBottom: footerHeight + 12 }}
+        // Top: clear the glass fade band (RightPanel) — same --chat-top-inset
+        // token, so content begins exactly where the band goes transparent and
+        // the first message is never painted over.
+        // Bottom: clear the composer AND its glass fade band (footerHeight + 48
+        // below) so the resting last message isn't shadowed by the fade. Must
+        // match that band height; content still dissolves under it while
+        // scrolling, but nothing rests inside the fade.
+        style={{ paddingTop: 'var(--chat-top-inset)', paddingBottom: footerHeight + 48 }}
       >
         {renderedTurns.length === 0 && (
           // ContentUnavailableView pattern (macOS 14+/iOS 17+):
@@ -684,32 +933,50 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
             />
             <p className="text-title-3 font-semibold text-foreground">Ask anything</p>
             <p className="max-w-xs text-center text-body text-muted-foreground">
-              Type a message or try a slash command like /proofread.
+              Type a message, or type / for commands.
             </p>
           </div>
         )}
-        {renderedTurns.map((turn) => (
-          <MessageRow
+        {renderedTurns.map((turn, i) => (
+          // data-turn-id lets the anchor effect find this bubble to scroll it to
+          // the top (the effect computes the offset itself). The wrapper is the
+          // scroll container's direct child, so [&>*+*]:mt-6 still spaces turns.
+          //
+          // ANCHOR mode reserves a viewport of scroll room by giving the LAST
+          // turn's wrapper a min-height. Pure CSS, self-trimming: a short reply
+          // is padded so the anchored message can sit at the top; a reply that
+          // already fills the viewport doesn't grow the wrapper, so there's no
+          // trailing void. min-height on the wrapper (not the bubble) keeps the
+          // bubble its natural size at the top of the padded box.
+          <div
             key={turn.id}
-            turn={turn}
-            threadId={activeId}
-            threadTitle={activeThread?.title ?? ''}
-            onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
-            // While a plan is parked for approval, its plan lives in the
-            // approval card — hide the (redundant) answer text so the plan
-            // isn't shown twice.
-            hideText={
-              turn.status === 'streaming' &&
-              pendingPermission?.toolName === 'ExitPlanMode'
+            data-turn-id={turn.id}
+            style={
+              scrollMode === 'ANCHORED' && i === renderedTurns.length - 1
+                ? { minHeight: 'calc(100dvh - var(--chat-top-inset))' }
+                : undefined
             }
-          />
+          >
+            <MessageRow
+              turn={turn}
+              threadId={activeId}
+              threadTitle={activeThread?.title ?? ''}
+              onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
+              // While a plan is parked for approval, its plan lives in the
+              // approval card — hide the (redundant) answer text so the plan
+              // isn't shown twice.
+              hideText={
+                turn.status === 'streaming' &&
+                pendingPermission?.toolName === 'ExitPlanMode'
+              }
+            />
+          </div>
         ))}
         {pendingPlanText && (
           <div className="px-1 text-[15px] leading-relaxed text-foreground">
             <StreamingMarkdown content={pendingPlanText} isStreaming={false} />
           </div>
         )}
-        <div ref={bottomRef} />
       </div>
 
       {/* Glass fade band: the transcript dissolves into the composer instead
@@ -735,8 +1002,11 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         className="absolute bottom-0 left-0 right-0 px-[var(--surface-inset)] pb-[var(--surface-inset)]"
       >
         <ScrollToBottomButton
-          visible={!pinned && renderedTurns.length > 0}
-          onClick={() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' })}
+          // Only when the user has deliberately scrolled up (FREE) — never
+          // during an ANCHORED send (the pin is intentional; there's no real
+          // content below to jump to).
+          visible={scrollMode === 'FREE' && renderedTurns.length > 0}
+          onClick={() => setScrollMode('FOLLOW_BOTTOM')}
         />
         {/* Pending AI changes, grouped by file — sits above the input, hides when empty. */}
         <ReviewTray />
@@ -750,6 +1020,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
           <GatePanel pending={pendingPermission} onClose={handleStop} />
         ) : (
           <PromptInput
+            threadId={activeId}
             status={chatStatus}
             disabled={!ready || !account.connected}
             onSubmit={handleSend}

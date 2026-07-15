@@ -2,14 +2,17 @@
 // footer; the value is stored on ThreadMeta so each thread remembers its
 // own choice. Disabled while a turn is streaming — switching mid-flight
 // would mismatch the in-flight prompt with the new model on retry.
+//
+// Shares the ModeToggle popup design (icon + title + description + check on the
+// active row, wide rounded panel) so the two footer pickers read as one system.
 
 import { useEffect, useMemo } from 'react'
+import { IconCheck } from '@tabler/icons-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { CHAT_MODELS, CHAT_MODEL_LABELS, type ChatModel } from '@/chat/types'
@@ -57,6 +60,7 @@ export function ModelSelect({ value, onChange, disabled }: Props) {
     <DropdownMenu>
       <DropdownMenuTrigger
         disabled={disabled}
+        aria-label={`Model: ${CHAT_MODEL_LABELS[value]}`}
         className={cn(
           'inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-body text-muted-foreground transition-colors',
           'hover:bg-accent hover:text-foreground',
@@ -66,15 +70,22 @@ export function ModelSelect({ value, onChange, disabled }: Props) {
       >
         {CHAT_MODEL_LABELS[value]}
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="end" className="min-w-36">
-        <DropdownMenuLabel className="text-footnote text-muted-foreground">Model</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={value} onValueChange={(v) => onChange(v as ChatModel)}>
-          {models.map((m) => (
-            <DropdownMenuRadioItem key={m} value={m} className="text-footnote">
-              {CHAT_MODEL_LABELS[m]}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
+      <DropdownMenuContent side="top" align="end" className="w-44 rounded-xl p-1">
+        <DropdownMenuLabel className="px-2.5 text-footnote text-muted-foreground">
+          Model
+        </DropdownMenuLabel>
+        {models.map((m) => (
+          <DropdownMenuItem
+            key={m}
+            onSelect={() => onChange(m)}
+            className="items-center gap-2.5 rounded-lg px-2.5 py-1.5"
+          >
+            <span className="min-w-0 flex-1 text-body font-medium">{CHAT_MODEL_LABELS[m]}</span>
+            {m === value && (
+              <IconCheck className="size-4 shrink-0 text-muted-foreground" stroke={2} />
+            )}
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   )

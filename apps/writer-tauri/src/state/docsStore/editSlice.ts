@@ -17,6 +17,7 @@ import { flushDirty, markSlugDirty, seedLastWrittenPath } from '@/lib/docFileSyn
 import { renameVaultFile } from '@/lib/vault'
 import { pathForDoc, sanitizeFilename } from '@/lib/docPaths'
 import { planFolderMove } from '@/lib/folderMove'
+import { updateWikilinksForRename } from '@/lib/renameWikilinks'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
 /** First free `<prefix><base>.md` (then ` 1`, ` 2`, …) not already
@@ -184,6 +185,10 @@ export const createEditSlice = (
       set({ knownDocs: list })
       markSlugDirty(slug)
       void flushDirty()
+      // Rewrite `[[oldName]]` → `[[newName]]` across the vault so inbound
+      // wikilinks follow the rename (Obsidian behaviour). Async so it never
+      // blocks the rename UI.
+      void updateWikilinksForRename(slug, cur.title ?? '', safe)
       return true
     }
 
@@ -203,6 +208,8 @@ export const createEditSlice = (
     // is that Finder reflects the change now, not 2s later.
     markSlugDirty(slug)
     void flushDirty()
+    // Follow inbound wikilinks across the vault (see the note branch above).
+    void updateWikilinksForRename(slug, cur.title ?? '', trimmed)
     return true
   },
 

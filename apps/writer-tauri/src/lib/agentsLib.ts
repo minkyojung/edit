@@ -50,7 +50,7 @@ export interface AgentSeed {
 }
 
 /** Seed default role files into `<AGENTS_REL>/` if missing. Idempotent by file
- * existence (never overwrites the user's edits) — same contract as seedRoutines.
+ * existence (never overwrites the user's edits) — same contract as seedCommands.
  * scanVault mints a slug into each on the next scan, so they become editable
  * notes. */
 export async function seedAgents(seeds: AgentSeed[]): Promise<void> {

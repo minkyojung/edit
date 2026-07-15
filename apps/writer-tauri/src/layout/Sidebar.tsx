@@ -9,7 +9,7 @@ import {
   IconUser,
   IconBolt,
   IconRobot,
-  IconRoute,
+  IconTerminal2,
   IconPalette,
   IconSparkles,
 } from '@tabler/icons-react'
@@ -20,7 +20,7 @@ import { useNewFolderStore } from '@/state/newFolderStore'
 import { openSettings } from '@/settings/useSettingsDialog'
 import { ensureProfileWikiSlug } from '@/state/wikiService'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
@@ -38,8 +38,10 @@ import { useSortStore, SORT_LABELS, type SortMode } from '@/state/sortStore'
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarHeader,
 } from '@/components/ui/sidebar'
+import { WhatsNewSidebar } from '@/components/WhatsNew'
 import { SIDEBAR_ROW_INTERACTION } from '@/components/ui/sidebarRow'
 import { cn } from '@/lib/utils'
 
@@ -77,7 +79,7 @@ export function AppSidebar() {
   const activeSlug = useActiveSlug()
   const activeDoc = knownDocs.find((d) => d.slug === activeSlug)
   const profileSlug = knownDocs.find(
-    (d) => d.type === 'wiki:profile' && !d.archivedAt,
+    (d) => d.type === 'wiki:profile',
   )?.slug
   const profileActive = !!profileSlug && profileSlug === activeSlug
 
@@ -91,7 +93,7 @@ export function AppSidebar() {
   const agentsActive = pathname === '/agents' || inSurface('_system/agent/agents')
   const skillsActive = pathname === '/skills' || inSurface('_system/agent/skills')
   const commandActive =
-    pathname === '/routines' || inSurface('_system/agent/commands')
+    pathname === '/commands' || inSurface('_system/agent/commands')
   const galleryActive = pathname === '/gallery'
   const onboardActive = pathname === '/onboard'
 
@@ -104,37 +106,21 @@ export function AppSidebar() {
     try {
       const slug = await ensureProfileWikiSlug()
       if (!slug) return
-      const store = useDocsStore.getState()
-      navigate(
-        buildViewUrl({
-          tab: store.sidebarTab,
-          dayAnchor: store.dayAnchor,
-          monthAnchor: store.monthAnchor,
-          slug,
-        }),
-      )
+      openDoc(slug)
     } catch (err) {
       console.warn('[sidebar] open profile failed', err)
     } finally {
       setProfileBusy(false)
     }
-  }, [profileBusy, navigate])
+  }, [profileBusy])
 
   // New flat note (lands at inbox/Untitled.md) → open it. Shared by the
   // header "+" button and the ⌘N shortcut so there's one code path.
   const handleCreateNew = useCallback(() => {
     createNew().then((slug) => {
-      const store = useDocsStore.getState()
-      navigate(
-        buildViewUrl({
-          tab: store.sidebarTab,
-          dayAnchor: store.dayAnchor,
-          monthAnchor: store.monthAnchor,
-          slug,
-        }),
-      )
+      openDoc(slug)
     }).catch((err) => console.error('[docs] createNew failed', err))
-  }, [createNew, navigate])
+  }, [createNew])
 
   // ⌘N → new note. The vault is flat now, so a new note no longer nests
   // under today's daily — it's just a fresh file.
@@ -289,31 +275,37 @@ export function AppSidebar() {
           </button>
           <button
             type="button"
-            onClick={() => navigate('/routines')}
+            onClick={() => navigate('/commands')}
             data-active={commandActive || undefined}
             className={NAV_ROW}
           >
-            <IconRoute size={18} stroke={1.75} className="shrink-0" />
-            <span className="flex-1 truncate text-left">Routine</span>
+            <IconTerminal2 size={18} stroke={1.75} className="shrink-0" />
+            <span className="flex-1 truncate text-left">Commands</span>
           </button>
-          <button
-            type="button"
-            onClick={() => navigate('/gallery')}
-            data-active={galleryActive || undefined}
-            className={NAV_ROW}
-          >
-            <IconPalette size={18} stroke={1.75} className="shrink-0" />
-            <span className="flex-1 truncate text-left">Gallery</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/onboard')}
-            data-active={onboardActive || undefined}
-            className={NAV_ROW}
-          >
-            <IconSparkles size={18} stroke={1.75} className="shrink-0" />
-            <span className="flex-1 truncate text-left">Onboarding</span>
-          </button>
+          {/* DEV-only design tools — the gallery + onboarding preview are for
+              iterating on UI, never shown to end users. */}
+          {import.meta.env.DEV && (
+            <>
+              <button
+                type="button"
+                onClick={() => navigate('/gallery')}
+                data-active={galleryActive || undefined}
+                className={NAV_ROW}
+              >
+                <IconPalette size={18} stroke={1.75} className="shrink-0" />
+                <span className="flex-1 truncate text-left">Gallery</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/onboard')}
+                data-active={onboardActive || undefined}
+                className={NAV_ROW}
+              >
+                <IconSparkles size={18} stroke={1.75} className="shrink-0" />
+                <span className="flex-1 truncate text-left">Onboarding</span>
+              </button>
+            </>
+          )}
         </nav>
 
         {/* Section label for the vault's notes, mirroring the "Assistant"
@@ -325,6 +317,9 @@ export function AppSidebar() {
             the sidebar. (Replaced the day/week/month date views.) */}
         <FolderTree />
       </SidebarContent>
+      <SidebarFooter className="p-0">
+        <WhatsNewSidebar />
+      </SidebarFooter>
       <ConnectClaudeDialog open={connectOpen} onOpenChange={setConnectOpen} onConnected={refresh} />
       <ConnectGitHubDialog
         open={githubConnectOpen}

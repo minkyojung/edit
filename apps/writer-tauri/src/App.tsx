@@ -13,7 +13,7 @@ import { Page } from '@/layout/Page'
 import { ReadLaterQueue } from '@/layout/ReadLaterQueue'
 import { FileViewer } from '@/layout/FileViewer'
 import { SkillsPage } from '@/layout/SkillsPage'
-import { RoutinesPage } from '@/layout/RoutinesPage'
+import { CommandsPage } from '@/layout/CommandsPage'
 import { AgentsPage } from '@/layout/AgentsPage'
 import { GalleryPage } from '@/layout/GalleryPage'
 import { CommandPalette } from '@/layout/CommandPalette'
@@ -30,9 +30,9 @@ import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { usePersistLastPath } from '@/hooks/usePersistLastPath'
 import { useWindowChrome } from '@/hooks/useWindowChrome'
 import { useVibrancy } from '@/hooks/useVibrancy'
-import { useWindowModeSync } from '@/hooks/useWindowModeSync'
 import { useCompactShortcut } from '@/hooks/useCompactShortcut'
 import { useWindowClose } from '@/hooks/useWindowClose'
+import { useUpdaterEvents } from '@/hooks/useUpdaterEvents'
 import {
   buildDayUrl,
   buildMonthUrl,
@@ -49,6 +49,7 @@ import '@/lib/vault'
 import '@/lib/scanVault'
 import { startAutoFlush } from '@/lib/docFileSync'
 import { startVaultWatcher } from '@/lib/vaultWatcher'
+import { setAppNavigate } from '@/lib/appNavigate'
 import { startPendingChangesApplier } from '@/state/pendingChangesApplier'
 import { gitInit } from '@/lib/git'
 import { startGitHubSync } from '@/lib/githubSync'
@@ -94,6 +95,10 @@ startPendingChangesApplier()
 startGitHubSync()
 
 export function App() {
+  // Subscribe this window to the Rust update state machine (mirrors state
+  // into the store + toasts on transitions). At the App root so every
+  // window — launcher and project alike — renders update status.
+  useUpdaterEvents()
   // HashRouter sits above BootGate so anything router-aware (useActiveSlug,
   // useNavigate, useLocation) can be called from anywhere inside the app
   // — including AppContent itself. BootGate is router-agnostic; it only
@@ -107,8 +112,11 @@ export function App() {
             <Routes>
               {/* Design-preview page for the onboarding flow — standalone, so
                   it renders WITHOUT BootGate/AppShell (no sidebar/editor). More
-                  specific than "*", so React Router matches it first. */}
-              <Route path="/onboard" element={<OnboardingPreview />} />
+                  specific than "*", so React Router matches it first.
+                  DEV-only: a design tool, never shipped to end users. */}
+              {import.meta.env.DEV && (
+                <Route path="/onboard" element={<OnboardingPreview />} />
+              )}
               <Route
                 path="*"
                 element={
@@ -147,7 +155,7 @@ export function App() {
 // render their own React surface instead of a document) must be exempt —
 // otherwise the self-heal reads their null slug as "broken" and bounces
 // the user back to today's daily.
-const SLUGLESS_ROUTES = new Set(['/read-later', '/skills', '/routines', '/agents', '/gallery'])
+const SLUGLESS_ROUTES = new Set(['/read-later', '/skills', '/commands', '/agents', '/gallery'])
 
 function RouteSyncBridge() {
   useRouteSync()
@@ -156,11 +164,37 @@ function RouteSyncBridge() {
   const bootstrapping = useDocsStore((s) => s.bootstrapping)
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const openSlugs = useDocsStore((s) => s.openSlugs)
+  const pendingRestoreUrl = useDocsStore((s) => s.pendingRestoreUrl)
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
+  // Wire the live router navigate into the module-level bridge so non-React
+  // callers (CodeMirror keymaps, chat tool results) route through the router
+  // via appNavigate/openDoc instead of setting window.location.hash raw.
+  useEffect(() => {
+    setAppNavigate(navigate)
+    return () => setAppNavigate(null)
+  }, [navigate])
+
   useEffect(() => {
     if (bootstrapping) return
+    // Boot restore (one-shot): the last-viewed doc, rebuilt for this boot's
+    // fresh slug. While it's pending we SUPPRESS the self-heal below and only
+    // navigate — clearing the flag via setState here would re-run this effect
+    // before navigate() reaches useLocation, and that intermediate run (flag
+    // cleared, pathname still the stale/invalid boot slug) would self-heal to
+    // today's daily and clobber the restore. Clear only once the URL is valid
+    // (i.e. navigate has landed), detected by slug validity so encoded slugs
+    // still match.
+    if (pendingRestoreUrl) {
+      const curSlug = parseSlugFromPath(pathname)
+      if (curSlug !== null && knownDocs.some((d) => d.slug === curSlug)) {
+        useDocsStore.setState({ pendingRestoreUrl: null })
+        return
+      }
+      navigate(pendingRestoreUrl, { replace: true })
+      return
+    }
     // Slug-less first-class routes (the Read Later queue) are valid
     // WITHOUT a document. Without this guard the self-heal below sees a
     // null slug, judges the URL "broken", and bounces back to today's
@@ -180,7 +214,7 @@ function RouteSyncBridge() {
     // today's daily hasn't been re-ensured yet.
     const today = todayLocalDate()
     const todaysDaily = knownDocs.find(
-      (d) => d.type === 'daily' && d.date === today && !d.archivedAt,
+      (d) => d.type === 'daily' && d.date === today,
     )
     const fallbackSlug = todaysDaily?.slug ?? openSlugs[0]
     if (!fallbackSlug) return
@@ -189,7 +223,7 @@ function RouteSyncBridge() {
     // /week/<bad>, fall back to /week/<good>, not /day/<today>/<good>.
     // For roots / unknown shapes we default to today's day view.
     navigate(buildFallbackUrl(pathname, fallbackSlug), { replace: true })
-  }, [bootstrapping, pathname, knownDocs, openSlugs, navigate])
+  }, [bootstrapping, pathname, knownDocs, openSlugs, navigate, pendingRestoreUrl])
 
   return null
 }
@@ -221,7 +255,6 @@ function AppContent() {
   useIdleTrigger()
   useWindowChrome()
   useVibrancy()
-  useWindowModeSync()
   useCompactShortcut()
   useWindowClose()
 
@@ -282,9 +315,12 @@ function AppContent() {
             <Route path="/file/:rel" element={<FileViewer />} />
             <Route path="/read-later" element={<ReadLaterQueue />} />
             <Route path="/skills" element={<SkillsPage />} />
-            <Route path="/routines" element={<RoutinesPage />} />
+            <Route path="/commands" element={<CommandsPage />} />
             <Route path="/agents" element={<AgentsPage />} />
-            <Route path="/gallery" element={<GalleryPage />} />
+            {/* DEV-only: the design-system gallery is a dev tool, not shipped. */}
+            {import.meta.env.DEV && (
+              <Route path="/gallery" element={<GalleryPage />} />
+            )}
           </Routes>
         </AppShell>
         <CommandPalette />

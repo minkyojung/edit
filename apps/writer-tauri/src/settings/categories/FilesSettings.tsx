@@ -13,12 +13,19 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { Button } from '@/components/ui/button'
+import { seedStarterTemplates, STARTER_TEMPLATES_FOLDER } from '@/lib/templates'
 import { SettingRow } from '../SettingRow'
 
 export function FilesSettings() {
   const knownFolders = useDocsStore((s) => s.knownFolders)
+  const createFolder = useDocsStore((s) => s.createFolder)
   const defaultNoteFolder = useSettingsStore((s) => s.defaultNoteFolder)
   const setDefaultNoteFolder = useSettingsStore((s) => s.setDefaultNoteFolder)
+  const knowledgeBaseFolder = useSettingsStore((s) => s.knowledgeBaseFolder)
+  const setKnowledgeBaseFolder = useSettingsStore((s) => s.setKnowledgeBaseFolder)
+  const templatesFolder = useSettingsStore((s) => s.templatesFolder)
+  const setTemplatesFolder = useSettingsStore((s) => s.setTemplatesFolder)
   const intakeModel = useSettingsStore((s) => s.intakeModel)
   const setIntakeModel = useSettingsStore((s) => s.setIntakeModel)
   const inboxAutoOrganize = useSettingsStore((s) => s.inboxAutoOrganize)
@@ -27,11 +34,38 @@ export function FilesSettings() {
   const setSandboxEnabled = useSettingsStore((s) => s.setSandboxEnabled)
   const vaultPath = useSettingsStore((s) => s.vaultPaths[s.activeVaultIndex] ?? '')
 
-  // Options: every real folder, plus 'inbox' (the default landing zone) and the current
-  // value — so the select always shows a valid, selectable current choice.
-  const options = [...new Set(['inbox', defaultNoteFolder, ...knownFolders])]
-    .filter(Boolean)
+  // Only real, user-facing folders belong in these pickers. Hide the
+  // agent-owned `_system` tree and any other internal folder (any segment
+  // starting with `_` or `.`) — you never file notes / knowledge / templates
+  // into those.
+  const isInternalFolder = (f: string) =>
+    f.split('/').some((seg) => seg.startsWith('_') || seg.startsWith('.'))
+  const realFolders = knownFolders.filter((f) => f && !isInternalFolder(f))
+
+  // New-note / knowledge-base pickers keep their role defaults ('inbox', 'wiki')
+  // plus the current value always selectable, so the control renders a choice
+  // even before those (scaffolded) folders exist on disk.
+  const roleOptions = [
+    ...new Set(['inbox', 'wiki', defaultNoteFolder, knowledgeBaseFolder, ...realFolders]),
+  ]
+    .filter((f) => f && !isInternalFolder(f))
     .sort((a, b) => a.localeCompare(b))
+
+  // Templates picker lists ONLY folders that actually exist. A not-yet-created
+  // templates folder must not masquerade as real — the select shows a
+  // placeholder until the user makes (or picks) a real folder, at which point
+  // it appears here and reads as selected.
+  const templateOptions = [...realFolders].sort((a, b) => a.localeCompare(b))
+
+  // "Set up" is offered until a real templates folder is configured. One click
+  // creates the folder, seeds the onboarding guide, and points the setting at
+  // it — the editor picks it up live (CmEditor watches templatesFolder).
+  const templatesConfigured = Boolean(templatesFolder) && realFolders.includes(templatesFolder)
+  const onSetupTemplates = async () => {
+    await createFolder(STARTER_TEMPLATES_FOLDER) // mkdir + knownFolders (picker/sidebar)
+    await seedStarterTemplates() // guide page, skipped if present
+    setTemplatesFolder(STARTER_TEMPLATES_FOLDER)
+  }
 
   return (
     <section>
@@ -53,13 +87,54 @@ export function FilesSettings() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {options.map((f) => (
+            {roleOptions.map((f) => (
               <SelectItem key={f} value={f}>
                 {f}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+      </SettingRow>
+      <SettingRow
+        title="Knowledge base folder"
+        description="Where the agent files durable, synthesized knowledge (entity & topic pages). Injected into the AI each turn; changing it takes effect on the next message."
+      >
+        <Select value={knowledgeBaseFolder} onValueChange={setKnowledgeBaseFolder}>
+          <SelectTrigger className="w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {roleOptions.map((f) => (
+              <SelectItem key={f} value={f}>
+                {f}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </SettingRow>
+      <SettingRow
+        title="Templates folder"
+        description="Where your template notes live. Their markdown feeds the editor's / menu (insert at cursor) and ⌘K's New from template. An empty or missing folder just shows no templates."
+      >
+        <div className="flex items-center gap-2">
+          <Select value={templatesFolder} onValueChange={setTemplatesFolder}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="None yet" />
+            </SelectTrigger>
+            <SelectContent>
+              {templateOptions.map((f) => (
+                <SelectItem key={f} value={f}>
+                  {f}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {!templatesConfigured && (
+            <Button variant="outline" size="sm" onClick={onSetupTemplates}>
+              Create folder
+            </Button>
+          )}
+        </div>
       </SettingRow>
       <SettingRow
         title="Organize model"

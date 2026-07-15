@@ -4,21 +4,26 @@
 // that still has unsaved local edits (`isDirty(slug) === true`).
 // Behaviour while a slug is in conflict:
 //
-//   - `docFileSync.flushDirty` skips it. Without the gate, the next
-//     auto-flush (every ~30s) would write the live Y.Doc to disk and
-//     silently overwrite the external version.
-//   - `ExternalEditBanner` renders over the editor for the active
-//     doc. Two resolutions:
-//       Reopen   → `reloadFromVault` discards the local Y.Doc state
-//                  and re-reads the disk file. User chose external.
-//       Dismiss  → just clears the conflict. Next auto-flush will
-//                  write the local Y.Doc, overwriting the external
-//                  edit. User chose local.
+//   - `docFileSync.flushDirty` skips it (see the `hasExternalConflict`
+//     gate). Without this, the next auto-flush would write the local
+//     body to disk and silently overwrite the external version.
+//   - `notify.externalEditConflict` surfaces a NON-dismissible toast
+//     (vaultWatcher.handleExternalReload) with two resolutions:
+//       Reopen  → `reloadFromVault` discards the local body and
+//                 re-reads the disk file. User chose external.
+//       Dismiss → just clears the conflict. The next auto-flush then
+//                 writes the local body, overwriting the external
+//                 edit. User chose local.
 //
-// One slug at a time per conflict. A second external edit on the
-// same slug while a banner is up is a no-op (already marked).
-// Cleared on slug archive / doc removal via the docsStore action,
-// but for v0.0.1 the banner is the canonical resolution surface.
+// One slug at a time per conflict. A second external edit on the same
+// slug while the toast is up is a no-op (already marked).
+//
+// Cleared in exactly three places: the two toast actions above, and
+// `closeDoc` / `removeKnownDoc` (docsStore) — closing or deleting the
+// doc ends the editing session, so a lingering conflict must not gate
+// a future reopen. The toast is non-dismissible precisely because it
+// is the only IN-SESSION clear; a swipe-away would otherwise latch the
+// flush gate silently for the rest of the session.
 
 import { create } from 'zustand'
 

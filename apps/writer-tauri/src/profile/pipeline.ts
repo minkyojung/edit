@@ -13,6 +13,7 @@
 // and Notes survive untouched.
 
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { discoverAndFetch, type Document } from './adapters'
 import {
   PROFILE_SECTIONS,
@@ -35,7 +36,6 @@ import {
 // reasoning. If About quality regresses we can selectively promote
 // it to Sonnet later.
 const MODEL = 'claude-haiku-4-5'
-const MAX_TOKENS_PER_SECTION = 800
 // Per-post truncation before the prompt. 2000 chars × 8 posts =
 // ~16k chars per call — comfortably below the OAuth-token per-
 // minute input limit so the three section calls don't 429. Voice
@@ -183,11 +183,10 @@ async function generateSection(
     `Return ONLY the section body. Do not include the "${def.heading}" heading — the caller will add it.`,
   ].join('\n')
 
-  // Caching strategy: keep system + posts identical across all three
-  // section calls so Anthropic's prompt cache hits on calls 2 and 3.
-  // Section-specific instruction is appended AFTER the cache marker
-  // on the posts block — anything before the marker is the cached
-  // prefix; anything after re-runs each call.
+  // Caching strategy: system + posts go into the sidecar's systemPrompt
+  // (identical across all three section calls), so the SDK's prompt cache
+  // hits on calls 2 and 3. The section-specific instruction is the per-call
+  // user prompt — its variance sits outside the cached system prefix.
   const postsText = renderDocsForPrompt(docs)
   const text = await callAnthropic({
     system: PROFILE_SYSTEM_PREAMBLE,
@@ -210,45 +209,30 @@ function renderDocsForPrompt(docs: Document[]): string {
     .join('\n\n---\n\n')
 }
 
-interface AnthropicResult {
-  status: number
-  body: {
-    content?: Array<{ type: string; text?: string }>
-    error?: { type?: string; message?: string }
-  }
-}
-
-/** Turn an Anthropic error block into a human-readable message.
- * The OAuth-token path often returns `message: "Error"` (literally
- * the string "Error") when rate-limited, with the real signal in
- * `type` (e.g. "rate_limit_error"). Prefer type when message is
- * empty / generic. */
-function formatApiError(
-  status: number,
-  err: { type?: string; message?: string } | undefined,
-): string {
-  if (status === 429) {
-    return "We've hit Anthropic's rate limit. Wait about a minute and try again."
-  }
-  const message = err?.message
-  const meaningful = message && message !== 'Error' ? message : null
-  if (meaningful) return meaningful
-  if (err?.type) return `${err.type} (status ${status})`
-  return `status ${status}`
-}
-
 interface SectionCallArgs {
   system: string
   postsText: string
   sectionInstruction: string
 }
 
+type CallOnceResult =
+  | { kind: 'ok'; text: string }
+  | { kind: 'rate_limited'; error: Error }
+  | { kind: 'fatal'; error: Error }
+
 async function callAnthropic(args: SectionCallArgs): Promise<string> {
-  // Retry loop. On 429 we back off and try again — the OAuth-token
-  // per-minute limit usually clears within a few seconds. Any other
-  // failure surfaces immediately (no point retrying a 400/auth/etc).
+  // system + posts are invariant across the three section calls, so they go
+  // into the sidecar's systemPrompt (the SDK caches that prefix → calls 2 and
+  // 3 hit cache). The section instruction is the per-call user prompt, so its
+  // variance sits outside the cached prefix.
+  const systemPrompt = `${args.system}\n\n${args.postsText}`
+  const prompt = args.sectionInstruction
+  // Retry loop. On a rate limit we back off and try again — the OAuth-token
+  // per-minute limit usually clears within a few seconds. Any other failure
+  // surfaces immediately (no point retrying a 400/auth/etc). The sidecar/SDK
+  // already retries transient 429s internally; this is the outer backstop.
   for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
-    const result = await callOnce(args)
+    const result = await callSection(systemPrompt, prompt)
     if (result.kind === 'ok') return result.text
     if (result.kind === 'rate_limited' && attempt < MAX_RETRY_ATTEMPTS) {
       const delayMs = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)
@@ -264,70 +248,114 @@ async function callAnthropic(args: SectionCallArgs): Promise<string> {
   throw new Error('exhausted retries')
 }
 
-type CallOnceResult =
-  | { kind: 'ok'; text: string }
-  | { kind: 'rate_limited'; error: Error }
-  | { kind: 'fatal'; error: Error }
-
-async function callOnce(args: SectionCallArgs): Promise<CallOnceResult> {
-  let resp: AnthropicResult
-  try {
-    resp = await invoke<AnthropicResult>('anthropic_messages_create', {
-      request: { body: buildRequestBody(args) },
-    })
-  } catch (err) {
-    console.error('[profile] invoke failed', err)
-    const message = typeof err === 'string' ? err : `invoke: ${String(err)}`
-    return { kind: 'fatal', error: new Error(message) }
+// Sidecar event shapes for the one-shot title path — the same `claude:*`
+// channel the chat runner and generateThreadTitle use. Assistant text arrives
+// on `claude:event`; the run ends with `claude:done` (success) or
+// `claude:error` (carrying a classified code).
+interface SectionChatEvent {
+  runId: string
+  event: {
+    type?: string
+    message?: { content?: Array<{ type: string; text?: string }> }
   }
-
-  if (resp.status === 429) {
-    console.warn('[profile] 429', { body: resp.body })
-    return {
-      kind: 'rate_limited',
-      error: new Error(formatApiError(resp.status, resp.body.error)),
-    }
-  }
-  if (resp.status !== 200) {
-    console.error('[profile] non-200', { status: resp.status, body: resp.body })
-    return {
-      kind: 'fatal',
-      error: new Error(formatApiError(resp.status, resp.body.error)),
-    }
-  }
-  const textBlock = resp.body.content?.find((b) => b.type === 'text')
-  if (!textBlock?.text) {
-    console.error('[profile] no text block', { body: resp.body })
-    return { kind: 'fatal', error: new Error('no text content in response') }
-  }
-  return { kind: 'ok', text: textBlock.text }
+}
+interface SectionDoneEvent {
+  runId: string
+}
+interface SectionErrorEvent {
+  runId: string
+  code: string
+  message: string
 }
 
-/** Build the Messages API body with a prompt-cache marker on the
- * posts block. The cache prefix is (system + posts) — identical
- * across the three section calls, so calls 2 and 3 hit the cache
- * and pay only for the (small) section instruction + output. The
- * section instruction sits AFTER the marker so its variance
- * doesn't invalidate the cache. */
-function buildRequestBody(args: SectionCallArgs) {
-  return {
-    model: MODEL,
-    max_tokens: MAX_TOKENS_PER_SECTION,
-    system: args.system,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: args.postsText,
-            cache_control: { type: 'ephemeral' },
-          },
-          { type: 'text', text: args.sectionInstruction },
-        ],
-      },
-    ],
+// Wall-clock cap on a single section call so a wedged stream can't hang the
+// onboarding pipeline. Generous because the section prompt carries the full
+// posts corpus; the SDK's own idle watchdog fires below this anyway.
+const SECTION_TIMEOUT_MS = 90_000
+
+/** Run one section prompt through the title sidecar (the SDK path) and collect
+ * the assistant text. Mirrors generateThreadTitle's event plumbing, but
+ * distinguishes a rate limit (retryable) from a fatal error so callAnthropic
+ * can back off. */
+function callSection(systemPrompt: string, prompt: string): Promise<CallOnceResult> {
+  const runId = crypto.randomUUID()
+  let text = ''
+  const unlistens: UnlistenFn[] = []
+  const cleanup = () => {
+    while (unlistens.length > 0) {
+      try {
+        unlistens.pop()?.()
+      } catch {
+        // already detached
+      }
+    }
   }
+
+  return new Promise<CallOnceResult>((resolve) => {
+    let done = false
+    const settle = (result: CallOnceResult) => {
+      if (done) return
+      done = true
+      cleanup()
+      resolve(result)
+    }
+
+    const timer = setTimeout(
+      () => settle({ kind: 'fatal', error: new Error('section timed out') }),
+      SECTION_TIMEOUT_MS,
+    )
+
+    Promise.all([
+      listen<SectionChatEvent>('claude:event', (e) => {
+        if (e.payload.runId !== runId) return
+        const ev = e.payload.event
+        if (ev?.type !== 'assistant') return
+        for (const b of ev.message?.content ?? []) {
+          if (b.type === 'text' && typeof b.text === 'string') {
+            text += b.text
+          }
+        }
+      }),
+      listen<SectionDoneEvent>('claude:done', (e) => {
+        if (e.payload.runId !== runId) return
+        clearTimeout(timer)
+        if (!text.trim()) {
+          settle({ kind: 'fatal', error: new Error('no text content in response') })
+          return
+        }
+        settle({ kind: 'ok', text })
+      }),
+      listen<SectionErrorEvent>('claude:error', (e) => {
+        if (e.payload.runId !== runId) return
+        clearTimeout(timer)
+        const code = e.payload.code
+        if (code === 'RATE_LIMIT') {
+          settle({
+            kind: 'rate_limited',
+            error: new Error(
+              "We've hit Anthropic's rate limit. Wait about a minute and try again.",
+            ),
+          })
+          return
+        }
+        settle({
+          kind: 'fatal',
+          error: new Error(e.payload.message || code || 'section failed'),
+        })
+      }),
+    ])
+      .then((registered) => {
+        unlistens.push(...registered)
+        return invoke('claude_title', {
+          args: { runId, model: MODEL, systemPrompt, prompt },
+        })
+      })
+      .catch((err) => {
+        clearTimeout(timer)
+        const message = typeof err === 'string' ? err : `invoke: ${String(err)}`
+        settle({ kind: 'fatal', error: new Error(message) })
+      })
+  })
 }
 
 function sleep(ms: number): Promise<void> {

@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, access } from 'node:fs/promises'
 import { join, normalize, relative, isAbsolute, resolve as resolvePath } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
@@ -105,6 +105,19 @@ function egressDenyRules() {
   ]
 }
 
+/** Deny the commands that dump the process environment, where the SDK-required
+ * CLAUDE_CODE_OAUTH_TOKEN lives (the CLI must receive it via env; Bash children
+ * inherit it). This is defense-in-depth, NOT a complete boundary: it stops the
+ * literal `printenv CLAUDE_CODE_OAUTH_TOKEN` / `env` probe an injected note is
+ * likely to use, but shell expansion (`echo $CLAUDE_CODE_OAUTH_TOKEN`) can't be
+ * caught by a command-name rule. The real closure is the sandbox blocking
+ * network egress (so a read token can't leave the machine) — see sandboxLockdown
+ * / failIfUnavailable. `set`/`export` are intentionally omitted: prefix-denying
+ * them would break legitimate `set -e` / `export FOO=…` usage for little gain. */
+function envDumpDenyRules() {
+  return ['Bash(printenv:*)', 'Bash(env:*)']
+}
+
 /** OS-sandbox config: block outbound network from tool subprocesses and
  * deny reads of the secret locations. */
 function sandboxLockdown() {
@@ -134,6 +147,35 @@ function sandboxLockdown() {
     // block lives in secretDenyRules().
     filesystem: { denyRead: secretPaths() },
   }
+}
+
+/** True if the SDK has persisted a session with this id to disk. The SDK writes
+ * each session as `~/.claude/projects/<cwd-encoded>/<sessionId>.jsonl`; the
+ * <cwd-encoded> segment mangles the path (slashes → dashes, and dotfiles too),
+ * so rather than reproduce that encoding we scan the project dirs for the
+ * `<sessionId>.jsonl` file — the id is a UUID, so a match is unambiguous.
+ * Used by the AUTH-retry path to decide resume-vs-recreate: we only `resume`
+ * a session that actually exists, so a first attempt that 401'd before any
+ * session file was written falls back to a clean create instead of erroring on
+ * a missing session. Best-effort: any fs error reads as "not persisted". */
+async function sessionPersisted(sessionId) {
+  if (!sessionId) return false
+  const base = join(homedir(), '.claude', 'projects')
+  let dirs
+  try {
+    dirs = await readdir(base)
+  } catch {
+    return false
+  }
+  for (const dir of dirs) {
+    try {
+      await access(join(base, dir, `${sessionId}.jsonl`))
+      return true
+    } catch {
+      // Not in this project dir — keep looking.
+    }
+  }
+  return false
 }
 
 /** Resolve a model-supplied file_path (absolute OR vault-relative) to an absolute
@@ -203,50 +245,6 @@ function extractPendingId(toolResponse) {
 // see the `canUseTool` hook below for the staged-edit gate that
 // supersedes the old chat:edit bridge.
 
-// Ingest result tool. Called once per ingest pass with the complete
-// JSON shape the frontend used to extract from raw assistant text.
-// The schema enforces structure at the SDK boundary — no more
-// frontend-side JSON parsing or per-field sanitization.
-//
-// Single-call contract: the model emits exactly one tool call per
-// run carrying every proposal / index update / log entry it decided
-// on. Empty arrays + null logEntry are valid (an ingest pass that
-// found nothing notable still calls the tool to mark the pass as
-// complete). The handler forwards the raw input to the host as an
-// `ingest/result` notification; ingest.ts assembles its IngestResult
-// from that payload directly.
-// `submit_profile` is the Profile-bootstrap counterpart to
-// submit_ingest_result. The Profile pipeline runs N per-URL Haiku
-// calls + 1 synthesis Sonnet call; every call uses this same tool
-// to emit a Profile-shaped payload, so the schema is shared. The
-// host distinguishes pass type by which event the run belongs to,
-// not by tool name.
-//
-// All array fields are optional / can be empty — a per-URL pass
-// may legitimately yield zero voice_samples for a thin source,
-// and the synthesis pass merges across sources to fill gaps.
-function buildSubmitProfileTool(runId, emit) {
-  return tool(
-    'submit_profile',
-    'Submit a structured profile extracted from one or more sources about the user. Use null for fields you cannot determine; use empty arrays for list fields with no entries. voice_samples must be verbatim quotes from the source text — do not paraphrase or invent. dispositions and values may be inferred from the writing but should be supported by something in the source. Call this exactly once per run.',
-    {
-      name: z.string().nullable(),
-      headline: z.string().nullable(),
-      location: z.string().nullable(),
-      roles: z.array(z.string()),
-      interests: z.array(z.string()),
-      voice_samples: z.array(z.string()),
-      values: z.array(z.string()),
-      dispositions: z.array(z.string()),
-      about: z.string(),
-    },
-    async (args) => {
-      emit(notification('profile/result', { runId, input: args }))
-      return { content: [{ type: 'text', text: 'Profile result recorded.' }] }
-    },
-  )
-}
-
 // E6 "host-applies" pattern: instead of letting the SDK's built-in
 // Edit / Write / MultiEdit tools touch disk themselves (gated through
 // `canUseTool` and then resolved by user via the host), we register
@@ -254,8 +252,8 @@ function buildSubmitProfileTool(runId, emit) {
 // proposal to the host as a `chat/edit-pending` notification and
 // return success immediately. The model believes the edit succeeded;
 // the host queues the proposal in `pendingChangesStore` and applies
-// it on user Keep. Symmetry with ingest's `submit_ingest_result`
-// (host does the writes after the LLM emits proposals).
+// it on user Keep. Ingest proposals flow the same way — the host does
+// the writes after the LLM emits proposals.
 //
 // Why this is the right shape:
 //   * Disk write timing is fully under host control — no IPC roundtrip
@@ -565,6 +563,19 @@ const PLAN_MODE_INSTRUCTIONS = [
 // don't set; the plan reaches the host via ExitPlanMode.input.plan, driven by
 // PLAN_MODE_INSTRUCTIONS, not a file on disk.)
 const PLAN_MODE_PLANS_DIR = join(tmpdir(), 'writer-tauri-plans')
+
+/** True only if `filePath` resolves to a location genuinely inside the plans
+ * dir. Mirrors `resolveVaultFile`'s idiom: normalise first (collapsing `..`),
+ * then boundary-check via `relative`. A raw `startsWith(PLAN_MODE_PLANS_DIR)`
+ * is traversal-vulnerable — `<plansdir>/../../.zshrc` passes the prefix but
+ * escapes the dir — which would let plan mode (nominally read-only) write
+ * outside the vault. */
+function isInsidePlansDir(filePath) {
+  const raw = String(filePath ?? '').trim()
+  if (!raw) return false
+  const rel = relative(PLAN_MODE_PLANS_DIR, resolvePath(raw))
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
 
 /** Dump a thrown error's full context to stderr so the Rust supervisor's
  * stderr drain (and the dev console downstream) can see what actually
@@ -919,7 +930,11 @@ export class Server {
         // in-process Read/Glob tools (the sandbox denyRead only reaches
         // subprocesses); they also hold when the sandbox can't initialise.
         ...(sandboxEnabled
-          ? { permissions: { deny: [...egressDenyRules(), ...secretDenyRules()] } }
+          ? {
+              permissions: {
+                deny: [...egressDenyRules(), ...envDumpDenyRules(), ...secretDenyRules()],
+              },
+            }
           : {}),
       },
       // Disable the SDK's filesystem settings auto-load (CLAUDE.md,
@@ -1058,7 +1073,7 @@ export class Server {
           toolName === 'NotebookEdit'
         ) {
           const filePath = typeof input?.file_path === 'string' ? input.file_path : ''
-          if (filePath.startsWith(PLAN_MODE_PLANS_DIR)) {
+          if (isInsidePlansDir(filePath)) {
             return { behavior: 'allow', updatedInput: input }
           }
           return {
@@ -1071,15 +1086,9 @@ export class Server {
       }
     }
 
-    // Phase 1 of the Claude-Code-style migration: when the host gives us
-    // a vaultPath, root the agent in the vault and turn on Claude Code's
-    // full built-in toolset (Read/Edit/Write/Bash/Grep/Glob/...). The
-    // model can now read and edit vault .md files directly through the
-    // tools it already knows from Claude Code — no custom edit relay
-    // required. We keep the legacy `edit_document` MCP tool registered
-    // alongside so a regression in built-in routing falls back instead
-    // of breaking chat. Once the built-in path is verified end-to-end
-    // (Phase 2) the legacy tool and applyDirectEdit host bridge come out.
+    // When the host gives us a vaultPath, root the agent in the vault and
+    // turn on Claude Code's built-in toolset so the model reads and edits
+    // vault .md files through the tools it already knows from Claude Code.
     //
     // Notes:
     //   * `cwd` scopes the Read/Edit tools' implicit path resolution to
@@ -1096,52 +1105,33 @@ export class Server {
     let existingSkills = []
     if (vaultPath) {
       options.cwd = vaultPath
-      // Built-in tool exposure is per-caller. Chat needs the full
-      // Claude Code preset (Read / Edit / Write / Bash / Grep / Glob)
-      // so the model can edit the doc on user request, gated through
-      // `canUseTool` + the host's PendingEditsBar. Ingest is a
-      // background flow with a structured-output channel — the LLM
-      // must not write to disk directly, so the host pins it to a
-      // read-only subset (Read / Glob / Grep, typically). Output
-      // lands via the `submit_ingest_result` relay tool and the host
-      // turns proposals into disk writes after user review.
+      // Built-in tool exposure is per-caller, and the write surface is
+      // deliberately narrow. The chat host passes an explicit `builtinTools`
+      // allowlist WITHOUT the write-side tools (Edit / Write / MultiEdit /
+      // NotebookEdit) — disk-changing intent instead flows through the
+      // host-applies `propose_*` MCP tools (registered in the relay loop
+      // below), which emit a `chat/edit-pending` notification and return
+      // immediately without parking a Promise; the host queues the proposal
+      // in `pendingChangesStore` and applies it on user Keep. Ingest is a
+      // background flow pinned to a read-only subset (Read / Glob / Grep)
+      // that emits the same `propose_*` proposals.
       //
       // `tools: ['Read', ...]` (explicit array) is the SDK's "least
-      // privilege" surface (sdk.d.ts:1211) — listed tools are the
-      // only ones the model sees, so Edit/Write are not just denied
-      // but invisible. Caller omits `builtinTools` for the chat
-      // shape and the preset stays.
+      // privilege" surface (sdk.d.ts:1211) — listed tools are the only ones
+      // the model sees, so Edit/Write are not just denied but invisible.
+      // When the caller omits `builtinTools` the full `claude_code` preset
+      // is used instead.
       options.tools = Array.isArray(builtinTools) && builtinTools.length > 0
         ? builtinTools
         : { type: 'preset', preset: 'claude_code' }
-      // Phase 3.1 of the Cursor-style staged edit migration: every
-      // built-in write-side tool (Edit / Write / MultiEdit / NotebookEdit)
-      // routes through `canUseTool` before it can run. For now we deny
-      // them all and surface the attempt so we can verify on the host
-      // that no fs.write slipped through — the next sub-phase (3.2)
-      // replaces this with a host round-trip that waits for the user
-      // to Apply/Reject. Read / Grep / Glob / Bash are not gated; the
-      // model still needs them to discover context.
-      //
-      // `permissionMode` MUST drop out of `bypassPermissions` for
-      // `canUseTool` to fire — bypass mode short-circuits the
-      // permission check entirely (sdk.d.ts L1806). 'default' is the
-      // standard mode where the SDK consults `canUseTool` (or, absent
-      // a callback, falls back to its interactive CLI prompt — which
-      // doesn't apply to us since we're driving the SDK from a long-
-      // running sidecar).
-      // Phase E6: the chat surface no longer exposes write-side
-      // built-in tools (Edit / Write / MultiEdit / NotebookEdit are
-      // omitted from `builtinTools` by the host). Disk-changing
-      // intent now flows through the host-applies `propose_*` MCP
-      // tools (registered in the relay loop below), which emit a
-      // `chat/edit-pending` notification and return immediately
-      // without parking a Promise. The host queues the proposal in
-      // `pendingChangesStore` and applies it on user Keep.
-      //
-      // permissionMode stays 'bypassPermissions' (its default) so
-      // the SDK auto-runs the remaining read-side tools without a
-      // CLI prompt. No `canUseTool` callback needed.
+      // permissionMode stays 'bypassPermissions' (its default) so the SDK
+      // auto-runs the read-side tools without a CLI prompt. No `canUseTool`
+      // callback is needed for edits — the write tools aren't on the surface
+      // at all, so there's nothing to gate. (Bypass short-circuits the
+      // permission check entirely — sdk.d.ts L1806 — which is why the write
+      // tools are withheld rather than gated. The `canUseTool` callback that
+      // IS attached under 'plan'/'default' handles AskUserQuestion and the
+      // plan-approval flow, not edits.)
 
       // Register the vault's agent plugin (`_system/agent`). The SDK loads its
       // `commands/`, `agents/`, and `skills/` NATIVELY — the canonical way, no
@@ -1221,9 +1211,7 @@ export class Server {
       : (this.mode === 'chat' ? [] : [])
     const relayDefs = []
     for (const name of enabledRelay) {
-      if (name === 'submit_profile') {
-        relayDefs.push(buildSubmitProfileTool(runId, this.emit))
-      } else if (name === 'propose_edit') {
+      if (name === 'propose_edit') {
         relayDefs.push(
           buildProposeEditTool(runId, this.emit, vaultPath, (id) => this.#registerAckSlot(id)),
         )
@@ -1430,8 +1418,15 @@ export class Server {
           // futile retries. A non-rejected event (allowed_warning) is just a
           // heads-up — keep it for settle-time but don't abort.
           if (event?.type === 'rate_limit_event' && event.rate_limit_info) {
-            lastRateLimitInfo = event.rate_limit_info
-            if (event.rate_limit_info.status === 'rejected') {
+            const info = event.rate_limit_info
+            lastRateLimitInfo = info
+            // Fail fast on a hard cap that won't clear within the SDK's retry
+            // window: the windowed limit is `rejected`, OR the overage (paid)
+            // budget is actively in use and itself `rejected`. The overageInUse
+            // guard keeps a mere overage warning (while the windowed budget
+            // still has room) from wrongly aborting a chat that would succeed.
+            const overageBlocked = info.overageInUse && info.overageStatus === 'rejected'
+            if (info.status === 'rejected' || overageBlocked) {
               rateLimitRejected = true
               controller.abort()
               break
@@ -1531,6 +1526,17 @@ export class Server {
           this.emit(notification('auth/refreshNeeded', { runId }))
           try {
             await this.#waitForTokenUpdate(5000)
+            // Continue the session instead of recreating it: if attempt 1 got
+            // far enough to persist the session, switch create→resume so we
+            // pick up after the last saved turn (no re-streamed/duplicated
+            // output, no same-id create collision — R2/R3). We only do this
+            // when the session file is actually on disk; otherwise there's
+            // nothing to resume, so we recreate exactly as before. Worst case
+            // is unchanged from today (retry fails → 2-attempt cap).
+            if (options.sessionId && (await sessionPersisted(options.sessionId))) {
+              options.resume = options.sessionId
+              delete options.sessionId
+            }
             continue // attempt 2 with the rotated token
           } catch {
             // No fresh token in time; fall through to error.
@@ -1710,10 +1716,21 @@ export class Server {
   }
 
   async #handleShutdown(id) {
+    if (id !== undefined) this.emit(response(id, null))
+    this.shutdown()
+  }
+
+  /** Graceful teardown, reused by the `shutdown` RPC (host quit) AND the
+   * process-signal handlers in index.mjs. Aborting each in-flight chat lets the
+   * SDK tear down its `claude` CLI subprocess (so it isn't orphaned) and flush
+   * session state to ~/.claude/projects (so resume stays intact), then we exit
+   * after a short flush window. Idempotent. */
+  shutdown() {
+    if (this.shuttingDown) return
     this.shuttingDown = true
     for (const [, rec] of this.activeChats) rec.controller.abort()
-    if (id !== undefined) this.emit(response(id, null))
-    // Give in-flight chats a moment to flush their CANCELLED notifications.
+    // Give in-flight chats a moment to flush their CANCELLED notifications and
+    // let the SDK reap the CLI child before we exit.
     setTimeout(() => process.exit(0), 250)
   }
 }
@@ -1733,8 +1750,17 @@ const NON_RETRYABLE_CODES = new Set(['AUTH', 'INVALID', 'BILLING', 'BUDGET'])
 // undefined when there's nothing to carry so the field is simply absent.
 function rateLimitPayload(info) {
   if (!info) return undefined
+  // When the block is on the overage (paid) budget, the reset lives in
+  // `overageResetsAt`, not `resetsAt` (sdk.d.ts SDKRateLimitInfo) — fall back to
+  // it so an overage rejection still shows a countdown instead of a blank one.
+  const resetsAt =
+    typeof info.resetsAt === 'number'
+      ? info.resetsAt
+      : typeof info.overageResetsAt === 'number'
+        ? info.overageResetsAt
+        : undefined
   return {
-    resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt : undefined,
+    resetsAt,
     rateLimitType: info.rateLimitType,
     overageDisabledReason: info.overageDisabledReason,
   }

@@ -50,7 +50,11 @@
         { "path": "$DOCUMENT/**" },
         { "path": "$DESKTOP/**" },
         { "path": "$HOME/**/.claude" },
-        { "path": "$HOME/**/.claude/**" }
+        { "path": "$HOME/**/.claude/**" },
+        { "path": "$HOME/**/.octave" },
+        { "path": "$HOME/**/.octave/**" },
+        { "path": "$HOME/**/_system/agent/.deleted.json" },
+        { "path": "$HOME/**/_system/agent/.deleted.json.tmp" }
       ]
     }
   ]

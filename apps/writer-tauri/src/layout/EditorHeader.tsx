@@ -31,7 +31,7 @@ import {
   IconLayoutSidebarRightFilled,
   IconSearch,
 } from '@tabler/icons-react'
-import { useMatch, useNavigate } from 'react-router-dom'
+import { useMatch } from 'react-router-dom'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Button } from '@/components/ui/button'
 import { NavHistoryButtons } from './NavHistoryButtons'
@@ -46,7 +46,7 @@ import { useGitStore } from '@/state/gitStore'
 import { useWindowModeStore } from '@/state/windowModeStore'
 import { useDocsStore } from '@/state/docsStore'
 import { useCommandPaletteStore } from '@/state/commandPaletteStore'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { EditorTabs } from '@/editor/EditorTabs'
 import type { CollabStatus } from '@/hooks/useCollabDoc'
 import { DocMenu } from './DocMenu'
@@ -218,22 +218,13 @@ function CompactToggle({ compact = false }: { compact?: boolean }) {
  * docsStore.createNew + commandPalette handlers as the sidebar header, so the
  * compact panel keeps those two flows without the full sidebar. */
 function CompactHeaderActions() {
-  const navigate = useNavigate()
   const createNew = useDocsStore((s) => s.createNew)
   const openPalette = useCommandPaletteStore((s) => s.openPalette)
 
   const handleCreateNew = () => {
     createNew()
       .then((slug) => {
-        const store = useDocsStore.getState()
-        navigate(
-          buildViewUrl({
-            tab: store.sidebarTab,
-            dayAnchor: store.dayAnchor,
-            monthAnchor: store.monthAnchor,
-            slug,
-          }),
-        )
+        openDoc(slug)
       })
       .catch((err) => console.error('[docs] createNew failed', err))
   }

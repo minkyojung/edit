@@ -17,6 +17,7 @@ import {
 } from '@/lib/youtube'
 import { summarizeTranscript, withSummary } from '@/agent/summarizeTranscript'
 import { sanitizeFilename } from '@/lib/docPaths'
+import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 
 /** Project a fetched capture onto a generic inbox `note`. Pure — the
@@ -34,7 +35,7 @@ export function youtubeCaptureToDoc(
     slug,
     type: 'note',
     title,
-    relPath: `inbox/${sanitizeFilename(title)}.md`,
+    relPath: `${getDefaultNoteFolder()}/${sanitizeFilename(title)}.md`,
     createdAt: now,
     savedAt: now,
     sourceUrl: capture.sourceUrl,

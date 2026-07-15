@@ -70,15 +70,6 @@ describe('buildFileTree', () => {
     expect(articles.slug).toBeUndefined()
   })
 
-  it('drops archived docs', () => {
-    const tree = buildFileTree([
-      doc({ slug: 'w1', type: 'wiki:custom-w1', title: 'Live' }),
-      doc({ slug: 'w2', type: 'wiki:custom-w2', title: 'Gone', archivedAt: 123 }),
-    ])
-    const wiki = tree[0] as TreeFolder
-    expect(wiki.children.map((c) => c.name)).toEqual(['Live'])
-  })
-
   it('drops docs with no placement (a daily without a date)', () => {
     expect(buildFileTree([doc({ slug: 'd1', type: 'daily' })])).toEqual([])
   })
@@ -191,6 +182,16 @@ describe('buildFileTree — attachments (non-md files)', () => {
 
   it('hides attachments under hidden tree paths', () => {
     const tree = buildFileTree([], [], 'name-asc', ['_system/secret.png', 'ok.png'])
+    expect(tree.map((n) => n.name)).toEqual(['ok.png'])
+  })
+
+  it('hides legacy top-level threads/ (folder + chat JSON) from the tree', () => {
+    const tree = buildFileTree(
+      [],
+      ['threads'],
+      'name-asc',
+      ['threads/abc.json', 'threads/abc.turns.jsonl', 'ok.png'],
+    )
     expect(tree.map((n) => n.name)).toEqual(['ok.png'])
   })
 })

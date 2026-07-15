@@ -7,12 +7,17 @@ import { syntaxTree } from '@codemirror/language'
 import type { SyntaxNode } from '@lezer/common'
 import type { EditorView } from '@codemirror/view'
 import type { EditorState } from '@codemirror/state'
+import type { Template } from '@/lib/templates'
+import { interpolate, CURSOR_TOKEN } from '@/lib/interpolate'
 
 export interface SlashItem {
   id: string
   label: string
   keywords: string[]
   detail?: string // right-aligned markdown hint (#, ##, - …)
+  /** Block transforms are the built-ins (headings, lists, …); 'template'
+   * items are user-authored vault templates, iconed differently. */
+  kind?: 'block' | 'template'
   apply: (view: EditorView, from: number, to: number) => void
 }
 
@@ -37,6 +42,43 @@ function block(insert: string, caretOffset: number): SlashItem['apply'] {
   }
 }
 
+/** Build a slash item for a vault template: selecting it replaces the `/query`
+ * with the template body. Tokens ({{today}}, {{now}}, …) are interpolated at
+ * insert time; a {{cursor}} marker (if any) is stripped and the caret lands
+ * there, else at the end of the inserted text. */
+export function templateSlashItem(t: Template): SlashItem {
+  return {
+    id: `tmpl:${t.name}`,
+    label: t.name,
+    keywords: ['template', ...t.name.toLowerCase().split(/\s+/).filter(Boolean)],
+    kind: 'template',
+    apply: (view, from, to) => {
+      const filled = interpolate(t.body)
+      // Caret goes to the first {{cursor}}; text before it is identical whether
+      // or not the later markers are stripped, so this offset stays correct
+      // after removing every marker.
+      const cursorIdx = filled.indexOf(CURSOR_TOKEN)
+      const insert = filled.split(CURSOR_TOKEN).join('')
+      const caret = cursorIdx === -1 ? insert.length : cursorIdx
+      view.dispatch({
+        changes: { from, to, insert },
+        selection: { anchor: from + caret },
+      })
+    },
+  }
+}
+
+/** Templates loaded from the vault, appended after the built-in blocks. Mutable
+ * module state (not part of the const SLASH_ITEMS) so the async vault load can
+ * refresh it without the sync trigger path (`readSlash`) needing to await. */
+let templateItems: SlashItem[] = []
+
+/** Replace the template slash items. Called by `refreshTemplateSlashItems`
+ * after loading the vault's `templates/` folder. */
+export function setTemplateSlashItems(items: SlashItem[]): void {
+  templateItems = items
+}
+
 export const SLASH_ITEMS: SlashItem[] = [
   { id: 'text', label: 'Text', keywords: ['paragraph', 'plain', 'p'], apply: prefix('') },
   { id: 'h1', label: 'Heading 1', keywords: ['title', 'h1', '#'], detail: '#', apply: prefix('# ') },
@@ -51,11 +93,13 @@ export const SLASH_ITEMS: SlashItem[] = [
   { id: 'image', label: 'Image', keywords: ['picture', 'photo', 'img'], detail: '![]', apply: block('![alt](url)', 2) },
 ]
 
-/** Items matching the query against label + keywords. Empty query = all. */
+/** Items matching the query against label + keywords. Empty query = all.
+ * Built-in blocks first, then the vault templates. */
 export function filterSlashItems(query: string): SlashItem[] {
+  const all = [...SLASH_ITEMS, ...templateItems]
   const q = query.trim().toLowerCase()
-  if (!q) return SLASH_ITEMS
-  return SLASH_ITEMS.filter(
+  if (!q) return all
+  return all.filter(
     (it) => it.label.toLowerCase().includes(q) || it.keywords.some((k) => k.includes(q)),
   )
 }

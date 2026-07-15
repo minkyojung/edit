@@ -1,6 +1,7 @@
 {
   "name": "montpellier",
   "private": true,
+  "packageManager": "pnpm@10.17.1",
   "scripts": {
     "dev": "pnpm --filter writer-tauri tauri dev",
     "build": "pnpm --filter writer-tauri tauri build"

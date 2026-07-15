@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Hardened-runtime entitlements for notarized builds. The app runs a bundled
+	  `bun` sidecar (JavaScriptCore JIT) and spawns Anthropic's pre-signed `claude`
+	  CLI; under hardened runtime the kernel denies JIT and refuses to load code
+	  signed by a different identity unless these are granted. Without them the app
+	  works in dev but the sidecars die ONLY in the signed/notarized build.
+	-->
+
+	<!-- JSC needs to allocate executable memory and JIT-compile. The full set
+	     mirrors what `bun` ships pre-signed with (Jarred Sumner, 7FRXF46ZSN),
+	     because Tauri re-signs the externalBin `bun` with OUR identity and THIS
+	     entitlements file — so dropping any key bun relied on would crash it in
+	     the notarized build. `disable-executable-page-protection` relaxes the
+	     hardened-runtime W^X enforcement JSC needs. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<key>com.apple.security.cs.disable-executable-page-protection</key>
+	<true/>
+
+	<!-- We load binaries signed by other identities (bun is pre-signed; the
+	     nested `claude` CLI is signed by Anthropic PBC), so library validation
+	     must be relaxed or dyld refuses to load them under our app signature. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+
+	<!-- The host injects env (e.g. the OAuth token, CLI path) into the sidecar /
+	     CLI subprocess environment. -->
+	<key>com.apple.security.cs.allow-dyld-environment-variables</key>
+	<true/>
+</dict>
+</plist>

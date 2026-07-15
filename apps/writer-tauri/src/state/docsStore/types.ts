@@ -23,6 +23,7 @@
 
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import type { HighlightRecord } from '@/lib/highlightTypes'
+import type { Template } from '@/lib/templates'
 
 /** Slim metadata read straight from the on-disk `.meta.json` sidecar
  * (via scanVault at boot) and persisted back through the flush loop's
@@ -57,18 +58,6 @@ export interface KnownDoc {
    * rename-on-change machinery in `docFileSync.flushDirty`. Daily
    * entries don't use this — their label derives from `date`. */
   title?: string
-  /** Archive timestamp (ms since epoch). Set when the user archives
-   * the doc; cleared when restored. Archived docs stay in knownDocs
-   * so they can be restored, but are filtered out of sidebar tree,
-   * wikilink palette, and search. A cascade-archive writes the same
-   * timestamp to a parent and all its descendants so the group can
-   * be restored together. Mirrors the threads-archive pattern from
-   * useThreads — same word, same shape. */
-  archivedAt?: number
-  /** Snapshot of `parentId` taken at archive time so restore can put
-   * the doc back where it was. While archived, `parentId` is left
-   * undefined so the doc doesn't pollute the live tree index. */
-  archivedFromParent?: string
   /** ISO timestamp recorded when the doc was first created. Phase 5b
    * of the Yjs-removal migration lifted this off `Y.Map('meta')` and
    * onto the catalog / `.meta.json` sidecar — see DocMetaFile in
@@ -154,8 +143,14 @@ export interface DocPolicy {
  * interface; the combined creator in `index.ts` spreads them into a
  * single zustand store. */
 export interface DocsState {
-  // Persisted
+  // Persisted (projected to PATHS on the way out — see persistConfig)
   openSlugs: string[]
+  /** Transient landing field for the persisted tab strip. Rehydrate lands
+   * the persisted vault-relative PATHS here (before scanVault has run, so
+   * they can't be resolved yet); `bootstrap` resolves them to slugs against
+   * the freshly-scanned catalog, sets `openSlugs`, and clears this. Never
+   * persisted from state — `partialize` recomputes it from `openSlugs`. */
+  openPaths: string[]
   knownDocs: KnownDoc[]
   /** Vault-relative paths of every folder on disk (recursive). Runtime-
    * only, rebuilt by bootstrap's scan. Lets the sidebar tree show empty
@@ -178,6 +173,8 @@ export interface DocsState {
   status: Record<string, CollabStatus>
   /** Set during bootstrap; turns to false when initial restore is done. */
   bootstrapping: boolean
+  /** One-shot restore URL for RouteSyncBridge (last-viewed doc). Runtime-only. */
+  pendingRestoreUrl: string | null
   /** Which sidebar date view is showing. Runtime-only — every session
    * starts on 'day' so the app reads as "you're here, now" on launch. */
   sidebarTab: 'day' | 'week' | 'month'
@@ -228,6 +225,8 @@ export interface DocsState {
   ensureOpen: (slug: string) => void
   closeDoc: (slug: string) => string | null
   createNew: () => Promise<string>
+  /** Create a new note seeded with a template's body, then return its slug. */
+  createFromTemplate: (template: Template) => Promise<string>
   /** Create a folder on disk at `relPath` and add it to knownFolders.
    * Idempotent; returns false on a filesystem error. */
   createFolder: (relPath: string) => Promise<boolean>
@@ -264,22 +263,6 @@ export interface DocsState {
   /** Toggle the sidebar fold for a given doc. */
   toggleExpanded: (slug: string) => void
   reorder: (slugs: string[]) => void
-  /** Archive `slug` and all its descendants (cascade). Closes any
-   * open tabs in the group, tears down their handles, and reassigns
-   * activeSlug if needed. The group is tagged with a single
-   * timestamp so restore can move them back together. Refuses to
-   * act on daily entries. Returns true on success. */
-  archiveDoc: (slug: string) => string | null
-  /** Restore an archived group identified by `slug` (any group
-   * member works). Re-points each parentId to its pre-archive
-   * value via `archivedFromParent`. */
-  unarchiveDoc: (slug: string) => void
-  /** Permanently delete an archived group: hits the sidecar DELETE
-   * for each member, removes them from knownDocs / openSlugs /
-   * handles. No-op if the slug isn't archived. */
-  deleteForever: (slug: string) => Promise<string | null>
-  /** Permanently delete every archived doc (sidecar + local state). */
-  emptyArchive: () => Promise<string | null>
   /** Delete a user doc by moving its file to the OS trash (recoverable)
    * and dropping it from the catalog / tabs / handles. Returns the slug
    * to navigate to next, or null. */

@@ -9,10 +9,11 @@
 // right after a successful connect.
 
 import { useEffect, useRef } from 'react'
-import { IconSparkles, IconBrandGithub } from '@tabler/icons-react'
+import { IconSparkles, IconBrandGithub, IconBrandGoogle } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useGitHubAuth } from '@/hooks/useGitHubAuth'
+import { useGoogleAuth } from '@/hooks/useGoogleAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
 import { useConnectGitHubDialog } from '@/stores/connectGitHubDialog'
 import { SettingRow } from '../SettingRow'
@@ -34,6 +35,18 @@ export function ConnectionsSettings() {
     refresh: refreshGithub,
     disconnect: disconnectGithub,
   } = useGitHubAuth()
+  const {
+    account: googleAccount,
+    connecting: googleConnecting,
+    connect: connectGoogle,
+    disconnect: disconnectGoogle,
+  } = useGoogleAuth()
+
+  // Google connects in one loopback round-trip (no dialog/paste), so it's driven
+  // straight from the hook here rather than through a connect-dialog store.
+  const signInGoogle = () => {
+    void connectGoogle().catch((e) => console.error('[connections] google sign-in failed', e))
+  }
 
   const connectOpen = useConnectDialog((s) => s.open)
   const openConnect = useConnectDialog((s) => s.setOpen)
@@ -46,6 +59,26 @@ export function ConnectionsSettings() {
   return (
     <section>
       <h2 className="mb-2 text-body font-semibold text-foreground">Connections</h2>
+
+      <SettingRow
+        title="Google"
+        description={
+          googleAccount.connected
+            ? [googleAccount.name, googleAccount.email].filter(Boolean).join(' · ') || 'Connected'
+            : 'Sign in with Google to personalize your workspace.'
+        }
+      >
+        {googleAccount.connected ? (
+          <Button variant="outline" size="sm" onClick={() => void disconnectGoogle()}>
+            Disconnect
+          </Button>
+        ) : (
+          <Button size="sm" onClick={signInGoogle} disabled={googleConnecting}>
+            <IconBrandGoogle size={16} stroke={1.5} />
+            {googleConnecting ? 'Waiting…' : 'Connect'}
+          </Button>
+        )}
+      </SettingRow>
 
       <SettingRow
         title="Claude"

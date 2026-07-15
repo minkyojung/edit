@@ -58,7 +58,7 @@ const AGENT_RAW = import.meta.glob('./agents/*.md', {
 
 /** Default skills → seeded to `_system/agent/skills/<name>/SKILL.md`. */
 export const DEFAULT_SKILLS: DefaultAsset[] = parseAssets(SKILL_RAW)
-/** Default routine commands → seeded to `_system/agent/commands/<name>.md`. */
+/** Default commands → seeded to `_system/agent/commands/<name>.md`. */
 export const DEFAULT_COMMANDS: DefaultAsset[] = parseAssets(COMMAND_RAW)
 /** Default agent roles → seeded to `_system/agent/agents/<name>.md`. */
 export const DEFAULT_AGENTS: DefaultAsset[] = parseAssets(AGENT_RAW)

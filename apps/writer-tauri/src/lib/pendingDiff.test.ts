@@ -19,6 +19,7 @@ function change(
     decidedAt: null,
     viewedAt: null,
     pageMarkdownSnapshot: snapshot,
+    feedbackDeliveredAt: null,
   }
 }
 

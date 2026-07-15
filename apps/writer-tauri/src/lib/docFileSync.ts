@@ -20,15 +20,16 @@
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
+import { invalidateVaultTimeline } from '@/state/vaultTimeline'
 import { hasExternalConflict } from '@/state/externalConflictStore'
 import {
   metaPathForDoc,
-  metaToFrontmatterFields,
+  portableFrontmatterFields,
   pathForDoc,
   usesFrontmatter,
   type DocMetaFile,
 } from '@/lib/docPaths'
-import { composeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
+import { mergeFrontmatter } from '@/lib/frontmatter'
 import {
   readVaultFile,
   renameVaultFile,
@@ -153,15 +154,8 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
 
 /** Compose the sidecar payload from the in-memory `KnownDoc`. Shared
  * between the full-flush path (`serializeDocToFiles`) and the
- * meta-only path (`flushDirty` for archived docs whose handle has
- * been torn down).
- *
- * `archivedAt`/`archivedFromParent` are emitted explicitly (including
- * the `undefined` case for live docs) so `mergeSidecar` can clear
- * stale archive markers on unarchive: a spread of an `undefined` key
- * over an existing value, then JSON.stringify, drops the field from
- * the on-disk JSON. Without the explicit key the merge would preserve
- * the pre-unarchive value. */
+ * meta-only path (`flushDirty` for docs whose handle has been torn
+ * down). */
 function buildMetaForKnownDoc(
   slug: string,
   known: KnownDoc | undefined,
@@ -169,8 +163,6 @@ function buildMetaForKnownDoc(
   return {
     version: 1,
     slug,
-    archivedAt: known?.archivedAt,
-    archivedFromParent: known?.archivedFromParent,
     // Phase 5b of the Yjs-removal migration: createdAt now lives on
     // the catalog (sourced from `.meta.json` by scanVault, or set by
     // createSlice for new docs). flushDirty writes it back via
@@ -215,6 +207,15 @@ export function serializeMetaOnly(slug: string): DocMetaFile | null {
 // `dirtySlugs` periodically and writes the changed docs to vault files.
 
 const dirtySlugs = new Set<string>()
+
+// Monotonic per-slug edit counter, bumped on every markDirty. The flush loop
+// captures a slug's generation BEFORE it serializes the body, then — after the
+// awaited disk write — only clears the dirty bit if the generation is
+// unchanged. Without this, an edit that lands during the write window (the
+// several ms of awaited rename/stat/read/write between serialize and clear)
+// has its freshly-set dirty bit wiped by the flush's clearDirty, and is
+// silently never written until some later, unrelated edit re-dirties the slug.
+const dirtyGeneration = new Map<string, number>()
 
 // Tracks where each slug was last successfully written. Lets the
 // flush path detect "the doc's filename changed since last write"
@@ -279,6 +280,7 @@ export function shouldDeferStaleWrite(
 
 function markDirty(slug: string): void {
   dirtySlugs.add(slug)
+  dirtyGeneration.set(slug, (dirtyGeneration.get(slug) ?? 0) + 1)
 }
 
 /** Public surface for marking a doc dirty without a Y.Doc mutation.
@@ -293,6 +295,22 @@ export function markSlugDirty(slug: string): void {
  * (iv.3). */
 export function clearDirty(slug: string): void {
   dirtySlugs.delete(slug)
+  dirtyGeneration.delete(slug)
+}
+
+/** Capture `slug`'s current edit generation. The flush loop calls this right
+ * before it serializes the body, then passes the result to
+ * `clearDirtyIfUnchanged` after the awaited write. */
+export function captureDirtyGeneration(slug: string): number {
+  return dirtyGeneration.get(slug) ?? 0
+}
+
+/** Clear `slug`'s dirty bit ONLY if no new edit landed since `gen` was
+ * captured. If an edit arrived during the flush's write window the generation
+ * advanced — leave the slug dirty so the next tick flushes the newer content
+ * instead of dropping it. */
+export function clearDirtyIfUnchanged(slug: string, gen: number): void {
+  if ((dirtyGeneration.get(slug) ?? 0) === gen) clearDirty(slug)
 }
 
 /** Snapshot of slugs that have unsaved changes since their last
@@ -453,11 +471,15 @@ async function flushDirtyOnce(): Promise<void> {
   if (!getActiveVaultPath()) return
   const docs = useDocsStore.getState()
   const getDoc = (s: string) => docs.knownDocs.find((d) => d.slug === s)
-  // Track whether this flush touched any wiki page so we can invalidate
-  // the Tier 1 index cache once at the end rather than per-doc. A wiki
-  // body / title change affects the index's summary + backlink columns
-  // for both the changed page and any pages it links to.
-  let wikiTouched = false
+  // Track whether this flush touched any page the vault index catalogs so
+  // we can invalidate the index cache once at the end rather than per-doc.
+  // The index maps the WHOLE vault (every folder), so any note change —
+  // wiki, daily, a generic note in an imported folder — shifts a row's
+  // summary / backlink columns or the catalog itself. Only `system:*`
+  // pages are excluded: the index page and its siblings are host-owned
+  // and never appear in their own catalog, so their writes must not
+  // re-trigger a rebuild (that would loop).
+  let indexTouched = false
   for (const slug of getDirtySlugs()) {
     // Skip slugs with an unresolved external-edit conflict. Writing
     // the live Y.Doc here would silently overwrite the external
@@ -494,6 +516,9 @@ async function flushDirtyOnce(): Promise<void> {
       // soft-state is persisted while it's open, by the body flush below
       // that embeds it in the frontmatter block.
       if (usesFrontmatter(known)) {
+        // Frontmatter docs keep their metadata inside the `.md`; with the
+        // handle gone we can't re-serialise the body, and there's no
+        // app-private soft state left to persist separately. Nothing to do.
         clearDirty(slug)
         continue
       }
@@ -513,6 +538,10 @@ async function flushDirtyOnce(): Promise<void> {
       }
       continue
     }
+    // Capture the edit generation before serializing so a mid-write edit
+    // (below, across the awaited disk ops) isn't cleared by the final
+    // clearDirty — see clearDirtyIfUnchanged.
+    const gen = captureDirtyGeneration(slug)
     const result = serializeDocToFiles(slug)
     if (!result) continue
     // Yjs-removal migration Phase 2: the `.ydoc` write path is gone.
@@ -573,22 +602,27 @@ async function flushDirtyOnce(): Promise<void> {
       // (skills / commands / agents) keep meaningful frontmatter like
       // `name` / `description` / `model` there, and stripping it on every save
       // would silently erase the user's role metadata.
-      let fields = metaToFrontmatterFields(result.meta)
+      let fileContent: string
       if (frontmatterDoc) {
+        // Overlay the app's own fields while preserving every other key in
+        // the existing block verbatim — lists, nested maps, comments the
+        // flat scalar view can't represent. Byte-identical to the old
+        // split→compose path for app-authored files, so the equality guard
+        // below still short-circuits untouched docs.
+        let existing = ''
         try {
-          const { data } = splitFrontmatter(await readVaultFile(mdPath))
-          const preserved: Record<string, string> = {}
-          for (const [k, v] of Object.entries(data)) {
-            if (!(k in fields)) preserved[k] = v
-          }
-          if (Object.keys(preserved).length > 0) fields = { ...preserved, ...fields }
+          existing = await readVaultFile(mdPath)
         } catch {
           // New file or unreadable — nothing to preserve.
         }
+        fileContent = mergeFrontmatter(
+          existing,
+          portableFrontmatterFields(result.meta),
+          result.md,
+        )
+      } else {
+        fileContent = result.md
       }
-      const fileContent = frontmatterDoc
-        ? composeFrontmatter(fields, result.md)
-        : result.md
       // Skip the write when the serialized output is byte-identical to
       // what's already on disk. Opening a doc marks it dirty
       // (installDocSync) even when the user never edits it; without this
@@ -600,6 +634,8 @@ async function flushDirtyOnce(): Promise<void> {
       if (!(await fileContentEquals(mdPath, fileContent))) {
         await writeVaultFile(mdPath, fileContent)
       }
+      // Slug is an ephemeral per-boot handle — persisted nowhere (identity
+      // across restarts is the file path). Nothing to write beyond the `.md`.
       if (!frontmatterDoc) {
         // Sidecar carries identity (version + slug) plus opt-in context
         // metadata other code paths populate (aiSummary, aiImportance,
@@ -612,8 +648,10 @@ async function flushDirtyOnce(): Promise<void> {
         }
       }
       lastWrittenPath.set(slug, mdPath)
-      clearDirty(slug)
-      if (known.type.startsWith('wiki:')) wikiTouched = true
+      // Only clear if no edit landed during the awaited write above; otherwise
+      // leave dirty so the next tick flushes the newer body (not a silent drop).
+      clearDirtyIfUnchanged(slug, gen)
+      if (!known.type.startsWith('system:')) indexTouched = true
     } catch (err) {
       // Error (not warn) — this is a data-durability failure path.
       // The slug stays dirty so the next auto-flush tick retries,
@@ -632,7 +670,13 @@ async function flushDirtyOnce(): Promise<void> {
   // removed slug can never strand a stale entry, and the toast reconciler
   // dismisses the moment the last persistent failure clears.
   useSaveFailureStore.getState().reconcile(getDirtySlugs())
-  if (wikiTouched) invalidateWikiIndex()
+  if (indexTouched) {
+    invalidateWikiIndex()
+    // Timeline keys on creation date + title, which a body edit doesn't
+    // change — but create/rename land here too, so invalidate alongside
+    // the index; the timeline persist guards the redundant write.
+    invalidateVaultTimeline()
+  }
 }
 
 /** Checkpoint flush on window blur / hide. The 500 ms timer is the

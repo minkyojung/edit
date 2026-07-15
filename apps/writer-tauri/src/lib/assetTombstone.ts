@@ -1,6 +1,6 @@
-// Tombstones for user-deleted agent assets (skills / routines / agents).
+// Tombstones for user-deleted agent assets (skills / commands / agents).
 //
-// seedSkills / seedRoutines / seedAgents re-create the built-in defaults on
+// seedSkills / seedCommands / seedAgents re-create the built-in defaults on
 // every boot when their file is missing (idempotent-by-existence). Without a
 // record of what the user deliberately deleted, a deleted default would
 // resurrect on the next launch — unnatural ("I deleted it, why is it back?").

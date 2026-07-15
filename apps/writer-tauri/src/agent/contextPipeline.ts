@@ -26,17 +26,24 @@
 // flow and which is already injected here. There is no hidden
 // always-on scratchpad the agent writes to behind the user's back.
 
-import { readClaudeMd, readSelfProfile } from '@/state/wikiService'
+import { readClaudeMd, readSelfProfile, readPreferences } from '@/state/wikiService'
 
 export interface ContextBundle {
-  /** Vault-root `CLAUDE.md` body. Karpathy / Claude Code schema
-   * document — vault layout, three-tier rules, operations, tool
-   * usage guidance, citation conventions. Shipped in both modes. */
+  /** The app-owned schema document (Karpathy / Claude Code shape —
+   * vault layout, role model, operations, tool usage, citation
+   * conventions). Now shipped from the app BUNDLE, not the vault, so
+   * schema improvements reach every vault on the next build and the
+   * user's files are never overwritten. Shipped in both modes. */
   claudeMd: string
   /** User self-profile (`wiki:profile`) body. Grounds "who the user
    * is" before every downstream block. Empty when the page doesn't
    * exist yet. */
   selfProfile: string
+  /** User behaviour preferences (`_system/preferences.md`) — how the
+   * agent should act/format output. The one per-user slice carved out
+   * of the old CLAUDE.md; the agent appends to it via the proposal
+   * flow. Empty until the user sets any. */
+  preferences: string
   /** Rough character count of the user-facing payload — diagnostics
    * only. */
   budgetUsed: number
@@ -45,16 +52,18 @@ export interface ContextBundle {
 /** Assemble the LLM-facing context bundle. Concurrent reads under
  * the hood — independent state, so we fire them in parallel. */
 export async function assembleContext(): Promise<ContextBundle> {
-  const [claudeMd, selfProfile] = await Promise.all([
+  const [claudeMd, selfProfile, preferences] = await Promise.all([
     readClaudeMd(),
     readSelfProfile(),
+    readPreferences(),
   ])
 
-  const budgetUsed = claudeMd.length + selfProfile.length
+  const budgetUsed = claudeMd.length + selfProfile.length + preferences.length
 
   return {
     claudeMd,
     selfProfile,
+    preferences,
     budgetUsed,
   }
 }

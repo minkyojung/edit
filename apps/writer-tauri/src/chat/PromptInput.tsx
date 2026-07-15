@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useLayoutStore } from '@/state/layoutStore'
 import { notify } from '@/lib/notify'
+import { writeVaultBinary, deleteVaultDir } from '@/lib/vault'
 import {
   IconArrowUp,
   IconAt,
@@ -51,6 +52,8 @@ import {
   type FileAttachment,
 } from '@/chat/types'
 import { cn } from '@/lib/utils'
+import { useChatDraftStore, EMPTY_DRAFT, type PastedText } from '@/state/chatDraftStore'
+import { OCTAVE_ATTACHMENTS_DIR } from '@/lib/octave'
 
 // Matches a slash command at the start of input — `/`, then optional
 // kebab-case name, with no whitespace yet. As soon as the user types a
@@ -67,7 +70,7 @@ const MENTION_RECENTS = 8
 const MENTION_RESULTS = 12
 
 const MAX_FILES = 5
-const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB — Claude API image limit
+const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB — Read/vision ingestion limit
 const PASTE_AS_CHIP_THRESHOLD = 500 // chars; long pasted text becomes a context chip
 
 // Detect Mac so we render the correct modifier glyph in shortcut hints.
@@ -88,10 +91,20 @@ export interface ValidationResult {
 }
 
 interface Props {
+  /** Thread the composer's draft (text / attachments / pasted text /
+   * mentions) is scoped to. Null on routes without an active thread (the
+   * draft then rides a shared transient bucket). Switching threads swaps
+   * the draft so unsent input can't bleed across sessions. */
+  threadId: string | null
   status: PromptStatus
   disabled?: boolean
   placeholder?: string
-  onSubmit: (text: string, attachments: FileAttachment[], mentionPaths: string[]) => void
+  onSubmit: (
+    text: string,
+    attachments: FileAttachment[],
+    mentionPaths: string[],
+    pastedTexts: { preview: string; content: string }[],
+  ) => void
   onStop?: () => void
   model: ChatModel
   onModelChange: (model: ChatModel) => void
@@ -158,6 +171,7 @@ const FILE_KIND_ICON: Record<AssetKind, typeof IconFile> = {
 }
 
 export function PromptInput({
+  threadId,
   status,
   disabled,
   placeholder = 'Ask anything about this document',
@@ -180,12 +194,35 @@ export function PromptInput({
   viewingFilePath,
   onClearViewingFile,
 }: Props) {
-  const [value, setValue] = useState('')
+  // Composer draft (text / attachments / pasted text / mentions) is scoped to
+  // the active thread via chatDraftStore, NOT local useState — otherwise it
+  // bleeds across sessions (the composer isn't remounted on thread switch).
+  // Null threadId (routes with no active thread) shares one transient bucket.
+  const draftKey = threadId ?? '__none__'
+  const draft = useChatDraftStore((s) => s.drafts[draftKey] ?? EMPTY_DRAFT)
+  const { text: value, attachments, pastedTexts, mentions } = draft
+  const patchDraft = useChatDraftStore((s) => s.patch)
+  // React-style setters over the store, so the many call sites below read
+  // exactly as they did with useState. Array updaters and setValue's optional
+  // functional form both read the latest value from the store first.
+  const setValue = (next: string | ((prev: string) => string)) =>
+    patchDraft(draftKey, {
+      text:
+        typeof next === 'function'
+          ? next(useChatDraftStore.getState().get(draftKey).text)
+          : next,
+    })
+  const setPastedTexts = (next: (prev: PastedText[]) => PastedText[]) =>
+    patchDraft(draftKey, {
+      pastedTexts: next(useChatDraftStore.getState().get(draftKey).pastedTexts),
+    })
+  const setMentions = (next: (prev: MentionItem[]) => MentionItem[]) =>
+    patchDraft(draftKey, {
+      mentions: next(useChatDraftStore.getState().get(draftKey).mentions),
+    })
+
   const [isComposing, setIsComposing] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [attachments, setAttachments] = useState<FileAttachment[]>([])
-  const [pastedTexts, setPastedTexts] = useState<Array<{ id: string; preview: string; content: string }>>([])
-  const [mentions, setMentions] = useState<MentionItem[]>([])
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounterRef = useRef(0)
@@ -203,14 +240,10 @@ export function PromptInput({
   }, [focusNonce])
 
   const addFiles = useCallback(async (fileList: FileList | File[]) => {
-    setAttachments((prev) => {
-      const slots = MAX_FILES - prev.length
-      if (slots <= 0) {
-        notify.attachmentLimitReached()
-        return prev
-      }
-      return prev // proceed; actual append happens after async read below
-    })
+    if (MAX_FILES - useChatDraftStore.getState().get(draftKey).attachments.length <= 0) {
+      notify.attachmentLimitReached()
+      return
+    }
 
     const incoming = Array.from(fileList)
 
@@ -225,31 +258,54 @@ export function PromptInput({
     }
     if (valid.length === 0) return
 
-    const results = await Promise.all(
-      valid.map((file) =>
-        new Promise<FileAttachment>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = () =>
-            resolve({
-              id: crypto.randomUUID(),
+    // Write each file into the vault's hidden `.octave/attachments/<id>/`
+    // folder and keep only its path. The agent Reads it on demand (same
+    // channel as @-mentions / the viewing file) — no base64 rides through the
+    // prompt. A per-file `<id>/` wrapper sidesteps name collisions. Failed
+    // writes drop to null and are filtered out.
+    const results = (
+      await Promise.all(
+        valid.map(async (file): Promise<FileAttachment | null> => {
+          const id = crypto.randomUUID()
+          const path = `${OCTAVE_ATTACHMENTS_DIR}/${id}/${file.name}`
+          try {
+            const bytes = new Uint8Array(await file.arrayBuffer())
+            await writeVaultBinary(path, bytes)
+            return {
+              id,
               name: file.name,
               mediaType: file.type || 'application/octet-stream',
-              dataUrl: reader.result as string,
-            })
-          reader.readAsDataURL(file)
+              path,
+            }
+          } catch {
+            notify.attachmentSaveFailed(file.name)
+            return null
+          }
         }),
-      ),
-    )
+      )
+    ).filter((r): r is FileAttachment => r !== null)
 
-    setAttachments((prev) => {
-      const slots = MAX_FILES - prev.length
-      if (slots <= 0) return prev
-      return [...prev, ...results.slice(0, slots)]
-    })
-  }, [])
+    // Re-read the latest attachments after the async writes — the active
+    // thread (draftKey) can't change mid-callback, but a concurrent addFiles
+    // could have appended.
+    const latest = useChatDraftStore.getState().get(draftKey).attachments
+    const slots = MAX_FILES - latest.length
+    if (slots <= 0) return
+    patchDraft(draftKey, { attachments: [...latest, ...results.slice(0, slots)] })
+  }, [draftKey, patchDraft])
 
   function removeAttachment(id: string) {
-    setAttachments((prev) => prev.filter((a) => a.id !== id))
+    patchDraft(draftKey, {
+      attachments: useChatDraftStore
+        .getState()
+        .get(draftKey)
+        .attachments.filter((a) => a.id !== id),
+    })
+    // Drop the on-disk file too. State only holds not-yet-sent attachments
+    // (cleared on submit), so removing a chip here means the file was never
+    // referenced by a turn — safe to delete its `.octave/attachments/<id>/`
+    // folder. Best-effort: a failed cleanup just leaves a harmless orphan.
+    void deleteVaultDir(`${OCTAVE_ATTACHMENTS_DIR}/${id}`).catch(() => {})
   }
 
   function removePastedText(id: string) {
@@ -315,13 +371,16 @@ export function PromptInput({
     [validate, trimmed],
   )
   const canSubmit =
-    !disabled && !isStreaming && (trimmed.length > 0 || pastedTexts.length > 0) && validation.ok
+    !disabled &&
+    !isStreaming &&
+    (trimmed.length > 0 || pastedTexts.length > 0 || attachments.length > 0) &&
+    validation.ok
 
   // Palette opens while the user is typing the command name itself —
   // before any space. Filter is the partial name (everything after `/`).
   const slashMatch = !isStreaming ? SLASH_RE.exec(value) : null
   const slashQuery = slashMatch?.[1] ?? ''
-  // Builtin editor actions (bundled) + the vault's routine commands (organize /
+  // Builtin editor actions (bundled) + the vault's commands (organize /
   // daily-ingest / … from the agent plugin). Both share the palette; execution
   // diverges by `source` in ChatPanel.
   const vaultCommands = useVaultCommands((s) => s.commands)
@@ -341,7 +400,7 @@ export function PromptInput({
   const mentionCandidates = useMemo<MentionItem[]>(() => {
     const lookup = new Map(knownDocs.map((d) => [d.slug, d]))
     return knownDocs
-      .filter((d) => !d.archivedAt && !d.type.startsWith('system:'))
+      .filter((d) => !d.type.startsWith('system:'))
       .map((d) => {
         const path = pathForDoc(d, (slug) => lookup.get(slug))
         return path
@@ -406,15 +465,19 @@ export function PromptInput({
 
   function submit() {
     if (!canSubmit) return
-    const context = pastedTexts.map((t) => t.content).join('\n\n')
-    const finalText = context && trimmed ? `${context}\n\n${trimmed}` : context || trimmed
-    // @-mentioned notes ride along as vault paths via a separate channel (the
-    // system prompt), NOT the visible message — so they don't clutter the bubble.
-    onSubmit(finalText, attachments, mentions.map((m) => m.path))
-    setValue('')
-    setAttachments([])
-    setPastedTexts([])
-    setMentions([])
+    // Pasted text now rides as a chip (committed onto the turn), NOT folded into
+    // the visible message — so the bubble shows a compact chip, not a wall of
+    // text. buildUserPrompt reattaches its content to the model prompt.
+    // @-mentioned notes likewise ride as vault paths via the system prompt.
+    onSubmit(
+      trimmed,
+      attachments,
+      mentions.map((m) => m.path),
+      pastedTexts.map((t) => ({ preview: t.preview, content: t.content })),
+    )
+    // Clear this thread's draft only — a submit from thread A must not wipe
+    // an unsent draft sitting in thread B.
+    useChatDraftStore.getState().clear(draftKey)
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {

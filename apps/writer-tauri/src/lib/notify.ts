@@ -140,6 +140,14 @@ export const notify = {
       action: retryAction(opts.onRetry),
     })
   },
+  /** Deleting a skill / command / agent asset threw (disk error, blocked
+   * path). Surfaced so the row staying put isn't a silent no-op. */
+  cantDeleteAsset(opts: RetryOpts = {}) {
+    toast.error("Couldn't delete this", {
+      description: 'See console for details.',
+      action: retryAction(opts.onRetry),
+    })
+  },
 
   // ── Editor ────────────────────────────────────────────────────
   /** Milkdown's Editor.make().create() chain rejected. The doc loaded
@@ -201,6 +209,11 @@ export const notify = {
     toast.warning(`External edit: ${args.fileName}`, {
       description: 'You have unsaved changes.',
       duration: Infinity,
+      // Non-dismissible (same as saveFailed): this toast is the ONLY surface
+      // that clears the conflict, and while a slug is conflicted flushDirty
+      // skips it — so a swipe-away (which does NOT run cancel.onClick) would
+      // silently gate all further saves to this note. Force an explicit choice.
+      dismissible: false,
       action: {
         label: 'Reload from disk',
         onClick: args.onReopen,
@@ -426,6 +439,32 @@ export const notify = {
   attachmentLimitReached() {
     toast.error('Maximum 5 files per message', {
       description: 'Remove an attachment to add another',
+    })
+  },
+  attachmentSaveFailed(name: string) {
+    toast.error(`Couldn't attach ${name}`, {
+      description: 'Failed to save the file — try again',
+    })
+  },
+
+  // ── Auto-update ───────────────────────────────────────────────
+  // Auto-download: the update downloads + installs silently in the
+  // background. The "ready" prompt is a custom 3-action toast (See changes /
+  // Restart when idle / Restart) — see components/UpdateReadyToast. Only the
+  // failure path stays here (a plain toast).
+  /** An update step failed. Copy names the likely real-world cause per
+   * phase (install failures are almost always a read-only / quarantined
+   * app location — the exact bug the old silent updater hid). */
+  updateFailed(phase: 'check' | 'download' | 'install') {
+    const desc = {
+      check: "Couldn't check for updates.",
+      download: 'The download failed.',
+      install: "Couldn't install — the app folder may be read-only or quarantined.",
+    }[phase]
+    toast.error('Update failed', {
+      id: 'octave-update',
+      description: `${desc} See About in Settings for details.`,
+      duration: Infinity,
     })
   },
 }
