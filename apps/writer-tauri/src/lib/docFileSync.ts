@@ -208,6 +208,15 @@ export function serializeMetaOnly(slug: string): DocMetaFile | null {
 
 const dirtySlugs = new Set<string>()
 
+// Monotonic per-slug edit counter, bumped on every markDirty. The flush loop
+// captures a slug's generation BEFORE it serializes the body, then — after the
+// awaited disk write — only clears the dirty bit if the generation is
+// unchanged. Without this, an edit that lands during the write window (the
+// several ms of awaited rename/stat/read/write between serialize and clear)
+// has its freshly-set dirty bit wiped by the flush's clearDirty, and is
+// silently never written until some later, unrelated edit re-dirties the slug.
+const dirtyGeneration = new Map<string, number>()
+
 // Tracks where each slug was last successfully written. Lets the
 // flush path detect "the doc's filename changed since last write"
 // (e.g. an Untitled note gained a title, a wiki page was renamed)
@@ -271,6 +280,7 @@ export function shouldDeferStaleWrite(
 
 function markDirty(slug: string): void {
   dirtySlugs.add(slug)
+  dirtyGeneration.set(slug, (dirtyGeneration.get(slug) ?? 0) + 1)
 }
 
 /** Public surface for marking a doc dirty without a Y.Doc mutation.
@@ -285,6 +295,22 @@ export function markSlugDirty(slug: string): void {
  * (iv.3). */
 export function clearDirty(slug: string): void {
   dirtySlugs.delete(slug)
+  dirtyGeneration.delete(slug)
+}
+
+/** Capture `slug`'s current edit generation. The flush loop calls this right
+ * before it serializes the body, then passes the result to
+ * `clearDirtyIfUnchanged` after the awaited write. */
+export function captureDirtyGeneration(slug: string): number {
+  return dirtyGeneration.get(slug) ?? 0
+}
+
+/** Clear `slug`'s dirty bit ONLY if no new edit landed since `gen` was
+ * captured. If an edit arrived during the flush's write window the generation
+ * advanced — leave the slug dirty so the next tick flushes the newer content
+ * instead of dropping it. */
+export function clearDirtyIfUnchanged(slug: string, gen: number): void {
+  if ((dirtyGeneration.get(slug) ?? 0) === gen) clearDirty(slug)
 }
 
 /** Snapshot of slugs that have unsaved changes since their last
@@ -512,6 +538,10 @@ async function flushDirtyOnce(): Promise<void> {
       }
       continue
     }
+    // Capture the edit generation before serializing so a mid-write edit
+    // (below, across the awaited disk ops) isn't cleared by the final
+    // clearDirty — see clearDirtyIfUnchanged.
+    const gen = captureDirtyGeneration(slug)
     const result = serializeDocToFiles(slug)
     if (!result) continue
     // Yjs-removal migration Phase 2: the `.ydoc` write path is gone.
@@ -618,7 +648,9 @@ async function flushDirtyOnce(): Promise<void> {
         }
       }
       lastWrittenPath.set(slug, mdPath)
-      clearDirty(slug)
+      // Only clear if no edit landed during the awaited write above; otherwise
+      // leave dirty so the next tick flushes the newer body (not a silent drop).
+      clearDirtyIfUnchanged(slug, gen)
       if (!known.type.startsWith('system:')) indexTouched = true
     } catch (err) {
       // Error (not warn) — this is a data-durability failure path.
