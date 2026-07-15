@@ -44,6 +44,7 @@ import {
   acceptEffect,
   rejectEffect,
   greenRangesForSave,
+  isDecisionTx,
   isMaterialized,
 } from '@/editor/cmInBufferReview'
 import { stripRanges } from '@/editor/proposalPlan'
@@ -238,7 +239,14 @@ export function CmEditor({ handle, header }: Props) {
             // programmatic body set (externalBody) is a load from disk — don't dirty
             // it.
             EditorView.updateListener.of((u) => {
-              if (!u.docChanged) return
+              // Re-mirror on doc changes AND on accept/reject decisions. Accepting
+              // a pure-insertion proposal (an append: empty red range) produces NO
+              // doc change, yet it flips that text from pending-green (EXCLUDED from
+              // greenRangesForSave) to accepted (INCLUDED). Bailing on !docChanged
+              // there leaves bodyMarkdown holding the pre-accept body, so an
+              // auto-accepted append to the open note is silently dropped on flush.
+              // A decision transaction changes the exclusion set → must re-mirror.
+              if (!u.docChanged && !isDecisionTx(u.transactions)) return
               const text = u.state.doc.toString()
               // Publish live word/char counts for the floating stats panel —
               // on every doc change, including programmatic loads.

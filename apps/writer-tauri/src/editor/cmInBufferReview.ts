@@ -72,6 +72,18 @@ export function greenRangesForSave(state: EditorState): RawRange[] {
   return greenRangesOf(state.field(matField, false) ?? [])
 }
 
+/** True when any transaction carries an accept/reject DECISION. Such a decision
+ * flips a proposal between pending-green (EXCLUDED from greenRangesForSave) and
+ * accepted (INCLUDED), so the saved body changes even when the doc text doesn't —
+ * a pure-insertion accept has an empty red range and thus no doc change. CmEditor's
+ * save listener must re-mirror on these, or an auto-accepted append to the open
+ * note is silently dropped. */
+export function isDecisionTx(transactions: readonly Transaction[]): boolean {
+  return transactions.some((t) =>
+    t.effects.some((e) => e.is(acceptEffect) || e.is(rejectEffect)),
+  )
+}
+
 // ── Undo wiring ────────────────────────────────────────────────────────────
 const reviewUndoLink = invertedEffects.of((tr) => {
   const out: StateEffect<unknown>[] = []
