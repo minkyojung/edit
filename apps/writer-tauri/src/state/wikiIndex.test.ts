@@ -268,10 +268,11 @@ describe('pickEmptyFolders', () => {
 
   it('excludes host-owned and dated areas', () => {
     // App-internal state lives under `.octave/` (dot-prefixed) and never
-    // reaches the catalog, so it can't appear in knownFolders here — the
-    // function only has to drop `_system` + dated `daily/` areas.
+    // reaches the catalog. `threads/` is not dot-prefixed, so it DOES reach
+    // knownFolders (it holds only .json/.turns.jsonl, never notes) and must be
+    // dropped alongside `_system` + dated `daily/` areas.
     const empties = pickEmptyFolders(
-      ['', '_system', '_system/agent', 'daily', 'daily/2026-01-01', 'notes'],
+      ['', '_system', '_system/agent', 'daily', 'daily/2026-01-01', 'threads', 'notes'],
       new Set(),
     )
     expect(empties).toEqual(['notes'])

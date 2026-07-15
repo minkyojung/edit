@@ -452,6 +452,10 @@ async function findMovedOpenDocSlug(rel: string): Promise<string | null> {
   } catch {
     return null
   }
+  // An empty/whitespace-only body hash-matches every other empty doc (e.g. a
+  // freshly created untitled tab), which would wrongly correlate an unrelated
+  // new external file as a move. Skip correlation and fall back to add.
+  if (body.trim() === '') return null
   const newHash = await hashContent(body)
   const { handles } = useDocsStore.getState()
   const openDocHashes = await Promise.all(

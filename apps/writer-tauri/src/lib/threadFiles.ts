@@ -63,10 +63,13 @@ function runExclusive<T>(id: string, fn: () => Promise<T>): Promise<T> {
   const next = prev.then(fn, fn)
   chains.set(id, next)
   // Drop the entry once it's the tail and settled, so the map doesn't grow
-  // unbounded over a long session.
-  void next.finally(() => {
+  // unbounded over a long session. Use then(cb, cb) — not finally — so a
+  // rejected op is consumed on this bookkeeping branch instead of surfacing
+  // as an unhandled rejection (the caller still sees it via the returned next).
+  const drop = () => {
     if (chains.get(id) === next) chains.delete(id)
-  })
+  }
+  void next.then(drop, drop)
   return next as Promise<T>
 }
 
