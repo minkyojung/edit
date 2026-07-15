@@ -2,11 +2,13 @@ import React, { useEffect, useState } from 'react'
 import {
   IconAlertTriangle,
   IconAt,
+  IconClipboard,
   IconFile,
   IconFileText,
   IconFileTypePdf,
   IconPhoto,
   IconPlayerStopFilled,
+  IconQuote,
 } from '@tabler/icons-react'
 import type { Attachment, ChatTurn } from '@/chat/types'
 import { formatDuration } from '@/chat/utils/formatDuration'
@@ -42,8 +44,18 @@ export const MessageRow = React.memo(function MessageRow({
   hideText?: boolean
 }) {
   if (turn.role === 'user') {
-    const fileAtts = (turn.attachments ?? []).filter(
+    const atts = turn.attachments ?? []
+    const fileAtts = atts.filter(
       (a): a is Extract<Attachment, { type: 'file' }> => a.type === 'file',
+    )
+    const selectionAtts = atts.filter(
+      (a): a is Extract<Attachment, { type: 'selection' }> => a.type === 'selection',
+    )
+    const viewingFiles = atts.filter(
+      (a): a is Extract<Attachment, { type: 'viewing-file' }> => a.type === 'viewing-file',
+    )
+    const pastedAtts = atts.filter(
+      (a): a is Extract<Attachment, { type: 'pasted' }> => a.type === 'pasted',
     )
     const mentions = turn.mentions ?? []
     return (
@@ -73,6 +85,48 @@ export const MessageRow = React.memo(function MessageRow({
                 >
                   <IconAt size={12} stroke={1.75} className="shrink-0 text-muted-foreground" />
                   <span className="truncate">{m.path.split('/').pop() ?? m.path}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          {viewingFiles.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {viewingFiles.map((v, i) => (
+                <span
+                  key={i}
+                  title={v.path}
+                  className="inline-flex h-6 items-center gap-1 rounded-md bg-background px-2 text-footnote font-medium text-foreground/80"
+                >
+                  <IconFile size={12} stroke={1.75} className="shrink-0 text-muted-foreground" />
+                  <span className="truncate">{v.path.split('/').pop() ?? v.path}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          {selectionAtts.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {selectionAtts.map((sel, i) => (
+                <span
+                  key={i}
+                  title={sel.preview}
+                  className="inline-flex h-6 items-center gap-1 rounded-md bg-background px-2 text-footnote font-medium text-foreground/80"
+                >
+                  <IconQuote size={12} stroke={1.75} className="shrink-0 text-muted-foreground" />
+                  <span className="truncate">{sel.label}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          {pastedAtts.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {pastedAtts.map((pt, i) => (
+                <span
+                  key={i}
+                  title={pt.content}
+                  className="inline-flex h-6 max-w-[200px] items-center gap-1 rounded-md bg-background px-2 text-footnote font-medium text-foreground/80"
+                >
+                  <IconClipboard size={12} stroke={1.75} className="shrink-0 text-muted-foreground" />
+                  <span className="truncate">{pt.preview}</span>
                 </span>
               ))}
             </div>
@@ -184,8 +238,6 @@ export const MessageRow = React.memo(function MessageRow({
           durationLabel={durationLabel}
           stopReasonLabel={stopReasonLabel}
           canCopy={canCopy}
-          canRegenerate={canRegenerate}
-          onRegenerate={onRegenerate}
           threadId={threadId}
           threadTitle={threadTitle}
         />

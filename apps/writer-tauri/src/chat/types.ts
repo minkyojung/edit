@@ -18,25 +18,30 @@
  * round-tripping through agent ids. The sidecar accepts the raw id. */
 export type ChatModel =
   | 'claude-haiku-4-5'
-  | 'claude-sonnet-4-6'
+  | 'claude-sonnet-5'
   | 'claude-opus-4-8'
   | 'claude-fable-5'
+  // Legacy — kept selectable for threads created before Sonnet 5, but listed
+  // last and not the default.
+  | 'claude-sonnet-4-6'
 
 export const CHAT_MODELS: readonly ChatModel[] = [
   'claude-haiku-4-5',
-  'claude-sonnet-4-6',
+  'claude-sonnet-5',
   'claude-opus-4-8',
   'claude-fable-5',
+  'claude-sonnet-4-6',
 ] as const
 
 export const CHAT_MODEL_LABELS: Record<ChatModel, string> = {
   'claude-haiku-4-5': 'Haiku 4.5',
-  'claude-sonnet-4-6': 'Sonnet 4.6',
+  'claude-sonnet-5': 'Sonnet 5',
   'claude-opus-4-8': 'Opus 4.8',
   'claude-fable-5': 'Fable 5',
+  'claude-sonnet-4-6': 'Sonnet 4.6',
 }
 
-export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-4-6'
+export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-5'
 
 /** One model the account can actually use, as reported by the Claude Agent
  * SDK's session-init handshake (query.supportedModels()). Only `value` is
@@ -76,9 +81,10 @@ export function modelSupportsFastMode(model: ChatModel): boolean {
 export type FastModeState = 'off' | 'cooldown' | 'on'
 
 /** Reasoning effort the model puts into a turn. Mirrors the Claude Agent
- * SDK's first-class `effort` option. `xhigh` is Opus-only — the SDK falls
- * back to `high` on other models, so we only offer it where it's real (see
- * EFFORTS_BY_MODEL). `max` is intentionally not exposed: its token/time cost
+ * SDK's first-class `effort` option. `xhigh` is only on the higher tiers
+ * (Sonnet 5, Opus 4.8, Fable 5) — the SDK falls back to `high` on models
+ * without it, so we only offer it where it's real (see EFFORTS_BY_MODEL).
+ * `max` is intentionally not exposed: its token/time cost
  * is disproportionate for a writing tool. */
 export type ChatEffort = 'low' | 'medium' | 'high' | 'xhigh'
 
@@ -92,9 +98,12 @@ export const CHAT_EFFORTS: readonly ChatEffort[] = ['low', 'medium', 'high', 'xh
  * one ring per entry, so this also drives how many circles the icon shows. */
 export const EFFORTS_BY_MODEL: Record<ChatModel, readonly ChatEffort[]> = {
   'claude-haiku-4-5': ['low', 'medium', 'high'],
-  'claude-sonnet-4-6': ['low', 'medium', 'high'],
+  // Sonnet 5 is the first Sonnet-tier model to expose the extra `xhigh` gear;
+  // Sonnet 4.6 tops out at `high`.
+  'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh'],
   'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh'],
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh'],
+  'claude-sonnet-4-6': ['low', 'medium', 'high'],
 }
 
 export function effortsForModel(model: ChatModel): readonly ChatEffort[] {
@@ -173,12 +182,6 @@ export interface ContextSnapshot {
 
 export interface ThreadMeta {
   id: string
-  /** Slug of the doc this thread is anchored to. Threads always
-   * belong to exactly one doc (wiki page / daily / system). When the
-   * parent doc is archived the thread follows. The file-based layout
-   * uses a flat `threads/` folder, so this field — not directory
-   * structure — carries the doc association. */
-  parentSlug: string
   title: string                    // empty until Haiku titler fills it in
   createdAt: number
   updatedAt: number
@@ -411,19 +414,37 @@ export interface RetryPart {
   error?: string
 }
 
+/** A piece of context committed onto a user turn — snapshotted from the
+ * composer at send time so the bubble can render exactly what was attached
+ * (and the live composer chips are cleared). */
 export type Attachment =
-  | { type: 'selection'; from: number; to: number; preview: string }
-  | { type: 'file'; name: string; mediaType: string }
+  // Editor selection the message was about: `label` is the composer's chip
+  // label ("Note · L10–14"), `preview` the selected text (tooltip).
+  | { type: 'selection'; label: string; preview: string }
+  // A file the user uploaded. `path` (vault-relative, under .octave/attachments/)
+  // makes the turn self-contained: regenerate re-sends it, and the attachment GC
+  // can tell a live file from an orphan. `name`/`mediaType` drive the chip glyph.
+  | { type: 'file'; name: string; mediaType: string; path: string }
+  // The non-markdown file the chat was viewing (vault-relative path).
+  | { type: 'viewing-file'; path: string }
+  // Long pasted text kept as a chip (not folded into the message). `preview`
+  // is the chip label; `content` is the full text — buildUserPrompt reattaches
+  // it to the model prompt so the model still receives it.
+  | { type: 'pasted'; preview: string; content: string }
 
 /** A file the user attached to a chat turn for the model to read.
- * `dataUrl` carries the full base64-encoded content; it is NOT stored
- * in the ChatTurn (too large for JSONL) — it flows only through the
- * live run path (PromptInput → useChatRunner → runChat → sidecar). */
+ * On attach we write the bytes into the vault's hidden `.octave/attachments/`
+ * folder and carry only `path` (vault-relative) — the model Reads it on
+ * demand, the same orientation-block channel @-mentions and the viewing
+ * file use. No base64 rides through the prompt anymore. */
 export interface FileAttachment {
   id: string
   name: string
   mediaType: string
-  dataUrl: string
+  /** Vault-relative path under `.octave/attachments/` (e.g.
+   * `.octave/attachments/<id>/Screenshot.png`). Hidden from the note tree/index
+   * (both filter dot-dirs) but Read-able by the agent. */
+  path: string
 }
 
 export interface ToolCall {

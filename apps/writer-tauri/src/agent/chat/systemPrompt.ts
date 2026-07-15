@@ -12,13 +12,8 @@
 // network. The engine (chat/index.ts) does the I/O (ctx assembly,
 // view doc extraction) and feeds the results in.
 
-import type { ChatTurn, FileAttachment } from '@/chat/types'
+import type { Attachment, ChatTurn } from '@/chat/types'
 import { DOC_CHAR_CAP, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type VizEditTarget } from './types'
-
-type TextBlock = { type: 'text'; text: string }
-type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
-type DocumentBlock = { type: 'document'; source: { type: 'base64'; media_type: string; data: string } }
-type ContentBlock = TextBlock | ImageBlock | DocumentBlock
 
 /** Derive the user prompt for the current SDK call from the thread
  * history. SDK session resume keeps prior turns server-side — we
@@ -30,34 +25,23 @@ export function buildUserPrompt(history: ChatTurn[]): string {
   // only — the model already received that answer via the tool result, so
   // they must never become the prompt (Regenerate would otherwise re-send
   // the chosen answer text as a fresh question).
-  const turns = history.filter((t) => !t.synthetic && t.content.trim().length > 0)
+  // A turn is "real" if it has typed text OR a pasted-text chip (a pasted-only
+  // send has empty content but must still become the prompt).
+  const pastedOf = (t: ChatTurn) =>
+    (t.attachments ?? [])
+      .filter((a): a is Extract<Attachment, { type: 'pasted' }> => a.type === 'pasted')
+      .map((a) => a.content)
+      .join('\n\n')
+  const turns = history.filter(
+    (t) => !t.synthetic && (t.content.trim().length > 0 || pastedOf(t).length > 0),
+  )
   if (turns.length === 0) return ''
-  return turns[turns.length - 1].content
-}
-
-/** Build the user message content for the SDK call. When attachments are
- * present, returns a ContentBlock[] so the model receives both the text and
- * the files; otherwise falls back to a plain string to keep the common path
- * clean. The sidecar's makeInput yields this as MessageParam.content, which
- * the Anthropic SDK accepts as either form. */
-export function buildUserContent(
-  history: ChatTurn[],
-  attachments?: FileAttachment[],
-): string | ContentBlock[] {
-  const text = buildUserPrompt(history)
-  if (!attachments || attachments.length === 0) return text
-
-  const blocks: ContentBlock[] = [{ type: 'text', text }]
-  for (const att of attachments) {
-    // data URLs are "data:<mediaType>;base64,<data>" — strip the prefix.
-    const base64 = att.dataUrl.split(',')[1] ?? ''
-    if (att.mediaType.startsWith('image/')) {
-      blocks.push({ type: 'image', source: { type: 'base64', media_type: att.mediaType, data: base64 } })
-    } else {
-      blocks.push({ type: 'document', source: { type: 'base64', media_type: att.mediaType, data: base64 } })
-    }
-  }
-  return blocks
+  const last = turns[turns.length - 1]
+  // Reattach pasted text (kept off the visible message as a chip) so the model
+  // still receives it, prepended like the composer used to fold it in.
+  const pasted = pastedOf(last)
+  if (!pasted) return last.content
+  return last.content.trim() ? `${pasted}\n\n${last.content}` : pasted
 }
 
 /** Slice the doc text down to {@link DOC_CHAR_CAP} characters from
@@ -81,6 +65,7 @@ export interface SystemBlocksArgs {
   ctx: {
     selfProfile: string
     claudeMd: string
+    preferences: string
   }
   /** Absolute path of the vault root. The model's file tools (Read/Glob/Grep/the
    * propose_* edit tools) take absolute paths, but a custom string systemPrompt
@@ -94,6 +79,12 @@ export interface SystemBlocksArgs {
    * it's the staging area to route notes OUT of — not a permanent home. Stable
    * for the session → sits in the cacheable prefix. */
   captureFolder?: string | null
+  /** The vault-relative knowledge-base folder (settings `knowledgeBaseFolder`,
+   * e.g. "wiki"). Injected so the model files durable synthesized knowledge
+   * here and treats it as authoritative over any folder named in the CLAUDE.md
+   * schema (the setting is what the user actually chose). Stable → cacheable
+   * prefix. */
+  knowledgeBaseFolder?: string | null
   /** When true (default for free chat) the document body is appended
    * past the SDK's cache boundary so it doesn't poison the cache key.
    * Slash commands that already embed `{{document}}` in their body
@@ -117,6 +108,12 @@ export interface SystemBlocksArgs {
    * / loaded, so its in-memory content is fresher than disk) it's injected
    * inline; otherwise the model is told to Read the path. */
   mentionFiles?: { path: string; body?: string }[]
+  /** Vault-relative paths of files the user attached via the composer
+   * (paperclip / drag / paste). Written to the hidden `.octave/attachments/` folder;
+   * rendered in an `--- ATTACHED FILES ---` block that tells the model to Read
+   * them BEFORE answering (unlike inline base64, a path is only "seen" once
+   * Read). */
+  attachedFiles?: string[]
   /** When set, a high-salience block naming the visualization being edited
    * (id + current spec) is pinned past the cache boundary, instructing the
    * model to apply changes via the edit_visualization tool. */
@@ -159,11 +156,13 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     ctx,
     vaultRoot,
     captureFolder,
+    knowledgeBaseFolder,
     appendDocument,
     currentFilePath,
     viewingFilePath,
     selectionText,
     mentionFiles,
+    attachedFiles,
     vizEditTarget,
     today,
   } = args
@@ -173,7 +172,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   // self-profile and CLAUDE.md schema below are per-vault and swappable. Putting
   // the invariant block first means switching vaults only invalidates the cache
   // from the profile byte onward, not the persona above it.
-  // Native routine runs (slash-command intake) carry their brain in the USER
+  // Native command runs (slash-command intake) carry their brain in the USER
   // turn, so they pass an empty systemBody — skip it rather than push a blank
   // block. Chat always has a non-empty persona, so this is a no-op there.
   if (systemBody) prefix.push(systemBody)
@@ -181,6 +180,13 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
   }
   if (ctx.claudeMd) prefix.push(ctx.claudeMd)
+  // User behaviour preferences — the "how you should act" rules the schema
+  // above points at. Separate per-user slice (from _system/preferences.md) so
+  // it can grow without touching the app-owned schema. Empty until the user
+  // sets any, in which case the block is dropped.
+  if (ctx.preferences) {
+    prefix.push(`--- PREFERENCES ---\n${ctx.preferences}`)
+  }
   // Ground the model's file tools in the real vault root (stable → stays in the
   // cacheable prefix). Without it the first Read guesses a wrong absolute path.
   if (vaultRoot) {
@@ -201,6 +207,20 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `Treat it as a staging inbox, NOT a permanent home: when you file or organize, ` +
         `move a note OUT of \`${captureFolder}/\` into the folder that best fits it (per the ` +
         `CLAUDE.md rules above). Don't route notes back into \`${captureFolder}/\`.`,
+    )
+  }
+  // Name the knowledge-base folder — where durable, synthesized knowledge
+  // (entity / topic / concept pages) lives. This is the user's actual setting,
+  // so it's AUTHORITATIVE over any folder the CLAUDE.md schema names. Stable →
+  // cacheable prefix.
+  if (knowledgeBaseFolder) {
+    prefix.push(
+      `--- KNOWLEDGE BASE ---\n` +
+        `The knowledge base is \`${knowledgeBaseFolder}/\` — the home for durable, ` +
+        `synthesized knowledge (the entity / topic / concept pages you own and keep ` +
+        `coherent). When you file lasting knowledge from a capture or a chat, write or ` +
+        `update pages HERE. This is the user's configured location: if the CLAUDE.md ` +
+        `schema above names a different folder for the knowledge base, THIS setting wins.`,
     )
   }
 
@@ -266,6 +286,16 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `the message doesn't name them again:\n\n${blocks.join('\n\n')}`,
     )
   }
+  if (attachedFiles && attachedFiles.length > 0) {
+    const list = attachedFiles.map((p) => `\`${p}\``).join('\n')
+    dynamic.push(
+      `--- ATTACHED FILES ---\n` +
+        `The user attached these files to THIS message. Before answering, Read ` +
+        `each one — they are the subject of the request even if the message ` +
+        `doesn't name them (Read ingests PDFs and images directly). Do not answer ` +
+        `about their contents without reading them first:\n\n${list}`,
+    )
+  }
   if (appendDocument) dynamic.push(`--- DOCUMENT ---\n${docForPrompt}`)
 
   if (dynamic.length > 0) {
@@ -274,7 +304,7 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   // A single-element prefix means only systemBody fired (chat with no context
   // blocks) — return it bare so the SDK caches a plain string. Anything else
   // (CLAUDE.md, workspace, etc. — always present for vault runs) returns the
-  // block array. `systemBody` is '' only for native routine runs, which always
+  // block array. `systemBody` is '' only for native command runs, which always
   // have those blocks, so the bare fallback never yields an empty prompt.
   if (prefix.length > 1) return prefix
   return systemBody

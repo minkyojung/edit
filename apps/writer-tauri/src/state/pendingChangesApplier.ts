@@ -227,8 +227,9 @@ const handledIds = new Set<string>()
  * (keeps the note) when:
  *   - another non-rejected change still targets the same note, or
  *   - the user has since typed their own content into it (bodyMarkdown non-empty).
- * `archiveDoc` is a soft delete (recoverable via Trash) and refuses system/daily/
- * non-user-owned pages on its own, returning null — in which case we leave it. */
+ * `deleteToTrash` is a soft delete (recoverable via the OS Trash) and refuses
+ * system/daily/non-user-owned pages on its own, returning null — in which case
+ * we leave it. */
 function cleanupRejectedNewNote(change: PendingChange): void {
   const slug = change.pageSlug
   const stillTargeted = Object.values(usePendingChangesStore.getState().byId).some(
@@ -238,12 +239,13 @@ function cleanupRejectedNewNote(change: PendingChange): void {
   const docs = useDocsStore.getState()
   const body = docs.handles[slug]?.bodyMarkdown
   if (body != null && body.trim().length > 0) return // user typed real content — keep
-  const result = docs.archiveDoc(slug)
-  if (result === null) {
-    console.info('[applier] rejected new note not archivable, left as-is', slug)
-  } else {
-    console.log('[applier] archived empty note from rejected proposal', slug)
-  }
+  void docs.deleteToTrash(slug).then((result) => {
+    if (result === null) {
+      console.info('[applier] rejected new note not deletable, left as-is', slug)
+    } else {
+      console.log('[applier] trashed empty note from rejected proposal', slug)
+    }
+  })
 }
 
 /** Boot-time validation for RESTORED pending changes: `pruneOrphaned` only
@@ -272,7 +274,7 @@ async function pruneStaleAnchorsOnce(): Promise<void> {
   let droppedCount = 0
   for (const [slug, changes] of bySlug) {
     const docs = useDocsStore.getState()
-    if (!docs.knownDocs.some((d) => d.slug === slug && !d.archivedAt)) continue // pruneOrphaned's job
+    if (!docs.knownDocs.some((d) => d.slug === slug)) continue // pruneOrphaned's job
     try {
       await docs.ensureHandle(slug)
       await useDocsStore.getState().handles[slug]?.contentReady
@@ -378,6 +380,10 @@ export function startPendingChangesApplier(): void {
             // (resolved, drops from pending).
             notify.markCantApply()
             console.info('[applier] suggestion outdated — kept user text', c.id)
+            // Record that this accepted change never reached disk so the
+            // edit-outcome feedback note can correct the model's belief
+            // that its proposal landed (status stays 'accepted').
+            usePendingChangesStore.getState().markApplyFailed(c.id)
           }
           // Commit at accept time for BOTH sources — Keep is when the
           // disk actually changes. The coordinator debounces a burst of

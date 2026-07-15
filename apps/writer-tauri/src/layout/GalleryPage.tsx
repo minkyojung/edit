@@ -8,13 +8,10 @@
 // Step 1 ships Foundations → Color only; later steps append sections.
 
 import { useState, type ReactNode } from 'react'
-import {
-  OnboardingDialog,
-  InputStage,
-  RunningStage,
-  DoneStage,
-  FailedStage,
-} from '@/profile/ui/OnboardingDialog'
+import { ReleaseNotes, ReleaseNotesHistory, WhatsNewCard } from '@/components/WhatsNew'
+import { UpdateReadyToast, showUpdateReadyToast } from '@/components/UpdateReadyToast'
+import { CHANGELOG } from '@/lib/changelog'
+import { IconChevronLeft } from '@tabler/icons-react'
 import { IconPlus, IconBrain, IconFileText, IconAlertTriangle, IconPlayerStopFilled } from '@tabler/icons-react'
 import type { ChatTurn, MessagePart } from '@/chat/types'
 import { MessageRow } from '@/chat/messages/MessageRow'
@@ -506,10 +503,126 @@ const NAV: { group: string; titles: string[] }[] = [
       'Surfaces · Turn outcomes',
       'Surfaces · Save failures',
       'Surfaces · Onboarding',
+      'Surfaces · Updates',
     ],
   },
   { group: 'Consistency', titles: ['Consistency · Controls', 'Consistency · Panels'] },
 ]
+
+// The update-related surfaces, gathered for design review. Toasts fire the
+// REAL methods (they appear in the corner); the rest render inline.
+// Interactive demo of the teaser → settings flow, self-contained so it works
+// inside the gallery (really opening settings would cover the page). A framed
+// "device" shows the sidebar teaser; clicking it swaps to the Settings ▸ About
+// "Release notes" section, with a Back to return.
+function UpdateFlowDemo() {
+  const [view, setView] = useState<'teaser' | 'notes'>('teaser')
+  const entry = CHANGELOG[0]
+  if (!entry) return null
+  return (
+    <div className="w-[560px] overflow-hidden rounded-xl border border-border bg-background shadow-sm">
+      <div className="border-b border-border/60 px-3 py-1.5 text-footnote text-muted-foreground">
+        {view === 'teaser'
+          ? 'Sidebar bottom — click the teaser →'
+          : 'Settings ▸ About ▸ Release notes'}
+      </div>
+      {view === 'teaser' ? (
+        <div className="flex h-80 flex-col justify-end bg-sidebar">
+          <WhatsNewCard
+            version={entry.version}
+            headline={entry.headline}
+            onOpen={() => setView('notes')}
+            onDismiss={() => {}}
+          />
+        </div>
+      ) : (
+        <div className="h-80 overflow-y-auto">
+          <button
+            type="button"
+            onClick={() => setView('teaser')}
+            className="sticky top-0 z-10 flex w-full items-center gap-1 border-b border-border/60 bg-background/90 px-4 py-2 text-footnote text-muted-foreground backdrop-blur transition-colors hover:text-foreground"
+          >
+            <IconChevronLeft size={14} /> Back to teaser
+          </button>
+          <div className="px-5 py-4">
+            <h2 className="mb-3 text-body font-semibold text-foreground">Release notes</h2>
+            <ReleaseNotesHistory />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function UpdatesGallery() {
+  const entry = CHANGELOG[0] ?? null
+  return (
+    <>
+      <Subgroup title="What's new — teaser → page flow (interactive)">
+        <UpdateFlowDemo />
+      </Subgroup>
+      <Subgroup title="Update-ready toast — 3 actions (click to fire)">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            showUpdateReadyToast({
+              version: '0.0.7',
+              onSeeChanges: () => {},
+              onRestartIdle: () => {},
+              onRestart: () => {},
+            })
+          }
+        >
+          Fire toast
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => notify.updateFailed('install')}>
+          Failed · install
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => notify.updateFailed('check')}>
+          Failed · check
+        </Button>
+      </Subgroup>
+      <Subgroup title="Update-ready toast — inline">
+        <UpdateReadyToast
+          version="0.0.7"
+          onSeeChanges={() => {}}
+          onRestartIdle={() => {}}
+          onRestart={() => {}}
+        />
+      </Subgroup>
+      <Subgroup title="What's new — sidebar teaser (after an update)">
+        <div className="w-64 rounded-lg bg-sidebar">
+          {entry && (
+            <WhatsNewCard
+              version={entry.version}
+              headline={entry.headline}
+              onOpen={() => {}}
+              onDismiss={() => {}}
+            />
+          )}
+        </div>
+      </Subgroup>
+      <Subgroup title="Release notes — full render (/whats-new page)">
+        <div className="w-[460px] rounded-lg border border-border p-5">
+          {entry && (
+            <>
+              <div className="mb-2 flex items-baseline gap-2 border-b border-border/60 pb-1.5">
+                <span className="text-body font-semibold text-foreground">
+                  Octave {entry.version}
+                </span>
+                {entry.date && (
+                  <span className="text-footnote text-muted-foreground">{entry.date}</span>
+                )}
+              </div>
+              <ReleaseNotes notes={entry.notes} />
+            </>
+          )}
+        </div>
+      </Subgroup>
+    </>
+  )
+}
 
 function GalleryNav() {
   const go = (title: string) =>
@@ -538,34 +651,11 @@ function GalleryNav() {
   )
 }
 
-/** A stage of the onboarding modal, boxed at the real dialog width so the
- * design reads the same as in the live modal. */
-function OnbStageCard({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="w-[440px]">
-      <div className="mb-1.5 text-xs text-muted-foreground">{label}</div>
-      <div className="rounded-xl border border-border bg-background p-4">
-        <div className="mb-3">
-          <div className="text-body font-semibold text-foreground">Tell us where you write</div>
-          <div className="text-footnote text-muted-foreground">
-            We&apos;ll read a few recent posts and draft a profile page you can edit.
-          </div>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
-}
-
 export function GalleryPage() {
-  const [liveOnboarding, setLiveOnboarding] = useState(false)
   return (
     // pt clears the absolutely-positioned EditorHeader AppShell overlays
     // (matches SkillsPage).
     <div className="mx-auto flex w-full max-w-5xl gap-10 px-6 pb-16 pt-[calc(var(--header-h)+8px)]">
-      {liveOnboarding && (
-        <OnboardingDialog open onClose={() => setLiveOnboarding(false)} />
-      )}
       <GalleryNav />
       <div className="min-w-0 max-w-3xl flex-1">
       <h1 className="mb-8 text-lg font-semibold text-foreground">Gallery</h1>
@@ -1372,47 +1462,6 @@ export function GalleryPage() {
         </Subgroup>
       </Section>
 
-      <Section title="Surfaces · Onboarding">
-        <p className="text-[13px] text-muted-foreground">
-          First-run modal — one dialog, 4 stages. The <code>input</code> stage&apos;s
-          Analyze calls the AI directly; with no login step, an unauthenticated new
-          user hits the raw <code>no claude token</code> error shown in stage 4. The
-          fix is to add a Connect-Claude step before Analyze runs.
-        </p>
-        <Subgroup title="Stages (design preview)">
-          <div className="flex flex-wrap gap-6">
-            <OnbStageCard label="1 · input">
-              <InputStage url="" setUrl={noop} onAnalyze={noop} onSkip={noop} />
-            </OnbStageCard>
-            <OnbStageCard label="2 · running">
-              <RunningStage
-                discoveryLabel="Found 8 posts via RSS"
-                sectionStatus={{
-                  voice: { status: 'done' },
-                  themes: { status: 'loading' },
-                  about: { status: 'pending' },
-                }}
-              />
-            </OnbStageCard>
-            <OnbStageCard label="3 · done">
-              <DoneStage onOpen={noop} />
-            </OnbStageCard>
-            <OnbStageCard label="4 · failed (current bug)">
-              <FailedStage
-                message="invoke: no claude token — user must sign in"
-                onRetry={noop}
-                onSkip={noop}
-              />
-            </OnbStageCard>
-          </div>
-        </Subgroup>
-        <Subgroup title="Live test (real modal)">
-          <Button variant="outline" onClick={() => setLiveOnboarding(true)}>
-            Launch onboarding modal
-          </Button>
-        </Subgroup>
-      </Section>
-
       <Section title="Consistency · Panels">
         <p className="text-[13px] text-muted-foreground">
           Floating surfaces — open each. Radii differ today (dialog 4xl ·
@@ -1454,6 +1503,10 @@ export function GalleryPage() {
             <TooltipContent>Compare this radius</TooltipContent>
           </Tooltip>
         </div>
+      </Section>
+
+      <Section title="Surfaces · Updates">
+        <UpdatesGallery />
       </Section>
       </div>
     </div>

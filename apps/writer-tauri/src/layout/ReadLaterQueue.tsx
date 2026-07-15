@@ -8,12 +8,10 @@
 // Filter (unread/read/all) + search are local state. A row click opens
 // the article in the editor (the editor IS the reader); the context menu
 // toggles read state and archives — same actions as the sidebar used to
-// expose, reusing the docsStore `setArticleRead` / `archiveDoc`.
+// expose, reusing the docsStore `setArticleRead`.
 
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
-  IconArchive,
   IconBrandYoutube,
   IconCircleCheck,
   IconCircleDot,
@@ -23,7 +21,7 @@ import {
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useSaveArticleDialogStore } from '@/state/saveArticleDialogStore'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -53,13 +51,8 @@ function savedDateLabel(savedAt?: string): string {
 export function ReadLaterQueue() {
   const knownDocs = useDocsStore((s) => s.knownDocs)
   const activeSlug = useActiveSlug()
-  const sidebarTab = useDocsStore((s) => s.sidebarTab)
-  const dayAnchor = useDocsStore((s) => s.dayAnchor)
-  const monthAnchor = useDocsStore((s) => s.monthAnchor)
-  const archiveDoc = useDocsStore((s) => s.archiveDoc)
   const setArticleRead = useDocsStore((s) => s.setArticleRead)
   const openSaveArticle = useSaveArticleDialogStore((s) => s.openDialog)
-  const navigate = useNavigate()
 
   const [filter, setFilter] = useState<Filter>('unread')
   const [query, setQuery] = useState('')
@@ -69,7 +62,7 @@ export function ReadLaterQueue() {
   const articles = useMemo(
     () =>
       knownDocs
-        .filter((d) => d.sourceUrl && !d.archivedAt)
+        .filter((d) => d.sourceUrl)
         .sort((a, b) => (b.savedAt ?? '').localeCompare(a.savedAt ?? '')),
     [knownDocs],
   )
@@ -91,7 +84,7 @@ export function ReadLaterQueue() {
   }, [articles, filter, query])
 
   const openArticle = (slug: string) => {
-    navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
+    openDoc(slug)
   }
 
   return (
@@ -149,7 +142,6 @@ export function ReadLaterQueue() {
               isActive={doc.slug === activeSlug}
               onSelect={() => openArticle(doc.slug)}
               onToggleRead={() => setArticleRead(doc.slug, !doc.readAt)}
-              onArchive={() => archiveDoc(doc.slug)}
             />
           ))}
         </ul>
@@ -163,13 +155,11 @@ function QueueRow({
   isActive,
   onSelect,
   onToggleRead,
-  onArchive,
 }: {
   doc: KnownDoc
   isActive: boolean
   onSelect: () => void
   onToggleRead: () => void
-  onArchive: () => void
 }) {
   const isRead = !!doc.readAt
   const title = doc.title?.trim() || 'Untitled'
@@ -231,10 +221,6 @@ function QueueRow({
             <IconCircleCheck className="mr-2 h-4 w-4" />
           )}
           {isRead ? 'Mark unread' : 'Mark read'}
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={onArchive}>
-          <IconArchive className="mr-2 h-4 w-4" />
-          Archive
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

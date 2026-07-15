@@ -22,7 +22,7 @@ export interface SkillSeed {
 /** Seed default skills into `<SKILLS_REL>/<name>/SKILL.md` if missing.
  * Idempotent by file existence (never overwrites the user's edits) and skips
  * anything the user deleted (tombstoned), so a removed default doesn't
- * resurrect — the same contract as `seedRoutines` / `seedAgents`. */
+ * resurrect — the same contract as `seedCommands` / `seedAgents`. */
 export async function seedSkills(seeds: SkillSeed[]): Promise<void> {
   const dead = await readTombstones()
   for (const seed of seeds) {

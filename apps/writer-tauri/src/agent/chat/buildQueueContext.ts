@@ -27,7 +27,7 @@ function dateLabel(savedAt?: string): string {
 export function buildQueueContextMarkdown(): string {
   const articles = useDocsStore
     .getState()
-    .knownDocs.filter((d) => d.sourceUrl && !d.archivedAt)
+    .knownDocs.filter((d) => d.sourceUrl)
     .sort((a, b) => (b.savedAt ?? '').localeCompare(a.savedAt ?? ''))
 
   const unread = articles.filter((d) => !d.readAt).length

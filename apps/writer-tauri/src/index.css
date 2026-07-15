@@ -695,6 +695,14 @@ html[data-window-mode='compact'] .command-palette {
   --footer-h: 2.25rem;
   --traffic-light-w: 5rem;
 
+  /* Chat transcript top safe-area. The glass fade band (RightPanel) and
+     the scroll container's paddingTop (ChatPanel) MUST read this same
+     value: the band fades to transparent at its bottom edge, so content
+     may only begin at or below that edge or the band paints over the
+     first message. Deriving both from one token makes that invariant
+     impossible to break when --header-h changes. */
+  --chat-top-inset: calc(var(--header-h) + 2rem);
+
   /* Editor prose scale. Body holds at 16px so writing surfaces stay
      comfortable even though UI is 14px; headings use a clean six-step
      ladder rather than the old em-based 1.6em / 1.3em that drifted
@@ -713,12 +721,13 @@ html[data-window-mode='compact'] .command-palette {
   --prose-gap-heading: 28px;
   /* Extra gap added to the TOP of every hard-broken line (Enter), so a hard
      line break reads distinct from a soft wrap (which stays at line-height).
-     Tune this one knob to make prose tighter/airier. */
-  --prose-gap-line: 1em;
+     Tune this one knob to make prose tighter/airier. 0 = stock-CM uniform:
+     every line is just its line-height, no per-line gap. */
+  --prose-gap-line: 0;
   /* Matched to --prose-gap-line so a line's top gap DOESN'T change when it is
      reclassified paragraph↔list mid-typing (typing "- " would otherwise shrink
      the gap and jump the caret up). Keep these two in lockstep. */
-  --prose-gap-list: 1em;
+  --prose-gap-list: 0;
   --prose-lh-list: 1.6;
 
   /* ── Tahoe Design Tokens (Layer 1: Numeric) ──────────────────────────

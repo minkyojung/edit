@@ -32,52 +32,55 @@ import { VaultLauncher } from '@/components/VaultLauncher'
 import { OnboardingLauncher } from '@/components/OnboardingLauncher'
 import { resolveWindowMode } from '@/hooks/useWindowModeSync'
 import { exists } from '@tauri-apps/plugin-fs'
-import { seedClaudeMd, seedWelcomeNote } from '@/lib/seedClaudeMd'
-import { seedRoutines } from '@/lib/routinesLib'
+import { migrateClaudeMdPreferences } from '@/lib/seedClaudeMd'
+import { importClaudeCode } from '@/lib/claudeImport'
+import { seedCommands } from '@/lib/commandsLib'
 import { seedAgents } from '@/lib/agentsLib'
 import { seedSkills } from '@/lib/skillsLib'
 import { DEFAULT_SKILLS, DEFAULT_COMMANDS, DEFAULT_AGENTS } from '@/agent/defaults'
 import { isTranslationProject } from '@/lib/translationProject'
-import { gitInit } from '@/lib/git'
+import { gitInit, gitEnsureGitignoreEntries } from '@/lib/git'
+import { sweepOrphanAttachments } from '@/lib/attachmentGc'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
 /** Wiki-vault boot steps: seed the default files a wiki vault needs (CLAUDE.md,
- * routine commands, agent roles). Only wiki vaults get these — a translation
+ * commands, agent roles). Only wiki vaults get these — a translation
  * project (a folder with `manuscript/`) has its own layout and would just get
  * littered with wiki scaffolding. Each step is best-effort: a failure logs and
  * the boot continues. */
 async function seedWikiDefaults(): Promise<void> {
-  // Seed a `Welcome.md` starter note into a BRAND-NEW vault (detected by the
-  // absence of CLAUDE.md), so a first-run user opens on real content instead of
-  // a blank editor. MUST run before seedClaudeMd — the freshness check reads
-  // CLAUDE.md's absence. No-op on existing vaults.
+  // Import the user's existing Claude Code setup (`~/.claude` commands / agents
+  // / skills) FIRST — before the seeds below. Same skip-if-exists + tombstone
+  // contract, so an imported asset makes the matching seed a no-op (the user's
+  // own version wins). Best-effort: a missing `~/.claude` imports nothing.
   try {
-    await seedWelcomeNote()
+    await importClaudeCode()
   } catch (err) {
-    console.warn('[boot] Welcome.md seed failed', err)
+    console.warn('[boot] claude-code import failed', err)
   }
-  // Seed `CLAUDE.md` at the vault root if missing — the schema document the
-  // agent reads every chat. Idempotent by file existence; never overwrites
-  // a user's edits.
+  // The agent schema is app-owned now (bundled + injected), so there's no
+  // CLAUDE.md to seed. One-shot: migrate a legacy vault's user preferences
+  // out of its old CLAUDE.md into `_system/preferences.md`. Additive; never
+  // deletes the old file.
   try {
-    await seedClaudeMd()
+    await migrateClaudeMdPreferences()
   } catch (err) {
-    console.warn('[boot] CLAUDE.md seed failed', err)
+    console.warn('[boot] preference migration failed', err)
   }
-  // Seed default routine command files (`.claude/commands/*.md`) — the editable
+  // Seed default command files (`_system/agent/commands/*.md`) — the editable
   // task brains. Idempotent by file existence; never overwrites the user's edits.
   try {
-    await seedRoutines(DEFAULT_COMMANDS)
+    await seedCommands(DEFAULT_COMMANDS)
   } catch (err) {
-    console.warn('[boot] routines seed failed', err)
+    console.warn('[boot] commands seed failed', err)
   }
-  // Load the seeded routine commands into the slash palette (organize /
+  // Load the seeded commands into the slash palette (organize /
   // daily-ingest / chat-to-wiki + any the user added). Best-effort.
   await useVaultCommands.getState().refresh()
-  // Seed default agent roles (`_system/agent/agents/*.md`) — the editable chat
-  // personas. `default` is the main persona (from FREE_CHAT_PROMPT) made
-  // editable; the rest are starter roles the user can edit or delete.
+  // Seed the default agent role (`_system/agent/agents/default.md`) — the
+  // editable chat persona (from FREE_CHAT_PROMPT). The only role shipped by
+  // default; the user can add their own.
   try {
     await seedAgents(DEFAULT_AGENTS)
   } catch (err) {
@@ -174,6 +177,11 @@ export function BootGate({ children }: Props) {
       // backup/push stays disabled. Runs for every project kind.
       try {
         await gitInit()
+        // Migrate existing vaults (whose .gitignore predates the rule) so all
+        // app-internal state under `.octave/` (chat threads + attachment
+        // binaries) stays out of history. New vaults get this from
+        // DEFAULT_GITIGNORE; best-effort either way.
+        await gitEnsureGitignoreEntries(['.octave/'])
       } catch (err) {
         console.warn('[boot] git init failed — checkpoints disabled', err)
       }
@@ -189,12 +197,15 @@ export function BootGate({ children }: Props) {
         await seedWikiDefaults()
       }
       bootstrap()
-      // Load chat thread metas + turns from `threads/`. Fires in
+      // Load chat thread metas + turns from `.octave/threads/`. Fires in
       // parallel with bootstrap because the two read disjoint paths
       // (docs read `wiki/` / `daily/` / `_system/`, threads read
-      // `threads/`). hydrate is idempotent so StrictMode's double-
+      // `.octave/threads/`). hydrate is idempotent so StrictMode's double-
       // mount is safe.
       void useThreadsStore.getState().hydrate()
+      // Sweep orphaned chat attachment files (sends never cleaned, abandoned
+      // drafts, deleted threads). Background + best-effort — never blocks boot.
+      void sweepOrphanAttachments().catch(() => {})
     }
     void init()
   }, [hasVault, vaultChecked, bootstrap])

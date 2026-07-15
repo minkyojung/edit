@@ -1,11 +1,12 @@
 // Vault I/O for chat threads.
 //
-// Each thread occupies a pair of files in `threads/` at the vault root:
+// Each thread occupies a pair of files in `.octave/threads/` (the app's
+// hidden internal namespace — see lib/octave.ts):
 //
-//   threads/<id>.json         — ThreadMeta. Atomic rewrite on every
+//   <id>.json         — ThreadMeta. Atomic rewrite on every
 //                                metadata change (title, archived,
 //                                model, ...). Small; cost is irrelevant.
-//   threads/<id>.turns.jsonl  — ChatTurn per line, append-only. Long
+//   <id>.turns.jsonl  — ChatTurn per line, append-only. Long
 //                                threads stay cheap because we never
 //                                rewrite the whole file.
 //
@@ -33,7 +34,7 @@ import {
   writeVaultFile,
 } from '@/lib/vault'
 
-const THREADS_DIR = 'threads'
+import { OCTAVE_THREADS_DIR as THREADS_DIR } from '@/lib/octave'
 
 function metaPath(id: string): string {
   return `${THREADS_DIR}/${id}.json`
@@ -41,6 +42,35 @@ function metaPath(id: string): string {
 
 function turnsPath(id: string): string {
   return `${THREADS_DIR}/${id}.turns.jsonl`
+}
+
+// Per-thread-id serialisation. appendVaultFile is read-modify-write (not an
+// OS-level append), so two concurrent writes to the same thread's turns file
+// each read the same old bytes and the later write clobbers the earlier —
+// silently dropping a turn. This clobber is invisible in memory (the store's
+// optimistic set keeps both) and only surfaces after a reload. Every mutation
+// of a thread's files runs through this queue so append / batch-append /
+// rewrite / delete on one id can't overlap. Keyed by thread id (not path) so
+// deleteThreadFiles — which touches both `.json` and `.jsonl` — serialises
+// against in-flight turn writes too.
+const chains = new Map<string, Promise<unknown>>()
+
+/** Run `fn` after any prior operation on the same thread id has settled.
+ * Enqueues synchronously, so call order == disk order == the store's
+ * optimistic in-memory order. A failed op doesn't block the next one. */
+function runExclusive<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const prev = chains.get(id) ?? Promise.resolve()
+  const next = prev.then(fn, fn)
+  chains.set(id, next)
+  // Drop the entry once it's the tail and settled, so the map doesn't grow
+  // unbounded over a long session. Use then(cb, cb) — not finally — so a
+  // rejected op is consumed on this bookkeeping branch instead of surfacing
+  // as an unhandled rejection (the caller still sees it via the returned next).
+  const drop = () => {
+    if (chains.get(id) === next) chains.delete(id)
+  }
+  void next.then(drop, drop)
+  return next as Promise<T>
 }
 
 /** Read a single thread's metadata. Returns null when the file is
@@ -64,9 +94,16 @@ export async function readThreadMeta(id: string): Promise<ThreadMeta | null> {
  * mutation: rename, archive, model/effort switch, sessionStarted
  * flip. Body of the JSON is the same `ThreadMeta` shape the rest of
  * the app sees, so we round-trip without a separate file shape. */
-export async function writeThreadMeta(meta: ThreadMeta): Promise<void> {
-  const path = metaPath(meta.id)
-  await writeVaultFile(path, JSON.stringify(meta, null, 2) + '\n')
+export function writeThreadMeta(meta: ThreadMeta): Promise<void> {
+  // Same per-id queue as the turn writes. The meta file is a full rewrite over
+  // a shared `<path>.tmp`, so two concurrent writes (title vs archive vs the
+  // agent's contextUsage, all fire-and-forget) would corrupt it or land an
+  // older snapshot last. Serialising per thread id makes each write a clean,
+  // ordered full-snapshot — last write wins with the newest state.
+  return runExclusive(meta.id, async () => {
+    const path = metaPath(meta.id)
+    await writeVaultFile(path, JSON.stringify(meta, null, 2) + '\n')
+  })
 }
 
 /** Read every turn of a thread, in order. Each line is one ChatTurn
@@ -96,12 +133,14 @@ export async function readThreadTurns(id: string): Promise<ChatTurn[]> {
  * (not the start) so a crash between writes leaves a clean line
  * boundary rather than a leading orphan newline that confuses
  * readers. */
-export async function appendThreadTurn(id: string, turn: ChatTurn): Promise<void> {
-  const path = turnsPath(id)
-  // Inline JSON — no indentation — so each line is exactly one record.
-  // A turn carrying a multi-line string (markdown / code) round-trips
-  // through JSON.stringify's escape, so the on-disk line never wraps.
-  await appendVaultFile(path, JSON.stringify(turn) + '\n')
+export function appendThreadTurn(id: string, turn: ChatTurn): Promise<void> {
+  return runExclusive(id, async () => {
+    const path = turnsPath(id)
+    // Inline JSON — no indentation — so each line is exactly one record.
+    // A turn carrying a multi-line string (markdown / code) round-trips
+    // through JSON.stringify's escape, so the on-disk line never wraps.
+    await appendVaultFile(path, JSON.stringify(turn) + '\n')
+  })
 }
 
 /** Append several turns as ONE write. appendVaultFile is read-modify-write
@@ -109,10 +148,12 @@ export async function appendThreadTurn(id: string, turn: ChatTurn): Promise<void
  * and lose an update; callers that must land multiple turns in a fixed order
  * (e.g. the AskUserQuestion turn-split: committed turn + answer bubble) use
  * this to write them atomically and in order. */
-export async function appendThreadTurns(id: string, turns: ChatTurn[]): Promise<void> {
-  if (turns.length === 0) return
-  const path = turnsPath(id)
-  await appendVaultFile(path, turns.map((t) => JSON.stringify(t) + '\n').join(''))
+export function appendThreadTurns(id: string, turns: ChatTurn[]): Promise<void> {
+  if (turns.length === 0) return Promise.resolve()
+  return runExclusive(id, async () => {
+    const path = turnsPath(id)
+    await appendVaultFile(path, turns.map((t) => JSON.stringify(t) + '\n').join(''))
+  })
 }
 
 /** Rewrite a thread's turn file from a fresh array. Required by
@@ -124,14 +165,16 @@ export async function appendThreadTurns(id: string, turns: ChatTurn[]): Promise<
  * (every assistant settle). Atomic — same tmp+rename as
  * {@link writeThreadMeta} — so a crash mid-rewrite can't truncate
  * the existing turns. */
-export async function rewriteThreadTurns(
+export function rewriteThreadTurns(
   id: string,
   turns: ChatTurn[],
 ): Promise<void> {
-  const path = turnsPath(id)
-  const body = turns.map((t) => JSON.stringify(t)).join('\n')
-  // Trailing newline so a future append lands on its own line.
-  await writeVaultFile(path, turns.length === 0 ? '' : body + '\n')
+  return runExclusive(id, async () => {
+    const path = turnsPath(id)
+    const body = turns.map((t) => JSON.stringify(t)).join('\n')
+    // Trailing newline so a future append lands on its own line.
+    await writeVaultFile(path, turns.length === 0 ? '' : body + '\n')
+  })
 }
 
 /** Discover every thread id stored in the vault. Used at boot to
@@ -162,7 +205,9 @@ export async function listThreadIds(): Promise<string[]> {
 /** Remove a thread's meta + turns from disk. Used by hard-delete
  * paths (cleanup of orphaned threads when the parent doc is
  * permanently removed). No-op on missing files. */
-export async function deleteThreadFiles(id: string): Promise<void> {
-  await deleteVaultFile(metaPath(id))
-  await deleteVaultFile(turnsPath(id))
+export function deleteThreadFiles(id: string): Promise<void> {
+  return runExclusive(id, async () => {
+    await deleteVaultFile(metaPath(id))
+    await deleteVaultFile(turnsPath(id))
+  })
 }

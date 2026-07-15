@@ -19,7 +19,9 @@
 
 import { scanVault } from '@/lib/scanVault'
 import { listVaultTreeRecursive } from '@/lib/vault'
-import { getActiveSlugFromHash } from '@/lib/viewUrl'
+import { getActiveSlugFromHash, buildViewUrl } from '@/lib/viewUrl'
+import { pathToKnownSlug } from '@/lib/docPaths'
+import { readLastView } from '@/lib/lastView'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
@@ -34,7 +36,7 @@ import type { GetDocsState, KnownDoc, SetDocsState } from './types'
  * holds nothing openable. */
 function pickDefaultSlug(scanned: KnownDoc[]): string | null {
   const live = scanned.filter(
-    (d) => !d.archivedAt && !d.type.startsWith('system:'),
+    (d) => !d.type.startsWith('system:'),
   )
   const today = todayLocalDate()
   const todaysDaily = live.find((d) => d.type === 'daily' && d.date === today)
@@ -50,6 +52,12 @@ function pickDefaultSlug(scanned: KnownDoc[]): string | null {
 export interface BootstrapSlice {
   /** Set during bootstrap; turns to false when initial restore is done. */
   bootstrapping: boolean
+  /** One-shot URL the boot restore wants RouteSyncBridge to navigate to
+   * (the last-viewed doc, rebuilt for this boot's fresh slug). Navigated via
+   * React Router — not window.location.hash — so useLocation updates
+   * atomically and the self-heal doesn't race a stale hash. RouteSyncBridge
+   * consumes and clears it. Null when there's nothing to restore. */
+  pendingRestoreUrl: string | null
   /** Run the initial vault scan → catalog → tab restore pipeline.
    * Re-entrancy-safe via the module-level `bootstrapInFlight` flag. */
   bootstrap: () => Promise<void>
@@ -77,6 +85,7 @@ export const createBootstrapSlice = (
   get: GetDocsState,
 ): BootstrapSlice => ({
   bootstrapping: true,
+  pendingRestoreUrl: null,
 
   bootstrap: async () => {
     if (bootstrapInFlight) return
@@ -105,14 +114,16 @@ export const createBootstrapSlice = (
         console.warn('[boot] tree scan failed', err)
       }
 
-      // Validate persisted tab state against the freshly hydrated
-      // catalog. Slugs that don't have a backing KnownDoc are
-      // dropped — they refer to docs deleted externally between
-      // sessions (or remembered from a pre-Path-C build where
-      // knownDocs persisted and could diverge from disk).
+      // Resolve the persisted tab strip (stored as PATHS, since the slug is
+      // an ephemeral per-boot handle) back to this boot's fresh slugs against
+      // the scanned catalog. Paths with no backing doc — a note deleted or
+      // moved-while-closed externally — drop out. Then clear the transient
+      // landing field.
       const knownSlugs = new Set(scanned.map((d) => d.slug))
-      const openSlugs = get().openSlugs.filter((s) => knownSlugs.has(s))
-      set({ openSlugs })
+      const openSlugs = get()
+        .openPaths.map((path) => pathToKnownSlug(path, scanned))
+        .filter((s): s is string => s !== null)
+      set({ openSlugs, openPaths: [] })
 
       // Eagerly connect the slug AppContent will render on first paint.
       // The URL is the source of truth: prefer its slug when it points
@@ -121,11 +132,42 @@ export const createBootstrapSlice = (
       // vault default (pickDefaultSlug — today's daily, never a stray
       // `_system/*` page). Null only when the vault is empty — the app
       // shows an empty state until the user creates / opens a note.
+      // Priority:
+      //   1. a live deep-link slug already in the hash (valid this session)
+      //   2. the last-viewed doc, resolved from its persisted PATH to this
+      //      boot's fresh slug — and we set the hash to its rebuilt URL so
+      //      HashRouter shows it (main.tsx no longer pre-restores)
+      //   3. a restored tab, else the deterministic vault default — the hash
+      //      stays root and RouteSyncBridge self-heals to today's daily
       const urlSlug = getActiveSlugFromHash()
-      const slugToOpen =
-        urlSlug && knownSlugs.has(urlSlug)
-          ? urlSlug
-          : openSlugs[0] ?? pickDefaultSlug(scanned)
+      const last = readLastView()
+      const lastSlug = last ? pathToKnownSlug(last.path, scanned) : null
+      let slugToOpen: string | null
+      if (urlSlug && knownSlugs.has(urlSlug)) {
+        // A live in-session deep link — keep it (leave the URL as-is).
+        slugToOpen = urlSlug
+      } else if (last && lastSlug) {
+        // Restore the last-viewed doc. Hand the rebuilt URL to
+        // RouteSyncBridge as a one-shot: it navigates via React Router so
+        // useLocation updates atomically. Setting window.location.hash here
+        // instead races the self-heal — the raw hash change hasn't reached
+        // React Router's location yet when bootstrapping flips false, so the
+        // self-heal would see the stale (now-invalid) slug and bounce to
+        // today's daily.
+        slugToOpen = lastSlug
+        set({
+          pendingRestoreUrl: buildViewUrl({
+            tab: last.tab,
+            dayAnchor: last.dayAnchor,
+            monthAnchor: last.monthAnchor,
+            slug: lastSlug,
+          }),
+        })
+      } else {
+        // No deep link, no restorable last view — RouteSyncBridge self-heals
+        // the (invalid) URL to today's daily; warm openSlugs[0] as the tab.
+        slugToOpen = openSlugs[0] ?? pickDefaultSlug(scanned)
+      }
       if (slugToOpen) {
         await get().ensureHandle(slugToOpen)
       }
@@ -147,6 +189,13 @@ export const createBootstrapSlice = (
         invalidateWikiIndex(),
       ).catch((err) =>
         console.error('[wiki] index invalidate failed', err),
+      )
+      // Same for the timeline (the by-date derived view) — invalidating
+      // here writes the fresh `_system/timeline.md` on cold boot.
+      void import('../vaultTimeline').then(({ invalidateVaultTimeline }) =>
+        invalidateVaultTimeline(),
+      ).catch((err) =>
+        console.error('[wiki] timeline invalidate failed', err),
       )
 
       set({ bootstrapping: false })

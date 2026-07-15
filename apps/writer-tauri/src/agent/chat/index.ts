@@ -23,7 +23,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { navigateToNoteBySlug } from '@/editor/cmNav'
 import { assembleContext } from '@/agent/contextPipeline'
-import { getActiveVaultPath, getDefaultNoteFolder, getSandboxEnabled } from '@/state/settingsStore'
+import {
+  getActiveVaultPath,
+  getDefaultNoteFolder,
+  getKnowledgeBaseFolder,
+  getSandboxEnabled,
+} from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { pathForDoc } from '@/lib/docPaths'
 import { useChatRuns } from '@/stores/chatRuns'
@@ -54,8 +59,9 @@ import {
   type RunChatResult,
 } from './types'
 import { resolveAgent } from '../agents'
+import { buildEditOutcomeNote } from './buildEditOutcomeNote'
 import {
-  buildUserContent,
+  buildUserPrompt,
   composeSystemBlocks,
   shouldResumeSession,
   truncateDocForPrompt,
@@ -140,7 +146,27 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // so behaviour is unchanged; the seam lets roles plug in later.
   const agent = await resolveAgent(useThreadsStore.getState().threads[threadId]?.agentId)
   const systemBody = systemPrompt ?? agent.systemPrompt
-  const prompt = promptOverride ?? buildUserContent(history ?? [], attachments)
+  // Attachments now ride as vault paths (written to `.octave/attachments/` on attach),
+  // injected as an orientation block the model Reads on demand — same channel
+  // as @-mentions. No base64 in the prompt.
+  const attachedFiles = (attachments ?? []).map((a) => a.path)
+  // Attachment-only sends carry no text, but an empty user message is invalid —
+  // fall back to a minimal instruction so the ATTACHED FILES block has a turn to
+  // act on. Harmless for the normal path (buildUserPrompt is non-empty there).
+  const derivedPrompt = buildUserPrompt(history ?? [])
+  const basePrompt =
+    promptOverride ??
+    (derivedPrompt || (attachedFiles.length > 0 ? 'Look at the attached file(s).' : derivedPrompt))
+
+  // Correct the model's record for edits it proposed on a PRIOR turn that
+  // never landed (user rejected, or the accept failed on a stale anchor).
+  // The sidecar told it "success" immediately (so the run didn't stall), so
+  // without this it keeps believing those edits are in the files. Skip on
+  // special flows (Regenerate / bootstrap) that pass an explicit prompt.
+  // `outcomeIds` is stamped delivered only after the run actually starts,
+  // so a failed start doesn't silently consume the outcomes.
+  const outcome = promptOverride ? { note: null, ids: [] } : buildEditOutcomeNote(threadId)
+  const prompt = outcome.note ? `${outcome.note}\n\n${basePrompt}` : basePrompt
 
   // Chat mode — Karpathy / Claude Code shape: only the always-on
   // schema (CLAUDE.md + profile) lands in the system prompt. The wiki
@@ -186,6 +212,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     // Name the configured capture folder so the model treats it as a staging
     // inbox to route notes OUT of (rename-safe — reads the setting).
     captureFolder: getDefaultNoteFolder(),
+    // Name the configured knowledge-base folder so the model files durable
+    // synthesized knowledge there (authoritative over the CLAUDE.md schema).
+    knowledgeBaseFolder: getKnowledgeBaseFolder(),
     // Viewing a non-markdown file (PDF/image/…) → there's no doc body to
     // pin, and `view` may still hold the previously-open note's text, so
     // suppress the DOCUMENT block to avoid feeding stale, wrong context.
@@ -195,6 +224,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     viewingFilePath,
     selectionText,
     mentionFiles,
+    attachedFiles,
     vizEditTarget,
     today: todayLocalDate(),
   })
@@ -652,11 +682,21 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           const payloadRl = e.payload.rateLimit
           const snapshotRl = parser.rateLimitInfo()
           if (e.payload.code === 'RATE_LIMIT' && (payloadRl || snapshotRl)) {
-            // SDK reports `resetsAt` in seconds since epoch. The UI works in ms
-            // (Date.now() math) so we normalize at the boundary.
-            const resetsAtSec = payloadRl?.resetsAt ?? snapshotRl?.resetsAt
+            // SDK reports `resetsAt` in seconds since epoch (its type leaves the
+            // unit undocumented); the UI works in ms (Date.now() math). Normalize
+            // by magnitude so we're correct either way: a seconds value (~1.7e9)
+            // is scaled ×1000, but an already-ms value (~1.7e12) is passed through
+            // — a seconds epoch won't cross 1e12 until the year ~33658, so the
+            // threshold cleanly separates the two.
+            const resetsAtRaw = payloadRl?.resetsAt ?? snapshotRl?.resetsAt
+            const resetsAt =
+              typeof resetsAtRaw !== 'number'
+                ? undefined
+                : resetsAtRaw > 1e12
+                  ? resetsAtRaw
+                  : resetsAtRaw * 1000
             ;(err as Error & { rateLimit?: ChatErrorRateLimit }).rateLimit = {
-              resetsAt: typeof resetsAtSec === 'number' ? resetsAtSec * 1000 : undefined,
+              resetsAt,
               rateLimitType: payloadRl?.rateLimitType ?? snapshotRl?.rateLimitType,
               overageDisabledReason: payloadRl?.overageDisabledReason,
             }
@@ -756,6 +796,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         resume: isResume ? threadId : undefined,
       },
     })
+    // The run is underway with the outcome note in its prompt — stamp those
+    // changes delivered so the same reject / failure isn't reported again.
+    if (outcome.ids.length > 0) {
+      usePendingChangesStore.getState().markFeedbackDelivered(outcome.ids)
+    }
   } catch (e) {
     cleanup()
     throw e

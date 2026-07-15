@@ -16,12 +16,20 @@ import { pathForDoc } from '@/lib/docPaths'
 import type { SortMode } from '@/state/sortStore'
 
 /** Paths hidden from the sidebar tree: `_`-prefixed agent folders
- * (`_system/`) and `threads/` (chat-thread JSON, gitignored app state).
- * Mirrors Obsidian hiding `.obsidian/`. Exported so other surfaces (the
- * "Move to…" folder list) hide the same set. */
+ * (`_system/`) and every dot-prefixed folder (`.octave/` app state,
+ * `.git/`, …). Mirrors Obsidian hiding `.obsidian/`. Exported so other
+ * surfaces (the "Move to…" folder list) hide the same set. Catalog-derived
+ * paths already drop dot-entries upstream (scanVault), so the `.`-check is
+ * belt-and-braces for any raw folder/file list passed in.
+ *
+ * `threads/` is chat-thread storage. New vaults keep it under `.octave/`
+ * (hidden by the `.`-check), but a pre-`.octave` vault still has a
+ * top-level `threads/` that was never migrated — keep hiding that too so
+ * the app-internal thread JSON never leaks into the tree. */
 export function isHiddenTreePath(path: string): boolean {
   return (
     path.startsWith('_') ||
+    path.startsWith('.') ||
     path === 'threads' ||
     path.startsWith('threads/')
   )
@@ -108,7 +116,6 @@ export function buildFileTree(
   }
 
   for (const doc of docs) {
-    if (doc.archivedAt) continue
     const path = pathForDoc(doc, getDoc)
     if (!path) continue
     if (isHiddenTreePath(path)) continue

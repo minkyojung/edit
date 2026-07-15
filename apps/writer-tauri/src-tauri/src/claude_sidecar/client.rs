@@ -78,6 +78,11 @@ pub struct SidecarClient {
     next_id: AtomicI64,
     pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, SidecarError>>>>>,
     write_tx: mpsc::Sender<Vec<u8>>,
+    // Child pid, which is also its process-group id (we spawn it as a group
+    // leader). Lets `hard_kill` SIGKILL the whole group — the Node process AND
+    // its `claude` CLI grandchild — as a backstop when graceful shutdown is
+    // too slow or the sidecar hangs. None only if the OS didn't report a pid.
+    pid: Option<u32>,
     // All spawned tasks (writer, reader, stderr drain, child wait). Aborted
     // on drop so the wait task lets go of Child, which fires kill_on_drop
     // and tears the subprocess down.
@@ -114,8 +119,15 @@ impl SidecarClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        // Put the sidecar in its own process group (leader pid == child pid) so
+        // `hard_kill` can SIGKILL the whole group and take the `claude` CLI
+        // grandchild with it. `kill_on_drop` only reaps the direct child, which
+        // is exactly why the grandchild could otherwise be orphaned.
+        #[cfg(unix)]
+        cmd.process_group(0);
 
         let mut child = cmd.spawn()?;
+        let pid = child.id();
         let stdin = child.stdin.take().expect("stdin piped");
         let stdout = child.stdout.take().expect("stdout piped");
         let stderr = child.stderr.take();
@@ -163,8 +175,25 @@ impl SidecarClient {
             next_id: AtomicI64::new(1),
             pending,
             write_tx,
+            pid,
             tasks,
         })
+    }
+
+    /// SIGKILL the sidecar's entire process group (the Node process and its
+    /// `claude` CLI grandchild). Used as the app-quit backstop: after we've
+    /// asked the sidecar to leave gracefully and waited a bounded grace, this
+    /// guarantees nothing survives — even a hung sidecar or a CLI child the
+    /// graceful path didn't reap in time. Idempotent: killing an
+    /// already-exited group is a harmless ESRCH no-op.
+    pub fn hard_kill(&self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.pid {
+            // Negative pid targets the whole process group (see setpgid(2)).
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
     }
 
     /// Spawns the child and performs the JSON-RPC `initialize` handshake.

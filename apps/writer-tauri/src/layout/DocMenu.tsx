@@ -4,7 +4,6 @@
 // spine.
 
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { IconDots } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -18,11 +17,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { isAgentAssetPath, deleteAssetByPath } from '@/lib/deleteAsset'
+import { copyAsRichText } from '@/lib/copyAsRichText'
 import { confirm } from '@/state/confirmStore'
 import { DocumentInfoDialog } from './DocumentInfoDialog'
 
@@ -32,7 +33,6 @@ export function DocMenu() {
     activeSlug ? s.knownDocs.find((d) => d.slug === activeSlug) : null,
   )
   const deleteToTrash = useDocsStore((s) => s.deleteToTrash)
-  const navigate = useNavigate()
   const [infoOpen, setInfoOpen] = useState(false)
 
   // Daily entries are the time-axis spine; deleting them would tear the
@@ -40,20 +40,27 @@ export function DocMenu() {
   // refuses, but keep the menu honest.
   const deleteDisabled = !activeDoc || activeDoc.type === 'daily'
 
-  // Delete the active doc. Skills / routines / agents route through the shared
+  // Delete the active doc. Skills / commands / agents route through the shared
   // asset-delete path (folder-aware for skills, tombstoned so seeded defaults
   // don't resurrect); every other note is a plain trash. Both ask first.
   const navigateTo = (slug: string) => {
-    const store = useDocsStore.getState()
-    navigate(
-      buildViewUrl({
-        tab: store.sidebarTab,
-        dayAnchor: store.dayAnchor,
-        monthAnchor: store.monthAnchor,
-        slug,
-      }),
-    )
+    openDoc(slug)
   }
+  // Copy the whole note to the clipboard with its formatting intact, so
+  // pasting into an external rich editor (Substack, Notion, Docs) keeps
+  // headings / bullets / bold rather than dumping raw markdown source.
+  // Reads the live body cache — the CM change listener keeps it current.
+  const handleCopyRichText = async () => {
+    if (!activeSlug) return
+    const md = useDocsStore.getState().handles[activeSlug]?.bodyMarkdown ?? ''
+    if (!md.trim()) {
+      toast.info('Nothing to copy')
+      return
+    }
+    const rich = await copyAsRichText(md)
+    toast.success(rich ? 'Copied with formatting' : 'Copied as text')
+  }
+
   const handleDelete = async () => {
     if (!activeSlug || !activeDoc) return
     const rel = activeDoc.relPath
@@ -94,6 +101,12 @@ export function DocMenu() {
         <DropdownMenuContent align="end" sideOffset={6} className="w-56">
           <DropdownMenuItem disabled={!activeSlug} onSelect={() => setInfoOpen(true)}>
             Document info
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!activeSlug}
+            onSelect={() => void handleCopyRichText()}
+          >
+            Copy as rich text
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={deleteDisabled}

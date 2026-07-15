@@ -1,38 +1,59 @@
 // Onboarding step — Choose where notes live (mandatory: no skip).
 //
-// Pure view: no window resize, no store, no side effects. Picking a folder is
-// required to finish onboarding, so there's no skip and no translation-project
-// fork here — just one clear action. The real launcher wires the folder pick;
-// the /onboard design-preview renders this same panel with a no-op.
+// Unlike the welcome/connect steps (2-column "sell" screens), this is the "do"
+// step: a single centred column with one focused folder drop-zone. The card
+// looks like a drop target but click-opens the native picker (real drag-and-drop
+// can be layered on later). Pure view: the launcher wires the pick; the /onboard
+// preview renders it with a no-op.
 
-import { Button } from '@/components/ui/button'
+import type { ReactNode } from 'react'
+import { IconFolder } from '@tabler/icons-react'
+import { cn } from '@/lib/utils'
 
 interface Props {
   onChooseFolder: () => void
+  /** True while a folder is being dragged over the window — highlights the drop
+   * target. Wired by the launcher; the /onboard preview leaves it off. */
+  dragActive?: boolean
+  /** Step-progress indicator, rendered (centred) above the headline. */
+  progress?: ReactNode
 }
 
-export function FolderPanel({ onChooseFolder }: Props) {
+export function FolderPanel({ onChooseFolder, dragActive, progress }: Props) {
   return (
-    <div className="grid h-full w-full grid-cols-2 bg-background">
-      {/* Left: copy + action */}
-      <div className="flex flex-col justify-center px-10 py-8">
-        <h1 className="mb-2 text-2xl font-semibold tracking-tight text-foreground">
+    <div className="flex h-full w-full items-center justify-center bg-background px-8">
+      <div className="w-full max-w-[420px] text-center">
+        {progress && <div className="mb-6 flex justify-center">{progress}</div>}
+        <h1 className="mb-3 text-3xl font-bold leading-tight tracking-tight text-foreground">
           Where should your notes live?
         </h1>
         <p className="mb-8 text-body leading-relaxed text-muted-foreground">
-          Pick a folder for your notes — or create a new one. It becomes your
-          vault; everything you write lives there as plain Markdown you own.
+          Pick a folder — or make a new one. It becomes your vault: plain Markdown
+          you own.
         </p>
-        <Button className="w-full" onClick={onChooseFolder}>
-          Choose a folder for my notes
-        </Button>
-      </div>
 
-      {/* Right: preview panel (placeholder — swap for a real image later) */}
-      <div className="flex items-center justify-center p-4">
-        <div className="flex h-full w-full items-center justify-center rounded-2xl bg-gradient-to-br from-muted/60 to-muted/20">
-          <span className="text-footnote text-muted-foreground/60">Preview image</span>
-        </div>
+        {/* The folder card IS the action — drop a folder from Finder onto it, or
+            click to open the native picker. */}
+        <button
+          type="button"
+          onClick={onChooseFolder}
+          className={cn(
+            'flex w-full flex-col items-center gap-2 rounded-2xl border-2 border-dashed px-6 py-10 transition-colors',
+            dragActive
+              ? 'border-foreground/60 bg-muted/60'
+              : 'border-border hover:border-foreground/40 hover:bg-muted/40',
+          )}
+        >
+          <span className="mb-1 flex size-12 items-center justify-center rounded-xl bg-foreground/5 text-foreground">
+            <IconFolder size={26} stroke={1.75} />
+          </span>
+          <span className="text-body font-medium text-foreground">
+            {dragActive ? 'Drop your folder' : 'Choose a folder'}
+          </span>
+          <span className="text-footnote text-muted-foreground">
+            {dragActive ? 'Release to use it as your vault' : 'drag one here, or create a new one'}
+          </span>
+        </button>
       </div>
     </div>
   )

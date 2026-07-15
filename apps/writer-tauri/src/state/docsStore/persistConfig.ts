@@ -27,27 +27,46 @@
 
 import type { PersistOptions } from 'zustand/middleware'
 import { projectStorageKey } from '@/lib/windowRoot'
+import { pathForDoc } from '@/lib/docPaths'
 import type { DocsState, KnownDoc } from './types'
 
 export const persistConfig: PersistOptions<
   DocsState,
-  Pick<DocsState, 'openSlugs' | 'expandedDocSlugs'>
+  Pick<DocsState, 'openPaths'>
 > = {
-  // Per-project: open tabs / expanded folders belong to one vault, so each
-  // project window persists its own (localStorage is shared across windows).
+  // Per-project: open tabs belong to one vault, so each project window
+  // persists its own (localStorage is shared across windows).
   name: projectStorageKey('writer-tauri:docs'),
-  version: 7,
+  version: 8,
   partialize: (s) => ({
-    openSlugs: s.openSlugs,
-    // activeSlug intentionally NOT persisted (v7) — URL is the
-    // source of truth. See module docstring.
-    // knownDocs no longer persisted (Path C): the source of truth
-    // is the vault folder, hydrated on every boot via scanVault().
-    // This eliminates the "two catalogs drift" class of bugs that
-    // the title-mirror / backfill machinery existed to paper over.
-    expandedDocSlugs: s.expandedDocSlugs,
+    // Persist the tab strip as vault-relative PATHS, not slugs: the slug is
+    // an ephemeral in-session handle (re-minted each boot), so a persisted
+    // slug would be stale next launch. The path is stable across restarts.
+    // `bootstrap` resolves these back to fresh slugs against the scanned
+    // catalog. knownDocs is populated here (runtime), so pathForDoc resolves.
+    openPaths: s.openSlugs
+      .map((slug) => {
+        const doc = s.knownDocs.find((d) => d.slug === slug)
+        return doc ? pathForDoc(doc, (x) => s.knownDocs.find((d) => d.slug === x)) : null
+      })
+      .filter((p): p is string => p !== null),
+    // activeSlug intentionally NOT persisted (v7) — URL is the source of
+    // truth. knownDocs NOT persisted (Path C) — the vault is the single
+    // source, rebuilt every boot by scanVault(). expandedDocSlugs dropped
+    // (v8) — the sidebar fold state is local, path-keyed useState in
+    // FolderTree; the persisted field drove nothing.
   }),
   migrate: (persisted, version) => {
+    // v7 → v8: the tab strip switched from slug-keyed (`openSlugs`) to
+    // path-keyed (`openPaths`), because the slug is now an ephemeral
+    // per-boot handle. Old blobs carry stale slugs that can't be resolved,
+    // so discard the persisted tab shape entirely — bootstrap falls back to
+    // the default doc. (The vault was wiped for this migration anyway.)
+    if (version < 8) {
+      const { openSlugs: _os, expandedDocSlugs: _ex, ...rest } =
+        (persisted as { openSlugs?: unknown; expandedDocSlugs?: unknown }) ?? {}
+      persisted = rest
+    }
     // v1 → v2: KnownDoc gains optional archivedAt /
     // archivedFromParent. Pre-v2 entries are all live; absence of
     // these fields already encodes that, so this migration is a

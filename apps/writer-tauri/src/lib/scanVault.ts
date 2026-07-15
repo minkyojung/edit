@@ -26,76 +26,31 @@ import { readDir } from '@tauri-apps/plugin-fs'
 import { join } from '@tauri-apps/api/path'
 import { generateClientSlug } from '@/lib/slug'
 import { getActiveVaultPath } from '@/state/settingsStore'
-import {
-  readVaultFile,
-  vaultFileExists,
-  writeVaultFile,
-} from '@/lib/vault'
+import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import type { KnownDoc } from '@/state/docsStore'
 import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
 import { seedLastWrittenPath } from '@/lib/docFileSync'
-import { composeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
+import { splitFrontmatter } from '@/lib/frontmatter'
 
-/** Read the doc's persistent slug from its `.meta.json` sidecar, or
- * mint one + write the sidecar if missing. Two-tier lookup:
+/** Mint a fresh slug for `mdRel` and load its portable frontmatter meta.
  *
- *   1. `.meta.json` exists with a `slug` field — return it.
- *   2. Sidecar missing (vim / git created a `.md` directly, or first
- *      scan of a brand-new doc) — mint a slug, persist it.
- *
- * The Stage 3.2 `.marks.json` migration tier was removed in the
- * `export/` cleanup: by that point every doc had already received a
- * `.meta.json` during the prior scan, so the legacy reader had no
- * remaining work. */
-/** Returned by {@link getOrAssignSlug}: the slug to use plus the rest
- * of the sidecar payload so callers can hydrate non-identity fields
- * (archivedAt, archivedFromParent, aiSummary, …) without a second
- * file read. Empty when the sidecar was just minted. */
-interface SidecarLoad {
-  slug: string
-  meta: Partial<DocMetaFile>
-}
-
-async function getOrAssignSlug(mdRel: string): Promise<SidecarLoad> {
-  // Frontmatter is the source of truth — read it first. A slug there means
-  // the `.md` fully describes the doc (no sidecar consulted).
-  let body = ''
+ * The slug is an EPHEMERAL in-session handle — re-minted on every scan,
+ * never persisted, never written to the file. Identity across restarts is
+ * the file PATH (the persisted UI state is path-keyed — see persistConfig /
+ * lib/lastView); the slug only has to be stable within one session, which
+ * it is. `meta` carries the portable frontmatter fields (sourceUrl, videoId,
+ * created, highlights, …); the file is never mutated here, so foreign notes
+ * stay byte-for-byte the user's. */
+async function mintDocMeta(
+  mdRel: string,
+): Promise<{ slug: string; meta: Partial<DocMetaFile> }> {
   let data: Record<string, string> = {}
   try {
-    const split = splitFrontmatter(await readVaultFile(mdRel))
-    data = split.data
-    body = split.body
-    if (data.slug) {
-      return { slug: data.slug, meta: frontmatterToMeta(data) }
-    }
+    data = splitFrontmatter(await readVaultFile(mdRel)).data
   } catch {
-    // Unreadable `.md` — fall through.
+    // Unreadable `.md` — mint anyway with empty meta.
   }
-
-  // Legacy fallback: a `.meta.json` sidecar from before the frontmatter
-  // switch, for docs not yet re-saved. We read its slug but never write
-  // sidecars anymore; the next flush migrates the doc to frontmatter.
-  const metaRel = mdRel.replace(/\.md$/, '.meta.json')
-  if (await vaultFileExists(metaRel)) {
-    try {
-      const parsed = JSON.parse(await readVaultFile(metaRel)) as Partial<DocMetaFile>
-      if (typeof parsed.slug === 'string' && parsed.slug.length > 0) {
-        return { slug: parsed.slug, meta: parsed }
-      }
-    } catch {
-      // Corrupted sidecar — fall through to mint.
-    }
-  }
-
-  // Neither: mint a slug and persist it INTO the file's frontmatter
-  // (no sidecar), so identity is stable on the next scan.
-  const slug = generateClientSlug()
-  try {
-    await writeVaultFile(mdRel, composeFrontmatter({ ...data, slug }, body))
-  } catch (err) {
-    console.warn('[scan] could not write slug frontmatter for', mdRel, err)
-  }
-  return { slug, meta: { slug } }
+  return { slug: generateClientSlug(), meta: frontmatterToMeta(data) }
 }
 
 /** Walk a vault subdirectory recursively and return every body-.md
@@ -154,12 +109,6 @@ export function mdRelToKnownDoc(
   // state (archive flag, title intent) survives the boot rebuild that
   // would otherwise only see the filesystem.
   const overlay: Partial<KnownDoc> = {}
-  if (typeof meta.archivedAt === 'number') {
-    overlay.archivedAt = meta.archivedAt
-  }
-  if (typeof meta.archivedFromParent === 'string') {
-    overlay.archivedFromParent = meta.archivedFromParent
-  }
   // Phase 5b of the Yjs-removal migration: the doc's creation time
   // used to live in `Y.Map('meta').createdAt`; we now read it off
   // the sidecar so the catalog has it without touching Y.Doc.
@@ -264,8 +213,8 @@ function mdRelToBaseDoc(
 
 /** Scan the active vault and return every recognised doc as a
  * KnownDoc. Empty array when no vault is selected — caller decides
- * whether to prompt for one. Idempotent: re-running on the same vault
- * produces the same slugs (sidecars persist them). */
+ * whether to prompt for one. Slugs are ephemeral: each scan mints fresh
+ * ones (identity across restarts is the file path, not the slug). */
 export async function scanVault(): Promise<KnownDoc[]> {
   if (!getActiveVaultPath()) return []
 
@@ -275,17 +224,16 @@ export async function scanVault(): Promise<KnownDoc[]> {
   // relPath). Always on now that the folder tree is the only sidebar.
   const allMd = await listMdRecursive('')
 
-  // Pass 1: resolve slug + load sidecar metadata for every file in one
-  // read. Done up-front because pass-2's writing-note resolution needs
-  // the daily slug map, and pass-2 also needs the sidecar's soft-state
-  // fields (archivedAt, …) to layer onto the path-derived KnownDoc.
+  // Pass 1: mint a fresh ephemeral slug + load portable meta for every
+  // file. Done up-front because pass-2's writing-note resolution needs the
+  // daily date→slug map built from this pass.
   const scanned: Array<{
     slug: string
     mdRel: string
     meta: Partial<DocMetaFile>
   }> = []
   for (const mdRel of allMd) {
-    const { slug, meta } = await getOrAssignSlug(mdRel)
+    const { slug, meta } = await mintDocMeta(mdRel)
     scanned.push({ slug, mdRel, meta })
   }
 
@@ -323,9 +271,8 @@ export async function scanVault(): Promise<KnownDoc[]> {
  * single path instead of the whole tree.
  *
  * Returns null when the path doesn't fit any placement rule (oddly-
- * located file the watcher should ignore). Mints + persists a fresh
- * `.meta.json` when none exists, so the next scan / restart reads
- * the same slug.
+ * located file the watcher should ignore). Mints a fresh ephemeral slug
+ * (nothing persisted — identity is the path).
  *
  * For `writing` types the function needs to find the parent daily's
  * slug. Rather than re-scanning the disk we accept the live
@@ -337,7 +284,7 @@ export async function buildKnownDocForExternalPath(
   mdRel: string,
   catalog: KnownDoc[],
 ): Promise<KnownDoc | null> {
-  const { slug, meta } = await getOrAssignSlug(mdRel)
+  const { slug, meta } = await mintDocMeta(mdRel)
   const dailySlugByDate = new Map<string, string>()
   for (const d of catalog) {
     if (d.type === 'daily' && d.date) dailySlugByDate.set(d.date, d.slug)

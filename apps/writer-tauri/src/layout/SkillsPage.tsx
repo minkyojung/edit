@@ -6,21 +6,16 @@
 // column like any note view — not a modal.
 
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { IconBolt, IconChevronRight, IconTrash } from '@tabler/icons-react'
-import { useDocsStore } from '@/state/docsStore'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { listSkills, SKILLS_REL, type VaultSkill } from '@/lib/skillsLib'
 import { deleteAssetByPath } from '@/lib/deleteAsset'
 import { confirm } from '@/state/confirmStore'
+import { notify } from '@/lib/notify'
 
 export function SkillsPage() {
   const [skills, setSkills] = useState<VaultSkill[]>([])
   const [loading, setLoading] = useState(true)
-  const navigate = useNavigate()
-  const sidebarTab = useDocsStore((s) => s.sidebarTab)
-  const dayAnchor = useDocsStore((s) => s.dayAnchor)
-  const monthAnchor = useDocsStore((s) => s.monthAnchor)
 
   useEffect(() => {
     setLoading(true)
@@ -32,7 +27,7 @@ export function SkillsPage() {
 
   const openSkill = (slug: string) => {
     if (!slug) return
-    navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
+    openDoc(slug)
   }
 
   const remove = async (skill: VaultSkill) => {
@@ -46,6 +41,7 @@ export function SkillsPage() {
       setSkills((cur) => cur.filter((s) => s.dir !== skill.dir))
     } catch (err) {
       console.warn('[skills] delete failed', skill.dir, err)
+      notify.cantDeleteAsset({ onRetry: () => void remove(skill) })
     }
   }
 

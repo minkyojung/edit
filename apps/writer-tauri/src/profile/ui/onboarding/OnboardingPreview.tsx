@@ -1,6 +1,6 @@
 // Design-preview page for the onboarding flow — like the gallery, but with no
 // sidebar or editor. Renders each onboarding step centred inside a fixed frame
-// that mimics the compact onboarding window (900×580), so the layout reads at
+// that mimics the compact onboarding window (900×600), so the layout reads at
 // true proportions. Flip through steps with Prev/Next — no app restart needed.
 //
 // Steps render their PRESENTATIONAL panels with no-op handlers (no window
@@ -14,30 +14,60 @@ import { useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { WelcomePanel } from '@/profile/ui/onboarding/WelcomePanel'
 import { ConnectPanel } from '@/profile/ui/onboarding/ConnectPanel'
+import { ClaudeConnectPanel } from '@/profile/ui/onboarding/ClaudeConnectPanel'
 import { FolderPanel } from '@/profile/ui/onboarding/FolderPanel'
+import { RolesPanel } from '@/profile/ui/onboarding/RolesPanel'
 import { DonePanel } from '@/profile/ui/onboarding/DonePanel'
 import { Button } from '@/components/ui/button'
+import { ONBOARDING_W, ONBOARDING_H } from '@/profile/ui/onboarding/onboardingWindow'
+import { StepDots } from '@/profile/ui/onboarding/StepDots'
 
 const noop = () => {}
-
-const ONBOARDING_W = 900
-const ONBOARDING_H = 580
 
 const STEPS: { key: string; label: string; render: () => ReactNode }[] = [
   {
     key: 'welcome',
     label: 'Welcome + trust',
-    render: () => <WelcomePanel onGetStarted={noop} />,
+    render: () => <WelcomePanel onGetStarted={noop} progress={<StepDots step="welcome" />} />,
   },
   {
     key: 'connect',
+    label: 'Sign in with Google',
+    render: () => (
+      <ConnectPanel onContinue={noop} onLater={noop} progress={<StepDots step="connect" />} />
+    ),
+  },
+  {
+    key: 'claude',
     label: 'Connect Claude',
-    render: () => <ConnectPanel onConnect={noop} onLater={noop} />,
+    render: () => (
+      <ClaudeConnectPanel
+        onStart={async () => {}}
+        onSubmit={async () => {}}
+        onLater={noop}
+        progress={<StepDots step="claude" />}
+      />
+    ),
   },
   {
     key: 'folder',
     label: 'Choose folder',
-    render: () => <FolderPanel onChooseFolder={noop} />,
+    render: () => <FolderPanel onChooseFolder={noop} progress={<StepDots step="folder" />} />,
+  },
+  {
+    key: 'roles',
+    label: 'Map folders to roles',
+    render: () => (
+      <RolesPanel
+        options={['inbox', 'notes', 'research', 'wiki']}
+        knowledgeBase="wiki"
+        capture="inbox"
+        onKnowledgeBaseChange={noop}
+        onCaptureChange={noop}
+        onContinue={noop}
+        progress={<StepDots step="roles" />}
+      />
+    ),
   },
   {
     key: 'done',
@@ -55,9 +85,11 @@ export function OnboardingPreview() {
 
   return (
     <div className="flex h-screen w-screen flex-col items-center justify-center gap-6 bg-muted/40">
-      {/* Frame mimicking the compact onboarding window */}
+      {/* Frame mimicking the compact onboarding window. Corner matches the real
+          window's native radius (--window-radius = the objc2 NSToolbar corner,
+          ~26px on macOS Tahoe) so the preview reads at true curvature. */}
       <div
-        className="overflow-hidden rounded-2xl border border-border bg-background shadow-2xl"
+        className="overflow-hidden rounded-[var(--window-radius)] border border-border bg-background shadow-2xl"
         style={{ width: ONBOARDING_W, height: ONBOARDING_H }}
       >
         {step.render()}

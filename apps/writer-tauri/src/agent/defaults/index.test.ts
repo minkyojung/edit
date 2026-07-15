@@ -16,34 +16,31 @@ describe('bundled defaults', () => {
     expect(undo!.body).toContain("git log --grep='(ai):'")
   })
 
-  it('loads the three routine commands with $ARGUMENTS / createdAt', () => {
-    expect(DEFAULT_COMMANDS.map((c) => c.name)).toEqual([
-      'chat-to-wiki',
-      'daily-ingest',
-      'organize',
-    ])
+  it('ships only the organize command (chat-to-wiki / daily-ingest are now inline brains)', () => {
+    expect(DEFAULT_COMMANDS.map((c) => c.name)).toEqual(['organize'])
     const organize = DEFAULT_COMMANDS.find((c) => c.name === 'organize')!
     expect(organize.body).toContain('$ARGUMENTS')
-    expect(organize.body).toContain('createdAt')
+    // Role-based now (no wiki/daily hardcoding; time axis is the system timeline)
+    expect(organize.body).toContain('knowledge base')
+    expect(organize.body).not.toContain('daily/')
   })
 
-  it('loads the four agent roles, carrying the model frontmatter', () => {
-    expect(DEFAULT_AGENTS.map((a) => a.name)).toEqual([
-      'default',
-      'proofreader',
-      'researcher',
-      'translator',
-    ])
-    expect(DEFAULT_AGENTS.find((a) => a.name === 'researcher')!.model).toBe('opus')
-    expect(DEFAULT_AGENTS.find((a) => a.name === 'translator')!.model).toBeUndefined()
-    // the default persona carries the proactive-memory + undo nudges
-    expect(DEFAULT_AGENTS.find((a) => a.name === 'default')!.body).toContain('second brain')
-    expect(DEFAULT_AGENTS.find((a) => a.name === 'default')!.body).toContain('undo-ai-change')
+  it('ships only the default agent role (starter roles removed)', () => {
+    expect(DEFAULT_AGENTS.map((a) => a.name)).toEqual(['default'])
   })
 
   it('loads CLAUDE.md with the Preferences section inlined', () => {
     expect(DEFAULT_CLAUDE_MD).toContain('# Wiki Maintainer')
     expect(DEFAULT_CLAUDE_MD).toContain('## Preferences')
     expect(DEFAULT_CLAUDE_MD).not.toContain('PREFERENCES_SECTION')
+  })
+
+  it('CLAUDE.md now owns the proactive-memory + undo nudges (moved off the persona)', () => {
+    expect(DEFAULT_CLAUDE_MD).toContain('second brain')
+    expect(DEFAULT_CLAUDE_MD).toContain('undo-ai-change')
+    // the chat persona no longer restates them
+    const persona = DEFAULT_AGENTS.find((a) => a.name === 'default')!.body
+    expect(persona).not.toContain('second brain')
+    expect(persona).not.toContain('undo-ai-change')
   })
 })

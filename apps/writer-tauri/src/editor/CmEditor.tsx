@@ -19,7 +19,6 @@ import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@cod
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
 import { markdown, deleteMarkupBackward } from '@codemirror/lang-markdown'
-import { autocompletion } from '@codemirror/autocomplete'
 import { GFM } from '@lezer/markdown'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
@@ -45,6 +44,7 @@ import {
   acceptEffect,
   rejectEffect,
   greenRangesForSave,
+  isDecisionTx,
   isMaterialized,
 } from '@/editor/cmInBufferReview'
 import { stripRanges } from '@/editor/proposalPlan'
@@ -60,12 +60,15 @@ import {
 import { CmHighlightBar } from '@/editor/CmHighlightBar'
 import { DocStatsPanel } from '@/editor/DocStatsPanel'
 import { openLinkSafely } from '@/editor/linkUtils'
-import { cmWikilinkSource } from '@/editor/cmAutocomplete'
 import { slashMenu, slashKeymap } from '@/editor/slashMenu'
+import { refreshTemplateSlashItems } from '@/lib/templates'
+import { wikilinkMenu, wikilinkKeymap } from '@/editor/wikilinkMenu'
 import { smartEnter } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
 import { clearTopLevelMarkerBackward } from '@/prototypes/listBackspace'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
+import { richTextCopy } from './cmRichCopy'
+import { htmlPaste } from './cmHtmlPaste'
 import { importMediaToVault } from '@/editor/cmMedia'
 
 interface Props {
@@ -110,6 +113,15 @@ export function CmEditor({ handle, header }: Props) {
   // changing it re-renders the wrapper CSS vars and CM's resize observer re-wraps
   // lines automatically — no editor remount.
   const textAlign = useSettingsStore((s) => s.editorTextAlign)
+  const templatesFolder = useSettingsStore((s) => s.templatesFolder)
+
+  // Load the templates folder into the slash menu. Re-runs when the configured
+  // folder changes (Settings → Templates folder) so switching it takes effect
+  // live, without a restart. Fire-and-forget: a slow/absent folder just leaves
+  // the built-in blocks.
+  useEffect(() => {
+    void refreshTemplateSlashItems()
+  }, [templatesFolder])
 
   useEffect(() => {
     const parent = rootRef.current
@@ -153,6 +165,12 @@ export function CmEditor({ handle, header }: Props) {
             // and cursor movement stay intact.
             slashMenu,
             slashKeymap,
+            // `[[` wikilink picker: same owned-tooltip design as the `/` menu.
+            // `wikilinkKeymap` (Prec.highest) MUST precede smartEnter so it can
+            // claim Enter/Tab/↑/↓ while the menu is open; it returns false when
+            // closed, so smartEnter and cursor movement stay intact.
+            wikilinkMenu,
+            wikilinkKeymap,
             // ENTER — one deterministic handler at Prec.highest: tight list continuation
             // / clean exit, blockquote continuation, else plain newline. Must beat every
             // other Enter handler so CM's loose-list inference never runs.
@@ -177,7 +195,6 @@ export function CmEditor({ handle, header }: Props) {
             // so English prose hyphenates under justify; CJK is unaffected.
             EditorView.contentAttributes.of({ lang: 'en' }),
             markdown({ extensions: [GFM], addKeymap: false }),
-            autocompletion({ override: [cmWikilinkSource] }), // [[ notes ]] (slash menu is slashMenu, above)
             placeholder('Start writing…'),
             taskCheckboxClick,
             livePreviewV2,
@@ -214,13 +231,22 @@ export function CmEditor({ handle, header }: Props) {
             timestampSeekClick, // plain-click a YouTube timestamp → seek the embed
             linkClick(openLinkSafely), // Cmd/Ctrl-click [text](url) → open (safe schemes)
             mediaDropPaste(importMediaToVault), // drop/paste media → vault + insert
+            htmlPaste, // paste rich web HTML → markdown (after media: files win)
+            richTextCopy, // Cmd+C/X → clipboard carries html + markdown
             cmInBufferReview(handle.slug), // AI suggestions → in-buffer red/green (Option B)
             // Save: mirror the doc text into the handle cache + flag dirty. The flush
             // loop (serializeDocToFiles → handle.bodyMarkdown) does the rest. A
             // programmatic body set (externalBody) is a load from disk — don't dirty
             // it.
             EditorView.updateListener.of((u) => {
-              if (!u.docChanged) return
+              // Re-mirror on doc changes AND on accept/reject decisions. Accepting
+              // a pure-insertion proposal (an append: empty red range) produces NO
+              // doc change, yet it flips that text from pending-green (EXCLUDED from
+              // greenRangesForSave) to accepted (INCLUDED). Bailing on !docChanged
+              // there leaves bodyMarkdown holding the pre-accept body, so an
+              // auto-accepted append to the open note is silently dropped on flush.
+              // A decision transaction changes the exclusion set → must re-mirror.
+              if (!u.docChanged && !isDecisionTx(u.transactions)) return
               const text = u.state.doc.toString()
               // Publish live word/char counts for the floating stats panel —
               // on every doc change, including programmatic loads.

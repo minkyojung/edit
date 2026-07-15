@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { classifyModify, planReappear, renameLeg } from './vaultWatcher'
+import {
+  classifyModify,
+  matchMovedDoc,
+  planReappear,
+  renameLeg,
+} from './vaultWatcher'
 
 // Regression cover for A2 (external move/rename keeps the open tab alive).
 // These pin the three routing decisions that each shipped a real bug; the
@@ -19,6 +24,33 @@ describe('classifyModify — A: rename vs reload', () => {
   it('routes an unknown / missing kind to reload (safe default)', () => {
     expect(classifyModify(undefined)).toBe('reload')
     expect(classifyModify('any')).toBe('reload')
+  })
+})
+
+describe('matchMovedDoc — content-hash correlation for move/rename follow', () => {
+  const open = [
+    { slug: 'a', hash: 'h-aaa' },
+    { slug: 'b', hash: 'h-bbb' },
+  ]
+
+  it('matches the open doc whose body hash equals the moved file', () => {
+    // The moved file at its new path hashes to doc b's live body → b's tab
+    // follows (reuse its slug) instead of the file becoming a new doc.
+    expect(matchMovedDoc(open, 'h-bbb')).toBe('b')
+  })
+
+  it('returns null when no open doc matches (a genuine new file)', () => {
+    expect(matchMovedDoc(open, 'h-new')).toBeNull()
+  })
+
+  it('returns null when nothing is open', () => {
+    expect(matchMovedDoc([], 'h-bbb')).toBeNull()
+  })
+
+  it('first match wins on a hash collision (two identical bodies)', () => {
+    expect(
+      matchMovedDoc([{ slug: 'x', hash: 'h' }, { slug: 'y', hash: 'h' }], 'h'),
+    ).toBe('x')
   })
 })
 

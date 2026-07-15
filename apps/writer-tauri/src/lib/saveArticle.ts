@@ -1,17 +1,15 @@
-// Read-it-later save orchestration: URL → article doc + daily breadcrumb.
+// Read-it-later save orchestration: URL → a saved note.
 //
 //   1. extractPage(url)  — defuddle fetch + clean Markdown + metadata
-//   2. createArticle(...) — new `article` doc at articles/<title>.md
-//   3. append `- [[Title]]` to today's daily note (bottom)
-//   4. toast
+//   2. createArticle(...) — new note in the capture folder (images
+//      localize into images/<slug>/ in the background)
+//   3. toast
 //
-// Composes existing primitives only. The daily breadcrumb uses the
-// canonical `[[Title]]` wikilink form, which resolveWikilinksInMarkdown
-// resolves against article docs too (they're non-system, non-archived),
-// so the link is clickable and points at the saved article.
+// Composes existing primitives only. The saved page is a generic note
+// carrying its source metadata; the system timeline indexes it by date,
+// so there is no manual daily breadcrumb.
 
 import { extractPage } from '@/profile/adapters/extractPage'
-import { appendMarkdownToWikiPage } from '@/agent/applyIngest'
 import { createArticle } from '@/state/articleService'
 import { captureYoutubeToNote } from '@/state/youtubeService'
 import { parseYoutubeId } from '@/lib/youtube'
@@ -89,15 +87,6 @@ export async function saveArticleFromUrl(url: string): Promise<SaveArticleResult
   // The article first shows with remote image URLs; once downloads
   // finish, the body is rewritten to local copies (offline-ready).
   void localizeImagesInBackground(slug, doc.contentMarkdown, doc.sourceUrl)
-
-  // Breadcrumb in today's daily. Non-fatal: the article is already
-  // saved; a failed append shouldn't fail the whole action.
-  try {
-    const dailySlug = ensureTodayDailySlug()
-    await appendMarkdownToWikiPage(dailySlug, `- [[${doc.title}]]`)
-  } catch (err) {
-    console.warn('[readlater] daily breadcrumb append failed', err)
-  }
 
   notify.articleSaved({ title: doc.title })
   return { ok: true, slug }

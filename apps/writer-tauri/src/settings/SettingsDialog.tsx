@@ -19,6 +19,7 @@ import { AppearanceSettings } from './categories/AppearanceSettings'
 import { EditorSettings } from './categories/EditorSettings'
 import { FilesSettings } from './categories/FilesSettings'
 import { ConnectionsSettings } from './categories/ConnectionsSettings'
+import { AboutSettings } from './categories/AboutSettings'
 
 export function SettingsDialog() {
   const open = useSettingsDialog((s) => s.open)
@@ -54,6 +55,7 @@ export function SettingsDialog() {
               {active === 'editor' && <EditorSettings />}
               {active === 'files' && <FilesSettings />}
               {active === 'connections' && <ConnectionsSettings />}
+              {active === 'about' && <AboutSettings />}
             </div>
           </ScrollArea>
         </div>

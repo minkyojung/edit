@@ -4,7 +4,8 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
@@ -29,6 +30,56 @@ impl Mode {
             Mode::Title => "title",
         }
     }
+}
+
+// Crash-loop supervision. A sidecar that dies is respawned, but a sidecar that
+// dies *immediately and repeatedly* (e.g. a broken bundle in a packaged build)
+// must not hot-loop forever pegging the CPU and flooding logs. Each respawn
+// waits an exponentially growing backoff, and after too many consecutive fast
+// deaths we stop trying and surface a terminal `sidecar:died { fatal: true }`.
+const MAX_CONSECUTIVE_RESTARTS: u32 = 5;
+/// An instance that lived at least this long before dying is treated as a
+/// healthy process that eventually died — not a crash loop — so its death
+/// resets the consecutive counter instead of escalating it.
+const HEALTHY_UPTIME: Duration = Duration::from_secs(60);
+const RESTART_BACKOFF_BASE_MS: u64 = 500;
+const RESTART_BACKOFF_CAP_MS: u64 = 30_000;
+
+/// Per-mode crash-loop state. `consecutive` counts back-to-back fast deaths;
+/// `last_spawn` dates the current instance so `handle_exit` can tell a loop
+/// from an isolated death.
+struct RestartGuard {
+    consecutive: u32,
+    last_spawn: Instant,
+}
+
+enum RestartAction {
+    /// Wait this long, then respawn.
+    Backoff(Duration),
+    /// Too many consecutive fast deaths — stop trying.
+    GiveUp,
+}
+
+/// Pure crash-loop policy. Given the consecutive-fast-death count so far and
+/// how long the just-dead instance lived, return the updated count and what to
+/// do next. Extracted from `handle_exit` so the escalation math is unit-tested
+/// without spawning real processes.
+fn restart_decision(prev_consecutive: u32, lived: Duration) -> (u32, RestartAction) {
+    // A death after a healthy run is an isolated incident, not a loop: reset
+    // the streak (this death counts as the first restart).
+    let consecutive = if lived >= HEALTHY_UPTIME {
+        1
+    } else {
+        prev_consecutive.saturating_add(1)
+    };
+    if consecutive > MAX_CONSECUTIVE_RESTARTS {
+        return (consecutive, RestartAction::GiveUp);
+    }
+    let shift = consecutive.saturating_sub(1).min(20);
+    let ms = RESTART_BACKOFF_BASE_MS
+        .saturating_mul(1u64 << shift)
+        .min(RESTART_BACKOFF_CAP_MS);
+    (consecutive, RestartAction::Backoff(Duration::from_millis(ms)))
 }
 
 /// How a sidecar is launched. Captured at startup so restarts use the same
@@ -58,6 +109,8 @@ pub struct SidecarManager {
     notification_handler: NotificationHandler,
     launcher: Launcher,
     app: AppHandle,
+    chat_restart: Mutex<RestartGuard>,
+    title_restart: Mutex<RestartGuard>,
 }
 
 impl SidecarManager {
@@ -102,6 +155,8 @@ impl SidecarManager {
             notification_handler: handler,
             launcher,
             app: app.clone(),
+            chat_restart: Mutex::new(RestartGuard { consecutive: 0, last_spawn: Instant::now() }),
+            title_restart: Mutex::new(RestartGuard { consecutive: 0, last_spawn: Instant::now() }),
         });
 
         // Wire the self-ref so the exit closures can find us when they fire.
@@ -135,20 +190,81 @@ impl SidecarManager {
         self.title.read().await.clone()
     }
 
-    /// Reads the latest OAuth token (auto-refreshing if near expiry) and
-    /// pushes it to both sidecars. Returns Ok(true) if a token was injected,
-    /// Ok(false) if no token is available.
-    pub async fn try_inject_token(&self, app: &AppHandle) -> Result<bool, SidecarError> {
-        let token = match crate::oauth::get_claude_token(app.clone()).await {
+    /// Gracefully tears down both sidecars on app quit. We send each a
+    /// `shutdown` notification so its Node process aborts in-flight chats —
+    /// which lets the SDK reap its `claude` CLI grandchild (no orphan) and
+    /// flush the session to ~/.claude/projects (so resume stays intact) —
+    /// then wait a bounded grace for the processes to actually exit.
+    ///
+    /// This is the graceful path, and it's the fix for the observed orphans:
+    /// app quit ends in `std::process::exit`, which skips `Drop` so
+    /// `kill_on_drop` never fires. Telling the sidecars to leave *before* we
+    /// exit is what tears the process tree down cleanly. After the grace we
+    /// hard-kill each process group as a backstop, so a hung sidecar (or a CLI
+    /// grandchild the graceful path didn't reap in time) still can't outlive us.
+    pub async fn shutdown_all(&self, grace: std::time::Duration) {
+        let chat = self.chat_client().await;
+        let title = self.title_client().await;
+
+        // Fire-and-forget: a notification has no id, so the Node router runs its
+        // graceful shutdown and exits without owing us a response.
+        let _ = chat.notify("shutdown", None).await;
+        let _ = title.notify("shutdown", None).await;
+
+        // Let the graceful exit + session flush complete before the caller
+        // proceeds to process exit. The Node side flushes then exits within
+        // ~250ms; the grace gives margin without stalling quit noticeably.
+        tokio::time::sleep(grace).await;
+
+        // Backstop: SIGKILL each process group. No-op for the already-exited
+        // common case; the guarantee for the hung / slow-reap case.
+        chat.hard_kill();
+        title.hard_kill();
+    }
+
+    /// Read the latest OAuth token (auto-refreshing if near expiry). A read
+    /// failure logs and yields None rather than propagating — callers treat
+    /// "no token" and "couldn't read the token" the same (chat fails cleanly).
+    async fn read_token(&self, app: &AppHandle) -> Option<String> {
+        match crate::oauth::get_claude_token(app.clone()).await {
             Ok(opt) => opt,
             Err(e) => {
                 eprintln!("[sidecar manager] failed to read OAuth token: {e}");
-                return Ok(false);
+                None
             }
-        };
-        match token {
+        }
+    }
+
+    /// Reads the latest token and pushes it to BOTH sidecars. Used at startup
+    /// and on `auth/refreshNeeded` — best-effort, not tied to a single request.
+    /// Returns Ok(true) if a token was injected, Ok(false) if none is available.
+    pub async fn try_inject_token(&self, app: &AppHandle) -> Result<bool, SidecarError> {
+        match self.read_token(app).await {
             Some(t) => {
                 self.set_token(&t).await?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Inject the current token into ONLY the chat sidecar. Called before a
+    /// chat start so a title sidecar that's mid-restart (or crash-looping)
+    /// can't block a chat request — the two hold their tokens independently.
+    pub async fn try_inject_token_chat(&self, app: &AppHandle) -> Result<bool, SidecarError> {
+        self.try_inject_token_for(app, Mode::Chat).await
+    }
+
+    /// Inject the current token into ONLY the title sidecar. Symmetric to
+    /// `try_inject_token_chat` — a title request doesn't depend on chat health.
+    pub async fn try_inject_token_title(&self, app: &AppHandle) -> Result<bool, SidecarError> {
+        self.try_inject_token_for(app, Mode::Title).await
+    }
+
+    async fn try_inject_token_for(&self, app: &AppHandle, mode: Mode) -> Result<bool, SidecarError> {
+        match self.read_token(app).await {
+            Some(t) => {
+                self.set_token_on(mode, &t).await?;
                 Ok(true)
             }
             None => Ok(false),
@@ -158,12 +274,79 @@ impl SidecarManager {
     /// Sends `setToken` to both sidecars. Idempotent — safe to call repeatedly
     /// to rotate the OAuth token without restarting either process.
     pub async fn set_token(&self, token: &str) -> Result<(), SidecarError> {
-        let params = Some(json!({ "token": token }));
-        let chat = self.chat_client().await;
-        let title = self.title_client().await;
-        let _: Value = chat.request("setToken", params.clone()).await?;
-        let _: Value = title.request("setToken", params).await?;
+        self.set_token_on(Mode::Chat, token).await?;
+        self.set_token_on(Mode::Title, token).await?;
         Ok(())
+    }
+
+    /// Sends `setToken` to a single sidecar.
+    async fn set_token_on(&self, mode: Mode, token: &str) -> Result<(), SidecarError> {
+        let client = match mode {
+            Mode::Chat => self.chat_client().await,
+            Mode::Title => self.title_client().await,
+        };
+        let _: Value = client
+            .request("setToken", Some(json!({ "token": token })))
+            .await?;
+        Ok(())
+    }
+
+    fn restart_guard(&self, mode: Mode) -> &Mutex<RestartGuard> {
+        match mode {
+            Mode::Chat => &self.chat_restart,
+            Mode::Title => &self.title_restart,
+        }
+    }
+
+    /// Called from the exit handler when a sidecar dies. Applies crash-loop
+    /// supervision — exponential backoff between respawns, and a hard cap on
+    /// consecutive fast deaths — then respawns (or gives up terminally).
+    async fn handle_exit(&self, mode: Mode) {
+        // Decide backoff vs give-up from how the just-dead instance behaved.
+        // The lock is released at the end of this block, before any await.
+        let (give_up, delay) = {
+            let mut g = self.restart_guard(mode).lock().unwrap();
+            let (next, action) = restart_decision(g.consecutive, g.last_spawn.elapsed());
+            g.consecutive = next;
+            match action {
+                RestartAction::GiveUp => (true, Duration::ZERO),
+                RestartAction::Backoff(d) => (false, d),
+            }
+        };
+
+        if give_up {
+            eprintln!(
+                "[sidecar manager] {} sidecar crash-looped past {} restarts; giving up",
+                mode.as_str(),
+                MAX_CONSECUTIVE_RESTARTS,
+            );
+            let _ = self
+                .app
+                .emit("sidecar:died", json!({ "mode": mode.as_str(), "fatal": true }));
+            return;
+        }
+
+        if !delay.is_zero() {
+            eprintln!(
+                "[sidecar manager] {} sidecar respawn backoff {}ms",
+                mode.as_str(),
+                delay.as_millis(),
+            );
+            tokio::time::sleep(delay).await;
+        }
+
+        if let Err(e) = self.restart(mode).await {
+            // The respawn itself failed, so no new exit handler was armed —
+            // nothing will retry. Surface a terminal signal instead of leaving
+            // the sidecar silently dead.
+            eprintln!(
+                "[sidecar manager] {} sidecar restart failed: {e}",
+                mode.as_str()
+            );
+            let _ = self
+                .app
+                .emit("sidecar:died", json!({ "mode": mode.as_str(), "fatal": true }));
+        }
     }
 
     async fn restart(&self, mode: Mode) -> Result<(), SidecarError> {
@@ -190,6 +373,9 @@ impl SidecarManager {
                 .request("setToken", Some(json!({ "token": token })))
                 .await?;
         }
+
+        // Date the fresh instance so the next death can measure its uptime.
+        self.restart_guard(mode).lock().unwrap().last_spawn = Instant::now();
 
         eprintln!("[sidecar manager] {} sidecar respawned", mode.as_str());
         Ok(())
@@ -290,12 +476,7 @@ fn build_exit(self_ref: SelfRef, mode: Mode, app: AppHandle) -> ExitHandler {
                 }
             };
             let Some(manager) = weak.upgrade() else { return };
-            if let Err(e) = manager.restart(mode).await {
-                eprintln!(
-                    "[sidecar manager] {} sidecar restart failed: {e}",
-                    mode.as_str()
-                );
-            }
+            manager.handle_exit(mode).await;
         });
     })
 }
@@ -513,5 +694,46 @@ mod dev_paths {
             }
         }
         PathBuf::from(".")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn backoff_ms(prev: u32, lived: Duration) -> u64 {
+        match restart_decision(prev, lived).1 {
+            RestartAction::Backoff(d) => d.as_millis() as u64,
+            RestartAction::GiveUp => panic!("expected Backoff, got GiveUp"),
+        }
+    }
+
+    #[test]
+    fn fast_deaths_escalate_backoff() {
+        // A fresh crash loop: each fast death grows the delay 0.5→1→2→4→8s.
+        let fast = Duration::from_secs(1);
+        assert_eq!(restart_decision(0, fast).0, 1);
+        assert_eq!(backoff_ms(0, fast), 500);
+        assert_eq!(backoff_ms(1, fast), 1000);
+        assert_eq!(backoff_ms(2, fast), 2000);
+        assert_eq!(backoff_ms(3, fast), 4000);
+        assert_eq!(backoff_ms(4, fast), 8000);
+    }
+
+    #[test]
+    fn gives_up_past_the_cap() {
+        // The 6th consecutive fast death (prev = MAX = 5) stops the loop.
+        let (next, action) = restart_decision(MAX_CONSECUTIVE_RESTARTS, Duration::from_secs(1));
+        assert_eq!(next, MAX_CONSECUTIVE_RESTARTS + 1);
+        assert!(matches!(action, RestartAction::GiveUp));
+    }
+
+    #[test]
+    fn healthy_run_resets_the_streak() {
+        // A death after a healthy uptime drops the streak back to 1 and the
+        // shortest backoff, even if the prior streak was near the cap.
+        let (next, action) = restart_decision(MAX_CONSECUTIVE_RESTARTS, HEALTHY_UPTIME);
+        assert_eq!(next, 1);
+        assert!(matches!(action, RestartAction::Backoff(d) if d == Duration::from_millis(500)));
     }
 }

@@ -42,35 +42,10 @@ import type { FrontmatterScalar } from '@/lib/frontmatter'
  * Bumping `version` is the migration lever — a future field addition
  * reads as `undefined` on old files and the migrate step rewrites
  * with the new shape.
- *
- * `aiSummary` / `aiImportance` feed the Tier 1 wiki index without
- * forcing the index builder to LLM-summarise every page on every
- * boot. They're populated by the ingest post-pass; a missing value
- * falls back to the page's first non-empty body line at index time.
  */
 export interface DocMetaFile {
   version: 1
   slug: string
-  /** One-line LLM-generated summary used by the wiki index. ~80 chars.
-   * Absent on old sidecars and freshly-minted docs; the index builder
-   * falls back to the body's first non-empty line until ingest writes
-   * a real summary. */
-  aiSummary?: string
-  /** 0–100 score used to rank pages when the Tier 2 hot-context
-   * selector has to drop pages to stay under budget. Computed from
-   * backlink count + recency; not user-editable. Absent on old
-   * sidecars — treated as 0 (lowest priority) by the selector. */
-  aiImportance?: number
-  /** Soft-delete timestamp (epoch ms). Set when the user archives the
-   * doc, cleared on unarchive. Persisted here because the catalog is
-   * rebuilt from disk on every boot (Path C — vault is the source of
-   * truth); without this field, archive state would silently revert
-   * to "live" on app restart. */
-  archivedAt?: number
-  /** Pre-archive `parentId` snapshot, so unarchive can restore the
-   * cascade group's tree structure. Lives in the same sidecar as
-   * `archivedAt` to keep the archive state self-contained. */
-  archivedFromParent?: string
   /** ISO timestamp recorded when the doc was first created. Migrated
    * out of `Y.Map('meta')` in Phase 5b of the Yjs-removal migration —
    * the Y.Map was the prior home for this field, but it's the only
@@ -169,16 +144,6 @@ export function frontmatterToMeta(
   const meta: Partial<DocMetaFile> = {}
   if (data.slug) meta.slug = data.slug
   if (data.createdAt) meta.createdAt = data.createdAt
-  if (data.archivedAt) {
-    const n = Number(data.archivedAt)
-    if (Number.isFinite(n)) meta.archivedAt = n
-  }
-  if (data.archivedFromParent) meta.archivedFromParent = data.archivedFromParent
-  if (data.aiSummary) meta.aiSummary = data.aiSummary
-  if (data.aiImportance) {
-    const n = Number(data.aiImportance)
-    if (Number.isFinite(n)) meta.aiImportance = n
-  }
   if (data.sourceUrl) meta.sourceUrl = data.sourceUrl
   if (data.siteName) meta.siteName = data.siteName
   if (data.faviconUrl) meta.faviconUrl = data.faviconUrl
@@ -223,10 +188,37 @@ export function metaToFrontmatterFields(
   return {
     slug: meta.slug,
     createdAt: meta.createdAt,
-    archivedAt: meta.archivedAt,
-    archivedFromParent: meta.archivedFromParent,
-    aiSummary: meta.aiSummary,
-    aiImportance: meta.aiImportance,
+    sourceUrl: meta.sourceUrl,
+    siteName: meta.siteName,
+    faviconUrl: meta.faviconUrl,
+    savedAt: meta.savedAt,
+    readAt: meta.readAt,
+    videoId: meta.videoId,
+    durationSec: meta.durationSec,
+    thumbnailUrl: meta.thumbnailUrl,
+    description: meta.description,
+    highlights:
+      meta.highlights && meta.highlights.length
+        ? JSON.stringify(meta.highlights)
+        : undefined,
+  }
+}
+
+/** The portable subset of {@link metaToFrontmatterFields}: the fields that
+ * belong in the user's `.md` because another tool (Obsidian, git) or a
+ * human can read them — created date, capture source, video metadata, and
+ * the user's own highlights.
+ *
+ * Excludes the app-private `slug` — an ephemeral per-boot handle that is
+ * never persisted (identity across restarts is the file path). Used by the
+ * flush so a saved `.md` carries only what's genuinely the user's. Kept in
+ * lockstep with metaToFrontmatterFields — the two must not disagree on where
+ * a field belongs. */
+export function portableFrontmatterFields(
+  meta: Partial<DocMetaFile>,
+): Record<string, FrontmatterScalar | undefined> {
+  return {
+    createdAt: meta.createdAt,
     sourceUrl: meta.sourceUrl,
     siteName: meta.siteName,
     faviconUrl: meta.faviconUrl,
@@ -292,19 +284,14 @@ export function ydocPathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null
  * (defensive — KnownDoc invariants forbid it, but we don't want a
  * pathological catalog to lock up the call site).
  *
- * Archived writings have their `parentId` cleared (so the tree UI
- * doesn't show them under a live daily) and the original parent
- * snapshotted in `archivedFromParent`. We fall back to that snapshot
- * so the archived doc still resolves to its on-disk location — the
- * sidecar lives next to the body file, and the flush needs the path
- * to write the archive marker. */
+ */
 function findDailyAncestor(doc: KnownDoc, getDoc: DocLookup): KnownDoc | null {
   const visited = new Set<string>()
   let current: KnownDoc | undefined = doc
   while (current && !visited.has(current.slug)) {
     visited.add(current.slug)
     if (current.type === 'daily') return current
-    const parentId = current.parentId ?? current.archivedFromParent
+    const parentId = current.parentId
     if (!parentId) return null
     current = getDoc(parentId)
   }

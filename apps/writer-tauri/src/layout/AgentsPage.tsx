@@ -1,26 +1,21 @@
 // Agents page — the main-area entry point for the agent "roles" the user can
 // pick for a chat (researcher, translator, proofreader, …). Mirrors
-// SkillsPage / RoutinesPage: a grouped list where clicking a row opens that
+// SkillsPage / CommandsPage: a grouped list where clicking a row opens that
 // role's markdown (`_system/agent/agents/*.md`) in the editor — the files are
 // catalogued as notes, so they auto-save like any note. Sits in the AppShell
 // content column like any note view.
 
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { IconChevronRight, IconUsers, IconTrash } from '@tabler/icons-react'
-import { useDocsStore } from '@/state/docsStore'
-import { buildViewUrl } from '@/lib/viewUrl'
+import { openDoc } from '@/lib/openDoc'
 import { listAgents, AGENTS_REL, type VaultAgent } from '@/lib/agentsLib'
 import { deleteAssetByPath } from '@/lib/deleteAsset'
 import { confirm } from '@/state/confirmStore'
+import { notify } from '@/lib/notify'
 
 export function AgentsPage() {
   const [agents, setAgents] = useState<VaultAgent[]>([])
   const [loading, setLoading] = useState(true)
-  const navigate = useNavigate()
-  const sidebarTab = useDocsStore((s) => s.sidebarTab)
-  const dayAnchor = useDocsStore((s) => s.dayAnchor)
-  const monthAnchor = useDocsStore((s) => s.monthAnchor)
 
   useEffect(() => {
     setLoading(true)
@@ -32,7 +27,7 @@ export function AgentsPage() {
 
   const open = (slug: string) => {
     if (!slug) return
-    navigate(buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug }))
+    openDoc(slug)
   }
 
   const remove = async (agent: VaultAgent) => {
@@ -46,6 +41,7 @@ export function AgentsPage() {
       setAgents((cur) => cur.filter((a) => a.fileName !== agent.fileName))
     } catch (err) {
       console.warn('[agents] delete failed', agent.fileName, err)
+      notify.cantDeleteAsset({ onRetry: () => void remove(agent) })
     }
   }
 

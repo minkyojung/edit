@@ -32,7 +32,7 @@ export function RightPanel({ slug }: Props) {
   // history view. useActiveThread holds a single useState — calling it
   // in two places would fork the active id — so it stays at this one
   // mount point and the id flows down to ChatPanel as a prop.
-  const threads = useThreads(slug)
+  const threads = useThreads()
   const { activeId, setActiveId } = useActiveThread(threads.active)
 
   // Read/unread: stamp the focused thread's current turn count as "seen"
@@ -62,7 +62,7 @@ export function RightPanel({ slug }: Props) {
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 z-sticky bg-background/90"
         style={{
-          height: 'calc(var(--header-h) + 2rem)',
+          height: 'var(--chat-top-inset)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
           maskImage:
