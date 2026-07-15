@@ -24,7 +24,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '0.0.7',
     date: '2026-07-14',
-    headline: 'Smarter updates, note templates, and a richer chat composer.',
+    headline: 'Smarter updates, note templates, and a calmer chat.',
     notes: [
       '### Updates, handled for you',
       '',
@@ -35,9 +35,10 @@ export const CHANGELOG: ChangelogEntry[] = [
       '',
       '- Create notes from your own **markdown templates** with `{{variable}}` placeholders — one-click setup, then insert from the slash menu.',
       '',
-      '### A richer chat composer',
+      '### A calmer chat',
       '',
-      '- Inline file chips, plus **/** slash and **@** mention menus as you type.',
+      '- Sending a message now pins it to the top and reads top-down, so the transcript no longer jumps around as the answer streams in.',
+      '- A richer composer: inline file chips, plus **/** slash and **@** mention menus as you type.',
       '',
       '### Steadier notes',
       '',
