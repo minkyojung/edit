@@ -32,19 +32,6 @@ function App() {
           >
             .octave
           </h1>
-          <a
-            href="/changelog"
-            style={{
-              fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif',
-              fontWeight: 400,
-              fontSize: '14px',
-              color: '#666',
-              letterSpacing: '-0.01em',
-              textDecoration: 'none'
-            }}
-          >
-            Changelog
-          </a>
         </div>
       </header>
 
