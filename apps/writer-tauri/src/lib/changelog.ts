@@ -19,6 +19,34 @@ export interface ChangelogEntry {
  * what the "What's new" panel shows after an update. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.0.7',
+    date: '2026-07-14',
+    notes: [
+      '### Updates, handled for you',
+      '',
+      "- New versions download quietly in the background. When one's ready you get a single prompt — **See changes**, **Restart when idle**, or **Restart** — so an update never interrupts what you're doing.",
+      "- After updating, a **What's new** card (this one) slides in at the bottom of the sidebar.",
+      '',
+      '### Templates',
+      '',
+      '- Create notes from your own **markdown templates** with `{{variable}}` placeholders — one-click setup, then insert from the slash menu.',
+      '',
+      '### A richer chat composer',
+      '',
+      '- Inline file chips, plus **/** slash and **@** mention menus as you type.',
+      '',
+      '### Steadier notes',
+      '',
+      '- Renaming a note now **rewrites links to it across the whole vault**.',
+      '- Moving or renaming a note outside the app keeps your open tab in sync.',
+      '- A batch of save-safety fixes so edits are never lost during saves, external changes, or updates.',
+      '',
+      '### Under the hood',
+      '',
+      '- App bookkeeping moved into a hidden `.octave/` folder, keeping your vault a clean folder of just your notes.',
+    ].join('\n'),
+  },
+  {
     version: '0.0.6',
     date: '2026-07-13',
     notes: [
