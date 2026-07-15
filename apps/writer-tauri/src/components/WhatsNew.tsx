@@ -13,14 +13,22 @@ import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { useSettingsStore } from '@/state/settingsStore'
 import { useWhatsNewStore } from '@/state/whatsNewStore'
 import { openSettings } from '@/settings/useSettingsDialog'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
 import { CHANGELOG, changelogFor, type ChangelogEntry } from '@/lib/changelog'
 
 // No typography plugin, so map the elements release notes use to tailwind
 // classes. `node` is dropped so it never lands on a DOM attribute. Sized for
 // the full What's-new page (the sidebar card is just a headline now).
 const MD_COMPONENTS: Components = {
+  // Section labels inside a release — demoted to a small muted "eyebrow" so
+  // they sit clearly BELOW the version header (which is the anchor), not
+  // competing with it at the same weight.
   h3: ({ node: _n, ...p }: ComponentPropsWithoutRef<'h3'> & { node?: unknown }) => (
-    <h3 className="mt-5 mb-1.5 text-body font-semibold text-foreground first:mt-0" {...p} />
+    <h3
+      className="mt-4 mb-1 text-footnote font-semibold uppercase tracking-wide text-muted-foreground first:mt-0"
+      {...p}
+    />
   ),
   p: ({ node: _n, ...p }: ComponentPropsWithoutRef<'p'> & { node?: unknown }) => (
     <p className="my-2 text-body leading-relaxed text-muted-foreground" {...p} />
@@ -64,21 +72,29 @@ export function ReleaseNotes({ notes }: { notes: string }) {
 export function ReleaseNotesHistory() {
   const pinned = useWhatsNewStore((s) => s.pinned)
   return (
-    <div className="space-y-8">
+    <div>
       {pinned && (
-        <section className="rounded-lg border border-border bg-muted/30 p-4">
-          <div className="mb-1 text-footnote font-medium text-muted-foreground">
-            Coming in Octave {pinned.version}
-          </div>
+        <section className="mb-8 rounded-lg border border-border bg-muted/30 p-4">
+          <Badge variant="secondary" className="mb-2">
+            Coming in {pinned.version}
+          </Badge>
           <ReleaseNotes notes={pinned.notes} />
         </section>
       )}
-      {CHANGELOG.map((entry) => (
+      {CHANGELOG.map((entry, i) => (
         <section key={entry.version}>
-          <div className="mb-1.5 flex items-baseline gap-2 border-b border-border/60 pb-1">
-            <h3 className="text-body font-semibold text-foreground">Octave {entry.version}</h3>
+          {i > 0 && <Separator className="my-8" />}
+          {/* Version = the anchor: a larger title + a Latest badge on the
+              newest, with the date pushed to the right as secondary info. */}
+          <div className="mb-3 flex items-center gap-2">
+            <h2 className="text-title-3 font-semibold text-foreground">
+              {entry.version}
+            </h2>
+            {i === 0 && <Badge>Latest</Badge>}
             {entry.date && (
-              <span className="text-footnote text-muted-foreground">{entry.date}</span>
+              <span className="ml-auto text-footnote tabular-nums text-muted-foreground">
+                {entry.date}
+              </span>
             )}
           </div>
           <ReleaseNotes notes={entry.notes} />
