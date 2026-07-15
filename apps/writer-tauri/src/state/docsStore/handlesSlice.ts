@@ -19,6 +19,7 @@ import {
   markSlugDirty,
 } from '@/lib/docFileSync'
 import { applyMarkdownToActiveCmEditor } from '@/state/activeCmEditor'
+import { useExternalConflictStore } from '@/state/externalConflictStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { pathForDoc, usesFrontmatter } from '@/lib/docPaths'
 import { splitFrontmatter } from '@/lib/frontmatter'
@@ -167,6 +168,11 @@ export const createHandlesSlice = (
     if (get().openSlugs.includes(slug)) {
       get().closeDoc(slug)
     }
+    // Drop any external-edit conflict for the removed doc. closeDoc already
+    // clears it for the open case; this covers a background handle (dirty but
+    // no open tab) that was conflicted and is now being removed, so no stale
+    // entry lingers in the conflict set. resolveConflict is idempotent.
+    useExternalConflictStore.getState().resolveConflict(slug)
     set((s) => ({
       knownDocs: s.knownDocs.filter((d) => d.slug !== slug),
       expandedDocSlugs: s.expandedDocSlugs.filter((s2) => s2 !== slug),

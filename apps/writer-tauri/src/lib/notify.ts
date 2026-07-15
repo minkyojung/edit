@@ -209,6 +209,11 @@ export const notify = {
     toast.warning(`External edit: ${args.fileName}`, {
       description: 'You have unsaved changes.',
       duration: Infinity,
+      // Non-dismissible (same as saveFailed): this toast is the ONLY surface
+      // that clears the conflict, and while a slug is conflicted flushDirty
+      // skips it — so a swipe-away (which does NOT run cancel.onClick) would
+      // silently gate all further saves to this note. Force an explicit choice.
+      dismissible: false,
       action: {
         label: 'Reload from disk',
         onClick: args.onReopen,
