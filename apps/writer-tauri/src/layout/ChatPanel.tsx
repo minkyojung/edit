@@ -374,12 +374,16 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     cmd: LoadedCommand,
     args: string,
     userText: string,
+    contextChips: Attachment[] = [],
   ) {
     const userTurn: ChatTurn = {
       id: crypto.randomUUID(),
       role: 'user',
       content: userText,
       ts: Date.now(),
+      // The command acts on the same selection/viewing-file it consumed via the
+      // {{selection}} template — show it in the bubble like the normal path.
+      attachments: contextChips.length > 0 ? contextChips : undefined,
       // Stamp so handleRegenerate can rerun this turn through the same
       // command path (system prompt + relayTools + summarize) instead of
       // replaying the literal "/proofread" text as plain chat.
@@ -443,6 +447,27 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     })
   }
 
+  // Prop-backed context chips (selection + viewing file) snapshotted as turn
+  // attachments, so EVERY send path (normal, slash, vault command) can commit
+  // them onto its turn uniformly. The draft-backed chips (file / pasted /
+  // mentions) are cleared by the composer's own submit, so they never leak.
+  function captureContextChips(): Attachment[] {
+    const chips: Attachment[] = []
+    if (selectionText) {
+      chips.push({ type: 'selection', label: selectionLabel ?? 'Selection', preview: selectionText })
+    }
+    if (viewingFilePath) chips.push({ type: 'viewing-file', path: viewingFilePath })
+    return chips
+  }
+  // Detach the one-shot prop-backed chips once a send has committed them.
+  // Selection collapses in the editor (its listener republishes the now-empty
+  // selection, hiding the chip); the viewing file is dismissed until the route
+  // changes to another file.
+  function resetContextChips() {
+    if (selectionText) useEditorSelectionStore.getState().collapse?.()
+    if (viewingFilePath) setFileChipDismissed(true)
+  }
+
   async function handleSend(
     text: string,
     attachments: FileAttachment[] = [],
@@ -465,26 +490,31 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       if (slash) {
         const cmd = getCommand(slash.name)
         if (cmd) {
-          await executeCommand(threadId, cmd, slash.args, text)
+          await executeCommand(threadId, cmd, slash.args, text, captureContextChips())
+          resetContextChips()
           return
         }
         // Not a builtin editor action — is it a vault command? Those
         // run natively (the SDK expands the plugin command).
         if (useVaultCommands.getState().get(slash.name)) {
+          const chips = captureContextChips()
           const userTurn: ChatTurn = {
             id: crypto.randomUUID(),
             role: 'user',
             content: text,
             ts: Date.now(),
+            attachments: chips.length > 0 ? chips : undefined,
             slashInvocation: { name: slash.name, args: slash.args },
           }
           turnsHook.appendTurn(userTurn)
+          resetContextChips()
           await runVaultCommand(threadId, slash.name, slash.args, [
             ...turnsHook.turns,
             userTurn,
           ])
           return
         }
+        // Unknown command — an error, not a send: leave the chips armed.
         appendInlineError(threadId, text, `Unknown command: /${slash.name}`)
         return
       }
@@ -495,16 +525,13 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       editingVizRef.current = null
 
       // Snapshot every composer context chip onto the turn so the bubble renders
-      // what was sent. The prop-backed ones (selection, viewing file) are the
-      // fix here — they used to leak because nothing committed them. Read fresh
-      // is unnecessary (handleSend closes over the current render's values).
+      // what was sent: draft-backed file/pasted here + the prop-backed
+      // selection/viewing-file via the shared helper (same commit boundary the
+      // slash paths use).
       const turnAttachments: Attachment[] = [
         ...attachments.map((f) => ({ type: 'file' as const, name: f.name, mediaType: f.mediaType })),
         ...pastedTexts.map((p) => ({ type: 'pasted' as const, preview: p.preview, content: p.content })),
-        ...(selectionText
-          ? [{ type: 'selection' as const, label: selectionLabel ?? 'Selection', preview: selectionText }]
-          : []),
-        ...(viewingFilePath ? [{ type: 'viewing-file' as const, path: viewingFilePath }] : []),
+        ...captureContextChips(),
       ]
       const userTurn: ChatTurn = {
         id: crypto.randomUUID(),
@@ -534,13 +561,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       // The user's turn is finished text — push to Yjs once and let it sync.
       turnsHook.appendTurn(userTurn)
 
-      // Detach the one-shot context chips now that they're committed to the turn
-      // (draft chips — text/attachments/mentions — were already cleared by the
-      // composer's submit). Selection collapses in the editor (its listener then
-      // publishes the empty selection, hiding the chip); the viewing file is
-      // dismissed until the route changes to another file.
-      if (selectionText) useEditorSelectionStore.getState().collapse?.()
-      if (viewingFilePath) setFileChipDismissed(true)
+      // Detach the one-shot prop-backed chips now that they're committed to the
+      // turn (draft chips were already cleared by the composer's submit).
+      resetContextChips()
 
       await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, undefined, attachments, mentionPaths)
     } finally {
