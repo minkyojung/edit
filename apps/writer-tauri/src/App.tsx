@@ -49,6 +49,7 @@ import '@/lib/vault'
 import '@/lib/scanVault'
 import { startAutoFlush } from '@/lib/docFileSync'
 import { startVaultWatcher } from '@/lib/vaultWatcher'
+import { setAppNavigate } from '@/lib/appNavigate'
 import { startPendingChangesApplier } from '@/state/pendingChangesApplier'
 import { gitInit } from '@/lib/git'
 import { startGitHubSync } from '@/lib/githubSync'
@@ -166,6 +167,14 @@ function RouteSyncBridge() {
   const pendingRestoreUrl = useDocsStore((s) => s.pendingRestoreUrl)
   const navigate = useNavigate()
   const { pathname } = useLocation()
+
+  // Wire the live router navigate into the module-level bridge so non-React
+  // callers (CodeMirror keymaps, chat tool results) route through the router
+  // via appNavigate/openDoc instead of setting window.location.hash raw.
+  useEffect(() => {
+    setAppNavigate(navigate)
+    return () => setAppNavigate(null)
+  }, [navigate])
 
   useEffect(() => {
     if (bootstrapping) return
