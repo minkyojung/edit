@@ -544,14 +544,33 @@ function UpdatesGallery() {
           onRestart={() => {}}
         />
       </Subgroup>
-      <Subgroup title="What's new — sidebar card (after an update)">
+      <Subgroup title="What's new — sidebar teaser (after an update)">
         <div className="w-64 rounded-lg bg-sidebar">
-          {entry && <WhatsNewCard entry={entry} onDismiss={() => {}} />}
+          {entry && (
+            <WhatsNewCard
+              version={entry.version}
+              headline={entry.headline}
+              onOpen={() => {}}
+              onDismiss={() => {}}
+            />
+          )}
         </div>
       </Subgroup>
-      <Subgroup title="Release notes — read-only render">
-        <div className="w-[420px] rounded-lg border border-border p-4">
-          {entry && <ReleaseNotes notes={entry.notes} />}
+      <Subgroup title="Release notes — full render (/whats-new page)">
+        <div className="w-[460px] rounded-lg border border-border p-5">
+          {entry && (
+            <>
+              <div className="mb-2 flex items-baseline gap-2 border-b border-border/60 pb-1.5">
+                <span className="text-body font-semibold text-foreground">
+                  Octave {entry.version}
+                </span>
+                {entry.date && (
+                  <span className="text-footnote text-muted-foreground">{entry.date}</span>
+                )}
+              </div>
+              <ReleaseNotes notes={entry.notes} />
+            </>
+          )}
         </div>
       </Subgroup>
     </>

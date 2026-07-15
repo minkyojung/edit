@@ -11,7 +11,10 @@ export interface ChangelogEntry {
   version: string
   /** Human date `YYYY-MM-DD` (display only). */
   date?: string
-  /** User-facing release notes, markdown. */
+  /** The single most important thing this release brings — one plain line,
+   * shown as the sidebar teaser. Clicking opens the full `notes`. */
+  headline: string
+  /** User-facing release notes, markdown (shown on the What's-new page). */
   notes: string
 }
 
@@ -21,6 +24,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '0.0.7',
     date: '2026-07-14',
+    headline: 'Smarter updates, note templates, and a richer chat composer.',
     notes: [
       '### Updates, handled for you',
       '',
@@ -49,6 +53,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '0.0.6',
     date: '2026-07-13',
+    headline: 'Updates download in the background and explain themselves.',
     notes: [
       '### Updates that explain themselves',
       '',
@@ -60,6 +65,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '0.0.5',
     date: '2026-07-13',
+    headline: 'The update prompt is one notice that flows in place.',
     notes: [
       '- The update prompt is now a single notice that flows from *available* to *ready* in place, instead of two separate toasts.',
     ].join('\n'),
@@ -67,11 +73,13 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '0.0.4',
     date: '2026-07-13',
+    headline: 'Rounder window corners on macOS 26.',
     notes: ['- Rounder window corners on macOS 26.'].join('\n'),
   },
   {
     version: '0.0.3',
     date: '2026-07-13',
+    headline: 'Auto-update is now reliable and shows its status.',
     notes: [
       '- Auto-update is now reliable and visible: failures surface instead of failing silently, and Settings ▸ About shows the current status.',
     ].join('\n'),
