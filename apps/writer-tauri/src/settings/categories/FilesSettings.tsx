@@ -32,6 +32,8 @@ export function FilesSettings() {
   const setInboxAutoOrganize = useSettingsStore((s) => s.setInboxAutoOrganize)
   const sandboxEnabled = useSettingsStore((s) => s.sandboxEnabled)
   const setSandboxEnabled = useSettingsStore((s) => s.setSandboxEnabled)
+  const persistentQueryEnabled = useSettingsStore((s) => s.persistentQueryEnabled)
+  const setPersistentQueryEnabled = useSettingsStore((s) => s.setPersistentQueryEnabled)
   const vaultPath = useSettingsStore((s) => s.vaultPaths[s.activeVaultIndex] ?? '')
 
   // Only real, user-facing folders belong in these pickers. Hide the
