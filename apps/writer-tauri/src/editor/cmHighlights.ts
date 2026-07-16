@@ -1,6 +1,6 @@
 // CM-native read-it-later highlights — production wiring.
 //
-// Reuses the proven render core (prototypes/highlights: highlightField +
+// Reuses the proven render core (editor/engine/highlights: highlightField +
 // the setHighlights effect + offset re-anchor by quote/occurrence) but
 // drives it from the REAL source of truth — KnownDoc.highlights via
 // lib/highlights. The interactive surface is a single bottom-center
@@ -23,7 +23,7 @@ import {
   highlights as highlightRender,
   setHighlights,
   occurrenceAt,
-} from '@/prototypes/highlights'
+} from '@/editor/engine/highlights'
 import { addHighlightRecord, getHighlights } from '@/lib/highlights'
 import { useDocsStore } from '@/state/docsStore'
 

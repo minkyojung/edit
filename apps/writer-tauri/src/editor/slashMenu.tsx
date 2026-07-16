@@ -22,7 +22,7 @@ import {
   type TooltipView,
 } from '@codemirror/view'
 import { createRoot, type Root } from 'react-dom/client'
-import { filterSlashItems, inCodeBlock, type SlashItem } from '@/prototypes/slashCommands'
+import { filterSlashItems, inCodeBlock, type SlashItem } from '@/editor/engine/slashCommands'
 import { EditorSlashMenu } from './EditorSlashMenu'
 
 export interface SlashState {

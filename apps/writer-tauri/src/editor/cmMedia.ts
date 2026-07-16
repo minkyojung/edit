@@ -4,7 +4,7 @@
 // vault-relative path (`images/foo.png`, `videos/clip.mp4`, …) that the inserted
 // markdown references; the asset bytes are already written to the vault by the importer.
 
-import { classifyMedia } from '@/prototypes/mediaDrop'
+import { classifyMedia } from '@/editor/engine/mediaDrop'
 import { importImageFile } from '@/lib/vaultImages'
 import { importVideoFile } from '@/lib/vaultVideos'
 import { importAudioFile } from '@/lib/vaultAudios'

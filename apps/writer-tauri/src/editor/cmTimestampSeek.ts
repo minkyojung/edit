@@ -7,7 +7,7 @@
 import { EditorView } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 
-import { linkAtPos } from '@/prototypes/linkNav'
+import { linkAtPos } from '@/editor/engine/linkNav'
 import { parseYoutubeTimestampLink } from '@/lib/youtube'
 import { useYoutubePlayerStore } from '@/state/youtubePlayerStore'
 

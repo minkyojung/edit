@@ -24,7 +24,7 @@ import {
   FileText,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { SlashItem } from '@/prototypes/slashCommands'
+import type { SlashItem } from '@/editor/engine/slashCommands'
 
 const ICONS: Record<string, LucideIcon> = {
   text: Type,
