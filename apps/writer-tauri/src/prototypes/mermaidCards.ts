@@ -19,7 +19,6 @@ import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
 import { activeLines } from './reveal'
-import { isComposing, compositionEnded } from './imeComposition'
 
 // Stash the React root on the DOM node so updateDOM/destroy can reuse it.
 type RootHost = HTMLElement & { _root?: Root }
@@ -140,15 +139,12 @@ function touchesMermaid(tr: Transaction, mapped: DecorationSet): boolean {
 export const mermaidField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
-    // Freeze during IME composition (see imeComposition); compositionEnded below
-    // does the one deferred rebuild.
-    if (isComposing(tr.state)) return value
     const mapped = value.map(tr.changes)
     // Doc edit: keep the mapped set unless the change could add/remove/alter a
     // mermaid fence — only then re-walk the tree. Stops the per-keystroke scan.
     if (tr.docChanged) return touchesMermaid(tr, mapped) ? build(tr.state) : mapped
-    // Caret moved (reveal) or composition just ended: positions didn't shift.
-    if (tr.selection || compositionEnded(tr)) return build(tr.state)
+    // Caret moved (reveal): positions didn't shift.
+    if (tr.selection) return build(tr.state)
     return mapped
   },
   provide: (f) => [

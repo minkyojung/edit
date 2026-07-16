@@ -145,6 +145,12 @@ interface SettingsState {
   sandboxEnabled: boolean
   /** Toggle the security lockdown. */
   setSandboxEnabled: (enabled: boolean) => void
+
+  /** Persistent-query path: keep one long-lived SDK query per conversation so
+   * background subagent tasks survive across turns (instead of being killed at
+   * turn end). Default OFF — dark launch; flip on to validate, then default on. */
+  persistentQueryEnabled: boolean
+  setPersistentQueryEnabled: (enabled: boolean) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -166,8 +172,10 @@ export const useSettingsStore = create<SettingsState>()(
       editorTextAlign: 'justify',
       notificationSound: 'Glass',
       sandboxEnabled: true,
+      persistentQueryEnabled: false,
       setNotificationSound: (sound) => set({ notificationSound: sound }),
       setSandboxEnabled: (enabled) => set({ sandboxEnabled: enabled }),
+      setPersistentQueryEnabled: (enabled) => set({ persistentQueryEnabled: enabled }),
       recentProjects: [],
       setActiveVaultPath: (path) =>
         set({ vaultPaths: [path], activeVaultIndex: 0 }),
@@ -212,6 +220,7 @@ export const useSettingsStore = create<SettingsState>()(
         sidebarVibrancyEnabled: s.sidebarVibrancyEnabled,
         editorTextAlign: s.editorTextAlign,
         sandboxEnabled: s.sandboxEnabled,
+        persistentQueryEnabled: s.persistentQueryEnabled,
         recentProjects: s.recentProjects,
       }),
     },
@@ -278,4 +287,10 @@ export function getInboxAutoOrganize(): boolean {
  * sidecar's `sandboxEnabled`. Default ON. */
 export function getSandboxEnabled(): boolean {
   return useSettingsStore.getState().sandboxEnabled
+}
+
+/** Whether the persistent-query path is enabled. Non-React read for the chat
+ * runner, which forwards it to the sidecar's `persistentQuery`. Default OFF. */
+export function getPersistentQueryEnabled(): boolean {
+  return useSettingsStore.getState().persistentQueryEnabled
 }

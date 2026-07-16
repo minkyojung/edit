@@ -168,6 +168,15 @@ export function FilesSettings() {
       >
         <Switch checked={sandboxEnabled} onCheckedChange={setSandboxEnabled} />
       </SettingRow>
+      <SettingRow
+        title="Keep background tasks alive (beta)"
+        description="Keeps the AI's conversation running so long background tasks (like deep research) survive across turns instead of being cut off — and their result shows up on its own when done. Experimental; turn off if chat behaves oddly."
+      >
+        <Switch
+          checked={persistentQueryEnabled}
+          onCheckedChange={setPersistentQueryEnabled}
+        />
+      </SettingRow>
     </section>
   )
 }

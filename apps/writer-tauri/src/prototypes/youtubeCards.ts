@@ -11,7 +11,6 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
 
 import { activeLines } from './reveal'
-import { isComposing, compositionEnded } from './imeComposition'
 import { detectYoutubeEmbed } from '@/lib/youtube'
 import { useYoutubePlayerStore } from '@/state/youtubePlayerStore'
 
@@ -155,17 +154,13 @@ function touchesYoutube(tr: Transaction, mapped: DecorationSet): boolean {
 export const youtubeCards: Extension = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
-    // Freeze during IME composition (see imeComposition); compositionEnded below
-    // does the one deferred rebuild.
-    if (isComposing(tr.state)) return value
     const mapped = value.map(tr.changes)
     // Doc edit: keep the mapped (position-shifted) set unless the change could
     // add/remove/alter an embed — only then re-walk the tree. This is what stops
     // the per-keystroke full-document scan.
     if (tr.docChanged) return touchesYoutube(tr, mapped) ? build(tr.state) : mapped
-    // Caret moved (reveal) or composition just ended: positions didn't shift, so
-    // rebuild without mapping. Matches blocks.ts.
-    if (tr.selection || compositionEnded(tr)) return build(tr.state)
+    // Caret moved (reveal): positions didn't shift, so rebuild without mapping.
+    if (tr.selection) return build(tr.state)
     return mapped
   },
   provide: (f) => [
