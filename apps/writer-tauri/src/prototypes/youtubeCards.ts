@@ -8,7 +8,7 @@
 
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
-import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
+import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
 
 import { activeLines } from './reveal'
 import { isComposing, compositionEnded } from './imeComposition'
@@ -128,11 +128,45 @@ function build(state: EditorState): DecorationSet {
   return Decoration.set(out, true)
 }
 
+/** Could this edit change which YouTube embeds render? True when a change
+ * overlaps an existing (mapped) widget or lands on a line mentioning a YouTube
+ * URL (`youtu`). Conservative — over-rebuilds rather than risk a stale embed;
+ * when false the mapped set is kept, so typing elsewhere never re-walks the
+ * whole syntax tree. Mirrors blocks.ts's `touchesBlocks`. */
+function touchesYoutube(tr: Transaction, mapped: DecorationSet): boolean {
+  let touched = false
+  tr.changes.iterChanges((_fromA, _toA, fromB, toB) => {
+    if (touched) return
+    mapped.between(fromB, toB, () => {
+      touched = true
+      return false
+    })
+    // Scan every line the change spans (not just the first) so a multi-line
+    // paste whose YouTube URL isn't on line 1 still triggers a rebuild.
+    const first = tr.state.doc.lineAt(fromB).number
+    const last = tr.state.doc.lineAt(toB).number
+    for (let n = first; n <= last && !touched; n++) {
+      if (tr.state.doc.line(n).text.includes('youtu')) touched = true
+    }
+  })
+  return touched
+}
+
 export const youtubeCards: Extension = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
+    // Freeze during IME composition (see imeComposition); compositionEnded below
+    // does the one deferred rebuild.
     if (isComposing(tr.state)) return value
-    return tr.docChanged || tr.selection || compositionEnded(tr) ? build(tr.state) : value
+    const mapped = value.map(tr.changes)
+    // Doc edit: keep the mapped (position-shifted) set unless the change could
+    // add/remove/alter an embed — only then re-walk the tree. This is what stops
+    // the per-keystroke full-document scan.
+    if (tr.docChanged) return touchesYoutube(tr, mapped) ? build(tr.state) : mapped
+    // Caret moved (reveal) or composition just ended: positions didn't shift, so
+    // rebuild without mapping. Matches blocks.ts.
+    if (tr.selection || compositionEnded(tr)) return build(tr.state)
+    return mapped
   },
   provide: (f) => [
     EditorView.decorations.from(f),

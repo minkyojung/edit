@@ -5,6 +5,7 @@
 // Everything is scoped by EditorView.theme, so it can't leak.
 
 import { EditorView } from '@codemirror/view'
+import { LIST_INDENT } from './v2/livePreview'
 
 export const cmPrototypeTheme = EditorView.theme({
   '&': {
@@ -225,13 +226,14 @@ export const cmPrototypeTheme = EditorView.theme({
   // Shared marker column (v2 step 6 — list indent unification). Every list marker
   // (bullet / number / task) is an inline-block of one fixed width, so all body
   // text starts at the same x and wrapped lines hang under it (the line's
-  // padding-left/text-indent reserve the column). WIDTH MUST MATCH `LIST_INDENT`
-  // in livePreview.ts. text-align:right keeps the glyph next to the body (the
-  // empty space falls on the indent side).
+  // padding-left/text-indent reserve the column). Width is the single `LIST_INDENT`
+  // constant imported from livePreview.ts — the JS hanging-indent and this CSS column
+  // read the same value, so they can't drift. text-align:right keeps the glyph next
+  // to the body (the empty space falls on the indent side).
   '.cm-list-marker': {
     display: 'inline-block',
     boxSizing: 'border-box',
-    width: '1.8em',
+    width: `${LIST_INDENT}em`,
     textAlign: 'right',
     position: 'relative',
   },

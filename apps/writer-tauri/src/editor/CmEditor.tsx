@@ -65,6 +65,7 @@ import { refreshTemplateSlashItems } from '@/lib/templates'
 import { wikilinkMenu, wikilinkKeymap } from '@/editor/wikilinkMenu'
 import { smartEnter } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
+import { imeComposition } from '@/prototypes/imeComposition'
 import { clearTopLevelMarkerBackward } from '@/prototypes/listBackspace'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
 import { richTextCopy } from './cmRichCopy'
@@ -129,6 +130,21 @@ export function CmEditor({ handle, header }: Props) {
     let view: EditorView | null = null
     let mounted = true
 
+    // Debounce the DISPLAY stats (word/char count in the floating panel). Word
+    // counting splits the whole doc into an array; doing that — and re-rendering
+    // the panel — on every keystroke is wasteful on long notes. Persistence (the
+    // bodyMarkdown mirror + markSlugDirty in the save listener) stays IMMEDIATE;
+    // only this cosmetic readout is deferred. Cleared on unmount so a pending
+    // tick can't fire stale counts for the doc we just left.
+    let statsTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleStats = (text: string) => {
+      if (statsTimer !== null) clearTimeout(statsTimer)
+      statsTimer = setTimeout(() => {
+        statsTimer = null
+        useDocStatsStore.getState().setStats(computeDocStats(text))
+      }, 200)
+    }
+
     // Cmd-Z / Cmd-Shift-Z router. Accept/Reject from the CHAT PANEL lands an undoable
     // entry in THIS editor's history, but the click leaves focus on the chat button, so
     // a plain Cmd-Z never reaches CM. We catch it at the document level and forward to
@@ -154,6 +170,15 @@ export function CmEditor({ handle, header }: Props) {
           doc: handle.bodyMarkdown,
           extensions: [
             history(),
+            // Surface IME composition state INTO editor state so the block/mark
+            // StateFields (youtubeCards, mermaidCards, highlightField) can freeze
+            // their decoration rebuild while composing — StateFields can't read
+            // `view.composing` directly, so they read `composingField` instead.
+            // MUST precede those fields: StateFields update in declaration order,
+            // so composingField has to settle before the fields that read it.
+            // (livePreviewV2 uses `view.composing` directly from its ViewPlugin and
+            // needs no wiring — a legit separate path.)
+            imeComposition,
             // Safari/WKWebView drops the Enter that confirms an IME composition, so a
             // Korean list item + Enter wouldn't continue the list. Recover it from the
             // browser's own beforeinput (insertParagraph/insertLineBreak) signal.
@@ -248,9 +273,10 @@ export function CmEditor({ handle, header }: Props) {
               // A decision transaction changes the exclusion set → must re-mirror.
               if (!u.docChanged && !isDecisionTx(u.transactions)) return
               const text = u.state.doc.toString()
-              // Publish live word/char counts for the floating stats panel —
-              // on every doc change, including programmatic loads.
-              useDocStatsStore.getState().setStats(computeDocStats(text))
+              // Publish live word/char counts for the floating stats panel.
+              // Debounced (200ms) — the count is cosmetic; the persistence below
+              // is not, and stays immediate.
+              scheduleStats(text)
               if (u.transactions.some((t) => t.annotation(externalBody))) return
               const h = useDocsStore.getState().handles[handle.slug]
               // Exclude pending green (proposal) text from the saved body — disk
@@ -328,6 +354,9 @@ export function CmEditor({ handle, header }: Props) {
       if (handle) unregisterCmEditor(handle.slug)
       useEditorSelectionStore.getState().setSelection(null)
       useEditorSelectionStore.getState().setCollapse(null)
+      // Cancel any pending debounced stats tick before clearing, so it can't
+      // fire after unmount and resurrect the leaving doc's counts.
+      if (statsTimer !== null) clearTimeout(statsTimer)
       useDocStatsStore.getState().setStats(null)
       view?.destroy()
       view = null

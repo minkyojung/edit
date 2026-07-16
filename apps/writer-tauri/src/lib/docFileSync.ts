@@ -1,17 +1,22 @@
 // Doc ↔ vault file synchronisation.
 //
-// Bridge between the live Y.Doc (memory) and the on-disk vault files
-// (.md body + .meta.json identity sidecar + .ydoc CRDT snapshot).
+// Bridge between the in-memory doc body and the on-disk vault files
+// (.md body + .meta.json identity sidecar). The CodeMirror editor mirrors
+// its live text into `handle.bodyMarkdown` on every change (see CmEditor's
+// save updateListener); this module reads that cache and writes it to disk.
+// (The old Y.Doc / `.ydoc` CRDT snapshot path was removed — `.md` is now the
+// single durable surface.)
 //
 // Runtime flow:
-//   - `installDocSync(slug, ydoc)` attaches an observer to the doc's
-//     XmlFragment and marks map; any mutation flags the slug dirty
+//   - `installDocSync(slug)` marks the slug dirty once so a freshly-opened
+//     doc is mirrored to disk even if the user never edits it; later edits
+//     dirty the slug via `markSlugDirty` from the editor's update listener
 //   - `startAutoFlush()` ticks every FLUSH_INTERVAL_MS; each tick
 //     calls `flushDirty()` which serialises every dirty slug and
-//     writes the three files atomically
+//     writes its files atomically
 //   - `flushDirty()` is also called from the app-close path
-//     (CloseConfirmDialog) so edits made in the last 2s before quit
-//     reach disk
+//     (CloseConfirmDialog) and on window blur so edits made just before
+//     quit / focus loss reach disk
 //
 // vault.ts owns the atomic write + echo flag; vaultWatcher.ts owns
 // external-change detection. This module is the glue: when to write,
@@ -96,10 +101,9 @@ async function fileContentEquals(
  *   - `meta` — slim identity sidecar (slug only), written to
  *              `<stem>.meta.json`
  *
- * Marks are not in this shape anymore — they live in the `.ydoc`
- * binary which flushDirty assembles separately from the handle's
- * Y.Doc. Path C Stage 3 removed the `.marks.json` payload (text-search
- * anchoring) in favor of `.ydoc` (CRDT RelativePosition anchoring). */
+ * Just these two files — highlights and other soft state ride inside
+ * `meta` (or the `.md` frontmatter for frontmatter-native docs). There
+ * is no separate binary payload; `.md` is the single durable body. */
 export interface SerializedDocFiles {
   md: string
   meta: DocMetaFile
@@ -107,19 +111,13 @@ export interface SerializedDocFiles {
 
 /** Serialize one open doc to the on-disk pair `{md, sidecar}`.
  *
- * v1 scope: only the active doc, marks ignored (sidecar is empty).
- * Returns null when the doc isn't open, the view hasn't mounted,
- * or the Milkdown serializer isn't ready yet — callers should
- * treat that as "skip this tick, try again next change" rather
- * than an error.
- *
- * The markdown output is whatever Milkdown's commonmark + gfm
- * serializer produces for the live PM doc. Mark spans currently
- * survive in the output as inline HTML (per `proof-marks.ts`'s
- * toMarkdown runner) — that's fine for this step because we're
- * verifying the body shape, not yet the mark strip. The next step
- * (4.B.1.b.ii) will move mark metadata into the sidecar and produce
- * clean markdown without span clutter. */
+ * Reads `handle.bodyMarkdown` — the plain markdown the CodeMirror editor
+ * mirrors on every change — as the body, and composes the identity sidecar
+ * from the in-memory `KnownDoc`. Returns null when the doc isn't open or its
+ * handle is still loading its initial body from disk (status !== 'ready');
+ * callers treat that as "skip this tick, try again next change" rather than
+ * an error. Because the body is already clean markdown, there's no serializer
+ * to wait on and no mark-span clutter to strip. */
 export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
   const docs = useDocsStore.getState()
   const handle = docs.handles[slug]
@@ -127,7 +125,7 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
 
   // K-followup safety: never flush when the handle is still loading
   // its initial body from disk. The default `bodyMarkdown` on a fresh
-  // handle is the empty string; if anything (a stray PM transaction,
+  // handle is the empty string; if anything (a stray editor change,
   // an applyToWikiPage call) marks the slug dirty before
   // `ensureHandle`'s disk read resolves, the flush would write that
   // empty string and wipe the disk file. The Daniel.md 0-byte
@@ -140,8 +138,8 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
     return null
   }
 
-  // Phase I: read from `handle.bodyMarkdown`, which dirtyTrackerPlugin
-  // keeps in sync with the live PM doc on every transaction. This
+  // Read from `handle.bodyMarkdown`, which the CodeMirror editor's save
+  // updateListener keeps in sync with the live doc on every change. This
   // removes the legacy "active doc only" gate: a slug that was
   // dirtied moments before the user navigated away still flushes
   // because the cache survived the editor unmount.
@@ -202,9 +200,9 @@ export function serializeMetaOnly(slug: string): DocMetaFile | null {
 
 // ── Dirty tracking ───────────────────────────────────────────────
 //
-// Each open doc's Y.Doc gets an observer that marks the slug "dirty"
-// on any content or mark mutation. The auto-flush tick walks
-// `dirtySlugs` periodically and writes the changed docs to vault files.
+// The editor marks a slug "dirty" on any change (via `markSlugDirty` from
+// CmEditor's save updateListener). The auto-flush tick walks `dirtySlugs`
+// periodically and writes the changed docs to vault files.
 
 const dirtySlugs = new Set<string>()
 
@@ -283,7 +281,7 @@ function markDirty(slug: string): void {
   dirtyGeneration.set(slug, (dirtyGeneration.get(slug) ?? 0) + 1)
 }
 
-/** Public surface for marking a doc dirty without a Y.Doc mutation.
+/** Public surface for marking a doc dirty without an editor change.
  * Used by knownDocs-only changes (rename) so the next flush picks
  * the slug up and the rename-on-change path moves the file on disk. */
 export function markSlugDirty(slug: string): void {
@@ -333,9 +331,8 @@ export function isDirty(slug: string): boolean {
  * torn-down handle's leftover dirty flag doesn't trigger a flush
  * against a slug whose state has gone away.
  *
- * Phase 5c of the Yjs-removal migration retired the Y.Doc fragment
- * observer this helper used to install — PM transactions feed the
- * dirty bit directly through `dirtyTrackerPlugin` now. All this
+ * This helper no longer installs any observer — the editor feeds the
+ * dirty bit directly via `markSlugDirty` on every change. All this
  * function does is mark the slug dirty once so the first flush tick
  * mirrors a freshly-opened doc to disk regardless of whether the
  * user edits it (covering the "boot tab the user never touches"
@@ -482,7 +479,7 @@ async function flushDirtyOnce(): Promise<void> {
   let indexTouched = false
   for (const slug of getDirtySlugs()) {
     // Skip slugs with an unresolved external-edit conflict. Writing
-    // the live Y.Doc here would silently overwrite the external
+    // the live body here would silently overwrite the external
     // version while the user is still deciding via the banner.
     // The slug stays dirty so the next flush after the user picks
     // Dismiss (keep local) will land normally. Picking Reopen
@@ -544,11 +541,8 @@ async function flushDirtyOnce(): Promise<void> {
     const gen = captureDirtyGeneration(slug)
     const result = serializeDocToFiles(slug)
     if (!result) continue
-    // Yjs-removal migration Phase 2: the `.ydoc` write path is gone.
-    // `.md` is the single durable surface; the in-memory Y.Doc is
-    // the working copy for this session only. Phases 5–7 will retire
-    // the Y.Doc altogether and switch this flush over to a PM-only
-    // serializer.
+    // `.md` is the single durable surface; `handle.bodyMarkdown` (mirrored
+    // by the editor) is the in-memory working copy for this session.
     try {
       // Rename-on-change: if this slug was last written at a
       // different path (Untitled note gained a title, wiki page
