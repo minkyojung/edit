@@ -880,15 +880,546 @@ export class Server {
     })
   }
 
-  // Persistent per-thread chat entry. Stage 1: delegates to the legacy path so
-  // the opt-in flag is safe to flip (behaviour-identical to today) while the
-  // thread registry / persistent generator are built out in Stage 2. The
-  // acceptance ack is emitted here so the wire contract matches the legacy
-  // branch exactly.
+  // Persistent per-thread chat entry. Either creates the thread's long-lived
+  // query() (first turn) or pushes this turn's message into the live one. The
+  // per-turn runId is a correlation id inside the thread; threadId identifies
+  // the conversation (and its SDK session).
   #handleChatPersistent(id, params) {
     const runId = params.runId
-    this.#startLegacyRun(runId, params)
-    this.emit(response(id, { runId, accepted: true }))
+    const threadId = params.threadId ?? params.sessionId ?? params.resume
+    if (typeof threadId !== 'string' || !threadId) {
+      this.emit(errorResponse(id, INVALID_PARAMS, 'threadId (or sessionId/resume) required'))
+      return
+    }
+    // runId must be unique sidecar-wide so runToThread and the frontend's runId
+    // demux stay unambiguous.
+    if (this.runToThread.has(runId)) {
+      this.emit(errorResponse(id, INVALID_PARAMS, `runId already active: ${runId}`))
+      return
+    }
+    const item = { runId, prompt: params.prompt, params }
+    this.runToThread.set(runId, threadId)
+
+    const existing = this.activeThreads.get(threadId)
+    if (existing && !existing.dead) {
+      // Reuse the live query — push this turn into its input queue.
+      this.#dispatchTurn(existing, item)
+      this.emit(response(id, { runId, accepted: true, threadId }))
+      return
+    }
+
+    // First turn on this thread — build the query, then dispatch into it.
+    this.emit(response(id, { runId, accepted: true, threadId }))
+    this.#ensureThread(threadId, params)
+      .then((rec) => this.#dispatchTurn(rec, item))
+      .catch((err) => {
+        logErrorContext('ensureThread', runId, err, { mode: this.mode, threadId })
+        this.runToThread.delete(runId)
+        this.activeThreads.delete(threadId)
+        this.#emitChatError(runId, 'INTERNAL', err?.message ?? String(err), true, undefined, threadId)
+      })
+  }
+
+  // Enqueue a turn into a thread's persistent input generator. Always queue
+  // first, then — if the generator is parked waiting for input and no turn is
+  // in flight — wake it with the queue head. Queue-then-wake (rather than
+  // wake-or-queue) closes the settle→re-park race: an item pushed in the window
+  // between a turn settling and the generator re-parking is still picked up,
+  // because the generator re-checks the queue on each loop. Strict
+  // serialization + FIFO: one turn generates at a time, in arrival order.
+  #dispatchTurn(rec, item) {
+    rec.turnQueue.push(item)
+    if (rec.nextTurnResolve && !rec.turnActive) {
+      const r = rec.nextTurnResolve
+      rec.nextTurnResolve = null
+      r(rec.turnQueue.shift())
+    }
+  }
+
+  // The long-lived input iterable feeding one thread's query(). Yields one user
+  // message per turn, then parks until #settleTurn releases it (so turn N's
+  // `result` lands before turn N+1 is yielded). Returns — ending the query —
+  // only when the thread is closed.
+  #threadInput(rec) {
+    return (async function* () {
+      while (true) {
+        const item = await new Promise((resolve) => {
+          if (rec.closeRequested) return resolve({ close: true })
+          if (rec.turnQueue.length) return resolve(rec.turnQueue.shift())
+          rec.nextTurnResolve = resolve
+        })
+        if (item.close) return
+
+        // Reset per-turn state before this turn generates.
+        rec.currentRunId = item.runId
+        rec.turnController = new AbortController()
+        rec.turnActive = true
+        rec.cancelRequested = false
+        rec.awaitingDecision = 0
+        rec.planApproved = false
+        rec.permissionMode = item.params.permissionMode ?? 'bypassPermissions'
+        rec.lastEventAt = Date.now()
+        rec.idleTimedOut = false
+        rec.lastAssistantError = null
+        rec.lastRateLimitInfo = null
+        rec.sawRateLimitRetry = false
+        rec.rateLimitRejected = false
+        // NOTE(Stage 3): from turn 2 on, apply per-turn model/effort/permission
+        // via control requests (setModel / applyFlagSettings / setPermissionMode)
+        // here before yielding.
+
+        yield {
+          type: 'user',
+          message: { role: 'user', content: item.prompt },
+          parent_tool_use_id: null,
+        }
+
+        // Park until this turn's result is fully settled.
+        await new Promise((resolve) => {
+          rec.turnSettleResolve = resolve
+        })
+      }
+    })()
+  }
+
+  // Create a thread's ThreadRec + long-lived query() and start its consumer
+  // loop. Options are built ONCE here (systemPrompt / tools / sandbox / relay /
+  // hooks / canUseTool); per-turn-mutable state lives on `rec` and is read live
+  // by the gate. Session lifecycle: resume when the thread was reaped or the
+  // app restarted (session on disk), else create.
+  async #ensureThread(threadId, params) {
+    const controller = new AbortController()
+    const rec = {
+      threadId,
+      controller, // thread-level: abort = hard teardown of the subprocess
+      query: null,
+      loopDone: null,
+      dead: false,
+      // input queue (producer/consumer)
+      turnQueue: [],
+      nextTurnResolve: null,
+      closeRequested: false,
+      // current turn (reset each turn in #threadInput)
+      currentRunId: null,
+      turnActive: false,
+      turnController: null, // per-turn: unparks #requestDecision, never kills the thread
+      turnSettleResolve: null,
+      cancelRequested: false,
+      awaitingDecision: 0,
+      planApproved: false,
+      permissionMode: params.permissionMode ?? 'bypassPermissions',
+      lastEventAt: Date.now(),
+      idleTimedOut: false,
+      // per-turn error accumulators
+      lastAssistantError: null,
+      lastRateLimitInfo: null,
+      sawRateLimitRetry: false,
+      rateLimitRejected: false,
+      // background-task tracking (Stage 4)
+      backgroundTaskIds: new Set(),
+      stopHookBackground: [],
+      backgroundRequested: false,
+      // reaper (Stage 4)
+      lastTurnEndedAt: 0,
+      reaperTimer: null,
+      optionsSeed: params,
+    }
+    this.activeThreads.set(threadId, rec)
+    const options = await this.#buildThreadOptions(rec)
+    rec.query = query({ prompt: this.#threadInput(rec), options })
+    // Detached consumer loop; its finally() finalizes teardown.
+    rec.loopDone = this.#runThreadLoop(rec)
+    return rec
+  }
+
+  // Build the query() options for a thread. Mirrors the legacy #runChat option
+  // block but reads per-turn-mutable state from `rec` so ONE options object
+  // serves every turn. canUseTool + planModeInstructions are attached
+  // UNCONDITIONALLY (a later turn may enter plan mode); under bypass the SDK
+  // skips the gate, so the common all-bypass thread pays nothing.
+  async #buildThreadOptions(rec) {
+    const params = rec.optionsSeed
+    const {
+      model,
+      systemPrompt,
+      relayTools,
+      vaultPath,
+      effort,
+      fastMode,
+      sessionId,
+      resume,
+      maxTurns,
+      builtinTools,
+      sandboxEnabled = true,
+      allowDelegation = true,
+    } = params
+
+    const options = {
+      permissionMode: rec.permissionMode,
+      abortController: rec.controller,
+      includePartialMessages: true,
+      forwardSubagentText: true,
+      agentProgressSummaries: true,
+      thinking: { type: 'adaptive', display: 'summarized' },
+      settings: {
+        autoCompactEnabled: true,
+        ...(fastMode ? { fastMode: true } : {}),
+        ...(sandboxEnabled
+          ? {
+              permissions: {
+                deny: [...egressDenyRules(), ...envDumpDenyRules(), ...secretDenyRules()],
+              },
+            }
+          : {}),
+      },
+      settingSources: [],
+    }
+    if (sandboxEnabled) options.sandbox = sandboxLockdown()
+    if (model) options.model = model
+    if (systemPrompt) options.systemPrompt = systemPrompt
+    if (effort) options.effort = effort
+    // Session lifecycle: resume when the thread already has a persisted session
+    // (reaped/app-restarted), else create it under threadId.
+    if (resume) options.resume = resume
+    else if (sessionId) options.sessionId = sessionId
+    else if (await sessionPersisted(rec.threadId)) options.resume = rec.threadId
+    else options.sessionId = rec.threadId
+    if (typeof maxTurns === 'number' && maxTurns > 0) options.maxTurns = maxTurns
+    if (process.env.CLAUDE_CODE_CLI_PATH) {
+      options.pathToClaudeCodeExecutable = process.env.CLAUDE_CODE_CLI_PATH
+    }
+    options.env = {
+      ...process.env,
+      CLAUDE_CODE_OAUTH_TOKEN: this.token,
+      ANTHROPIC_API_KEY: undefined,
+      ANTHROPIC_AUTH_TOKEN: undefined,
+    }
+
+    // Gate is always attached (a later turn may switch to plan) and reads rec
+    // LIVE. Under bypassPermissions the SDK short-circuits it.
+    options.planModeInstructions = PLAN_MODE_INSTRUCTIONS
+    options.canUseTool = async (toolName, input) => {
+      if (toolName === 'AskUserQuestion') {
+        rec.awaitingDecision++
+        try {
+          const decision = await this.#requestDecision(
+            rec.currentRunId,
+            toolName,
+            input,
+            rec.turnController,
+          )
+          const updatedInput = { questions: input.questions, answers: decision?.answers ?? {} }
+          if (decision?.response) updatedInput.response = decision.response
+          return { behavior: 'allow', updatedInput }
+        } finally {
+          rec.awaitingDecision--
+        }
+      }
+      if (rec.permissionMode !== 'plan') {
+        return { behavior: 'allow', updatedInput: input }
+      }
+      // ── Plan-mode read-only enforcement ──
+      if (toolName === 'ExitPlanMode') {
+        rec.awaitingDecision++
+        try {
+          const decision = await this.#requestDecision(
+            rec.currentRunId,
+            toolName,
+            input,
+            rec.turnController,
+          )
+          if (decision?.type === 'approve') {
+            rec.planApproved = true
+            try {
+              await rec.query.setPermissionMode('default')
+              rec.permissionMode = 'default'
+            } catch (e) {
+              logErrorContext('setPermissionMode', rec.currentRunId, e, { mode: this.mode })
+            }
+            return { behavior: 'allow', updatedInput: input }
+          }
+          return {
+            behavior: 'deny',
+            message:
+              decision?.message || 'The user asked you to revise the plan before proceeding.',
+          }
+        } finally {
+          rec.awaitingDecision--
+        }
+      }
+      if (typeof toolName === 'string' && toolName.includes('propose_')) {
+        if (rec.planApproved) return { behavior: 'allow', updatedInput: input }
+        return {
+          behavior: 'deny',
+          message:
+            'Plan mode is read-only. Lay out the full plan, then call ExitPlanMode to proceed.',
+        }
+      }
+      if (
+        toolName === 'Write' ||
+        toolName === 'Edit' ||
+        toolName === 'MultiEdit' ||
+        toolName === 'NotebookEdit'
+      ) {
+        const filePath = typeof input?.file_path === 'string' ? input.file_path : ''
+        if (isInsidePlansDir(filePath)) return { behavior: 'allow', updatedInput: input }
+        return {
+          behavior: 'deny',
+          message:
+            'Plan mode is read-only. Put the plan in ExitPlanMode instead of editing files.',
+        }
+      }
+      return { behavior: 'allow', updatedInput: input }
+    }
+
+    // Vault: cwd + built-in toolset + agent plugin (commands/agents/skills).
+    let existingSkills = []
+    if (vaultPath) {
+      options.cwd = vaultPath
+      options.tools =
+        Array.isArray(builtinTools) && builtinTools.length > 0
+          ? builtinTools
+          : { type: 'preset', preset: 'claude_code' }
+      try {
+        const pluginRoot = join(vaultPath, '_system/agent')
+        await readdir(pluginRoot)
+        options.plugins = [{ type: 'local', path: pluginRoot }]
+        if (allowDelegation && Array.isArray(options.tools)) {
+          for (const t of ['Skill', 'Task']) {
+            if (!options.tools.includes(t)) options.tools = [...options.tools, t]
+          }
+        }
+        try {
+          const skillsRoot = join(pluginRoot, 'skills')
+          const skillNames = (await readdir(skillsRoot, { withFileTypes: true }))
+            .filter((d) => d.isDirectory())
+            .map((d) => d.name)
+          if (skillNames.length > 0) {
+            options.skills = skillNames
+            for (const dir of skillNames) {
+              try {
+                const raw = await readFile(join(skillsRoot, dir, 'SKILL.md'), 'utf-8')
+                const fm = raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? ''
+                const pick = (k) =>
+                  fm
+                    .split('\n')
+                    .find((l) => l.startsWith(`${k}:`))
+                    ?.slice(k.length + 1)
+                    .trim()
+                    .replace(/^["']|["']$/g, '') ?? ''
+                existingSkills.push({ name: pick('name') || dir, description: pick('description') })
+              } catch {
+                // Unreadable SKILL.md — skip.
+              }
+            }
+          }
+        } catch {
+          // No skills/ subdir.
+        }
+      } catch {
+        // No plugin dir.
+      }
+    }
+
+    const enabledRelay = Array.isArray(relayTools) ? relayTools : []
+    const relayServer = this.#buildRelayServer(
+      enabledRelay,
+      () => rec.currentRunId, // live per-turn runId
+      vaultPath,
+      existingSkills,
+    )
+    if (relayServer) options.mcpServers = { 'writer-relay': relayServer }
+
+    options.hooks = { PostToolUse: this.#postToolUseHooks() }
+    return options
+  }
+
+  // The thread's long-lived consumer loop. Unlike the legacy per-turn loop it
+  // NEVER breaks on `result` — a result is a turn boundary handled by
+  // #settleTurn, and the loop keeps reading so background subagent tasks stream
+  // across turns. Exits only when the query ends (thread closed / stream error).
+  async #runThreadLoop(rec) {
+    const watchdog = setInterval(() => this.#tickThreadWatchdog(rec), 5_000)
+    try {
+      for await (const event of rec.query) {
+        rec.lastEventAt = Date.now()
+        this.emit(
+          notification('chat/event', { threadId: rec.threadId, runId: rec.currentRunId, event }),
+        )
+        if (event?.type === 'assistant' && event.error) rec.lastAssistantError = event.error
+        if (
+          event?.type === 'system' &&
+          event.subtype === 'api_retry' &&
+          event.error === 'rate_limit'
+        ) {
+          rec.sawRateLimitRetry = true
+        }
+        if (event?.type === 'rate_limit_event' && event.rate_limit_info) {
+          rec.lastRateLimitInfo = event.rate_limit_info
+          const info = event.rate_limit_info
+          const overageBlocked = info.overageInUse && info.overageStatus === 'rejected'
+          if (info.status === 'rejected' || overageBlocked) rec.rateLimitRejected = true
+        }
+        // NOTE(Stage 4): task_started/progress/updated/notification tracking +
+        // forwarding on the dedicated chat/task channel goes here.
+        if (event?.type === 'result') {
+          await this.#settleTurn(rec, event)
+          continue
+        }
+      }
+    } catch (err) {
+      // A stream-level error kills the whole thread query. Surface it on the
+      // current turn (if one is active); the next chat on this threadId resumes
+      // from disk.
+      logErrorContext('threadLoop', rec.currentRunId, err, {
+        mode: this.mode,
+        threadId: rec.threadId,
+      })
+      if (rec.turnActive && rec.currentRunId) {
+        const code = classifyError(err)
+        this.#emitChatError(
+          rec.currentRunId,
+          code,
+          err?.message ?? String(err),
+          !NON_RETRYABLE_CODES.has(code),
+          undefined,
+          rec.threadId,
+        )
+        // Release a parked turn so a caller awaiting settle isn't wedged.
+        rec.turnActive = false
+        const r = rec.turnSettleResolve
+        rec.turnSettleResolve = null
+        if (r) r()
+      }
+    } finally {
+      clearInterval(watchdog)
+      this.#finalizeThreadTeardown(rec)
+    }
+  }
+
+  // Turn boundary. A `result` settles the CURRENT turn (emit chat/done or a
+  // typed chat/error) but keeps the thread query alive. A result that arrives
+  // with no active turn is an autonomous background continuation — ignored here
+  // (Stage 4 routes it to the background surface) so we never emit a runId-less
+  // chat/done.
+  async #settleTurn(rec, result) {
+    if (!rec.turnActive || !rec.currentRunId) return
+
+    let contextUsage = null
+    try {
+      contextUsage = await rec.query.getContextUsage()
+    } catch (e) {
+      logErrorContext('getContextUsage', rec.currentRunId, e, { mode: this.mode })
+    }
+
+    const runId = rec.currentRunId
+    rec.turnActive = false
+    rec.lastTurnEndedAt = Date.now()
+
+    if (rec.cancelRequested) {
+      this.#emitChatError(runId, 'CANCELLED', 'cancelled by client', false, undefined, rec.threadId)
+    } else if (result.is_error || String(result.subtype ?? '').startsWith('error_')) {
+      let { code, message, retryable } = mapSdkError({
+        subtype: result.subtype,
+        assistantError: rec.lastAssistantError,
+        errors: result.errors,
+      })
+      if (code !== 'RATE_LIMIT' && (rec.lastRateLimitInfo?.status === 'rejected' || rec.sawRateLimitRetry)) {
+        code = 'RATE_LIMIT'
+        message = 'rate limited'
+        retryable = true
+      }
+      // NOTE(Stage 5): code === 'AUTH' → #restartThreadForAuth(rec) instead of
+      // surfacing, so a mid-thread token expiry recreates + replays the turn.
+      this.#emitChatError(
+        runId,
+        code,
+        message,
+        retryable,
+        code === 'RATE_LIMIT' ? rateLimitPayload(rec.lastRateLimitInfo) : undefined,
+        rec.threadId,
+      )
+    } else {
+      this.emit(
+        notification('chat/done', {
+          threadId: rec.threadId,
+          runId,
+          stopReason: result.stop_reason ?? null,
+          usage: result.usage ?? null,
+          totalCostUsd: result.total_cost_usd ?? null,
+          contextUsage,
+          fastModeState: result.fast_mode_state ?? null,
+          // Turn done, but background work continues — the frontend keeps the
+          // thread's background surface live instead of treating it as fully idle.
+          backgroundRequested: result.terminal_reason === 'background_requested',
+        }),
+      )
+      if (result.terminal_reason === 'background_requested') rec.backgroundRequested = true
+    }
+
+    this.runToThread.delete(runId)
+    rec.currentRunId = null
+    // NOTE(Stage 4): #armReaper(rec) — start the idle-close countdown here.
+    const r = rec.turnSettleResolve
+    rec.turnSettleResolve = null
+    if (r) r()
+  }
+
+  // Per-thread idle watchdog. Guards ONLY an in-progress turn: an idle-but-alive
+  // thread (awaiting the next user message, or waiting on background work) is
+  // never timed out — only the reaper (Stage 4) closes those, and only when
+  // background-free. A wedged turn hard-closes the thread; it resumes next turn.
+  #tickThreadWatchdog(rec) {
+    if (rec.dead || rec.controller.signal.aborted) return
+    if (!rec.turnActive) return
+    if (rec.awaitingDecision > 0) {
+      rec.lastEventAt = Date.now()
+      return
+    }
+    if (Date.now() - rec.lastEventAt > TURN_IDLE_MS) {
+      rec.idleTimedOut = true
+      this.#emitChatError(
+        rec.currentRunId,
+        'IDLE_TIMEOUT',
+        `No response for ${Math.round(TURN_IDLE_MS / 1000)}s — check your network connection`,
+        true,
+        undefined,
+        rec.threadId,
+      )
+      this.#teardownThread(rec, 'idle_timeout')
+    }
+  }
+
+  // Graceful thread close: signal the generator to return, release any parked
+  // turn, then hard-abort as a backstop. The session persists to disk, so the
+  // next chat for this threadId resumes cleanly. Idempotent.
+  #teardownThread(rec, _reason) {
+    if (rec.dead) return
+    rec.dead = true
+    rec.closeRequested = true
+    if (rec.nextTurnResolve) {
+      const r = rec.nextTurnResolve
+      rec.nextTurnResolve = null
+      r({ close: true })
+    }
+    if (rec.turnSettleResolve) {
+      const r = rec.turnSettleResolve
+      rec.turnSettleResolve = null
+      r()
+    }
+    clearTimeout(rec.reaperTimer)
+    try {
+      rec.controller.abort()
+    } catch {
+      // best-effort
+    }
+  }
+
+  // Remove a thread from the registries once its consumer loop has exited.
+  #finalizeThreadTeardown(rec) {
+    clearTimeout(rec.reaperTimer)
+    if (rec.currentRunId) this.runToThread.delete(rec.currentRunId)
+    this.activeThreads.delete(rec.threadId)
   }
 
   // Whether a thread still has background subagent work in flight — the signal
@@ -935,6 +1466,59 @@ export class Server {
     }
     if (relayDefs.length === 0) return null
     return createSdkMcpServer({ name: 'writer-relay', tools: relayDefs })
+  }
+
+  // The PostToolUse hook that confirms propose_edit/write/multi_edit proposals
+  // actually landed in the host's pendingChangesStore before the model treats
+  // them as settled. Keyed by pendingId (runId-independent), so it's shared
+  // verbatim by the legacy and persistent paths. See the call site for the
+  // full rationale (eager-success gap; fail-open on timeout).
+  #postToolUseHooks() {
+    return [
+      {
+        matcher: 'propose_edit|propose_write|propose_multi_edit',
+        // Seconds. Local IPC to the host's own process — generous but bounded
+        // so a host hang can't stall the agent loop forever.
+        timeout: 5,
+        hooks: [
+          async (input) => {
+            const pendingId = extractPendingId(input.tool_response)
+            // No id found — this call errored before queuing (e.g.
+            // checkOldString rejected it) and already carries its own error
+            // text; nothing to confirm.
+            if (!pendingId) return {}
+            const pending = this.pendingAcks.get(pendingId)
+            if (!pending) return {} // no slot registered — let it pass
+            // Belt-and-suspenders: race against our OWN timeout too. Fail-open
+            // on timeout (ok: true, no rewrite) — don't surface a spurious
+            // error over a host that's merely slow, only one that reported
+            // failure.
+            const { ok, reason } = await Promise.race([
+              pending.promise,
+              new Promise((r) => setTimeout(() => r({ ok: true, reason: null }), 4000)),
+            ])
+            this.pendingAcks.delete(pendingId)
+            if (ok) return {}
+            return {
+              hookSpecificOutput: {
+                hookEventName: 'PostToolUse',
+                updatedToolOutput: {
+                  content: [
+                    {
+                      type: 'text',
+                      text:
+                        '(error: this proposal could not be queued for review' +
+                        (reason ? ` — ${reason}` : '') +
+                        '. Re-read the file and retry.)',
+                    },
+                  ],
+                },
+              },
+            }
+          },
+        ],
+      },
+    ]
   }
 
   async #runChat(runId, params, controller) {
@@ -1328,58 +1912,7 @@ export class Server {
     // the `canUseTool` block above) — it must run in EVERY permission mode,
     // including 'bypassPermissions', since eager-success is a correctness
     // gap independent of the approval flow.
-    options.hooks = {
-      PostToolUse: [
-        {
-          matcher: 'propose_edit|propose_write|propose_multi_edit',
-          // Seconds. Local IPC to the host's own process — generous but
-          // bounded so a host hang can't stall the agent loop forever.
-          timeout: 5,
-          hooks: [
-            async (input) => {
-              const pendingId = extractPendingId(input.tool_response)
-              // No id found — this call errored before queuing (e.g.
-              // checkOldString rejected it) and already carries its own
-              // error text; nothing to confirm.
-              if (!pendingId) return {}
-              const pending = this.pendingAcks.get(pendingId)
-              if (!pending) return {} // no slot registered — let it pass
-              // Belt-and-suspenders: race against our OWN timeout too, in
-              // addition to the matcher's declared `timeout` above — this is
-              // the main chat loop, so a host that never acks must not hang
-              // it regardless of whether the SDK's own timeout enforcement
-              // covers this exact case.
-              // Fail-open on timeout (ok: true, no rewrite) — same convention
-              // checkOldString uses above for anything unverifiable: don't
-              // surface a spurious error over a host that's merely slow, only
-              // over one that explicitly reported failure.
-              const { ok, reason } = await Promise.race([
-                pending.promise,
-                new Promise((r) => setTimeout(() => r({ ok: true, reason: null }), 4000)),
-              ])
-              this.pendingAcks.delete(pendingId)
-              if (ok) return {}
-              return {
-                hookSpecificOutput: {
-                  hookEventName: 'PostToolUse',
-                  updatedToolOutput: {
-                    content: [
-                      {
-                        type: 'text',
-                        text:
-                          '(error: this proposal could not be queued for review' +
-                          (reason ? ` — ${reason}` : '') +
-                          '. Re-read the file and retry.)',
-                      },
-                    ],
-                  },
-                },
-              }
-            },
-          ],
-        },
-      ],
-    }
+    options.hooks = { PostToolUse: this.#postToolUseHooks() }
 
     // Up to two attempts: if the first fails with AUTH, ask the host for a
     // fresh token and retry once. Any other error (or a second AUTH) ends
@@ -1687,9 +2220,9 @@ export class Server {
     this.activeChats.delete(runId)
   }
 
-  #emitChatError(runId, code, message, retryable, rateLimit) {
+  #emitChatError(runId, code, message, retryable, rateLimit, threadId) {
     this.emit(
-      notification('chat/error', { runId, code, message, retryable, rateLimit }),
+      notification('chat/error', { runId, code, message, retryable, rateLimit, threadId }),
     )
   }
 
@@ -1809,6 +2342,10 @@ export class Server {
     if (this.shuttingDown) return
     this.shuttingDown = true
     for (const [, rec] of this.activeChats) rec.controller.abort()
+    // Persistent-path threads: graceful close (signals the generator to return
+    // and aborts the thread controller) so their `claude` children are reaped
+    // too. Sessions persist to disk, so nothing is lost.
+    for (const [, rec] of this.activeThreads) this.#teardownThread(rec, 'shutdown')
     // Give in-flight chats a moment to flush their CANCELLED notifications and
     // let the SDK reap the CLI child before we exit.
     setTimeout(() => process.exit(0), 250)
@@ -1831,6 +2368,13 @@ const IDLE_TTL_MS = 300_000
 // the LRU idle, background-free thread is evicted (it resumes from disk on its
 // next turn). A thread that's mid-turn or has background work is never evicted.
 const MAX_LIVE_THREADS = 6
+
+// Persistent path: max wall-clock gap between events WITHIN an active turn
+// before we treat the turn as network-wedged and hard-close the thread (it
+// resumes from disk next turn). Mirrors the legacy #runChat IDLE_MS (180s) —
+// snappier than the SDK's 10-min backstop, above realistic model pauses. Only
+// armed while a turn is generating; an idle-but-alive thread never times out.
+const TURN_IDLE_MS = 180_000
 
 // Codes the user can't fix by retrying the same request. Used to set the
 // `retryable` flag (host hides the Retry button for these).
