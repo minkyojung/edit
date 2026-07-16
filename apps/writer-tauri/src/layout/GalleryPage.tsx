@@ -18,6 +18,8 @@ import { MessageRow } from '@/chat/messages/MessageRow'
 import { ActivityRow } from '@/chat/parts/ActivityRow'
 import { CompactDivider } from '@/chat/parts/CompactDivider'
 import { RetryRow } from '@/chat/parts/RetryRow'
+import { StatusRow } from '@/chat/parts/StatusRow'
+import { NoticeRow } from '@/chat/parts/NoticeRow'
 import { TerminalNote } from '@/chat/messages/TerminalNote'
 import { ErrorCard } from '@/chat/messages/ErrorCard'
 import { humanizeError } from '@/chat/utils/errorMessage'
@@ -1029,6 +1031,37 @@ export function GalleryPage() {
                 trigger: 'auto',
                 preTokens: 120000,
                 postTokens: 40000,
+              }}
+            />
+            <StatusRow part={{ id: 's', ts: 0, type: 'status', state: 'compacting' }} />
+            <NoticeRow
+              part={{
+                id: 'n1',
+                ts: 0,
+                type: 'notice',
+                kind: 'permission-denied',
+                toolName: 'Read',
+                reason: 'blocked by a deny rule',
+              }}
+            />
+            <NoticeRow
+              part={{
+                id: 'n2',
+                ts: 0,
+                type: 'notice',
+                kind: 'model-fallback',
+                fallbackModel: 'claude-opus-4-8',
+              }}
+            />
+            <NoticeRow
+              part={{
+                id: 'n3',
+                ts: 0,
+                type: 'notice',
+                kind: 'info',
+                level: 'warning',
+                text: 'Continuation was stopped by a hook',
+                blocking: true,
               }}
             />
           </div>

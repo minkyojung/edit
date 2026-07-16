@@ -237,6 +237,27 @@ export interface ChatEvent {
     attempt?: number
     max_retries?: number
     retry_delay_ms?: number
+    // system/status — a live transport status. `status: 'compacting'` means the
+    // SDK is summarizing older turns to fit the window (an otherwise-silent
+    // multi-second pause); 'requesting'/null are not surfaced.
+    status?: 'compacting' | 'requesting' | null
+    // system/informational — an SDK notice meant for the user. `level` drives
+    // prominence ('info' is transcript-only and not surfaced); when
+    // `prevent_continuation` is true the turn stopped after this message.
+    content?: string
+    level?: 'info' | 'notice' | 'suggestion' | 'warning'
+    prevent_continuation?: boolean
+    // system/permission_denied — a tool call was auto-denied (deny rule /
+    // classifier / mode) without an interactive prompt. `decision_reason` is a
+    // human explanation when available.
+    tool_name?: string
+    decision_reason?: string
+    decision_reason_type?: string
+    // system/model_refusal_fallback — the SDK re-served a refused request on a
+    // fallback model. `fallback_model` is the model it switched to.
+    original_model?: string
+    fallback_model?: string
+    direction?: 'retry' | 'revert' | 'sticky'
     // assistant / user — message.content is an array of content blocks
     message?: {
       content?: Array<{

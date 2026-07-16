@@ -9,6 +9,8 @@ import { TodoActivity } from '@/chat/parts/TodoActivity'
 import { TaskActivity } from '@/chat/parts/TaskActivity'
 import { CompactDivider } from '@/chat/parts/CompactDivider'
 import { RetryRow } from '@/chat/parts/RetryRow'
+import { StatusRow } from '@/chat/parts/StatusRow'
+import { NoticeRow } from '@/chat/parts/NoticeRow'
 import { isProposeEditTool } from '@/chat/parts/proposeChangeTool'
 import { InlineSuggestion } from '@/chat/suggestions/InlineSuggestion'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -186,6 +188,19 @@ export function PartList({
         // while streaming, collapses into the process summary once settled.
         flushReasoning()
         processRows.push(<RetryRow key={part.id} part={part} />)
+        break
+      case 'status':
+        // Transient live status (compacting) — folds into the process summary
+        // once the turn moves on, same as the retry row.
+        flushReasoning()
+        processRows.push(<StatusRow key={part.id} part={part} />)
+        break
+      case 'notice':
+        // Consequential notice (blocked tool / model fallback / SDK warning) —
+        // stays in the body so it remains visible after the turn settles, not
+        // hidden behind the collapsed process summary.
+        flushReasoning()
+        bodyNodes.push(<NoticeRow key={part.id} part={part} />)
         break
       case 'step-start':
         break

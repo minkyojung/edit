@@ -312,6 +312,8 @@ export type MessagePart =
   | StepStartPart
   | CompactPart
   | RetryPart
+  | StatusPart
+  | NoticePart
 
 export interface TextPart {
   id: string
@@ -412,6 +414,45 @@ export interface RetryPart {
   maxRetries?: number
   /** The structured error label that triggered the retry (e.g. 'server_error'). */
   error?: string
+}
+
+/** A live transport status (`system/status`) the model is in the middle of —
+ * currently only `compacting` (summarizing older turns to fit the window),
+ * which otherwise reads as a dead pause. Transient and coalescing (constant id
+ * per turn), like {@link RetryPart}: visible while it's happening, folded into
+ * the process summary once the turn moves on. The end-of-compaction divider is
+ * a separate {@link CompactPart}; this fills the silent gap *during* it. */
+export interface StatusPart {
+  id: string
+  ts: number
+  type: 'status'
+  state: 'compacting'
+}
+
+/** A consequential one-line notice the SDK surfaces mid-turn that isn't chat
+ * content — a tool blocked by a permission rule, an automatic model fallback
+ * after a refusal, or an SDK `informational` message. Persistent in the
+ * timeline (unlike the transient {@link StatusPart}) so the user can see *why*
+ * the turn behaved the way it did. Raw fields only; the renderer composes the
+ * (localized) label, mirroring how {@link RetryPart} is rendered. */
+export interface NoticePart {
+  id: string
+  ts: number
+  type: 'notice'
+  kind: 'permission-denied' | 'model-fallback' | 'info'
+  /** permission-denied: the blocked tool, and the human reason when the SDK
+   * provided one (`decision_reason`). */
+  toolName?: string
+  reason?: string
+  /** model-fallback: the model the SDK switched to after a refusal. */
+  fallbackModel?: string
+  /** info: the SDK's `content`, and its render level (drives prominence — the
+   * transcript-only `info` level is filtered out before a part is created). */
+  text?: string
+  level?: 'notice' | 'suggestion' | 'warning'
+  /** info: the SDK's `prevent_continuation` — the turn stopped after this
+   * message (e.g. a Stop hook denied continuation). */
+  blocking?: boolean
 }
 
 /** A piece of context committed onto a user turn — snapshotted from the

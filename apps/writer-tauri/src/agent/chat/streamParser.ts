@@ -48,6 +48,48 @@ export function extractErrorText(content: unknown): string | undefined {
 const PENDING_ID_RE =
   /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 
+/** SDK event kinds we deliberately drop without surfacing — pure transport /
+ * lifecycle metadata, not chat content. `result` is consumed separately via the
+ * `claude:done` notification; `system/init` serves only as a session-exists
+ * latch (index.ts); `auth_status` is handled by the host's token flow. Anything
+ * NOT in this set that falls through to the parser's floor is treated as an
+ * unhandled signal (see {@link noteUnhandledEvent}) — so the difference between
+ * "intentionally ignored" and "silently missed" is explicit, not accidental. */
+const IGNORED_EVENT_KEYS = new Set<string>([
+  'result',
+  'system/init',
+  'auth_status',
+])
+
+/** Unhandled-event kinds already reported, so prod logs each kind at most once
+ * (per app session) instead of on every occurrence. Module-scoped: the dedup is
+ * global, not per-parser-instance — the same kind from any run is noted once. */
+const seenUnhandledKeys = new Set<string>()
+
+/** Stable identity of an SDK event for ignore/dedup purposes: `system` messages
+ * are keyed by their subtype (that's where their meaning lives — `system/init`
+ * vs `system/status`), everything else by top-level type. */
+function eventKey(ev: ChatEvent['event']): string {
+  if (ev?.type === 'system') return `system/${ev.subtype ?? '?'}`
+  return ev?.type ?? '?'
+}
+
+/** Default channel for any event that reached the parser without a handler.
+ * Deliberately-ignored plumbing (see {@link IGNORED_EVENT_KEYS}) passes
+ * silently; a genuinely unrecognized signal is surfaced — loudly in dev (so we
+ * notice new SDK events and can decide whether to render them), quietly counted
+ * in prod. Never renders anything to the user; UX for a signal is only added by
+ * giving it a real handler above. */
+function noteUnhandledEvent(ev: ChatEvent['event']): void {
+  const key = eventKey(ev)
+  if (IGNORED_EVENT_KEYS.has(key)) return
+  if (seenUnhandledKeys.has(key)) return
+  seenUnhandledKeys.add(key)
+  if (import.meta.env.DEV) {
+    console.warn(`[streamParser] unhandled SDK event: ${key}`, ev)
+  }
+}
+
 export interface StreamParser {
   /** Feed one `claude:event` payload (already runId-filtered by the
    * caller). The parser updates its internal timeline and emits any
@@ -275,6 +317,65 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
         return
       }
 
+      // 1e) Live transport status. `compacting` is the only user-facing one:
+      // the SDK is summarizing older turns to fit the window — a multi-second
+      // pause that otherwise shows nothing. Coalescing row (constant id), folds
+      // into the process summary once the turn moves on. `requesting`/null are
+      // intentionally NOT surfaced (pure "waiting on the API" noise).
+      if (ev?.type === 'system' && ev.subtype === 'status') {
+        if (ev.status === 'compacting') {
+          upsertPart({ id: 'status', ts: Date.now(), type: 'status', state: 'compacting' })
+        }
+        return
+      }
+
+      // 1f) A tool call was auto-denied (deny rule / classifier / mode) with no
+      // interactive prompt — e.g. our secret-file / egress deny rules blocking
+      // the model. Without this the model just quietly works around it and the
+      // user can't tell why. Persistent notice row.
+      if (ev?.type === 'system' && ev.subtype === 'permission_denied') {
+        upsertPart({
+          id: crypto.randomUUID(),
+          ts: Date.now(),
+          type: 'notice',
+          kind: 'permission-denied',
+          toolName: typeof ev.tool_name === 'string' ? ev.tool_name : undefined,
+          reason: typeof ev.decision_reason === 'string' ? ev.decision_reason : undefined,
+        })
+        return
+      }
+
+      // 1g) The SDK re-served a refused request on a fallback model. The reply's
+      // tone/quality can shift; surface which model answered.
+      if (ev?.type === 'system' && ev.subtype === 'model_refusal_fallback') {
+        upsertPart({
+          id: crypto.randomUUID(),
+          ts: Date.now(),
+          type: 'notice',
+          kind: 'model-fallback',
+          fallbackModel: typeof ev.fallback_model === 'string' ? ev.fallback_model : undefined,
+        })
+        return
+      }
+
+      // 1h) An SDK `informational` message meant for the user. `level: 'info'` is
+      // transcript-only (not surfaced); notice/suggestion/warning render.
+      if (ev?.type === 'system' && ev.subtype === 'informational') {
+        const level = ev.level
+        if (level === 'notice' || level === 'suggestion' || level === 'warning') {
+          upsertPart({
+            id: crypto.randomUUID(),
+            ts: Date.now(),
+            type: 'notice',
+            kind: 'info',
+            text: typeof ev.content === 'string' ? ev.content : undefined,
+            level,
+            blocking: ev.prevent_continuation === true,
+          })
+        }
+        return
+      }
+
       // 2) Assistant message.
       if (ev?.type === 'assistant') {
         const parentId = ev.parent_tool_use_id ?? undefined
@@ -365,11 +466,17 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
         return
       }
 
-      // 5) Everything else (system, result, …) — SDK transport
-      // metadata, not chat content. The Vercel `parts` model only
-      // carries text/reasoning/tool/source/file/step-*, so we
-      // mirror that and drop anything outside the whitelist on the
-      // floor.
+      // 5) Default channel. Anything that reached here had no handler above.
+      // Two cases:
+      //   (a) Known transport / lifecycle plumbing we deliberately never
+      //       surface (see IGNORED_EVENT_KEYS) — dropped silently. That set is
+      //       the explicit record of "handled by choosing NOT to show it".
+      //   (b) A signal we don't (yet) handle. Surfaced by noteUnhandledEvent —
+      //       loudly in dev so a new/unrecognized SDK event can't slip past us,
+      //       quietly counted in prod (no user-facing noise). This is the
+      //       safety net that stops us silently dropping SDK capabilities as
+      //       the SDK evolves.
+      noteUnhandledEvent(ev)
     },
 
     rateLimitInfo() {
