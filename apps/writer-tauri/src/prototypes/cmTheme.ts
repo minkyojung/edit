@@ -5,7 +5,7 @@
 // Everything is scoped by EditorView.theme, so it can't leak.
 
 import { EditorView } from '@codemirror/view'
-import { LIST_INDENT } from './v2/livePreview'
+import { LIST_INDENT, LIST_MARKER_END_PAD } from './v2/livePreview'
 
 export const cmPrototypeTheme = EditorView.theme({
   '&': {
@@ -248,15 +248,20 @@ export const cmPrototypeTheme = EditorView.theme({
     content: '"•"',
     visibility: 'visible',
     position: 'absolute',
-    right: '0.32em',
+    // Shared marker→body gap (see LIST_MARKER_END_PAD) so bullet/number/task align.
+    right: `${LIST_MARKER_END_PAD}em`,
     top: '50%',
     transform: 'translateY(-50%)',
     color: 'var(--muted-foreground)',
   },
   // Ordered number (v2 step 3) — the digits ARE the glyph, so just tint them
-  // (right-aligned in the column, next to the body).
+  // (right-aligned in the column). `padding-right` gives them the SAME marker→body
+  // gap as the bullet/task `::after` insets — put on `.cm-list-num` (not the shared
+  // `.cm-list-marker`), or the `::after` glyphs (whose `right` is measured from the
+  // column's padding edge) would shift out of sync with the number.
   '.cm-list-num': {
     color: 'var(--muted-foreground)',
+    paddingRight: `${LIST_MARKER_END_PAD}em`,
   },
   // Completed task body — struck through and muted (v2 step 5c).
   '.cm-task-done': {
@@ -274,7 +279,8 @@ export const cmPrototypeTheme = EditorView.theme({
     content: '""',
     visibility: 'visible',
     position: 'absolute',
-    right: '0.15em',
+    // Shared marker→body gap (see LIST_MARKER_END_PAD) so bullet/number/task align.
+    right: `${LIST_MARKER_END_PAD}em`,
     top: '50%',
     transform: 'translateY(-50%)',
     boxSizing: 'border-box',

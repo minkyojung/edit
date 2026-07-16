@@ -37,7 +37,7 @@ function listLineCount(doc: string): number {
   return decos(doc).filter((r) => (r.value.spec as { class?: string }).class === 'cm-list-line').length
 }
 
-describe('list markers — single source (post-fallback-removal)', () => {
+describe('list markers — tree path + immediate regex fallback', () => {
   it('bullet `- item` → cm-list-bullet', () => {
     expect(markerClassAt('- item', 0, 1)).toContain('cm-list-bullet')
   })
@@ -78,5 +78,32 @@ describe('list markers — single source (post-fallback-removal)', () => {
     // Top-level: one column (1.8em). Nested (under a parent item): two columns (3.6em).
     expect(style('- top')).toContain('padding-left:1.8em')
     expect(style('- parent\n  - child')).toBeTruthy() // parses as a nested list
+  })
+})
+
+// An empty marker placed below a DIFFERENT-type list is parsed by CommonMark as lazy
+// continuation of the item above, so Lezer produces NO ListMark for it — only the
+// regex fallback can render it immediately. The fallback's horizontal-rule guard used
+// to skip a lone `- ` / `* ` (a single rule char reads like an HR-in-progress), so an
+// empty bullet under a numbered list showed no marker until content was typed. A real
+// HR needs 3+ rule chars, so the guard now requires that. (Unlike the "immediacy"
+// regressions, THIS is headless-testable: the tree genuinely lacks the node even fully
+// parsed, so the fallback's decision is what's under test.)
+describe('empty bullet below a different-type list (HR-guard fix)', () => {
+  const bulletAt = (doc: string, from: number, to: number) =>
+    decos(doc).some(
+      (r) => r.from === from && r.to === to && (r.value.spec as { class?: string }).class?.includes('cm-list-bullet'),
+    )
+  const anyBullet = (doc: string) =>
+    decos(doc).some((r) => (r.value.spec as { class?: string }).class?.includes('cm-list-bullet'))
+
+  it('renders `- ` under a numbered list (the reported bug)', () => {
+    expect(bulletAt('1. a\n- ', 5, 6)).toBe(true)
+  })
+  it('does NOT render `---` (horizontal rule) as a bullet', () => {
+    expect(anyBullet('--- ')).toBe(false)
+  })
+  it('does NOT render `- - -` (spaced rule) as a bullet', () => {
+    expect(anyBullet('- - -')).toBe(false)
   })
 })

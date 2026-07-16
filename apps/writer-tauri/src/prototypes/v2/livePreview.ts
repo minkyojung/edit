@@ -35,6 +35,13 @@ export const wikilinkKnown = Facet.define<(title: string) => boolean, (title: st
 // can't drift).
 export const LIST_INDENT = 1.8
 
+// Gap (em) between a list marker's glyph and the body text — the SINGLE shared
+// value for bullet / number / task, so they line up identically (like Obsidian's
+// `--list-bullet-end-padding`). Each marker positions its glyph `PAD` in from the
+// column's right edge; before this the three were hand-tuned to different insets
+// (0.32 / 0.15 / 0), which read as three different gaps. cmTheme imports this.
+export const LIST_MARKER_END_PAD = 0.35
+
 /** lezer parses `[[Title]]` as a `Link` ([Title]) wrapped in an extra `[`…`]`.
  * Detect that so the grammar Link/LinkMark handling can bail and leave wikilinks
  * entirely to the regex overlay (otherwise both fire → double styling, overlapping
@@ -355,7 +362,14 @@ function buildDecos(
         if (listLinesDone.has(line.from)) continue // Lezer already styled this line
         const lm = /^(\s*)([-*+]|\d+[.)])\s/.exec(line.text)
         if (!lm) continue
-        if (/^[-*_ ]+$/.test(line.text.trim())) continue // `---` / `* * *` = rule, not list
+        // Horizontal rule vs empty bullet: a real HR is 3+ of `-`/`*`/`_` (CommonMark);
+        // a lone `- ` / `* ` is an EMPTY BULLET, not a rule. The old `/^[-*_ ]+$/`
+        // matched a single `-` too, so it wrongly skipped empty bullets — which the
+        // Lezer tree ALSO can't render below a different-type list (it's parsed as lazy
+        // continuation), so the marker never appeared until content was typed. Require
+        // 3+ rule chars so `---`/`* * *` still skip but `- `/`* ` render as bullets.
+        const trimmed = line.text.trim()
+        if (/^[-*_ ]+$/.test(trimmed) && (trimmed.match(/[-*_]/g)?.length ?? 0) >= 3) continue
         if (inCodeContext(state, line.from)) continue // `- ` inside a code fence is literal
         const indent = lm[1].length
         const markerFrom = line.from + indent
