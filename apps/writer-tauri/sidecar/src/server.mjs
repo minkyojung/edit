@@ -269,7 +269,7 @@ function extractPendingId(toolResponse) {
 // new_string"). The model has prior experience with those names — the
 // `propose_` prefix is the only visible difference, and the matching
 // input shape keeps the tool-call ergonomics unchanged.
-function buildProposeEditTool(runId, emit, vaultPath, registerAck) {
+function buildProposeEditTool(getRunId, emit, vaultPath, registerAck) {
   return tool(
     'propose_edit',
     'PREFERRED tool for changing an existing file. Propose a surgical edit: provide the absolute file_path, the exact old_string to replace (copy it VERBATIM from the file — Read it first if unsure), and the new_string. old_string MUST identify exactly ONE place in the file — if the text appears more than once, include enough surrounding lines to make it unique, otherwise the edit is rejected as ambiguous (the host never guesses which occurrence you meant). Works exactly like the built-in Edit tool. The host locates old_string and applies the change in place, then queues it for user review. Returns immediately — do not wait for the user. `reason`: a short one-line note recorded in the VERSION HISTORY (the commit log) for this edit — say what changed and why in plain terms. It is NOT shown in your chat reply; it is the audit trail so the user can later see why a change was made. Keep it specific ("Fixed the typo in the intro", "Added the 2026 pricing row"), not generic.',
@@ -289,7 +289,7 @@ function buildProposeEditTool(runId, emit, vaultPath, registerAck) {
       const pendingId = globalThis.crypto.randomUUID()
       emit(
         notification('chat/edit-pending', {
-          runId,
+          runId: getRunId(),
           pendingId,
           toolName: 'Edit',
           input,
@@ -308,7 +308,7 @@ function buildProposeEditTool(runId, emit, vaultPath, registerAck) {
   )
 }
 
-function buildProposeWriteTool(runId, emit, registerAck) {
+function buildProposeWriteTool(getRunId, emit, registerAck) {
   return tool(
     'propose_write',
     'Create a BRAND-NEW file, or replace an existing file\'s ENTIRE content when the user explicitly asks for a full rewrite. Send `content` = the complete desired file content. For any partial change to an existing file — a single line, a value, appending a bullet — do NOT use this; use propose_edit instead so the change applies surgically in place. Returns immediately — do not wait for the user. `reason`: a short one-line note recorded in the VERSION HISTORY (the commit log) for this write — say what the file is / why you created or rewrote it, in plain terms. It is NOT shown in your chat reply; it is the audit trail. Keep it specific, not generic.',
@@ -321,7 +321,7 @@ function buildProposeWriteTool(runId, emit, registerAck) {
       const pendingId = globalThis.crypto.randomUUID()
       emit(
         notification('chat/edit-pending', {
-          runId,
+          runId: getRunId(),
           pendingId,
           toolName: 'Write',
           input,
@@ -346,7 +346,7 @@ function buildProposeWriteTool(runId, emit, registerAck) {
 // discovered + loaded on the next session via the plugins path. Decoupled
 // from the doc-edit pipeline because a skill is agent infrastructure, not a
 // wiki document.
-function buildProposeSkillTool(runId, emit, existingSkills = []) {
+function buildProposeSkillTool(getRunId, emit, existingSkills = []) {
   // Show the model the current skill library so it can decide UPDATE vs NEW
   // (the canonical extract→retrieve→decide pattern: the existing skills ARE
   // the retrieved candidates). NOOP is handled by instruction — "don't call
@@ -376,7 +376,7 @@ function buildProposeSkillTool(runId, emit, existingSkills = []) {
       const pendingId = globalThis.crypto.randomUUID()
       emit(
         notification('chat/skill-pending', {
-          runId,
+          runId: getRunId(),
           pendingId,
           name: input.name,
           description: input.description,
@@ -398,7 +398,7 @@ function buildProposeSkillTool(runId, emit, existingSkills = []) {
   )
 }
 
-function buildProposeMultiEditTool(runId, emit, vaultPath, registerAck) {
+function buildProposeMultiEditTool(getRunId, emit, vaultPath, registerAck) {
   return tool(
     'propose_multi_edit',
     'Propose multiple edits to a single file in one transaction. The host queues this proposal for user review and applies it on approval. Use the same way as the built-in MultiEdit tool: provide the file_path and an array of edits, each with old_string and new_string. Each old_string MUST identify exactly ONE place in the file — when the same text appears more than once (e.g. two identical lines you want changed differently), include enough surrounding lines in each old_string to make it unique, otherwise that edit is rejected as ambiguous (the host never guesses which occurrence you meant). Returns immediately — do not wait for the user.',
@@ -422,7 +422,7 @@ function buildProposeMultiEditTool(runId, emit, vaultPath, registerAck) {
       const pendingId = globalThis.crypto.randomUUID()
       emit(
         notification('chat/edit-pending', {
-          runId,
+          runId: getRunId(),
           pendingId,
           toolName: 'MultiEdit',
           input,
@@ -447,7 +447,7 @@ function buildProposeMultiEditTool(runId, emit, vaultPath, registerAck) {
 // loses no content, so gating it behind an approval card only adds friction.
 // The host resolves the note by path and relocates it (docsStore.moveDocToFolder),
 // which rewrites its relPath and lets the flush machinery move the file on disk.
-function buildMoveNoteTool(runId, emit) {
+function buildMoveNoteTool(getRunId, emit) {
   return tool(
     'move_note',
     "Move a note OUT of the capture/inbox folder into the folder that best fits it — do this AFTER you've filed the note's durable knowledge into the wiki, so the capture folder stays a staging area and not a graveyard. `from_path` is the note's current vault-relative path (e.g. `inbox/some-note.md`); `to_folder` is the destination folder, vault-relative, no leading/trailing slash (e.g. `people`, `projects/acme`). The CLAUDE.md schema governs which folder fits. Applied IMMEDIATELY (not queued for review) and reversible, so only move when you're confident where it belongs; if unsure, leave it in place. Returns immediately — do not wait.",
@@ -458,7 +458,7 @@ function buildMoveNoteTool(runId, emit) {
     async (input) => {
       emit(
         notification('chat/move-note', {
-          runId,
+          runId: getRunId(),
           fromPath: input.from_path,
           toFolder: input.to_folder,
         }),
@@ -515,7 +515,7 @@ const vizNodeSchema = z.lazy(() =>
 // editor work — find the block by id, replace its spec — happens in the
 // frontend) and acks so the model continues in the same turn. Unlike propose_*
 // it applies immediately (no Keep/Reject); the user undoes with Cmd+Z.
-function buildEditVisualizationTool(runId, emit) {
+function buildEditVisualizationTool(getRunId, emit) {
   return tool(
     'edit_visualization',
     'Edit a data visualization that is ALREADY in the document, addressed by its chartId. Pass the FULL updated tree as `root`. A node is a layout — {type:"stack"|"columns", gap?, children:[…]} — or a leaf: {type:"donut"|"bar", title?, data:[{label,value}]} / {type:"column", title?, xLabels:[…], series:[{label,values:[…]}]} / {type:"kpi", title?, items:[{label,value,sub?}]} / {type:"stat", label, value, sub?} / {type:"text", value, variant?} / {type:"table", columns:[…], rows:[[…]]}. DATA + STRUCTURE ONLY — never colors, sizes, or fonts; the app owns the look. Preserve any data you were not asked to change. The host applies it in place. Returns immediately — do not wait.',
@@ -526,7 +526,7 @@ function buildEditVisualizationTool(runId, emit) {
     async (input) => {
       emit(
         notification('chat/viz-apply', {
-          runId,
+          runId: getRunId(),
           chartId: input.chartId,
           root: input.root,
         }),
@@ -615,8 +615,22 @@ export class Server {
     this.emit = emit
     this.initialized = false
     this.token = null
-    // runId -> AbortController
+    // runId -> AbortController-bearing run record. In `chat` mode this backs
+    // the legacy turn-scoped path (one query() per turn); it is ALSO the sole
+    // registry for `title` mode (single-flight, short-lived — never uses the
+    // persistent path). See #handleChat's branch.
     this.activeChats = new Map()
+    // threadId -> ThreadRec. The persistent-query path (chat mode, when the
+    // host opts in via params.persistentQuery): one long-lived streaming-input
+    // query() per conversation thread, driven by a message queue, so a `result`
+    // is a TURN boundary rather than a session teardown and background
+    // subagent tasks survive across turns. Empty until the first persistent
+    // chat lands; the legacy path never touches it.
+    this.activeThreads = new Map()
+    // runId -> threadId, so the runId-keyed RPCs (chat/cancel) can find the
+    // owning thread on the persistent path. Written when a turn is dispatched,
+    // deleted when it settles.
+    this.runToThread = new Map()
     // decisionId -> { resolve, reject } for in-flight canUseTool gates
     // (plan approval / clarifying questions) awaiting a host decision.
     this.pendingDecisions = new Map()
@@ -818,9 +832,35 @@ export class Server {
       return
     }
 
+    // Persistent-query path: opt-in per chat (the host forwards a Settings
+    // toggle, exactly like sandboxEnabled). Chat mode only — `title` stays
+    // single-flight and short-lived, so it never wants a long-lived query.
+    // When on, one streaming-input query() is kept alive per conversation
+    // thread and `result` is a turn boundary, so background subagent tasks
+    // survive across turns. When off (default), the legacy per-turn path runs
+    // unchanged, so flipping the flag is the only behaviour switch.
+    if (this.#usePersistentQuery(params)) {
+      return this.#handleChatPersistent(id, params)
+    }
+
     // Token env is injected per-attempt inside #runChat so the AUTH-retry
     // path picks up rotated tokens automatically.
+    this.#startLegacyRun(runId, params)
 
+    // Acknowledge acceptance before we start streaming.
+    this.emit(response(id, { runId, accepted: true }))
+  }
+
+  // Whether this chat should use the persistent per-thread query path.
+  #usePersistentQuery(params) {
+    return this.mode === 'chat' && params?.persistentQuery === true
+  }
+
+  // Legacy per-turn run: one AbortController + one query() that tears down at
+  // the first `result`. Shared by the non-persistent path and, until the
+  // thread machinery lands (Stage 2), delegated to by the persistent stub so
+  // enabling the flag is behaviour-identical to today.
+  #startLegacyRun(runId, params) {
     const controller = new AbortController()
     // Run record: the AbortController plus, filled in once #runChat starts,
     // the live query handle (for graceful interrupt()), a predicate for
@@ -833,14 +873,68 @@ export class Server {
       cancelRequested: false,
     })
 
-    // Acknowledge acceptance before we start streaming.
-    this.emit(response(id, { runId, accepted: true }))
-
     this.#runChat(runId, params, controller).catch((err) => {
       logErrorContext('runChat-uncaught', runId, err, { mode: this.mode })
       this.#emitChatError(runId, 'INTERNAL', err?.message ?? String(err), true)
       this.activeChats.delete(runId)
     })
+  }
+
+  // Persistent per-thread chat entry. Stage 1: delegates to the legacy path so
+  // the opt-in flag is safe to flip (behaviour-identical to today) while the
+  // thread registry / persistent generator are built out in Stage 2. The
+  // acceptance ack is emitted here so the wire contract matches the legacy
+  // branch exactly.
+  #handleChatPersistent(id, params) {
+    const runId = params.runId
+    this.#startLegacyRun(runId, params)
+    this.emit(response(id, { runId, accepted: true }))
+  }
+
+  // Whether a thread still has background subagent work in flight — the signal
+  // that keeps the reaper from closing an otherwise-idle thread. Authoritative
+  // source is the Stop hook's `background_tasks[]` snapshot; the task-id set and
+  // the `background_requested` latch cover the window before/after the hook
+  // fires. (Deliberately NOT `query.backgroundTasks()`, which is an ACTION that
+  // backgrounds foreground tasks, not a live inventory.)
+  #backgroundInFlight(rec) {
+    return (
+      rec.backgroundTaskIds.size > 0 ||
+      rec.stopHookBackground.length > 0 ||
+      rec.backgroundRequested
+    )
+  }
+
+  // Build the `writer-relay` MCP server from the enabled relay-tool names, or
+  // null when none are enabled. `getRunId` is a getter (not a value) so each
+  // relay call stamps the runId that's live at emit time — constant on the
+  // legacy single-turn path, `() => rec.currentRunId` on the persistent path
+  // where one server instance serves many turns.
+  #buildRelayServer(enabledRelay, getRunId, vaultPath, existingSkills) {
+    const relayDefs = []
+    for (const name of enabledRelay) {
+      if (name === 'propose_edit') {
+        relayDefs.push(
+          buildProposeEditTool(getRunId, this.emit, vaultPath, (id) => this.#registerAckSlot(id)),
+        )
+      } else if (name === 'propose_write') {
+        relayDefs.push(buildProposeWriteTool(getRunId, this.emit, (id) => this.#registerAckSlot(id)))
+      } else if (name === 'propose_skill') {
+        relayDefs.push(buildProposeSkillTool(getRunId, this.emit, existingSkills))
+      } else if (name === 'propose_multi_edit') {
+        relayDefs.push(
+          buildProposeMultiEditTool(getRunId, this.emit, vaultPath, (id) =>
+            this.#registerAckSlot(id),
+          ),
+        )
+      } else if (name === 'move_note') {
+        relayDefs.push(buildMoveNoteTool(getRunId, this.emit))
+      } else if (name === 'edit_visualization') {
+        relayDefs.push(buildEditVisualizationTool(getRunId, this.emit))
+      }
+    }
+    if (relayDefs.length === 0) return null
+    return createSdkMcpServer({ name: 'writer-relay', tools: relayDefs })
   }
 
   async #runChat(runId, params, controller) {
@@ -1209,30 +1303,16 @@ export class Server {
     const enabledRelay = Array.isArray(relayTools)
       ? relayTools
       : (this.mode === 'chat' ? [] : [])
-    const relayDefs = []
-    for (const name of enabledRelay) {
-      if (name === 'propose_edit') {
-        relayDefs.push(
-          buildProposeEditTool(runId, this.emit, vaultPath, (id) => this.#registerAckSlot(id)),
-        )
-      } else if (name === 'propose_write') {
-        relayDefs.push(buildProposeWriteTool(runId, this.emit, (id) => this.#registerAckSlot(id)))
-      } else if (name === 'propose_skill') {
-        relayDefs.push(buildProposeSkillTool(runId, this.emit, existingSkills))
-      } else if (name === 'propose_multi_edit') {
-        relayDefs.push(
-          buildProposeMultiEditTool(runId, this.emit, vaultPath, (id) => this.#registerAckSlot(id)),
-        )
-      } else if (name === 'move_note') {
-        relayDefs.push(buildMoveNoteTool(runId, this.emit))
-      } else if (name === 'edit_visualization') {
-        relayDefs.push(buildEditVisualizationTool(runId, this.emit))
-      }
-    }
-    if (relayDefs.length > 0) {
-      const server = createSdkMcpServer({ name: 'writer-relay', tools: relayDefs })
-      options.mcpServers = { 'writer-relay': server }
-    }
+    // Legacy path: runId is fixed for this single-turn run, so the getter is
+    // constant. (The persistent path passes `() => rec.currentRunId` so each
+    // turn's relay calls tag the runId that's live at emit time.)
+    const relayServer = this.#buildRelayServer(
+      enabledRelay,
+      () => runId,
+      vaultPath,
+      existingSkills,
+    )
+    if (relayServer) options.mcpServers = { 'writer-relay': relayServer }
 
     // propose_edit/write/multi_edit report success to the model the instant
     // they emit `chat/edit-pending` — before the host has actually mapped the
@@ -1739,6 +1819,18 @@ export class Server {
 // handler forces a hard abort. Short enough to feel instant, long enough for
 // the model to reach a safe boundary.
 const INTERRUPT_GRACE_MS = 1500
+
+// Persistent-query path (chat mode) resource bounds.
+// A live thread query holds a `claude` CLI subprocess open across turns. The
+// reaper gracefully closes a thread that's been idle this long WHEN no
+// background task is in flight; the next turn resumes it from disk (sessions
+// persist under ~/.claude/projects), so closing is lossless. 5 min clears the
+// prompt cache but keeps a subprocess from lingering for a walked-away user.
+const IDLE_TTL_MS = 300_000
+// Each live thread = one subprocess. Cap concurrent live threads; on overflow
+// the LRU idle, background-free thread is evicted (it resumes from disk on its
+// next turn). A thread that's mid-turn or has background work is never evicted.
+const MAX_LIVE_THREADS = 6
 
 // Codes the user can't fix by retrying the same request. Used to set the
 // `retryable` flag (host hides the Retry button for these).
