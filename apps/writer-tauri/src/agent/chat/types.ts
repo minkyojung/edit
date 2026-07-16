@@ -194,6 +194,12 @@ export interface ChatErrorRateLimit {
  */
 export interface ChatEvent {
   runId: string
+  /** Persistent-query path: the conversation/thread this event belongs to. */
+  threadId?: string
+  /** True when this event is part of an AUTONOMOUS background-completion turn —
+   * the model's "task finished" answer that arrives with no active user turn.
+   * The runId is a synthetic per-background-turn id, not any runChat's runId. */
+  background?: boolean
   event: {
     type?: string
     // system messages carry a subtype (e.g. 'compact_boundary', 'task_progress')
@@ -280,6 +286,15 @@ export interface ChatEvent {
 
 export interface DoneEvent {
   runId: string
+  /** Persistent-query path: the conversation/thread this turn belongs to. */
+  threadId?: string
+  /** True when this is the completion of an autonomous background turn (P2),
+   * not a user-initiated turn. The frontend renders it as a standalone
+   * assistant turn rather than resolving a pending runChat. */
+  background?: boolean
+  /** True when the turn ended because background work was requested — the turn
+   * is done but background subagents keep running. Cosmetic hint. */
+  backgroundRequested?: boolean
   stopReason: string | null
   /** Token usage for the final result of the turn. The sidecar
    * (server.mjs chat/done) already emits this from the SDK result
@@ -316,8 +331,34 @@ export interface DoneEvent {
   fastModeState?: 'off' | 'cooldown' | 'on' | null
 }
 
+/** Background subagent lifecycle, forwarded by the sidecar on the dedicated
+ * `claude:task` channel (threadId-tagged, routed independent of any turn's
+ * runId). Consumed by the app-level background-task listener, NOT the parser. */
+export interface TaskEvent {
+  threadId: string
+  runId?: string | null
+  kind: 'started' | 'progress' | 'updated' | 'notification' | 'changed'
+  taskId: string | null
+  description?: string
+  subagentType?: string
+  toolUses?: number
+  totalTokens?: number
+  lastTool?: string
+  summary?: string
+  /** notification only: 'completed' | 'failed' | 'stopped'. */
+  status?: string
+  /** notification only: filesystem path holding the task's full output. */
+  outputFile?: string
+  /** task_updated merge-patch (status/is_backgrounded/…). */
+  patch?: { status?: string; is_backgrounded?: boolean; error?: string }
+}
+
 export interface ErrorEvent {
   runId: string
+  /** Persistent-query path: the conversation/thread this error belongs to. */
+  threadId?: string
+  /** True when the error terminated an autonomous background turn (P2). */
+  background?: boolean
   code: string
   message: string
   /** Whether retrying the same request could succeed. Drives whether the

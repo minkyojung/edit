@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { IconLoader2, IconRobot } from '@tabler/icons-react'
 import type { ToolPart } from '@/chat/types'
 import { ActivityRow } from '@/chat/parts/ActivityRow'
+import { useBackgroundTasks, type BackgroundTask } from '@/stores/backgroundTasks'
 
 /** One subagent as a top-level Agent row — a Task delegation.
  *
@@ -25,23 +26,45 @@ export function TaskActivity({ part, steps }: { part: ToolPart; steps?: ReactNod
   // the user sees the bare role name.
   const agentType = input.subagent_type?.trim().replace(/^writer-agent-skills:/, '')
   const label = agentType || description
-  const running =
-    part.state === 'input-streaming' || part.state === 'input-available'
+
+  // Background-task store overlay (persistent-query path). task_ids are globally
+  // unique, so find by toolCallId across threads — no threadId plumbing needed.
+  // The store is the single writer of background status, so it WINS when present;
+  // `part.state`/`part.task` are the fallback for the legacy per-turn path. This
+  // is required, not just tidy: a backgrounded subagent never gets a tool_result,
+  // so `part.state` can't advance and would spin forever without the store.
+  const bg = useBackgroundTasks((s): BackgroundTask | undefined => {
+    const id = part.toolCallId
+    for (const thread of Object.values(s.byThread)) {
+      if (thread[id]) return thread[id]
+    }
+    return undefined
+  })
+
+  const running = bg
+    ? bg.status === 'running'
+    : part.state === 'input-streaming' || part.state === 'input-available'
 
   const task = part.task
-  const heartbeat = task
-    ? [
-        task.toolUses != null && `${task.toolUses} tool${task.toolUses === 1 ? '' : 's'}`,
-        task.totalTokens != null && `${formatK(task.totalTokens)} tokens`,
-        task.lastTool && `last: ${task.lastTool}`,
-      ]
-        .filter(Boolean)
-        .join(' · ')
-    : undefined
-  // Prefer the AI-generated summary ("Analyzing the outline") — it says what the
-  // subagent is DOING in plain terms. Fall back to the raw tool/token counter,
-  // then to the task description when the headline is the agent name.
-  const activity = task?.summary?.trim() || heartbeat || (agentType ? description : undefined)
+  const heartbeat = (() => {
+    const toolUses = bg?.toolUses ?? task?.toolUses
+    const totalTokens = bg?.totalTokens ?? task?.totalTokens
+    const lastTool = bg?.lastTool ?? task?.lastTool
+    const bits = [
+      toolUses != null && `${toolUses} tool${toolUses === 1 ? '' : 's'}`,
+      totalTokens != null && `${formatK(totalTokens)} tokens`,
+      lastTool && `last: ${lastTool}`,
+    ].filter(Boolean)
+    return bits.length ? bits.join(' · ') : undefined
+  })()
+  // Completed background task → show its result summary; else the AI progress
+  // summary ("Analyzing the outline"); else the raw heartbeat; else description.
+  const activity =
+    bg?.resultSummary?.trim() ||
+    bg?.summary?.trim() ||
+    task?.summary?.trim() ||
+    heartbeat ||
+    (agentType ? description : undefined)
 
   return (
     <ActivityRow

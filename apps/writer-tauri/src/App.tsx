@@ -20,6 +20,7 @@ import { CommandPalette } from '@/layout/CommandPalette'
 import { SaveArticleDialog } from '@/components/SaveArticleDialog'
 import { SettingsDialog } from '@/settings/SettingsDialog'
 import { ConfirmDialogHost } from '@/components/ConfirmDialogHost'
+import { mountBackgroundTaskListener } from '@/agent/backgroundTaskListener'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore, getActiveVaultPath } from '@/state/settingsStore'
@@ -175,6 +176,23 @@ function RouteSyncBridge() {
     setAppNavigate(navigate)
     return () => setAppNavigate(null)
   }, [navigate])
+
+  // App-level background-task listener (persistent-query path): records
+  // background subagent lifecycle and renders autonomous completion turns.
+  // Mounted once for the whole app so work in non-active threads is still
+  // tracked. Dormant unless the sidecar emits on the persistent channels.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null
+    let cancelled = false
+    void mountBackgroundTaskListener().then((fn) => {
+      if (cancelled) fn()
+      else unlisten = fn
+    })
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [])
 
   useEffect(() => {
     if (bootstrapping) return
