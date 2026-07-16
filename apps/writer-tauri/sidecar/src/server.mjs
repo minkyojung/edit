@@ -674,6 +674,10 @@ export class Server {
           return this.#handleChat(id, params)
         case 'chat/cancel':
           return this.#handleCancel(params)
+        case 'chat/close-thread':
+          return this.#handleCloseThread(params)
+        case 'chat/stop-task':
+          return this.#handleStopTask(params)
         case 'chat/decision':
           return this.#handleDecision(params)
         case 'chat/edit-ack':
@@ -952,9 +956,13 @@ export class Server {
 
         // Reset per-turn state before this turn generates.
         rec.currentRunId = item.runId
+        rec.currentItem = item
         rec.turnController = new AbortController()
         rec.turnActive = true
         rec.cancelRequested = false
+        // Guards against a turn emitting two terminals (e.g. a CANCELLED result
+        // via #settleTurn AND the interrupt's stream-abort via the loop catch).
+        rec.terminalEmitted = false
         rec.awaitingDecision = 0
         rec.planApproved = false
         rec.permissionMode = item.params.permissionMode ?? 'bypassPermissions'
@@ -1003,6 +1011,10 @@ export class Server {
       closeRequested: false,
       // current turn (reset each turn in #threadInput)
       currentRunId: null,
+      // the live turn's dispatch item — kept so an AUTH restart can replay it.
+      currentItem: null,
+      // one-shot guard so a second AUTH on the same turn gives up (not a loop).
+      authRetried: false,
       // synthetic runId for an autonomous background-completion turn (P2) — the
       // model's "task finished" answer that arrives with no active user turn.
       bgTurnRunId: null,
@@ -1320,21 +1332,44 @@ export class Server {
         mode: this.mode,
         threadId: rec.threadId,
       })
-      if (rec.turnActive && rec.currentRunId) {
+      if (rec.turnActive && rec.currentRunId && !rec.terminalEmitted) {
         const code = classifyError(err)
-        this.#emitChatError(
-          rec.currentRunId,
-          code,
-          err?.message ?? String(err),
-          !NON_RETRYABLE_CODES.has(code),
-          undefined,
-          rec.threadId,
-        )
-        // Release a parked turn so a caller awaiting settle isn't wedged.
-        rec.turnActive = false
-        const r = rec.turnSettleResolve
-        rec.turnSettleResolve = null
-        if (r) r()
+        // Mid-thread token expiry thrown at the stream level → recreate + replay
+        // (the finally's identity-guarded finalize won't clobber the new thread).
+        if (code === 'AUTH' && (await this.#restartThreadForAuth(rec, rec.currentRunId))) {
+          rec.turnActive = false
+          const r = rec.turnSettleResolve
+          rec.turnSettleResolve = null
+          if (r) r()
+        } else {
+          rec.terminalEmitted = true
+          // A user cancel interrupts via a stream abort ("aborted by user"); show
+          // it as CANCELLED, not a generic INTERNAL error.
+          if (rec.cancelRequested) {
+            this.#emitChatError(
+              rec.currentRunId,
+              'CANCELLED',
+              'cancelled by client',
+              false,
+              undefined,
+              rec.threadId,
+            )
+          } else {
+            this.#emitChatError(
+              rec.currentRunId,
+              code,
+              err?.message ?? String(err),
+              !NON_RETRYABLE_CODES.has(code),
+              undefined,
+              rec.threadId,
+            )
+          }
+          // Release a parked turn so a caller awaiting settle isn't wedged.
+          rec.turnActive = false
+          const r = rec.turnSettleResolve
+          rec.turnSettleResolve = null
+          if (r) r()
+        }
       }
     } finally {
       clearInterval(watchdog)
@@ -1361,6 +1396,20 @@ export class Server {
     rec.turnActive = false
     rec.lastTurnEndedAt = Date.now()
 
+    // The interrupt() path can land a clean `result` here AND abort the stream
+    // (loop catch). Whichever runs first emits the single terminal; the other
+    // skips. Settle still advances the generator/registries below.
+    if (rec.terminalEmitted) {
+      this.runToThread.delete(runId)
+      rec.currentRunId = null
+      this.#armReaper(rec)
+      const rr = rec.turnSettleResolve
+      rec.turnSettleResolve = null
+      if (rr) rr()
+      return
+    }
+    rec.terminalEmitted = true
+
     if (rec.cancelRequested) {
       this.#emitChatError(runId, 'CANCELLED', 'cancelled by client', false, undefined, rec.threadId)
     } else if (result.is_error || String(result.subtype ?? '').startsWith('error_')) {
@@ -1374,8 +1423,22 @@ export class Server {
         message = 'rate limited'
         retryable = true
       }
-      // NOTE(Stage 5): code === 'AUTH' → #restartThreadForAuth(rec) instead of
-      // surfacing, so a mid-thread token expiry recreates + replays the turn.
+      // Mid-thread token expiry: recreate the thread with a fresh token and
+      // replay this turn instead of surfacing AUTH. #restartThreadForAuth reads
+      // rec.currentItem, so capture the runId release below only when NOT
+      // restarting (the restart re-dispatches under the same runId).
+      if (code === 'AUTH') {
+        const restarting = await this.#restartThreadForAuth(rec, runId)
+        if (restarting) {
+          // The old thread was torn down; the replay runs on a fresh thread.
+          // Release this generator turn so the old loop unwinds cleanly.
+          rec.turnActive = false
+          const rr = rec.turnSettleResolve
+          rec.turnSettleResolve = null
+          if (rr) rr()
+          return
+        }
+      }
       this.#emitChatError(
         runId,
         code,
@@ -1600,10 +1663,16 @@ export class Server {
   }
 
   // Remove a thread from the registries once its consumer loop has exited.
+  // Guard the delete on identity: an AUTH restart recreates a NEW rec under the
+  // same threadId, and the OLD loop's finally must not clobber that replacement.
   #finalizeThreadTeardown(rec) {
     clearTimeout(rec.reaperTimer)
-    if (rec.currentRunId) this.runToThread.delete(rec.currentRunId)
-    this.activeThreads.delete(rec.threadId)
+    if (this.activeThreads.get(rec.threadId) === rec) {
+      this.activeThreads.delete(rec.threadId)
+      // Only drop the runId mapping when we still own the thread slot — during
+      // an AUTH restart the replacement thread owns it and needs the mapping.
+      if (rec.currentRunId) this.runToThread.delete(rec.currentRunId)
+    }
   }
 
   // Whether a thread still has background subagent work in flight — the signal
@@ -2478,6 +2547,16 @@ export class Server {
   #handleCancel(params) {
     const runId = params?.runId
     if (typeof runId !== 'string') return
+
+    // Persistent path: the runId maps to a thread. Cancel the TURN only — keep
+    // the thread query (and any in-flight background tasks) alive.
+    const threadId = this.runToThread.get(runId)
+    if (threadId) {
+      this.#cancelPersistentTurn(runId, threadId)
+      return
+    }
+
+    // Legacy path: cancel the single-turn run.
     const rec = this.activeChats.get(runId)
     if (!rec) return
     // Mark intent so a graceful interrupt that still lands a result settles as
@@ -2512,6 +2591,111 @@ export class Server {
     }
   }
 
+  // Cancel the CURRENT turn of a persistent thread without killing the thread.
+  // A graceful interrupt() lets the SDK settle the turn to a clean `result`,
+  // which #settleTurn maps to CANCELLED (rec.cancelRequested). Only a genuinely
+  // wedged stream (no result within the grace window) escalates to a hard thread
+  // teardown — accepting the loss of in-flight background work, since the turn
+  // is stuck anyway. The thread resumes from disk on its next chat.
+  #cancelPersistentTurn(runId, threadId) {
+    const rec = this.activeThreads.get(threadId)
+    // Stale cancel (turn already settled / different turn now live) → no-op.
+    if (!rec || rec.currentRunId !== runId || !rec.turnActive) return
+    rec.cancelRequested = true
+
+    // Parked on a user decision (canUseTool) → the model isn't generating.
+    // Abort the TURN controller (unparks #requestDecision), NOT the thread
+    // controller; then interrupt to stop any follow-on generation.
+    if (rec.awaitingDecision > 0) {
+      try {
+        rec.turnController?.abort()
+      } catch {
+        // best-effort
+      }
+    }
+    Promise.resolve()
+      .then(() => rec.query?.interrupt())
+      .catch((e) => logErrorContext('interrupt', runId, e, { mode: this.mode, threadId }))
+    setTimeout(() => {
+      // If the turn is still live after the grace window, interrupt didn't
+      // round-trip → treat the stream as wedged: settle CANCELLED and hard-close
+      // the thread (last resort). If #settleTurn already ran, currentRunId has
+      // moved on and this guard skips.
+      if (
+        this.activeThreads.get(threadId) === rec &&
+        rec.currentRunId === runId &&
+        rec.turnActive &&
+        !rec.terminalEmitted
+      ) {
+        rec.terminalEmitted = true
+        this.#emitChatError(runId, 'CANCELLED', 'cancelled by client', false, undefined, threadId)
+        this.#teardownThread(rec, 'cancel_wedged')
+      }
+    }, PERSIST_INTERRUPT_GRACE_MS)
+  }
+
+  // Real teardown of a persistent thread (archive / doc-close / delete). Distinct
+  // from per-turn cancel: ends the long-lived query. The session persists to
+  // disk, so a later chat for this threadId resumes cleanly.
+  #handleCloseThread(params) {
+    const threadId = params?.threadId
+    if (typeof threadId !== 'string') return
+    const rec = this.activeThreads.get(threadId)
+    if (rec) this.#teardownThread(rec, 'closed')
+  }
+
+  // Stop a specific in-flight background task (the user hit Stop on its row).
+  // The SDK emits a task_notification with status 'stopped', which #trackBackground
+  // forwards and clears from backgroundTaskIds.
+  #handleStopTask(params) {
+    const threadId = params?.threadId
+    const taskId = params?.taskId
+    if (typeof threadId !== 'string' || typeof taskId !== 'string') return
+    const rec = this.activeThreads.get(threadId)
+    if (rec?.query && typeof rec.query.stopTask === 'function') {
+      Promise.resolve()
+        .then(() => rec.query.stopTask(taskId))
+        .catch((e) => logErrorContext('stopTask', taskId, e, { mode: this.mode, threadId }))
+    }
+  }
+
+  // Mid-thread token expiry: the persistent query's env token was fixed at build
+  // time, so an AUTH failure can't be fixed by the legacy per-attempt retry.
+  // Recreate the thread (resume from the persisted session) with a fresh token
+  // and replay the failed turn. One-shot: a second AUTH gives up. Returns true if
+  // a restart was launched (caller should NOT also emit the error).
+  async #restartThreadForAuth(rec, runId) {
+    if (rec.authRetried) return false
+    rec.authRetried = true
+    const threadId = rec.threadId
+    const item = rec.currentItem
+    this.emit(notification('auth/refreshNeeded', { runId, threadId }))
+    try {
+      await this.#waitForTokenUpdate(5000)
+    } catch {
+      return false // no fresh token in time → let the caller surface AUTH
+    }
+    // Drop the dead subprocess, then recreate resuming the persisted session and
+    // replay the turn that 401'd.
+    this.#teardownThread(rec, 'auth_restart')
+    if (!item) return false
+    const params = { ...rec.optionsSeed, resume: threadId }
+    this.#ensureThread(threadId, params)
+      .then((newRec) => {
+        newRec.authRetried = true // don't loop on a second AUTH after replay
+        // Restore the runId→thread mapping (the old thread's teardown may have
+        // dropped it) so cancel still finds the replayed turn.
+        this.runToThread.set(item.runId, threadId)
+        this.#dispatchTurn(newRec, item)
+      })
+      .catch((err) => {
+        logErrorContext('authRestart', runId, err, { mode: this.mode, threadId })
+        this.runToThread.delete(runId)
+        this.#emitChatError(runId, 'AUTH', 'authentication failed', false, undefined, threadId)
+      })
+    return true
+  }
+
   async #handleShutdown(id) {
     if (id !== undefined) this.emit(response(id, null))
     this.shutdown()
@@ -2540,6 +2724,12 @@ export class Server {
 // handler forces a hard abort. Short enough to feel instant, long enough for
 // the model to reach a safe boundary.
 const INTERRUPT_GRACE_MS = 1500
+
+// Persistent path: a more generous interrupt window before the backstop tears
+// the thread down. Longer than the legacy value because a premature teardown
+// here kills the whole thread (and any in-flight background tasks), so we only
+// escalate when the stream is genuinely wedged, not merely slow to settle.
+const PERSIST_INTERRUPT_GRACE_MS = 5000
 
 // Persistent-query path (chat mode) resource bounds.
 // A live thread query holds a `claude` CLI subprocess open across turns. The
