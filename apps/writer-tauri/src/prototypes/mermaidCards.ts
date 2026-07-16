@@ -17,7 +17,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
-import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
+import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
 import { activeLines } from './reveal'
 import { isComposing, compositionEnded } from './imeComposition'
 
@@ -110,11 +110,46 @@ function build(state: EditorState): DecorationSet {
   return Decoration.set(out, true)
 }
 
+/** Could this edit change which mermaid diagrams render? True when a change
+ * overlaps an existing (mapped) widget or touches a line with a fence marker
+ * (```/~~~) or the word `mermaid` (the info string). Conservative — over-builds
+ * rather than risk a stale diagram; when false the mapped set is kept, so typing
+ * inside a mermaid body (or anywhere else) never re-walks the whole syntax tree.
+ * A revealed fence being edited shows raw source (no widget); the caret leaving it
+ * re-renders via the selection branch. Mirrors blocks.ts's `touchesBlocks`. */
+function touchesMermaid(tr: Transaction, mapped: DecorationSet): boolean {
+  let touched = false
+  tr.changes.iterChanges((_fromA, _toA, fromB, toB) => {
+    if (touched) return
+    mapped.between(fromB, toB, () => {
+      touched = true
+      return false
+    })
+    // Scan every line the change spans so a multi-line paste that introduces a
+    // ```mermaid fence (marker + info string on separate lines) still rebuilds.
+    const first = tr.state.doc.lineAt(fromB).number
+    const last = tr.state.doc.lineAt(toB).number
+    for (let n = first; n <= last && !touched; n++) {
+      const text = tr.state.doc.line(n).text
+      if (text.includes('```') || text.includes('~~~') || text.includes('mermaid')) touched = true
+    }
+  })
+  return touched
+}
+
 export const mermaidField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
+    // Freeze during IME composition (see imeComposition); compositionEnded below
+    // does the one deferred rebuild.
     if (isComposing(tr.state)) return value
-    return tr.docChanged || tr.selection || compositionEnded(tr) ? build(tr.state) : value
+    const mapped = value.map(tr.changes)
+    // Doc edit: keep the mapped set unless the change could add/remove/alter a
+    // mermaid fence — only then re-walk the tree. Stops the per-keystroke scan.
+    if (tr.docChanged) return touchesMermaid(tr, mapped) ? build(tr.state) : mapped
+    // Caret moved (reveal) or composition just ended: positions didn't shift.
+    if (tr.selection || compositionEnded(tr)) return build(tr.state)
+    return mapped
   },
   provide: (f) => [
     EditorView.decorations.from(f),

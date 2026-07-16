@@ -17,6 +17,7 @@ import { Facet, type EditorState, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
 import { isKnownNote } from '../wikilinkComplete'
 import { inProofRawRange } from '@/editor/proofRawRanges'
+import { cursorInRange } from './cursorRange'
 
 const HIDE = Decoration.replace({})
 
@@ -28,18 +29,11 @@ export const wikilinkKnown = Facet.define<(title: string) => boolean, (title: st
 })
 
 // Width (em) of the list marker column. The hanging-indent padding (JS, here) and
-// the `.cm-list-marker` inline-block width (CSS, cmTheme) MUST match this value so
-// the marker fills its column and body text lands exactly at the column edge.
-const LIST_INDENT = 1.8
-
-/** Any selection range touches [from, to] (inclusive — an edge counts, so a
- * just-typed marker stays raw until the caret moves off). */
-function cursorInRange(state: EditorState, from: number, to: number): boolean {
-  for (const r of state.selection.ranges) {
-    if (r.from <= to && from <= r.to) return true
-  }
-  return false
-}
+// the `.cm-list-marker` inline-block width (CSS, cmTheme) must be the SAME value so
+// the marker fills its column and body text lands exactly at the column edge — so
+// cmTheme imports this constant rather than re-hardcoding `1.8em` (single source,
+// can't drift).
+export const LIST_INDENT = 1.8
 
 /** lezer parses `[[Title]]` as a `Link` ([Title]) wrapped in an extra `[`…`]`.
  * Detect that so the grammar Link/LinkMark handling can bail and leave wikilinks

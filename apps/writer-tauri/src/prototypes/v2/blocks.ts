@@ -31,11 +31,7 @@ import { ImageWidget } from '../widgets'
 import { EditableTableWidget } from './editableTable'
 import { MediaWidget, detectMedia } from '../mediaCards'
 import { inProofRawRange } from '@/editor/proofRawRanges'
-
-function cursorInRange(state: EditorState, from: number, to: number): boolean {
-  for (const r of state.selection.ranges) if (r.from <= to && from <= r.to) return true
-  return false
-}
+import { cursorInRange } from './cursorRange'
 
 function build(state: EditorState): DecorationSet {
   const out: Range<Decoration>[] = []
