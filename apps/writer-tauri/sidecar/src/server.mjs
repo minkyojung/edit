@@ -1,7 +1,7 @@
-import { readFile, readdir, access } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { join, normalize, relative, isAbsolute, resolve as resolvePath } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
-import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
+import { query, tool, createSdkMcpServer, getSessionInfo } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import {
   response,
@@ -149,33 +149,29 @@ function sandboxLockdown() {
   }
 }
 
-/** True if the SDK has persisted a session with this id to disk. The SDK writes
- * each session as `~/.claude/projects/<cwd-encoded>/<sessionId>.jsonl`; the
- * <cwd-encoded> segment mangles the path (slashes → dashes, and dotfiles too),
- * so rather than reproduce that encoding we scan the project dirs for the
- * `<sessionId>.jsonl` file — the id is a UUID, so a match is unambiguous.
- * Used by the AUTH-retry path to decide resume-vs-recreate: we only `resume`
- * a session that actually exists, so a first attempt that 401'd before any
- * session file was written falls back to a clean create instead of erroring on
- * a missing session. Best-effort: any fs error reads as "not persisted". */
+/** True if the SDK has a resumable session persisted under this id. Asks the SDK
+ * directly via `getSessionInfo(sessionId)` — the canonical API — instead of
+ * reproducing its on-disk layout (`~/.claude/projects/<cwd-encoded>/<id>.jsonl`,
+ * whose <cwd-encoded> segment mangles the path); with `dir` omitted the SDK
+ * searches every project directory, matching the old scan's coverage but with
+ * no coupling to the storage format.
+ *
+ * Used by the AUTH-retry path to decide resume-vs-recreate: we only `resume` a
+ * session that actually exists, so a first attempt that 401'd before anything
+ * was written falls back to a clean create instead of erroring on a missing
+ * session. `getSessionInfo` returns undefined for a missing OR empty session;
+ * its `summary` falls back to the first user prompt, so any session that got a
+ * real user turn qualifies — i.e. this matches the old "file exists" check for
+ * every session with content, and treats a contentless session (nothing to
+ * resume) as not-persisted, which is strictly more correct. Best-effort: any
+ * error reads as "not persisted". */
 async function sessionPersisted(sessionId) {
   if (!sessionId) return false
-  const base = join(homedir(), '.claude', 'projects')
-  let dirs
   try {
-    dirs = await readdir(base)
+    return (await getSessionInfo(sessionId)) !== undefined
   } catch {
     return false
   }
-  for (const dir of dirs) {
-    try {
-      await access(join(base, dir, `${sessionId}.jsonl`))
-      return true
-    } catch {
-      // Not in this project dir — keep looking.
-    }
-  }
-  return false
 }
 
 /** Resolve a model-supplied file_path (absolute OR vault-relative) to an absolute
@@ -861,10 +857,22 @@ export class Server {
   }
 
   // Legacy per-turn run: one AbortController + one query() that tears down at
-  // the first `result`. Shared by the non-persistent path and, until the
-  // thread machinery lands (Stage 2), delegated to by the persistent stub so
-  // enabling the flag is behaviour-identical to today.
+  // the first `result`. Used when the persistent flag is off (and for title
+  // mode, which never uses the persistent path).
   #startLegacyRun(runId, params) {
+    // Rollback safety: if the persistent flag was just turned OFF mid-conversation,
+    // this legacy turn will `resume` the threadId's SDK session in a NEW query —
+    // but the thread's persistent query may still be live in `activeThreads`
+    // (the reaper holds it up to IDLE_TTL). Two subprocesses resuming the same
+    // session UUID concurrently races on the session file. Pre-emptively tear the
+    // persistent thread down (session persists to disk, so nothing is lost) so the
+    // legacy resume owns the session cleanly. Makes ON↔OFF toggling safe.
+    const threadId = params?.threadId
+    if (typeof threadId === 'string' && threadId) {
+      const stale = this.activeThreads.get(threadId)
+      if (stale) this.#teardownThread(stale, 'flag_rollback')
+    }
+
     const controller = new AbortController()
     // Run record: the AbortController plus, filled in once #runChat starts,
     // the live query handle (for graceful interrupt()), a predicate for
@@ -913,7 +921,7 @@ export class Server {
       // the whole query), then dispatches the turn. setModel/setPermissionMode
       // don't touch running background tasks, so no background guard is needed;
       // only skip while a turn is mid-flight (settings apply between turns).
-      if (this.#turnNeedsRebuild(existing, params) && !existing.turnActive) {
+      if (this.#turnControlsChanged(existing, params) && !existing.turnActive) {
         this.emit(response(id, { runId, accepted: true, threadId }))
         this.#applyThreadControls(existing, params).then(() => this.#dispatchTurn(existing, item))
         return
@@ -944,6 +952,24 @@ export class Server {
   // because the generator re-checks the queue on each loop. Strict
   // serialization + FIFO: one turn generates at a time, in arrival order.
   #dispatchTurn(rec, item) {
+    // The thread can be torn down between a turn's accept and its dispatch —
+    // the #applyThreadControls().then(#dispatchTurn) path awaits control
+    // requests, and a shutdown/teardown can land in that gap. Queuing onto a
+    // dead thread would strand the turn (its runId is already in runToThread)
+    // with no terminal → frontend wedge. Surface a retryable error instead so
+    // the frontend re-sends (spinning up a fresh thread).
+    if (rec.dead) {
+      this.runToThread.delete(item.runId)
+      this.#emitChatError(
+        item.runId,
+        'INTERNAL',
+        'thread closed before the turn started',
+        true,
+        undefined,
+        rec.threadId,
+      )
+      return
+    }
     rec.turnQueue.push(item)
     if (rec.nextTurnResolve && !rec.turnActive) {
       const r = rec.nextTurnResolve
@@ -988,10 +1014,12 @@ export class Server {
     rec.optionsSeed = params // new baseline for the next turn's diff
   }
 
-  // Whether a new turn's model / permissionMode / fastMode differs from what the
-  // thread's query was built with (its optionsSeed). These are fixed at build
-  // time, so a change requires a recreate rather than a live mutation.
-  #turnNeedsRebuild(rec, params) {
+  // Whether a new turn's model / permissionMode / fastMode differs from the
+  // thread's current baseline (its optionsSeed). A change is applied to the live
+  // query via control requests in #applyThreadControls (setModel /
+  // setPermissionMode / applyFlagSettings) — NOT a thread recreate. (Recreate is
+  // AUTH-restart only; see #recreateThread.)
+  #turnControlsChanged(rec, params) {
     const seed = rec.optionsSeed ?? {}
     const modeOf = (p) => p.permissionMode ?? 'bypassPermissions'
     return (
@@ -1002,9 +1030,11 @@ export class Server {
   }
 
   // Recreate a thread from its persisted session with new params, then replay
-  // `item`. The canonical state-transfer path (resume) — used both for a
-  // settings change (new model/mode) and for an AUTH restart — instead of
-  // mutating the live query. Tears the old thread down first; the identity-
+  // `item`. The state-transfer path (resume) used by the AUTH restart
+  // (#restartThreadForAuth) — its only caller — to swap in a fresh token without
+  // mutating the live query. (Settings changes do NOT recreate; they go through
+  // live control requests — see #applyThreadControls / #turnControlsChanged.)
+  // Tears the old thread down first; the identity-
   // guarded #finalizeThreadTeardown keeps the old loop's finally from clobbering
   // the replacement's registry slot.
   async #recreateThread(oldRec, item, newParams, reason) {
@@ -1057,13 +1087,17 @@ export class Server {
         rec.lastRateLimitInfo = null
         rec.sawRateLimitRetry = false
         rec.rateLimitRejected = false
-        // NOTE: model / permissionMode / fastMode are fixed for a persistent
-        // thread (build-time options = turn 1). The host keeps turns that CHANGE
-        // these — a model switch, or a plan-mode turn — on the legacy per-turn
-        // path (persistentQuery:false); those never spawn surviving background
-        // tasks, so they don't need thread persistence. Reconciling mid-stream
-        // via setModel/setPermissionMode perturbed the SDK control channel
-        // between turns and aborted the turn, so it is intentionally not done.
+        // NOTE: model / permissionMode / fastMode are set at build time (turn 1),
+        // but a later turn that CHANGES them is handled on THIS live thread — not
+        // punted to the legacy path. #handleChatPersistent detects the change
+        // (#turnControlsChanged) and reconciles it via live control requests
+        // (#applyThreadControls: setModel / setPermissionMode / applyFlagSettings)
+        // BEFORE dispatching the changed turn. Those requests are issued from
+        // #handleChatPersistent — OUTSIDE this generator — because a control
+        // request awaited from INSIDE the generator that rejects is re-raised by
+        // the SDK's streamInput and aborts the whole query. plan-mode turns are
+        // likewise handled here: canUseTool + planModeInstructions are attached
+        // unconditionally in #buildThreadOptions and the gate reads rec live.
 
         yield {
           type: 'user',
@@ -1162,6 +1196,15 @@ export class Server {
 
     const options = {
       permissionMode: rec.permissionMode,
+      // Required companion to `bypassPermissions` (sdk.d.ts: "Must be set to
+      // `true` when using permissionMode: 'bypassPermissions'"). Set
+      // unconditionally, not gated on the current mode: a persistent thread can
+      // switch to/from bypass mid-life via setPermissionMode (plan approval),
+      // and this is a host-level opt-in ("this host may use bypass"), not the
+      // mode itself — it never FORCES bypass, so it's inert under plan/default.
+      // Today's behaviour is unchanged (bypass already works); this closes the
+      // forward-compat gap if the SDK starts enforcing the pairing.
+      allowDangerouslySkipPermissions: true,
       abortController: rec.controller,
       includePartialMessages: true,
       forwardSubagentText: true,
@@ -1405,7 +1448,35 @@ export class Server {
           rec.lastRateLimitInfo = event.rate_limit_info
           const info = event.rate_limit_info
           const overageBlocked = info.overageInUse && info.overageStatus === 'rejected'
-          if (info.status === 'rejected' || overageBlocked) rec.rateLimitRejected = true
+          if (info.status === 'rejected' || overageBlocked) {
+            rec.rateLimitRejected = true
+            // Fail-fast on a hard quota rejection: it won't clear within the
+            // SDK's retry window (~10 attempts over minutes). Surface RATE_LIMIT
+            // now and interrupt the TURN's generation instead of grinding futile
+            // retries — mirrors the legacy path's abort+emit, but interrupts the
+            // turn only (the thread and any background tasks stay alive). The
+            // `terminalEmitted` guard means the interrupt's eventual `result`
+            // settles via #settleTurn's early-return, with no double emit.
+            if (rec.turnActive && rec.currentRunId && !rec.terminalEmitted) {
+              rec.terminalEmitted = true
+              this.#emitChatError(
+                rec.currentRunId,
+                'RATE_LIMIT',
+                'rate limited',
+                true,
+                rateLimitPayload(info),
+                rec.threadId,
+              )
+              Promise.resolve()
+                .then(() => rec.query?.interrupt())
+                .catch((e) =>
+                  logErrorContext('interrupt', rec.currentRunId, e, {
+                    mode: this.mode,
+                    threadId: rec.threadId,
+                  }),
+                )
+            }
+          }
         }
         if (event?.type === 'result') {
           if (rec.turnActive) await this.#settleTurn(rec, event)
@@ -1462,15 +1533,44 @@ export class Server {
       }
     } finally {
       clearInterval(watchdog)
+      // Defensive terminal: if the query generator ended while a turn was still
+      // active and no terminal was emitted (a `result`-less stream close — e.g.
+      // the SDK ends the loop internally on a budget/retry limit — that bypasses
+      // both #settleTurn and the catch above), the parked turn would wedge with
+      // no chat/done|error for its runId. Emit INTERNAL (retryable) and release
+      // the park. Every intentional terminal path sets terminalEmitted, so this
+      // only fires on the genuinely-missed case.
+      if (rec.turnActive && rec.currentRunId && !rec.terminalEmitted) {
+        // Observability: this defensive path firing means a real turn ended with
+        // no terminal from the normal paths — worth knowing if it happens.
+        logErrorContext('threadLoop-terminalless', rec.currentRunId, new Error('stream ended with active turn, no terminal'), {
+          mode: this.mode,
+          threadId: rec.threadId,
+        })
+        rec.terminalEmitted = true
+        this.#emitChatError(
+          rec.currentRunId,
+          'INTERNAL',
+          'the model stream ended unexpectedly',
+          true,
+          undefined,
+          rec.threadId,
+        )
+        rec.turnActive = false
+        const r = rec.turnSettleResolve
+        rec.turnSettleResolve = null
+        if (r) r()
+      }
       this.#finalizeThreadTeardown(rec)
     }
   }
 
   // Turn boundary. A `result` settles the CURRENT turn (emit chat/done or a
   // typed chat/error) but keeps the thread query alive. A result that arrives
-  // with no active turn is an autonomous background continuation — ignored here
-  // (Stage 4 routes it to the background surface) so we never emit a runId-less
-  // chat/done.
+  // with no active turn is an autonomous background continuation — #runThreadLoop
+  // routes THAT to #settleBackgroundTurn instead of here, so this method only
+  // ever runs for a real user turn (guarded below) and never emits a
+  // runId-less chat/done.
   async #settleTurn(rec, result) {
     if (!rec.turnActive || !rec.currentRunId) return
 
@@ -1682,8 +1782,9 @@ export class Server {
     if (rec.dead) return
     clearTimeout(rec.reaperTimer)
     rec.reaperTimer = setTimeout(() => {
-      if (rec.dead || rec.turnActive) return
-      if (this.#backgroundInFlight(rec)) return // a later event will re-arm
+      // Busy (mid-turn, queued turn, or background work) → don't reap; a later
+      // event (turn settle / background settle) re-arms.
+      if (rec.dead || this.#threadBusy(rec)) return
       this.#teardownThread(rec, 'idle_reap')
     }, IDLE_TTL_MS)
   }
@@ -1695,7 +1796,10 @@ export class Server {
     if (this.activeThreads.size < MAX_LIVE_THREADS) return
     let victim = null
     for (const [, rec] of this.activeThreads) {
-      if (rec.dead || rec.turnActive || this.#backgroundInFlight(rec)) continue
+      // Never evict a busy thread — mid-turn, a queued-but-not-yet-started turn,
+      // or live background work. (Missing the queued-turn case is the turn-loss
+      // race — see #threadBusy.)
+      if (rec.dead || this.#threadBusy(rec)) continue
       if (!victim || rec.lastTurnEndedAt < victim.lastTurnEndedAt) victim = rec
     }
     if (victim) this.#teardownThread(victim, 'lru_evict')
@@ -1714,6 +1818,11 @@ export class Server {
     }
     if (Date.now() - rec.lastEventAt > TURN_IDLE_MS) {
       rec.idleTimedOut = true
+      // Set the terminal guard BEFORE emitting so the loop's finally (which fires
+      // when the torn-down generator returns) doesn't re-emit a second terminal
+      // for this runId. Keeps the "every terminal path sets terminalEmitted"
+      // invariant that the finally guard relies on.
+      rec.terminalEmitted = true
       this.#emitChatError(
         rec.currentRunId,
         'IDLE_TIMEOUT',
@@ -1729,8 +1838,18 @@ export class Server {
   // Graceful thread close: signal the generator to return, release any parked
   // turn, then hard-abort as a backstop. The session persists to disk, so the
   // next chat for this threadId resumes cleanly. Idempotent.
-  #teardownThread(rec, _reason) {
+  #teardownThread(rec, reason) {
     if (rec.dead) return
+    // Observability: one line per teardown with its reason. The distribution
+    // (lru_evict / idle_reap / cancel_wedged / auth_restart / flag_rollback /
+    // idle_timeout / closed / shutdown) is the primary early-warning signal for
+    // persistent-path regressions once the flag is on — e.g. lru_evict spiking
+    // near mid-flight would flag the turn-loss race (A1). Drains via the Rust
+    // supervisor's stderr, same channel as logErrorContext.
+    process.stderr.write(
+      `[sidecar thread-teardown] threadId=${rec.threadId} reason=${reason}` +
+        ` turnActive=${rec.turnActive} bg=${this.#backgroundInFlight(rec)}\n`,
+    )
     rec.dead = true
     rec.closeRequested = true
     if (rec.nextTurnResolve) {
@@ -1776,6 +1895,17 @@ export class Server {
       rec.stopHookBackground.length > 0 ||
       rec.backgroundRequested
     )
+  }
+
+  // Whether a thread is doing (or about to do) work and so must NOT be reaped or
+  // LRU-evicted. Three signals: a turn is generating (`turnActive`), a turn is
+  // queued but not yet picked up (`turnQueue.length` — the settle→re-park window
+  // where `#settleTurn` has set turnActive=false but `#threadInput` hasn't yet
+  // shifted the next item), or background subagent work is live. Missing the
+  // queued-turn signal is the turn-loss race: an evict in that window tears the
+  // thread down and the queued turn vanishes with no terminal for its runId.
+  #threadBusy(rec) {
+    return rec.turnActive || rec.turnQueue.length > 0 || this.#backgroundInFlight(rec)
   }
 
   // Build the `writer-relay` MCP server from the enabled relay-tool names, or
@@ -1908,6 +2038,12 @@ export class Server {
 
     const options = {
       permissionMode,
+      // Required companion to `bypassPermissions` (sdk.d.ts: "Must be set to
+      // `true` when using permissionMode: 'bypassPermissions'"). Set
+      // unconditionally: it's a host-level opt-in to bypass, inert under
+      // plan/default (never forces bypass). Behaviour is unchanged today —
+      // this just closes the forward-compat gap if the SDK begins enforcing it.
+      allowDangerouslySkipPermissions: true,
       abortController: controller,
       // Emit `stream_event` notifications token-by-token instead of one
       // SDKAssistantMessage per turn. The frontend reassembles the live
