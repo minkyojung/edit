@@ -301,7 +301,7 @@ export function getSandboxEnabled(): boolean {
 }
 
 /** Whether the persistent-query path is enabled. Non-React read for the chat
- * runner, which forwards it to the sidecar's `persistentQuery`. Default OFF. */
+ * runner, which forwards it to the sidecar's `persistentQuery`. Default ON. */
 export function getPersistentQueryEnabled(): boolean {
   return useSettingsStore.getState().persistentQueryEnabled
 }
