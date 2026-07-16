@@ -50,14 +50,6 @@ import {
 import { stripRanges } from '@/editor/proposalPlan'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore } from '@/state/settingsStore'
-import {
-  highlightRenderExtension,
-  highlightSelectionNotifier,
-  highlightClickExtension,
-  highlightHotkey,
-  highlightsSyncEffect,
-} from '@/editor/cmHighlights'
-import { CmHighlightBar } from '@/editor/CmHighlightBar'
 import { DocStatsPanel } from '@/editor/DocStatsPanel'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { slashMenu, slashKeymap } from '@/editor/slashMenu'
@@ -217,8 +209,6 @@ export function CmEditor({ handle, header }: Props) {
             blocksV2,
             youtubeCards, // a bare youtube URL line → inline player
             mermaidCards, // ```mermaid fence → live diagram (portable across md apps)
-            highlightRenderExtension(handle.slug), // paint recorded highlights
-            highlightSelectionNotifier, // selection → "Highlight" prompt in the bar
             // Mirror the live selection into the editor-agnostic store so the
             // chat panel can show the selection chip + inject it as context.
             // We publish the line range too (CM knows it cheaply) so the chip
@@ -237,9 +227,6 @@ export function CmEditor({ handle, header }: Props) {
                 toLine: u.state.doc.lineAt(m.to).number,
               })
             }),
-            highlightClickExtension, // click a highlight → open it for a note
-            highlightHotkey(handle.slug), // ⌘⇧M → highlight the selection
-
             tableArrowEntry,
             blockVerticalNav,
             wikilinkKnown.of(isKnownNoteTitle), // blue vs red from REAL knownDocs
@@ -282,7 +269,7 @@ export function CmEditor({ handle, header }: Props) {
           ],
         }),
       })
-      viewRef.current = view // expose for the highlight sync + floating menu
+      viewRef.current = view // expose for the floating menu
       // Seed the stats panel before the first edit fires a docChanged update.
       useDocStatsStore.getState().setStats(computeDocStats(handle.bodyMarkdown))
       // Let the chat's selection-chip X collapse this view's selection
@@ -365,18 +352,6 @@ export function CmEditor({ handle, header }: Props) {
     // Re-runs only on slug change (a doc switch); mount-time deps are stable.
   }, [slug])
 
-  // Repaint highlights when this doc's highlight records change (create /
-  // remove / note edit). The render extension seeds the initial set at
-  // mount; this keeps it in sync afterwards.
-  useEffect(() => {
-    if (!slug) return
-    return useDocsStore.subscribe((s, prev) => {
-      const cur = s.knownDocs.find((d) => d.slug === slug)?.highlights
-      const old = prev.knownDocs.find((d) => d.slug === slug)?.highlights
-      if (cur !== old) viewRef.current?.dispatch({ effects: highlightsSyncEffect(slug) })
-    })
-  }, [slug])
-
   return (
     <div className="relative flex h-full w-full flex-col">
       {/* Header gradient-blur glass band. A sibling of the scroll
@@ -424,7 +399,6 @@ export function CmEditor({ handle, header }: Props) {
           <div className="cm-prototype" ref={rootRef} />
         </div>
       </div>
-      <CmHighlightBar viewRef={viewRef} slug={slug} />
       <DocStatsPanel />
     </div>
   )

@@ -175,13 +175,6 @@ export const cmPrototypeTheme = EditorView.theme({
     color: 'var(--muted-foreground)',
   },
 
-  // Highlight (read-it-later) — view-only mark over recorded ranges
-  '.cm-highlight': {
-    background: 'color-mix(in oklch, gold 38%, transparent)',
-    borderRadius: '2px',
-    cursor: 'pointer',
-  },
-
   // Blockquote (line decoration)
   '.cm-blockquote': {
     borderLeft: '2px solid var(--border)',

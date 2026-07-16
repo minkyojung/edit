@@ -126,7 +126,6 @@ export function mdRelToKnownDoc(
   if (typeof meta.faviconUrl === 'string') overlay.faviconUrl = meta.faviconUrl
   if (typeof meta.savedAt === 'string') overlay.savedAt = meta.savedAt
   if (typeof meta.readAt === 'string') overlay.readAt = meta.readAt
-  if (Array.isArray(meta.highlights)) overlay.highlights = meta.highlights
   // YouTube capture metadata (type 'youtube'). Harmless on other types —
   // their frontmatter/sidecar never carries these.
   if (typeof meta.videoId === 'string') overlay.videoId = meta.videoId

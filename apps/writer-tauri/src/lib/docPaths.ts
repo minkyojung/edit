@@ -29,7 +29,6 @@
 // shapes without standing up the rest of the app.
 
 import type { KnownDoc } from '@/state/docsStore'
-import type { HighlightRecord } from '@/lib/highlightTypes'
 import type { FrontmatterScalar } from '@/lib/frontmatter'
 
 /**
@@ -63,9 +62,6 @@ export interface DocMetaFile {
   faviconUrl?: string
   savedAt?: string
   readAt?: string
-  /** User highlights on a captured read-it-later note. Source of truth
-   * for highlights — the editor re-anchors each to the body on mount. */
-  highlights?: HighlightRecord[]
   /** YouTube capture metadata. A present `videoId` marks a generic `note`
    * as a video capture. Persisted in `.md` frontmatter; the field shape
    * is shared so the frontmatter ⇄ meta mapping has one definition. */
@@ -133,11 +129,7 @@ export function usesFrontmatter(_doc: Pick<KnownDoc, 'type'>): boolean {
  * are parsed; unrecognised keys are ignored. Mirrors exactly the fields
  * `mdRelToKnownDoc` layers, so a doc whose metadata lives in frontmatter
  * rebuilds identically to one whose metadata lives in a `.meta.json`
- * sidecar.
- *
- * `highlights` is a nested array, so it rides as a JSON string in a single
- * frontmatter scalar (composeFrontmatter single-quotes it; JSON escapes any
- * newline, so it stays one line) and is parsed back here. */
+ * sidecar. */
 export function frontmatterToMeta(
   data: Record<string, string>,
 ): Partial<DocMetaFile> {
@@ -156,15 +148,6 @@ export function frontmatterToMeta(
   }
   if (data.thumbnailUrl) meta.thumbnailUrl = data.thumbnailUrl
   if (data.description) meta.description = data.description
-  if (data.highlights) {
-    try {
-      const parsed = JSON.parse(data.highlights)
-      if (Array.isArray(parsed)) meta.highlights = parsed
-    } catch {
-      // Corrupt highlights JSON (e.g. hand-edited frontmatter) → skip it
-      // rather than fail the whole doc load.
-    }
-  }
   return meta
 }
 
@@ -172,11 +155,9 @@ export function frontmatterToMeta(
  * onto the flat frontmatter fields we emit when a doc stores its metadata
  * in its own `.md` instead of a `.meta.json` sidecar.
  *
- * `version` is dropped (sidecar-only bookkeeping). `highlights` is a
- * nested array, so it's JSON-serialized into a single scalar (see
- * frontmatterToMeta for the inverse); an empty/absent list emits nothing.
- * Other undefined fields are returned as-is; `composeFrontmatter` skips
- * them, so the caller can hand over the whole record.
+ * `version` is dropped (sidecar-only bookkeeping). Undefined fields are
+ * returned as-is; `composeFrontmatter` skips them, so the caller can hand
+ * over the whole record.
  *
  * Kept beside `frontmatterToMeta` on purpose: the two field lists must
  * stay in lockstep, and the round-trip test pins them together so adding
@@ -197,17 +178,12 @@ export function metaToFrontmatterFields(
     durationSec: meta.durationSec,
     thumbnailUrl: meta.thumbnailUrl,
     description: meta.description,
-    highlights:
-      meta.highlights && meta.highlights.length
-        ? JSON.stringify(meta.highlights)
-        : undefined,
   }
 }
 
 /** The portable subset of {@link metaToFrontmatterFields}: the fields that
  * belong in the user's `.md` because another tool (Obsidian, git) or a
- * human can read them — created date, capture source, video metadata, and
- * the user's own highlights.
+ * human can read them — created date, capture source, and video metadata.
  *
  * Excludes the app-private `slug` — an ephemeral per-boot handle that is
  * never persisted (identity across restarts is the file path). Used by the
@@ -228,10 +204,6 @@ export function portableFrontmatterFields(
     durationSec: meta.durationSec,
     thumbnailUrl: meta.thumbnailUrl,
     description: meta.description,
-    highlights:
-      meta.highlights && meta.highlights.length
-        ? JSON.stringify(meta.highlights)
-        : undefined,
   }
 }
 
