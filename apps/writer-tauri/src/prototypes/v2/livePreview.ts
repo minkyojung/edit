@@ -42,6 +42,18 @@ export const LIST_INDENT = 1.8
 // (0.32 / 0.15 / 0), which read as three different gaps. cmTheme imports this.
 export const LIST_MARKER_END_PAD = 0.35
 
+// Width (em) of the single source space after a marker (`- ` / `1. `). That space
+// is a normal text glyph OUTSIDE the fixed `LIST_INDENT` marker column, so a
+// wrapped/continuation line (which hangs at the column edge) would land ~one space
+// left of the first line's body without it. Adding it to the line padding closes
+// that gap. This is a constant approximation of the editor font's space advance
+// (Obsidian uses the same trick via `--list-marker-space: 0.25em`); exact alignment
+// would need per-line `coordsAtPos` measurement, which we deliberately avoid to keep
+// the fixed-column design (no measure machinery, no reflow-on-remeasure bugs).
+// It lives ONLY in the line inline-style — the `.cm-list-marker` column width is
+// unchanged, so cmTheme needs no change.
+export const LIST_MARKER_SPACE = 0.25
+
 /** lezer parses `[[Title]]` as a `Link` ([Title]) wrapped in an extra `[`…`]`.
  * Detect that so the grammar Link/LinkMark handling can bail and leave wikilinks
  * entirely to the regex overlay (otherwise both fire → double styling, overlapping
@@ -57,6 +69,28 @@ function inCodeContext(state: EditorState, pos: number): boolean {
     if (/Code/.test(n.name)) return true
   }
   return false
+}
+
+/** Hanging-indent level for a marker-LESS line that belongs to a list item (a
+ * hard-break / lazy-continuation line under a bullet). Walks up from the line start
+ * to the innermost `ListItem` (nested → the child item, i.e. the deeper level), then
+ * counts ancestor `BulletList`/`OrderedList` — the SAME `depth`/`level` rule the
+ * `ListMark` branch uses, so the continuation lands at that line's body column.
+ * `null` when the position isn't inside a list item. */
+function listItemLevelAt(state: EditorState, pos: number): number | null {
+  let item: SyntaxNode | null = null
+  for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1); n; n = n.parent) {
+    if (n.name === 'ListItem') {
+      item = n
+      break
+    }
+  }
+  if (!item) return null
+  let depth = 0
+  for (let p: SyntaxNode | null = item.parent; p; p = p.parent) {
+    if (p.name === 'BulletList' || p.name === 'OrderedList') depth++
+  }
+  return Math.max(0, depth - 1)
 }
 
 function buildDecos(
@@ -272,7 +306,7 @@ function buildDecos(
             Decoration.line({
               class: 'cm-list-line',
               attributes: {
-                style: `padding-left:${(level + 1) * LIST_INDENT}em;text-indent:-${LIST_INDENT}em`,
+                style: `padding-left:${(level + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:-${LIST_INDENT + LIST_MARKER_SPACE}em`,
               },
             }).range(line.from),
           )
@@ -361,7 +395,26 @@ function buildDecos(
         const line = state.doc.line(ln)
         if (listLinesDone.has(line.from)) continue // Lezer already styled this line
         const lm = /^(\s*)([-*+]|\d+[.)])\s/.exec(line.text)
-        if (!lm) continue
+        if (!lm) {
+          // No marker — but a hard-break / lazy-continuation line inside a list item
+          // (Shift+Enter → plain newline, no marker, no leading space) still needs the
+          // hanging indent, or its text runs back under the bullet. Give it the body
+          // column with `text-indent:0` (no marker to pull back). Same `LIST_INDENT`
+          // grid as the marker line, so wrapped and hard-break lines share one x.
+          if (line.from === line.to) continue // blank line — nothing to indent
+          if (inCodeContext(state, line.from)) continue // literal code line in a list
+          const lvl = listItemLevelAt(state, line.from)
+          if (lvl == null) continue
+          out.push(
+            Decoration.line({
+              class: 'cm-list-line',
+              attributes: {
+                style: `padding-left:${(lvl + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:0`,
+              },
+            }).range(line.from),
+          )
+          continue
+        }
         // Horizontal rule vs empty bullet: a real HR is 3+ of `-`/`*`/`_` (CommonMark);
         // a lone `- ` / `* ` is an EMPTY BULLET, not a rule. The old `/^[-*_ ]+$/`
         // matched a single `-` too, so it wrongly skipped empty bullets — which the
@@ -382,7 +435,7 @@ function buildDecos(
           Decoration.line({
             class: 'cm-list-line',
             attributes: {
-              style: `padding-left:${(level + 1) * LIST_INDENT}em;text-indent:-${LIST_INDENT}em`,
+              style: `padding-left:${(level + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:-${LIST_INDENT + LIST_MARKER_SPACE}em`,
             },
           }).range(line.from),
         )

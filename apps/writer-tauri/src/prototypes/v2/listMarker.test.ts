@@ -75,9 +75,25 @@ describe('list markers — tree path + immediate regex fallback', () => {
       decos(doc)
         .filter((r) => (r.value.spec as { class?: string }).class === 'cm-list-line')
         .map((r) => (r.value.spec as { attributes?: { style?: string } }).attributes?.style)[0] ?? ''
-    // Top-level: one column (1.8em). Nested (under a parent item): two columns (3.6em).
-    expect(style('- top')).toContain('padding-left:1.8em')
+    // Column = LIST_INDENT (1.8) + LIST_MARKER_SPACE (0.25) = 2.05em per level; the
+    // first line pulls the marker back by (LIST_INDENT + space) so its body and the
+    // wrapped line share one x. Top-level: one column. text-indent matches padding.
+    expect(style('- top')).toContain('padding-left:2.05em;text-indent:-2.05em')
     expect(style('- parent\n  - child')).toBeTruthy() // parses as a nested list
+  })
+
+  it('a hard-break continuation line (no marker) gets the body-column hang', () => {
+    // `- a\nb` — the `b` line has no marker (Shift+Enter → plain newline). It must
+    // still hang at the body column (2.05em) but with text-indent:0, since there's no
+    // marker to pull back — the whole line, first visual row included, sits at the body.
+    const doc = '- a\nb'
+    const line2From = doc.indexOf('\n') + 1
+    const cont = decos(doc).find(
+      (r) => r.from === line2From && (r.value.spec as { class?: string }).class === 'cm-list-line',
+    )
+    const style = (cont?.value.spec as { attributes?: { style?: string } })?.attributes?.style ?? ''
+    expect(style).toContain('padding-left:2.05em')
+    expect(style).toContain('text-indent:0')
   })
 })
 
