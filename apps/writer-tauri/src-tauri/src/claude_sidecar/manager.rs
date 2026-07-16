@@ -408,6 +408,11 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             "chat/event" => "claude:event",
             "chat/done" => "claude:done",
             "chat/error" => "claude:error",
+            // Background subagent lifecycle (persistent-query path): the sidecar
+            // forwards task_started / task_progress / task_updated /
+            // task_notification on this dedicated channel (threadId-tagged) so
+            // the frontend routes them by thread, independent of any turn's runId.
+            "chat/task" => "claude:task",
             "chat/proposal" => "claude:proposal",
             // Host-applies proposal (Phase E6): emitted whenever the
             // sidecar's `propose_edit` / `propose_write` /

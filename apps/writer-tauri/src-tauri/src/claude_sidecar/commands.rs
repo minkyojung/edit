@@ -95,12 +95,35 @@ pub struct ChatStartArgs {
     /// sends `Some(true)` after gating on model support; `None` = off.
     #[serde(default)]
     pub fast_mode: Option<bool>,
+    /// Conversation/thread id (= the SDK session UUID). When `persistent_query`
+    /// is set, the sidecar keeps one long-lived query alive per thread so a
+    /// `result` is a turn boundary and background subagent tasks survive across
+    /// turns. Falls back to session_id/resume when omitted.
+    #[serde(default)]
+    pub thread_id: Option<String>,
+    /// Opt into the persistent per-thread query path (chat mode only). Omitted
+    /// or false → the legacy per-turn path runs unchanged.
+    #[serde(default)]
+    pub persistent_query: Option<bool>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatCancelArgs {
     pub run_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseThreadArgs {
+    pub thread_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StopTaskArgs {
+    pub thread_id: String,
+    pub task_id: String,
 }
 
 #[derive(Deserialize)]
@@ -201,11 +224,47 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     if let Some(fm) = args.fast_mode {
         params["fastMode"] = json!(fm);
     }
+    if let Some(tid) = args.thread_id {
+        params["threadId"] = Value::String(tid);
+    }
+    if let Some(pq) = args.persistent_query {
+        params["persistentQuery"] = json!(pq);
+    }
 
     let chat = manager.chat_client().await;
     chat.request("chat", Some(params))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Close a persistent thread's long-lived query (archive / doc-close / delete).
+/// Distinct from cancel: this ends the query entirely. The SDK session persists,
+/// so a later chat for the same threadId resumes cleanly.
+#[tauri::command]
+pub async fn claude_chat_close_thread(app: AppHandle, args: CloseThreadArgs) -> Result<(), String> {
+    let manager = get_manager(&app)?;
+    let chat = manager.chat_client().await;
+    chat.notify(
+        "chat/close-thread",
+        Some(json!({ "threadId": args.thread_id })),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Stop a specific in-flight background subagent task (the user hit Stop on its
+/// row). The sidecar calls the SDK's stopTask; a task_notification with status
+/// 'stopped' follows on the chat/task channel.
+#[tauri::command]
+pub async fn claude_chat_stop_task(app: AppHandle, args: StopTaskArgs) -> Result<(), String> {
+    let manager = get_manager(&app)?;
+    let chat = manager.chat_client().await;
+    chat.notify(
+        "chat/stop-task",
+        Some(json!({ "threadId": args.thread_id, "taskId": args.task_id })),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Lists the models this account can actually use, from the SDK's session-init
