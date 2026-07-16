@@ -972,9 +972,13 @@ export class Server {
         rec.lastRateLimitInfo = null
         rec.sawRateLimitRetry = false
         rec.rateLimitRejected = false
-        // NOTE(Stage 3): from turn 2 on, apply per-turn model/effort/permission
-        // via control requests (setModel / applyFlagSettings / setPermissionMode)
-        // here before yielding.
+        // NOTE: model / permissionMode / fastMode are fixed for a persistent
+        // thread (build-time options = turn 1). The host keeps turns that CHANGE
+        // these — a model switch, or a plan-mode turn — on the legacy per-turn
+        // path (persistentQuery:false); those never spawn surviving background
+        // tasks, so they don't need thread persistence. Reconciling mid-stream
+        // via setModel/setPermissionMode perturbed the SDK control channel
+        // between turns and aborted the turn, so it is intentionally not done.
 
         yield {
           type: 'user',
