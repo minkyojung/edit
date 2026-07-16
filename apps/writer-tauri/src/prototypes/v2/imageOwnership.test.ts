@@ -40,3 +40,28 @@ describe('image ownership — live-preview does not touch images', () => {
     expect(decosOverImage(onImage)).toHaveLength(0)
   })
 })
+
+// Same class as the image bug: a GFM table is replaced wholesale by the block table
+// widget, but its CELLS can hold inline markdown (`**bold**`, `[x](u)`, `code`,
+// `~~s~~`). Without a Table guard the inline layer decorated those cell markers too,
+// colliding with the table widget. Pin that live-preview emits ZERO decorations over
+// a table whose cells contain markdown.
+const TABLE = '| **bold** | [x](u) |\n| --- | --- |\n| `code` | ~~s~~ |'
+const TDOC = `intro\n\n${TABLE}\n\noutro`
+
+function decosOverTable() {
+  const state = EditorState.create({
+    doc: TDOC,
+    selection: { anchor: 0 },
+    extensions: [markdown({ extensions: [GFM] })],
+  })
+  const from = TDOC.indexOf('|')
+  const to = from + TABLE.length
+  return _buildDecos(state, [{ from, to }]).filter((r) => r.from >= from && r.to <= to)
+}
+
+describe('table ownership — live-preview does not touch tables', () => {
+  it('emits no decorations over a table with markdown-bearing cells', () => {
+    expect(decosOverTable()).toHaveLength(0)
+  })
+})

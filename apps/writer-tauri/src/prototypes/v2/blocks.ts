@@ -149,6 +149,9 @@ function touchesBlocks(tr: Transaction, mapped: DecorationSet): boolean {
       return false
     })
     if (!touched && tr.state.doc.lineAt(fromB).text.includes('![')) touched = true
+    // A freshly-inserted `<video>`/`<audio>` line (like `![` for images) — otherwise
+    // an inserted media embed stays raw until the caret happens to enter its line.
+    if (!touched && /<(video|audio)\b/i.test(tr.state.doc.lineAt(fromB).text)) touched = true
     if (!touched && (inTableAt(tr.state, fromB) || inTableAt(tr.state, toB))) touched = true
   })
   return touched

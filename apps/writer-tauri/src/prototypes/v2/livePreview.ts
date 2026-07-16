@@ -115,14 +115,18 @@ function buildDecos(
         // it edits natively. Skip the node + its children.
         if (inProofRawRange(state, nf)) return false
 
-        // Images are owned ENTIRELY by the block-decoration layer (v2/blocks) — it
-        // replaces `![alt](url)` with the <img> widget. Lezer parses an Image's
-        // `![`/`]`/`(`/`)` as the SAME `LinkMark`/`URL` node types a real link uses,
-        // so without this guard the generic LinkMark/URL branches below would ALSO
-        // hide/mark those markers — two layers decorating one image. That overlap
-        // leaks stray brackets around the rendered image. Skip the node + children
-        // (return false) so blocks is the sole owner, exactly like the proof guard.
-        if (name === 'Image') return false
+        // Images and GFM tables are owned ENTIRELY by the block-decoration layer
+        // (v2/blocks): it replaces `![alt](url)` with the <img> widget and the whole
+        // table with the editable-table widget (whose cells render their own inline
+        // markdown via livePreviewInline). Without a guard here the inline layer ALSO
+        // walks in and decorates their markers — an Image's `![`/`]`/`(`/`)` (which
+        // Lezer labels with the SAME LinkMark/URL types a link uses) and any inline
+        // markdown INSIDE table cells (`**bold**`, `[x](u)`, …). Two layers on one
+        // block collide and leak stray markers around the rendered block. Skip the
+        // node + children (return false) so blocks is the sole owner — same as the
+        // proof guard above. (In inlineOnly cell mode the nested doc has no Image/
+        // Table node, so this never suppresses a cell's own inline rendering.)
+        if (name === 'Image' || name === 'Table') return false
 
         // INLINE-ONLY mode (table cells): a GFM table cell holds inline content
         // only — there are no real headings/lists/quotes/rules/code-blocks in a
