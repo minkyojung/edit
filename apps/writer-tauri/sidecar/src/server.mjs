@@ -906,6 +906,22 @@ export class Server {
 
     const existing = this.activeThreads.get(threadId)
     if (existing && !existing.dead) {
+      // A turn that changes model / permissionMode / fastMode can't mutate the
+      // live query safely (mid-stream control requests perturb the SDK control
+      // channel and abort the next turn). Instead recreate the thread from the
+      // persisted session with the new settings and replay this turn — but ONLY
+      // when the thread is idle and background-free, so we never sever running
+      // background work. Otherwise fall through and run the turn on the existing
+      // thread (the settings change is deferred to a later, safe boundary).
+      if (
+        this.#turnNeedsRebuild(existing, params) &&
+        !existing.turnActive &&
+        !this.#backgroundInFlight(existing)
+      ) {
+        this.emit(response(id, { runId, accepted: true, threadId }))
+        this.#recreateThread(existing, item, params, 'settings-change')
+        return
+      }
       // Reuse the live query — push this turn into its input queue.
       this.#dispatchTurn(existing, item)
       this.emit(response(id, { runId, accepted: true, threadId }))
@@ -937,6 +953,43 @@ export class Server {
       const r = rec.nextTurnResolve
       rec.nextTurnResolve = null
       r(rec.turnQueue.shift())
+    }
+  }
+
+  // Whether a new turn's model / permissionMode / fastMode differs from what the
+  // thread's query was built with (its optionsSeed). These are fixed at build
+  // time, so a change requires a recreate rather than a live mutation.
+  #turnNeedsRebuild(rec, params) {
+    const seed = rec.optionsSeed ?? {}
+    const modeOf = (p) => p.permissionMode ?? 'bypassPermissions'
+    return (
+      (params.model ?? null) !== (seed.model ?? null) ||
+      modeOf(params) !== modeOf(seed) ||
+      !!params.fastMode !== !!seed.fastMode
+    )
+  }
+
+  // Recreate a thread from its persisted session with new params, then replay
+  // `item`. The canonical state-transfer path (resume) — used both for a
+  // settings change (new model/mode) and for an AUTH restart — instead of
+  // mutating the live query. Tears the old thread down first; the identity-
+  // guarded #finalizeThreadTeardown keeps the old loop's finally from clobbering
+  // the replacement's registry slot.
+  async #recreateThread(oldRec, item, newParams, reason) {
+    const threadId = oldRec.threadId
+    this.#teardownThread(oldRec, reason)
+    try {
+      const newRec = await this.#ensureThread(threadId, { ...newParams, resume: threadId })
+      // The old thread's teardown may have dropped the runId mapping; restore it
+      // so cancel can still find the replayed turn.
+      this.runToThread.set(item.runId, threadId)
+      this.#dispatchTurn(newRec, item)
+      return newRec
+    } catch (err) {
+      logErrorContext('recreateThread', item.runId, err, { mode: this.mode, threadId, reason })
+      this.runToThread.delete(item.runId)
+      this.#emitChatError(item.runId, 'INTERNAL', err?.message ?? String(err), true, undefined, threadId)
+      return null
     }
   }
 
@@ -2596,11 +2649,14 @@ export class Server {
   }
 
   // Cancel the CURRENT turn of a persistent thread without killing the thread.
-  // A graceful interrupt() lets the SDK settle the turn to a clean `result`,
-  // which #settleTurn maps to CANCELLED (rec.cancelRequested). Only a genuinely
-  // wedged stream (no result within the grace window) escalates to a hard thread
-  // teardown — accepting the loss of in-flight background work, since the turn
-  // is stuck anyway. The thread resumes from disk on its next chat.
+  // A graceful interrupt() stops the foreground turn's generation; the SDK
+  // settles it to a clean `result`, which #settleTurn maps to CANCELLED
+  // (rec.cancelRequested). Background subagent tasks run in the same subprocess
+  // and SURVIVE the interrupt (verified) — they keep running and deliver their
+  // task_notification. Only a genuinely wedged stream (no result within the
+  // grace window) escalates to a hard teardown, and even then ONLY when no
+  // background work is in flight (see the backstop), so a cancel never severs a
+  // running background task.
   #cancelPersistentTurn(runId, threadId) {
     const rec = this.activeThreads.get(threadId)
     // Stale cancel (turn already settled / different turn now live) → no-op.
@@ -2622,9 +2678,11 @@ export class Server {
       .catch((e) => logErrorContext('interrupt', runId, e, { mode: this.mode, threadId }))
     setTimeout(() => {
       // If the turn is still live after the grace window, interrupt didn't
-      // round-trip → treat the stream as wedged: settle CANCELLED and hard-close
-      // the thread (last resort). If #settleTurn already ran, currentRunId has
-      // moved on and this guard skips.
+      // round-trip. Settle CANCELLED either way. Hard-close the thread ONLY when
+      // no background work is in flight — a running background task means the
+      // subprocess must stay up to deliver its result, so we settle the turn but
+      // leave the thread alive (the next turn reuses it). If #settleTurn already
+      // ran, currentRunId has moved on and this guard skips.
       if (
         this.activeThreads.get(threadId) === rec &&
         rec.currentRunId === runId &&
@@ -2633,7 +2691,18 @@ export class Server {
       ) {
         rec.terminalEmitted = true
         this.#emitChatError(runId, 'CANCELLED', 'cancelled by client', false, undefined, threadId)
-        this.#teardownThread(rec, 'cancel_wedged')
+        if (this.#backgroundInFlight(rec)) {
+          // Keep the thread (and its background tasks) alive; just release the
+          // parked turn so the generator can advance to the next one.
+          rec.turnActive = false
+          this.runToThread.delete(runId)
+          rec.currentRunId = null
+          const r = rec.turnSettleResolve
+          rec.turnSettleResolve = null
+          if (r) r()
+        } else {
+          this.#teardownThread(rec, 'cancel_wedged')
+        }
       }
     }, PERSIST_INTERRUPT_GRACE_MS)
   }
@@ -2671,32 +2740,21 @@ export class Server {
   async #restartThreadForAuth(rec, runId) {
     if (rec.authRetried) return false
     rec.authRetried = true
-    const threadId = rec.threadId
     const item = rec.currentItem
-    this.emit(notification('auth/refreshNeeded', { runId, threadId }))
+    this.emit(notification('auth/refreshNeeded', { runId, threadId: rec.threadId }))
     try {
       await this.#waitForTokenUpdate(5000)
     } catch {
       return false // no fresh token in time → let the caller surface AUTH
     }
-    // Drop the dead subprocess, then recreate resuming the persisted session and
-    // replay the turn that 401'd.
-    this.#teardownThread(rec, 'auth_restart')
-    if (!item) return false
-    const params = { ...rec.optionsSeed, resume: threadId }
-    this.#ensureThread(threadId, params)
-      .then((newRec) => {
-        newRec.authRetried = true // don't loop on a second AUTH after replay
-        // Restore the runId→thread mapping (the old thread's teardown may have
-        // dropped it) so cancel still finds the replayed turn.
-        this.runToThread.set(item.runId, threadId)
-        this.#dispatchTurn(newRec, item)
-      })
-      .catch((err) => {
-        logErrorContext('authRestart', runId, err, { mode: this.mode, threadId })
-        this.runToThread.delete(runId)
-        this.#emitChatError(runId, 'AUTH', 'authentication failed', false, undefined, threadId)
-      })
+    if (!item) {
+      this.#teardownThread(rec, 'auth_restart')
+      return false
+    }
+    // Recreate resuming the persisted session (with the refreshed token picked
+    // up from this.token at build) and replay the turn that 401'd.
+    const newRec = await this.#recreateThread(rec, item, rec.optionsSeed, 'auth_restart')
+    if (newRec) newRec.authRetried = true // don't loop on a second AUTH after replay
     return true
   }
 
