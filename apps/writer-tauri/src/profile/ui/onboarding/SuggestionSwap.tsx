@@ -1,5 +1,5 @@
 // Inline suggestion swap, faithful to the real CodeMirror proof-review
-// (prototypes/v2/proofMarks.ts): the old text stays IN PLACE, struck through
+// (editor/cmInBufferReview.ts): the old text stays IN PLACE, struck through
 // (cm-proof-old), and a widget right after it holds the green replacement plus
 // ✓ / ✕ — all inline, mid-sentence:
 //
