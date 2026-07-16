@@ -988,6 +988,8 @@ export class Server {
   // by the gate. Session lifecycle: resume when the thread was reaped or the
   // app restarted (session on disk), else create.
   async #ensureThread(threadId, params) {
+    // Bound live subprocesses: evict an LRU idle, background-free thread first.
+    this.#maybeEvictLRU()
     const controller = new AbortController()
     const rec = {
       threadId,
@@ -1001,6 +1003,9 @@ export class Server {
       closeRequested: false,
       // current turn (reset each turn in #threadInput)
       currentRunId: null,
+      // synthetic runId for an autonomous background-completion turn (P2) — the
+      // model's "task finished" answer that arrives with no active user turn.
+      bgTurnRunId: null,
       turnActive: false,
       turnController: null, // per-turn: unparks #requestDecision, never kills the thread
       turnSettleResolve: null,
@@ -1230,7 +1235,25 @@ export class Server {
     )
     if (relayServer) options.mcpServers = { 'writer-relay': relayServer }
 
-    options.hooks = { PostToolUse: this.#postToolUseHooks() }
+    // PostToolUse: proposal-ack confirmation (shared with legacy). Stop: snapshot
+    // the authoritative in-flight background inventory each turn end, so the
+    // reaper can tell "thread idle & done" from "idle but awaiting a background
+    // wake". Non-blocking (returns {}).
+    options.hooks = {
+      PostToolUse: this.#postToolUseHooks(),
+      Stop: [
+        {
+          hooks: [
+            async (input) => {
+              rec.stopHookBackground = Array.isArray(input?.background_tasks)
+                ? input.background_tasks
+                : []
+              return {}
+            },
+          ],
+        },
+      ],
+    }
     return options
   }
 
@@ -1243,9 +1266,32 @@ export class Server {
     try {
       for await (const event of rec.query) {
         rec.lastEventAt = Date.now()
+
+        // (1) Background task lifecycle → dedicated chat/task channel, tracked
+        // for the reaper. Never emitted on the chat/event firehose.
+        if (this.#isTaskEvent(event)) {
+          this.#trackBackground(rec, event)
+          continue
+        }
+
+        // (2) Route the event to a runId. During a user turn → rec.currentRunId.
+        // Between turns, a content event begins an AUTONOMOUS background-
+        // completion turn (P2 — the model's "task finished" answer with no user
+        // input); tag it with a synthetic bgTurnRunId + background:true.
+        const isBg = !rec.turnActive
+        if (isBg && !rec.bgTurnRunId && this.#isContentEvent(event)) {
+          rec.bgTurnRunId = globalThis.crypto.randomUUID()
+        }
+        const runId = rec.turnActive ? rec.currentRunId : rec.bgTurnRunId
         this.emit(
-          notification('chat/event', { threadId: rec.threadId, runId: rec.currentRunId, event }),
+          notification('chat/event', {
+            threadId: rec.threadId,
+            runId,
+            ...(isBg ? { background: true } : {}),
+            event,
+          }),
         )
+
         if (event?.type === 'assistant' && event.error) rec.lastAssistantError = event.error
         if (
           event?.type === 'system' &&
@@ -1260,10 +1306,9 @@ export class Server {
           const overageBlocked = info.overageInUse && info.overageStatus === 'rejected'
           if (info.status === 'rejected' || overageBlocked) rec.rateLimitRejected = true
         }
-        // NOTE(Stage 4): task_started/progress/updated/notification tracking +
-        // forwarding on the dedicated chat/task channel goes here.
         if (event?.type === 'result') {
-          await this.#settleTurn(rec, event)
+          if (rec.turnActive) await this.#settleTurn(rec, event)
+          else this.#settleBackgroundTurn(rec, event)
           continue
         }
       }
@@ -1359,10 +1404,149 @@ export class Server {
 
     this.runToThread.delete(runId)
     rec.currentRunId = null
-    // NOTE(Stage 4): #armReaper(rec) — start the idle-close countdown here.
+    this.#armReaper(rec) // idle-close countdown (guarded by backgroundInFlight)
     const r = rec.turnSettleResolve
     rec.turnSettleResolve = null
     if (r) r()
+  }
+
+  // Settle an AUTONOMOUS background-completion turn (P2): the model generated a
+  // "task finished" answer with no active user turn. Emit a chat/done tagged
+  // background:true under the synthetic bgTurnRunId so the frontend can render
+  // it as a standalone assistant turn (not anchored to any runChat).
+  #settleBackgroundTurn(rec, result) {
+    const runId = rec.bgTurnRunId
+    rec.bgTurnRunId = null
+    this.#armReaper(rec)
+    if (!runId) return // a result with no preceding content — nothing to settle
+    if (result.is_error || String(result.subtype ?? '').startsWith('error_')) {
+      const { code, message, retryable } = mapSdkError({
+        subtype: result.subtype,
+        assistantError: rec.lastAssistantError,
+        errors: result.errors,
+      })
+      this.emit(
+        notification('chat/error', {
+          runId,
+          threadId: rec.threadId,
+          code,
+          message,
+          retryable,
+          background: true,
+        }),
+      )
+      return
+    }
+    this.emit(
+      notification('chat/done', {
+        threadId: rec.threadId,
+        runId,
+        background: true,
+        stopReason: result.stop_reason ?? null,
+        usage: result.usage ?? null,
+        totalCostUsd: result.total_cost_usd ?? null,
+        contextUsage: null,
+        fastModeState: result.fast_mode_state ?? null,
+      }),
+    )
+  }
+
+  // A `type:'system'` task-lifecycle event (or the opaque background_tasks_changed
+  // signal). These carry background subagent state, routed to the dedicated
+  // chat/task channel rather than the chat/event firehose.
+  #isTaskEvent(event) {
+    return (
+      event?.type === 'system' &&
+      (String(event.subtype ?? '').startsWith('task') ||
+        event.subtype === 'background_tasks_changed')
+    )
+  }
+
+  // A content-bearing event (vs SDK housekeeping like system/init or
+  // session_state_changed). Between user turns, the FIRST content event marks
+  // the start of an autonomous background-completion turn.
+  #isContentEvent(event) {
+    return (
+      event?.type === 'assistant' ||
+      event?.type === 'stream_event' ||
+      event?.type === 'user'
+    )
+  }
+
+  // Track a background task's lifecycle and forward it on the dedicated
+  // chat/task channel. `backgroundTaskIds` is our own in-flight set; combined
+  // with the Stop hook's snapshot it tells the reaper when a thread still has
+  // work pending. (Confirmed by probe: a `background:true` agent emits
+  // task_started → task_progress → task_notification{status,output_file}; the
+  // spawning turn's result is terminal_reason 'completed', NOT
+  // 'background_requested' — so we must NOT rely on that flag for keep-alive.)
+  #trackBackground(rec, event) {
+    const st = event.subtype
+    if (st === 'task_started' && event.task_id) {
+      rec.backgroundTaskIds.add(event.task_id)
+    } else if (st === 'task_notification' && event.task_id) {
+      rec.backgroundTaskIds.delete(event.task_id)
+    } else if (st === 'task_updated' && event.task_id) {
+      const s = event.patch?.status
+      if (s === 'completed' || s === 'failed' || s === 'killed') {
+        rec.backgroundTaskIds.delete(event.task_id)
+      }
+    }
+    const kind =
+      st === 'task_started'
+        ? 'started'
+        : st === 'task_progress'
+          ? 'progress'
+          : st === 'task_updated'
+            ? 'updated'
+            : st === 'task_notification'
+              ? 'notification'
+              : 'changed'
+    this.emit(
+      notification('chat/task', {
+        threadId: rec.threadId,
+        runId: rec.turnActive ? rec.currentRunId : (rec.bgTurnRunId ?? null),
+        kind,
+        taskId: event.task_id ?? null,
+        description: event.description,
+        subagentType: event.subagent_type,
+        toolUses: event.usage?.tool_uses,
+        totalTokens: event.usage?.total_tokens,
+        lastTool: event.last_tool_name,
+        summary: event.summary,
+        status: event.status,
+        outputFile: event.output_file || undefined,
+        patch: event.patch,
+      }),
+    )
+    this.#armReaper(rec)
+  }
+
+  // Arm/replace the idle-close countdown. Re-checks backgroundInFlight AT FIRE
+  // time (not arm time) so a task that backgrounds just after arming isn't
+  // reaped; when it later settles, #trackBackground re-arms. Never reaps a
+  // thread that's mid-turn or has background work.
+  #armReaper(rec) {
+    if (rec.dead) return
+    clearTimeout(rec.reaperTimer)
+    rec.reaperTimer = setTimeout(() => {
+      if (rec.dead || rec.turnActive) return
+      if (this.#backgroundInFlight(rec)) return // a later event will re-arm
+      this.#teardownThread(rec, 'idle_reap')
+    }, IDLE_TTL_MS)
+  }
+
+  // Enforce MAX_LIVE_THREADS by evicting the least-recently-used idle,
+  // background-free thread. A thread mid-turn or with background work is never
+  // evicted. Evicted threads resume from disk on their next turn.
+  #maybeEvictLRU() {
+    if (this.activeThreads.size < MAX_LIVE_THREADS) return
+    let victim = null
+    for (const [, rec] of this.activeThreads) {
+      if (rec.dead || rec.turnActive || this.#backgroundInFlight(rec)) continue
+      if (!victim || rec.lastTurnEndedAt < victim.lastTurnEndedAt) victim = rec
+    }
+    if (victim) this.#teardownThread(victim, 'lru_evict')
   }
 
   // Per-thread idle watchdog. Guards ONLY an in-progress turn: an idle-but-alive
