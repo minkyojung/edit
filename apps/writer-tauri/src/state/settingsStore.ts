@@ -148,7 +148,8 @@ interface SettingsState {
 
   /** Persistent-query path: keep one long-lived SDK query per conversation so
    * background subagent tasks survive across turns (instead of being killed at
-   * turn end). Default OFF — dark launch; flip on to validate, then default on. */
+   * turn end). Default ON (graduated from dark launch in store v2); the Settings
+   * toggle is the opt-out that falls back to the legacy per-turn path. */
   persistentQueryEnabled: boolean
   setPersistentQueryEnabled: (enabled: boolean) => void
 }
@@ -172,7 +173,7 @@ export const useSettingsStore = create<SettingsState>()(
       editorTextAlign: 'justify',
       notificationSound: 'Glass',
       sandboxEnabled: true,
-      persistentQueryEnabled: false,
+      persistentQueryEnabled: true,
       setNotificationSound: (sound) => set({ notificationSound: sound }),
       setSandboxEnabled: (enabled) => set({ sandboxEnabled: enabled }),
       setPersistentQueryEnabled: (enabled) => set({ persistentQueryEnabled: enabled }),
@@ -206,7 +207,17 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'writer-tauri:settings',
-      version: 1,
+      version: 2,
+      // v2: persistent-query graduated from dark-launch (default off) to default
+      // on. Existing users carry a persisted `false` from the beta, which would
+      // otherwise pin them to the retired legacy per-turn path forever. Move them
+      // onto the new default; the Settings toggle remains as the opt-out. Only
+      // touches this one flag — every other persisted field passes through.
+      migrate: (persisted, version) => {
+        const prev = (persisted ?? {}) as Partial<SettingsState>
+        if (version < 2) return { ...prev, persistentQueryEnabled: true } as SettingsState
+        return prev as SettingsState
+      },
       partialize: (s) => ({
         vaultPaths: s.vaultPaths,
         activeVaultIndex: s.activeVaultIndex,
