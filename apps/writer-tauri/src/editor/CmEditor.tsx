@@ -129,6 +129,23 @@ export function CmEditor({ handle, header }: Props) {
     let view: EditorView | null = null
     let mounted = true
 
+    // Word/char counts are DISPLAY-ONLY (no persistence), so keep their O(n)
+    // trim/split off the per-keystroke hot path — coalesce to a short trailing
+    // window (fires at most ~every 150ms while typing, plus once after it stops).
+    // The bodyMarkdown mirror below stays SYNCHRONOUS: it's the durability path and
+    // the 500ms flush reads it, so deferring it would risk a stale save (see the
+    // save listener). Cleared on unmount.
+    let statsTimer: number | null = null
+    let statsText = ''
+    const scheduleStats = (text: string) => {
+      statsText = text
+      if (statsTimer !== null) return
+      statsTimer = window.setTimeout(() => {
+        statsTimer = null
+        useDocStatsStore.getState().setStats(computeDocStats(statsText))
+      }, 150)
+    }
+
     // Cmd-Z / Cmd-Shift-Z router. Accept/Reject from the CHAT PANEL lands an undoable
     // entry in THIS editor's history, but the click leaves focus on the chat button, so
     // a plain Cmd-Z never reaches CM. We catch it at the document level and forward to
@@ -248,9 +265,10 @@ export function CmEditor({ handle, header }: Props) {
               // A decision transaction changes the exclusion set → must re-mirror.
               if (!u.docChanged && !isDecisionTx(u.transactions)) return
               const text = u.state.doc.toString()
-              // Publish live word/char counts for the floating stats panel —
-              // on every doc change, including programmatic loads.
-              useDocStatsStore.getState().setStats(computeDocStats(text))
+              // Publish live word/char counts for the floating stats panel. Debounced
+              // (display-only) so the count's trim/split doesn't run on every keystroke;
+              // still fires for programmatic loads (they go through this listener too).
+              scheduleStats(text)
               if (u.transactions.some((t) => t.annotation(externalBody))) return
               const h = useDocsStore.getState().handles[handle.slug]
               // Exclude pending green (proposal) text from the saved body — disk
@@ -324,6 +342,7 @@ export function CmEditor({ handle, header }: Props) {
       // Obsidian "save on note switch" behaviour. Fire-and-forget: the
       // single-flight guard serialises it against the timer.
       void flushDirty()
+      if (statsTimer !== null) window.clearTimeout(statsTimer)
       document.removeEventListener('keydown', onKeyDown)
       if (handle) unregisterCmEditor(handle.slug)
       useEditorSelectionStore.getState().setSelection(null)

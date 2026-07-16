@@ -141,15 +141,47 @@ function touchesBlocks(tr: Transaction, mapped: DecorationSet): boolean {
   return touched
 }
 
+/** Does the selection sit on (or span) a line that can REVEAL a block on caret —
+ * an image (`![`) or a `<video>`/`<audio>` media line? Table widgets render
+ * unconditionally (no caret reveal), so they're deliberately excluded. Used to gate
+ * the selection-change rebuild: a cursor move through plain prose can't change any
+ * widget, so we keep the mapped set instead of re-scanning the whole syntax tree on
+ * every keystroke/arrow. Scans only the lines the selection touches (one line for a
+ * collapsed caret) — a superset of `detectMedia`'s trimmed-start match, so it never
+ * misses a real reveal. */
+function selectionNearBlock(state: EditorState): boolean {
+  for (const r of state.selection.ranges) {
+    const first = state.doc.lineAt(r.from)
+    const last = r.to <= first.to ? first : state.doc.lineAt(r.to)
+    const text = state.doc.sliceString(first.from, last.to)
+    if (text.includes('![') || /<(video|audio)\b/i.test(text)) return true
+  }
+  return false
+}
+
 const blocksField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
     const mapped = value.map(tr.changes)
     if (tr.docChanged) return touchesBlocks(tr, mapped) ? build(tr.state) : mapped
-    if (tr.selection) return build(tr.state) // reveal / selected; no shift → no reload
+    // Selection-only change: rebuild ONLY when the caret enters or leaves a
+    // reveal-capable block line (before OR after the move). Since this branch is
+    // never reached for doc-changing transactions (the docChanged return above wins),
+    // startState and state share the same text, so both selections are comparable.
+    // No shift → no reload; the rebuild just toggles the image/media source reveal.
+    if (tr.selection) {
+      return selectionNearBlock(tr.startState) || selectionNearBlock(tr.state)
+        ? build(tr.state)
+        : mapped
+    }
     return mapped
   },
   provide: (f) => EditorView.decorations.from(f),
 })
 
 export const blocksV2: Extension = [blocksField]
+
+// Test-only: the selection gate predicate + the field, so the "cursor move through
+// prose keeps the mapped set (no rebuild) but a move onto a block line reveals" the
+// invariant can be asserted headlessly.
+export { selectionNearBlock as _selectionNearBlock, blocksField as _blocksField }

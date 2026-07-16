@@ -115,6 +115,15 @@ function buildDecos(
         // it edits natively. Skip the node + its children.
         if (inProofRawRange(state, nf)) return false
 
+        // Images are owned ENTIRELY by the block-decoration layer (v2/blocks) — it
+        // replaces `![alt](url)` with the <img> widget. Lezer parses an Image's
+        // `![`/`]`/`(`/`)` as the SAME `LinkMark`/`URL` node types a real link uses,
+        // so without this guard the generic LinkMark/URL branches below would ALSO
+        // hide/mark those markers — two layers decorating one image. That overlap
+        // leaks stray brackets around the rendered image. Skip the node + children
+        // (return false) so blocks is the sole owner, exactly like the proof guard.
+        if (name === 'Image') return false
+
         // INLINE-ONLY mode (table cells): a GFM table cell holds inline content
         // only — there are no real headings/lists/quotes/rules/code-blocks in a
         // cell. Skip those block branches (return undefined → still descend so
