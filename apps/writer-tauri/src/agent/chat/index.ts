@@ -28,6 +28,7 @@ import {
   getDefaultNoteFolder,
   getKnowledgeBaseFolder,
   getSandboxEnabled,
+  getPersistentQueryEnabled,
 } from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
 import { pathForDoc } from '@/lib/docPaths'
@@ -794,6 +795,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         fastMode: fastMode || undefined,
         sessionId: isResume ? undefined : threadId,
         resume: isResume ? threadId : undefined,
+        // Persistent-query path. When on, the sidecar keeps one long-lived query
+        // per thread so background subagent tasks survive across turns. threadId
+        // is the conversation/session key; the sidecar manages resume internally
+        // on the live query. A model / mode / fastMode change is reconciled on
+        // the live query via control requests (setModel / setPermissionMode /
+        // applyFlagSettings), so plan and model-switch turns stay on this path
+        // too — no per-turn routing to the legacy path is needed.
+        threadId,
+        persistentQuery: getPersistentQueryEnabled() || undefined,
       },
     })
     // The run is underway with the outcome note in its prompt — stamp those

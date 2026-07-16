@@ -22,7 +22,6 @@
  */
 
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
-import type { HighlightRecord } from '@/lib/highlightTypes'
 import type { Template } from '@/lib/templates'
 
 /** Slim metadata read straight from the on-disk `.meta.json` sidecar
@@ -77,10 +76,6 @@ export interface KnownDoc {
   description?: string
   savedAt?: string
   readAt?: string
-  /** User highlights on a captured note (read-it-later). Source of
-   * truth, persisted via frontmatter; the editor re-anchors each one to
-   * the body on mount. */
-  highlights?: HighlightRecord[]
   /** YouTube capture metadata. A present `videoId` is what marks a
    * generic `note` as a video capture (the old `type === 'youtube'`
    * gate) — it renders an inline player and picks the video icon. The

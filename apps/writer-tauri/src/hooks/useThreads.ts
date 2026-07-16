@@ -17,8 +17,10 @@ import {
   type ChatModel,
   type ThreadMeta,
 } from '@/chat/types'
+import { invoke } from '@tauri-apps/api/core'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useThreadsStore } from '@/state/threadsStore'
+import { useBackgroundTasks } from '@/stores/backgroundTasks'
 
 export interface UseThreadsResult {
   ready: boolean
@@ -97,6 +99,12 @@ export function useThreads(): UseThreadsResult {
       // caller of archiveThread benefits, regardless of which UI
       // path triggered it.
       useChatRuns.getState().abortByThread(id)
+      // Persistent-query path: also end the thread's long-lived sidecar query
+      // (distinct from per-turn cancel) and drop its background-task state. A
+      // no-op sidecar-side when the thread isn't live, so it's safe to always
+      // fire; fire-and-forget.
+      void invoke('claude_chat_close_thread', { args: { threadId: id } }).catch(() => {})
+      useBackgroundTasks.getState().clearThread(id)
       // A draft (opened but never sent) has no file and no history — discard it
       // outright rather than leaving a blank archived entry behind.
       if (useThreadsStore.getState().draftIds.has(id)) {

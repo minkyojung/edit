@@ -32,6 +32,8 @@ export function FilesSettings() {
   const setInboxAutoOrganize = useSettingsStore((s) => s.setInboxAutoOrganize)
   const sandboxEnabled = useSettingsStore((s) => s.sandboxEnabled)
   const setSandboxEnabled = useSettingsStore((s) => s.setSandboxEnabled)
+  const persistentQueryEnabled = useSettingsStore((s) => s.persistentQueryEnabled)
+  const setPersistentQueryEnabled = useSettingsStore((s) => s.setPersistentQueryEnabled)
   const vaultPath = useSettingsStore((s) => s.vaultPaths[s.activeVaultIndex] ?? '')
 
   // Only real, user-facing folders belong in these pickers. Hide the
@@ -167,6 +169,15 @@ export function FilesSettings() {
         description="Stops the AI from sending data to the internet or reading secret files (SSH keys, tokens, credentials) — so a malicious instruction hidden in a captured web page or transcript can't leak your data. Leave on unless you know you need it off."
       >
         <Switch checked={sandboxEnabled} onCheckedChange={setSandboxEnabled} />
+      </SettingRow>
+      <SettingRow
+        title="Keep background tasks alive (beta)"
+        description="Keeps the AI's conversation running so long background tasks (like deep research) survive across turns instead of being cut off — and their result shows up on its own when done. Experimental; turn off if chat behaves oddly."
+      >
+        <Switch
+          checked={persistentQueryEnabled}
+          onCheckedChange={setPersistentQueryEnabled}
+        />
       </SettingRow>
     </section>
   )

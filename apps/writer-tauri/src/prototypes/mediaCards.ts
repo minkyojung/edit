@@ -13,7 +13,6 @@ import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
 import { activeLines } from './reveal'
-import { isComposing, compositionEnded } from './imeComposition'
 import { setVaultAssetSrc } from './setAssetSrc'
 
 type MediaKind = 'video' | 'audio'
@@ -109,8 +108,7 @@ function build(state: EditorState): DecorationSet {
 export const mediaField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
-    if (isComposing(tr.state)) return value
-    return tr.docChanged || tr.selection || compositionEnded(tr) ? build(tr.state) : value
+    return tr.docChanged || tr.selection ? build(tr.state) : value
   },
   provide: (f) => [
     EditorView.decorations.from(f),

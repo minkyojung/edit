@@ -26,15 +26,12 @@ import {
   type Range,
   type Transaction,
 } from '@codemirror/state'
+import { type SyntaxNode } from '@lezer/common'
 import { ImageWidget } from '../widgets'
 import { EditableTableWidget } from './editableTable'
 import { MediaWidget, detectMedia } from '../mediaCards'
 import { inProofRawRange } from '@/editor/proofRawRanges'
-
-function cursorInRange(state: EditorState, from: number, to: number): boolean {
-  for (const r of state.selection.ranges) if (r.from <= to && from <= r.to) return true
-  return false
-}
+import { cursorInRange } from './cursorRange'
 
 function build(state: EditorState): DecorationSet {
   const out: Range<Decoration>[] = []
@@ -122,12 +119,23 @@ function build(state: EditorState): DecorationSet {
   return Decoration.set(out, true)
 }
 
+/** Is `pos` inside a GFM `Table` node? Tables render unconditionally (build always
+ * emits the widget), so the field just needs to KNOW a change/selection involves a
+ * table to trigger a rebuild. */
+function inTableAt(state: EditorState, pos: number): boolean {
+  for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1); n; n = n.parent) {
+    if (n.name === 'Table') return true
+  }
+  return false
+}
+
 /** Could this edit change which block widgets render (or their content)? True when
- * a change overlaps an existing (mapped) widget — image OR table — or lands on a
- * line containing `![` (a new image). Tables don't need a syntax check here: while
- * the caret is in a table it's shown raw (no widget), and it (re)renders when the
- * caret leaves via the selection-change rebuild. When false, the mapped set is
- * kept — so typing elsewhere never reloads/re-renders a widget. */
+ * a change overlaps an existing (mapped) widget — image OR table — lands on a line
+ * containing `![` (a new image), or lands inside a table (a freshly-inserted or
+ * edited GFM table). The table check is REQUIRED: an inserted table isn't near an
+ * existing widget and has no `![`, so without it the table stays raw markdown until
+ * some unrelated later rebuild. When false, the mapped set is kept — so typing
+ * elsewhere never reloads/re-renders a widget. */
 function touchesBlocks(tr: Transaction, mapped: DecorationSet): boolean {
   let touched = false
   tr.changes.iterChanges((_fromA, _toA, fromB, toB) => {
@@ -137,8 +145,32 @@ function touchesBlocks(tr: Transaction, mapped: DecorationSet): boolean {
       return false
     })
     if (!touched && tr.state.doc.lineAt(fromB).text.includes('![')) touched = true
+    // A freshly-inserted `<video>`/`<audio>` line (like `![` for images) — otherwise
+    // an inserted media embed stays raw until the caret happens to enter its line.
+    if (!touched && /<(video|audio)\b/i.test(tr.state.doc.lineAt(fromB).text)) touched = true
+    if (!touched && (inTableAt(tr.state, fromB) || inTableAt(tr.state, toB))) touched = true
   })
   return touched
+}
+
+/** Does the selection sit on (or span) a block whose rendering depends on the
+ * selection — an image (`![`) or `<video>`/`<audio>` line (caret reveal), or a
+ * table (a caret-leave after inserting/editing raw rows needs to (re)render it)?
+ * Used to gate the selection-change rebuild: a cursor move through plain prose can't
+ * change any widget, so we keep the mapped set instead of re-scanning the whole
+ * syntax tree on every keystroke/arrow. The image/media check scans only the lines
+ * the selection touches (a superset of `detectMedia`'s match, so it never misses a
+ * reveal); the table check uses the syntax tree (reliable here — selection changes
+ * happen after the parser has settled). */
+function selectionNearBlock(state: EditorState): boolean {
+  for (const r of state.selection.ranges) {
+    const first = state.doc.lineAt(r.from)
+    const last = r.to <= first.to ? first : state.doc.lineAt(r.to)
+    const text = state.doc.sliceString(first.from, last.to)
+    if (text.includes('![') || /<(video|audio)\b/i.test(text)) return true
+    if (inTableAt(state, r.from) || inTableAt(state, r.to)) return true
+  }
+  return false
 }
 
 const blocksField = StateField.define<DecorationSet>({
@@ -146,10 +178,24 @@ const blocksField = StateField.define<DecorationSet>({
   update: (value, tr) => {
     const mapped = value.map(tr.changes)
     if (tr.docChanged) return touchesBlocks(tr, mapped) ? build(tr.state) : mapped
-    if (tr.selection) return build(tr.state) // reveal / selected; no shift → no reload
+    // Selection-only change: rebuild ONLY when the caret enters or leaves a
+    // reveal-capable block line (before OR after the move). Since this branch is
+    // never reached for doc-changing transactions (the docChanged return above wins),
+    // startState and state share the same text, so both selections are comparable.
+    // No shift → no reload; the rebuild just toggles the image/media source reveal.
+    if (tr.selection) {
+      return selectionNearBlock(tr.startState) || selectionNearBlock(tr.state)
+        ? build(tr.state)
+        : mapped
+    }
     return mapped
   },
   provide: (f) => EditorView.decorations.from(f),
 })
 
 export const blocksV2: Extension = [blocksField]
+
+// Test-only: the selection gate predicate + the field, so the "cursor move through
+// prose keeps the mapped set (no rebuild) but a move onto a block line reveals" the
+// invariant can be asserted headlessly.
+export { selectionNearBlock as _selectionNearBlock, blocksField as _blocksField }

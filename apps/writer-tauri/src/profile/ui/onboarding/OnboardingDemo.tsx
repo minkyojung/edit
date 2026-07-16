@@ -1,7 +1,7 @@
 // Auto-playing product demo shown in the onboarding right panel. It replays one
 // story on a loop, rendered to look like the REAL editor — an inline suggestion
 // with the old text struck through (red) and the new text highlighted (green),
-// the same marks the CodeMirror proof-review uses (see prototypes/v2/proofMarks):
+// the same marks the CodeMirror proof-review uses (see editor/cmInBufferReview.ts):
 //
 //   request → think (line by line) → inline red/green suggestion → Keep → applied → (loop)
 //

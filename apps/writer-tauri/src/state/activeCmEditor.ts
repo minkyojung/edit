@@ -22,6 +22,12 @@ type CmScroller = (changeId: string) => void
 // applier asks this so it doesn't ALSO try to apply a change the in-buffer review
 // already owns (which only logged a harmless "outdated" warning).
 type CmMaterializedQuery = (changeId: string) => boolean
+// Read the editor's CURRENT saved-body markdown, on demand. CM's own state is the
+// authoritative document (immutable, always current — see the CM6 guide), so the save
+// path PULLS this at flush time instead of the editor mirroring it into a parallel
+// copy on every keystroke. Returns the body MINUS pending-green proposal text (disk
+// only holds accepted content), matching what the old per-keystroke mirror wrote.
+type CmBodyReader = () => string
 
 let active: {
   slug: string
@@ -29,6 +35,7 @@ let active: {
   rejectChange: CmRejecter
   scrollToChange: CmScroller
   isMaterialized: CmMaterializedQuery
+  getBody: CmBodyReader
 } | null = null
 
 // A scroll request that arrived before its target editor mounted — the cross-note jump
@@ -42,8 +49,9 @@ export function registerCmEditor(
   rejectChange: CmRejecter,
   scrollToChange: CmScroller,
   isMaterialized: CmMaterializedQuery,
+  getBody: CmBodyReader,
 ): void {
-  active = { slug, setBody, rejectChange, scrollToChange, isMaterialized }
+  active = { slug, setBody, rejectChange, scrollToChange, isMaterialized, getBody }
   if (pendingScroll?.slug === slug) {
     const { changeId } = pendingScroll
     pendingScroll = null
@@ -89,4 +97,13 @@ export function rejectActiveCmChange(slug: string, changeId: string): boolean {
  * the buffer + the save mirror, so a second apply would be redundant (and noisy). */
 export function isChangeMaterializedInActiveCm(slug: string, changeId: string): boolean {
   return active?.slug === slug ? active.isMaterialized(changeId) : false
+}
+
+/** The current saved-body markdown of the mounted CM editor for `slug`, read straight
+ * from its live state — or null when no editor for `slug` is mounted (then the caller
+ * uses its cached copy, refreshed by the editor's unmount checkpoint). The flush path
+ * calls this so the on-disk write reflects the live document without a per-keystroke
+ * mirror. */
+export function pullActiveCmBody(slug: string): string | null {
+  return active?.slug === slug ? active.getBody() : null
 }

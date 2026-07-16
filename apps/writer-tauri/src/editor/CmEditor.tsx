@@ -50,14 +50,6 @@ import {
 import { stripRanges } from '@/editor/proposalPlan'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore } from '@/state/settingsStore'
-import {
-  highlightRenderExtension,
-  highlightSelectionNotifier,
-  highlightClickExtension,
-  highlightHotkey,
-  highlightsSyncEffect,
-} from '@/editor/cmHighlights'
-import { CmHighlightBar } from '@/editor/CmHighlightBar'
 import { DocStatsPanel } from '@/editor/DocStatsPanel'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { slashMenu, slashKeymap } from '@/editor/slashMenu'
@@ -128,6 +120,22 @@ export function CmEditor({ handle, header }: Props) {
     if (!parent || !handle) return
     let view: EditorView | null = null
     let mounted = true
+
+    // Word/char counts are DISPLAY-ONLY. Capture the STATE (a cheap reference) and
+    // serialize/count on a short trailing window — so the O(n) `doc.toString()` runs
+    // at most ~every 150ms, never per keystroke. (Persistence no longer runs here at
+    // all: the flush PULLS the body from the live editor — see registerCmEditor's
+    // getBody + docFileSync — so a keystroke only flags the slug dirty.)
+    let statsTimer: number | null = null
+    let statsState: EditorState | null = null
+    const scheduleStats = (state: EditorState) => {
+      statsState = state
+      if (statsTimer !== null) return
+      statsTimer = window.setTimeout(() => {
+        statsTimer = null
+        if (statsState) useDocStatsStore.getState().setStats(computeDocStats(statsState.doc.toString()))
+      }, 150)
+    }
 
     // Cmd-Z / Cmd-Shift-Z router. Accept/Reject from the CHAT PANEL lands an undoable
     // entry in THIS editor's history, but the click leaves focus on the chat button, so
@@ -201,8 +209,6 @@ export function CmEditor({ handle, header }: Props) {
             blocksV2,
             youtubeCards, // a bare youtube URL line → inline player
             mermaidCards, // ```mermaid fence → live diagram (portable across md apps)
-            highlightRenderExtension(handle.slug), // paint recorded highlights
-            highlightSelectionNotifier, // selection → "Highlight" prompt in the bar
             // Mirror the live selection into the editor-agnostic store so the
             // chat panel can show the selection chip + inject it as context.
             // We publish the line range too (CM knows it cheaply) so the chip
@@ -221,9 +227,6 @@ export function CmEditor({ handle, header }: Props) {
                 toLine: u.state.doc.lineAt(m.to).number,
               })
             }),
-            highlightClickExtension, // click a highlight → open it for a note
-            highlightHotkey(handle.slug), // ⌘⇧M → highlight the selection
-
             tableArrowEntry,
             blockVerticalNav,
             wikilinkKnown.of(isKnownNoteTitle), // blue vs red from REAL knownDocs
@@ -247,15 +250,18 @@ export function CmEditor({ handle, header }: Props) {
               // auto-accepted append to the open note is silently dropped on flush.
               // A decision transaction changes the exclusion set → must re-mirror.
               if (!u.docChanged && !isDecisionTx(u.transactions)) return
-              const text = u.state.doc.toString()
-              // Publish live word/char counts for the floating stats panel —
-              // on every doc change, including programmatic loads.
-              useDocStatsStore.getState().setStats(computeDocStats(text))
+              // Publish live word/char counts (display-only, debounced — no toString
+              // on the keystroke). Also fires for programmatic loads.
+              scheduleStats(u.state)
+              // A programmatic body set (externalBody) is a load FROM disk, not a user
+              // edit — don't dirty it.
               if (u.transactions.some((t) => t.annotation(externalBody))) return
-              const h = useDocsStore.getState().handles[handle.slug]
-              // Exclude pending green (proposal) text from the saved body — disk
-              // only ever holds accepted content (Option B in-buffer review).
-              if (h) h.bodyMarkdown = stripRanges(text, greenRangesForSave(u.state))
+              // Just flag the slug dirty. The flush PULLS the current body from this
+              // live editor (getBody, below) — CM's state is the source of truth, read
+              // on demand rather than mirrored on every keystroke. A decision tx
+              // (accept/reject, possibly no doc change) also reaches here → the pull
+              // re-reads with the current green set, so an auto-accepted append isn't
+              // dropped.
               markSlugDirty(handle.slug)
             }),
             Prec.lowest(cmPrototypeTheme),
@@ -263,7 +269,7 @@ export function CmEditor({ handle, header }: Props) {
           ],
         }),
       })
-      viewRef.current = view // expose for the highlight sync + floating menu
+      viewRef.current = view // expose for the floating menu
       // Seed the stats panel before the first edit fires a docChanged update.
       useDocStatsStore.getState().setStats(computeDocStats(handle.bodyMarkdown))
       // Let the chat's selection-chip X collapse this view's selection
@@ -312,18 +318,28 @@ export function CmEditor({ handle, header }: Props) {
         // Materialized query: is this change showing as an in-buffer proposal? The
         // applier asks before applying, so it skips changes the review already owns.
         (changeId) => (view ? isMaterialized(view.state, changeId) : false),
+        // Body reader: the flush PULLS the current saved body from here (CM state is
+        // the source of truth). Excludes pending-green proposal text (disk only holds
+        // accepted content), matching what the old per-keystroke mirror wrote.
+        () => (view ? stripRanges(view.state.doc.toString(), greenRangesForSave(view.state)) : ''),
       )
     })
 
     return () => {
       mounted = false
-      // Checkpoint flush: this cleanup runs on doc switch AND editor
-      // unmount. The updateListener has already mirrored the latest
-      // keystrokes into handle.bodyMarkdown, so flushing here shrinks
-      // the 500 ms auto-flush window to ~0 for the leaving doc — the
-      // Obsidian "save on note switch" behaviour. Fire-and-forget: the
-      // single-flight guard serialises it against the timer.
+      // Checkpoint (doc switch AND editor unmount). SYNCHRONOUSLY pull the latest body
+      // into the cache BEFORE tearing the view down: the flush now reads from the live
+      // editor (getBody), but `flushDirty()` is async and we destroy the view below in
+      // the same tick — so without this the leaving doc's last keystrokes would be gone
+      // by the time the async flush runs. Writing the cache here (the same value getBody
+      // returns) makes the torn-down handle's body current for this flush and any later
+      // one. flushDirty then persists it (Obsidian "save on note switch").
+      if (view) {
+        const h = useDocsStore.getState().handles[handle.slug]
+        if (h) h.bodyMarkdown = stripRanges(view.state.doc.toString(), greenRangesForSave(view.state))
+      }
       void flushDirty()
+      if (statsTimer !== null) window.clearTimeout(statsTimer)
       document.removeEventListener('keydown', onKeyDown)
       if (handle) unregisterCmEditor(handle.slug)
       useEditorSelectionStore.getState().setSelection(null)
@@ -334,18 +350,6 @@ export function CmEditor({ handle, header }: Props) {
       viewRef.current = null
     }
     // Re-runs only on slug change (a doc switch); mount-time deps are stable.
-  }, [slug])
-
-  // Repaint highlights when this doc's highlight records change (create /
-  // remove / note edit). The render extension seeds the initial set at
-  // mount; this keeps it in sync afterwards.
-  useEffect(() => {
-    if (!slug) return
-    return useDocsStore.subscribe((s, prev) => {
-      const cur = s.knownDocs.find((d) => d.slug === slug)?.highlights
-      const old = prev.knownDocs.find((d) => d.slug === slug)?.highlights
-      if (cur !== old) viewRef.current?.dispatch({ effects: highlightsSyncEffect(slug) })
-    })
   }, [slug])
 
   return (
@@ -395,7 +399,6 @@ export function CmEditor({ handle, header }: Props) {
           <div className="cm-prototype" ref={rootRef} />
         </div>
       </div>
-      <CmHighlightBar viewRef={viewRef} slug={slug} />
       <DocStatsPanel />
     </div>
   )

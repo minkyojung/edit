@@ -1,0 +1,45 @@
+import type { ReactNode } from 'react'
+import {
+  IconBan,
+  IconInfoCircle,
+  IconAlertTriangle,
+  IconArrowsExchange,
+} from '@tabler/icons-react'
+import type { NoticePart } from '@/chat/types'
+import { ActivityRow } from '@/chat/parts/ActivityRow'
+
+/** A consequential mid-turn notice the SDK surfaced that isn't chat content: a
+ * tool blocked by a permission rule, an automatic model fallback after a
+ * refusal, or an SDK `informational` message. Persistent (unlike the transient
+ * StatusRow) so the user can see *why* the turn behaved as it did. Composes its
+ * own (localized) label from the part's raw fields, mirroring RetryRow. */
+export function NoticeRow({ part }: { part: NoticePart }) {
+  const { icon, label } = describe(part)
+  return <ActivityRow icon={icon} label={label} />
+}
+
+function describe(part: NoticePart): { icon: ReactNode; label: string } {
+  switch (part.kind) {
+    case 'permission-denied': {
+      const tool = part.toolName ?? 'A tool'
+      const why = part.reason ? ` — ${part.reason}` : ''
+      return { icon: <IconBan size={14} />, label: `Blocked: ${tool}${why}` }
+    }
+    case 'model-fallback': {
+      const to = part.fallbackModel ? ` to ${part.fallbackModel}` : ''
+      return {
+        icon: <IconArrowsExchange size={14} />,
+        label: `Switched${to} after a safety refusal`,
+      }
+    }
+    case 'info': {
+      const warn = part.level === 'warning'
+      const text = part.text ?? (warn ? 'Warning' : 'Notice')
+      const suffix = part.blocking ? ' (stopped here)' : ''
+      return {
+        icon: warn ? <IconAlertTriangle size={14} /> : <IconInfoCircle size={14} />,
+        label: `${text}${suffix}`,
+      }
+    }
+  }
+}

@@ -17,6 +17,7 @@ import { Facet, type EditorState, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
 import { isKnownNote } from '../wikilinkComplete'
 import { inProofRawRange } from '@/editor/proofRawRanges'
+import { cursorInRange } from './cursorRange'
 
 const HIDE = Decoration.replace({})
 
@@ -28,18 +29,30 @@ export const wikilinkKnown = Facet.define<(title: string) => boolean, (title: st
 })
 
 // Width (em) of the list marker column. The hanging-indent padding (JS, here) and
-// the `.cm-list-marker` inline-block width (CSS, cmTheme) MUST match this value so
-// the marker fills its column and body text lands exactly at the column edge.
-const LIST_INDENT = 1.8
+// the `.cm-list-marker` inline-block width (CSS, cmTheme) must be the SAME value so
+// the marker fills its column and body text lands exactly at the column edge — so
+// cmTheme imports this constant rather than re-hardcoding `1.8em` (single source,
+// can't drift).
+export const LIST_INDENT = 1.8
 
-/** Any selection range touches [from, to] (inclusive — an edge counts, so a
- * just-typed marker stays raw until the caret moves off). */
-function cursorInRange(state: EditorState, from: number, to: number): boolean {
-  for (const r of state.selection.ranges) {
-    if (r.from <= to && from <= r.to) return true
-  }
-  return false
-}
+// Gap (em) between a list marker's glyph and the body text — the SINGLE shared
+// value for bullet / number / task, so they line up identically (like Obsidian's
+// `--list-bullet-end-padding`). Each marker positions its glyph `PAD` in from the
+// column's right edge; before this the three were hand-tuned to different insets
+// (0.32 / 0.15 / 0), which read as three different gaps. cmTheme imports this.
+export const LIST_MARKER_END_PAD = 0.35
+
+// Width (em) of the single source space after a marker (`- ` / `1. `). That space
+// is a normal text glyph OUTSIDE the fixed `LIST_INDENT` marker column, so a
+// wrapped/continuation line (which hangs at the column edge) would land ~one space
+// left of the first line's body without it. Adding it to the line padding closes
+// that gap. This is a constant approximation of the editor font's space advance
+// (Obsidian uses the same trick via `--list-marker-space: 0.25em`); exact alignment
+// would need per-line `coordsAtPos` measurement, which we deliberately avoid to keep
+// the fixed-column design (no measure machinery, no reflow-on-remeasure bugs).
+// It lives ONLY in the line inline-style — the `.cm-list-marker` column width is
+// unchanged, so cmTheme needs no change.
+export const LIST_MARKER_SPACE = 0.25
 
 /** lezer parses `[[Title]]` as a `Link` ([Title]) wrapped in an extra `[`…`]`.
  * Detect that so the grammar Link/LinkMark handling can bail and leave wikilinks
@@ -56,6 +69,28 @@ function inCodeContext(state: EditorState, pos: number): boolean {
     if (/Code/.test(n.name)) return true
   }
   return false
+}
+
+/** Hanging-indent level for a marker-LESS line that belongs to a list item (a
+ * hard-break / lazy-continuation line under a bullet). Walks up from the line start
+ * to the innermost `ListItem` (nested → the child item, i.e. the deeper level), then
+ * counts ancestor `BulletList`/`OrderedList` — the SAME `depth`/`level` rule the
+ * `ListMark` branch uses, so the continuation lands at that line's body column.
+ * `null` when the position isn't inside a list item. */
+function listItemLevelAt(state: EditorState, pos: number): number | null {
+  let item: SyntaxNode | null = null
+  for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1); n; n = n.parent) {
+    if (n.name === 'ListItem') {
+      item = n
+      break
+    }
+  }
+  if (!item) return null
+  let depth = 0
+  for (let p: SyntaxNode | null = item.parent; p; p = p.parent) {
+    if (p.name === 'BulletList' || p.name === 'OrderedList') depth++
+  }
+  return Math.max(0, depth - 1)
 }
 
 function buildDecos(
@@ -114,6 +149,19 @@ function buildDecos(
         // Pending AI proposal (Option B): leave it RAW so proposal ≠ content and
         // it edits natively. Skip the node + its children.
         if (inProofRawRange(state, nf)) return false
+
+        // Images and GFM tables are owned ENTIRELY by the block-decoration layer
+        // (v2/blocks): it replaces `![alt](url)` with the <img> widget and the whole
+        // table with the editable-table widget (whose cells render their own inline
+        // markdown via livePreviewInline). Without a guard here the inline layer ALSO
+        // walks in and decorates their markers — an Image's `![`/`]`/`(`/`)` (which
+        // Lezer labels with the SAME LinkMark/URL types a link uses) and any inline
+        // markdown INSIDE table cells (`**bold**`, `[x](u)`, …). Two layers on one
+        // block collide and leak stray markers around the rendered block. Skip the
+        // node + children (return false) so blocks is the sole owner — same as the
+        // proof guard above. (In inlineOnly cell mode the nested doc has no Image/
+        // Table node, so this never suppresses a cell's own inline rendering.)
+        if (name === 'Image' || name === 'Table') return false
 
         // INLINE-ONLY mode (table cells): a GFM table cell holds inline content
         // only — there are no real headings/lists/quotes/rules/code-blocks in a
@@ -258,7 +306,7 @@ function buildDecos(
             Decoration.line({
               class: 'cm-list-line',
               attributes: {
-                style: `padding-left:${(level + 1) * LIST_INDENT}em;text-indent:-${LIST_INDENT}em`,
+                style: `padding-left:${(level + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:-${LIST_INDENT + LIST_MARKER_SPACE}em`,
               },
             }).range(line.from),
           )
@@ -347,8 +395,34 @@ function buildDecos(
         const line = state.doc.line(ln)
         if (listLinesDone.has(line.from)) continue // Lezer already styled this line
         const lm = /^(\s*)([-*+]|\d+[.)])\s/.exec(line.text)
-        if (!lm) continue
-        if (/^[-*_ ]+$/.test(line.text.trim())) continue // `---` / `* * *` = rule, not list
+        if (!lm) {
+          // No marker — but a hard-break / lazy-continuation line inside a list item
+          // (Shift+Enter → plain newline, no marker, no leading space) still needs the
+          // hanging indent, or its text runs back under the bullet. Give it the body
+          // column with `text-indent:0` (no marker to pull back). Same `LIST_INDENT`
+          // grid as the marker line, so wrapped and hard-break lines share one x.
+          if (line.from === line.to) continue // blank line — nothing to indent
+          if (inCodeContext(state, line.from)) continue // literal code line in a list
+          const lvl = listItemLevelAt(state, line.from)
+          if (lvl == null) continue
+          out.push(
+            Decoration.line({
+              class: 'cm-list-line',
+              attributes: {
+                style: `padding-left:${(lvl + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:0`,
+              },
+            }).range(line.from),
+          )
+          continue
+        }
+        // Horizontal rule vs empty bullet: a real HR is 3+ of `-`/`*`/`_` (CommonMark);
+        // a lone `- ` / `* ` is an EMPTY BULLET, not a rule. The old `/^[-*_ ]+$/`
+        // matched a single `-` too, so it wrongly skipped empty bullets — which the
+        // Lezer tree ALSO can't render below a different-type list (it's parsed as lazy
+        // continuation), so the marker never appeared until content was typed. Require
+        // 3+ rule chars so `---`/`* * *` still skip but `- `/`* ` render as bullets.
+        const trimmed = line.text.trim()
+        if (/^[-*_ ]+$/.test(trimmed) && (trimmed.match(/[-*_]/g)?.length ?? 0) >= 3) continue
         if (inCodeContext(state, line.from)) continue // `- ` inside a code fence is literal
         const indent = lm[1].length
         const markerFrom = line.from + indent
@@ -361,7 +435,7 @@ function buildDecos(
           Decoration.line({
             class: 'cm-list-line',
             attributes: {
-              style: `padding-left:${(level + 1) * LIST_INDENT}em;text-indent:-${LIST_INDENT}em`,
+              style: `padding-left:${(level + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:-${LIST_INDENT + LIST_MARKER_SPACE}em`,
             },
           }).range(line.from),
         )
