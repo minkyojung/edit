@@ -129,20 +129,19 @@ export function CmEditor({ handle, header }: Props) {
     let view: EditorView | null = null
     let mounted = true
 
-    // Word/char counts are DISPLAY-ONLY (no persistence), so keep their O(n)
-    // trim/split off the per-keystroke hot path — coalesce to a short trailing
-    // window (fires at most ~every 150ms while typing, plus once after it stops).
-    // The bodyMarkdown mirror below stays SYNCHRONOUS: it's the durability path and
-    // the 500ms flush reads it, so deferring it would risk a stale save (see the
-    // save listener). Cleared on unmount.
+    // Word/char counts are DISPLAY-ONLY. Capture the STATE (a cheap reference) and
+    // serialize/count on a short trailing window — so the O(n) `doc.toString()` runs
+    // at most ~every 150ms, never per keystroke. (Persistence no longer runs here at
+    // all: the flush PULLS the body from the live editor — see registerCmEditor's
+    // getBody + docFileSync — so a keystroke only flags the slug dirty.)
     let statsTimer: number | null = null
-    let statsText = ''
-    const scheduleStats = (text: string) => {
-      statsText = text
+    let statsState: EditorState | null = null
+    const scheduleStats = (state: EditorState) => {
+      statsState = state
       if (statsTimer !== null) return
       statsTimer = window.setTimeout(() => {
         statsTimer = null
-        useDocStatsStore.getState().setStats(computeDocStats(statsText))
+        if (statsState) useDocStatsStore.getState().setStats(computeDocStats(statsState.doc.toString()))
       }, 150)
     }
 
@@ -264,16 +263,18 @@ export function CmEditor({ handle, header }: Props) {
               // auto-accepted append to the open note is silently dropped on flush.
               // A decision transaction changes the exclusion set → must re-mirror.
               if (!u.docChanged && !isDecisionTx(u.transactions)) return
-              const text = u.state.doc.toString()
-              // Publish live word/char counts for the floating stats panel. Debounced
-              // (display-only) so the count's trim/split doesn't run on every keystroke;
-              // still fires for programmatic loads (they go through this listener too).
-              scheduleStats(text)
+              // Publish live word/char counts (display-only, debounced — no toString
+              // on the keystroke). Also fires for programmatic loads.
+              scheduleStats(u.state)
+              // A programmatic body set (externalBody) is a load FROM disk, not a user
+              // edit — don't dirty it.
               if (u.transactions.some((t) => t.annotation(externalBody))) return
-              const h = useDocsStore.getState().handles[handle.slug]
-              // Exclude pending green (proposal) text from the saved body — disk
-              // only ever holds accepted content (Option B in-buffer review).
-              if (h) h.bodyMarkdown = stripRanges(text, greenRangesForSave(u.state))
+              // Just flag the slug dirty. The flush PULLS the current body from this
+              // live editor (getBody, below) — CM's state is the source of truth, read
+              // on demand rather than mirrored on every keystroke. A decision tx
+              // (accept/reject, possibly no doc change) also reaches here → the pull
+              // re-reads with the current green set, so an auto-accepted append isn't
+              // dropped.
               markSlugDirty(handle.slug)
             }),
             Prec.lowest(cmPrototypeTheme),
@@ -330,17 +331,26 @@ export function CmEditor({ handle, header }: Props) {
         // Materialized query: is this change showing as an in-buffer proposal? The
         // applier asks before applying, so it skips changes the review already owns.
         (changeId) => (view ? isMaterialized(view.state, changeId) : false),
+        // Body reader: the flush PULLS the current saved body from here (CM state is
+        // the source of truth). Excludes pending-green proposal text (disk only holds
+        // accepted content), matching what the old per-keystroke mirror wrote.
+        () => (view ? stripRanges(view.state.doc.toString(), greenRangesForSave(view.state)) : ''),
       )
     })
 
     return () => {
       mounted = false
-      // Checkpoint flush: this cleanup runs on doc switch AND editor
-      // unmount. The updateListener has already mirrored the latest
-      // keystrokes into handle.bodyMarkdown, so flushing here shrinks
-      // the 500 ms auto-flush window to ~0 for the leaving doc — the
-      // Obsidian "save on note switch" behaviour. Fire-and-forget: the
-      // single-flight guard serialises it against the timer.
+      // Checkpoint (doc switch AND editor unmount). SYNCHRONOUSLY pull the latest body
+      // into the cache BEFORE tearing the view down: the flush now reads from the live
+      // editor (getBody), but `flushDirty()` is async and we destroy the view below in
+      // the same tick — so without this the leaving doc's last keystrokes would be gone
+      // by the time the async flush runs. Writing the cache here (the same value getBody
+      // returns) makes the torn-down handle's body current for this flush and any later
+      // one. flushDirty then persists it (Obsidian "save on note switch").
+      if (view) {
+        const h = useDocsStore.getState().handles[handle.slug]
+        if (h) h.bodyMarkdown = stripRanges(view.state.doc.toString(), greenRangesForSave(view.state))
+      }
       void flushDirty()
       if (statsTimer !== null) window.clearTimeout(statsTimer)
       document.removeEventListener('keydown', onKeyDown)

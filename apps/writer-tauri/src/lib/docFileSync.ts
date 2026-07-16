@@ -18,6 +18,7 @@
 // and what (serialise) to write.
 
 import { useDocsStore, type KnownDoc } from '@/state/docsStore'
+import { pullActiveCmBody } from '@/state/activeCmEditor'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { invalidateWikiIndex } from '@/state/wikiIndex'
 import { invalidateVaultTimeline } from '@/state/vaultTimeline'
@@ -140,11 +141,15 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
     return null
   }
 
-  // Phase I: read from `handle.bodyMarkdown`, which dirtyTrackerPlugin
-  // keeps in sync with the live PM doc on every transaction. This
-  // removes the legacy "active doc only" gate: a slug that was
-  // dirtied moments before the user navigated away still flushes
-  // because the cache survived the editor unmount.
+  // PULL the body from the live CM editor if one is mounted for this slug — CM's
+  // state is the authoritative document (see the CM6 guide), so we read it on demand
+  // at flush time instead of the editor mirroring it into `handle.bodyMarkdown` on
+  // every keystroke. When no editor is mounted (the user navigated away), fall back
+  // to the cached `bodyMarkdown`, which the editor's unmount checkpoint refreshed
+  // before tearing down — so a slug dirtied moments before navigation still flushes
+  // the correct final body.
+  const pulled = pullActiveCmBody(slug)
+  if (pulled !== null) handle.bodyMarkdown = pulled
   const md = handle.bodyMarkdown
 
   const known = docs.knownDocs.find((d) => d.slug === slug)
