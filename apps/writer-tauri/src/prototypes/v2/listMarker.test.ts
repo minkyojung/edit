@@ -1,8 +1,14 @@
-// After unifying list-marker rendering onto the single Lezer `ListMark` branch
-// (the regex fallback was deleted; `buildDecos` forces the viewport parse via
-// ensureSyntaxTree so the tree is authoritative), pin that every list shape still
-// produces exactly the right marker decoration — and that there's no DOUBLE
-// decoration (the two-path drift the fallback risked).
+// Characterizes list-marker rendering: every list shape produces the right marker
+// decoration, and there's no DOUBLE decoration (the tree path + the immediate-marker
+// regex fallback are deduped by `listLinesDone`).
+//
+// NOTE: this can't catch the regression that matters most — an EMPTY just-typed
+// marker (`- `, `1. `) rendering IMMEDIATELY. Headless states parse synchronously, so
+// the tree already has the ListMark; the fallback's value (painting the marker before
+// the incremental parser catches up, especially for ordered markers, which Lezer only
+// confirms once the item has content) only shows in the live editor. Removing the
+// fallback in favor of a forced parse (ensureSyntaxTree) passed these tests yet broke
+// `1. ` in-app — see the revert. Real-app eyeball is the only guard for immediacy.
 
 import { describe, expect, it } from 'vitest'
 import { EditorState } from '@codemirror/state'
