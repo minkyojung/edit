@@ -906,20 +906,16 @@ export class Server {
 
     const existing = this.activeThreads.get(threadId)
     if (existing && !existing.dead) {
-      // A turn that changes model / permissionMode / fastMode can't mutate the
-      // live query safely (mid-stream control requests perturb the SDK control
-      // channel and abort the next turn). Instead recreate the thread from the
-      // persisted session with the new settings and replay this turn — but ONLY
-      // when the thread is idle and background-free, so we never sever running
-      // background work. Otherwise fall through and run the turn on the existing
-      // thread (the settings change is deferred to a later, safe boundary).
-      if (
-        this.#turnNeedsRebuild(existing, params) &&
-        !existing.turnActive &&
-        !this.#backgroundInFlight(existing)
-      ) {
+      // A turn that changes model / permissionMode / fastMode reconciles the
+      // live query via control requests issued from OUTSIDE the input generator
+      // (the canonical placement — a control request awaited from INSIDE the
+      // generator that rejects is re-raised by the SDK's streamInput and aborts
+      // the whole query), then dispatches the turn. setModel/setPermissionMode
+      // don't touch running background tasks, so no background guard is needed;
+      // only skip while a turn is mid-flight (settings apply between turns).
+      if (this.#turnNeedsRebuild(existing, params) && !existing.turnActive) {
         this.emit(response(id, { runId, accepted: true, threadId }))
-        this.#recreateThread(existing, item, params, 'settings-change')
+        this.#applyThreadControls(existing, params).then(() => this.#dispatchTurn(existing, item))
         return
       }
       // Reuse the live query — push this turn into its input queue.
@@ -954,6 +950,42 @@ export class Server {
       rec.nextTurnResolve = null
       r(rec.turnQueue.shift())
     }
+  }
+
+  // Reconcile a turn's model / permissionMode / fastMode with the live query via
+  // control requests, issued from OUTSIDE the input generator. This is the
+  // canonical placement: setModel/setPermissionMode/applyFlagSettings are
+  // top-level Query methods, and a control request awaited from INSIDE the input
+  // generator that rejects is re-raised by the SDK's streamInput and aborts the
+  // entire query (the "Operation aborted" heisenbug). Each is best-effort
+  // (try/catch); optionsSeed is updated so later turns diff against the new
+  // baseline. permissionMode also updates rec so the canUseTool gate reads it.
+  async #applyThreadControls(rec, params) {
+    const mode = params.permissionMode ?? 'bypassPermissions'
+    const seedMode = rec.optionsSeed.permissionMode ?? 'bypassPermissions'
+    if (mode !== seedMode) {
+      try {
+        await rec.query.setPermissionMode(mode)
+        rec.permissionMode = mode
+      } catch (e) {
+        logErrorContext('setPermissionMode', rec.currentRunId, e, { mode: this.mode })
+      }
+    }
+    if (params.model && params.model !== rec.optionsSeed.model) {
+      try {
+        await rec.query.setModel(params.model)
+      } catch (e) {
+        logErrorContext('setModel', rec.currentRunId, e, { mode: this.mode })
+      }
+    }
+    if (!!params.fastMode !== !!rec.optionsSeed.fastMode) {
+      try {
+        await rec.query.applyFlagSettings({ fastMode: !!params.fastMode })
+      } catch (e) {
+        logErrorContext('applyFlagSettings', rec.currentRunId, e, { mode: this.mode })
+      }
+    }
+    rec.optionsSeed = params // new baseline for the next turn's diff
   }
 
   // Whether a new turn's model / permissionMode / fastMode differs from what the
