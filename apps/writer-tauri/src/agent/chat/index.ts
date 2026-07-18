@@ -59,6 +59,7 @@ import {
   type RunChatArgs,
   type RunChatResult,
 } from './types'
+import { parseChatEvent, parseDoneEvent, parseErrorEvent } from './eventSchemas'
 import { resolveAgent } from '../agents'
 import { buildEditOutcomeNote } from './buildEditOutcomeNote'
 import {
@@ -323,7 +324,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
     Promise.all([
       listen<ChatEvent>('claude:event', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseChatEvent(e.payload) || e.payload.runId !== runId) return
         // First event of any kind = the SDK has confirmed/created the session
         // for this thread (its `system` init lands before any content). Mark
         // session-started here so a turn that dies mid-think still flips the
@@ -659,7 +660,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         },
       ),
       listen<DoneEvent>('claude:done', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseDoneEvent(e.payload) || e.payload.runId !== runId) return
         recordContextUsage(threadId, model, e.payload.usage, e.payload.contextUsage)
         // Reflect the SDK's actual fast-mode state (on / cooldown / off) for the
         // toggle. Absent → off (e.g. a model that doesn't support fast mode).
@@ -667,7 +668,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         settleOk(e.payload.stopReason)
       }),
       listen<ErrorEvent>('claude:error', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseErrorEvent(e.payload) || e.payload.runId !== runId) return
         if (e.payload.code === 'CANCELLED') {
           settleErr(new DOMException(e.payload.message, 'AbortError'))
         } else {

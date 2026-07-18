@@ -17,6 +17,11 @@
 // else is fixed.
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import {
+  parseChatEvent,
+  parseDoneEvent,
+  parseErrorEvent,
+} from '@/agent/chat/eventSchemas'
 
 export interface ChatRunOutcome<TInput> {
   /** Structured output emitted via the run's relay tool. Null when
@@ -81,7 +86,7 @@ export function awaitChatRun<TInput>(
           message?: { content?: Array<{ type: string; text?: string }> }
         }
       }>('claude:event', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseChatEvent(e.payload) || e.payload.runId !== runId) return
         const ev = e.payload.event
         if (ev?.type === 'stream_event') {
           const inner = ev.event
@@ -108,14 +113,14 @@ export function awaitChatRun<TInput>(
       listen<{ runId: string; stopReason: string | null }>(
         'claude:done',
         (e) => {
-          if (e.payload.runId !== runId) return
+          if (!parseDoneEvent(e.payload) || e.payload.runId !== runId) return
           settleOk()
         },
       ),
       listen<{ runId: string; code: string; message: string }>(
         'claude:error',
         (e) => {
-          if (e.payload.runId !== runId) return
+          if (!parseErrorEvent(e.payload) || e.payload.runId !== runId) return
           settleErr(new Error(`${e.payload.code}: ${e.payload.message}`))
         },
       ),
