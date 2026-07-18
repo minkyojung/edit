@@ -37,7 +37,7 @@ impl Mode {
 // dies *immediately and repeatedly* (e.g. a broken bundle in a packaged build)
 // must not hot-loop forever pegging the CPU and flooding logs. Each respawn
 // waits an exponentially growing backoff, and after too many consecutive fast
-// deaths we stop trying and surface a terminal `sidecar:died { fatal: true }`.
+// deaths we stop trying and surface a terminal `SidecarState::Dead { fatal }`.
 const MAX_CONSECUTIVE_RESTARTS: u32 = 5;
 /// An instance that lived at least this long before dying is treated as a
 /// healthy process that eventually died — not a crash loop — so its death
@@ -127,8 +127,8 @@ impl SidecarManager {
         let handler = build_notification_handler(app.clone());
         let self_ref: SelfRef = Arc::new(OnceLock::new());
 
-        let chat_exit = build_exit(self_ref.clone(), Mode::Chat, app.clone());
-        let title_exit = build_exit(self_ref.clone(), Mode::Title, app.clone());
+        let chat_exit = build_exit(self_ref.clone(), Mode::Chat);
+        let title_exit = build_exit(self_ref.clone(), Mode::Title);
 
         set_sidecar_state(app, SidecarState::Starting { mode: Mode::Chat.as_str().into() });
         set_sidecar_state(app, SidecarState::Starting { mode: Mode::Title.as_str().into() });
@@ -327,9 +327,6 @@ impl SidecarManager {
                 mode.as_str(),
                 MAX_CONSECUTIVE_RESTARTS,
             );
-            let _ = self
-                .app
-                .emit("sidecar:died", json!({ "mode": mode.as_str(), "fatal": true }));
             set_sidecar_state(
                 &self.app,
                 SidecarState::Dead { mode: mode.as_str().into(), fatal: true },
@@ -338,8 +335,8 @@ impl SidecarManager {
         }
 
         // Announce the impending respawn. Consumers settle in-flight work on
-        // this (once the parallel `sidecar:died` is retired). `attempt` is the
-        // consecutive-fast-death count; the process is gone until `Running`.
+        // this transition. `attempt` is the consecutive-fast-death count; the
+        // process is gone until the next `Running`.
         set_sidecar_state(
             &self.app,
             SidecarState::Restarting {
@@ -366,9 +363,6 @@ impl SidecarManager {
                 "[sidecar manager] {} sidecar restart failed: {e}",
                 mode.as_str()
             );
-            let _ = self
-                .app
-                .emit("sidecar:died", json!({ "mode": mode.as_str(), "fatal": true }));
             set_sidecar_state(
                 &self.app,
                 SidecarState::Dead { mode: mode.as_str().into(), fatal: true },
@@ -378,7 +372,7 @@ impl SidecarManager {
 
     async fn restart(&self, mode: Mode) -> Result<(), SidecarError> {
         eprintln!("[sidecar manager] {} sidecar exited; respawning", mode.as_str());
-        let exit_handler = build_exit(self.self_ref.clone(), mode, self.app.clone());
+        let exit_handler = build_exit(self.self_ref.clone(), mode);
         let client = SidecarClient::spawn_initialized(
             &self.launcher.program,
             &self.launcher.args_for(mode.as_str()),
@@ -461,21 +455,14 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
     })
 }
 
-fn build_exit(self_ref: SelfRef, mode: Mode, app: AppHandle) -> ExitHandler {
+fn build_exit(self_ref: SelfRef, mode: Mode) -> ExitHandler {
     Arc::new(move || {
-        // Tell the frontend the sidecar is gone before we attempt restart.
-        // In-flight chat runs are blocked waiting on `claude:event` /
-        // `claude:done` / `claude:error` notifications that will never
-        // arrive once the producer is dead — without this signal, the UI
-        // sits in `streaming` forever. The frontend chat loop listens for
-        // this and settles affected runs with an error so the user gets
-        // a Retry-able card instead of a frozen spinner.
-        if let Err(e) = app.emit("sidecar:died", json!({ "mode": mode.as_str() })) {
-            eprintln!(
-                "[sidecar manager] failed to emit sidecar:died for {}: {e}",
-                mode.as_str()
-            );
-        }
+        // The observable death signal is emitted by `handle_exit` below, which
+        // transitions the sidecar to `restarting` (respawning) or `dead`
+        // (terminal). In-flight chat runs listen for that transition and settle
+        // with an error instead of hanging forever on `claude:event` /
+        // `claude:done` notifications that will never arrive once the producer
+        // is gone.
         let self_ref = self_ref.clone();
         tauri::async_runtime::spawn(async move {
             let weak = match self_ref.get() {

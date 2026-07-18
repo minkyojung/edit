@@ -9,8 +9,8 @@
 //   2. The model emits text deltas (`claude:event`) which we
 //      concatenate, AND it calls the structured-output tool exactly
 //      once which the sidecar forwards as a custom notification.
-//   3. `claude:done` settles the promise; `claude:error` or
-//      `sidecar:died` reject.
+//   3. `claude:done` settles the promise; `claude:error` or a
+//      `sidecar:state` transition to restarting/dead reject.
 //
 // Callers parameterise the result event name (e.g. `ingest:result`
 // or `profile:result`) and the expected `TInput` shape; everything
@@ -124,8 +124,11 @@ export function awaitChatRun<TInput>(
           settleErr(new Error(`${e.payload.code}: ${e.payload.message}`))
         },
       ),
-      listen<{ mode: string }>('sidecar:died', (e) => {
+      listen<{ status: string; mode: string }>('sidecar:state', (e) => {
         if (e.payload.mode !== 'chat') return
+        // The chat process this run is streaming from is gone (respawning or
+        // terminally dead) — its SDK session can't resume, so fail the run.
+        if (e.payload.status !== 'restarting' && e.payload.status !== 'dead') return
         settleErr(new Error('SIDECAR_DIED: chat sidecar crashed'))
       }),
     ])

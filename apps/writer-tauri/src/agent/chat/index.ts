@@ -706,13 +706,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           settleErr(err)
         }
       }),
-      // Sidecar process death. The Rust supervisor emits this on
-      // child exit (before attempting restart). Without it, in-flight
-      // runs hang waiting on chat:event / chat:done that will never
-      // arrive — the producer is gone. We settle as a regular error
-      // so the UI shows a retry card.
-      listen<{ mode: string }>('sidecar:died', (e) => {
+      // Sidecar process death. The Rust supervisor transitions the chat
+      // sidecar to `restarting` (respawning) or `dead` (terminal) on child
+      // exit. Without settling here, in-flight runs hang waiting on
+      // claude:event / claude:done that will never arrive — the producer is
+      // gone. We settle as a regular error so the UI shows a retry card.
+      listen<{ status: string; mode: string }>('sidecar:state', (e) => {
         if (e.payload.mode !== 'chat') return
+        if (e.payload.status !== 'restarting' && e.payload.status !== 'dead') return
         settleErr(new Error('SIDECAR_DIED: chat sidecar crashed'))
       }),
     ])
