@@ -9,10 +9,8 @@
 //       inactive doc routes through the on-disk `.md` + a Y.Doc
 //       reload so any future open of the page shows fresh content.
 
-import { applyMarkdownToActiveCmEditor } from '@/state/activeCmEditor'
 import { useDocsStore } from '@/state/docsStore'
-import { markSlugDirty } from '@/lib/docFileSync'
-import { runExclusive } from '@/lib/keyedMutex'
+import { updateDocBody } from '@/state/docsStore/docBody'
 import { looseReplace } from '@/lib/looseMatch'
 import { splitFrontmatter } from '@/lib/frontmatter'
 import { appendToBackground } from '@/profile/markers'
@@ -34,96 +32,37 @@ import { appendToBackground } from '@/profile/markers'
  *   collapses both paths onto the markdown-level approach so the
  *   active and inactive outputs match by construction.
  *
- * Flow:
- *   1. ensureHandle — synthesise the in-memory handle if the doc
- *      has never been opened; the handle's `bodyMarkdown` is the
- *      source of truth for the current content.
- *   2. transform(oldMd) → newMd. No-op when identical.
- *   3. Update `handle.bodyMarkdown` immediately. Phase I made this
- *      the live in-memory mirror, so the next flush picks it up.
- *   4. If the doc is the active editor, also dispatch a full
- *      `replaceWith(0, doc.size, parser(newMd))` so the user sees
- *      the change instantly. The PM dispatch fires
- *      `dirtyTrackerPlugin` which marks the slug dirty and re-syncs
- *      `bodyMarkdown` from PM (roundtrip should be identity).
- *   5. If NOT active, mark the slug dirty manually — no plugin
- *      observes bodyMarkdown mutations directly.
+ * Flow: guard that `slug` is a known doc, then hand the read-modify-write
+ * to `updateDocBody` (the single body-write funnel), which serializes per
+ * slug, awaits hydration, reads the live editor body when one is mounted,
+ * assigns the mirror, pushes into the live editor, and marks the slug dirty
+ * for the 500-ms flush that writes the actual `.md`.
  *
- * The 500-ms flush tick (Phase I) writes the actual `.md` file.
- * Returns false on hard failures only (unknown slug, ensureHandle
- * failure, parser missing for an active doc); a no-op transform
- * still returns true. */
-export function applyToWikiPage(
+ * Returns false on hard failures (unknown slug, no handle, hydration
+ * failure) or when the write is refused because the doc has an unresolved
+ * external conflict; a landed write or a no-op transform returns true. */
+export async function applyToWikiPage(
   slug: string,
   transform: (currentMd: string) => string,
   changeId?: string,
 ): Promise<boolean> {
-  // Serialize per-slug: applyToWikiPageImpl is a read-modify-write on
-  // handle.bodyMarkdown with awaits BEFORE the read (ensureHandle /
-  // contentReady). Two concurrent applies to the SAME slug — e.g. several
-  // auto-accepted edits to one note in a single turn — would each read the same
-  // old body, and the later write would clobber the earlier: a silently dropped
-  // edit that also desyncs the model's assumed content (its next replace's
-  // old_string then fails to match → "not found"). Different slugs still run in
-  // parallel.
-  return runExclusive(slug, () => applyToWikiPageImpl(slug, transform, changeId))
-}
-
-async function applyToWikiPageImpl(
-  slug: string,
-  transform: (currentMd: string) => string,
-  changeId?: string,
-): Promise<boolean> {
-  const docs = useDocsStore.getState()
-  const known = docs.knownDocs.find((d) => d.slug === slug)
+  const known = useDocsStore.getState().knownDocs.find((d) => d.slug === slug)
   if (!known) {
     console.warn('[apply] unknown slug', slug)
     return false
   }
-
-  try {
-    await docs.ensureHandle(slug)
-  } catch (err) {
-    console.warn('[apply] ensureHandle failed', slug, err)
-    return false
-  }
-  const handle = useDocsStore.getState().handles[slug]
-  if (!handle) return false
-
-  // Wait for the body to hydrate from disk before reading it. `ensureHandle`
-  // only BUILDS the handle; the disk load resolves separately on
-  // `contentReady`. Reading `bodyMarkdown` before that sees '' for a not-yet-
-  // open note, and this is a read-modify-write — an append would then clobber
-  // the real on-disk content and a replace would silently miss. (createSlice
-  // awaits contentReady for the same reason.)
-  try {
-    await handle.contentReady
-  } catch (err) {
-    console.warn('[apply] contentReady failed', slug, err)
-    return false
-  }
-
-  const oldMd = handle.bodyMarkdown
-  const newMd = transform(oldMd)
-  if (newMd === oldMd) return true
-
-  // Live in-memory mirror first. flushDirty (Phase I) writes from
-  // this on the next tick.
-  handle.bodyMarkdown = newMd
-
-  // CodeMirror editor (no PM view): push the new body straight into the live CM doc
-  // via the same bridge external-reload uses, then mark dirty (the CM body-set is
-  // annotated to skip its own dirty-tracking). Without this, an accepted edit reached
-  // disk but the open CM editor didn't update until reload.
-  if (applyMarkdownToActiveCmEditor(slug, newMd, changeId)) {
-    markSlugDirty(slug)
-    return true
-  }
-
-  // Not the active CM doc (applyMarkdownToActiveCmEditor returned false) —
-  // bodyMarkdown is already updated; mark dirty so flushDirty writes it.
-  markSlugDirty(slug)
-  return true
+  // Delegate the read-modify-write to the single body-write funnel, which owns
+  // per-slug serialization (concurrent auto-accepts to one note can't clobber
+  // each other → no dropped edit that desyncs the model's assumed content),
+  // the hydration wait, reading the LIVE editor body (so an accept can't drop
+  // keystrokes typed since the last flush — the old impl read the stale mirror
+  // here), the editor push, and the dirty-mark.
+  const result = await updateDocBody(slug, transform, { changeId })
+  // Boolean contract preserved: a landed write or a no-op transform → true;
+  // hard failures (no handle / hydration) → false. A write refused because the
+  // doc has an unresolved external conflict also returns false — correctly
+  // "not applied", surfaced to the model rather than silently dropped.
+  return result.ok
 }
 
 /** Append `markdown` to the end of wiki page `slug`. The LLM emits
