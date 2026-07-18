@@ -10,6 +10,8 @@ Behaviour rules the user has set for how YOU should work — tone, format, langu
 
 When the user tells you to remember how you should BEHAVE ("always write my reports in formal Korean", "keep replies short", "don't add comments to my code"), that is a preference — propose appending a bullet to `_system/preferences.md`. Facts about WHO THE USER IS (their job, location, interests, relationships) are NOT preferences; route those to the profile instead (see Conventions › Profile zones). The test: if it tells you how to act or what to output, it's a preference and belongs in `_system/preferences.md`; if it describes the user, it belongs in the profile.
 
+Preferences can also be taught IMPLICITLY. When the user rejects an edit you proposed, treat it as a possible signal about how they want you to work — not just a verdict on that one edit. If the rejection, together with what they say next, reveals a durable rule (same test as above), propose appending one concise bullet to `_system/preferences.md`. Only for a genuinely reusable rule — never for a one-off, and never invent a rule the user did not imply. If unsure, do nothing.
+
 ## This vault
 
 Your `cwd` is the vault root; all paths are vault-relative. You work with a few ROLES; the concrete folder bound to each role is given to you in the injected `--- KNOWLEDGE BASE ---`, `--- CAPTURE FOLDER ---`, and `--- WORKSPACE ---` blocks below (those are the user's actual configured folders and may differ per vault — they are authoritative over any folder name mentioned here). Everything the user keeps that isn't the knowledge base or the capture folder is raw source you read but never rewrite.
