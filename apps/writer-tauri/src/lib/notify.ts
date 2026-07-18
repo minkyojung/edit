@@ -452,9 +452,12 @@ export const notify = {
   // background. The "ready" prompt is a custom 3-action toast (See changes /
   // Restart when idle / Restart) — see components/UpdateReadyToast. Only the
   // failure path stays here (a plain toast).
-  /** An update step failed. Copy names the likely real-world cause per
-   * phase (install failures are almost always a read-only / quarantined
-   * app location — the exact bug the old silent updater hid). */
+  /** A manual update check failed. Copy names the likely real-world cause
+   * per phase (install failures are almost always a read-only / quarantined
+   * app location — the exact bug the old silent updater hid). Transient —
+   * the persistent record lives in the About row; the id (distinct from the
+   * ready toast's, since sonner merges props across same-id updates) lets a
+   * later ready/upToDate transition dismiss a stale failure. */
   updateFailed(phase: 'check' | 'download' | 'install') {
     const desc = {
       check: "Couldn't check for updates.",
@@ -462,9 +465,8 @@ export const notify = {
       install: "Couldn't install — the app folder may be read-only or quarantined.",
     }[phase]
     toast.error('Update failed', {
-      id: 'octave-update',
+      id: 'octave-update-failed',
       description: `${desc} See About in Settings for details.`,
-      duration: Infinity,
     })
   },
 }
