@@ -1,9 +1,8 @@
 // First-run launcher / project picker. Rendered by BootGate in the
-// launcher window (a window with no `?root` param). Three ways in:
+// launcher window (a window with no `?root` param). Two ways in:
 //
 //   - Recent       — reopen a project from the persisted list
-//   - New translation project — scaffold a fresh translation folder
-//   - Open folder  — open any existing folder (wiki or translation)
+//   - Open folder  — open any existing folder
 //
 // Window-per-project model: every entry point opens the project in its OWN
 // window via openProjectWindow(), then hides itself. It reappears when the
@@ -13,42 +12,20 @@ import { useCallback } from 'react'
 import { exists } from '@tauri-apps/plugin-fs'
 import { Button } from '@/components/ui/button'
 import { pickVault } from '@/lib/vaultPicker'
-import {
-  isTranslationProject,
-  scaffoldTranslationProject,
-} from '@/lib/translationProject'
 import { openProjectWindow, folderName } from '@/lib/projectWindow'
-import {
-  useSettingsStore,
-  type ProjectType,
-  type RecentProject,
-} from '@/state/settingsStore'
+import { useSettingsStore, type RecentProject } from '@/state/settingsStore'
 
 export function VaultLauncher() {
   const recentProjects = useSettingsStore((s) => s.recentProjects)
   const addRecentProject = useSettingsStore((s) => s.addRecentProject)
   const removeRecentProject = useSettingsStore((s) => s.removeRecentProject)
 
-  // Open any existing folder. pickVault validates; we detect the project
-  // type for the recent list, then open it in its own window.
+  // Open any existing folder. pickVault validates, then we open it in its own
+  // window.
   const openExisting = useCallback(async () => {
     const path = await pickVault()
     if (!path) return
-    const type: ProjectType = (await isTranslationProject(path))
-      ? 'translation'
-      : 'wiki'
-    addRecentProject(path, type)
-    await openProjectWindow(path, folderName(path))
-  }, [addRecentProject])
-
-  // Create a new translation project: pick/create a folder, lay down the
-  // translation CLAUDE.md + manuscript/ + reference/ skeleton, then open it in
-  // its own window.
-  const newTranslation = useCallback(async () => {
-    const path = await pickVault()
-    if (!path) return
-    await scaffoldTranslationProject(path)
-    addRecentProject(path, 'translation')
+    addRecentProject(path)
     await openProjectWindow(path, folderName(path))
   }, [addRecentProject])
 
@@ -60,7 +37,7 @@ export function VaultLauncher() {
         removeRecentProject(p.path)
         return
       }
-      addRecentProject(p.path, p.type) // refresh lastOpened + move to front
+      addRecentProject(p.path) // refresh lastOpened + move to front
       await openProjectWindow(p.path, folderName(p.path))
     },
     [addRecentProject, removeRecentProject],
@@ -96,26 +73,14 @@ export function VaultLauncher() {
                     {p.path}
                   </div>
                 </div>
-                <span className="flex-none text-footnote text-muted-foreground">
-                  {p.type === 'translation' ? 'Translation' : 'Wiki'}
-                </span>
               </button>
             ))}
           </div>
         )}
 
-        <div className="flex gap-2">
-          <Button className="flex-1" onClick={() => void newTranslation()}>
-            New translation project
-          </Button>
-          <Button
-            variant="outline"
-            className="flex-1"
-            onClick={() => void openExisting()}
-          >
-            Open folder
-          </Button>
-        </div>
+        <Button className="w-full" onClick={() => void openExisting()}>
+          Open folder
+        </Button>
       </div>
     </div>
   )

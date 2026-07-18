@@ -38,16 +38,13 @@ import { seedCommands } from '@/lib/commandsLib'
 import { seedAgents } from '@/lib/agentsLib'
 import { seedSkills } from '@/lib/skillsLib'
 import { DEFAULT_SKILLS, DEFAULT_COMMANDS, DEFAULT_AGENTS } from '@/agent/defaults'
-import { isTranslationProject } from '@/lib/translationProject'
 import { gitInit, gitEnsureGitignoreEntries } from '@/lib/git'
 import { sweepOrphanAttachments } from '@/lib/attachmentGc'
 
 const LOADER_DELAY_MS = 400 // keep spinner flashes off fast boots
 
-/** Wiki-vault boot steps: seed the default files a wiki vault needs (CLAUDE.md,
- * commands, agent roles). Only wiki vaults get these — a translation
- * project (a folder with `manuscript/`) has its own layout and would just get
- * littered with wiki scaffolding. Each step is best-effort: a failure logs and
+/** Wiki-vault boot steps: seed the default files a vault needs (CLAUDE.md,
+ * commands, agent roles). Each step is best-effort: a failure logs and
  * the boot continues. */
 async function seedWikiDefaults(): Promise<void> {
   // Import the user's existing Claude Code setup (`~/.claude` commands / agents
@@ -186,16 +183,8 @@ export function BootGate({ children }: Props) {
         console.warn('[boot] git init failed — checkpoints disabled', err)
       }
 
-      // Project kind drives which boot steps run. The wiki default seeds apply
-      // only to wiki vaults; a translation project (a folder with `manuscript/`)
-      // has its own layout, so we skip them to keep the project clean.
-      // bootstrap() below is generic and runs for every kind. Unknown / fresh
-      // folders default to wiki.
-      const vaultRoot = getActiveVaultPath()
-      const isWiki = vaultRoot ? !(await isTranslationProject(vaultRoot)) : true
-      if (isWiki) {
-        await seedWikiDefaults()
-      }
+      // Seed the wiki defaults, then run the generic bootstrap.
+      await seedWikiDefaults()
       bootstrap()
       // Load chat thread metas + turns from `.octave/threads/`. Fires in
       // parallel with bootstrap because the two read disjoint paths
