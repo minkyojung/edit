@@ -146,6 +146,35 @@ export function appendToBackground(markdown: string, block: string): string {
   return `${before}${BACKGROUND_HEADING}\n\n${body}\n\n${after}`
 }
 
+/** Split the profile into the small SUMMARY zones (Voice / Themes / About /
+ * Sources / Notes) and the append-only `## Background` zone. Used to keep the
+ * bounded summary always-on in the system prompt while the unbounded, growing
+ * Background is loaded on demand (the model Reads the profile file when it
+ * needs a specific personal fact).
+ *
+ * `summary` is the full markdown with the Background heading + its body
+ * removed, every other zone preserved verbatim (order intact). `background` is
+ * the Background body, trimmed ('' when the zone is absent or empty). When
+ * there's no Background, `summary` is the input unchanged and `background` is
+ * ''. */
+export function splitOutBackground(markdown: string): {
+  summary: string
+  background: string
+} {
+  const start = findHeadingLine(markdown, BACKGROUND_HEADING)
+  if (start === null) return { summary: markdown.trim(), background: '' }
+
+  const afterHeading = start + BACKGROUND_HEADING.length + 1
+  const nextHeadingAt = findNextH2(markdown, afterHeading)
+  const end = nextHeadingAt === null ? markdown.length : nextHeadingAt
+  const background = markdown.slice(afterHeading, end).trim()
+
+  const before = markdown.slice(0, start).trimEnd()
+  const after = markdown.slice(end).trim() // e.g. the `## Notes` zone
+  const summary = after ? `${before}\n\n${after}` : before
+  return { summary: summary.trim(), background }
+}
+
 /** Read back the body of a single zone, without the heading line.
  * Returns null when the heading isn't found. */
 export function readZone(

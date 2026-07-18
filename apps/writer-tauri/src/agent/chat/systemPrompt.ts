@@ -63,7 +63,12 @@ export interface SystemBlocksArgs {
    * the Karpathy / Claude Code pattern has the LLM fetch those via
    * Read / Glob / Grep when (and only when) a turn warrants it. */
   ctx: {
+    /** The bounded profile SUMMARY (Background carved out). */
     selfProfile: string
+    /** Vault-relative path of the profile page — set only when its
+     * `## Background` zone has content, so the block appends a pointer telling
+     * the model to Read it on demand. Optional for callers that don't split. */
+    selfProfileBackgroundPath?: string | null
     claudeMd: string
     preferences: string
   }
@@ -127,19 +132,19 @@ export interface SystemBlocksArgs {
 
 /** Compose the system prompt as a `string | string[]`.
  *
- * Anchor ordering by cache stability:
- *   prefix (stable):   selfProfile → claudeMd → systemBody
- *   suffix (dynamic):  document
+ * Anchor ordering by cache stability (most-stable → most-mutable):
+ *   prefix (stable):   systemBody(persona) → claudeMd → folder blocks →
+ *                      SELF PROFILE → PREFERENCES
+ *   suffix (dynamic):  today → current file → document → …
  *
- * `selfProfile` sits at the very top — it changes only when the user
- * edits the profile or the ingest LLM accepts a proposal targeting
- * `wiki:profile`. `claudeMd` is the Karpathy / Claude Code schema
- * document — vault layout, operations, tool usage, conventions (the
- * user's vault-specific rules now live inside it). Both blocks are
- * eligible for prompt caching. `systemBody` (FREE_CHAT_PROMPT) is the
- * shortest, most app-specific framing. The document changes every
- * keystroke so we pin
- * it after the SDK's cache boundary.
+ * `systemBody` (FREE_CHAT_PROMPT) and `claudeMd` (the Karpathy / Claude Code
+ * schema — vault layout, operations, tool usage, conventions) are app-static,
+ * so they lead. The GROWING per-user blocks (SELF PROFILE, PREFERENCES — the
+ * compound loop appends to these) sit LAST in the cacheable prefix so an
+ * append invalidates only the small trailer, not the static core. The profile
+ * block itself carries only the bounded summary; its unbounded `## Background`
+ * loads on demand via a pointer (see the SELF PROFILE assembly below). The
+ * document changes every keystroke so we pin it after the SDK's cache boundary.
  *
  * The return type is `string | string[]`:
  *   - `string[]` with a {@link SYSTEM_PROMPT_DYNAMIC_BOUNDARY} sentinel
@@ -226,8 +231,27 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   //   - PREFERENCES: the "how you should act" rules (from _system/preferences.md)
   //     — the per-user slice the CLAUDE.md schema points at. Empty until the
   //     user sets any, in which case the block is dropped.
-  if (ctx.selfProfile) {
-    prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
+  // Self-profile: the bounded summary always-on, the growing Background loaded
+  // on demand. Render the block when EITHER is present — an all-Background
+  // profile has an empty summary but still needs its pointer, so guarding on
+  // the summary alone would silently drop it.
+  if (ctx.selfProfile || ctx.selfProfileBackgroundPath) {
+    const parts: string[] = []
+    if (ctx.selfProfile) parts.push(ctx.selfProfile)
+    if (ctx.selfProfileBackgroundPath) {
+      const abs = vaultRoot
+        ? `${vaultRoot}/${ctx.selfProfileBackgroundPath}`
+        : ctx.selfProfileBackgroundPath
+      parts.push(
+        `Fuller background facts about the user (history, ongoing projects, ` +
+          `relationships, past events) live in the \`## Background\` section of ` +
+          `their profile page at \`${abs}\`. That section is kept OUT of this ` +
+          `prompt to stay lean. When a task needs a specific personal fact the ` +
+          `summary above doesn't cover, Read that file first — don't guess or ` +
+          `claim you don't know without checking.`,
+      )
+    }
+    prefix.push(`--- SELF PROFILE ---\n${parts.join('\n\n')}`)
   }
   if (ctx.preferences) {
     prefix.push(`--- PREFERENCES ---\n${ctx.preferences}`)

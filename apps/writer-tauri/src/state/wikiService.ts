@@ -172,6 +172,21 @@ export async function readSelfProfile(): Promise<string> {
   return readWikiMarkdown(doc.slug)
 }
 
+/** Like {@link readSelfProfile}, but also returns the page's vault-relative
+ * path — needed so the context pipeline can point the model at the profile
+ * file for on-demand loading of the (unbounded) `## Background` zone. Both are
+ * null/'' when the profile page doesn't exist yet. */
+export async function readSelfProfileWithMeta(): Promise<{
+  body: string
+  relPath: string | null
+}> {
+  const doc = useDocsStore
+    .getState()
+    .knownDocs.find((d) => d.type === 'wiki:profile')
+  if (!doc) return { body: '', relPath: null }
+  return { body: await readWikiMarkdown(doc.slug), relPath: doc.relPath ?? null }
+}
+
 /** The agent's schema document — vault layout, role model, operations,
  * tool-usage rules, conventions, citations. This is APP-OWNED and ships
  * in the app bundle (`DEFAULT_CLAUDE_MD`), NOT the vault. Injecting it
