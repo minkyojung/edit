@@ -167,26 +167,20 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     today,
   } = args
   const prefix: string[] = []
-  // App-static persona first so it forms the longest cache-stable prefix: it
-  // ships with the binary and never changes on a vault switch, whereas the
-  // self-profile and CLAUDE.md schema below are per-vault and swappable. Putting
-  // the invariant block first means switching vaults only invalidates the cache
-  // from the profile byte onward, not the persona above it.
+  // Blocks are ordered MOST-STABLE → MOST-MUTABLE so the SDK prompt cache can
+  // reuse the longest possible prefix. A change anywhere in the cached prefix
+  // invalidates every byte below it, so the app-static blocks lead (persona,
+  // then the CLAUDE.md schema), the vault-static folder blocks follow, and the
+  // per-user GROWING blocks (self-profile, preferences) sit LAST — appended
+  // below, just before the dynamic boundary. That way a fact appended by the
+  // compound loop (reject → preference, profile facts) re-writes only the small
+  // trailer, not the large static core above it.
+  //
   // Native command runs (slash-command intake) carry their brain in the USER
   // turn, so they pass an empty systemBody — skip it rather than push a blank
   // block. Chat always has a non-empty persona, so this is a no-op there.
   if (systemBody) prefix.push(systemBody)
-  if (ctx.selfProfile) {
-    prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
-  }
   if (ctx.claudeMd) prefix.push(ctx.claudeMd)
-  // User behaviour preferences — the "how you should act" rules the schema
-  // above points at. Separate per-user slice (from _system/preferences.md) so
-  // it can grow without touching the app-owned schema. Empty until the user
-  // sets any, in which case the block is dropped.
-  if (ctx.preferences) {
-    prefix.push(`--- PREFERENCES ---\n${ctx.preferences}`)
-  }
   // Ground the model's file tools in the real vault root (stable → stays in the
   // cacheable prefix). Without it the first Read guesses a wrong absolute path.
   if (vaultRoot) {
@@ -222,6 +216,21 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `update pages HERE. This is the user's configured location: if the CLAUDE.md ` +
         `schema above names a different folder for the knowledge base, THIS setting wins.`,
     )
+  }
+
+  // Per-user GROWING blocks last (see the ordering note at the top of the
+  // prefix build): profile + preferences accrue over time, so keeping them at
+  // the tail of the cacheable prefix means an append only invalidates this
+  // trailer, not the static core above.
+  //   - SELF PROFILE: facts about who the user is (from Profile.md).
+  //   - PREFERENCES: the "how you should act" rules (from _system/preferences.md)
+  //     — the per-user slice the CLAUDE.md schema points at. Empty until the
+  //     user sets any, in which case the block is dropped.
+  if (ctx.selfProfile) {
+    prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
+  }
+  if (ctx.preferences) {
+    prefix.push(`--- PREFERENCES ---\n${ctx.preferences}`)
   }
 
   // Dynamic suffix — pinned past the SDK cache boundary because it changes

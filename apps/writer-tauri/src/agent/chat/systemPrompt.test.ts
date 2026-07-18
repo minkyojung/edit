@@ -60,3 +60,31 @@ describe('composeSystemBlocks — role folders reach the prompt', () => {
     expect(out).not.toContain('--- KNOWLEDGE BASE ---')
   })
 })
+
+// Cache-stability contract: the per-user GROWING blocks (self-profile,
+// preferences — the compound loop appends to these) must sit AFTER the
+// app/vault-static blocks in the cacheable prefix, so an append only
+// invalidates the small trailer, not the large static core. See the ordering
+// note in composeSystemBlocks.
+describe('composeSystemBlocks — growing blocks ordered last (cache stability)', () => {
+  it('places SELF PROFILE / PREFERENCES after the static CLAUDE.md + folder blocks', () => {
+    const result = composeSystemBlocks(
+      args({
+        ctx: { selfProfile: 'PROFILE_FACTS', claudeMd: 'CLAUDE_SCHEMA', preferences: 'PREFS' },
+        knowledgeBaseFolder: 'wiki',
+        captureFolder: 'inbox',
+        vaultRoot: '/v',
+      }),
+    )
+    const blocks = Array.isArray(result) ? result : [result]
+    const idx = (needle: string) => blocks.findIndex((b) => b.includes(needle))
+
+    // Every static block must precede the first growing block.
+    expect(idx('CLAUDE_SCHEMA')).toBeGreaterThanOrEqual(0)
+    expect(idx('CLAUDE_SCHEMA')).toBeLessThan(idx('--- SELF PROFILE ---'))
+    expect(idx('--- KNOWLEDGE BASE ---')).toBeLessThan(idx('--- SELF PROFILE ---'))
+    expect(idx('--- CAPTURE FOLDER ---')).toBeLessThan(idx('--- SELF PROFILE ---'))
+    // Persona stays first of all.
+    expect(idx('PERSONA')).toBe(0)
+  })
+})
