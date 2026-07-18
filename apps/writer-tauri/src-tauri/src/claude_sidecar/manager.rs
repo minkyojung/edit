@@ -382,6 +382,16 @@ impl SidecarManager {
     }
 }
 
+/// Map a sidecar notification method to the frontend Tauri event name the
+/// bridge emits: `chat/<x>` → `claude:<x>`, any other `<ns>/<x>` → `<ns>:<x>`.
+/// `None` for a non-namespaced method (no `/`), which the caller logs and drops.
+/// `auth/refreshNeeded` is intercepted before this and never passed in.
+fn notification_event_name(method: &str) -> Option<String> {
+    let (ns, rest) = method.split_once('/')?;
+    let prefix = if ns == "chat" { "claude" } else { ns };
+    Some(format!("{prefix}:{rest}"))
+}
+
 fn build_notification_handler(app: AppHandle) -> NotificationHandler {
     Arc::new(move |method, params| {
         // auth/refreshNeeded is internal: the sidecar is asking the host
@@ -404,50 +414,20 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             });
             return;
         }
-        let event_name = match method.as_str() {
-            "chat/event" => "claude:event",
-            "chat/done" => "claude:done",
-            "chat/error" => "claude:error",
-            // Background subagent lifecycle (persistent-query path): the sidecar
-            // forwards task_started / task_progress / task_updated /
-            // task_notification on this dedicated channel (threadId-tagged) so
-            // the frontend routes them by thread, independent of any turn's runId.
-            "chat/task" => "claude:task",
-            "chat/proposal" => "claude:proposal",
-            // Host-applies proposal (Phase E6): emitted whenever the
-            // sidecar's `propose_edit` / `propose_write` /
-            // `propose_multi_edit` MCP tools run. The host queues the
-            // proposal in `pendingChangesStore` and applies it on
-            // user Keep via the inline review widget.
-            "chat/edit-pending" => "claude:edit-pending",
-            // propose_skill MCP tool (Phase 2B): the sidecar relays a
-            // proposed reusable skill (name / description / body); the host
-            // renders a Keep/Reject card and, on approval, writes it to
-            // `_system/agent/skills/<name>/SKILL.md`.
-            "chat/skill-pending" => "claude:skill-pending",
-            // move_note MCP tool: the sidecar relays a note relocation
-            // (fromPath → toFolder). Applied IMMEDIATELY by the host
-            // (docsStore.moveDocToFolder) — no review card, since a move is
-            // reversible and loses no content.
-            "chat/move-note" => "claude:move-note",
-            // edit_visualization MCP tool: the sidecar relays the new chart
-            // spec (chartId + VizNode tree) via this notification; the chat
-            // runner re-validates it and applies it to the target block by id
-            // in the live editor (immediate, Cmd+Z to undo).
-            "chat/viz-apply" => "claude:viz-apply",
-            // Plan-mode interactive gate (canUseTool): the sidecar parks an
-            // ExitPlanMode / AskUserQuestion decision and emits this so the
-            // host can render the approval / question card. The user's choice
-            // returns via the `claude_chat_decision` command (chat/decision).
-            "chat/permission" => "claude:permission",
-            // Structured ingest output. The sidecar's
-            // submit_ingest_result MCP tool relays its full input
-            // payload via this notification; the frontend's ingest
-            // path listens for it instead of parsing free-form JSON.
-            "ingest/result" => "ingest:result",
-            _ => return,
+        // Forward every namespaced sidecar notification to the frontend as a
+        // Tauri event by a mechanical rule: `chat/<x>` → `claude:<x>`, and any
+        // other `<ns>/<x>` → `<ns>:<x>`. New channels flow through with zero
+        // edits here, and an unexpected shape is logged rather than silently
+        // dropped — the previous hardcoded match's `_ => return` swallowed any
+        // method not in its table, so a new sidecar channel did nothing until
+        // someone remembered to extend the table. (`auth/*` is host-internal
+        // and already handled above; it never reaches this point.) The channel
+        // catalogue and payload shapes live in PROTOCOL.md §4.
+        let Some(event_name) = notification_event_name(&method) else {
+            eprintln!("[sidecar manager] ignoring non-namespaced notification: {method}");
+            return;
         };
-        if let Err(e) = app.emit(event_name, params) {
+        if let Err(e) = app.emit(event_name.as_str(), params) {
             eprintln!("[sidecar manager] emit {event_name} failed: {e}");
         }
     })
@@ -740,5 +720,37 @@ mod tests {
         let (next, action) = restart_decision(MAX_CONSECUTIVE_RESTARTS, HEALTHY_UPTIME);
         assert_eq!(next, 1);
         assert!(matches!(action, RestartAction::Backoff(d) if d == Duration::from_millis(500)));
+    }
+
+    #[test]
+    fn event_name_matches_the_old_hardcoded_table() {
+        // Golden test pinning behaviour-equivalence with the hardcoded match
+        // this transform replaced: every method the sidecar actually emits must
+        // map to the exact same Tauri event the old table produced.
+        for (method, expected) in [
+            ("chat/event", "claude:event"),
+            ("chat/done", "claude:done"),
+            ("chat/error", "claude:error"),
+            ("chat/task", "claude:task"),
+            ("chat/proposal", "claude:proposal"),
+            ("chat/edit-pending", "claude:edit-pending"),
+            ("chat/skill-pending", "claude:skill-pending"),
+            ("chat/move-note", "claude:move-note"),
+            ("chat/viz-apply", "claude:viz-apply"),
+            ("chat/permission", "claude:permission"),
+            ("ingest/result", "ingest:result"),
+        ] {
+            assert_eq!(notification_event_name(method).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn event_name_forwards_new_channels_and_drops_non_namespaced() {
+        // A brand-new namespaced channel flows through with no bridge edit...
+        assert_eq!(notification_event_name("chat/whatever").as_deref(), Some("claude:whatever"));
+        assert_eq!(notification_event_name("profile/result").as_deref(), Some("profile:result"));
+        // ...while a malformed, non-namespaced method is dropped (logged), not
+        // forwarded as a bare event.
+        assert_eq!(notification_event_name("shutdown"), None);
     }
 }

@@ -259,6 +259,13 @@ sidecar's stdin and wait for process exit.
 
 ## 4. Notifications (sidecar → Rust)
 
+The Rust bridge forwards every namespaced notification to the frontend as a
+Tauri event by a mechanical rule — `chat/<x>` → `claude:<x>`, any other
+`<ns>/<x>` → `<ns>:<x>` — passing `params` through untouched. Adding a channel
+therefore needs no bridge change, and an unexpected method is logged rather
+than dropped. The sole exception is `auth/refreshNeeded`, which the bridge
+consumes itself (token refresh) and never forwards.
+
 ### `chat/event`
 
 Wraps a single Agent SDK event from the `query()` async iterator. The bridge
