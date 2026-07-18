@@ -12,6 +12,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::RwLock;
 
 use super::client::{ExitHandler, NotificationHandler, SidecarClient, SidecarError};
+use super::state::{set_sidecar_state, SidecarState};
 
 // Self-reference handle for exit closures. Set after the SidecarManager Arc
 // is created, so the closures can find their way back to call restart_*.
@@ -129,6 +130,9 @@ impl SidecarManager {
         let chat_exit = build_exit(self_ref.clone(), Mode::Chat, app.clone());
         let title_exit = build_exit(self_ref.clone(), Mode::Title, app.clone());
 
+        set_sidecar_state(app, SidecarState::Starting { mode: Mode::Chat.as_str().into() });
+        set_sidecar_state(app, SidecarState::Starting { mode: Mode::Title.as_str().into() });
+
         let chat = SidecarClient::spawn_initialized(
             &launcher.program,
             &launcher.args_for("chat"),
@@ -147,6 +151,9 @@ impl SidecarManager {
         .await?;
 
         eprintln!("[sidecar manager] both sidecars initialized");
+
+        set_sidecar_state(app, SidecarState::Running { mode: Mode::Chat.as_str().into() });
+        set_sidecar_state(app, SidecarState::Running { mode: Mode::Title.as_str().into() });
 
         let mgr = Arc::new(Self {
             chat: RwLock::new(Arc::new(chat)),
@@ -304,13 +311,13 @@ impl SidecarManager {
     async fn handle_exit(&self, mode: Mode) {
         // Decide backoff vs give-up from how the just-dead instance behaved.
         // The lock is released at the end of this block, before any await.
-        let (give_up, delay) = {
+        let (give_up, delay, attempt) = {
             let mut g = self.restart_guard(mode).lock().unwrap();
             let (next, action) = restart_decision(g.consecutive, g.last_spawn.elapsed());
             g.consecutive = next;
             match action {
-                RestartAction::GiveUp => (true, Duration::ZERO),
-                RestartAction::Backoff(d) => (false, d),
+                RestartAction::GiveUp => (true, Duration::ZERO, next),
+                RestartAction::Backoff(d) => (false, d, next),
             }
         };
 
@@ -323,8 +330,24 @@ impl SidecarManager {
             let _ = self
                 .app
                 .emit("sidecar:died", json!({ "mode": mode.as_str(), "fatal": true }));
+            set_sidecar_state(
+                &self.app,
+                SidecarState::Dead { mode: mode.as_str().into(), fatal: true },
+            );
             return;
         }
+
+        // Announce the impending respawn. Consumers settle in-flight work on
+        // this (once the parallel `sidecar:died` is retired). `attempt` is the
+        // consecutive-fast-death count; the process is gone until `Running`.
+        set_sidecar_state(
+            &self.app,
+            SidecarState::Restarting {
+                mode: mode.as_str().into(),
+                attempt,
+                max: MAX_CONSECUTIVE_RESTARTS,
+            },
+        );
 
         if !delay.is_zero() {
             eprintln!(
@@ -346,6 +369,10 @@ impl SidecarManager {
             let _ = self
                 .app
                 .emit("sidecar:died", json!({ "mode": mode.as_str(), "fatal": true }));
+            set_sidecar_state(
+                &self.app,
+                SidecarState::Dead { mode: mode.as_str().into(), fatal: true },
+            );
         }
     }
 
@@ -378,6 +405,7 @@ impl SidecarManager {
         self.restart_guard(mode).lock().unwrap().last_spawn = Instant::now();
 
         eprintln!("[sidecar manager] {} sidecar respawned", mode.as_str());
+        set_sidecar_state(&self.app, SidecarState::Running { mode: mode.as_str().into() });
         Ok(())
     }
 }

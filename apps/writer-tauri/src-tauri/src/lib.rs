@@ -402,6 +402,7 @@ pub fn run() {
         .manage(github::PendingGitHubAuth::default())
         .manage(CompactFrames::default())
         .manage(updater::UpdaterState::default())
+        .manage(claude_sidecar::state::SidecarSupervisorState::default())
         .invoke_handler(tauri::generate_handler![
             oauth::start_claude_oauth,
             oauth::complete_claude_oauth,
@@ -461,6 +462,7 @@ pub fn run() {
             updater::updater_check,
             updater::updater_install,
             updater::updater_status,
+            claude_sidecar::state::sidecar_status,
         ])
         .setup(|app| {
             // Resolve the per-device app-data base once, up front: git history
