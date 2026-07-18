@@ -19,12 +19,6 @@ import { persist } from 'zustand/middleware'
 import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { type ChatModel, DEFAULT_CHAT_MODEL } from '@/chat/types'
 
-/** What kind of project a folder holds. Drives the launcher label and,
- * later, which CLAUDE.md scaffold a fresh folder gets. Detected from the
- * folder contents when opening an existing folder (a `manuscript/` dir → a
- * translation project), or set explicitly when scaffolding a new one. */
-export type ProjectType = 'wiki' | 'translation'
-
 /** macOS system sound played when a background chat job finishes (file names in
  * /System/Library/Sounds). 'None' silences the completion ping. */
 export type NotificationSound = 'None' | 'Glass' | 'Ping' | 'Pop' | 'Bottle' | 'Sosumi'
@@ -34,7 +28,6 @@ export type NotificationSound = 'None' | 'Glass' | 'Ping' | 'Pop' | 'Bottle' | '
  * the persisted settings store. */
 export interface RecentProject {
   path: string
-  type: ProjectType
   /** Epoch ms of the last time this project was opened. Sort key for
    * the launcher list (most recent first). */
   lastOpened: number
@@ -73,8 +66,8 @@ interface SettingsState {
    * Global (cross-window) app preference. */
   recentProjects: RecentProject[]
   /** Record a project as just-opened: upsert by path (refresh its
-   * `lastOpened` + type) and move it to the front. */
-  addRecentProject: (path: string, type: ProjectType) => void
+   * `lastOpened`) and move it to the front. */
+  addRecentProject: (path: string) => void
   /** Drop a project from the recent list (e.g. user removes a stale
    * entry whose folder is gone). */
   removeRecentProject: (path: string) => void
@@ -183,10 +176,10 @@ export const useSettingsStore = create<SettingsState>()(
       clearVault: () => set({ vaultPaths: [], activeVaultIndex: 0 }),
       markBootstrapCompleted: () => set({ bootstrapCompleted: true }),
       setLastWhatsNewVersion: (version) => set({ lastWhatsNewVersion: version }),
-      addRecentProject: (path, type) =>
+      addRecentProject: (path) =>
         set((s) => ({
           recentProjects: [
-            { path, type, lastOpened: Date.now() },
+            { path, lastOpened: Date.now() },
             ...s.recentProjects.filter((p) => p.path !== path),
           ],
         })),
@@ -249,19 +242,6 @@ export function getActiveVaultPath(): string | null {
   if (WINDOW_ROOT) return WINDOW_ROOT
   const { vaultPaths, activeVaultIndex } = useSettingsStore.getState()
   return vaultPaths[activeVaultIndex] ?? null
-}
-
-/** Project type of the active vault, resolved from the recent-projects
- * list by path. Defaults to `'wiki'` when the path isn't recorded (the
- * common case + fresh vaults). The agent-schema injector uses this to pick
- * the wiki bundle schema vs a translation project's own routing brain. */
-export function getActiveProjectType(): ProjectType {
-  const path = getActiveVaultPath()
-  if (!path) return 'wiki'
-  return (
-    useSettingsStore.getState().recentProjects.find((p) => p.path === path)
-      ?.type ?? 'wiki'
-  )
 }
 
 /** Folder new chat-created notes land in. Default 'inbox'. Non-React read for the

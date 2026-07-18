@@ -22,7 +22,7 @@ import {
 } from './docsStore'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
-import { getDefaultNoteFolder, getActiveProjectType } from '@/state/settingsStore'
+import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { DEFAULT_CLAUDE_MD } from '@/agent/defaults'
 
 // PROOF_BASE_URL removed (Phase 3.A.2). All wiki body reads go
@@ -181,23 +181,8 @@ export async function readSelfProfile(): Promise<string> {
  * separately: folder bindings from settings (WORKSPACE / CAPTURE FOLDER /
  * KNOWLEDGE BASE blocks) and behaviour rules from {@link readPreferences}.
  *
- * Translation projects are the exception: they carry their own small
- * routing-brain `CLAUDE.md` at the project root (see translationProject.ts),
- * so for those we keep reading the vault file. The bundled wiki schema only
- * applies to wiki vaults.
- *
  * Kept async so the `assembleContext` call site is unchanged. */
 export async function readClaudeMd(): Promise<string> {
-  if (getActiveProjectType() === 'translation') {
-    try {
-      if (await vaultFileExists('CLAUDE.md')) {
-        return splitFrontmatter(await readVaultFile('CLAUDE.md')).body.trim()
-      }
-    } catch (err) {
-      console.warn('[wiki] readClaudeMd (translation) failed', err)
-    }
-    return ''
-  }
   return DEFAULT_CLAUDE_MD
 }
 

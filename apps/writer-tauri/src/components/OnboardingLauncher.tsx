@@ -19,10 +19,9 @@ import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { readDir } from '@tauri-apps/plugin-fs'
 import { toast } from 'sonner'
 import { pickVault } from '@/lib/vaultPicker'
-import { isTranslationProject } from '@/lib/translationProject'
 import { openProjectWindow, folderName } from '@/lib/projectWindow'
 import { useGoogleAuth } from '@/hooks/useGoogleAuth'
-import { useSettingsStore, type ProjectType } from '@/state/settingsStore'
+import { useSettingsStore } from '@/state/settingsStore'
 import { StepDots } from '@/profile/ui/onboarding/StepDots'
 import { WelcomePanel } from '@/profile/ui/onboarding/WelcomePanel'
 import { ConnectPanel } from '@/profile/ui/onboarding/ConnectPanel'
@@ -48,7 +47,7 @@ export function OnboardingLauncher() {
   const { connect: connectGoogle, connecting: googleConnecting } = useGoogleAuth()
 
   const [step, setStep] = useState<Step>('welcome')
-  const [chosen, setChosen] = useState<{ path: string; type: ProjectType } | null>(null)
+  const [chosen, setChosen] = useState<{ path: string } | null>(null)
   // Role-step state: the folder options read off the picked vault, plus the
   // user's current pick for each role (defaulted, editable in the dropdowns).
   const [roleOptions, setRoleOptions] = useState<string[]>([])
@@ -93,20 +92,10 @@ export function OnboardingLauncher() {
   }, [])
 
   // Remember a chosen folder + advance. Shared by the native picker and folder
-  // drag-and-drop. Detecting an existing translation project keeps that path
-  // working even though onboarding no longer scaffolds.
-  //
-  // For a wiki vault, scan its top-level folders and go to the roles step so
-  // the user maps knowledge base + capture to real folders. Translation
-  // projects use a fixed manuscript/reference layout — the roles don't apply,
-  // so they skip straight to done.
+  // drag-and-drop. Scan the vault's top-level folders and go to the roles step
+  // so the user maps knowledge base + capture to real folders.
   const acceptFolder = useCallback(async (path: string) => {
-    const type: ProjectType = (await isTranslationProject(path)) ? 'translation' : 'wiki'
-    setChosen({ path, type })
-    if (type === 'translation') {
-      setStep('done')
-      return
-    }
+    setChosen({ path })
     let dirs: string[] = []
     try {
       const entries = await readDir(path)
@@ -194,7 +183,7 @@ export function OnboardingLauncher() {
     setError(null)
     try {
       await openProjectWindow(chosen.path, folderName(chosen.path))
-      addRecentProject(chosen.path, chosen.type)
+      addRecentProject(chosen.path)
       markBootstrapCompleted()
     } catch (err) {
       console.error('[onboarding] failed to open project window', err)
