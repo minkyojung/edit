@@ -562,7 +562,7 @@ pub fn run() {
                         "check-for-updates" => {
                             let app = app.clone();
                             tauri::async_runtime::spawn(async move {
-                                updater::run_check(app).await;
+                                updater::run_check(app, updater::CheckOrigin::Manual).await;
                             });
                         }
                         _ => {}
@@ -639,7 +639,8 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     loop {
-                        updater::run_check(updater_app.clone()).await;
+                        updater::run_check(updater_app.clone(), updater::CheckOrigin::Scheduled)
+                            .await;
                         tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
                     }
                 });

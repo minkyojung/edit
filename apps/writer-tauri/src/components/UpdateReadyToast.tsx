@@ -46,9 +46,11 @@ export function UpdateReadyToast({
   )
 }
 
-/** Fire the update-ready toast. One stable id so it replaces any prior update
- * toast. "Restart when idle" dismisses this and confirms; "See changes" leaves
- * it up so the user can still restart. */
+/** Fire the update-ready toast. One stable id so it replaces any prior ready
+ * toast — distinct from the failure toast's id, since sonner MERGES props on
+ * same-id updates (a jsx/custom toast would leak into a plain error toast).
+ * "Restart when idle" dismisses this and confirms; "See changes" leaves it up
+ * so the user can still restart. */
 export function showUpdateReadyToast(opts: UpdateReadyToastProps) {
   toast.custom(
     (id) => (
@@ -65,6 +67,6 @@ export function showUpdateReadyToast(opts: UpdateReadyToastProps) {
         onRestart={opts.onRestart}
       />
     ),
-    { id: 'octave-update', duration: Infinity },
+    { id: 'octave-update-ready', duration: Infinity },
   )
 }
