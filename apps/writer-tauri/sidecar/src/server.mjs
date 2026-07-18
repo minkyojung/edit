@@ -536,6 +536,14 @@ function buildEditVisualizationTool(getRunId, emit) {
 
 const SIDECAR_VERSION = '0.1.0'
 
+// Wire-protocol contract version. Bump this (in lockstep with the Rust
+// `PROTOCOL_VERSION` in claude_sidecar/client.rs) on any breaking change to
+// the request/notification shapes in PROTOCOL.md. The host asserts equality
+// during `initialize` and refuses to run a mismatched sidecar — this turns
+// the "forgot to run `pnpm pack:sidecar`" foot-gun into a loud, immediate
+// failure instead of a silently stale sidecar.
+const PROTOCOL_VERSION = 1
+
 // Plan-mode workflow body. Replaces the SDK's default code-implementation
 // plan steps (the CLI still wraps this with its read-only preamble + the
 // ExitPlanMode footer). This is a prose/wiki vault, not a codebase, so we
@@ -698,6 +706,7 @@ export class Server {
     this.initialized = true
     this.emit(
       response(id, {
+        protocolVersion: PROTOCOL_VERSION,
         sidecarVersion: SIDECAR_VERSION,
         node: process.version,
         mode: this.mode,
