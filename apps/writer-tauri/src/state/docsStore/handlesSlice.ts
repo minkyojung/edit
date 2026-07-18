@@ -13,14 +13,9 @@
  */
 
 import { useIngestStore } from '../ingestStore'
-import {
-  clearDirty,
-  installDocSync,
-  markSlugDirty,
-} from '@/lib/docFileSync'
-import { applyMarkdownToActiveCmEditor } from '@/state/activeCmEditor'
+import { installDocSync, markSlugDirty } from '@/lib/docFileSync'
+import { updateDocBody, setBodyMirror } from './docBody'
 import { useExternalConflictStore } from '@/state/externalConflictStore'
-import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { pathForDoc, usesFrontmatter } from '@/lib/docPaths'
 import { splitFrontmatter } from '@/lib/frontmatter'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
@@ -123,14 +118,16 @@ export const createHandlesSlice = (
       return
     }
     const refreshedMarkdown = result.markdown
-    handle.bodyMarkdown = refreshedMarkdown
-    clearDirty(slug)
-    const activeSlug = getActiveSlugFromHash()
-    if (activeSlug === slug) {
-      // Push the external edit into the live CodeMirror editor (no-op if this
-      // slug isn't the mounted view).
-      applyMarkdownToActiveCmEditor(slug, refreshedMarkdown)
-    }
+    // Disk wins. Route through the body funnel so this external reload
+    // serializes against any in-flight local write on the same slug, becomes
+    // the single mirror write, pushes into the live editor (no-op when this
+    // slug isn't mounted), and clears the dirty flag. `resolvesConflict`
+    // bypasses the funnel's conflict gate — the user already chose to reopen,
+    // so this write IS the resolution.
+    await updateDocBody(slug, () => refreshedMarkdown, {
+      source: 'external',
+      resolvesConflict: true,
+    })
     console.log(`[vault:reload] ${slug} hydrated from external edit`)
   },
 
@@ -230,8 +227,12 @@ function buildHandle(
     // usable blank doc and the next flush rewrites the file. The
     // "do not touch" semantics matter on the reload path, not here.
     const initialLoad = await loadBodyMarkdown(slug, get)
-    handle.bodyMarkdown =
-      initialLoad.kind === 'loaded' ? initialLoad.markdown : ''
+    // Construction: seed the mirror with the disk snapshot BEFORE contentReady
+    // resolves. This isn't a transform (there's no prior body to read and no
+    // editor mounted yet), so it writes the mirror directly via the sanctioned
+    // setter rather than through updateDocBody (which would await the very
+    // contentReady we're resolving).
+    setBodyMirror(handle, initialLoad.kind === 'loaded' ? initialLoad.markdown : '')
 
     // Ingest dirty-bit signal. Installed AFTER hydrate so the
     // initial seed doesn't register as a fresh edit. Agent-managed
@@ -272,7 +273,9 @@ function buildHandle(
  * reaches disk on the next 2s tick even if the user never types. */
 function seedBodyFirstLine(handle: CollabHandle, text: string): void {
   if (handle.bodyMarkdown.trim().length > 0) return
-  handle.bodyMarkdown = text
+  // Runs during ensureHandle, before contentReady — construction, not a
+  // transform, so it writes the mirror directly via the sanctioned setter.
+  setBodyMirror(handle, text)
   markSlugDirty(handle.slug)
 }
 

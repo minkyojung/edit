@@ -22,6 +22,7 @@ import { markdown, deleteMarkupBackward } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
+import { setBodyMirror } from '@/state/docsStore/docBody'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 import { useDocStatsStore, computeDocStats } from '@/state/docStatsStore'
 import { registerCmEditor, unregisterCmEditor } from '@/state/activeCmEditor'
@@ -336,7 +337,7 @@ export function CmEditor({ handle, header }: Props) {
       // one. flushDirty then persists it (Obsidian "save on note switch").
       if (view) {
         const h = useDocsStore.getState().handles[handle.slug]
-        if (h) h.bodyMarkdown = stripRanges(view.state.doc.toString(), greenRangesForSave(view.state))
+        if (h) setBodyMirror(h, stripRanges(view.state.doc.toString(), greenRangesForSave(view.state)))
       }
       void flushDirty()
       if (statsTimer !== null) window.clearTimeout(statsTimer)
