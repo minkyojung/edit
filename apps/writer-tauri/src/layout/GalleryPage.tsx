@@ -23,6 +23,8 @@ import { NoticeRow } from '@/chat/parts/NoticeRow'
 import { TerminalNote } from '@/chat/messages/TerminalNote'
 import { ErrorCard } from '@/chat/messages/ErrorCard'
 import { humanizeError } from '@/chat/utils/errorMessage'
+import { QuestionPanel } from '@/chat/QuestionPanel'
+import type { PendingPermission } from '@/state/pendingPermissionsStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -502,6 +504,7 @@ const NAV: { group: string; titles: string[] }[] = [
     group: 'Surfaces',
     titles: [
       'Surfaces · Chat states',
+      'Surfaces · Ask question',
       'Surfaces · Turn outcomes',
       'Surfaces · Save failures',
       'Surfaces · Onboarding',
@@ -1320,6 +1323,96 @@ export function GalleryPage() {
               }),
             ]}
           />
+        </Subgroup>
+      </Section>
+
+      <Section title="Surfaces · Ask question">
+        <p className="text-[13px] text-muted-foreground">
+          <strong>AskUserQuestion</strong> — the model pauses mid-turn to ask a
+          clarifying question, <strong>replacing the prompt input</strong> until
+          it's answered. It fires in normal chat, not just plan mode: the turn
+          parks on the sidecar's <code>canUseTool</code> gate and resumes with
+          the chosen answer injected as the tool result. One question at a time
+          with an <code>i of N</code> pager, numbered options (single- or
+          multi-select), a “Something else” free-text row, and Skip / Next / Send.
+          This is the real <code>QuestionPanel</code> with mock input — selecting
+          works; Send is a no-op here.
+        </p>
+        <Subgroup title="Clarifying question — single select">
+          <div className="w-[400px]">
+            <QuestionPanel
+              pending={
+                {
+                  runId: 'gallery-q1',
+                  threadId: 'gallery-q1',
+                  decisionId: 'gallery-q1',
+                  toolName: 'AskUserQuestion',
+                  input: {
+                    questions: [
+                      {
+                        header: 'Scope',
+                        question: 'Which notes should I reorganize?',
+                        options: [
+                          {
+                            label: 'Just this note',
+                            description: 'Only the note you have open',
+                          },
+                          {
+                            label: 'This folder',
+                            description: 'Every note in the current folder',
+                          },
+                          {
+                            label: 'The whole vault',
+                            description: 'All notes — slower, more thorough',
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                } satisfies PendingPermission
+              }
+              onClose={() => {}}
+            />
+          </div>
+        </Subgroup>
+        <Subgroup title="Multiple questions — pager + multi-select">
+          <div className="w-[400px]">
+            <QuestionPanel
+              pending={
+                {
+                  runId: 'gallery-q2',
+                  threadId: 'gallery-q2',
+                  decisionId: 'gallery-q2',
+                  toolName: 'AskUserQuestion',
+                  input: {
+                    questions: [
+                      {
+                        header: 'Tone',
+                        question: 'What tone should the summary take?',
+                        options: [
+                          { label: 'Concise' },
+                          { label: 'Detailed' },
+                          { label: 'Casual' },
+                        ],
+                      },
+                      {
+                        header: 'Include',
+                        question: 'What should the summary include?',
+                        multiSelect: true,
+                        options: [
+                          { label: 'Action items' },
+                          { label: 'Decisions' },
+                          { label: 'Open questions' },
+                          { label: 'Attendees' },
+                        ],
+                      },
+                    ],
+                  },
+                } satisfies PendingPermission
+              }
+              onClose={() => {}}
+            />
+          </div>
         </Subgroup>
       </Section>
 
