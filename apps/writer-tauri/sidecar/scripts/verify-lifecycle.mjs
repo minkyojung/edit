@@ -247,8 +247,26 @@ async function t6() {
   send('chat/close-thread', { threadId: tid }); await sleep(50)
 }
 
+// ── T7: closeAfterResult — a one-shot thread (title / any non-persistent
+// flow) ends after its single result, instead of lingering like a chat. ──
+async function t7() {
+  console.log('\n[T7] closeAfterResult: one-shot thread tears down after its single result')
+  fakes.length = 0; teardownLog.length = 0
+  const { server, send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, teardown: 'closeAfterResult', prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  check('thread live before result', server.activeThreads.has(tid))
+  await runTurn(fake, r1, ev)
+  // The single result closes the input → query ends → finalize teardown.
+  await waitFor(() => !server.activeThreads.has(tid))
+  check('one turn settled (chat/done)', ev.done.length === 1 && ev.err.length === 0, `done=${ev.done.length} err=${ev.err.length}`)
+  check('thread torn down after one result', !server.activeThreads.has(tid), `size=${server.activeThreads.size}`)
+  check('exactly one query (no reuse for a one-shot)', fakes.length === 1, `fakes=${fakes.length}`)
+}
+
 try {
-  await t1(); await t2(); await t3(); await t4(); await t5(); await t6()
+  await t1(); await t2(); await t3(); await t4(); await t5(); await t6(); await t7()
 } finally {
   process.stderr.write = origWrite
 }
