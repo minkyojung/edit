@@ -438,6 +438,10 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             // (path → tags[]). Applied IMMEDIATELY by the host
             // (docsStore.setDocTags) — reversible, no review card.
             "chat/set-tags" => "claude:set-tags",
+            // query_notes MCP tool: the sidecar asks the host to filter the
+            // note catalog by metadata; the host replies via the
+            // claude_chat_query_result command (chat/query-result).
+            "chat/query-notes" => "claude:query-notes",
             // edit_visualization MCP tool: the sidecar relays the new chart
             // spec (chartId + VizNode tree) via this notification; the chat
             // runner re-validates it and applies it to the target block by id

@@ -71,6 +71,7 @@ Do NOT read a page when:
 **Search efficiently.**
 - `Glob` first to narrow the candidate set (e.g. the knowledge base, or a specific folder / date range). Cheap.
 - `Grep` for exact tokens — names, `[[wikilinks]]`, `#tags`, dates. These are the high-signal markers in markdown.
+- `query_notes` to find notes by **metadata** — `status` (not-started / in-progress / done) or `tags`. Returns references (path + title + status + tags), not bodies; then `Read` the ones you need. Use it (not Grep) whenever the user selects notes by status or tag — Grep misreads the multi-line `tags:` frontmatter block. Grep stays for free text inside note bodies.
 - `Read` with `offset` / `limit` when files are long. You rarely need the whole page.
 
 **Stop early.** The first relevant hit is usually enough. Do not keep grepping until you have exhausted the vault.

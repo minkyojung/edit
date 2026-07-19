@@ -436,6 +436,12 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
                   showOnHover
                   aria-label="New note in this folder"
                   title="New note here"
+                  // Match the sidebar's icon-action idiom (header +/folder
+                  // buttons, SidebarMenuAction): muted /60 that fills on hover,
+                  // a foreground/12 hover chip that reads a step above the row's
+                  // own foreground/6 hover, and a 16px glyph like every other
+                  // inline action.
+                  className="rounded-md text-sidebar-foreground/60 transition hover:bg-foreground/12 hover:text-sidebar-foreground [&>svg]:size-4"
                   // The row's outer div carries the drag listeners; stop the
                   // pointer here so grabbing the "+" doesn't start a folder drag
                   // and the click doesn't bubble to the label/toggle.

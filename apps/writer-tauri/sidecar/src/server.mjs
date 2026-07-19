@@ -520,6 +520,54 @@ function buildSetNoteTagsTool(getRunId, emit) {
   )
 }
 
+function buildQueryNotesTool(getRunId, requestQuery) {
+  return tool(
+    'query_notes',
+    "Find notes by their METADATA — workflow status and/or tags — WITHOUT reading files. Use this whenever the user refers to notes by status or tag: \"summarize my in-progress notes\", \"list notes tagged finance\", \"what's not started yet\". `where.status` is one of not-started / in-progress / done; `where.tags` is a list — a note matches if it carries ANY of them (case-sensitive). Returns REFERENCES only — {path, title, status, tags} per note, NEVER the note bodies — so Read the paths you actually want. Do NOT use this for free text inside a note's body (a phrase, a name, a [[wikilink]]) — use Grep for that. Grep is unreliable on the multi-line `tags:` frontmatter block, which is exactly why this tool exists for metadata. If `nextCursor` comes back, pass it as `cursor` to page through more.",
+    {
+      where: z
+        .object({
+          status: z.enum(['not-started', 'in-progress', 'done']).optional(),
+          tags: z.array(z.string()).optional(),
+        })
+        .optional(),
+      limit: z.number().optional(),
+      cursor: z.string().optional(),
+    },
+    async (input) => {
+      try {
+        const { results, nextCursor } = await requestQuery(
+          input.where ?? {},
+          input.limit ?? 50,
+          input.cursor ?? null,
+        )
+        if (results.length === 0) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: 'No notes matched this metadata filter (status / tags). For free text inside note bodies, use Grep instead.',
+              },
+            ],
+          }
+        }
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ results, nextCursor }) }],
+        }
+      } catch (e) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `(query_notes failed: ${e.message}. Retry, or fall back to Glob/Grep.)`,
+            },
+          ],
+        }
+      }
+    },
+  )
+}
+
 // Recursive VizNode schema — mirrors src/viz/vizSpec.ts. Layout nodes
 // (stack/columns) nest children; leaves are charts + stat/text/table. The model
 // fills this when it calls edit_visualization, so its output is shaped to our
@@ -688,6 +736,11 @@ export class Server {
     // files/tool-calls isn't blocked on this — only the SINGLE tool result
     // that hook rewrites, if the host reports it didn't land).
     this.pendingAcks = new Map()
+    // queryId -> { resolve, reject, runId } for an in-flight `query_notes`
+    // tool call awaiting the host's filtered result (references). Unlike
+    // pendingAcks, the tool handler AWAITS this and returns the payload to the
+    // model. Modeled on pendingDecisions (awaited + cancellable + data-carrying).
+    this.pendingQueries = new Map()
     this.shuttingDown = false
     // Pending waiters for the next setToken call. Resolved when a new token
     // is pushed; used by the AUTH-retry path to coordinate refreshes.
@@ -727,6 +780,8 @@ export class Server {
           return this.#handleDecision(params)
         case 'chat/edit-ack':
           return this.#handleEditAck(params)
+        case 'chat/query-result':
+          return this.#handleQueryResult(params)
         case 'shutdown':
           return this.#handleShutdown(id)
         default:
@@ -1978,6 +2033,12 @@ export class Server {
         relayDefs.push(buildSetNoteStatusTool(getRunId, this.emit))
       } else if (name === 'set_note_tags') {
         relayDefs.push(buildSetNoteTagsTool(getRunId, this.emit))
+      } else if (name === 'query_notes') {
+        relayDefs.push(
+          buildQueryNotesTool(getRunId, (where, limit, cursor) =>
+            this.#requestQuery(getRunId(), where, limit, cursor),
+          ),
+        )
       } else if (name === 'edit_visualization') {
         relayDefs.push(buildEditVisualizationTool(getRunId, this.emit))
       }
@@ -2781,6 +2842,45 @@ export class Server {
     pending.resolve(params?.decision ?? {})
   }
 
+  // Ask the host to filter its note catalog by metadata and return references.
+  // Awaited by the `query_notes` tool handler (unlike the propose_* acks). The
+  // host's filter is a near-instant in-memory pass, so a 5s timeout backstop
+  // (host never answers) plus per-run rejection on cancel is enough — no
+  // controller is threaded through the fire-once relay tools.
+  #requestQuery(runId, where, limit, cursor) {
+    return new Promise((resolve, reject) => {
+      const queryId = globalThis.crypto.randomUUID()
+      let timer = null
+      const settle = (fn) => (v) => {
+        if (timer) clearTimeout(timer)
+        this.pendingQueries.delete(queryId)
+        fn(v)
+      }
+      this.pendingQueries.set(queryId, {
+        runId,
+        resolve: settle(resolve),
+        reject: settle(reject),
+      })
+      timer = setTimeout(() => {
+        const q = this.pendingQueries.get(queryId)
+        if (q) q.reject(new Error('query_notes: host did not respond in time'))
+      }, 5000)
+      this.emit(notification('chat/query-notes', { runId, queryId, where, limit, cursor }))
+    })
+  }
+
+  // Host's filtered result for a parked query_notes call.
+  #handleQueryResult(params) {
+    const queryId = params?.queryId
+    if (typeof queryId !== 'string') return
+    const pending = this.pendingQueries.get(queryId)
+    if (!pending) return
+    pending.resolve({
+      results: Array.isArray(params?.results) ? params.results : [],
+      nextCursor: params?.nextCursor ?? null,
+    })
+  }
+
   // Open a slot for a propose_* tool call's host-ack, keyed by the pendingId
   // it just emitted in its `chat/edit-pending` notification. Called from the
   // tool handler itself (buildProposeEditTool etc.), right after emitting —
@@ -2811,6 +2911,12 @@ export class Server {
   #handleCancel(params) {
     const runId = params?.runId
     if (typeof runId !== 'string') return
+
+    // Fail any in-flight query_notes for this run so its slot doesn't linger
+    // until the 5s timeout (covers both the persistent and legacy paths below).
+    for (const q of this.pendingQueries.values()) {
+      if (q.runId === runId) q.reject(new Error('cancelled'))
+    }
 
     // Persistent path: the runId maps to a thread. Cancel the TURN only — keep
     // the thread query (and any in-flight background tasks) alive.
