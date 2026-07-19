@@ -29,6 +29,7 @@ import {
 import {
   IconFolder,
   IconFolderOpen,
+  IconPlus,
   IconPhoto,
   IconFileTypePdf,
   IconMusic,
@@ -62,6 +63,7 @@ import {
   TreeRow,
   TreeRowLabel,
   TreeRowLead,
+  TreeRowTrail,
   TreeSub,
 } from '@/components/ui/tree-row'
 import {
@@ -205,6 +207,9 @@ interface TreeCtx {
   onCommitFolderRename: (path: string, name: string) => void
   onCancelFolderRename: () => void
   onDeleteFolder: (path: string) => void
+  /** Create a fresh Untitled note inside `path`, expand the folder if
+   * collapsed, and open the note. Folder-row "+" button / context menu. */
+  onNewNote: (path: string) => void
   /** Folder path under which a new subfolder is being named (null = none). */
   creatingSubfolderParent: string | null
   onStartCreateSubfolder: (parentPath: string) => void
@@ -353,6 +358,9 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
         <RowContextMenu
           items={
             <>
+              <DropdownMenuItem onSelect={() => ctx.onNewNote(node.path)}>
+                New note here
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => ctx.onStartCreateSubfolder(node.path)}>
                 New subfolder
               </DropdownMenuItem>
@@ -422,6 +430,23 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
                 >
                   <span className="truncate">{node.name}</span>
                 </TreeRowLabel>
+              )}
+              {!isEditing && (
+                <TreeRowTrail
+                  showOnHover
+                  aria-label="New note in this folder"
+                  title="New note here"
+                  // The row's outer div carries the drag listeners; stop the
+                  // pointer here so grabbing the "+" doesn't start a folder drag
+                  // and the click doesn't bubble to the label/toggle.
+                  onPointerDown={(e: MouseEvent) => e.stopPropagation()}
+                  onClick={(e: MouseEvent) => {
+                    e.stopPropagation()
+                    ctx.onNewNote(node.path)
+                  }}
+                >
+                  <IconPlus stroke={1.75} />
+                </TreeRowTrail>
               )}
             </TreeRow>
           </div>
@@ -547,6 +572,7 @@ export function FolderTree() {
   const moveFolder = useDocsStore((s) => s.moveFolder)
   const deleteFolder = useDocsStore((s) => s.deleteFolder)
   const duplicateDoc = useDocsStore((s) => s.duplicateDoc)
+  const createNew = useDocsStore((s) => s.createNew)
   const creatingFolder = useNewFolderStore((s) => s.creating)
   const stopNewFolder = useNewFolderStore((s) => s.stop)
   const sortMode = useSortStore((s) => s.mode)
@@ -670,6 +696,15 @@ export function FolderTree() {
       if (next) openDoc(next)
     })
   }
+  const onNewNote = (path: string) => {
+    // Expand the folder first so the fresh note is visible in-tree once
+    // created, then create + open it. Mirrors createNew's flush lifecycle;
+    // the note lands at `<path>/Untitled.md`.
+    setExpanded((prev) => (prev.has(path) ? prev : new Set(prev).add(path)))
+    void createNew(path)
+      .then((slug) => openDoc(slug))
+      .catch((err) => console.error('[docs] new note in folder failed', err))
+  }
   const onStartCreateSubfolder = (parentPath: string) => {
     setCreatingSubfolderParent(parentPath)
     // Expand the parent so its (newly mounted) name input is visible.
@@ -761,6 +796,7 @@ export function FolderTree() {
     onCommitFolderRename,
     onCancelFolderRename: () => setEditingFolderPath(null),
     onDeleteFolder,
+    onNewNote,
     creatingSubfolderParent,
     onStartCreateSubfolder,
     onCommitCreateSubfolder,

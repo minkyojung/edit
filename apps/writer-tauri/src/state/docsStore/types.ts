@@ -228,7 +228,7 @@ export interface DocsState {
   removeKnownDoc: (slug: string) => void
   ensureOpen: (slug: string) => void
   closeDoc: (slug: string) => string | null
-  createNew: () => Promise<string>
+  createNew: (folderPath?: string) => Promise<string>
   /** Create a new note seeded with a template's body, then return its slug. */
   createFromTemplate: (template: Template) => Promise<string>
   /** Create a folder on disk at `relPath` and add it to knownFolders.
