@@ -27,6 +27,8 @@ import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useGitHubAuth } from '@/hooks/useGitHubAuth'
+import { useGoogleAuth } from '@/hooks/useGoogleAuth'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useConnectDialog } from '@/stores/connectDialog'
 import { useConnectGitHubDialog } from '@/stores/connectGitHubDialog'
 import {
@@ -66,6 +68,9 @@ export function AppSidebar() {
   const githubConnectOpen = useConnectGitHubDialog((s) => s.open)
   const setGithubConnectOpen = useConnectGitHubDialog((s) => s.setOpen)
   const { refresh: refreshGithub } = useGitHubAuth()
+  // Every user signs in with Google, so the Profile row wears the Google
+  // avatar + display name instead of a generic icon + "Profile" label.
+  const { account: googleAccount } = useGoogleAuth()
 
   const createNew = useDocsStore((s) => s.createNew)
   const openPalette = useCommandPaletteStore((s) => s.openPalette)
@@ -272,8 +277,21 @@ export function AppSidebar() {
             data-active={profileActive || undefined}
             className={NAV_ROW}
           >
-            <IconUser size={18} stroke={1.75} className="shrink-0" />
-            <span className="flex-1 truncate text-left">Profile</span>
+            <Avatar size="sm" className="size-[18px]">
+              {googleAccount.picture ? (
+                <AvatarImage
+                  src={googleAccount.picture}
+                  alt={googleAccount.name ?? 'Profile'}
+                  referrerPolicy="no-referrer"
+                />
+              ) : null}
+              <AvatarFallback>
+                <IconUser size={12} stroke={1.75} />
+              </AvatarFallback>
+            </Avatar>
+            <span className="flex-1 truncate text-left">
+              {googleAccount.name ?? 'Profile'}
+            </span>
           </button>
           <button
             type="button"
