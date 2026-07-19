@@ -5,7 +5,6 @@ import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import { modelSupportsFastMode } from '@/chat/types'
 import type { ChatEffort, ChatMode, ChatModel, ChatTurn, FileAttachment } from '@/chat/types'
-import type { VizEditTarget } from '@/agent/chat/types'
 import type { PromptStatus } from '@/chat/PromptInput'
 import { classifyRunError } from '@/chat/utils/errorMessage'
 import { createStreamingBuffer } from '@/chat/utils/streamingBuffer'
@@ -84,7 +83,6 @@ export interface ChatRunner {
     threadId: string,
     history: ChatTurn[],
     overrides?: RunOverrides,
-    vizEditTarget?: VizEditTarget,
     attachments?: FileAttachment[],
     mentionPaths?: string[],
   ) => Promise<void>
@@ -129,7 +127,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       threadId: string,
       history: ChatTurn[],
       overrides?: RunOverrides,
-      vizEditTarget?: VizEditTarget,
       attachments?: FileAttachment[],
       mentionPaths?: string[],
     ) => {
@@ -338,9 +335,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           systemPrompt: overrides?.systemPrompt,
           appendDocument: overrides ? false : undefined,
           attachments: overrides ? undefined : attachments,
-          // Editing a specific viz block: runChat adds the edit_visualization
-          // relay tool + injects the target's id/spec into the system prompt.
-          vizEditTarget,
           // Plan turns keep the propose_* relays available so the model can
           // execute once the plan is approved. The gate (sidecar canUseTool)
           // denies them while planning and allows them after ExitPlanMode is
