@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildFileTree,
-  filterInProgressWithAncestors,
+  filterDocsWithAncestors,
   type TreeFolder,
 } from './fileTree'
 import type { KnownDoc } from '@/state/docsStore'
@@ -154,19 +154,21 @@ describe('buildFileTree — sort modes', () => {
   })
 })
 
-describe('filterInProgressWithAncestors', () => {
+describe('filterDocsWithAncestors', () => {
   const slugs = (docs: KnownDoc[]) => docs.map((d) => d.slug).sort()
+  const inProgress = (d: KnownDoc) => d.status === 'in-progress'
+  const hasTag = (tag: string) => (d: KnownDoc) => !!d.tags?.includes(tag)
 
-  it('keeps only in-progress notes when there are no parent chains', () => {
+  it('keeps only matches when there are no parent chains (status predicate)', () => {
     const docs = [
       doc({ slug: 'a', type: 'note', relPath: 'inbox/a.md', status: 'in-progress' }),
       doc({ slug: 'b', type: 'note', relPath: 'inbox/b.md', status: 'done' }),
       doc({ slug: 'c', type: 'note', relPath: 'inbox/c.md' }), // no status
     ]
-    expect(slugs(filterInProgressWithAncestors(docs))).toEqual(['a'])
+    expect(slugs(filterDocsWithAncestors(docs, inProgress))).toEqual(['a'])
   })
 
-  it('preserves a writing note`s daily ancestor even though it is not in progress', () => {
+  it('preserves a writing note`s daily ancestor even though it does not match', () => {
     // The daily has no status; without keeping it, the writing note`s path
     // (which resolves through the daily) would drop out of the tree.
     const docs = [
@@ -174,8 +176,7 @@ describe('filterInProgressWithAncestors', () => {
       doc({ slug: 'w1', type: 'writing', title: 'Note', parentId: 'd1', status: 'in-progress' }),
       doc({ slug: 'w2', type: 'writing', title: 'Other', parentId: 'd1', status: 'done' }),
     ]
-    // w1 kept + its ancestor d1 kept; w2 (done) dropped.
-    expect(slugs(filterInProgressWithAncestors(docs))).toEqual(['d1', 'w1'])
+    expect(slugs(filterDocsWithAncestors(docs, inProgress))).toEqual(['d1', 'w1'])
   })
 
   it('walks a multi-level parent chain up to the root', () => {
@@ -184,16 +185,31 @@ describe('filterInProgressWithAncestors', () => {
       doc({ slug: 'w1', type: 'writing', title: 'Parent', parentId: 'd1' }),
       doc({ slug: 'w2', type: 'writing', title: 'Child', parentId: 'w1', status: 'in-progress' }),
     ]
-    // w2 kept → w1 (its parent) → d1 (grandparent) all kept.
-    expect(slugs(filterInProgressWithAncestors(docs))).toEqual(['d1', 'w1', 'w2'])
+    expect(slugs(filterDocsWithAncestors(docs, inProgress))).toEqual(['d1', 'w1', 'w2'])
   })
 
-  it('returns nothing when no note is in progress', () => {
+  it('filters by a tag predicate', () => {
     const docs = [
-      doc({ slug: 'a', type: 'note', relPath: 'inbox/a.md', status: 'done' }),
-      doc({ slug: 'b', type: 'note', relPath: 'inbox/b.md' }),
+      doc({ slug: 'a', type: 'note', relPath: 'inbox/a.md', tags: ['ai', 'x'] }),
+      doc({ slug: 'b', type: 'note', relPath: 'inbox/b.md', tags: ['x'] }),
+      doc({ slug: 'c', type: 'note', relPath: 'inbox/c.md' }),
     ]
-    expect(filterInProgressWithAncestors(docs)).toEqual([])
+    expect(slugs(filterDocsWithAncestors(docs, hasTag('ai')))).toEqual(['a'])
+  })
+
+  it('composes predicates with AND (status ∧ tag)', () => {
+    const docs = [
+      doc({ slug: 'a', type: 'note', relPath: 'inbox/a.md', status: 'in-progress', tags: ['ai'] }),
+      doc({ slug: 'b', type: 'note', relPath: 'inbox/b.md', status: 'in-progress', tags: ['other'] }),
+      doc({ slug: 'c', type: 'note', relPath: 'inbox/c.md', status: 'done', tags: ['ai'] }),
+    ]
+    const both = (d: KnownDoc) => inProgress(d) && hasTag('ai')(d)
+    expect(slugs(filterDocsWithAncestors(docs, both))).toEqual(['a'])
+  })
+
+  it('returns nothing when no note matches', () => {
+    const docs = [doc({ slug: 'a', type: 'note', relPath: 'inbox/a.md', status: 'done' })]
+    expect(filterDocsWithAncestors(docs, inProgress)).toEqual([])
   })
 })
 

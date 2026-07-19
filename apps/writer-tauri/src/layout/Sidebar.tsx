@@ -15,6 +15,7 @@ import {
   IconCircleDashed,
 } from '@tabler/icons-react'
 import { FolderTree } from './FolderTree'
+import { TagList } from './TagList'
 import { useDocsStore } from '@/state/docsStore'
 import { useCommandPaletteStore } from '@/state/commandPaletteStore'
 import { useNewFolderStore } from '@/state/newFolderStore'
@@ -335,6 +336,8 @@ export function AppSidebar() {
         {/* Obsidian-style folder tree — the vault's folder structure is
             the sidebar. (Replaced the day/week/month date views.) */}
         <FolderTree />
+        {/* Tags pane below the tree — browse + filter by tag. */}
+        <TagList />
       </SidebarContent>
       <SidebarFooter className="p-0">
         <WhatsNewSidebar />

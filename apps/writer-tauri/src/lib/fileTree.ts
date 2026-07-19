@@ -84,19 +84,22 @@ export interface TreeAttachment {
 
 export type TreeNode = TreeFile | TreeFolder | TreeAttachment
 
-/** For the sidebar "in-progress only" filter: keep every in-progress note
- *  plus the parent chain each one needs to stay reachable. A `writing`
- *  note's path resolves through its `daily` ancestor (see pathForDoc), so
- *  dropping the ancestor would make the note vanish from the tree — this
- *  walks `parentId` up and keeps those ancestors even when they aren't
- *  themselves in progress. */
-export function filterInProgressWithAncestors(
+/** Narrow the doc list to those matching `predicate`, keeping the parent
+ *  chain each match needs to stay reachable. A `writing` note's path
+ *  resolves through its `daily` ancestor (see pathForDoc), so dropping the
+ *  ancestor would make the note vanish from the tree — this walks `parentId`
+ *  up and keeps those ancestors even when they don't match themselves.
+ *
+ *  The predicate shape lets the sidebar compose several filters (status,
+ *  tag, …) by ANDing them, without this function knowing about any of them. */
+export function filterDocsWithAncestors(
   docs: readonly KnownDoc[],
+  predicate: (doc: KnownDoc) => boolean,
 ): KnownDoc[] {
   const bySlug = new Map(docs.map((d) => [d.slug, d]))
   const keep = new Set<string>()
   for (const doc of docs) {
-    if (doc.status !== 'in-progress') continue
+    if (!predicate(doc)) continue
     keep.add(doc.slug)
     let parent = doc.parentId
     while (parent && !keep.has(parent)) {

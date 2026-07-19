@@ -40,12 +40,13 @@ import { useDocsStore } from '@/state/docsStore'
 import { useNewFolderStore } from '@/state/newFolderStore'
 import { useSortStore } from '@/state/sortStore'
 import { useStatusFilterStore } from '@/state/statusFilterStore'
+import { useTagFilterStore } from '@/state/tagFilterStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { cn } from '@/lib/utils'
 import { STATUS_DOT_CLASS, STATUS_LABEL } from '@/lib/docStatusMeta'
 import {
   buildFileTree,
-  filterInProgressWithAncestors,
+  filterDocsWithAncestors,
   isHiddenTreePath,
   type TreeAttachment,
   type TreeFile,
@@ -547,17 +548,23 @@ export function FolderTree() {
   const stopNewFolder = useNewFolderStore((s) => s.stop)
   const sortMode = useSortStore((s) => s.mode)
   const inProgressOnly = useStatusFilterStore((s) => s.inProgressOnly)
+  const activeTag = useTagFilterStore((s) => s.activeTag)
   const navigate = useNavigate()
   const activeSlug = useActiveSlug()
 
   const tree = useMemo(() => {
-    if (!inProgressOnly) {
+    // Compose the active sidebar filters as AND-ed predicates. No filter →
+    // the full tree; any filter → only the matching notes and the ancestors
+    // they need to stay reachable (no standalone folders/files).
+    const preds: ((d: (typeof knownDocs)[number]) => boolean)[] = []
+    if (inProgressOnly) preds.push((d) => d.status === 'in-progress')
+    if (activeTag) preds.push((d) => !!d.tags?.includes(activeTag))
+    if (preds.length === 0) {
       return buildFileTree(knownDocs, knownFolders, sortMode, knownFiles)
     }
-    // Pass no standalone folders/files so the filtered tree shows only the
-    // paths that actually contain an in-progress note (and its ancestors).
-    return buildFileTree(filterInProgressWithAncestors(knownDocs), [], sortMode, [])
-  }, [inProgressOnly, knownDocs, knownFolders, sortMode, knownFiles])
+    const match = filterDocsWithAncestors(knownDocs, (d) => preds.every((p) => p(d)))
+    return buildFileTree(match, [], sortMode, [])
+  }, [inProgressOnly, activeTag, knownDocs, knownFolders, sortMode, knownFiles])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [editingSlug, setEditingSlug] = useState<string | null>(null)
   const [editingFolderPath, setEditingFolderPath] = useState<string | null>(null)
@@ -755,7 +762,7 @@ export function FolderTree() {
       onDragEnd={onDragEnd}
       onDragCancel={resetDrag}
     >
-      <div className="flex h-full flex-col">
+      <div className="flex flex-col">
         {/* Left gutter (pl-3 = 12px) so row ICON/TEXT lands on the traffic-light
             leading edge (12px gutter + the lead's 8px ml = 20px); the fill may
             spill a touch left, which is intentional. In sync with the Sidebar
