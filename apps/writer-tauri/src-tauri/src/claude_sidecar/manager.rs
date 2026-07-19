@@ -430,11 +430,6 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             // (docsStore.moveDocToFolder) — no review card, since a move is
             // reversible and loses no content.
             "chat/move-note" => "claude:move-note",
-            // edit_visualization MCP tool: the sidecar relays the new chart
-            // spec (chartId + VizNode tree) via this notification; the chat
-            // runner re-validates it and applies it to the target block by id
-            // in the live editor (immediate, Cmd+Z to undo).
-            "chat/viz-apply" => "claude:viz-apply",
             // Plan-mode interactive gate (canUseTool): the sidecar parks an
             // ExitPlanMode / AskUserQuestion decision and emits this so the
             // host can render the approval / question card. The user's choice

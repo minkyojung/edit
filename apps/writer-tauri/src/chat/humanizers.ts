@@ -147,13 +147,6 @@ function humanizeWebFetch(input: unknown): HumanizedToolCall {
   return { label: `Fetching ${host}` }
 }
 
-/** `edit_visualization` — sidecar relay tool that updates a chart already in the
- * document by id. The host applies the new spec in place; the label just signals
- * the activity (the change itself shows in the document body). */
-function humanizeEditVisualization(): HumanizedToolCall {
-  return { label: 'Updating the visualization' }
-}
-
 /** Our write-side MCP relay tools (propose_edit / write / multi_edit). The
  * model's intent is an edit proposal; the file rides in a chip and the label
  * is just the verb — keyed by short name (humanizeToolCall strips the
@@ -199,7 +192,6 @@ const humanizers: Record<string, Humanizer> = {
   Glob: humanizeGlob,
   WebSearch: humanizeWebSearch,
   WebFetch: humanizeWebFetch,
-  edit_visualization: humanizeEditVisualization,
 }
 
 /** Strip the SDK's MCP relay prefix off a tool name. Tools the sidecar

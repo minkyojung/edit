@@ -471,69 +471,6 @@ function buildMoveNoteTool(getRunId, emit) {
   )
 }
 
-// Recursive VizNode schema — mirrors src/viz/vizSpec.ts. Layout nodes
-// (stack/columns) nest children; leaves are charts + stat/text/table. The model
-// fills this when it calls edit_visualization, so its output is shaped to our
-// component tree (no HTML/colors). The frontend re-validates via parseVizSpec.
-const VIZ_GAP = z.enum(['sm', 'md', 'lg'])
-const VIZ_DATUM = z.object({ label: z.string(), value: z.number() })
-const VIZ_SERIES = z.object({ label: z.string(), values: z.array(z.number()) })
-const vizNodeSchema = z.lazy(() =>
-  z.union([
-    z.object({ type: z.literal('stack'), gap: VIZ_GAP.optional(), children: z.array(vizNodeSchema).min(1) }),
-    z.object({ type: z.literal('columns'), gap: VIZ_GAP.optional(), children: z.array(vizNodeSchema).min(1) }),
-    z.object({ type: z.literal('donut'), title: z.string().optional(), data: z.array(VIZ_DATUM).min(1) }),
-    z.object({ type: z.literal('bar'), title: z.string().optional(), data: z.array(VIZ_DATUM).min(1) }),
-    z.object({
-      type: z.literal('column'),
-      title: z.string().optional(),
-      xLabels: z.array(z.string()).min(1),
-      series: z.array(VIZ_SERIES).min(1),
-      stacked: z.boolean().optional(),
-    }),
-    z.object({
-      type: z.literal('kpi'),
-      title: z.string().optional(),
-      items: z.array(z.object({ label: z.string(), value: z.string(), sub: z.string().optional() })).min(1),
-    }),
-    z.object({ type: z.literal('stat'), label: z.string(), value: z.string(), sub: z.string().optional() }),
-    z.object({ type: z.literal('text'), value: z.string(), variant: z.enum(['title', 'body', 'muted']).optional() }),
-    z.object({
-      type: z.literal('table'),
-      columns: z.array(z.string()).min(1),
-      rows: z.array(z.array(z.union([z.string(), z.number()]))).min(1),
-    }),
-  ]),
-)
-
-// edit_visualization: change a chart already in the document, addressed by its
-// stable id. Like the propose_* tools the handler just forwards to the host (the
-// editor work — find the block by id, replace its spec — happens in the
-// frontend) and acks so the model continues in the same turn. Unlike propose_*
-// it applies immediately (no Keep/Reject); the user undoes with Cmd+Z.
-function buildEditVisualizationTool(getRunId, emit) {
-  return tool(
-    'edit_visualization',
-    'Edit a data visualization that is ALREADY in the document, addressed by its chartId. Pass the FULL updated tree as `root`. A node is a layout — {type:"stack"|"columns", gap?, children:[…]} — or a leaf: {type:"donut"|"bar", title?, data:[{label,value}]} / {type:"column", title?, xLabels:[…], series:[{label,values:[…]}]} / {type:"kpi", title?, items:[{label,value,sub?}]} / {type:"stat", label, value, sub?} / {type:"text", value, variant?} / {type:"table", columns:[…], rows:[[…]]}. DATA + STRUCTURE ONLY — never colors, sizes, or fonts; the app owns the look. Preserve any data you were not asked to change. The host applies it in place. Returns immediately — do not wait.',
-    {
-      chartId: z.string(),
-      root: vizNodeSchema,
-    },
-    async (input) => {
-      emit(
-        notification('chat/viz-apply', {
-          runId: getRunId(),
-          chartId: input.chartId,
-          root: input.root,
-        }),
-      )
-      return {
-        content: [{ type: 'text', text: `Visualization ${input.chartId} updated.` }],
-      }
-    },
-  )
-}
-
 const SIDECAR_VERSION = '0.1.0'
 
 // Plan-mode workflow body. Replaces the SDK's default code-implementation
@@ -1932,8 +1869,6 @@ export class Server {
         )
       } else if (name === 'move_note') {
         relayDefs.push(buildMoveNoteTool(getRunId, this.emit))
-      } else if (name === 'edit_visualization') {
-        relayDefs.push(buildEditVisualizationTool(getRunId, this.emit))
       }
     }
     if (relayDefs.length === 0) return null
