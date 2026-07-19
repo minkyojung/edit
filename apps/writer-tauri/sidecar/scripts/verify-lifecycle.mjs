@@ -178,28 +178,6 @@ async function t3() {
   await sleep(50)
 }
 
-// ── T4: B1 rollback — legacy entry tears down the live persistent thread
-async function t4() {
-  console.log('\n[T4] B1: legacy chat on a live thread → persistent thread torn down (flag_rollback)')
-  fakes.length = 0; teardownLog.length = 0
-  const { server, send, ev } = makeServer()
-  const tid = randomUUID(), r1 = randomUUID(), r2 = randomUUID()
-  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
-  const fake = await awaitFake(1)
-  await runTurn(fake, r1, ev)
-  const rec = server.activeThreads.get(tid)
-  check('persistent thread live before rollback', !!rec && !rec.dead)
-  // Flag flipped OFF: same threadId now arrives on the legacy path.
-  send('chat', { runId: r2, threadId: tid, prompt: 'b' /* persistentQuery omitted */ }, nid())
-  check('persistent thread torn down synchronously', !!rec && rec.dead === true)
-  check('teardown reason = flag_rollback', teardownLog.some((l) => l.includes('flag_rollback')), teardownLog.join(' | '))
-  // unblock the legacy fake query so nothing hangs
-  const legacyFake = await awaitFake(2)
-  await waitFor(() => legacyFake.messages.length > 0, 500)
-  legacyFake.pushEvent({ type: 'result', subtype: 'success', stop_reason: 'end_turn', usage: {} })
-  await sleep(80)
-}
-
 // ── T5: A1 refactor — busy (active-turn) thread survives eviction ─────
 async function t5() {
   console.log('\n[T5] A1: #threadBusy protects a busy thread under LRU pressure')
@@ -254,7 +232,9 @@ async function t7() {
   fakes.length = 0; teardownLog.length = 0
   const { server, send, ev } = makeServer()
   const tid = randomUUID(), r1 = randomUUID()
-  send('chat', { runId: r1, threadId: tid, persistentQuery: true, teardown: 'closeAfterResult', prompt: 'a' }, nid())
+  // No persistentQuery → the router derives teardown:'closeAfterResult' (the
+  // flag-off / intake one-shot case, now on the one engine).
+  send('chat', { runId: r1, threadId: tid, prompt: 'a' }, nid())
   const fake = await awaitFake(1)
   check('thread live before result', server.activeThreads.has(tid))
   await runTurn(fake, r1, ev)
@@ -287,9 +267,9 @@ async function t8() {
   send('chat', { runId: r1, prompt: 'summarize this' }, nid())
   const fake = await awaitFake(1)
   check(
-    'title ran on the thread engine (activeThreads), not legacy activeChats',
-    server.activeThreads.size === 1 && server.activeChats.size === 0,
-    `threads=${server.activeThreads.size} chats=${server.activeChats.size}`,
+    'title ran on the thread engine (one activeThreads entry)',
+    server.activeThreads.size === 1,
+    `threads=${server.activeThreads.size}`,
   )
   // Single-flight: a second title while one is live must not spawn a 2nd thread.
   send('chat', { runId: randomUUID(), prompt: 'other' }, nid())
@@ -301,7 +281,7 @@ async function t8() {
 }
 
 try {
-  await t1(); await t2(); await t3(); await t4(); await t5(); await t6(); await t7(); await t8()
+  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8()
 } finally {
   process.stderr.write = origWrite
 }
