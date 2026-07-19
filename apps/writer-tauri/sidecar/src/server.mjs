@@ -472,6 +472,29 @@ function buildMoveNoteTool(getRunId, emit) {
   )
 }
 
+function buildSetNoteStatusTool(getRunId, emit) {
+  return tool(
+    'set_note_status',
+    "Set a note's workflow status when the user asks (e.g. \"이거 완료 처리해줘\" → done, \"진행 중으로\" → in-progress, \"아직 시작 안 함\" → not-started). `path` is the note's vault-relative or absolute path; `status` is one of not-started / in-progress / done. Only editable notes carry a status — a daily journal or a system page will be ignored by the host. Applied IMMEDIATELY (not queued for review) and reversible. Returns immediately — do not wait. This is the ONLY way to change a note's status; never write a `status:` line into a `---` frontmatter block yourself.",
+    {
+      path: z.string(),
+      status: z.enum(['not-started', 'in-progress', 'done']),
+    },
+    async (input) => {
+      emit(
+        notification('chat/set-status', {
+          runId: getRunId(),
+          path: input.path,
+          status: input.status,
+        }),
+      )
+      return {
+        content: [{ type: 'text', text: `Status set: ${input.path} → ${input.status}` }],
+      }
+    },
+  )
+}
+
 // Recursive VizNode schema — mirrors src/viz/vizSpec.ts. Layout nodes
 // (stack/columns) nest children; leaves are charts + stat/text/table. The model
 // fills this when it calls edit_visualization, so its output is shaped to our
@@ -1926,6 +1949,8 @@ export class Server {
         )
       } else if (name === 'move_note') {
         relayDefs.push(buildMoveNoteTool(getRunId, this.emit))
+      } else if (name === 'set_note_status') {
+        relayDefs.push(buildSetNoteStatusTool(getRunId, this.emit))
       } else if (name === 'edit_visualization') {
         relayDefs.push(buildEditVisualizationTool(getRunId, this.emit))
       }

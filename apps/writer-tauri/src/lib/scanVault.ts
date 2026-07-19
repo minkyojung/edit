@@ -132,6 +132,8 @@ export function mdRelToKnownDoc(
   if (typeof meta.durationSec === 'number') overlay.durationSec = meta.durationSec
   if (typeof meta.thumbnailUrl === 'string') overlay.thumbnailUrl = meta.thumbnailUrl
   if (typeof meta.description === 'string') overlay.description = meta.description
+  // Workflow status — already validated to a known value by frontmatterToMeta.
+  if (meta.status) overlay.status = meta.status
   return { ...base, ...overlay } as KnownDoc
 }
 

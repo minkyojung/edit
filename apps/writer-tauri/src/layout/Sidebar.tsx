@@ -12,6 +12,7 @@ import {
   IconTerminal2,
   IconPalette,
   IconSparkles,
+  IconCircleDashed,
 } from '@tabler/icons-react'
 import { FolderTree } from './FolderTree'
 import { useDocsStore } from '@/state/docsStore'
@@ -35,6 +36,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useSortStore, SORT_LABELS, type SortMode } from '@/state/sortStore'
+import { useStatusFilterStore } from '@/state/statusFilterStore'
 import {
   Sidebar,
   SidebarContent,
@@ -69,6 +71,8 @@ export function AppSidebar() {
   const startNewFolder = useNewFolderStore((s) => s.start)
   const sortMode = useSortStore((s) => s.mode)
   const setSortMode = useSortStore((s) => s.setMode)
+  const inProgressOnly = useStatusFilterStore((s) => s.inProgressOnly)
+  const setInProgressOnly = useStatusFilterStore((s) => s.setInProgressOnly)
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
@@ -200,6 +204,21 @@ export function AppSidebar() {
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
+        <button
+          type="button"
+          aria-label="진행 중만 보기"
+          title="진행 중만 보기"
+          aria-pressed={inProgressOnly}
+          onClick={() => setInProgressOnly(!inProgressOnly)}
+          className={cn(
+            'flex size-8 shrink-0 items-center justify-center rounded-md transition-colors',
+            inProgressOnly
+              ? 'bg-foreground/12 text-sidebar-foreground'
+              : 'text-sidebar-foreground/60 hover:bg-foreground/12 hover:text-sidebar-foreground',
+          )}
+        >
+          <IconCircleDashed size={18} stroke={1.75} />
+        </button>
         <button
           type="button"
           aria-label="New folder"

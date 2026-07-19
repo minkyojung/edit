@@ -15,9 +15,10 @@
 
 import { flushDirty, markSlugDirty, seedLastWrittenPath } from '@/lib/docFileSync'
 import { renameVaultFile } from '@/lib/vault'
-import { pathForDoc, sanitizeFilename } from '@/lib/docPaths'
+import { pathForDoc, sanitizeFilename, type DocStatus } from '@/lib/docPaths'
 import { planFolderMove } from '@/lib/folderMove'
 import { updateWikilinksForRename } from '@/lib/renameWikilinks'
+import { docSupportsStatus } from './helpers'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
 /** First free `<prefix><base>.md` (then ` 1`, ` 2`, …) not already
@@ -155,6 +156,10 @@ export interface EditSlice {
    * marking unread, then flushes so the `.meta.json` sidecar reflects
    * the change immediately. No-op for non-article docs. */
   setArticleRead: (slug: string, read: boolean) => void
+  /** Set (or clear, with `undefined`) a note's workflow status, then
+   * flush so the `.md` frontmatter reflects it immediately. No-op for
+   * doc types that don't carry status (daily / system). */
+  setDocStatus: (slug: string, status: DocStatus | undefined) => void
 }
 
 export const createEditSlice = (
@@ -268,6 +273,23 @@ export const createEditSlice = (
     // writes the cleared value through mergeSidecar — same trick the
     // archive unarchive path uses to drop a sidecar field.
     list[idx] = { ...cur, readAt }
+    set({ knownDocs: list })
+    markSlugDirty(slug)
+    void flushDirty()
+  },
+
+  setDocStatus: (slug, status) => {
+    const idx = get().knownDocs.findIndex((d) => d.slug === slug)
+    if (idx < 0) return
+    const cur = get().knownDocs[idx]
+    // Daily journals and system pages don't carry a workflow status.
+    if (!docSupportsStatus(cur)) return
+    if (cur.status === status) return
+    const list = [...get().knownDocs]
+    // Explicit `status` (even when undefined) so buildMetaForKnownDoc
+    // writes the cleared value through mergeSidecar — same trick
+    // setArticleRead uses to drop a field.
+    list[idx] = { ...cur, status }
     set({ knownDocs: list })
     markSlugDirty(slug)
     void flushDirty()

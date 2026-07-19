@@ -31,7 +31,7 @@ import {
   getPersistentQueryEnabled,
 } from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
-import { pathForDoc } from '@/lib/docPaths'
+import { pathForDoc, pathToKnownSlug, type DocStatus } from '@/lib/docPaths'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
@@ -98,6 +98,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       // capture folder into its resting place. Auto-applied (reversible), not
       // queued — see the claude:move-note handler below.
       'move_note',
+      // Fire-and-forget: set a note's workflow status on request. Auto-applied
+      // (reversible), not queued — see the claude:set-status handler below.
+      'set_note_status',
     ],
     appendDocument = true,
     viewingFilePath,
@@ -656,6 +659,27 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           const folder = e.payload.toFolder.replace(/^\/+|\/+$/g, '')
           const ok = useDocsStore.getState().moveDocToFolder(doc.slug, folder)
           console.log('[chat] move-note', { from: relFrom, toFolder: folder, ok })
+        },
+      ),
+      // set_note_status MCP tool → set a note's workflow status. Resolve via
+      // pathToKnownSlug (not a relPath match) so writing/wiki docs resolve too,
+      // then hand to setDocStatus, which guards non-status doc types itself.
+      listen<{ runId: string; path: string; status: DocStatus }>(
+        'claude:set-status',
+        (e) => {
+          if (e.payload.runId !== runId) return
+          const rel = toVaultRelative(e.payload.path, getActiveVaultPath())
+          if (!rel) {
+            console.warn('[chat] set-status: unresolved path', e.payload.path)
+            return
+          }
+          const slug = pathToKnownSlug(rel, useDocsStore.getState().knownDocs)
+          if (!slug) {
+            console.warn('[chat] set-status: no note at', rel)
+            return
+          }
+          useDocsStore.getState().setDocStatus(slug, e.payload.status)
+          console.log('[chat] set-status', { path: rel, status: e.payload.status })
         },
       ),
       listen<DoneEvent>('claude:done', (e) => {

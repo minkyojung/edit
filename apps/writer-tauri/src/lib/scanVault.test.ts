@@ -316,6 +316,7 @@ describe('meta ⇄ frontmatter round-trip', () => {
       siteName: 'Example',
       savedAt: '2026-06-10T09:00:00.000Z',
       readAt: '2026-06-10T10:00:00.000Z',
+      status: 'in-progress',
     }
 
     const fields = metaToFrontmatterFields(meta)
@@ -324,6 +325,13 @@ describe('meta ⇄ frontmatter round-trip', () => {
 
     expect(frontmatterToMeta(data)).toEqual(meta)
     expect(body).toBe('The note body.\n')
+  })
+
+  it('drops an unknown status value on read', () => {
+    // status is user- and AI-writable, so a value outside the known set is
+    // rejected rather than trusted into the catalog.
+    expect(frontmatterToMeta({ status: 'garbage' }).status).toBeUndefined()
+    expect(frontmatterToMeta({ status: 'done' }).status).toBe('done')
   })
 
   it('round-trips youtube capture fields (durationSec stays numeric)', () => {

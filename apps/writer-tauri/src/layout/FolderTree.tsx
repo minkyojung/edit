@@ -39,9 +39,13 @@ import {
 import { useDocsStore } from '@/state/docsStore'
 import { useNewFolderStore } from '@/state/newFolderStore'
 import { useSortStore } from '@/state/sortStore'
+import { useStatusFilterStore } from '@/state/statusFilterStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
+import { cn } from '@/lib/utils'
+import { STATUS_DOT_CLASS, STATUS_LABEL } from '@/lib/docStatusMeta'
 import {
   buildFileTree,
+  filterInProgressWithAncestors,
   isHiddenTreePath,
   type TreeAttachment,
   type TreeFile,
@@ -280,10 +284,19 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
         }
       >
         <TreeRow active={isActive}>
-          {/* Empty lead keeps file text aligned under folder labels;
-              files are text-only (no icon) per the Obsidian look. */}
+          {/* Lead keeps file text aligned under folder labels; it holds a
+              small status dot when the note has one, else stays empty (the
+              Obsidian text-only look). */}
           <TreeRowLead asChild>
-            <span aria-hidden />
+            <span>
+              {node.status ? (
+                <span
+                  className={cn('size-1.5 rounded-full', STATUS_DOT_CLASS[node.status])}
+                  title={STATUS_LABEL[node.status]}
+                  aria-label={`상태: ${STATUS_LABEL[node.status]}`}
+                />
+              ) : null}
+            </span>
           </TreeRowLead>
           {isEditing ? (
             <RenameInput
@@ -533,13 +546,18 @@ export function FolderTree() {
   const creatingFolder = useNewFolderStore((s) => s.creating)
   const stopNewFolder = useNewFolderStore((s) => s.stop)
   const sortMode = useSortStore((s) => s.mode)
+  const inProgressOnly = useStatusFilterStore((s) => s.inProgressOnly)
   const navigate = useNavigate()
   const activeSlug = useActiveSlug()
 
-  const tree = useMemo(
-    () => buildFileTree(knownDocs, knownFolders, sortMode, knownFiles),
-    [knownDocs, knownFolders, sortMode, knownFiles],
-  )
+  const tree = useMemo(() => {
+    if (!inProgressOnly) {
+      return buildFileTree(knownDocs, knownFolders, sortMode, knownFiles)
+    }
+    // Pass no standalone folders/files so the filtered tree shows only the
+    // paths that actually contain an in-progress note (and its ancestors).
+    return buildFileTree(filterInProgressWithAncestors(knownDocs), [], sortMode, [])
+  }, [inProgressOnly, knownDocs, knownFolders, sortMode, knownFiles])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [editingSlug, setEditingSlug] = useState<string | null>(null)
   const [editingFolderPath, setEditingFolderPath] = useState<string | null>(null)

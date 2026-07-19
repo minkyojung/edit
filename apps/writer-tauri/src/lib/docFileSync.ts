@@ -186,6 +186,9 @@ function buildMetaForKnownDoc(
     durationSec: known?.durationSec,
     thumbnailUrl: known?.thumbnailUrl,
     description: known?.description,
+    // Workflow status; undefined on status-less notes, so mergeSidecar
+    // writes no `status:` field for them.
+    status: known?.status,
   }
 }
 

@@ -122,6 +122,15 @@ export function isUserOwnedWiki(doc: Pick<KnownDoc, 'type'>): boolean {
   return cat === 'wiki-content' || cat === 'wiki-profile'
 }
 
+/** Whether a doc can carry a workflow `status`. Excludes `daily`
+ * journals (a day isn't "in progress") and `system:*` agent-meta pages;
+ * allows `writing`, `note`, and both wiki categories. The badge, the
+ * `setDocStatus` action, and the AI relay all gate on this. */
+export function docSupportsStatus(doc: Pick<KnownDoc, 'type'>): boolean {
+  const cat = getDocPolicy(doc).category
+  return cat !== 'daily' && cat !== 'system-meta'
+}
+
 // ── Vault path lookup ──────────────────────────────────────────────
 
 /** Reverse-lookup a doc's slug from a vault-relative `.md` path.

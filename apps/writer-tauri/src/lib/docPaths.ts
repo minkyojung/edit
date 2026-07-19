@@ -32,6 +32,16 @@ import type { KnownDoc } from '@/state/docsStore'
 import type { FrontmatterScalar } from '@/lib/frontmatter'
 
 /**
+ * A note's workflow status. Optional per note; a note carries no `status`
+ * until one is set. Stable English values persist to `.md` frontmatter;
+ * the Korean display labels live only in the UI layer. `DOC_STATUS_VALUES`
+ * is a runtime `const` because {@link frontmatterToMeta} validates against
+ * it — a stored value that isn't one of these is dropped on read.
+ */
+export const DOC_STATUS_VALUES = ['not-started', 'in-progress', 'done'] as const
+export type DocStatus = (typeof DOC_STATUS_VALUES)[number]
+
+/**
  * Doc identity sidecar — the `<stem>.meta.json` file that scanVault
  * reads at boot to recover each doc's persistent slug across sessions
  * and external file moves.
@@ -72,6 +82,11 @@ export interface DocMetaFile {
    * for a youtube capture). Lifted out of the body so the header can
    * render it styled, separate from the editable content. */
   description?: string
+  /** Workflow status (not-started / in-progress / done). Optional and
+   * user-facing: set via the header badge or the AI `set_note_status`
+   * tool, shown as a badge + a sidebar dot. Only editable note types
+   * carry it — see `docSupportsStatus`. */
+  status?: DocStatus
 }
 
 /** Lookup a doc by slug. Required by {@link pathForDoc} only for
@@ -148,6 +163,11 @@ export function frontmatterToMeta(
   }
   if (data.thumbnailUrl) meta.thumbnailUrl = data.thumbnailUrl
   if (data.description) meta.description = data.description
+  // Validate: a `status` written by the user or the AI must be one of the
+  // known values; anything else is dropped rather than trusted.
+  if (data.status && (DOC_STATUS_VALUES as readonly string[]).includes(data.status)) {
+    meta.status = data.status as DocStatus
+  }
   return meta
 }
 
@@ -178,6 +198,7 @@ export function metaToFrontmatterFields(
     durationSec: meta.durationSec,
     thumbnailUrl: meta.thumbnailUrl,
     description: meta.description,
+    status: meta.status,
   }
 }
 
@@ -204,6 +225,7 @@ export function portableFrontmatterFields(
     durationSec: meta.durationSec,
     thumbnailUrl: meta.thumbnailUrl,
     description: meta.description,
+    status: meta.status,
   }
 }
 

@@ -19,6 +19,7 @@ import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { useObservePageTitle } from '@/hooks/useObservePageTitle'
 import { EditableTitleInput } from './EditableTitleInput'
+import { StatusControl } from './StatusControl'
 
 interface Props {
   slug: string
@@ -42,10 +43,16 @@ export function PageHeader({ slug }: Props) {
     return <ReadOnlyHeader label={label} ariaLabel="System page" />
   }
 
-  // User-editable docs (user-owned wiki + writing) get an inline
-  // text input that doubles as the file's name on disk. See
-  // EditableTitleInput for commit semantics (Enter / Blur).
-  return <EditableTitleInput slug={slug} currentTitle={known.title} />
+  // User-editable docs (user-owned wiki + writing + notes) get an inline
+  // text input that doubles as the file's name on disk, plus a workflow
+  // status control above it. This branch is exactly the status-supporting
+  // set (daily / system are handled above), so no extra gate is needed.
+  return (
+    <div>
+      <StatusControl slug={slug} status={known.status} />
+      <EditableTitleInput slug={slug} currentTitle={known.title} />
+    </div>
+  )
 }
 
 /** Read-only label rendered with the same visual weight across kinds
