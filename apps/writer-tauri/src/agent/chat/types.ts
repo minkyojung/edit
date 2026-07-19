@@ -24,16 +24,6 @@ export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY_
 export const DEFAULT_MODEL = 'claude-sonnet-4-6'
 export const DOC_CHAR_CAP = 60_000
 
-/** A visualization the user armed for editing (via the ✎ toolbar, or by
- * selecting a viz block). When present on a run, the agent is given the
- * edit_visualization relay tool and told the target's id + current spec, so
- * "make it a bar chart" edits THAT block in place — same session, no separate
- * pipeline. `source` is the block's current spec JSON. */
-export interface VizEditTarget {
-  id: string
-  source: string
-}
-
 export interface RunChatArgs {
   /** The chat's "current page" text. The Read Later queue passes a generated
    * article list here; otherwise runChat reads the open doc's bodyMarkdown
@@ -118,10 +108,6 @@ export interface RunChatArgs {
    * `--- REFERENCED FILES ---` orientation block (like viewingFilePath) so the
    * agent Reads them on demand — kept out of the visible user message. */
   mentionPaths?: string[]
-  /** When set, this run is editing a specific visualization: the agent gets
-   * the edit_visualization relay tool and the target's id + current spec are
-   * injected into the system prompt. Omit for normal turns. */
-  vizEditTarget?: VizEditTarget
   signal?: AbortSignal
   /** Convenience callback fired for raw text deltas. New callers should
    * prefer `onPart` and derive content from the parts timeline. */

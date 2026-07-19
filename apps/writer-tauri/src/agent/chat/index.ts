@@ -105,7 +105,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     viewingFilePath,
     selectionText,
     mentionPaths,
-    vizEditTarget,
     permissionMode,
     autoAcceptEdits = false,
     builtinTools,
@@ -225,16 +224,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     selectionText,
     mentionFiles,
     attachedFiles,
-    vizEditTarget,
     today: todayLocalDate(),
   })
-  // A viz-edit run gets the edit_visualization relay tool on top of whatever
-  // the caller asked for. Skipped in plan mode (read-only — the gate would
-  // deny it anyway).
-  const effectiveRelayTools =
-    vizEditTarget && permissionMode !== 'plan'
-      ? [...relayTools, 'edit_visualization']
-      : relayTools
   const runId = crypto.randomUUID()
 
   // Internal controller is the single source of abort — it bridges the
@@ -745,7 +736,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         model,
         systemPrompt: system,
         prompt,
-        relayTools: effectiveRelayTools,
+        relayTools,
         // Read-only planning turns set this to 'plan'; edit turns omit it
         // (sidecar defaults to bypassPermissions). In plan mode the sidecar's
         // canUseTool gate — NOT tool omission — enforces read-only: the caller

@@ -22,7 +22,13 @@ export type UpdateState =
       percent: number | null
     }
   | { status: 'ready'; version: string; notes?: string }
-  | { status: 'error'; phase: 'check' | 'download' | 'install'; message: string }
+  | {
+      status: 'error'
+      phase: 'check' | 'download' | 'install'
+      message: string
+      /** Manual failures toast; scheduled (boot/hourly) failures stay silent. */
+      origin: 'manual' | 'scheduled'
+    }
   | { status: 'unsupported'; reason: string }
 
 /** The event every window listens on for state transitions. */

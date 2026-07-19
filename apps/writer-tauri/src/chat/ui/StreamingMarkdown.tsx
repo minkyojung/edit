@@ -8,8 +8,6 @@ import { usePacedText } from './usePacedText'
 import { WikiLink } from './WikiLink'
 import { CodeBlock } from '@/components/ai-elements/code-block'
 import { MermaidBlock } from '@/viz/MermaidBlock'
-import { ArtifactBlock } from '@/viz/ArtifactBlock'
-import { VizBlock } from '@/viz/VizBlock'
 
 // Why react-markdown directly (no streamdown, no sanitize):
 //
@@ -185,11 +183,10 @@ export function StreamingMarkdown({
   const shown = usePacedText(content, isStreaming)
 
   // Fenced code blocks. react-markdown nests <code> inside <pre>; overriding
-  // <pre> hands us the wrapper. A `mermaid` fence routes to MermaidBlock and an
-  // `artifact` fence to ArtifactBlock (both wait for the fence to settle before
-  // rendering); everything else goes to CodeBlock (Shiki, themed via --shiki-*
-  // tokens). Rebuilt only when the streaming flag flips so those blocks know
-  // when the source is complete.
+  // <pre> hands us the wrapper. A `mermaid` fence routes to MermaidBlock (it
+  // waits for the fence to settle before rendering); everything else goes to
+  // CodeBlock (Shiki, themed via --shiki-* tokens). Rebuilt only when the
+  // streaming flag flips so the block knows when the source is complete.
   const components = useMemo<MarkdownComponents>(
     () => ({
       ...STATIC_COMPONENTS,
@@ -198,12 +195,6 @@ export function StreamingMarkdown({
         const { code, lang, rawLang } = extractCodeText(node)
         if (rawLang === 'mermaid') {
           return <MermaidBlock code={code} isStreaming={isStreaming} />
-        }
-        if (rawLang === 'artifact') {
-          return <ArtifactBlock code={code} isStreaming={isStreaming} />
-        }
-        if (rawLang === 'chart') {
-          return <VizBlock code={code} isStreaming={isStreaming} />
         }
         return <CodeBlock code={code} language={lang} />
       },

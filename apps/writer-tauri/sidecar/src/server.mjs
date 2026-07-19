@@ -33,7 +33,6 @@ import {
   buildProposeSkillTool,
   buildProposeMultiEditTool,
   buildMoveNoteTool,
-  buildEditVisualizationTool,
   extractPendingId,
 } from './tools/relay.mjs'
 
@@ -1460,8 +1459,6 @@ export class Server {
         )
       } else if (name === 'move_note') {
         relayDefs.push(buildMoveNoteTool(getRunId, this.emit))
-      } else if (name === 'edit_visualization') {
-        relayDefs.push(buildEditVisualizationTool(getRunId, this.emit))
       }
     }
     if (relayDefs.length === 0) return null

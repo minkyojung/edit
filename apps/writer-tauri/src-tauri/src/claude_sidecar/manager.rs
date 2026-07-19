@@ -751,7 +751,6 @@ mod tests {
             ("chat/edit-pending", "claude:edit-pending"),
             ("chat/skill-pending", "claude:skill-pending"),
             ("chat/move-note", "claude:move-note"),
-            ("chat/viz-apply", "claude:viz-apply"),
             ("chat/permission", "claude:permission"),
             ("ingest/result", "ingest:result"),
         ] {
