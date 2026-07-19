@@ -29,7 +29,15 @@ import {
 import {
   IconFolder,
   IconFolderOpen,
+  IconFolderPlus,
   IconPlus,
+  IconFilePlus,
+  IconPencil,
+  IconCopy,
+  IconArrowRight,
+  IconLink,
+  IconExternalLink,
+  IconTrash,
   IconPhoto,
   IconFileTypePdf,
   IconMusic,
@@ -138,13 +146,19 @@ function RenameInput({
  * row (so it becomes the popper anchor) and right-click opens the menu
  * with side="right" align="start". Left-click still falls through to the
  * row (open note / toggle folder). */
-// Folder menu surface — brighter panel that matches the sidebar's selected
-// row color (color-mix foreground 18% + sidebar), frosted via backdrop-blur,
-// wider with a smaller radius. Applied to both the content and the "Move to…"
-// sub-content so the whole menu reads as one bright surface. (Overrides the
-// dropdown-menu defaults bg-popover / min-w-48 / rounded-md via tailwind-merge.)
-const ROW_MENU_SURFACE =
-  'min-w-64 rounded-lg border border-foreground/8 bg-[color-mix(in_oklch,var(--foreground)_18%,var(--sidebar))]/55 backdrop-blur-2xl'
+// Folder/file row menu — a Notion-style SOLID, compact popover. We keep the
+// dropdown-menu defaults (opaque bg-popover, shadow-lg, ring, rounded-md,
+// p-1.5) — i.e. NO more /55 translucency + backdrop-blur that let the editor
+// bleed through — and only (a) narrow the min width and (b) tighten every row:
+// less vertical padding + lighter weight than the app-wide DropdownMenuItem,
+// so more items pack in without wasted space. The density is scoped by
+// data-slot so the shared menu primitive stays untouched everywhere else.
+// Applied to both the content and the "Move to…" sub-content.
+const ROW_MENU_SURFACE = cn(
+  'min-w-56',
+  '[&_[data-slot=dropdown-menu-item]]:gap-2.5 [&_[data-slot=dropdown-menu-item]]:px-2 [&_[data-slot=dropdown-menu-item]]:py-1.5 [&_[data-slot=dropdown-menu-item]]:font-normal',
+  '[&_[data-slot=dropdown-menu-sub-trigger]]:gap-2.5 [&_[data-slot=dropdown-menu-sub-trigger]]:px-2 [&_[data-slot=dropdown-menu-sub-trigger]]:py-1.5 [&_[data-slot=dropdown-menu-sub-trigger]]:font-normal',
+)
 
 function RowContextMenu({
   children,
@@ -250,13 +264,18 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
         items={
           <>
             <DropdownMenuItem onSelect={() => ctx.onStartRename(node.slug)}>
+              <IconPencil className="text-muted-foreground" />
               Rename
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => ctx.onDuplicate(node.slug)}>
+              <IconCopy className="text-muted-foreground" />
               Duplicate
             </DropdownMenuItem>
             <DropdownMenuSub>
-              <DropdownMenuSubTrigger>Move to…</DropdownMenuSubTrigger>
+              <DropdownMenuSubTrigger>
+                <IconArrowRight className="text-muted-foreground" />
+                Move to…
+              </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className={ROW_MENU_SURFACE}>
                 <DropdownMenuItem onSelect={() => ctx.onMoveTo(node.slug, '')}>
                   (vault root)
@@ -271,19 +290,23 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
             </DropdownMenuSub>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => ctx.onCopyPath(node.path)}>
+              <IconLink className="text-muted-foreground" />
               Copy path
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => ctx.onOpenInDefaultApp(node.path)}>
+              <IconExternalLink className="text-muted-foreground" />
               Open in default app
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => ctx.onRevealInFinder(node.path)}>
+              <IconFolderOpen className="text-muted-foreground" />
               Reveal in Finder
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
+              variant="destructive"
               onSelect={() => ctx.onDelete(node.slug)}
-              className="text-destructive focus:text-destructive"
             >
+              <IconTrash />
               Delete
             </DropdownMenuItem>
           </>
@@ -359,19 +382,23 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
           items={
             <>
               <DropdownMenuItem onSelect={() => ctx.onNewNote(node.path)}>
+                <IconFilePlus className="text-muted-foreground" />
                 New note here
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => ctx.onStartCreateSubfolder(node.path)}>
+                <IconFolderPlus className="text-muted-foreground" />
                 New subfolder
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => ctx.onStartFolderRename(node.path)}>
+                <IconPencil className="text-muted-foreground" />
                 Rename
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
+                variant="destructive"
                 onSelect={() => ctx.onDeleteFolder(node.path)}
-                className="text-destructive focus:text-destructive"
               >
+                <IconTrash />
                 Delete
               </DropdownMenuItem>
             </>
@@ -514,12 +541,15 @@ function AttachmentNode({ node, ctx }: { node: TreeAttachment; ctx: TreeCtx }) {
         items={
           <>
             <DropdownMenuItem onSelect={() => ctx.onCopyPath(node.path)}>
+              <IconLink className="text-muted-foreground" />
               Copy path
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => ctx.onOpenInDefaultApp(node.path)}>
+              <IconExternalLink className="text-muted-foreground" />
               Open in default app
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => ctx.onRevealInFinder(node.path)}>
+              <IconFolderOpen className="text-muted-foreground" />
               Reveal in Finder
             </DropdownMenuItem>
           </>
