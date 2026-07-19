@@ -34,6 +34,7 @@ import { todayLocalDate } from '@/hooks/useDocMeta'
 import { pathForDoc } from '@/lib/docPaths'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
+import { readDocBody } from '@/state/docsStore/docBody'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useGitStore, aiEditSubject } from '@/state/gitStore'
 import { applyWriteWikiPage } from '@/agent/applyIngest'
@@ -135,13 +136,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     ?.content?.trim()
 
   // "Current page" text: the caller-supplied page markdown (the Read Later
-  // queue passes a generated article list), else the open doc's bodyMarkdown
-  // cache — the editor-agnostic single source of truth, kept current on every
-  // keystroke by the CM editor.
-  const docText =
-    pageContextMarkdown ??
-    (slug ? useDocsStore.getState().handles[slug]?.bodyMarkdown : undefined) ??
-    ''
+  // queue passes a generated article list), else the open doc's body via the
+  // canonical reader — the live editor when one is mounted, so the model sees
+  // what's on screen (not the mirror, which lags mid-edit).
+  const docText = pageContextMarkdown ?? (slug ? readDocBody(slug) : '')
   const docForPrompt = truncateDocForPrompt(docText)
   // Resolve this thread's agent (role) — the prompt body + memory
   // namespace come from here. Currently always the built-in default,

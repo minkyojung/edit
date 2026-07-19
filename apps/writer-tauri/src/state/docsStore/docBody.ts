@@ -59,6 +59,20 @@ export function setBodyMirror(handle: CollabHandle, next: string): void {
 }
 
 /**
+ * A doc's body RIGHT NOW: the live editor when one is mounted on this slug,
+ * else the mirror. The canonical read that complements `updateDocBody` /
+ * `setBodyMirror` — any consumer that wants "the current content of this doc"
+ * goes through here, never reads `handle.bodyMarkdown` directly (which lags the
+ * editor between mount and unmount, since the flush no longer writes the mirror
+ * back). Returns '' when the doc has no handle.
+ */
+export function readDocBody(slug: string): string {
+  const live = pullActiveCmBody(slug)
+  if (live !== null) return live
+  return useDocsStore.getState().handles[slug]?.bodyMarkdown ?? ''
+}
+
+/**
  * Atomically read → transform → write a doc's body, owning all four concerns
  * every writer previously had to remember: (1) per-slug serialization, so a
  * read-modify-write can't interleave and lose an update; (2) hydration, so it

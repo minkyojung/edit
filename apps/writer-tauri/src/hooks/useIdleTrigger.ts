@@ -14,6 +14,7 @@
 import { useEffect } from 'react'
 import { processDailyNote } from '@/agent/dailyIngest'
 import { useDocsStore, isWikiDoc } from '@/state/docsStore'
+import { readDocBody } from '@/state/docsStore/docBody'
 import { useIngestStore } from '@/state/ingestStore'
 import { effectiveLength } from '@/lib/markdownText'
 import { todayLocalDate } from '@/hooks/useDocMeta'
@@ -28,13 +29,11 @@ interface RunOptions {
   force?: boolean
 }
 
-/** Effective length of the doc's body, client-side, from the `bodyMarkdown`
- * cache. Returns 0 when no handle exists (treated as "nothing to ingest"). */
+/** Effective length of the doc's body, client-side, via the canonical reader
+ * (live editor when mounted, else the mirror). Returns 0 when no handle exists
+ * (treated as "nothing to ingest"). */
 function readDocLength(slug: string): number {
-  const docs = useDocsStore.getState()
-  const handle = docs.handles[slug]
-  if (!handle) return 0
-  return effectiveLength(handle.bodyMarkdown)
+  return effectiveLength(readDocBody(slug))
 }
 
 /** Run a daily ingest pass against a specific note slug via the general intake

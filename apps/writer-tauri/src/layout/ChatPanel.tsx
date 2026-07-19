@@ -15,6 +15,7 @@ import { parseFilePathFromPath } from '@/lib/viewUrl'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 import { useDocsStore } from '@/state/docsStore'
+import { readDocBody } from '@/state/docsStore/docBody'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
@@ -504,12 +505,11 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     let systemPrompt: string
     try {
       // Document + selection from the editor-agnostic sources CM publishes: the
-      // open doc's bodyMarkdown cache and the live selection store (the same one
-      // the chip reads). render.ts throws CommandRenderError when scope is
-      // "selection" and nothing is selected — surfaced as an inline error below.
-      const docText = slug
-        ? (useDocsStore.getState().handles[slug]?.bodyMarkdown ?? '')
-        : ''
+      // open doc's body via the canonical reader (live editor when mounted) and
+      // the live selection store (the same one the chip reads). render.ts throws
+      // CommandRenderError when scope is "selection" and nothing is selected —
+      // surfaced as an inline error below.
+      const docText = slug ? readDocBody(slug) : ''
       systemPrompt = renderBody(cmd, {
         document: docText,
         selection: selectionText ?? '',

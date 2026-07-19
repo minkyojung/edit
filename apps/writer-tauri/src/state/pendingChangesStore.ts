@@ -39,7 +39,7 @@
 import { create } from 'zustand'
 import { rejectActiveCmChange } from '@/state/activeCmEditor'
 import { persist } from 'zustand/middleware'
-import { useDocsStore } from '@/state/docsStore'
+import { readDocBody } from '@/state/docsStore/docBody'
 import { projectStorageKey } from '@/lib/windowRoot'
 
 /** A single line-level edit inside a PendingChange. One PendingChange
@@ -293,8 +293,7 @@ export const usePendingChangesStore = create<PendingChangesState>()(
           // the live page moves on. Empty when the handle hasn't
           // hydrated yet — the panel falls back to live markdown
           // (best-effort).
-          const snapshot =
-            useDocsStore.getState().handles[change.pageSlug]?.bodyMarkdown ?? ''
+          const snapshot = readDocBody(change.pageSlug)
           const next: PendingChange = {
             id: change.id,
             source: change.source,
