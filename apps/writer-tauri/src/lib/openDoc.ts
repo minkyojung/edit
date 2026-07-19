@@ -12,6 +12,7 @@
  */
 
 import { useDocsStore } from '@/state/docsStore'
+import { useRecentDocsStore } from '@/state/recentDocsStore'
 import { buildViewUrl } from '@/lib/viewUrl'
 import { appNavigate } from '@/lib/appNavigate'
 
@@ -23,7 +24,9 @@ export function buildCurrentViewUrl(slug: string): string {
   return buildViewUrl({ tab: sidebarTab, dayAnchor, monthAnchor, slug })
 }
 
-/** Open `slug` — navigate to it in the current view via the router bridge. */
+/** Open `slug` — navigate to it in the current view via the router bridge.
+ * Records the open for session recency (⌘K "Recent" ordering). */
 export function openDoc(slug: string, opts?: { replace?: boolean }): void {
+  useRecentDocsStore.getState().recordOpen(slug)
   appNavigate(buildCurrentViewUrl(slug), opts)
 }
