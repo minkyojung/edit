@@ -88,6 +88,82 @@ describe('splitFrontmatter', () => {
     expect(data).toEqual({ slug: 'abc' })
     expect(body).toBe('intro\n\n---\n\nmore')
   })
+
+  // ── Parser-swap invariants ──────────────────────────────────────────
+  // These pin behaviour that must survive swapping the hand-rolled scalar
+  // reader for the YAML library: they are green against both parsers.
+
+  it('tolerates a trailing space on the closing fence', () => {
+    const { data, body } = splitFrontmatter('---\nslug: abc\n---  \n\nbody')
+    expect(data).toEqual({ slug: 'abc' })
+    expect(body).toBe('body')
+  })
+
+  it('tolerates a trailing tab on the closing fence', () => {
+    const { data, body } = splitFrontmatter('---\nslug: abc\n---\t\n\nbody')
+    expect(data).toEqual({ slug: 'abc' })
+    expect(body).toBe('body')
+  })
+
+  it('reads a double-quoted wikilink value with the quotes stripped', () => {
+    const { data } = splitFrontmatter('---\nrelated: "[[ISA]]"\n---\n\nbody')
+    expect(data).toEqual({ related: '[[ISA]]' })
+  })
+
+  it('treats an empty block (no lines between fences) as no frontmatter', () => {
+    // `---\n---` has nothing to slice as a block; both parsers fall back to
+    // the whole input as body rather than inventing an empty data object.
+    const raw = '---\n---\n\nbody'
+    expect(splitFrontmatter(raw)).toEqual({ data: {}, body: raw })
+  })
+
+  it('reads an empty value as an empty string', () => {
+    const { data } = splitFrontmatter('---\nk:\nslug: ok\n---\n\nb')
+    expect(data).toEqual({ k: '', slug: 'ok' })
+  })
+
+  it('keeps the exact text of a numeric-looking value (no coercion)', () => {
+    // A value that looks like a number must round-trip as its original
+    // string — leading zeros and large magnitudes intact.
+    const { data } = splitFrontmatter(
+      '---\ncode: 007\narchivedAt: 1718000000000\n---\n\nb',
+    )
+    expect(data).toEqual({ code: '007', archivedAt: '1718000000000' })
+  })
+
+  // ── Intended divergences from the old hand parser ────────────────────
+  // The YAML library understands structure the line-based parser only
+  // faked. These behaviours are deliberate and covered so a future change
+  // can't silently regress them. No app read consumer inspects nested
+  // keys, so production behaviour is unaffected.
+
+  it('skips a nested list value (the flat contract cannot hold it)', () => {
+    // Old parser surfaced `tags` as an empty string and dropped the items;
+    // now the whole non-scalar key is skipped, and siblings still parse.
+    const { data } = splitFrontmatter(
+      '---\ntags:\n  - a\n  - b\nslug: keep\n---\n\nbody',
+    )
+    expect(data).toEqual({ slug: 'keep' })
+  })
+
+  it('does not leak a nested map key to the top level', () => {
+    // Old parser mis-read the indented `a: 1` as a top-level `a` key; the
+    // library scopes it correctly, so only the real top-level key remains.
+    const { data } = splitFrontmatter(
+      '---\nmeta:\n  a: 1\nslug: keep\n---\n\nbody',
+    )
+    expect(data).toEqual({ slug: 'keep' })
+  })
+
+  it('recovers sibling scalars when one line is malformed YAML', () => {
+    // `bad: x: y` is invalid YAML (an unquoted `: ` reads as a nested map);
+    // silent parsing keeps the valid keys rather than discarding the whole
+    // block the way a throwing parse would.
+    const { data } = splitFrontmatter(
+      '---\ncreatedAt: 2026-07-19\nslug: abc\nbad: x: y\n---\n\nbody',
+    )
+    expect(data).toEqual({ createdAt: '2026-07-19', slug: 'abc' })
+  })
 })
 
 describe('round-trip', () => {

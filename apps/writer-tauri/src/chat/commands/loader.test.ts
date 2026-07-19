@@ -33,4 +33,21 @@ describe('parseCommand — Claude Code slash-command convention', () => {
   it('still validates a filename-derived name as kebab-case', () => {
     expect(() => parseCommand('body', './builtin/BadName.md')).toThrow(CommandParseError)
   })
+
+  it('still rejects an invalid enum value loudly', () => {
+    const raw = '---\nname: c\nscope: sideways\n---\n\nbody'
+    expect(() => parseCommand(raw, 'c.md')).toThrow(CommandParseError)
+  })
+
+  it('reads a quoted value that contains a colon', () => {
+    const raw = "---\nname: c\nargument-hint: 'format: <lang>'\n---\n\nbody"
+    expect(parseCommand(raw, 'c.md').argumentHint).toBe('format: <lang>')
+  })
+
+  it('tolerates an unquoted value with a mid-word colon (YAML-valid)', () => {
+    // The shared parser accepts `path:thing` (no space after the colon) where
+    // the old hand parser demanded quoting; a valid scalar is read as-is.
+    const raw = '---\nname: c\nargument-hint: path/to:thing\n---\n\nbody'
+    expect(parseCommand(raw, 'c.md').argumentHint).toBe('path/to:thing')
+  })
 })

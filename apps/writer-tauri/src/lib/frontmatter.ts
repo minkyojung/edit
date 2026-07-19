@@ -1,20 +1,30 @@
 // Generic frontmatter plumbing — the read/write layer for the small
 // YAML `---` block that carries a document's metadata at the top of its
-// `.md` file.
+// `.md` file. The single shared foundation for every frontmatter site
+// (profile/sources.ts, chat/commands/loader.ts, the doc flush).
 //
-// Deliberately dependency-free and limited to a flat `key: value` block
-// of scalars, matching the convention already used by
-// profile/sources.ts and chat/commands/loader.ts. We don't pull in a
-// YAML library: the surface we emit and read is narrow, and we'd rather
-// own the exact escaping than inherit a parser's quirks. (Those two
-// existing call sites stay as-is for now — this module is the shared
-// foundation new frontmatter work builds on.)
+// Reading uses the `yaml` library (eemeli, YAML 1.2 core schema): it
+// handles quoting, escaping, CRLF, and comments correctly, and — unlike
+// js-yaml's default schema — leaves unquoted ISO dates as strings rather
+// than coercing them to `Date`, which is load-bearing for the date-valued
+// metadata fields (createdAt/savedAt/readAt). We read each scalar's
+// *source text* (see splitFrontmatter) so a numeric-looking value keeps
+// its exact form (no `007` → `7`, no precision loss).
+//
+// Writing stays hand-rolled on purpose (composeFrontmatter /
+// mergeFrontmatter + escapeYamlValue): mergeFrontmatter preserves foreign
+// keys, comments, and nested structures byte-for-byte by copying their
+// original lines, which the flush's content-equality guard depends on. A
+// library re-serialise would normalise (reorder keys, drop comments) and
+// regress that. The library is parse-only here.
 //
 // Boundary: frontmatter is only recognised when the file *starts* with a
 // `---` line AND has a matching closing `---` line. A body that happens
 // to begin with a `---` thematic break but has no closing delimiter is
 // treated as having no frontmatter. We always write a real block, so in
 // practice this ambiguity only touches files we didn't author.
+
+import { isMap, isScalar, parseDocument } from 'yaml'
 
 /** Values we know how to emit. Everything reads back as a string —
  *  YAML scalars are untyped text, so the caller coerces (e.g.
@@ -63,21 +73,52 @@ export function composeFrontmatter(
  * Split a `.md` file string into its frontmatter fields and body. Never
  * throws: a missing or malformed block yields `{ data: {}, body: raw }`,
  * so a file that lost (or never had) frontmatter still loads its content.
+ *
+ * The block is *located* with {@link FRONTMATTER_RE} (start-of-file fence,
+ * matching close, CRLF/trailing-space tolerant) and then *parsed* with the
+ * YAML library in silent mode — malformed YAML degrades to whatever the
+ * parser can still recover (a bad line never poisons the sibling keys) and
+ * never propagates an exception.
+ *
+ * Only top-level scalar keys are exposed, as the exact source text of each
+ * value (so `007` stays `'007'` and a large id keeps full precision). Keys
+ * whose value is a nested map or list can't fit the flat `Record<string,
+ * string>` contract and are skipped here; on write, {@link mergeFrontmatter}
+ * preserves them verbatim.
  */
 export function splitFrontmatter(raw: string): SplitDoc {
   const m = FRONTMATTER_RE.exec(raw)
   if (!m) return { data: {}, body: raw }
+  return { data: parseFrontmatterBlock(m[1]), body: (m[2] ?? '').replace(/^(?:\r?\n)+/, '') }
+}
 
+/**
+ * Parse the inner text of a frontmatter block (the part *between* the `---`
+ * fences, already sliced out) into its top-level scalar fields. Shared by
+ * {@link splitFrontmatter} and the slash-command loader so both read YAML
+ * through one implementation.
+ *
+ * Silent mode: malformed YAML degrades to whatever the parser can still
+ * recover and never throws. Only top-level scalar keys are returned, as the
+ * exact source text of each value (so `007` stays `'007'`); nested maps and
+ * lists can't fit the flat `Record<string, string>` contract and are skipped.
+ */
+export function parseFrontmatterBlock(inner: string): Record<string, string> {
   const data: Record<string, string> = {}
-  for (const line of m[1].split(/\r?\n/)) {
-    if (!line.trim() || line.trim().startsWith('#')) continue
-    const colon = line.indexOf(':')
-    if (colon === -1) continue // skip lines we can't read rather than fail
-    const key = line.slice(0, colon).trim()
-    if (key) data[key] = unescapeYamlValue(line.slice(colon + 1).trim())
+  const doc = parseDocument(inner, { logLevel: 'silent' })
+  if (isMap(doc.contents)) {
+    for (const item of doc.contents.items) {
+      if (!isScalar(item.key)) continue
+      const key = String(item.key.value).trim()
+      if (!key) continue
+      const value = item.value
+      // Scalars only. `.source` is the decoded scalar text: unquoted and
+      // unescaped for strings, and the original token for numbers/booleans
+      // — matching the flat string contract without a lossy type round-trip.
+      if (isScalar(value)) data[key] = value.source ?? String(value.value)
+    }
   }
-
-  return { data, body: (m[2] ?? '').replace(/^(?:\r?\n)+/, '') }
+  return data
 }
 
 /**
@@ -150,23 +191,14 @@ export function mergeFrontmatter(
   }`
 }
 
-// ── YAML scalar escaping ──────────────────────────────────────────────
-// Mirrors profile/sources.ts: we quote only when a value would otherwise
-// be misread, and double single-quotes inside per YAML. Not full YAML —
-// the read side mirrors this same narrow surface.
+// ── YAML scalar escaping (emit side) ──────────────────────────────────
+// The write path stays hand-rolled and byte-stable: quote only when a
+// value would otherwise be misread, doubling inner single-quotes per YAML.
+// Reading is handled by the `yaml` library (see splitFrontmatter), so
+// there is no matching unescape helper here.
 
 function escapeYamlValue(value: string): string {
   const needsQuote = /[:#]|^\s|\s$|^["'[\]{}|>!%@&*]/.test(value)
   if (!needsQuote) return value
   return `'${value.replace(/'/g, "''")}'`
-}
-
-function unescapeYamlValue(value: string): string {
-  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
-    return value.slice(1, -1).replace(/''/g, "'")
-  }
-  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-    return value.slice(1, -1)
-  }
-  return value
 }

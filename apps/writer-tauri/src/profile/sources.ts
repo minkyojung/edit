@@ -19,6 +19,7 @@
 // this URL?" without scanning the folder tree, and gives us a place
 // to attach future metadata (last_analyzed, manual title, etc).
 
+import { composeFrontmatter, splitFrontmatter } from '@/lib/frontmatter'
 import {
   listVaultDir,
   readVaultFile,
@@ -227,76 +228,41 @@ function looksLikeFilename(seg: string): boolean {
 
 type ParsedSource = Document
 
-/** Compose the on-disk markdown for a single source file. */
+/** Compose the on-disk markdown for a single source file. Field order is
+ * fixed by the object literal; `composeFrontmatter` drops the absent
+ * optional fields. `sourceUrl` is always present, so a block is always
+ * emitted. */
 function serialiseSourceFile(
   doc: Document,
   adapter: string,
   fetchedAt: string,
 ): string {
-  const fields: Array<[string, string | undefined]> = [
-    ['sourceUrl', doc.sourceUrl],
-    ['title', doc.title],
-    ['author', doc.author],
-    ['publishedAt', doc.publishedAt],
-    ['fetchedAt', fetchedAt],
-    ['adapter', adapter],
-  ]
-  const frontmatter = fields
-    .filter(([, v]) => v !== undefined && v !== '')
-    .map(([k, v]) => `${k}: ${escapeYamlValue(v as string)}`)
-    .join('\n')
-  return `---\n${frontmatter}\n---\n\n${doc.contentMarkdown}\n`
+  return composeFrontmatter(
+    {
+      sourceUrl: doc.sourceUrl,
+      title: doc.title,
+      author: doc.author,
+      publishedAt: doc.publishedAt,
+      fetchedAt,
+      adapter,
+    },
+    doc.contentMarkdown,
+  )
 }
 
-/** Parse a source file back into a Document. Returns null if the
- * file is missing the frontmatter delimiters — we don't try to
- * recover, because anything that lost its frontmatter probably wasn't
- * written by us. */
+/** Parse a source file back into a Document. Returns null when it carries
+ * no `sourceUrl` — either it has no frontmatter, or it lost the field, and
+ * anything without it probably wasn't written by us. */
 function parseSourceFile(raw: string): ParsedSource | null {
-  if (!raw.startsWith('---\n')) return null
-  const closeIdx = raw.indexOf('\n---\n', 4)
-  if (closeIdx === -1) return null
-  const fmBlock = raw.slice(4, closeIdx)
-  const body = raw.slice(closeIdx + 5).replace(/^\n+/, '')
-
-  const fields: Record<string, string> = {}
-  for (const line of fmBlock.split('\n')) {
-    const colonIdx = line.indexOf(':')
-    if (colonIdx === -1) continue
-    const key = line.slice(0, colonIdx).trim()
-    const value = unescapeYamlValue(line.slice(colonIdx + 1).trim())
-    if (key) fields[key] = value
-  }
-
-  if (!fields.sourceUrl) return null
+  const { data, body } = splitFrontmatter(raw)
+  if (!data.sourceUrl) return null
   return {
-    sourceUrl: fields.sourceUrl,
-    title: fields.title ?? '(untitled)',
+    sourceUrl: data.sourceUrl,
+    title: data.title ?? '(untitled)',
     contentMarkdown: body.trimEnd(),
-    publishedAt: fields.publishedAt || undefined,
-    author: fields.author || undefined,
+    publishedAt: data.publishedAt || undefined,
+    author: data.author || undefined,
   }
-}
-
-/** YAML escape — only the cases we actually emit. Wraps in single
- * quotes when the value contains a colon, leading whitespace, or a
- * `#`; otherwise emit bare. Single-quote inside is doubled per YAML
- * 1.2. We don't claim full YAML coverage; the parser side mirrors
- * this narrow surface. */
-function escapeYamlValue(value: string): string {
-  const needsQuote = /[:#]|^\s|\s$|^["'[\]{}|>!%@&*]/.test(value)
-  if (!needsQuote) return value
-  return `'${value.replace(/'/g, "''")}'`
-}
-
-function unescapeYamlValue(value: string): string {
-  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
-    return value.slice(1, -1).replace(/''/g, "'")
-  }
-  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-    return value.slice(1, -1)
-  }
-  return value
 }
 
 // Currently-unused export kept for future imports that want to inspect

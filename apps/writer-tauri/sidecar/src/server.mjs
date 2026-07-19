@@ -15,6 +15,7 @@ import {
   NOT_INITIALIZED,
   NO_TOKEN,
 } from './jsonrpc.mjs'
+import { readSkillMeta } from './frontmatter.mjs'
 
 
 // ── Security lockdown ────────────────────────────────────────────
@@ -1347,16 +1348,9 @@ export class Server {
             options.skills = skillNames
             for (const dir of skillNames) {
               try {
-                const raw = await readFile(join(skillsRoot, dir, 'SKILL.md'), 'utf-8')
-                const fm = raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? ''
-                const pick = (k) =>
-                  fm
-                    .split('\n')
-                    .find((l) => l.startsWith(`${k}:`))
-                    ?.slice(k.length + 1)
-                    .trim()
-                    .replace(/^["']|["']$/g, '') ?? ''
-                existingSkills.push({ name: pick('name') || dir, description: pick('description') })
+                existingSkills.push(
+                  await readSkillMeta(join(skillsRoot, dir, 'SKILL.md'), dir),
+                )
               } catch {
                 // Unreadable SKILL.md — skip.
               }
@@ -2333,16 +2327,9 @@ export class Server {
             options.skills = skillNames
             for (const dir of skillNames) {
               try {
-                const raw = await readFile(join(skillsRoot, dir, 'SKILL.md'), 'utf-8')
-                const fm = raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? ''
-                const pick = (k) =>
-                  fm
-                    .split('\n')
-                    .find((l) => l.startsWith(`${k}:`))
-                    ?.slice(k.length + 1)
-                    .trim()
-                    .replace(/^["']|["']$/g, '') ?? ''
-                existingSkills.push({ name: pick('name') || dir, description: pick('description') })
+                existingSkills.push(
+                  await readSkillMeta(join(skillsRoot, dir, 'SKILL.md'), dir),
+                )
               } catch {
                 // Unreadable SKILL.md — skip; it just won't appear in the
                 // dedup list shown to the model.
