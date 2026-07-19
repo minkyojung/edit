@@ -717,19 +717,18 @@ export class Server {
   // skips the gate, so the common all-bypass thread pays nothing.
   async #buildThreadOptions(rec) {
     const params = rec.optionsSeed
+    // vaultPath / builtinTools / relayTools / allowDelegation are read inside
+    // #applySkillsAndRelay (from rec.optionsSeed); only the base-options fields
+    // are destructured here.
     const {
       model,
       systemPrompt,
-      relayTools,
-      vaultPath,
       effort,
       fastMode,
       sessionId,
       resume,
       maxTurns,
-      builtinTools,
       sandboxEnabled = true,
-      allowDelegation = true,
     } = params
 
     const options = {
@@ -785,7 +784,19 @@ export class Server {
     // Gate is always attached (a later turn may switch to plan) and reads rec
     // LIVE. Under bypassPermissions the SDK short-circuits it.
     options.planModeInstructions = PLAN_MODE_INSTRUCTIONS
-    options.canUseTool = async (toolName, input) => {
+    options.canUseTool = this.#buildCanUseTool(rec)
+
+    await this.#applySkillsAndRelay(rec, options)
+    return options
+  }
+
+  // The canUseTool gate for a thread. Always attached (a later turn may switch
+  // to plan) and reads `rec` LIVE; under bypassPermissions the SDK
+  // short-circuits it. AskUserQuestion / ExitPlanMode park on #requestDecision
+  // (which runs in the SDK's tool-callback context — OUTSIDE the input
+  // generator — so awaiting it here can never abort the query).
+  #buildCanUseTool(rec) {
+    return async (toolName, input) => {
       if (toolName === 'AskUserQuestion') {
         rec.awaitingDecision++
         try {
@@ -858,7 +869,13 @@ export class Server {
       }
       return { behavior: 'allow', updatedInput: input }
     }
+  }
 
+  // Vault skill/plugin discovery + relay MCP server + hooks. Mutates `options`
+  // (cwd/tools/plugins/skills/mcpServers/hooks). Background inventory is wired
+  // ONLY through the Stop hook (never query.backgroundTasks()).
+  async #applySkillsAndRelay(rec, options) {
+    const { vaultPath, builtinTools, allowDelegation = true, relayTools } = rec.optionsSeed
     // Vault: cwd + built-in toolset + agent plugin (commands/agents/skills).
     let existingSkills = []
     if (vaultPath) {
@@ -936,7 +953,6 @@ export class Server {
         },
       ],
     }
-    return options
   }
 
   // The thread's long-lived consumer loop. Unlike the legacy per-turn loop it
