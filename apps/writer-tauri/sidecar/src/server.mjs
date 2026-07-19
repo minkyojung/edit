@@ -666,6 +666,13 @@ export class Server {
       query: null,
       loopDone: null,
       dead: false,
+      // Teardown policy: 'persist' keeps the thread alive across turns (chat, so
+      // background subagents survive turn boundaries); 'closeAfterResult' ends
+      // the thread after its first result (title / any one-shot — legacy's
+      // per-turn "close at result" semantics). Set once at creation; read by the
+      // #runThreadLoop result branch. Defaults to 'persist' — dormant until a
+      // caller passes 'closeAfterResult'.
+      teardown: params.teardown ?? 'persist',
       // input queue (producer/consumer)
       turnQueue: [],
       nextTurnResolve: null,
@@ -1033,8 +1040,21 @@ export class Server {
           }
         }
         if (event?.type === 'result') {
-          if (rec.turnActive) await this.#settleTurn(rec, event)
-          else this.#settleBackgroundTurn(rec, event)
+          if (rec.turnActive) {
+            // One-shot policy ('closeAfterResult'): end the thread after this
+            // result. Set closeRequested BEFORE #settleTurn — settle fetches
+            // context usage (input still open) then releases #threadInput's
+            // settle park; the generator loops to its top-of-loop closeRequested
+            // check (which must already be true) and returns → input ends → the
+            // query ends cleanly → the loop's finally finalizes teardown. Setting
+            // it AFTER settle would race the generator re-parking onto the next
+            // turn. This makes legacy's "getContextUsage → releaseInput → break"
+            // an emergent behaviour of the one engine, not a second code path.
+            if (rec.teardown === 'closeAfterResult') rec.closeRequested = true
+            await this.#settleTurn(rec, event)
+          } else {
+            this.#settleBackgroundTurn(rec, event)
+          }
           continue
         }
       }
