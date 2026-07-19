@@ -525,7 +525,10 @@ function RootDropZone() {
     <div
       ref={setNodeRef}
       className={
-        'ml-3 mr-2 mt-1 min-h-16 flex-1 rounded-lg ' +
+        // A modest fixed drop strip (drag-to-root target) rather than a
+        // flex-1 fill, so the Tags pane sits right below the tree instead of
+        // being pushed to the bottom of the sidebar.
+        'ml-3 mr-2 mt-1 min-h-8 rounded-lg ' +
         (isOver ? 'bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring/50' : '')
       }
     />
