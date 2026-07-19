@@ -142,6 +142,13 @@ html[data-window-mode='compact'] .command-palette {
 /* ── Editor / external library styles (isolated in @layer base so Tailwind
    utilities can always override) ─────────────────────────────────────── */
 @layer base {
+  /* Tailwind v4 preflight drops the pointer cursor on buttons; restore it for
+     enabled buttons / role="button" so hover affordance matches macOS. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
   /* Reject / Keep chip — shared by SkillProposalTray + ReviewTray cards. */
   .pending-edit__action {
     appearance: none;
