@@ -434,6 +434,10 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             // (path → status). Applied IMMEDIATELY by the host
             // (docsStore.setDocStatus) — reversible, no review card.
             "chat/set-status" => "claude:set-status",
+            // set_note_tags MCP tool: the sidecar relays a tags change
+            // (path → tags[]). Applied IMMEDIATELY by the host
+            // (docsStore.setDocTags) — reversible, no review card.
+            "chat/set-tags" => "claude:set-tags",
             // edit_visualization MCP tool: the sidecar relays the new chart
             // spec (chartId + VizNode tree) via this notification; the chat
             // runner re-validates it and applies it to the target block by id

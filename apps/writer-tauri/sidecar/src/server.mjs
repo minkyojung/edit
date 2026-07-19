@@ -495,6 +495,31 @@ function buildSetNoteStatusTool(getRunId, emit) {
   )
 }
 
+function buildSetNoteTagsTool(getRunId, emit) {
+  return tool(
+    'set_note_tags',
+    "Set a note's tags when the user asks (e.g. \"이 노트에 태그 달아줘\", \"ai, 금융 태그 붙여줘\"). `path` is the note's vault-relative or absolute path; `tags` is the COMPLETE list of tags the note should have (this REPLACES the existing tags, so include the ones to keep). Pass an empty list to clear all tags. Only editable notes carry tags — a daily journal or system page is ignored by the host. Applied IMMEDIATELY (not queued) and reversible. Returns immediately — do not wait. This is the ONLY way to change a note's tags; never write a `tags:` block into a `---` frontmatter block yourself.",
+    {
+      path: z.string(),
+      tags: z.array(z.string()),
+    },
+    async (input) => {
+      emit(
+        notification('chat/set-tags', {
+          runId: getRunId(),
+          path: input.path,
+          tags: input.tags,
+        }),
+      )
+      return {
+        content: [
+          { type: 'text', text: `Tags set: ${input.path} → [${input.tags.join(', ')}]` },
+        ],
+      }
+    },
+  )
+}
+
 // Recursive VizNode schema — mirrors src/viz/vizSpec.ts. Layout nodes
 // (stack/columns) nest children; leaves are charts + stat/text/table. The model
 // fills this when it calls edit_visualization, so its output is shaped to our
@@ -1951,6 +1976,8 @@ export class Server {
         relayDefs.push(buildMoveNoteTool(getRunId, this.emit))
       } else if (name === 'set_note_status') {
         relayDefs.push(buildSetNoteStatusTool(getRunId, this.emit))
+      } else if (name === 'set_note_tags') {
+        relayDefs.push(buildSetNoteTagsTool(getRunId, this.emit))
       } else if (name === 'edit_visualization') {
         relayDefs.push(buildEditVisualizationTool(getRunId, this.emit))
       }

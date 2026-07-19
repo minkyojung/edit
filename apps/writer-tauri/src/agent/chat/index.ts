@@ -101,6 +101,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       // Fire-and-forget: set a note's workflow status on request. Auto-applied
       // (reversible), not queued — see the claude:set-status handler below.
       'set_note_status',
+      // Fire-and-forget: set a note's tags on request. Auto-applied
+      // (reversible), not queued — see the claude:set-tags handler below.
+      'set_note_tags',
     ],
     appendDocument = true,
     viewingFilePath,
@@ -680,6 +683,27 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           }
           useDocsStore.getState().setDocStatus(slug, e.payload.status)
           console.log('[chat] set-status', { path: rel, status: e.payload.status })
+        },
+      ),
+      // set_note_tags MCP tool → replace a note's tags. Resolve via
+      // pathToKnownSlug (writing/wiki docs too), then hand to setDocTags,
+      // which trims/de-dupes and guards non-metadata doc types.
+      listen<{ runId: string; path: string; tags: string[] }>(
+        'claude:set-tags',
+        (e) => {
+          if (e.payload.runId !== runId) return
+          const rel = toVaultRelative(e.payload.path, getActiveVaultPath())
+          if (!rel) {
+            console.warn('[chat] set-tags: unresolved path', e.payload.path)
+            return
+          }
+          const slug = pathToKnownSlug(rel, useDocsStore.getState().knownDocs)
+          if (!slug) {
+            console.warn('[chat] set-tags: no note at', rel)
+            return
+          }
+          useDocsStore.getState().setDocTags(slug, e.payload.tags)
+          console.log('[chat] set-tags', { path: rel, tags: e.payload.tags })
         },
       ),
       listen<DoneEvent>('claude:done', (e) => {
