@@ -290,7 +290,7 @@ export function AppSidebar() {
               </AvatarFallback>
             </Avatar>
             <span className="flex-1 truncate text-left">
-              {googleAccount.name ?? 'Profile'}
+              {googleAccount.name ? `${googleAccount.name}'s profile` : 'Profile'}
             </span>
           </button>
           <button
