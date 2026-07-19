@@ -15,139 +15,19 @@ import {
   NOT_INITIALIZED,
   NO_TOKEN,
 } from './jsonrpc.mjs'
+import {
+  rateLimitPayload,
+  mapSdkError,
+  classifyError,
+  NON_RETRYABLE_CODES,
+} from './errors.mjs'
+import {
+  secretDenyRules,
+  egressDenyRules,
+  envDumpDenyRules,
+  sandboxLockdown,
+} from './policy/security.mjs'
 
-
-// ── Security lockdown ────────────────────────────────────────────
-//
-// "Close the exits": the agent may edit files locally (that's the
-// product), but two things must never be possible even if untrusted
-// captured content (a web page / transcript) carries a prompt
-// injection — (1) sending data OUT to the network, and (2) reading
-// the user's SECRETS. This is Anthropic's "containment of last
-// resort": if credentials can't be reached and egress is blocked, a
-// successful injection is harmless.
-//
-// Two overlapping layers, because they govern DIFFERENT surfaces (per the
-// SDK, tool access is controlled by permission rules, while the sandbox
-// confines subprocesses — sdk.d.ts: "Filesystem and network restrictions
-// are configured via permission rules, not via these sandbox settings"):
-//   • deny RULES (settings.permissions.deny) — evaluated BEFORE the
-//     canUseTool gate (and win even under bypass). This is the ONLY thing
-//     that stops the in-process file tools (`Read`, `Glob`) from reading
-//     `~/.ssh/id_rsa`, and it hard-blocks the common network shells. It
-//     also holds when the sandbox can't initialise. Zero dependency.
-//   • OS SANDBOX (options.sandbox) — kernel-level (macOS Seatbelt),
-//     confines the tool SUBPROCESSES (`Bash`, and `Grep`/ripgrep): blocks
-//     their network egress and (via `filesystem.denyRead`) their reads of
-//     the same secret paths — closing the shell leaks the deny rules
-//     can't. `failIfUnavailable: false` so a sandbox that can't initialise
-//     degrades to the permission-rule layer instead of breaking chat.
-
-/** Home-relative secret locations the agent must never read or write.
- * `~`-relative so the same list feeds both the sandbox (absolute paths)
- * and the permission rules (SDK `~/…` grammar). */
-const SECRET_HOME_RELATIVE = [
-  '.ssh',
-  '.aws',
-  '.gnupg',
-  '.config/gh',
-  '.config/gcloud',
-  '.kube',
-  '.npmrc',
-  // The app's own encrypted OAuth/token store.
-  'Library/Application Support/com.minkyojung.octave',
-]
-
-/** Absolute secret locations for the OS sandbox's `filesystem.denyRead`.
- * That layer confines only the tool SUBPROCESSES (Bash, and Grep — which
- * shells out to ripgrep); it does NOT govern the in-process file tools. */
-function secretPaths() {
-  const home = homedir()
-  return SECRET_HOME_RELATIVE.map((rel) => `${home}/${rel}`)
-}
-
-/** Permission deny rules for the secret locations. Per the Claude Code
- * docs, the built-in file tools use the PERMISSION system, not the sandbox
- * ("Read, Edit, and Write use the permission system directly rather than
- * running through the sandbox") — so the sandbox `denyRead` above does NOT
- * stop them; without these rules the `Read` tool reads `~/.ssh/id_rsa`
- * straight into context.
- *
- * `Read` + `Edit` are the two canonical rule families and cover the whole
- * surface: a `Read` deny is applied best-effort to every read tool (`Read`,
- * and `Grep`/`Glob`), and an `Edit` deny to every write tool (`Edit`,
- * `Write`, `MultiEdit`, `NotebookEdit`) — and both also catch the file
- * commands Claude Code recognises in Bash (`cat`/`head`/`sed`). Arbitrary
- * subprocess reads (a python script) are caught by the sandbox `denyRead`
- * instead. Rules follow the gitignore-style grammar: `~/`-relative, plus a
- * `/**` variant so both the directory and everything under it match. */
-function secretDenyRules() {
-  const rules = []
-  for (const rel of SECRET_HOME_RELATIVE) {
-    for (const tool of ['Read', 'Edit']) {
-      rules.push(`${tool}(~/${rel})`)
-      rules.push(`${tool}(~/${rel}/**)`)
-    }
-  }
-  return rules
-}
-
-/** Deny rules that hard-block network-egress shells before any gate. */
-function egressDenyRules() {
-  return [
-    'Bash(curl:*)',
-    'Bash(wget:*)',
-    'Bash(nc:*)',
-    'Bash(ncat:*)',
-    'Bash(telnet:*)',
-    'Bash(scp:*)',
-    'Bash(sftp:*)',
-  ]
-}
-
-/** Deny the commands that dump the process environment, where the SDK-required
- * CLAUDE_CODE_OAUTH_TOKEN lives (the CLI must receive it via env; Bash children
- * inherit it). This is defense-in-depth, NOT a complete boundary: it stops the
- * literal `printenv CLAUDE_CODE_OAUTH_TOKEN` / `env` probe an injected note is
- * likely to use, but shell expansion (`echo $CLAUDE_CODE_OAUTH_TOKEN`) can't be
- * caught by a command-name rule. The real closure is the sandbox blocking
- * network egress (so a read token can't leave the machine) — see sandboxLockdown
- * / failIfUnavailable. `set`/`export` are intentionally omitted: prefix-denying
- * them would break legitimate `set -e` / `export FOO=…` usage for little gain. */
-function envDumpDenyRules() {
-  return ['Bash(printenv:*)', 'Bash(env:*)']
-}
-
-/** OS-sandbox config: block outbound network from tool subprocesses and
- * deny reads of the secret locations. */
-function sandboxLockdown() {
-  return {
-    enabled: true,
-    // failIfUnavailable:false → a host where the sandbox can't initialise
-    // degrades to a warning instead of breaking chat. The Claude Code docs
-    // recommend `true` for a hard security gate; deferred until the
-    // packaged build confirms Seatbelt initialises there. Safe to defer:
-    // the permission deny rules (secret + egress) are sandbox-INDEPENDENT
-    // and still apply, and the only untrusted-content shape (intake) has no
-    // Bash at all — the residual (arbitrary-subprocess reads/egress with the
-    // sandbox down) is reachable only from the trusted, user-driven chat.
-    failIfUnavailable: false,
-    // Ignore the model's `dangerouslyDisableSandbox` escape hatch — a
-    // sandboxed command that fails must NOT silently retry unsandboxed.
-    // ("the dangerouslyDisableSandbox parameter is completely ignored and
-    // all commands must run sandboxed" — Claude Code sandbox docs.)
-    allowUnsandboxedCommands: false,
-    // No allowed domains → tool subprocesses get no network egress (the
-    // proxy pre-allows nothing, so every new host is blocked in headless).
-    // The SDK↔model API channel and server-side WebSearch/WebFetch run
-    // OUTSIDE this sandbox, so live web research still works.
-    network: { allowedDomains: [] },
-    // OS-level backstop for the SUBPROCESS reads the permission rules can't
-    // reach (a python/node script opening a file itself). The tool-level
-    // block lives in secretDenyRules().
-    filesystem: { denyRead: secretPaths() },
-  }
-}
 
 /** True if the SDK has a resumable session persisted under this id. Asks the SDK
  * directly via `getSessionInfo(sessionId)` — the canonical API — instead of
@@ -2989,84 +2869,3 @@ const MAX_LIVE_THREADS = 6
 // armed while a turn is generating; an idle-but-alive thread never times out.
 const TURN_IDLE_MS = 180_000
 
-// Codes the user can't fix by retrying the same request. Used to set the
-// `retryable` flag (host hides the Retry button for these).
-const NON_RETRYABLE_CODES = new Set(['AUTH', 'INVALID', 'BILLING', 'BUDGET'])
-
-// Shape the SDK's `rate_limit_info` into the compact reset payload the host
-// attaches to a RATE_LIMIT error (resetsAt drives the countdown / date;
-// rateLimitType + overageDisabledReason pick the distinct copy). Returns
-// undefined when there's nothing to carry so the field is simply absent.
-function rateLimitPayload(info) {
-  if (!info) return undefined
-  // When the block is on the overage (paid) budget, the reset lives in
-  // `overageResetsAt`, not `resetsAt` (sdk.d.ts SDKRateLimitInfo) — fall back to
-  // it so an overage rejection still shows a countdown instead of a blank one.
-  const resetsAt =
-    typeof info.resetsAt === 'number'
-      ? info.resetsAt
-      : typeof info.overageResetsAt === 'number'
-        ? info.overageResetsAt
-        : undefined
-  return {
-    resetsAt,
-    rateLimitType: info.rateLimitType,
-    overageDisabledReason: info.overageDisabledReason,
-  }
-}
-
-// Map a structured SDK error — the result `subtype` and/or the mid-turn
-// SDKAssistantMessageError — to a host error code, an English fallback
-// message, and retryability. The host owns the final user-facing copy
-// (humanizeError) for every code except EXEC, which forwards the SDK's own
-// `errors[0]` detail. `assistantError` is more specific than a generic
-// `error_during_execution` subtype, so it wins when both are present.
-function mapSdkError({ subtype, assistantError, errors }) {
-  switch (assistantError) {
-    case 'authentication_failed':
-      return { code: 'AUTH', message: 'authentication failed', retryable: false }
-    case 'rate_limit':
-      return { code: 'RATE_LIMIT', message: 'rate limited', retryable: true }
-    case 'billing_error':
-      return { code: 'BILLING', message: 'credit balance too low', retryable: false }
-    case 'server_error':
-      return { code: 'SERVER', message: 'service is busy', retryable: true }
-    case 'invalid_request':
-      return { code: 'INVALID', message: 'invalid request', retryable: false }
-    case 'max_output_tokens':
-      return { code: 'TRUNCATED', message: 'response was cut off', retryable: true }
-    default:
-      break
-  }
-  switch (subtype) {
-    case 'error_max_turns':
-      return { code: 'MAX_TURNS', message: 'stopped after too many tool steps', retryable: true }
-    case 'error_max_budget_usd':
-      return { code: 'BUDGET', message: 'hit the cost limit', retryable: false }
-    case 'error_max_structured_output_retries':
-      return { code: 'FORMAT', message: 'could not produce a valid result format', retryable: true }
-    case 'error_during_execution':
-    default: {
-      // Forward the SDK's own `errors[0]` detail (may be empty); the host
-      // composes the final "Stopped on an error[: detail]" copy.
-      const detail = Array.isArray(errors) && errors.length > 0 ? String(errors[0]) : ''
-      return { code: 'EXEC', message: detail, retryable: true }
-    }
-  }
-}
-
-function classifyError(err) {
-  // Prefer a structured HTTP status when the thrown error carries one
-  // (Anthropic SDK errors expose `.status`); fall back to message regex.
-  const status = typeof err?.status === 'number' ? err.status : undefined
-  if (status === 401 || status === 403) return 'AUTH'
-  if (status === 429) return 'RATE_LIMIT'
-  if (status === 400) return 'INVALID'
-  if (status === 500 || status === 529) return 'SERVER'
-  const msg = err?.message ? String(err.message) : String(err)
-  if (/401|unauthor|invalid[_ ]?token/i.test(msg)) return 'AUTH'
-  if (/429|rate[_ ]?limit/i.test(msg)) return 'RATE_LIMIT'
-  if (/ETIMEDOUT|timed[_ ]?out/i.test(msg)) return 'IDLE_TIMEOUT'
-  if (/network|fetch failed|ECONN/i.test(msg)) return 'NETWORK'
-  return 'INTERNAL'
-}
