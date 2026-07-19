@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendToBackground } from './markers'
+import { appendToBackground, splitOutBackground } from './markers'
 
 // appendToBackground is the fix for the "profile facts land after the
 // user's ## Notes" bug: ingest / chat facts about the user must go INTO
@@ -52,5 +52,55 @@ describe('appendToBackground', () => {
 
   it('is a no-op for blank input', () => {
     expect(appendToBackground(profile, '   ')).toBe(profile)
+  })
+})
+
+// splitOutBackground keeps the bounded summary zones always-on and carves out
+// the growing ## Background for on-demand loading.
+describe('splitOutBackground', () => {
+  const profile = [
+    '## About',
+    '',
+    'A writer.',
+    '',
+    '## Background',
+    '',
+    '- Works at Acme',
+    '- Lives in Seoul',
+    '',
+    '## Notes',
+    '',
+    'My private scratch.',
+    '',
+  ].join('\n')
+
+  it('removes the Background zone from the summary but keeps the other zones', () => {
+    const { summary } = splitOutBackground(profile)
+    expect(summary).toContain('## About')
+    expect(summary).toContain('A writer.')
+    expect(summary).toContain('## Notes')
+    expect(summary).toContain('My private scratch.')
+    // Background heading + body are gone from the summary.
+    expect(summary).not.toContain('## Background')
+    expect(summary).not.toContain('Works at Acme')
+  })
+
+  it('returns the Background body separately', () => {
+    const { background } = splitOutBackground(profile)
+    expect(background).toBe('- Works at Acme\n- Lives in Seoul')
+  })
+
+  it('returns empty background and unchanged summary when there is no Background zone', () => {
+    const bare = '## About\n\nA writer.\n'
+    const { summary, background } = splitOutBackground(bare)
+    expect(background).toBe('')
+    expect(summary).toContain('A writer.')
+  })
+
+  it('handles a profile that is ONLY a Background zone', () => {
+    const onlyBg = '## Background\n\n- Fact one\n- Fact two\n'
+    const { summary, background } = splitOutBackground(onlyBg)
+    expect(summary).toBe('')
+    expect(background).toBe('- Fact one\n- Fact two')
   })
 })

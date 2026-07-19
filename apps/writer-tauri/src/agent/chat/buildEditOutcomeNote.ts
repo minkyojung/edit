@@ -17,6 +17,15 @@
 // every proposal's fate; this reads it and returns a HOST NOTE block plus
 // the ids it covered so the caller can stamp them delivered (never told
 // twice).
+//
+// Second purpose (the compound loop): a REJECT is not just a failed write —
+// it's an implicit teaching signal about how the user wants the agent to
+// work. Left in the turn stream it dies with the thread and the same mistake
+// recurs next session. So when a rejection is present, the note also invites
+// the model to codify a DURABLE rule into `_system/preferences.md` (which the
+// always-on context reads every session) — turning a one-off correction into
+// a permanent preference. Apply-failures (stale anchor) are NOT a teaching
+// signal, so that nudge is gated on an actual user reject.
 
 import { usePendingChangesStore, type PendingChange } from '@/state/pendingChangesStore'
 import { useDocsStore } from '@/state/docsStore'
@@ -30,6 +39,22 @@ export interface EditOutcomeNote {
    * reject / failure is never reported again. */
   ids: string[]
 }
+
+/** Appended to the note when at least one outcome was a user reject. Invites
+ * the model to promote the correction to a durable preference — the compound
+ * step. Kept terse and hedged so the model only acts on a genuinely reusable
+ * rule and never fabricates one. Mirrors CLAUDE.md's Preferences routing
+ * ("how you should act / what to output" → `_system/preferences.md`). */
+const PREFERENCE_NUDGE_LINES = [
+  'A rejection can be an implicit signal about how the user wants you to work,',
+  'not just a verdict on this one edit. If this rejection — taken together with',
+  "the user's current message — reveals a DURABLE rule about how you should act",
+  'or shape output (tone, format, language, a default to always apply), propose',
+  'appending ONE concise bullet to `_system/preferences.md` via propose_edit',
+  '(create the file if it does not exist yet). Only for a genuinely reusable',
+  'rule — never for a one-off, and never invent a rule the user did not imply.',
+  'If unsure, do nothing.',
+]
 
 /** True when a change's outcome contradicts the model's "it succeeded"
  * belief: the user rejected it, or the accept failed to write to disk. */
@@ -70,6 +95,10 @@ export function buildEditOutcomeNote(threadId: string): EditOutcomeNote {
     return `- ${label}: ${outcome} — your change is NOT in the file.`
   })
 
+  // Only a user reject is a teaching signal; an apply-failure (stale anchor)
+  // is not, so the preference nudge is gated on an actual rejection.
+  const anyRejected = relevant.some((c) => c.status === 'rejected')
+
   const note = [
     '[HOST NOTE — outcomes of edits you proposed earlier in this conversation.',
     'This is a system message, NOT something the user typed.]',
@@ -77,6 +106,7 @@ export function buildEditOutcomeNote(threadId: string): EditOutcomeNote {
     ...lines,
     'Do not assume these edits were saved. Re-read the relevant file before',
     'proposing any follow-up edit that depends on them.',
+    ...(anyRejected ? ['', ...PREFERENCE_NUDGE_LINES] : []),
   ].join('\n')
 
   return { note, ids: relevant.map((c) => c.id) }

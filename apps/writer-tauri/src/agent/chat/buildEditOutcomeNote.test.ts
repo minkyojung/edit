@@ -81,6 +81,18 @@ describe('buildEditOutcomeNote', () => {
     seed([change({ id: 'a', status: 'rejected', reason: 'added 2026 pricing row' })])
     expect(buildEditOutcomeNote('t1').note).toContain('added 2026 pricing row')
   })
+
+  it('invites a durable preference when a reject is present', () => {
+    seed([change({ id: 'a', status: 'rejected' })])
+    expect(buildEditOutcomeNote('t1').note).toContain('_system/preferences.md')
+  })
+
+  it('does NOT invite a preference for an apply-failure alone (no teaching signal)', () => {
+    seed([change({ id: 'a', status: 'accepted', applyFailed: true })])
+    const { note } = buildEditOutcomeNote('t1')
+    expect(note).toContain('could not be applied')
+    expect(note).not.toContain('_system/preferences.md')
+  })
 })
 
 // Exercises the real store actions the applier + index.ts drive (which

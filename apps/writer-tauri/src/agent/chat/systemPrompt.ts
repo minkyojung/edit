@@ -63,7 +63,12 @@ export interface SystemBlocksArgs {
    * the Karpathy / Claude Code pattern has the LLM fetch those via
    * Read / Glob / Grep when (and only when) a turn warrants it. */
   ctx: {
+    /** The bounded profile SUMMARY (Background carved out). */
     selfProfile: string
+    /** Vault-relative path of the profile page — set only when its
+     * `## Background` zone has content, so the block appends a pointer telling
+     * the model to Read it on demand. Optional for callers that don't split. */
+    selfProfileBackgroundPath?: string | null
     claudeMd: string
     preferences: string
   }
@@ -127,19 +132,19 @@ export interface SystemBlocksArgs {
 
 /** Compose the system prompt as a `string | string[]`.
  *
- * Anchor ordering by cache stability:
- *   prefix (stable):   selfProfile → claudeMd → systemBody
- *   suffix (dynamic):  document
+ * Anchor ordering by cache stability (most-stable → most-mutable):
+ *   prefix (stable):   systemBody(persona) → claudeMd → folder blocks →
+ *                      SELF PROFILE → PREFERENCES
+ *   suffix (dynamic):  today → current file → document → …
  *
- * `selfProfile` sits at the very top — it changes only when the user
- * edits the profile or the ingest LLM accepts a proposal targeting
- * `wiki:profile`. `claudeMd` is the Karpathy / Claude Code schema
- * document — vault layout, operations, tool usage, conventions (the
- * user's vault-specific rules now live inside it). Both blocks are
- * eligible for prompt caching. `systemBody` (FREE_CHAT_PROMPT) is the
- * shortest, most app-specific framing. The document changes every
- * keystroke so we pin
- * it after the SDK's cache boundary.
+ * `systemBody` (FREE_CHAT_PROMPT) and `claudeMd` (the Karpathy / Claude Code
+ * schema — vault layout, operations, tool usage, conventions) are app-static,
+ * so they lead. The GROWING per-user blocks (SELF PROFILE, PREFERENCES — the
+ * compound loop appends to these) sit LAST in the cacheable prefix so an
+ * append invalidates only the small trailer, not the static core. The profile
+ * block itself carries only the bounded summary; its unbounded `## Background`
+ * loads on demand via a pointer (see the SELF PROFILE assembly below). The
+ * document changes every keystroke so we pin it after the SDK's cache boundary.
  *
  * The return type is `string | string[]`:
  *   - `string[]` with a {@link SYSTEM_PROMPT_DYNAMIC_BOUNDARY} sentinel
@@ -167,26 +172,20 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     today,
   } = args
   const prefix: string[] = []
-  // App-static persona first so it forms the longest cache-stable prefix: it
-  // ships with the binary and never changes on a vault switch, whereas the
-  // self-profile and CLAUDE.md schema below are per-vault and swappable. Putting
-  // the invariant block first means switching vaults only invalidates the cache
-  // from the profile byte onward, not the persona above it.
+  // Blocks are ordered MOST-STABLE → MOST-MUTABLE so the SDK prompt cache can
+  // reuse the longest possible prefix. A change anywhere in the cached prefix
+  // invalidates every byte below it, so the app-static blocks lead (persona,
+  // then the CLAUDE.md schema), the vault-static folder blocks follow, and the
+  // per-user GROWING blocks (self-profile, preferences) sit LAST — appended
+  // below, just before the dynamic boundary. That way a fact appended by the
+  // compound loop (reject → preference, profile facts) re-writes only the small
+  // trailer, not the large static core above it.
+  //
   // Native command runs (slash-command intake) carry their brain in the USER
   // turn, so they pass an empty systemBody — skip it rather than push a blank
   // block. Chat always has a non-empty persona, so this is a no-op there.
   if (systemBody) prefix.push(systemBody)
-  if (ctx.selfProfile) {
-    prefix.push(`--- SELF PROFILE ---\n${ctx.selfProfile}`)
-  }
   if (ctx.claudeMd) prefix.push(ctx.claudeMd)
-  // User behaviour preferences — the "how you should act" rules the schema
-  // above points at. Separate per-user slice (from _system/preferences.md) so
-  // it can grow without touching the app-owned schema. Empty until the user
-  // sets any, in which case the block is dropped.
-  if (ctx.preferences) {
-    prefix.push(`--- PREFERENCES ---\n${ctx.preferences}`)
-  }
   // Ground the model's file tools in the real vault root (stable → stays in the
   // cacheable prefix). Without it the first Read guesses a wrong absolute path.
   if (vaultRoot) {
@@ -222,6 +221,40 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `update pages HERE. This is the user's configured location: if the CLAUDE.md ` +
         `schema above names a different folder for the knowledge base, THIS setting wins.`,
     )
+  }
+
+  // Per-user GROWING blocks last (see the ordering note at the top of the
+  // prefix build): profile + preferences accrue over time, so keeping them at
+  // the tail of the cacheable prefix means an append only invalidates this
+  // trailer, not the static core above.
+  //   - SELF PROFILE: facts about who the user is (from Profile.md).
+  //   - PREFERENCES: the "how you should act" rules (from _system/preferences.md)
+  //     — the per-user slice the CLAUDE.md schema points at. Empty until the
+  //     user sets any, in which case the block is dropped.
+  // Self-profile: the bounded summary always-on, the growing Background loaded
+  // on demand. Render the block when EITHER is present — an all-Background
+  // profile has an empty summary but still needs its pointer, so guarding on
+  // the summary alone would silently drop it.
+  if (ctx.selfProfile || ctx.selfProfileBackgroundPath) {
+    const parts: string[] = []
+    if (ctx.selfProfile) parts.push(ctx.selfProfile)
+    if (ctx.selfProfileBackgroundPath) {
+      const abs = vaultRoot
+        ? `${vaultRoot}/${ctx.selfProfileBackgroundPath}`
+        : ctx.selfProfileBackgroundPath
+      parts.push(
+        `Fuller background facts about the user (history, ongoing projects, ` +
+          `relationships, past events) live in the \`## Background\` section of ` +
+          `their profile page at \`${abs}\`. That section is kept OUT of this ` +
+          `prompt to stay lean. When a task needs a specific personal fact the ` +
+          `summary above doesn't cover, Read that file first — don't guess or ` +
+          `claim you don't know without checking.`,
+      )
+    }
+    prefix.push(`--- SELF PROFILE ---\n${parts.join('\n\n')}`)
+  }
+  if (ctx.preferences) {
+    prefix.push(`--- PREFERENCES ---\n${ctx.preferences}`)
   }
 
   // Dynamic suffix — pinned past the SDK cache boundary because it changes

@@ -1,0 +1,19 @@
+# Conductor "Files to copy" — gitignored files seeded into every NEW workspace.
+#
+# Git worktrees only carry TRACKED files, so gitignored-but-required files must
+# be listed here to be copied from the repo root into each new workspace. This
+# file holds PATHS ONLY — never secret values — so it's safe to commit.
+#
+# NOTE: creating this file overrides Conductor's built-in default `.env*` copy,
+# so `.env*` is re-listed below to preserve that behavior.
+
+# Google OAuth client credentials. Baked into the Rust binary at COMPILE time
+# via include_str! in apps/writer-tauri/src-tauri/src/google_oauth.rs — a
+# missing file is a hard compile error, so every workspace that builds the app
+# needs them present.
+apps/writer-tauri/src-tauri/secrets/google_client_id
+apps/writer-tauri/src-tauri/secrets/google_client_secret
+
+# Env files (preserves the default `.env*` copy + the signing env `pnpm release`
+# reads).
+.env*
