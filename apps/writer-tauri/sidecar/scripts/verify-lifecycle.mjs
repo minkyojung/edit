@@ -265,8 +265,43 @@ async function t7() {
   check('exactly one query (no reuse for a one-shot)', fakes.length === 1, `fakes=${fakes.length}`)
 }
 
+// ── T8: title mode routes onto the thread engine (B2) — a title chat (no
+// threadId, no persistentQuery, exactly what generateThreadTitle sends) runs
+// as a closeAfterResult one-shot on the engine, not the legacy path, and stays
+// single-flight. ──
+async function t8() {
+  console.log('\n[T8] title mode → thread engine, closeAfterResult one-shot, single-flight')
+  fakes.length = 0; teardownLog.length = 0
+  const ev = { done: [], err: [] }
+  const server = new Server({
+    mode: 'title',
+    emit: (m) => {
+      if (m.method === 'chat/done') ev.done.push(m.params)
+      else if (m.method === 'chat/error') ev.err.push(m.params)
+    },
+  })
+  const send = (method, params, id) => server.handle({ jsonrpc: '2.0', id, method, params })
+  send('initialize', {}, 1)
+  send('setToken', { token: 'sk-ant-oat-test-fake' }, 2)
+  const r1 = randomUUID()
+  send('chat', { runId: r1, prompt: 'summarize this' }, nid())
+  const fake = await awaitFake(1)
+  check(
+    'title ran on the thread engine (activeThreads), not legacy activeChats',
+    server.activeThreads.size === 1 && server.activeChats.size === 0,
+    `threads=${server.activeThreads.size} chats=${server.activeChats.size}`,
+  )
+  // Single-flight: a second title while one is live must not spawn a 2nd thread.
+  send('chat', { runId: randomUUID(), prompt: 'other' }, nid())
+  check('title stays single-flight (activeThreads guard)', server.activeThreads.size === 1, `threads=${server.activeThreads.size}`)
+  await runTurn(fake, r1, ev)
+  await waitFor(() => server.activeThreads.size === 0)
+  check('title thread torn down after its single result', server.activeThreads.size === 0)
+  check('one chat/done, no error', ev.done.length === 1 && ev.err.length === 0, `done=${ev.done.length} err=${ev.err.length}`)
+}
+
 try {
-  await t1(); await t2(); await t3(); await t4(); await t5(); await t6(); await t7()
+  await t1(); await t2(); await t3(); await t4(); await t5(); await t6(); await t7(); await t8()
 } finally {
   process.stderr.write = origWrite
 }

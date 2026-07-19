@@ -361,13 +361,26 @@ export class Server {
       this.emit(errorResponse(id, INVALID_PARAMS, `runId already active: ${runId}`))
       return
     }
-    if (this.mode === 'title' && this.activeChats.size > 0) {
+    if (this.mode === 'title' && this.activeThreads.size > 0) {
       this.emit(errorResponse(id, BUSY, 'title sidecar is single-flight'))
       return
     }
     if (this.shuttingDown) {
       this.emit(errorResponse(id, INVALID_REQUEST, 'shutting down'))
       return
+    }
+
+    // Title generation is a stateless one-shot: run it on the same thread engine
+    // with 'closeAfterResult' teardown — the thread ends after its single result
+    // (legacy's per-turn semantics, now a teardown policy on the one engine).
+    // Title requests carry no threadId, so synthesise one from runId; a fresh
+    // SDK session is created and torn down per title (nothing to resume).
+    if (this.mode === 'title') {
+      return this.#handleChatPersistent(id, {
+        ...params,
+        threadId: params.threadId ?? runId,
+        teardown: 'closeAfterResult',
+      })
     }
 
     // Persistent-query path: opt-in per chat (the host forwards a Settings
