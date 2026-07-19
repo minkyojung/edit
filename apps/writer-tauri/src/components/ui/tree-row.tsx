@@ -55,7 +55,7 @@ function TreeRow({ active, className, ...props }: TreeRowProps) {
       data-active={active || undefined}
       className={cn(
         'group/tree-row relative flex h-9 w-full items-center',
-        'text-body font-normal',
+        'text-body font-medium',
         // Shared row skin (radius + hover + selected) so tree rows match
         // the footer menu buttons exactly — see sidebarRow.ts.
         SIDEBAR_ROW_INTERACTION,

@@ -22,7 +22,7 @@ export function TagList() {
 
   return (
     <div className="pb-2">
-      <div className="-mb-1 select-none px-5 pt-3 text-footnote font-medium text-sidebar-foreground/50">
+      <div className="-mb-1 select-none px-5 pt-3 text-footnote font-semibold text-sidebar-foreground/50">
         Tags
       </div>
       <div className="flex flex-col py-1 pl-3 pr-2">

@@ -52,7 +52,7 @@ import { cn } from '@/lib/utils'
 // folder-tree rows (SIDEBAR_ROW_INTERACTION), so hover / focus / selected match
 // exactly. Selected state is driven by `data-active` (not a class), like TreeRow.
 const NAV_ROW = cn(
-  'flex h-9 w-full items-center gap-2 rounded-sm px-2 text-body font-normal',
+  'flex h-9 w-full items-center gap-2 rounded-sm px-2 text-body font-medium',
   SIDEBAR_ROW_INTERACTION,
 )
 
@@ -262,7 +262,7 @@ export function AppSidebar() {
             root <ul> below so both share one content line. */}
         {/* Small muted section label (title-case, aligned to the icon column at
             pl-5) — categorizes the top surfaces vs. the notes tree below. */}
-        <div className="-mb-1 select-none px-5 pt-2 text-footnote font-medium text-sidebar-foreground/50">
+        <div className="-mb-1 select-none px-5 pt-2 text-footnote font-semibold text-sidebar-foreground/50">
           Assistant
         </div>
         <nav className="flex flex-col gap-0.5 pl-3 pr-2">
@@ -330,7 +330,7 @@ export function AppSidebar() {
 
         {/* Section label for the vault's notes, mirroring the "Assistant"
             label above so the two zones read as distinct groups. */}
-        <div className="-mb-1 select-none px-5 pt-3 text-footnote font-medium text-sidebar-foreground/50">
+        <div className="-mb-1 select-none px-5 pt-3 text-footnote font-semibold text-sidebar-foreground/50">
           Notes
         </div>
         {/* Obsidian-style folder tree — the vault's folder structure is
