@@ -17,7 +17,7 @@
 // regardless of what the body contains. To name it, use the inline
 // title input (PageHeader) or the Command Palette's Rename.
 
-import { useDocsStore, isWikiDoc } from '@/state/docsStore'
+import { useDocsStore, isWikiDoc, type KnownDoc } from '@/state/docsStore'
 
 const DAILY_LABEL_FMT = new Intl.DateTimeFormat('en-US', {
   weekday: 'long',
@@ -34,11 +34,10 @@ function formatDailyLabel(date: string): string {
   return DAILY_LABEL_FMT.format(dt)
 }
 
-export function useDocLabel(slug: string | null): string {
-  const known = useDocsStore((s) =>
-    slug ? s.knownDocs.find((d) => d.slug === slug) : undefined,
-  )
-
+/** Pure form of {@link useDocLabel} — the displayed label for a doc,
+ * following the same policy. Exported for non-hook callers (e.g. the
+ * command palette, which maps over many docs at once). */
+export function docLabel(known: KnownDoc | undefined): string {
   if (!known) return 'Untitled'
 
   if (known.type === 'daily' && known.date) return formatDailyLabel(known.date)
@@ -56,4 +55,11 @@ export function useDocLabel(slug: string | null): string {
   // Writing notes — body decoupled from title (Step 4). Title is
   // whatever renameDoc has set, or 'Untitled'.
   return known.title?.trim() || 'Untitled'
+}
+
+export function useDocLabel(slug: string | null): string {
+  const known = useDocsStore((s) =>
+    slug ? s.knownDocs.find((d) => d.slug === slug) : undefined,
+  )
+  return docLabel(known)
 }
