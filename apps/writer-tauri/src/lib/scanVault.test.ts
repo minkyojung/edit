@@ -354,6 +354,15 @@ describe('meta ⇄ frontmatter round-trip', () => {
     expect(frontmatterToMeta({ tags: [] }).tags).toBeUndefined()
   })
 
+  it('trims and de-duplicates tags on read (matches the write path)', () => {
+    // A hand-written / external file may repeat or pad tags; reading must
+    // normalize the same way setDocTags does, so counts don't inflate.
+    expect(frontmatterToMeta({ tags: ['  ai  ', 'ai', 'finance', ' '] }).tags).toEqual([
+      'ai',
+      'finance',
+    ])
+  })
+
   it('round-trips youtube capture fields (durationSec stays numeric)', () => {
     const meta: Partial<DocMetaFile> = {
       slug: 'yt-3',

@@ -30,6 +30,7 @@
 
 import type { KnownDoc } from '@/state/docsStore'
 import type { FrontmatterValue } from '@/lib/frontmatter'
+import { normalizeTags } from '@/lib/tags'
 
 /**
  * A note's workflow status. Optional per note; a note carries no `status`
@@ -156,35 +157,48 @@ export function frontmatterToMeta(
   const meta: Partial<DocMetaFile> = {}
   const str = (v: string | string[] | undefined): string | undefined =>
     typeof v === 'string' ? v : undefined
-  if (str(data.slug)) meta.slug = str(data.slug)
-  if (str(data.createdAt)) meta.createdAt = str(data.createdAt)
-  if (str(data.sourceUrl)) meta.sourceUrl = str(data.sourceUrl)
-  if (str(data.siteName)) meta.siteName = str(data.siteName)
-  if (str(data.faviconUrl)) meta.faviconUrl = str(data.faviconUrl)
-  if (str(data.savedAt)) meta.savedAt = str(data.savedAt)
-  if (str(data.readAt)) meta.readAt = str(data.readAt)
-  if (str(data.videoId)) meta.videoId = str(data.videoId)
+
+  // Plain string fields: copy each through when it's present as a string. A
+  // malformed value (e.g. a scalar key hand-written as a YAML list) reads as
+  // a non-string and is dropped rather than mis-assigned.
+  const STRING_KEYS = [
+    'slug',
+    'createdAt',
+    'sourceUrl',
+    'siteName',
+    'faviconUrl',
+    'savedAt',
+    'readAt',
+    'videoId',
+    'thumbnailUrl',
+    'description',
+  ] as const
+  for (const key of STRING_KEYS) {
+    const s = str(data[key])
+    if (s) meta[key] = s
+  }
+
   const dur = str(data.durationSec)
   if (dur) {
     const n = Number(dur)
     if (Number.isFinite(n)) meta.durationSec = n
   }
-  if (str(data.thumbnailUrl)) meta.thumbnailUrl = str(data.thumbnailUrl)
-  if (str(data.description)) meta.description = str(data.description)
-  // Validate: a `status` written by the user or the AI must be one of the
-  // known values; anything else is dropped rather than trusted.
+  // status must be one of the known values; anything else is dropped.
   const status = str(data.status)
   if (status && (DOC_STATUS_VALUES as readonly string[]).includes(status)) {
     meta.status = status as DocStatus
   }
-  // Tags: a list of strings. A single scalar `tags: foo` is normalized to
-  // `['foo']` so a hand-written scalar still reads sensibly.
-  if (Array.isArray(data.tags)) {
-    const tags = data.tags.filter((t) => t.trim().length > 0)
-    if (tags.length) meta.tags = tags
-  } else if (str(data.tags)?.trim()) {
-    meta.tags = [str(data.tags) as string]
-  }
+  // Tags: a YAML list, or a scalar `tags: foo` treated as one item. Runs the
+  // same normalization (trim / de-dupe) as the write path so a note read from
+  // disk matches one written in-app.
+  const rawTags = Array.isArray(data.tags)
+    ? data.tags
+    : str(data.tags)
+      ? [str(data.tags) as string]
+      : []
+  const tags = normalizeTags(rawTags)
+  if (tags.length) meta.tags = tags
+
   return meta
 }
 

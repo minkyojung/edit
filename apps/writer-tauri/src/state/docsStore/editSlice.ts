@@ -18,6 +18,7 @@ import { renameVaultFile } from '@/lib/vault'
 import { pathForDoc, sanitizeFilename, type DocStatus } from '@/lib/docPaths'
 import { planFolderMove } from '@/lib/folderMove'
 import { updateWikilinksForRename } from '@/lib/renameWikilinks'
+import { normalizeTags } from '@/lib/tags'
 import { docSupportsStatus } from './helpers'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
@@ -303,10 +304,7 @@ export const createEditSlice = (
     if (idx < 0) return
     const cur = get().knownDocs[idx]
     if (!docSupportsStatus(cur)) return
-    // Normalize: trim, drop blanks, dedupe (case-sensitive, first wins).
-    const next = Array.from(
-      new Set(tags.map((t) => t.trim()).filter((t) => t.length > 0)),
-    )
+    const next = normalizeTags(tags)
     const prev = cur.tags ?? []
     if (prev.length === next.length && prev.every((t, i) => t === next[i])) return
     const list = [...get().knownDocs]

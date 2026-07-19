@@ -102,6 +102,35 @@ describe('mergeFrontmatter — list values', () => {
       '---\nslug: s\n---\n\nb\n',
     )
   })
+
+  it('keeps a floating comment that follows an app-owned list block', () => {
+    // The `tags:` block is app-owned (dropped + re-emitted), but the
+    // top-level comment after it floats and belongs with `aliases`, so it
+    // must survive the rewrite.
+    const existing = [
+      '---',
+      'tags:',
+      '  - draft',
+      '# keep in sync with aliases',
+      'aliases: [x]',
+      '---',
+      '',
+      'body',
+    ].join('\n')
+    const out = mergeFrontmatter(existing, { tags: ['done'] }, 'body')
+    expect(out).toBe(
+      [
+        '---',
+        '# keep in sync with aliases',
+        'aliases: [x]',
+        'tags:',
+        '  - done',
+        '---',
+        '',
+        'body\n',
+      ].join('\n'),
+    )
+  })
 })
 
 describe('parseFrontmatterFull', () => {

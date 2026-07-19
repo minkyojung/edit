@@ -211,11 +211,14 @@ export function mergeFrontmatter(
       if (keyMatch) {
         ownedByApp = appKeys.has(keyMatch[1].trim())
         if (!ownedByApp) preserved.push(line)
-      } else if (!ownedByApp) {
-        // Continuation (indented), comment, blank, or top-level list item —
-        // belongs to the current key's group (or floats). Keep unless the
-        // current group is an app-owned key being dropped.
-        preserved.push(line)
+      } else {
+        // A non-indented comment or a blank line floats *between* key blocks,
+        // so it's kept even when the preceding key is app-owned (a key's value
+        // is only its indented continuation lines). An indented line belongs
+        // to the current key's group and rides its ownership.
+        const trimmed = line.trim()
+        const floats = trimmed === '' || (trimmed.startsWith('#') && !/^[ \t]/.test(line))
+        if (floats || !ownedByApp) preserved.push(line)
       }
     }
   }

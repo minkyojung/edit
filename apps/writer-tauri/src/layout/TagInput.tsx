@@ -24,6 +24,10 @@ export function TagInput({
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    // Don't act on the Enter/Backspace that finishes an IME composition
+    // (e.g. confirming a Hangul syllable) — otherwise a half-composed tag
+    // gets committed. Matches EditableTitleInput's guard.
+    if (e.nativeEvent.isComposing) return
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault()
       commitDraft()
@@ -40,6 +44,9 @@ export function TagInput({
           <button
             type="button"
             aria-label={`${tag} 제거`}
+            // Keep focus in the input so its onBlur doesn't fire first and
+            // commit the in-progress draft against a stale tag list.
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onChange(tags.filter((t) => t !== tag))}
             className="rounded-full text-muted-foreground hover:text-foreground"
           >

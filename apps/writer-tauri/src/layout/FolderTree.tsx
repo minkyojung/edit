@@ -552,8 +552,19 @@ export function FolderTree() {
   const sortMode = useSortStore((s) => s.mode)
   const inProgressOnly = useStatusFilterStore((s) => s.inProgressOnly)
   const activeTag = useTagFilterStore((s) => s.activeTag)
+  const clearTagFilter = useTagFilterStore((s) => s.clear)
   const navigate = useNavigate()
   const activeSlug = useActiveSlug()
+
+  // Self-heal: if the active tag no longer exists on any note (its last
+  // carrier was deleted or retagged), clear the filter — otherwise the tree
+  // would render empty with no way to clear it (its chip is gone from the
+  // Tags pane too).
+  useEffect(() => {
+    if (activeTag && !knownDocs.some((d) => d.tags?.includes(activeTag))) {
+      clearTagFilter()
+    }
+  }, [activeTag, knownDocs, clearTagFilter])
 
   const tree = useMemo(() => {
     // Compose the active sidebar filters as AND-ed predicates. No filter →
