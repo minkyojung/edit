@@ -17,6 +17,13 @@ use tokio::task::JoinHandle;
 
 use super::framing::{encode, FrameParser};
 
+/// Wire-protocol contract version. Bump in lockstep with the sidecar's
+/// `PROTOCOL_VERSION` (sidecar/src/server.mjs) on any breaking change to the
+/// request/notification shapes in PROTOCOL.md. Asserted during `initialize`:
+/// a mismatch means the bundled sidecar is stale (typically `pnpm pack:sidecar`
+/// wasn't re-run) and we refuse to run it rather than misbehave silently.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 #[derive(Debug, thiserror::Error)]
 pub enum SidecarError {
     #[error("sidecar exited unexpectedly")]
@@ -29,6 +36,11 @@ pub enum SidecarError {
     Json(#[from] serde_json::Error),
     #[error("send error")]
     Send,
+    #[error(
+        "sidecar protocol version mismatch: app expects {expected}, sidecar reports {got:?} \
+         — the bundled sidecar is stale; re-run `pnpm pack:sidecar`"
+    )]
+    ProtocolMismatch { expected: u32, got: Option<u32> },
 }
 
 #[derive(Serialize)]
@@ -206,9 +218,22 @@ impl SidecarClient {
         on_exit: Option<ExitHandler>,
     ) -> Result<Self, SidecarError> {
         let client = Self::spawn(program, args, extra_env, on_notification, on_exit).await?;
-        let _: Value = client
-            .request("initialize", Some(json!({ "clientVersion": "0.1.0" })))
+        let init: Value = client
+            .request(
+                "initialize",
+                Some(json!({ "clientVersion": "0.1.0", "protocolVersion": PROTOCOL_VERSION })),
+            )
             .await?;
+        // Assert-equal on the wire-protocol version. Client and sidecar ship in
+        // the same app bundle, so a mismatch is never a compatibility spread to
+        // negotiate — it's a packaging bug (stale sidecar-pkg). Fail loudly.
+        let got = init
+            .get("protocolVersion")
+            .and_then(Value::as_u64)
+            .map(|v| v as u32);
+        if got != Some(PROTOCOL_VERSION) {
+            return Err(SidecarError::ProtocolMismatch { expected: PROTOCOL_VERSION, got });
+        }
         Ok(client)
     }
 

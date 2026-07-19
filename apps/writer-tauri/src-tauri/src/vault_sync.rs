@@ -42,6 +42,24 @@ pub struct SyncState {
     pub status: String,
 }
 
+/// Outcome of a `vault_pull`. A fast-forward receive has three results a
+/// caller must tell apart — connect prompt vs conflict UI vs "you're synced" —
+/// so they're distinct variants rather than the old `bool` that collapsed
+/// "diverged" and "not connected" into the same `false`. Tagged on `result`
+/// for the frontend to match on.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "result", rename_all = "camelCase")]
+pub enum PullOutcome {
+    /// Fast-forwarded to new remote commits, or already up to date — either
+    /// way the local vault now matches remote.
+    Advanced,
+    /// Local and remote have diverged (two devices edited); nothing was
+    /// written — the caller must resolve the conflict.
+    Diverged,
+    /// GitHub isn't connected for this vault; nothing to receive.
+    NotConnected,
+}
+
 fn now_unix() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -230,17 +248,21 @@ pub async fn vault_restore(
 }
 
 /// Receive remote changes into the connected vault — fast-forward ONLY.
-/// Returns `Ok(true)` when it advanced or was already current, `Ok(false)` when
-/// local and remote have diverged (two devices edited → the conflict slice
-/// handles that) or GitHub isn't connected. Never writes a merge commit or
+/// Returns a `PullOutcome` distinguishing advanced/already-current from
+/// diverged from not-connected (see the enum). Never writes a merge commit or
 /// conflict markers, so the notes are never left half-merged.
 #[tauri::command]
-pub async fn vault_pull(app: AppHandle, vault_path: String) -> Result<bool, String> {
+pub async fn vault_pull(app: AppHandle, vault_path: String) -> Result<PullOutcome, String> {
     let Some(stored) = github::load_token(&app)? else {
-        return Ok(false); // not connected — nothing to receive
+        return Ok(PullOutcome::NotConnected);
     };
     let branch = git::git_current_branch(&vault_path).await?;
-    git::git_pull_ff(&vault_path, &stored.access_token, &branch).await
+    let fast_forwarded = git::git_pull_ff(&vault_path, &stored.access_token, &branch).await?;
+    Ok(if fast_forwarded {
+        PullOutcome::Advanced
+    } else {
+        PullOutcome::Diverged
+    })
 }
 
 #[cfg(test)]
@@ -275,5 +297,16 @@ mod tests {
         assert_eq!(repo_name_from_vault("/Users/me/Writer"), "Writer");
         assert_eq!(repo_name_from_vault("/Users/me/My Notes!"), "My-Notes");
         assert_eq!(repo_name_from_vault("/"), "manila-vault");
+    }
+
+    #[test]
+    fn pull_outcome_serializes_tagged_on_result() {
+        let val = |o: PullOutcome| serde_json::to_value(o).unwrap();
+        assert_eq!(val(PullOutcome::Advanced), serde_json::json!({ "result": "advanced" }));
+        assert_eq!(val(PullOutcome::Diverged), serde_json::json!({ "result": "diverged" }));
+        assert_eq!(
+            val(PullOutcome::NotConnected),
+            serde_json::json!({ "result": "notConnected" }),
+        );
     }
 }

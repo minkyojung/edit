@@ -22,18 +22,14 @@ export interface CollabHandle {
    * Callers that need to read content-dependent state await this
    * before touching `bodyMarkdown`. */
   contentReady: Promise<void>
-  /** Markdown snapshot taken at hydrate time. The editor reads this
-   * as its mount-time hydrate source, and the three inactive-doc
-   * readers (ingest/readDoc, useIdleTrigger, wikiService) fall back
-   * to it when no PM view is mounted. Updated on:
-   *   - initial vault load (buildHandle)
-   *   - external reload (handlesSlice.reloadFromVault)
-   *   - background body rewrite (createSlice.seed/replaceDocBody when
-   *     no PM view is mounted for this slug)
-   * Active-view writes go through `applyMarkdownToEditor` and then
-   * `flushDirty` rewrites the `.md` and updates this cache on the
-   * next round. */
-  bodyMarkdown: string
+  /** In-memory body mirror. The editor reads this as its mount-time hydrate
+   * source, and the inactive-doc readers fall back to it when no editor is
+   * mounted. `readonly` here: it may ONLY be written through the body-write
+   * owner `state/docsStore/docBody.ts` (updateDocBody / setBodyMirror), which
+   * makes the read-modify-write atomic. A raw `handle.bodyMarkdown = …`
+   * anywhere else is a compile error (and an ESLint error) by design — that
+   * scattered-writer pattern is what caused the past silent-save-loss bugs. */
+  readonly bodyMarkdown: string
   /** Per-handle teardown. Runs vault-sync disposer + clears the
    * slug's dirty flag. Idempotent — closeDoc / archiveDoc each call
    * it once when a handle leaves the catalog. */

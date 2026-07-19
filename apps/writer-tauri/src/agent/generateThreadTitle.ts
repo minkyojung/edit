@@ -8,6 +8,12 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import type { ChatEvent, DoneEvent, ErrorEvent } from '@/agent/chat/types'
+import {
+  parseChatEvent,
+  parseDoneEvent,
+  parseErrorEvent,
+} from '@/agent/chat/eventSchemas'
 
 const MODEL = 'claude-haiku-4-5'
 const TIMEOUT_MS = 15_000
@@ -22,24 +28,6 @@ Rules:
 - Match the language of the user's message exactly.`
 
 const TITLE_MAX_CHARS = 30
-
-interface ChatEvent {
-  runId: string
-  event: {
-    type?: string
-    message?: { content?: Array<{ type: string; text?: string }> }
-  }
-}
-
-interface DoneEvent {
-  runId: string
-}
-
-interface ErrorEvent {
-  runId: string
-  code: string
-  message: string
-}
 
 export async function generateThreadTitle(userMessage: string): Promise<string | null> {
   const trimmed = userMessage.trim()
@@ -71,7 +59,7 @@ export async function generateThreadTitle(userMessage: string): Promise<string |
 
     Promise.all([
       listen<ChatEvent>('claude:event', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseChatEvent(e.payload) || e.payload.runId !== runId) return
         const ev = e.payload.event
         if (ev?.type !== 'assistant') return
         for (const b of ev.message?.content ?? []) {
@@ -81,7 +69,7 @@ export async function generateThreadTitle(userMessage: string): Promise<string |
         }
       }),
       listen<DoneEvent>('claude:done', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseDoneEvent(e.payload) || e.payload.runId !== runId) return
         clearTimeout(timer)
         // Take the first non-empty line, strip wrapping quotes, collapse
         // whitespace, then hard-cap length. Haiku occasionally returns a
@@ -100,7 +88,7 @@ export async function generateThreadTitle(userMessage: string): Promise<string |
         settle(capped.length > 0 ? capped : null)
       }),
       listen<ErrorEvent>('claude:error', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseErrorEvent(e.payload) || e.payload.runId !== runId) return
         clearTimeout(timer)
         settle(null)
       }),

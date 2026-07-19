@@ -20,6 +20,7 @@
 //   CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat... node scripts/verify-profile-title.mjs
 
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { FrameParser, encode } from '../src/jsonrpc.mjs'
@@ -121,7 +122,11 @@ try {
       '# Post 1: On shipping\nI ship small and often. Perfect is the enemy of done.'
     const prompt =
       'Describe this writer’s VOICE in 2–3 sentences. Return only the section body.'
-    const r = await runSection('sec-1', systemPrompt, prompt)
+    // runId MUST be a real UUID: the one thread engine synthesises the
+    // thread/session id from it for a one-shot (title/section), and the claude
+    // CLI rejects a non-UUID sessionId (exit 1). The real app always passes a
+    // crypto.randomUUID() runId, so this mirrors it.
+    const r = await runSection(randomUUID(), systemPrompt, prompt)
     if (r.kind === 'ok') {
       ok('full section round-trip → assistant text + done')
       console.log('\n  --- model output ---\n  ' + r.text.trim().replace(/\n/g, '\n  ') + '\n')

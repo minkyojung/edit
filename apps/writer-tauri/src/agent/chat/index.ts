@@ -34,6 +34,7 @@ import { todayLocalDate } from '@/hooks/useDocMeta'
 import { pathForDoc } from '@/lib/docPaths'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
+import { readDocBody } from '@/state/docsStore/docBody'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useGitStore, aiEditSubject } from '@/state/gitStore'
 import { applyWriteWikiPage } from '@/agent/applyIngest'
@@ -59,6 +60,7 @@ import {
   type RunChatArgs,
   type RunChatResult,
 } from './types'
+import { parseChatEvent, parseDoneEvent, parseErrorEvent } from './eventSchemas'
 import { resolveAgent } from '../agents'
 import { buildEditOutcomeNote } from './buildEditOutcomeNote'
 import {
@@ -133,13 +135,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     ?.content?.trim()
 
   // "Current page" text: the caller-supplied page markdown (the Read Later
-  // queue passes a generated article list), else the open doc's bodyMarkdown
-  // cache — the editor-agnostic single source of truth, kept current on every
-  // keystroke by the CM editor.
-  const docText =
-    pageContextMarkdown ??
-    (slug ? useDocsStore.getState().handles[slug]?.bodyMarkdown : undefined) ??
-    ''
+  // queue passes a generated article list), else the open doc's body via the
+  // canonical reader — the live editor when one is mounted, so the model sees
+  // what's on screen (not the mirror, which lags mid-edit).
+  const docText = pageContextMarkdown ?? (slug ? readDocBody(slug) : '')
   const docForPrompt = truncateDocForPrompt(docText)
   // Resolve this thread's agent (role) — the prompt body + memory
   // namespace come from here. Currently always the built-in default,
@@ -314,7 +313,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
     Promise.all([
       listen<ChatEvent>('claude:event', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseChatEvent(e.payload) || e.payload.runId !== runId) return
         // First event of any kind = the SDK has confirmed/created the session
         // for this thread (its `system` init lands before any content). Mark
         // session-started here so a turn that dies mid-think still flips the
@@ -650,7 +649,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         },
       ),
       listen<DoneEvent>('claude:done', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseDoneEvent(e.payload) || e.payload.runId !== runId) return
         recordContextUsage(threadId, model, e.payload.usage, e.payload.contextUsage)
         // Reflect the SDK's actual fast-mode state (on / cooldown / off) for the
         // toggle. Absent → off (e.g. a model that doesn't support fast mode).
@@ -658,7 +657,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         settleOk(e.payload.stopReason)
       }),
       listen<ErrorEvent>('claude:error', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseErrorEvent(e.payload) || e.payload.runId !== runId) return
         if (e.payload.code === 'CANCELLED') {
           settleErr(new DOMException(e.payload.message, 'AbortError'))
         } else {
@@ -696,13 +695,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           settleErr(err)
         }
       }),
-      // Sidecar process death. The Rust supervisor emits this on
-      // child exit (before attempting restart). Without it, in-flight
-      // runs hang waiting on chat:event / chat:done that will never
-      // arrive — the producer is gone. We settle as a regular error
-      // so the UI shows a retry card.
-      listen<{ mode: string }>('sidecar:died', (e) => {
+      // Sidecar process death. The Rust supervisor transitions the chat
+      // sidecar to `restarting` (respawning) or `dead` (terminal) on child
+      // exit. Without settling here, in-flight runs hang waiting on
+      // claude:event / claude:done that will never arrive — the producer is
+      // gone. We settle as a regular error so the UI shows a retry card.
+      listen<{ status: string; mode: string }>('sidecar:state', (e) => {
         if (e.payload.mode !== 'chat') return
+        if (e.payload.status !== 'restarting' && e.payload.status !== 'dead') return
         settleErr(new Error('SIDECAR_DIED: chat sidecar crashed'))
       }),
     ])

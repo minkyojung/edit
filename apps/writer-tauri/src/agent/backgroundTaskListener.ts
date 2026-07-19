@@ -17,6 +17,12 @@
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { ChatEvent, DoneEvent, ErrorEvent, TaskEvent } from '@/agent/chat/types'
+import {
+  parseChatEvent,
+  parseDoneEvent,
+  parseErrorEvent,
+  parseTaskEvent,
+} from '@/agent/chat/eventSchemas'
 import { createStreamParser, type StreamParser } from '@/agent/chat/streamParser'
 import { useBackgroundTasks } from '@/stores/backgroundTasks'
 import { useThreadsStore } from '@/state/threadsStore'
@@ -45,14 +51,14 @@ export async function mountBackgroundTaskListener(): Promise<UnlistenFn> {
     // 1) Background task lifecycle → store.
     listen<TaskEvent>('claude:task', (e) => {
       const p = e.payload
-      if (!isKnownThread(p.threadId)) return
+      if (!parseTaskEvent(p) || !isKnownThread(p.threadId)) return
       useBackgroundTasks.getState().ingest(p)
     }),
 
     // 2a) Autonomous-turn content stream.
     listen<ChatEvent>('claude:event', (e) => {
       const p = e.payload
-      if (!p.background || !isKnownThread(p.threadId)) return
+      if (!parseChatEvent(p) || !p.background || !isKnownThread(p.threadId)) return
       let bg = bgTurns.get(p.runId)
       if (!bg) {
         const state: BgTurn = {
@@ -77,7 +83,7 @@ export async function mountBackgroundTaskListener(): Promise<UnlistenFn> {
     // 2b) Autonomous-turn completion → append a standalone assistant turn.
     listen<DoneEvent>('claude:done', (e) => {
       const p = e.payload
-      if (!p.background || !isKnownThread(p.threadId)) return
+      if (!parseDoneEvent(p) || !p.background || !isKnownThread(p.threadId)) return
       const bg = bgTurns.get(p.runId)
       bgTurns.delete(p.runId)
       const parts = bg ? [...bg.parts.values()] : []
@@ -101,7 +107,7 @@ export async function mountBackgroundTaskListener(): Promise<UnlistenFn> {
     // a background wake; the task row shows failed/stopped from its notification).
     listen<ErrorEvent>('claude:error', (e) => {
       const p = e.payload
-      if (!p.background) return
+      if (!parseErrorEvent(p) || !p.background) return
       bgTurns.delete(p.runId)
     }),
   ])
