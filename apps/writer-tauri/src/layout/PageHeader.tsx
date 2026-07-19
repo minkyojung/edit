@@ -19,7 +19,7 @@ import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { useObservePageTitle } from '@/hooks/useObservePageTitle'
 import { EditableTitleInput } from './EditableTitleInput'
-import { StatusControl } from './StatusControl'
+import { PropertiesPanel } from './PropertiesPanel'
 
 interface Props {
   slug: string
@@ -44,13 +44,14 @@ export function PageHeader({ slug }: Props) {
   }
 
   // User-editable docs (user-owned wiki + writing + notes) get an inline
-  // text input that doubles as the file's name on disk, plus a workflow
-  // status control above it. This branch is exactly the status-supporting
-  // set (daily / system are handled above), so no extra gate is needed.
+  // title input (doubles as the on-disk filename) followed by the properties
+  // panel below it — the Notion pattern. This branch is exactly the
+  // status-supporting set (daily / system are handled above), so the panel
+  // always applies here.
   return (
     <div>
-      <StatusControl slug={slug} status={known.status} />
       <EditableTitleInput slug={slug} currentTitle={known.title} />
+      <PropertiesPanel slug={slug} known={known} />
     </div>
   )
 }

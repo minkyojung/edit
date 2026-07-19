@@ -30,6 +30,7 @@ import { useDocLabel } from '@/hooks/useDocLabel'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useDocsStore } from '@/state/docsStore'
 import { useDocStatsStore } from '@/state/docStatsStore'
+import { formatDate } from '@/lib/formatDate'
 
 interface Props {
   open: boolean
@@ -58,7 +59,7 @@ export function DocumentInfoDialog({ open, onOpenChange }: Props) {
           </Section>
 
           <Section title="Created">
-            <Row label="Date" value={createdAt ? fmtDate(createdAt) : '—'} />
+            <Row label="Date" value={createdAt ? formatDate(createdAt) : '—'} />
           </Section>
         </div>
       </DialogContent>
@@ -89,14 +90,4 @@ function Row({ label, value }: { label: string; value: string }) {
 function fmtNum(n: number | undefined): string {
   if (n == null) return '—'
   return n.toLocaleString()
-}
-
-function fmtDate(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  })
 }

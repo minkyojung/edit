@@ -34,7 +34,7 @@ export function StatusControl({
           aria-label="상태"
           className={cn(
             badgeVariants({ variant: status ? STATUS_BADGE_VARIANT[status] : 'outline' }),
-            'mb-3 cursor-pointer',
+            'cursor-pointer',
             !status && 'text-muted-foreground',
           )}
         >
