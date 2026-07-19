@@ -24,12 +24,16 @@
 // treated as having no frontmatter. We always write a real block, so in
 // practice this ambiguity only touches files we didn't author.
 
-import { isMap, isScalar, parseDocument } from 'yaml'
+import { isMap, isScalar, isSeq, parseDocument } from 'yaml'
 
 /** Values we know how to emit. Everything reads back as a string —
  *  YAML scalars are untyped text, so the caller coerces (e.g.
  *  `Number(data.archivedAt)`) at the point of use. */
 export type FrontmatterScalar = string | number | boolean
+
+/** A value the write path can emit: a scalar, or a list of strings that
+ *  serialises as a YAML block sequence (`key:\n  - a\n  - b`). */
+export type FrontmatterValue = FrontmatterScalar | string[]
 
 export interface SplitDoc {
   /** Parsed frontmatter fields, raw string values. Empty `{}` when the
@@ -53,12 +57,12 @@ const FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n([\s\S]*)
  * survives, the body is returned on its own (no empty `---` block).
  */
 export function composeFrontmatter(
-  fields: Record<string, FrontmatterScalar | undefined | null>,
+  fields: Record<string, FrontmatterValue | undefined | null>,
   body: string,
 ): string {
   const lines = Object.entries(fields)
-    .filter(([, v]) => v !== undefined && v !== null && v !== '')
-    .map(([k, v]) => `${k}: ${escapeYamlValue(String(v))}`)
+    .filter(([, v]) => !isEmptyFieldValue(v))
+    .map(([k, v]) => emitField(k, v as FrontmatterValue))
 
   const trimmedBody = body.replace(/^\n+/, '')
   if (lines.length === 0) {
@@ -92,6 +96,18 @@ export function splitFrontmatter(raw: string): SplitDoc {
   return { data: parseFrontmatterBlock(m[1]), body: (m[2] ?? '').replace(/^(?:\r?\n)+/, '') }
 }
 
+/** Like {@link splitFrontmatter} but includes list-valued fields (`tags`)
+ *  in `data` as `string[]`, for the metadata read path. See
+ *  {@link parseFrontmatterFull}. */
+export function splitFrontmatterFull(raw: string): {
+  data: Record<string, string | string[]>
+  body: string
+} {
+  const m = FRONTMATTER_RE.exec(raw)
+  if (!m) return { data: {}, body: raw }
+  return { data: parseFrontmatterFull(m[1]), body: (m[2] ?? '').replace(/^(?:\r?\n)+/, '') }
+}
+
 /**
  * Parse the inner text of a frontmatter block (the part *between* the `---`
  * fences, already sliced out) into its top-level scalar fields. Shared by
@@ -105,6 +121,26 @@ export function splitFrontmatter(raw: string): SplitDoc {
  */
 export function parseFrontmatterBlock(inner: string): Record<string, string> {
   const data: Record<string, string> = {}
+  for (const [key, value] of Object.entries(parseFrontmatterFull(inner))) {
+    if (typeof value === 'string') data[key] = value
+  }
+  return data
+}
+
+/**
+ * Like {@link parseFrontmatterBlock} but also returns top-level list
+ * (sequence-of-scalars) values as `string[]`, for the metadata read path
+ * that needs list fields such as `tags`. Scalars still come back as their
+ * exact source text; nested maps and non-scalar list items are skipped.
+ *
+ * Kept separate so the scalar-only `parseFrontmatterBlock` contract (used by
+ * the loader / sources / splitFrontmatter) is unchanged — only the meta
+ * projection opts into lists.
+ */
+export function parseFrontmatterFull(
+  inner: string,
+): Record<string, string | string[]> {
+  const data: Record<string, string | string[]> = {}
   const doc = parseDocument(inner, { logLevel: 'silent' })
   if (isMap(doc.contents)) {
     for (const item of doc.contents.items) {
@@ -112,10 +148,17 @@ export function parseFrontmatterBlock(inner: string): Record<string, string> {
       const key = String(item.key.value).trim()
       if (!key) continue
       const value = item.value
-      // Scalars only. `.source` is the decoded scalar text: unquoted and
-      // unescaped for strings, and the original token for numbers/booleans
-      // — matching the flat string contract without a lossy type round-trip.
-      if (isScalar(value)) data[key] = value.source ?? String(value.value)
+      // `.source` is the decoded scalar text: unquoted/unescaped for strings,
+      // original token for numbers/booleans — no lossy type round-trip.
+      if (isScalar(value)) {
+        data[key] = value.source ?? String(value.value)
+      } else if (isSeq(value)) {
+        const items: string[] = []
+        for (const el of value.items) {
+          if (isScalar(el)) items.push(el.source ?? String(el.value))
+        }
+        if (items.length) data[key] = items
+      }
     }
   }
   return data
@@ -150,7 +193,7 @@ export function parseFrontmatterBlock(inner: string): Record<string, string> {
  */
 export function mergeFrontmatter(
   existingFile: string,
-  appFields: Record<string, FrontmatterScalar | undefined | null>,
+  appFields: Record<string, FrontmatterValue | undefined | null>,
   newBody: string,
 ): string {
   const m = FRONTMATTER_RE.exec(existingFile)
@@ -178,8 +221,8 @@ export function mergeFrontmatter(
   }
 
   const appLines = Object.entries(appFields)
-    .filter(([, v]) => v !== undefined && v !== null && v !== '')
-    .map(([k, v]) => `${k}: ${escapeYamlValue(String(v))}`)
+    .filter(([, v]) => !isEmptyFieldValue(v))
+    .map(([k, v]) => emitField(k, v as FrontmatterValue))
 
   const lines = [...preserved, ...appLines]
   const trimmedBody = newBody.replace(/^\n+/, '')
@@ -201,4 +244,27 @@ function escapeYamlValue(value: string): string {
   const needsQuote = /[:#]|^\s|\s$|^["'[\]{}|>!%@&*]/.test(value)
   if (!needsQuote) return value
   return `'${value.replace(/'/g, "''")}'`
+}
+
+/** True for values the write path drops: absent scalars and empty lists.
+ *  A non-empty list is kept even though it isn't a scalar. */
+function isEmptyFieldValue(v: FrontmatterValue | undefined | null): boolean {
+  if (Array.isArray(v)) return v.length === 0
+  return v === undefined || v === null || v === ''
+}
+
+/** Emit one frontmatter field. Scalars render inline (`k: v`); a string
+ *  list renders as a YAML block sequence:
+ *
+ *      k:
+ *        - a
+ *        - b
+ *
+ *  Scalar output is byte-identical to the previous scalar-only emitter, so
+ *  the flush's content-equality guard is unaffected for scalar fields. */
+function emitField(key: string, value: FrontmatterValue): string {
+  if (Array.isArray(value)) {
+    return `${key}:\n${value.map((item) => `  - ${escapeYamlValue(item)}`).join('\n')}`
+  }
+  return `${key}: ${escapeYamlValue(String(value))}`
 }

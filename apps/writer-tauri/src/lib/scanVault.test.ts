@@ -22,7 +22,11 @@ import {
   portableFrontmatterFields,
   type DocMetaFile,
 } from './docPaths'
-import { composeFrontmatter, splitFrontmatter } from './frontmatter'
+import {
+  composeFrontmatter,
+  splitFrontmatter,
+  splitFrontmatterFull,
+} from './frontmatter'
 
 const noChildren = new Map<string, string>()
 
@@ -332,6 +336,22 @@ describe('meta ⇄ frontmatter round-trip', () => {
     // rejected rather than trusted into the catalog.
     expect(frontmatterToMeta({ status: 'garbage' }).status).toBeUndefined()
     expect(frontmatterToMeta({ status: 'done' }).status).toBe('done')
+  })
+
+  it('round-trips a tags list through compose → splitFrontmatterFull', () => {
+    const meta: Partial<DocMetaFile> = {
+      slug: 'note-t',
+      createdAt: '2026-06-11T00:00:00.000Z',
+      tags: ['ai', 'finance'],
+    }
+    const file = composeFrontmatter(metaToFrontmatterFields(meta), 'body\n')
+    const { data } = splitFrontmatterFull(file)
+    expect(frontmatterToMeta(data)).toEqual(meta)
+  })
+
+  it('normalizes a scalar tags value to a single-element list', () => {
+    expect(frontmatterToMeta({ tags: 'solo' }).tags).toEqual(['solo'])
+    expect(frontmatterToMeta({ tags: [] }).tags).toBeUndefined()
   })
 
   it('round-trips youtube capture fields (durationSec stays numeric)', () => {

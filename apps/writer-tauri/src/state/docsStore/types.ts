@@ -95,6 +95,9 @@ export interface KnownDoc {
    * `.md` frontmatter via `buildMetaForKnownDoc` / `portableFrontmatterFields`,
    * read back by scanVault at boot. */
   status?: DocStatus
+  /** Free-form tags, persisted to `.md` frontmatter as a YAML list. Empty
+   * or absent when the note has none. Set via the properties panel. */
+  tags?: string[]
 }
 
 /** Coarse classification used by the DOC_POLICIES table below. Every
@@ -314,6 +317,8 @@ export interface DocsState {
   /** Set (or clear, with `undefined`) a note's workflow status and flush.
    * No-op for doc types that don't carry status (daily / system). */
   setDocStatus: (slug: string, status: DocStatus | undefined) => void
+  /** Replace a note's tag list (trimmed/de-duped; empty clears) and flush. */
+  setDocTags: (slug: string, tags: string[]) => void
   /** Switch the sidebar date view. */
   setSidebarTab: (tab: 'day' | 'week' | 'month') => void
   /** Set the Month view's anchor month (YYYY-MM). */

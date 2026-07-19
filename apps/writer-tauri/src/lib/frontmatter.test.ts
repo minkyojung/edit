@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   composeFrontmatter,
   mergeFrontmatter,
+  parseFrontmatterBlock,
+  parseFrontmatterFull,
   splitFrontmatter,
 } from './frontmatter'
 
@@ -46,6 +48,70 @@ describe('composeFrontmatter', () => {
 
   it('does not add a second trailing newline when the body has one', () => {
     expect(composeFrontmatter({ slug: 'x' }, 'body\n')).toBe('---\nslug: x\n---\n\nbody\n')
+  })
+})
+
+describe('composeFrontmatter — list values', () => {
+  it('emits a string array as a YAML block sequence', () => {
+    expect(composeFrontmatter({ tags: ['ai', 'finance'] }, 'body')).toBe(
+      '---\ntags:\n  - ai\n  - finance\n---\n\nbody\n',
+    )
+  })
+
+  it('drops an empty array (like an empty scalar)', () => {
+    expect(composeFrontmatter({ tags: [], slug: 'x' }, 'body')).toBe(
+      '---\nslug: x\n---\n\nbody\n',
+    )
+  })
+
+  it('quotes list items that need it', () => {
+    expect(composeFrontmatter({ tags: ['a: b', 'plain'] }, 'body')).toBe(
+      "---\ntags:\n  - 'a: b'\n  - plain\n---\n\nbody\n",
+    )
+  })
+
+  it('is byte-identical to the old scalar emitter for scalar-only fields', () => {
+    // Byte-stability guard: adding list support must not change scalar output.
+    expect(composeFrontmatter({ slug: 'abc', read: true }, 'b')).toBe(
+      '---\nslug: abc\nread: true\n---\n\nb\n',
+    )
+  })
+
+  it('round-trips a list through parseFrontmatterFull', () => {
+    const file = composeFrontmatter({ tags: ['x', 'y: z'] }, 'body')
+    const { data } = splitFrontmatter(file)
+    // splitFrontmatter's flat view skips the list...
+    expect(data.tags).toBeUndefined()
+    // ...but parseFrontmatterFull reads it back exactly.
+    const inner = file.slice(4, file.indexOf('\n---\n', 4))
+    expect(parseFrontmatterFull(inner).tags).toEqual(['x', 'y: z'])
+  })
+})
+
+describe('mergeFrontmatter — list values', () => {
+  it('replaces an app-owned list, preserving foreign keys', () => {
+    const existing = '---\ntags:\n  - old\naliases: [keep]\n---\n\nbody'
+    expect(mergeFrontmatter(existing, { tags: ['new', 'two'] }, 'body')).toBe(
+      '---\naliases: [keep]\ntags:\n  - new\n  - two\n---\n\nbody\n',
+    )
+  })
+
+  it('drops an app-owned list when cleared to empty', () => {
+    const existing = '---\ntags:\n  - a\nslug: s\n---\n\nb'
+    expect(mergeFrontmatter(existing, { tags: [], slug: 's' }, 'b')).toBe(
+      '---\nslug: s\n---\n\nb\n',
+    )
+  })
+})
+
+describe('parseFrontmatterFull', () => {
+  it('returns scalars as strings and sequences as arrays', () => {
+    const out = parseFrontmatterFull('slug: abc\ntags:\n  - a\n  - b')
+    expect(out).toEqual({ slug: 'abc', tags: ['a', 'b'] })
+  })
+
+  it('parseFrontmatterBlock still drops the list (scalar-only contract)', () => {
+    expect(parseFrontmatterBlock('slug: abc\ntags:\n  - a')).toEqual({ slug: 'abc' })
   })
 })
 

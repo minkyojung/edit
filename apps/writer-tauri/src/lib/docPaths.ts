@@ -29,7 +29,7 @@
 // shapes without standing up the rest of the app.
 
 import type { KnownDoc } from '@/state/docsStore'
-import type { FrontmatterScalar } from '@/lib/frontmatter'
+import type { FrontmatterValue } from '@/lib/frontmatter'
 
 /**
  * A note's workflow status. Optional per note; a note carries no `status`
@@ -87,6 +87,10 @@ export interface DocMetaFile {
    * tool, shown as a badge + a sidebar dot. Only editable note types
    * carry it — see `docSupportsStatus`. */
   status?: DocStatus
+  /** Free-form tags, persisted to `.md` frontmatter as a YAML list
+   * (`tags:\n  - a\n  - b`). User-facing and editable via the properties
+   * panel. Empty/absent when the note has no tags. */
+  tags?: string[]
 }
 
 /** Lookup a doc by slug. Required by {@link pathForDoc} only for
@@ -139,34 +143,47 @@ export function usesFrontmatter(_doc: Pick<KnownDoc, 'type'>): boolean {
   return true
 }
 
-/** Coerce a parsed frontmatter block (whose values are all raw strings)
- * into the sidecar-shaped meta the catalog overlay reads. Numeric fields
- * are parsed; unrecognised keys are ignored. Mirrors exactly the fields
- * `mdRelToKnownDoc` layers, so a doc whose metadata lives in frontmatter
- * rebuilds identically to one whose metadata lives in a `.meta.json`
- * sidecar. */
+/** Coerce a parsed frontmatter block into the sidecar-shaped meta the
+ * catalog overlay reads. Input comes from `parseFrontmatterFull`, so scalar
+ * fields arrive as strings and list fields (`tags`) as `string[]`; each read
+ * guards its own type so a malformed value (e.g. a scalar key written as a
+ * list) is dropped rather than mis-assigned. Numeric fields are parsed;
+ * unrecognised keys are ignored. Mirrors exactly the fields `mdRelToKnownDoc`
+ * layers. */
 export function frontmatterToMeta(
-  data: Record<string, string>,
+  data: Record<string, string | string[]>,
 ): Partial<DocMetaFile> {
   const meta: Partial<DocMetaFile> = {}
-  if (data.slug) meta.slug = data.slug
-  if (data.createdAt) meta.createdAt = data.createdAt
-  if (data.sourceUrl) meta.sourceUrl = data.sourceUrl
-  if (data.siteName) meta.siteName = data.siteName
-  if (data.faviconUrl) meta.faviconUrl = data.faviconUrl
-  if (data.savedAt) meta.savedAt = data.savedAt
-  if (data.readAt) meta.readAt = data.readAt
-  if (data.videoId) meta.videoId = data.videoId
-  if (data.durationSec) {
-    const n = Number(data.durationSec)
+  const str = (v: string | string[] | undefined): string | undefined =>
+    typeof v === 'string' ? v : undefined
+  if (str(data.slug)) meta.slug = str(data.slug)
+  if (str(data.createdAt)) meta.createdAt = str(data.createdAt)
+  if (str(data.sourceUrl)) meta.sourceUrl = str(data.sourceUrl)
+  if (str(data.siteName)) meta.siteName = str(data.siteName)
+  if (str(data.faviconUrl)) meta.faviconUrl = str(data.faviconUrl)
+  if (str(data.savedAt)) meta.savedAt = str(data.savedAt)
+  if (str(data.readAt)) meta.readAt = str(data.readAt)
+  if (str(data.videoId)) meta.videoId = str(data.videoId)
+  const dur = str(data.durationSec)
+  if (dur) {
+    const n = Number(dur)
     if (Number.isFinite(n)) meta.durationSec = n
   }
-  if (data.thumbnailUrl) meta.thumbnailUrl = data.thumbnailUrl
-  if (data.description) meta.description = data.description
+  if (str(data.thumbnailUrl)) meta.thumbnailUrl = str(data.thumbnailUrl)
+  if (str(data.description)) meta.description = str(data.description)
   // Validate: a `status` written by the user or the AI must be one of the
   // known values; anything else is dropped rather than trusted.
-  if (data.status && (DOC_STATUS_VALUES as readonly string[]).includes(data.status)) {
-    meta.status = data.status as DocStatus
+  const status = str(data.status)
+  if (status && (DOC_STATUS_VALUES as readonly string[]).includes(status)) {
+    meta.status = status as DocStatus
+  }
+  // Tags: a list of strings. A single scalar `tags: foo` is normalized to
+  // `['foo']` so a hand-written scalar still reads sensibly.
+  if (Array.isArray(data.tags)) {
+    const tags = data.tags.filter((t) => t.trim().length > 0)
+    if (tags.length) meta.tags = tags
+  } else if (str(data.tags)?.trim()) {
+    meta.tags = [str(data.tags) as string]
   }
   return meta
 }
@@ -185,7 +202,7 @@ export function frontmatterToMeta(
  * metadata on save. */
 export function metaToFrontmatterFields(
   meta: Partial<DocMetaFile>,
-): Record<string, FrontmatterScalar | undefined> {
+): Record<string, FrontmatterValue | undefined> {
   return {
     slug: meta.slug,
     createdAt: meta.createdAt,
@@ -199,6 +216,7 @@ export function metaToFrontmatterFields(
     thumbnailUrl: meta.thumbnailUrl,
     description: meta.description,
     status: meta.status,
+    tags: meta.tags,
   }
 }
 
@@ -213,7 +231,7 @@ export function metaToFrontmatterFields(
  * a field belongs. */
 export function portableFrontmatterFields(
   meta: Partial<DocMetaFile>,
-): Record<string, FrontmatterScalar | undefined> {
+): Record<string, FrontmatterValue | undefined> {
   return {
     createdAt: meta.createdAt,
     sourceUrl: meta.sourceUrl,
@@ -226,6 +244,7 @@ export function portableFrontmatterFields(
     thumbnailUrl: meta.thumbnailUrl,
     description: meta.description,
     status: meta.status,
+    tags: meta.tags,
   }
 }
 

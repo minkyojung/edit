@@ -160,6 +160,9 @@ export interface EditSlice {
    * flush so the `.md` frontmatter reflects it immediately. No-op for
    * doc types that don't carry status (daily / system). */
   setDocStatus: (slug: string, status: DocStatus | undefined) => void
+  /** Replace a note's tag list (trimmed, de-duped; empty clears the field),
+   * then flush. No-op for doc types that don't carry metadata. */
+  setDocTags: (slug: string, tags: string[]) => void
 }
 
 export const createEditSlice = (
@@ -290,6 +293,25 @@ export const createEditSlice = (
     // writes the cleared value through mergeSidecar — same trick
     // setArticleRead uses to drop a field.
     list[idx] = { ...cur, status }
+    set({ knownDocs: list })
+    markSlugDirty(slug)
+    void flushDirty()
+  },
+
+  setDocTags: (slug, tags) => {
+    const idx = get().knownDocs.findIndex((d) => d.slug === slug)
+    if (idx < 0) return
+    const cur = get().knownDocs[idx]
+    if (!docSupportsStatus(cur)) return
+    // Normalize: trim, drop blanks, dedupe (case-sensitive, first wins).
+    const next = Array.from(
+      new Set(tags.map((t) => t.trim()).filter((t) => t.length > 0)),
+    )
+    const prev = cur.tags ?? []
+    if (prev.length === next.length && prev.every((t, i) => t === next[i])) return
+    const list = [...get().knownDocs]
+    // Empty → undefined so buildMetaForKnownDoc drops the `tags:` block.
+    list[idx] = { ...cur, tags: next.length ? next : undefined }
     set({ knownDocs: list })
     markSlugDirty(slug)
     void flushDirty()

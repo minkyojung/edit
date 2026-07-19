@@ -10,6 +10,7 @@ import {
   IconCalendar,
   IconCircleDashed,
   IconClock,
+  IconTag,
   IconWorld,
 } from '@tabler/icons-react'
 import type { KnownDoc } from '@/state/docsStore'
@@ -18,23 +19,12 @@ import { formatDate } from '@/lib/formatDate'
 import { Switch } from '@/components/ui/switch'
 import { PropertyRow } from './PropertyRow'
 import { StatusControl } from './StatusControl'
-
-export type PropKind = 'status' | 'created' | 'source' | 'read'
-
-/** Which property rows a note shows. `status` is always present (every
- * editable note supports it); the rest appear only when their backing field
- * exists, so read-only rows never render as an empty line. */
-export function visibleProps(
-  known: Pick<KnownDoc, 'createdAt' | 'sourceUrl'>,
-): PropKind[] {
-  const rows: PropKind[] = ['status']
-  if (known.createdAt) rows.push('created')
-  if (known.sourceUrl) rows.push('source', 'read')
-  return rows
-}
+import { TagInput } from './TagInput'
+import { visibleProps } from './propertyRows'
 
 export function PropertiesPanel({ slug, known }: { slug: string; known: KnownDoc }) {
   const setArticleRead = useDocsStore((s) => s.setArticleRead)
+  const setDocTags = useDocsStore((s) => s.setDocTags)
   const rows = visibleProps(known)
 
   return (
@@ -45,6 +35,15 @@ export function PropertiesPanel({ slug, known }: { slug: string; known: KnownDoc
             return (
               <PropertyRow key={kind} icon={IconCircleDashed} label="상태">
                 <StatusControl slug={slug} status={known.status} />
+              </PropertyRow>
+            )
+          case 'tags':
+            return (
+              <PropertyRow key={kind} icon={IconTag} label="태그">
+                <TagInput
+                  tags={known.tags ?? []}
+                  onChange={(next) => setDocTags(slug, next)}
+                />
               </PropertyRow>
             )
           case 'created':
