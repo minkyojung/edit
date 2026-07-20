@@ -100,14 +100,78 @@ export function continueListItemSoft(view: EditorView): boolean {
 }
 
 /**
+ * Enter on a marker-LESS line that belongs to a list item (an indented continuation,
+ * the kind Shift+Enter creates). Obsidian's UX, which stock CM never does (its
+ * `insertNewlineContinueMarkup` only re-indents the paragraph there, by design):
+ *   • continuation WITH content → start a NEW item of the same list at the same level
+ *     (same marker kind, ordered +1, task box fresh — identical to listEnter's rules);
+ *   • WHITESPACE-ONLY continuation → exit the list: clear the indent, caret column 0
+ *     (mirrors listEnter's empty-top-level-item exit).
+ * Text-based like listEnter (never lags the parser): the governing item is found by
+ * scanning upward past indented lines to the nearest marker line; a blank or flush-left
+ * line ends the item, and an under-indented current line (lazy continuation the user
+ * typed at the margin) is NOT ours — matches livePreview's rendering gate.
+ */
+export function continuationEnter(view: EditorView): boolean {
+  const { state } = view
+  const sel = state.selection.main
+  if (!sel.empty) return false
+  const line = state.doc.lineAt(sel.head)
+  if (LIST_RE.test(line.text)) return false // marker line → listEnter's job
+  const ws = /^[ \t]*/.exec(line.text)![0].length
+  if (ws === 0) return false // flush-left → not a list continuation
+  // Find the governing marker line: walk up while lines look like continuations.
+  let m: RegExpExecArray | null = null
+  for (let n = line.number - 1; n >= 1; n--) {
+    const prev = state.doc.line(n)
+    if (prev.length === 0) return false // blank line closed the list
+    m = LIST_RE.exec(prev.text)
+    if (m) break
+    if (/^[ \t]*/.exec(prev.text)![0].length === 0) return false // flush-left non-marker
+  }
+  if (!m) return false
+  const [, indent, marker, gap, task] = m
+  const contentCol = indent.length + marker.length + gap.length
+
+  // Whitespace-only continuation → exit the list (clear indent, caret col 0).
+  if (ws === line.text.length) {
+    view.dispatch({
+      changes: { from: line.from, to: line.to, insert: '' },
+      selection: { anchor: line.from },
+      scrollIntoView: true,
+      userEvent: 'delete',
+    })
+    return true
+  }
+
+  if (ws < contentCol) return false // lazy continuation typed at the margin → not ours
+  // Continuation with content → new item of the same list (same rules as listEnter).
+  const ordered = /^(\d+)([.)])$/.exec(marker)
+  const nextMarker = ordered ? `${parseInt(ordered[1], 10) + 1}${ordered[2]}` : marker
+  const insert = '\n' + indent + nextMarker + gap + (task ? '[ ] ' : '')
+  view.dispatch({
+    changes: { from: sel.head, to: sel.head, insert },
+    selection: { anchor: sel.head + insert.length },
+    scrollIntoView: true,
+    userEvent: 'input',
+  })
+  return true
+}
+
+/**
  * The full Enter behaviour for the editor (and the IME-recovery path). Order:
- *  1. listEnter — deterministic tight list continuation / clean exit.
- *  2. blockquote (`>`) ONLY → CM's markup-continue (it handles quote continuation
+ *  1. listEnter — deterministic tight list continuation / clean exit (marker lines).
+ *  2. continuationEnter — Obsidian-style Enter on an indented continuation line:
+ *     new same-level item (content) or list exit (whitespace-only).
+ *  3. blockquote (`>`) ONLY → CM's markup-continue (it handles quote continuation
  *     fine). We gate it to quote lines because `insertNewlineContinueMarkup`
- *     MIS-handles a paragraph that lezer treats as a list item's lazy continuation
- *     (a non-marker line directly under a task) — it deletes the text. So for any
- *     non-list, non-quote line we use a plain newline instead.
- *  3. plain newline.
+ *     MIS-handles a lazy-continuation line SHORTER than the marker width — its
+ *     emptyLine check slices the line at the marker column, gets "", and the
+ *     empty-item path deletes the typed text (verified live on 6.5.0; the borrowed
+ *     marker-line columns are the package's historically buggy zone, cf. changelog
+ *     0.17.2 / 0.18.2 / 6.1.1 / 6.5.1). So for any non-list, non-quote line we use
+ *     a plain newline instead.
+ *  4. plain newline (with indent maintenance for code blocks).
  */
 // Shared dedupe signal for the two Enter paths (keymap on keydown, imeListContinue
 // on beforeinput). Whenever smartEnter actually handles an Enter it stamps the
@@ -120,7 +184,7 @@ export function enterHandledRecently(ms = 50): boolean {
 }
 
 export function smartEnter(view: EditorView): boolean {
-  let handled = listEnter(view)
+  let handled = listEnter(view) || continuationEnter(view)
   if (!handled) {
     const line = view.state.doc.lineAt(view.state.selection.main.head)
     handled = /^\s*>/.test(line.text) ? insertNewlineContinueMarkup(view) : insertNewlineAndIndent(view)
