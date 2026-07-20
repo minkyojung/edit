@@ -94,9 +94,11 @@ describe('list markers — tree path + immediate regex fallback', () => {
     expect(cont).toBeUndefined()
   })
 
-  it('a continuation INDENTED to the content column DOES hang at the body column', () => {
+  it('a continuation INDENTED to the content column hangs at the body column, its leading spaces pulled back', () => {
     // `- a\n  b` — `b` is indented 2 cols (= the `- ` content column), so it is a real
-    // list continuation and hangs at the body column with text-indent:0.
+    // list continuation and hangs at the body column (2.05em). Its 2 literal spaces are
+    // pulled back by text-indent (2 × LIST_MARKER_SPACE 0.25 = 0.5em) so the first row
+    // and any wrapped row both land at the body column — no double indent.
     const doc = '- a\n  b'
     const line2From = doc.indexOf('\n') + 1
     const cont = decos(doc).find(
@@ -104,7 +106,7 @@ describe('list markers — tree path + immediate regex fallback', () => {
     )
     const style = (cont?.value.spec as { attributes?: { style?: string } })?.attributes?.style ?? ''
     expect(style).toContain('padding-left:2.05em')
-    expect(style).toContain('text-indent:0')
+    expect(style).toContain('text-indent:-0.5em')
   })
 })
 

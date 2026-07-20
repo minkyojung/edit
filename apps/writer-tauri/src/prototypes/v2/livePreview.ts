@@ -406,11 +406,8 @@ function buildDecos(
         if (listLinesDone.has(line.from)) continue // Lezer already styled this line
         const lm = /^(\s*)([-*+]|\d+[.)])\s/.exec(line.text)
         if (!lm) {
-          // No marker — but a hard-break / lazy-continuation line inside a list item
-          // (Shift+Enter → plain newline, no marker, no leading space) still needs the
-          // hanging indent, or its text runs back under the bullet. Give it the body
-          // column with `text-indent:0` (no marker to pull back). Same `LIST_INDENT`
-          // grid as the marker line, so wrapped and hard-break lines share one x.
+          // No marker — a continuation line the tree folds into a list item. Hang it at
+          // the item's body column so its wrapped rows align under the content.
           if (line.from === line.to) continue // blank line — nothing to indent
           if (inCodeContext(state, line.from)) continue // literal code line in a list
           const ctx = listItemContextAt(state, line.from)
@@ -423,11 +420,16 @@ function buildDecos(
           // blank separator line gets a character.
           const ws = line.text.length - line.text.trimStart().length
           if (ws < ctx.contentCol) continue
+          // The line's own leading spaces render, so pull the first visual row back by
+          // their width (≈ `ws` × the font's space advance, the same LIST_MARKER_SPACE
+          // approximation the marker line uses). Net: the first row's text and every
+          // wrapped row both land at the body column — no double indent, no measuring,
+          // still line-decoration-only → IME-safe.
           out.push(
             Decoration.line({
               class: 'cm-list-line',
               attributes: {
-                style: `padding-left:${(ctx.level + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:0`,
+                style: `padding-left:${(ctx.level + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:-${ws * LIST_MARKER_SPACE}em`,
               },
             }).range(line.from),
           )
