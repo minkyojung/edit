@@ -24,6 +24,8 @@ import { pathForDoc, sanitizeFilename, type DocStatus } from '@/lib/docPaths'
 import {
   clearTypedFieldPatch,
   effectiveEntries,
+  isAlwaysShownKey,
+  isNumericKey,
   RESERVED_PROPERTY_KEYS,
   TYPED_KEY_TO_META,
   typedFieldPatch,
@@ -387,6 +389,8 @@ export const createEditSlice = (
     if (!docSupportsStatus(cur)) return false
     const trimmedKey = key.trim()
     if (!trimmedKey || RESERVED_PROPERTY_KEYS.includes(trimmedKey)) return false
+    // Numeric-only names can't hold a stable row position (see isNumericKey).
+    if (isNumericKey(trimmedKey)) return false
     // Duplicate = already a row in the panel's effective view (covers
     // both fm entries and typed fields that carry a value).
     const taken = effectiveEntries(cur.fm, cur).some((e) => e.key === trimmedKey)
@@ -402,6 +406,11 @@ export const createEditSlice = (
     const nextKey = newKey.trim()
     if (!nextKey || nextKey === oldKey) return false
     if (RESERVED_PROPERTY_KEYS.includes(nextKey)) return false
+    // Numeric-only names can't hold a stable row position (see isNumericKey).
+    if (isNumericKey(nextKey)) return false
+    // status/tags are structural affordances — renaming one leaves a
+    // re-pinned empty duplicate behind (see isAlwaysShownKey).
+    if (isAlwaysShownKey(oldKey)) return false
     // Materialize the effective view so a typed key that isn't in fm yet
     // (status set via the badge, never panel-placed) can still be renamed
     // at the position the panel shows it in.
@@ -428,6 +437,9 @@ export const createEditSlice = (
     if (idx < 0) return
     const cur = get().knownDocs[idx]
     if (!docSupportsStatus(cur)) return
+    // status/tags can't be removed — the row would re-pin empty at the top
+    // (see isAlwaysShownKey). Clear their value via the dedicated control.
+    if (isAlwaysShownKey(key)) return
     const fm = effectiveEntries(cur.fm, cur).filter((e) => e.key !== key)
     const list = [...get().knownDocs]
     // The flush claims every scalar key of the on-disk block, so a key

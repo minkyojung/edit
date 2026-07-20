@@ -12,11 +12,40 @@ import { describe, expect, it } from 'vitest'
 import {
   effectiveEntries,
   fmEntriesFromData,
+  isAlwaysShownKey,
+  isNumericKey,
   orderedFrontmatterFields,
   typedFieldPatch,
 } from './docProperties'
 import { mergeFrontmatter, splitFrontmatterFull } from './frontmatter'
 import { portableFrontmatterFields, type DocMetaFile } from './docPaths'
+
+describe('isAlwaysShownKey — structural affordance rows', () => {
+  it('marks status + tags structural (not renamable/deletable), others not', () => {
+    // status/tags are always re-pinned by effectiveEntries, so the store
+    // and panel must refuse to rename/delete them; every other key is a
+    // normal, removable row.
+    expect(isAlwaysShownKey('status')).toBe(true)
+    expect(isAlwaysShownKey('tags')).toBe(true)
+    expect(isAlwaysShownKey('created')).toBe(false)
+    expect(isAlwaysShownKey('source')).toBe(false)
+    expect(isAlwaysShownKey('custom')).toBe(false)
+  })
+})
+
+describe('isNumericKey — order-unstable key names the app refuses', () => {
+  it('flags digit-only names, accepts anything with a non-digit', () => {
+    // Integer-like keys enumerate numerically in JS objects, so they can't
+    // hold a stable row/file position — addDocProperty/renameDocProperty
+    // reject them.
+    expect(isNumericKey('1')).toBe(true)
+    expect(isNumericKey('2024')).toBe(true)
+    expect(isNumericKey('2024년')).toBe(false)
+    expect(isNumericKey('q1')).toBe(false)
+    expect(isNumericKey('priority')).toBe(false)
+    expect(isNumericKey('')).toBe(false)
+  })
+})
 
 describe('fmEntriesFromData', () => {
   it('preserves file key order through the parser', () => {

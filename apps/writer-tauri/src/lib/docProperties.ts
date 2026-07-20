@@ -23,8 +23,13 @@ export interface FmEntry {
 }
 
 /** Project `splitFrontmatterFull(...).data` into the ordered entry list.
- *  JS objects preserve string-key insertion order, and the YAML parser
- *  inserts keys in document order, so `Object.entries` IS the file order.
+ *  JS objects preserve insertion order for string keys, and the YAML
+ *  parser inserts keys in document order, so `Object.entries` tracks file
+ *  order — EXCEPT for integer-like keys ("1", "2024"), which JS always
+ *  enumerates in ascending numeric order first. Those would break the
+ *  file-order = row-order invariant, so the app refuses to create them
+ *  (see {@link isNumericKey}); an externally-authored numeric key stays
+ *  readable, only its row position isn't guaranteed.
  *  Returns undefined for an empty block so docs without frontmatter don't
  *  carry an empty array through the catalog. */
 export function fmEntriesFromData(
@@ -137,6 +142,27 @@ function typedValueOf(
  * placeholder (`''` / `[]`) so its position survives in-session; the
  * emitter drops empty values, so placeholders never reach disk. */
 export const ALWAYS_SHOWN_KEYS: readonly TypedPanelKey[] = ['status', 'tags']
+
+/** True for the structural affordance keys that {@link effectiveEntries}
+ *  re-pins to the top whenever the file hasn't placed them. Because they
+ *  can never truly be absent, they can't be renamed or deleted as rows —
+ *  a rename would leave the re-pinned empty original behind (a phantom
+ *  duplicate) and a delete would immediately reappear. Their VALUE is
+ *  cleared through the dedicated controls (StatusControl "Clear",
+ *  TagInput chip removal), so the row menu on them is redundant anyway. */
+export function isAlwaysShownKey(key: string): boolean {
+  return (ALWAYS_SHOWN_KEYS as readonly string[]).includes(key)
+}
+
+/** True for a key that is only ASCII digits (e.g. "1", "2024"). JS objects
+ *  enumerate integer-like keys in ascending numeric order rather than
+ *  insertion order, so such a key can't hold a stable row/file position
+ *  (see {@link fmEntriesFromData}). The app refuses to create or rename to
+ *  these — the one path by which a numeric key could enter through the
+ *  panel. */
+export function isNumericKey(key: string): boolean {
+  return /^\d+$/.test(key)
+}
 
 export function effectiveEntries(
   fm: FmEntry[] | undefined,

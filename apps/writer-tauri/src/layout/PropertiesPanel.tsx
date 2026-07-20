@@ -37,6 +37,7 @@ import {
 import type { KnownDoc } from '@/state/docsStore'
 import { useDocsStore } from '@/state/docsStore'
 import { Switch } from '@/components/ui/switch'
+import { isAlwaysShownKey } from '@/lib/docProperties'
 import { PropertyRow } from './PropertyRow'
 import { StatusControl } from './StatusControl'
 import { TagInput } from './TagInput'
@@ -224,6 +225,10 @@ function SortableRow({ slug, known, row }: { slug: string; known: KnownDoc; row:
   const deleteDocProperty = useDocsStore((s) => s.deleteDocProperty)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: row.key })
+  // status/tags are structural affordance rows: always re-pinned, so they
+  // can't be renamed or removed (the model rejects it too). Drop the row
+  // menu on them — their value is cleared via the dedicated control.
+  const structural = isAlwaysShownKey(row.key)
 
   return (
     <div
@@ -235,8 +240,8 @@ function SortableRow({ slug, known, row }: { slug: string; known: KnownDoc; row:
         icon={iconFor(row)}
         label={row.key}
         dragProps={{ ...attributes, ...listeners }}
-        onRename={(newKey) => renameDocProperty(slug, row.key, newKey)}
-        onDelete={() => deleteDocProperty(slug, row.key)}
+        onRename={structural ? undefined : (newKey) => renameDocProperty(slug, row.key, newKey)}
+        onDelete={structural ? undefined : () => deleteDocProperty(slug, row.key)}
       >
         <RowValue slug={slug} known={known} row={row} />
       </PropertyRow>
