@@ -28,7 +28,6 @@ import {
   IconCalendar,
   IconCircleDashed,
   IconClock,
-  IconGripVertical,
   IconList,
   IconPlus,
   IconTag,
@@ -235,17 +234,7 @@ function SortableRow({ slug, known, row }: { slug: string; known: KnownDoc; row:
       <PropertyRow
         icon={iconFor(row)}
         label={row.key}
-        handle={
-          <button
-            type="button"
-            aria-label={`Reorder ${row.key}`}
-            {...attributes}
-            {...listeners}
-            className="flex w-4 shrink-0 cursor-grab items-center justify-center rounded-sm text-muted-foreground/50 opacity-0 transition-opacity group-hover/prop:opacity-100 hover:text-muted-foreground active:cursor-grabbing"
-          >
-            <IconGripVertical size={15} stroke={1.75} />
-          </button>
-        }
+        dragProps={{ ...attributes, ...listeners }}
         onRename={(newKey) => renameDocProperty(slug, row.key, newKey)}
         onDelete={() => deleteDocProperty(slug, row.key)}
       >

@@ -1,14 +1,23 @@
-// One row of the note properties panel: an optional drag handle in the
-// left gutter, a fixed-width `[icon] key` cell, and the value control,
-// aligned to a common left edge across rows (the Notion property look).
+// One row of the note properties panel: a fixed-width `[icon] key` cell
+// aligned with the title's left edge, and the value control beside it
+// (the Notion property look).
 //
-// The key cell is a BUTTON: clicking it opens a compact solid menu
-// (Rename / Delete — the FolderTree row-menu surface). Rename swaps the
-// cell for an inline input (IME-guarded, Enter commits, Escape reverts,
-// blur commits — the EditableTitleInput convention). Rows without
-// `onRename`/`onDelete` fall back to a plain non-interactive cell.
+// The icon slot doubles as the drag handle (Notion's trick — no extra
+// gutter, so the row stays left-aligned with the title): the property
+// icon shows at rest and swaps to a ⋮⋮ grip on row hover, in the same
+// 15px box. The KEY LABEL is the menu trigger — clicking it opens a
+// compact solid Rename/Delete menu; Rename swaps the label for an inline
+// input (IME-guarded, Enter commits, Escape reverts, blur commits — the
+// EditableTitleInput convention).
 
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
 import { cn } from '@/lib/utils'
 import {
   DropdownMenu,
@@ -16,7 +25,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { IconPencil, IconTrash } from '@tabler/icons-react'
+import { IconGripVertical, IconPencil, IconTrash } from '@tabler/icons-react'
 
 type IconComponent = React.ComponentType<{
   size?: number | string
@@ -35,16 +44,17 @@ export function PropertyRow({
   icon: Icon,
   label,
   children,
-  handle,
+  dragProps,
   onRename,
   onDelete,
 }: {
   icon: IconComponent
   label: string
   children: ReactNode
-  /** Drag-handle node rendered in the row's left gutter (visible on row
-   * hover). The sortable wrapper owns its listeners. */
-  handle?: ReactNode
+  /** dnd-kit sortable listeners + attributes, spread onto the icon slot
+   * so the icon area IS the drag handle. Absent → the row isn't
+   * draggable and the icon just renders. */
+  dragProps?: ComponentProps<'button'>
   /** Commit a new key name. Absent → the key cell isn't renamable. */
   onRename?: (newKey: string) => void
   /** Remove this property row. Absent → no delete menu item. */
@@ -78,14 +88,38 @@ export function PropertyRow({
     }
   }
 
-  const interactive = Boolean(onRename || onDelete)
+  // The icon slot: property icon at rest, ⋮⋮ grip on row hover, both in
+  // the same 15px box so nothing shifts. When draggable it's the handle.
+  const iconSlot = (
+    <button
+      type="button"
+      {...dragProps}
+      aria-label={dragProps ? `Reorder ${label}` : undefined}
+      className={cn(
+        'relative flex size-[15px] shrink-0 items-center justify-center text-muted-foreground',
+        dragProps && 'cursor-grab active:cursor-grabbing',
+      )}
+    >
+      <Icon
+        size={15}
+        stroke={1.75}
+        className={cn('shrink-0', dragProps && 'transition-opacity group-hover/prop:opacity-0')}
+      />
+      {dragProps ? (
+        <IconGripVertical
+          size={15}
+          stroke={1.75}
+          className="absolute opacity-0 transition-opacity group-hover/prop:opacity-100"
+        />
+      ) : null}
+    </button>
+  )
 
   return (
-    <div className="group/prop relative -mx-1.5 flex min-h-8 items-center gap-2 rounded-md px-1.5 transition-colors hover:bg-accent/40">
-      {handle}
-      {renaming ? (
-        <div className="flex w-36 shrink-0 items-center gap-1.5 text-footnote">
-          <Icon size={15} stroke={1.75} className="shrink-0 text-muted-foreground" />
+    <div className="group/prop -mx-1.5 flex min-h-8 items-center gap-2 rounded-md px-1.5 transition-colors hover:bg-accent/40">
+      <div className="flex w-36 shrink-0 items-center gap-1.5 text-footnote text-muted-foreground">
+        {iconSlot}
+        {renaming ? (
           <input
             ref={inputRef}
             value={draft}
@@ -94,49 +128,45 @@ export function PropertyRow({
             onKeyDown={onKeyDown}
             className="w-full min-w-0 rounded-sm bg-input/50 px-1 py-0.5 text-footnote text-foreground outline-none"
           />
-        </div>
-      ) : interactive ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="flex w-36 shrink-0 cursor-pointer items-center gap-1.5 rounded-sm px-1 py-1 text-left text-footnote text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <Icon size={15} stroke={1.75} className="shrink-0" />
-              <span className="truncate">{label}</span>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            side="bottom"
-            align="start"
-            sideOffset={4}
-            className={KEY_MENU_SURFACE}
-          >
-            {onRename ? (
-              <DropdownMenuItem
-                onSelect={() => {
-                  setDraft(label)
-                  setRenaming(true)
-                }}
+        ) : onRename || onDelete ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="min-w-0 flex-1 cursor-pointer truncate rounded-sm px-1 py-0.5 text-left transition-colors hover:bg-accent hover:text-foreground"
               >
-                <IconPencil size={15} stroke={1.75} />
-                Rename
-              </DropdownMenuItem>
-            ) : null}
-            {onDelete ? (
-              <DropdownMenuItem variant="destructive" onSelect={onDelete}>
-                <IconTrash size={15} stroke={1.75} />
-                Delete
-              </DropdownMenuItem>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : (
-        <div className="flex w-36 shrink-0 items-center gap-1.5 px-1 text-footnote text-muted-foreground">
-          <Icon size={15} stroke={1.75} className="shrink-0" />
-          <span className="truncate">{label}</span>
-        </div>
-      )}
+                {label}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              side="bottom"
+              align="start"
+              sideOffset={4}
+              className={KEY_MENU_SURFACE}
+            >
+              {onRename ? (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setDraft(label)
+                    setRenaming(true)
+                  }}
+                >
+                  <IconPencil size={15} stroke={1.75} />
+                  Rename
+                </DropdownMenuItem>
+              ) : null}
+              {onDelete ? (
+                <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+                  <IconTrash size={15} stroke={1.75} />
+                  Delete
+                </DropdownMenuItem>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <span className="truncate px-1">{label}</span>
+        )}
+      </div>
       <div className="min-w-0 flex-1 text-body text-foreground">{children}</div>
     </div>
   )
