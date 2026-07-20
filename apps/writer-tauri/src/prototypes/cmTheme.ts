@@ -230,6 +230,15 @@ export const cmPrototypeTheme = EditorView.theme({
     textAlign: 'right',
     position: 'relative',
   },
+  // A marker-LESS continuation line's leading indent, rendered as a fixed body-column
+  // spacer (width set inline per nesting level by livePreview) so the content after it
+  // lands at the same body column as the marker line — the counterpart to
+  // `.cm-list-marker`. `white-space:pre` keeps the spaces as real caret positions.
+  '.cm-list-cont-indent': {
+    display: 'inline-block',
+    boxSizing: 'border-box',
+    whiteSpace: 'pre',
+  },
   // List bullet (v2 step 1) — Ixora's trick: hide the source dash with
   // `visibility:hidden` (keeps its box → full caret height) and draw a • over it
   // with an absolutely-positioned ::after. Geometry never changes on reveal → no
