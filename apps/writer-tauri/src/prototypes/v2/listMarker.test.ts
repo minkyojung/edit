@@ -97,8 +97,8 @@ describe('list markers — tree path + immediate regex fallback', () => {
   it('a continuation INDENTED to the content column hangs at the body column, its leading spaces pulled back', () => {
     // `- a\n  b` — `b` is indented 2 cols (= the `- ` content column), so it is a real
     // list continuation and hangs at the body column (2.05em). Its 2 literal spaces are
-    // pulled back by text-indent (2 × LIST_MARKER_SPACE 0.25 = 0.5em) so the first row
-    // and any wrapped row both land at the body column — no double indent.
+    // pulled back by the EXACT measured width (2 × --cm-space-w), so the first row and
+    // any wrapped row both land at the body column — no space-advance guess.
     const doc = '- a\n  b'
     const line2From = doc.indexOf('\n') + 1
     const cont = decos(doc).find(
@@ -106,7 +106,21 @@ describe('list markers — tree path + immediate regex fallback', () => {
     )
     const style = (cont?.value.spec as { attributes?: { style?: string } })?.attributes?.style ?? ''
     expect(style).toContain('padding-left:2.05em')
-    expect(style).toContain('text-indent:-0.5em')
+    expect(style).toContain('text-indent:calc(2 * var(--cm-space-w, 0.25em) * -1)')
+  })
+
+  it('an EMPTY indented continuation (Shift+Enter, before typing) also hangs at the body column', () => {
+    // `- item\n  ` — Lezer leaves the whitespace-only line OUTSIDE the ListItem, so the
+    // context is inherited from the item above. It still gets the pull-back, so the caret
+    // sits at the body column, not the ambiguous mid-indent spot (the reported bug).
+    const doc = '- item\n  '
+    const line2From = doc.indexOf('\n') + 1
+    const cont = decos(doc).find(
+      (r) => r.from === line2From && (r.value.spec as { class?: string }).class === 'cm-list-line',
+    )
+    const style = (cont?.value.spec as { attributes?: { style?: string } })?.attributes?.style ?? ''
+    expect(style).toContain('padding-left:2.05em')
+    expect(style).toContain('text-indent:calc(2 * var(--cm-space-w, 0.25em) * -1)')
   })
 })
 
