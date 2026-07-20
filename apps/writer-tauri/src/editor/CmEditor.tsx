@@ -58,7 +58,7 @@ import { refreshTemplateSlashItems } from '@/lib/templates'
 import { wikilinkMenu, wikilinkKeymap } from '@/editor/wikilinkMenu'
 import { smartEnter, continueListItemSoft } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
-import { clearTopLevelMarkerBackward } from '@/prototypes/listBackspace'
+import { clearTopLevelMarkerBackward, dedentContinuationBackward } from '@/prototypes/listBackspace'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
 import { richTextCopy } from './cmRichCopy'
 import { htmlPaste } from './cmHtmlPaste'
@@ -200,6 +200,9 @@ export function CmEditor({ handle, header }: Props) {
               // BEFORE deleteMarkupBackward; returns false for nested / code /
               // mid-content so CM's indentation-preserving delete stays intact.
               { key: 'Backspace', run: clearTopLevelMarkerBackward },
+              // Indented, marker-less list continuation (Shift+Enter's output) → one
+              // press clears the whole indent to leave the item. Before deleteMarkupBackward.
+              { key: 'Backspace', run: dedentContinuationBackward },
               { key: 'Backspace', run: deleteMarkupBackward },
               indentWithTab,
               ...defaultKeymap,
