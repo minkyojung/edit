@@ -17,8 +17,9 @@ import { useEffect, useRef } from 'react'
 import { EditorState, Prec, Annotation } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands'
+import { highlightSelectionMatches } from '@codemirror/search'
 import { indentUnit } from '@codemirror/language'
-import { markdown, deleteMarkupBackward } from '@codemirror/lang-markdown'
+import { markdown, deleteMarkupBackward, pasteURLAsLink } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
@@ -56,9 +57,10 @@ import { openLinkSafely } from '@/editor/linkUtils'
 import { slashMenu, slashKeymap } from '@/editor/slashMenu'
 import { refreshTemplateSlashItems } from '@/lib/templates'
 import { wikilinkMenu, wikilinkKeymap } from '@/editor/wikilinkMenu'
-import { smartEnter } from '@/prototypes/listEnter'
+import { smartEnter, shiftEnter } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
-import { clearTopLevelMarkerBackward } from '@/prototypes/listBackspace'
+import { spaceWidthProbe } from '@/prototypes/spaceWidth'
+import { dedentContinuationBackward } from '@/prototypes/listBackspace'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
 import { richTextCopy } from './cmRichCopy'
 import { htmlPaste } from './cmHtmlPaste'
@@ -163,6 +165,10 @@ export function CmEditor({ handle, header }: Props) {
           doc: handle.bodyMarkdown,
           extensions: [
             history(),
+            // Measure the body font's space advance → `--cm-space-w`, so list
+            // continuation hanging-indent can pull leading spaces back by their exact
+            // width (not a guess). Must precede livePreviewV2, which reads the variable.
+            spaceWidthProbe(),
             // Safari/WKWebView drops the Enter that confirms an IME composition, so a
             // Korean list item + Enter wouldn't continue the list. Recover it from the
             // browser's own beforeinput (insertParagraph/insertLineBreak) signal.
@@ -183,15 +189,23 @@ export function CmEditor({ handle, header }: Props) {
             // ENTER — one deterministic handler at Prec.highest: tight list continuation
             // / clean exit, blockquote continuation, else plain newline. Must beat every
             // other Enter handler so CM's loose-list inference never runs.
-            Prec.highest(keymap.of([{ key: 'Enter', run: smartEnter }])),
+            // SHIFT-ENTER — continue the same list item on an INDENTED new line (real
+            // continuation, not a flush-left lazy one); returns false off a list so the
+            // default soft newline stands. Highest prec so it beats defaultKeymap's.
+            Prec.highest(
+              keymap.of([
+                { key: 'Enter', run: smartEnter },
+                { key: 'Shift-Enter', run: shiftEnter },
+              ]),
+            ),
             // ⌘B/⌘I/⌘E/⌘⇧X wrap toggles (Prec.high → beats defaultKeymap). ⌘K
             // (link) is intentionally omitted: it opens the command palette.
             inlineFormatKeymapNoLink,
             keymap.of([
-              // Top-level bullet Backspace → clean delete (no ghost "  "). Runs
-              // BEFORE deleteMarkupBackward; returns false for nested / code /
-              // mid-content so CM's indentation-preserving delete stays intact.
-              { key: 'Backspace', run: clearTopLevelMarkerBackward },
+              // Indented, marker-less list continuation (Shift+Enter's output) → one
+              // press clears the whole indent to leave the item. Before deleteMarkupBackward,
+              // which handles markers (incl. a clean column-0 delete on lang-markdown 6.5).
+              { key: 'Backspace', run: dedentContinuationBackward },
               { key: 'Backspace', run: deleteMarkupBackward },
               indentWithTab,
               ...defaultKeymap,
@@ -205,6 +219,10 @@ export function CmEditor({ handle, header }: Props) {
             EditorView.contentAttributes.of({ lang: 'en' }),
             markdown({ extensions: [GFM], addKeymap: false }),
             placeholder('Start writing…'),
+            // Highlight other occurrences of the selected text (stock @codemirror/search).
+            // minSelectionLength 2 so a single-char selection doesn't flood the viewport;
+            // viewport-scoped + plain mark decoration → cheap and IME-safe.
+            highlightSelectionMatches({ minSelectionLength: 2 }),
             taskCheckboxClick,
             livePreviewV2,
             blocksV2,
@@ -236,6 +254,10 @@ export function CmEditor({ handle, header }: Props) {
             linkClick(openLinkSafely), // Cmd/Ctrl-click [text](url) → open (safe schemes)
             mediaDropPaste(importMediaToVault), // drop/paste media → vault + insert
             htmlPaste, // paste rich web HTML → markdown (after media: files win)
+            // Paste a URL over a non-empty selection → `[selection](url)`. Stock
+            // lang-markdown; disjoint from htmlPaste (it reads text/plain only and
+            // wraps, else returns false) so it slots in after it.
+            pasteURLAsLink,
             richTextCopy, // Cmd+C/X → clipboard carries html + markdown
             cmInBufferReview(handle.slug), // AI suggestions → in-buffer red/green (Option B)
             // Save: mirror the doc text into the handle cache + flag dirty. The flush

@@ -82,6 +82,14 @@ export const cmPrototypeTheme = EditorView.theme({
   '.cm-list-line': {
     paddingTop: 'var(--prose-gap-list, 0)',
     lineHeight: 'var(--prose-lh-list, 1.35)',
+    // Lists opt OUT of the app's default text-align:justify. Justify stretches the
+    // spaces of every wrapped row — including a continuation's leading indent spaces
+    // and the space after a marker — so first-row content drifts right of the hanging
+    // column (measured: up to ~9px in English, worse in Korean where few spaces absorb
+    // all the stretch). Hanging indent and justify are structurally incompatible on
+    // the indent region; every canonical implementation (Obsidian et al) keeps lists
+    // ragged-right. Paragraphs stay justified.
+    textAlign: 'left',
   },
   // The FIRST logical line has nothing above it to separate from — the 48px
   // `.cm-content` padding already sets the top inset — so it opts out of the
@@ -112,6 +120,14 @@ export const cmPrototypeTheme = EditorView.theme({
     {
       backgroundColor: 'color-mix(in oklch, var(--info) 22%, transparent)',
     },
+  // Other occurrences of the selected text (highlightSelectionMatches). A neutral,
+  // subtler wash than the selection's --info tint, so the match reads as "same word
+  // elsewhere" without competing with the active selection. Overrides the package's
+  // default green baseTheme, which clashes on a dark palette.
+  '.cm-selectionMatch': {
+    backgroundColor: 'color-mix(in oklch, var(--foreground) 13%, transparent)',
+    borderRadius: '2px',
+  },
 
   // Headings (line decorations)
   '.cm-h1, .cm-h2, .cm-h3, .cm-h4, .cm-h5, .cm-h6': {
