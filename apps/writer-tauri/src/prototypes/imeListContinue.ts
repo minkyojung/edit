@@ -27,18 +27,21 @@
 
 import { EditorView } from '@codemirror/view'
 import { Prec, type Extension } from '@codemirror/state'
-import { smartEnter, enterHandledRecently } from './listEnter'
-
-const NEWLINE_INTENT = new Set(['insertParagraph', 'insertLineBreak'])
+import { smartEnter, shiftEnter, enterHandledRecently } from './listEnter'
 
 export function imeListContinue(): Extension {
   return Prec.highest(
     EditorView.domEventHandlers({
       beforeinput(event, view) {
-        if (!NEWLINE_INTENT.has(event.inputType)) return false
-        if (enterHandledRecently()) return false // the keymap already took this Enter
+        // insertParagraph = Enter (new item / exit), insertLineBreak = Shift+Enter
+        // (indented continuation). Route each to the SAME handler the keymap uses, so
+        // a composition-confirming key CM dropped still does the right thing.
+        const isParagraph = event.inputType === 'insertParagraph'
+        const isLineBreak = event.inputType === 'insertLineBreak'
+        if (!isParagraph && !isLineBreak) return false
+        if (enterHandledRecently()) return false // the keymap already took this key
         event.preventDefault()
-        return smartEnter(view)
+        return isLineBreak ? shiftEnter(view) : smartEnter(view)
       },
     }),
   )

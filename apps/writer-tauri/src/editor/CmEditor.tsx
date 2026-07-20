@@ -56,7 +56,7 @@ import { openLinkSafely } from '@/editor/linkUtils'
 import { slashMenu, slashKeymap } from '@/editor/slashMenu'
 import { refreshTemplateSlashItems } from '@/lib/templates'
 import { wikilinkMenu, wikilinkKeymap } from '@/editor/wikilinkMenu'
-import { smartEnter, continueListItemSoft } from '@/prototypes/listEnter'
+import { smartEnter, shiftEnter } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
 import { clearTopLevelMarkerBackward, dedentContinuationBackward } from '@/prototypes/listBackspace'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
@@ -189,7 +189,7 @@ export function CmEditor({ handle, header }: Props) {
             Prec.highest(
               keymap.of([
                 { key: 'Enter', run: smartEnter },
-                { key: 'Shift-Enter', run: continueListItemSoft },
+                { key: 'Shift-Enter', run: shiftEnter },
               ]),
             ),
             // ⌘B/⌘I/⌘E/⌘⇧X wrap toggles (Prec.high → beats defaultKeymap). ⌘K

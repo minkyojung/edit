@@ -8,7 +8,7 @@ import { EditorView } from '@codemirror/view'
 import { forceParsing } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
-import { smartEnter, continueListItemSoft } from './listEnter'
+import { smartEnter, continueListItemSoft, shiftEnter, enterHandledRecently } from './listEnter'
 
 function mk(doc: string) {
   const v = new EditorView({
@@ -87,6 +87,27 @@ describe('continueListItemSoft — Shift+Enter indents the continuation to the c
     const v = mk('plain paragraph')
     expect(continueListItemSoft(v)).toBe(false)
     expect(v.state.doc.toString()).toBe('plain paragraph')
+    v.destroy()
+  })
+})
+
+describe('shiftEnter — list continuation or plain newline, stamps the Enter signal', () => {
+  it('in a list: indents like continueListItemSoft', () => {
+    const v = mk('- item')
+    expect(shiftEnter(v)).toBe(true)
+    expect(v.state.doc.toString()).toBe('- item\n  ')
+    v.destroy()
+  })
+  it('off a list: plain soft newline', () => {
+    const v = mk('plain')
+    expect(shiftEnter(v)).toBe(true)
+    expect(v.state.doc.toString()).toBe('plain\n')
+    v.destroy()
+  })
+  it('stamps enterHandledRecently so the IME beforeinput path dedupes', () => {
+    const v = mk('- item')
+    shiftEnter(v)
+    expect(enterHandledRecently()).toBe(true)
     v.destroy()
   })
 })

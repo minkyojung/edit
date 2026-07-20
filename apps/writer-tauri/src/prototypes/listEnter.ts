@@ -128,3 +128,16 @@ export function smartEnter(view: EditorView): boolean {
   if (handled) lastEnterHandledAt = performance.now()
   return handled
 }
+
+/**
+ * The full Shift+Enter behaviour (and its IME-recovery path): continue a list item on
+ * an INDENTED new line (a real continuation), else a plain soft newline. Stamps the
+ * SAME `lastEnterHandledAt` signal as smartEnter so the `beforeinput` IME path dedupes
+ * against the keymap — one source of truth, no double / dropped line break.
+ */
+export function shiftEnter(view: EditorView): boolean {
+  let handled = continueListItemSoft(view)
+  if (!handled) handled = insertNewlineAndIndent(view)
+  if (handled) lastEnterHandledAt = performance.now()
+  return handled
+}
