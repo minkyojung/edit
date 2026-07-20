@@ -65,6 +65,41 @@ export function listEnter(view: EditorView): boolean {
 }
 
 /**
+ * Shift+Enter inside a list = continue the SAME item on a new line, INDENTED to the
+ * item's content column, so the continuation is a real CommonMark part of the item
+ * rather than a flush-left lazy continuation that renders at the margin (livePreview
+ * only hangs a continuation indented to at least `indent + marker + gap`). On a marker
+ * line we indent to that column (task box excluded, matching livePreview's contentCol);
+ * on an already-indented line we mirror its indent so a third/fourth continuation stays
+ * aligned. A flush-left, non-list line returns false → the caller falls back to a plain
+ * soft newline. Text-based (like listEnter) so it never lags the parser.
+ */
+export function continueListItemSoft(view: EditorView): boolean {
+  const { state } = view
+  const sel = state.selection.main
+  if (!sel.empty) return false // a real selection → let default replace it
+  const line = state.doc.lineAt(sel.head)
+  let indentStr: string | null = null
+  const m = LIST_RE.exec(line.text)
+  if (m) {
+    const [, indent, marker, gap] = m
+    indentStr = ' '.repeat(indent.length + marker.length + gap.length)
+  } else {
+    const lead = /^[ \t]*/.exec(line.text)![0]
+    if (lead.length > 0) indentStr = lead // continuation of an already-indented block
+  }
+  if (indentStr == null) return false // flush-left non-list line → plain newline
+  const insert = '\n' + indentStr
+  view.dispatch({
+    changes: { from: sel.head, to: sel.head, insert },
+    selection: { anchor: sel.head + insert.length },
+    scrollIntoView: true,
+    userEvent: 'input',
+  })
+  return true
+}
+
+/**
  * The full Enter behaviour for the editor (and the IME-recovery path). Order:
  *  1. listEnter — deterministic tight list continuation / clean exit.
  *  2. blockquote (`>`) ONLY → CM's markup-continue (it handles quote continuation

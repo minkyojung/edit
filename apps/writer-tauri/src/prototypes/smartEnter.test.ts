@@ -8,7 +8,7 @@ import { EditorView } from '@codemirror/view'
 import { forceParsing } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
-import { smartEnter } from './listEnter'
+import { smartEnter, continueListItemSoft } from './listEnter'
 
 function mk(doc: string) {
   const v = new EditorView({
@@ -54,6 +54,39 @@ describe('smartEnter — exit then retype then Enter keeps text (parser in the l
     const v = mk('> quote')
     enter(v)
     expect(v.state.doc.toString()).toBe('> quote\n> ')
+    v.destroy()
+  })
+})
+
+describe('continueListItemSoft — Shift+Enter indents the continuation to the content column', () => {
+  it('bullet: newline + 2 spaces (content col of "- ")', () => {
+    const v = mk('- item')
+    expect(continueListItemSoft(v)).toBe(true)
+    expect(v.state.doc.toString()).toBe('- item\n  ')
+    v.destroy()
+  })
+  it('ordered: newline + 3 spaces (content col of "1. ")', () => {
+    const v = mk('1. item')
+    expect(continueListItemSoft(v)).toBe(true)
+    expect(v.state.doc.toString()).toBe('1. item\n   ')
+    v.destroy()
+  })
+  it('task: content col excludes the checkbox (2 spaces after "- ")', () => {
+    const v = mk('- [ ] task')
+    expect(continueListItemSoft(v)).toBe(true)
+    expect(v.state.doc.toString()).toBe('- [ ] task\n  ')
+    v.destroy()
+  })
+  it('already-indented continuation: mirrors its own indent', () => {
+    const v = mk('- item\n  cont')
+    expect(continueListItemSoft(v)).toBe(true)
+    expect(v.state.doc.toString()).toBe('- item\n  cont\n  ')
+    v.destroy()
+  })
+  it('flush-left non-list line: returns false, leaves the doc untouched', () => {
+    const v = mk('plain paragraph')
+    expect(continueListItemSoft(v)).toBe(false)
+    expect(v.state.doc.toString()).toBe('plain paragraph')
     v.destroy()
   })
 })

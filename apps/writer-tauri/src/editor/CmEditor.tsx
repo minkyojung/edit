@@ -56,7 +56,7 @@ import { openLinkSafely } from '@/editor/linkUtils'
 import { slashMenu, slashKeymap } from '@/editor/slashMenu'
 import { refreshTemplateSlashItems } from '@/lib/templates'
 import { wikilinkMenu, wikilinkKeymap } from '@/editor/wikilinkMenu'
-import { smartEnter } from '@/prototypes/listEnter'
+import { smartEnter, continueListItemSoft } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
 import { clearTopLevelMarkerBackward } from '@/prototypes/listBackspace'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
@@ -183,7 +183,15 @@ export function CmEditor({ handle, header }: Props) {
             // ENTER — one deterministic handler at Prec.highest: tight list continuation
             // / clean exit, blockquote continuation, else plain newline. Must beat every
             // other Enter handler so CM's loose-list inference never runs.
-            Prec.highest(keymap.of([{ key: 'Enter', run: smartEnter }])),
+            // SHIFT-ENTER — continue the same list item on an INDENTED new line (real
+            // continuation, not a flush-left lazy one); returns false off a list so the
+            // default soft newline stands. Highest prec so it beats defaultKeymap's.
+            Prec.highest(
+              keymap.of([
+                { key: 'Enter', run: smartEnter },
+                { key: 'Shift-Enter', run: continueListItemSoft },
+              ]),
+            ),
             // ⌘B/⌘I/⌘E/⌘⇧X wrap toggles (Prec.high → beats defaultKeymap). ⌘K
             // (link) is intentionally omitted: it opens the command palette.
             inlineFormatKeymapNoLink,
