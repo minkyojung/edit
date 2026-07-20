@@ -188,6 +188,13 @@ const blocksField = StateField.define<DecorationSet>({
         ? build(tr.state)
         : mapped
     }
+    // Parse-progress: the background parser advanced the tree, so an Image/Table/media
+    // Paragraph node absent on the last build may exist now. Rebuild so the block
+    // widget appears the moment the parser catches up (instead of staying raw markdown
+    // until an unrelated edit). Cheap pointer compare; fires only on the handful of
+    // ticks until the parse settles. Must sit AFTER the doc/selection gates (those
+    // transactions also change the tree) so this only catches pure parse-progress.
+    if (syntaxTree(tr.startState) != syntaxTree(tr.state)) return build(tr.state)
     return mapped
   },
   provide: (f) => EditorView.decorations.from(f),

@@ -18,6 +18,7 @@ import { syntaxTree } from '@codemirror/language'
 import { GFM } from '@lezer/markdown'
 import { livePreviewInline } from './livePreview'
 import { addRow, addColumn, deleteRow, deleteColumn, applyContentColumns } from '../tableEdit'
+import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 
 const isDelim = (line: string): boolean => /^[\s|:-]+$/.test(line) && line.includes('-')
 // Split a row into its source cells on UNESCAPED pipes only (a `\|` inside a cell is
@@ -97,14 +98,35 @@ export function serialize(root: HTMLElement, delim: string): string {
   return [line(header), delim, ...bodyRows.map(line)].join('\n')
 }
 
+/** Canonical GFM for a table SOURCE string — the SAME normalization `serialize`
+ * produces from the rendered DOM: each cell decoded then re-encoded (idempotent
+ * escape round-trip + trim), single-spaced `| a | b |`, original delimiter kept.
+ * Comparing canonical forms makes `eq`/`updateDOM` ignore incidental whitespace /
+ * delimiter-format differences that don't change what renders — so an own-commit
+ * (which re-normalizes the source) is recognized as unchanged and the cell views are
+ * KEPT (caret/IME survive) instead of torn down and rebuilt. */
+export function canonicalize(source: string, delim: string): string {
+  const dataRows = source.split('\n').filter((l) => l.includes('|') && !isDelim(l))
+  if (dataRows.length === 0) return source
+  const line = (cells: string[]) => `| ${cells.join(' | ')} |`
+  const cells = (l: string) => cellsOf(l).map((c) => docToCell(cellToDoc(c)))
+  const [header, ...body] = dataRows
+  return [line(cells(header)), delim, ...body.map((r) => line(cells(r)))].join('\n')
+}
+
 export class EditableTableWidget extends WidgetType {
   readonly delim: string
+  readonly canonical: string
   constructor(readonly source: string) {
     super()
     this.delim = source.split('\n').find(isDelim) ?? '| --- |'
+    this.canonical = canonicalize(source, this.delim)
   }
+  // Identity = the CANONICAL table, not the raw source: two sources that render the
+  // same table (differing only in cell whitespace / delimiter formatting) are equal,
+  // so CM keeps the DOM instead of churning.
   eq(o: EditableTableWidget) {
-    return o.source === this.source
+    return o.canonical === this.canonical
   }
   toDOM(view: EditorView) {
     const rows = this.source.split('\n').filter((l) => l.includes('|'))
@@ -142,7 +164,21 @@ export class EditableTableWidget extends WidgetType {
     // Cell views, row-major, for Tab/Shift-Tab nav and teardown.
     const grid: EditorView[][] = []
     const cellViews: EditorView[] = []
+    // Collapse the currently-focused cell's selection to a caret before navigating
+    // elsewhere. Each cell is its own EditorView that keeps rendering its selection
+    // even when blurred, so Tab's select-all would otherwise leave a TRAIL of
+    // highlighted cells behind the caret. Runs ONLY on programmatic nav (Tab/arrows) —
+    // never on plain blur — so selecting a cell then clicking the chat keeps that
+    // selection (and its context chip) alive.
+    const collapseFocused = () => {
+      for (const cv of cellViews) {
+        if (cv.hasFocus && !cv.state.selection.main.empty) {
+          cv.dispatch({ selection: { anchor: cv.state.selection.main.head } })
+        }
+      }
+    }
     const focusCell = (v: EditorView) => {
+      collapseFocused()
       v.focus()
       v.dispatch({ selection: { anchor: 0, head: v.state.doc.length } }) // select-all
     }
@@ -160,6 +196,7 @@ export class EditableTableWidget extends WidgetType {
       return null
     }
     const enterCell = (v: EditorView, atEnd: boolean) => {
+      collapseFocused()
       v.focus()
       v.dispatch({ selection: { anchor: atEnd ? v.state.doc.length : 0 }, scrollIntoView: true })
     }
@@ -169,6 +206,7 @@ export class EditableTableWidget extends WidgetType {
       const { from, to } = rangeFromDoc()
       const no = dir < 0 ? view.state.doc.lineAt(from).number - 1 : view.state.doc.lineAt(to).number + 1
       if (no < 1 || no > view.state.doc.lines) return false // no line beyond the table that way
+      collapseFocused() // clear the leaving cell's selection so no highlight lingers
       const tgt = view.state.doc.line(no)
       view.dispatch({ selection: { anchor: dir < 0 ? tgt.to : tgt.from }, scrollIntoView: true })
       view.focus()
@@ -266,6 +304,29 @@ export class EditableTableWidget extends WidgetType {
             markdown({ extensions: [GFM], addKeymap: false }),
             livePreviewInline,
             cellTheme,
+            // Bridge a cell's selection into the editor-agnostic store so the chat
+            // panel's context chip picks it up — the main editor's updateListener
+            // never sees it (the cell is a separate nested EditorView; the table is a
+            // block widget the main selection can't enter). Text is the cell's own
+            // (already-unescaped) doc; the line range is the WHOLE table's main-doc span
+            // (rangeFromDoc) — the chip only needs a label, not char-exact main-doc
+            // offsets, which the `<br>`/`\|` escaping would make unreliable. Empty
+            // selection clears, matching the main editor. Scope: in-cell selection only.
+            EditorView.updateListener.of((u) => {
+              if (!u.selectionSet && !u.docChanged) return
+              const sel = u.state.selection.main
+              const store = useEditorSelectionStore.getState()
+              if (sel.empty) {
+                store.setSelection(null)
+                return
+              }
+              const { from, to } = rangeFromDoc()
+              store.setSelection({
+                text: u.state.sliceDoc(sel.from, sel.to),
+                fromLine: view.state.doc.lineAt(from).number,
+                toLine: view.state.doc.lineAt(to).number,
+              })
+            }),
             EditorView.domEventHandlers({ blur: () => commit() }),
           ],
         }),
@@ -356,9 +417,12 @@ export class EditableTableWidget extends WidgetType {
     return wrap
   }
   // Own-commit re-render → keep DOM (focus/IME of nested cell views survive);
-  // otherwise (undo / external edit) let CM rebuild.
+  // otherwise (undo / external edit that changes cell CONTENT) let CM rebuild.
+  // Compare the DOM's serialization to the CANONICAL new source (not the raw source):
+  // `serialize(dom)` is already normalized, so an own-commit — even when the committed
+  // text re-normalized whitespace/escaping — matches and the cell views are kept.
   updateDOM(dom: HTMLElement) {
-    return serialize(dom, this.delim) === this.source
+    return serialize(dom, this.delim) === this.canonical
   }
   // CM does NOT auto-destroy nested views — release every cell view on teardown.
   destroy(dom: HTMLElement) {

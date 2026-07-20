@@ -161,6 +161,10 @@ export const youtubeCards: Extension = StateField.define<DecorationSet>({
     if (tr.docChanged) return touchesYoutube(tr, mapped) ? build(tr.state) : mapped
     // Caret moved (reveal): positions didn't shift, so rebuild without mapping.
     if (tr.selection) return build(tr.state)
+    // Parse-progress: the tree advanced (a bare YouTube URL line may now be a matching
+    // Paragraph node) — rebuild so it renders as soon as the parser catches up. Cheap
+    // pointer compare; only fires on pure parse-progress transactions (after the gates).
+    if (syntaxTree(tr.startState) != syntaxTree(tr.state)) return build(tr.state)
     return mapped
   },
   provide: (f) => [

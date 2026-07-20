@@ -145,6 +145,10 @@ export const mermaidField = StateField.define<DecorationSet>({
     if (tr.docChanged) return touchesMermaid(tr, mapped) ? build(tr.state) : mapped
     // Caret moved (reveal): positions didn't shift.
     if (tr.selection) return build(tr.state)
+    // Parse-progress: the tree advanced (a ```mermaid fence may now be a FencedCode
+    // node) — rebuild so it renders as soon as the parser catches up. Cheap pointer
+    // compare; only fires on pure parse-progress transactions (after the gates above).
+    if (syntaxTree(tr.startState) != syntaxTree(tr.state)) return build(tr.state)
     return mapped
   },
   provide: (f) => [

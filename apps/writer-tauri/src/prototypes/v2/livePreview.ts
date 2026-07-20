@@ -529,7 +529,14 @@ function previewPlugin(inlineOnly: boolean) {
       update(u: ViewUpdate) {
         // Reveal depends on selection AND focus (a blurred main editor renders fully
         // clean), so rebuild on both — not just the cell variant.
-        if (u.docChanged || u.viewportChanged || u.selectionSet || u.focusChanged || this.paused) {
+        // `treeChanged`: the incremental Lezer parser runs behind edits, so a just-
+        // typed construct (heading/bold/link/…) has no node yet and renders raw. When
+        // the background parse advances it dispatches a transaction whose tree object
+        // differs — rebuild then so the construct renders as soon as the parser catches
+        // up (instead of staying raw until an unrelated edit). This is the canonical CM
+        // signal, NOT a forced parse, so the list-marker regex fallback is untouched.
+        const treeChanged = syntaxTree(u.startState) != syntaxTree(u.state)
+        if (u.docChanged || u.viewportChanged || u.selectionSet || u.focusChanged || treeChanged || this.paused) {
           if (u.view.composing) {
             this.deco = this.deco.map(u.changes)
             this.paused = true

@@ -1,11 +1,11 @@
-import { useState, useCallback } from 'react'
+import { useCallback } from 'react'
 import { runChat } from '@/agent/chat/index'
+import { useTurnState } from '@/stores/turnState'
 import { flushDirty } from '@/lib/docFileSync'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import { modelSupportsFastMode } from '@/chat/types'
 import type { ChatEffort, ChatMode, ChatModel, ChatTurn, FileAttachment } from '@/chat/types'
-import type { PromptStatus } from '@/chat/PromptInput'
 import { classifyRunError } from '@/chat/utils/errorMessage'
 import { createStreamingBuffer } from '@/chat/utils/streamingBuffer'
 import { createThrottledFlusher } from '@/chat/utils/throttledFlusher'
@@ -56,7 +56,6 @@ interface UseChatRunnerDeps {
    * free-chat turns it's forwarded to runChat as a `--- SELECTION ---` block
    * so "explain this" focuses on the selection. */
   selectionText: string | null
-  activeId: string | null
   activeThreadModel: ChatModel
   activeThreadEffort: ChatEffort
   /** Active thread's interaction mode. 'plan' makes the turn read-only. */
@@ -77,8 +76,6 @@ interface UseChatRunnerDeps {
 }
 
 export interface ChatRunner {
-  status: PromptStatus
-  streaming: { threadId: string; turn: ChatTurn } | null
   run: (
     threadId: string,
     history: ChatTurn[],
@@ -89,14 +86,12 @@ export interface ChatRunner {
 }
 
 /** Drives a single assistant turn end-to-end: seed streaming buffer, run
- * runChat with the given history, commit on settle. The hook owns the
- * `streaming` buffer state and the chat-level `status` enum that gates
- * Send / regenerate UI. Handlers in ChatPanel call `runner.run(...)` from
- * handleSend / handleRegenerate / executeCommand instead of duplicating
- * the lifecycle. */
+ * runChat with the given history, commit on settle. The turn's `status` enum
+ * and streaming buffer live in the per-thread `useTurnState` store (keyed by
+ * threadId), so concurrent sessions each drive their own turn. Handlers in
+ * ChatPanel call `runner.run(...)` from handleSend / handleRegenerate /
+ * executeCommand instead of duplicating the lifecycle. */
 export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
-  const [status, setStatus] = useState<PromptStatus>('idle')
-  const [streaming, setStreaming] = useState<{ threadId: string; turn: ChatTurn } | null>(null)
   const startActivity = useChatActivity((s) => s.start)
   const endActivity = useChatActivity((s) => s.end)
 
@@ -105,7 +100,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
     slug,
     viewingFilePath,
     selectionText,
-    activeId,
     activeThreadModel,
     activeThreadEffort,
     activeThreadMode,
@@ -148,21 +142,19 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       // `rotateForAnswer` below.
       let assistantId = crypto.randomUUID()
 
-      // Seed the live assistant turn in local state. No Yjs op fires until
-      // the turn settles, so streaming deltas don't trigger collab traffic
-      // or whole-list re-renders.
-      setStreaming({
-        threadId,
-        turn: {
-          id: assistantId,
-          role: 'assistant',
-          content: '',
-          ts: Date.now(),
-          status: 'streaming',
-        },
+      // Seed the live assistant turn in the per-thread store. No Yjs op fires
+      // until the turn settles, so streaming deltas don't trigger collab
+      // traffic or whole-list re-renders.
+      const turnState = useTurnState.getState()
+      turnState.setStreamingTurn(threadId, {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        ts: Date.now(),
+        status: 'streaming',
       })
 
-      setStatus('streaming')
+      turnState.setStatus(threadId, 'streaming')
       startActivity()
 
       // OS-level "offline" event: fires the moment the user disables Wi-Fi
@@ -171,8 +163,10 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       // within a beat. `offline.aborted` lets the catch distinguish this
       // from a user-pressed Stop (which should render as the muted
       // "Stopped" card, not as an error).
+      // Abort THIS run's thread (not the visible one) — a background session
+      // must not kill whichever thread happens to be active when Wi-Fi drops.
       const offline = watchOffline(() => {
-        if (activeId) useChatRuns.getState().abortByThread(activeId)
+        useChatRuns.getState().abortByThread(threadId)
       })
 
       // Authoritative ordered list of parts for the in-flight assistant
@@ -190,14 +184,13 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         const parts = buffer.buildParts()
         const content = buffer.joinByType('text')
         const thinking = buffer.joinByType('reasoning')
-        setStreaming((s) =>
-          s && s.threadId === threadId
-            ? {
-                ...s,
-                turn: { ...s.turn, content, thinking: thinking || undefined, parts },
-              }
-            : s,
-        )
+        // No-op if the thread's streaming turn was cleared/rotated (the store
+        // preserves the old `s.threadId === threadId` guard internally).
+        useTurnState.getState().patchStreamingTurn(threadId, {
+          content,
+          thinking: thinking || undefined,
+          parts,
+        })
       })
 
       // Session-started marking now happens via runChat's onSessionStart
@@ -250,7 +243,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           overageDisabledReason,
           retryable,
         })
-        setStreaming(null)
+        useTurnState.getState().setStreamingTurn(threadId, null)
       }
 
       // AskUserQuestion answers we've already split on — guards against a
@@ -299,9 +292,12 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         // answer content), never back on the committed pre-question turn.
         assistantId = crypto.randomUUID()
         buffer = createStreamingBuffer()
-        setStreaming({
-          threadId,
-          turn: { id: assistantId, role: 'assistant', content: '', ts: Date.now(), status: 'streaming' },
+        useTurnState.getState().setStreamingTurn(threadId, {
+          id: assistantId,
+          role: 'assistant',
+          content: '',
+          ts: Date.now(),
+          status: 'streaming',
         })
         void useThreadsStore.getState().appendTurns(threadId, toAppend)
       }
@@ -411,7 +407,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         proposedCount = result.editCount
         appliedCount = result.editCount
         commit('done', result.stopReason)
-        setStatus('idle')
+        useTurnState.getState().setStatus(threadId, 'idle')
         // Completion ping — only fires while the app is unfocused (the user
         // walked away). Best-effort; never blocks the run.
         void notifyJobDone(
@@ -433,7 +429,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           outcome.retryable,
           outcome.overageDisabledReason,
         )
-        setStatus(outcome.chatStatus)
+        useTurnState.getState().setStatus(threadId, outcome.chatStatus)
         // Ping on a real failure too (not a user-pressed Stop) so a background
         // job that died while you were away doesn't go unnoticed.
         if (outcome.terminal === 'error') {
@@ -444,8 +440,8 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [isQueue, slug, viewingFilePath, selectionText, activeId, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
+    [isQueue, slug, viewingFilePath, selectionText, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
-  return { status, streaming, run }
+  return { run }
 }

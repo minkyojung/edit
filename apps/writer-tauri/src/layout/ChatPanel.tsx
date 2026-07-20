@@ -31,6 +31,7 @@ import {
   type LoadedCommand,
 } from '@/chat/commands'
 import { useChatRuns } from '@/stores/chatRuns'
+import { useTurnState } from '@/stores/turnState'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { useFastModeStore } from '@/state/fastModeStore'
 import { usePendingPermissions } from '@/state/pendingPermissionsStore'
@@ -126,12 +127,14 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // transcript's bottom to match, so the last message always clears it.
   const footerRef = useRef<HTMLDivElement>(null)
   const [footerHeight, setFooterHeight] = useState(0)
-  // Synchronous send-in-flight latch. Flipping `chatStatus` to 'streaming'
-  // only takes effect on the *next* render, so a fast double-Enter could
-  // squeeze a second handleSend in before the React state caught up. The
-  // ref flips immediately on the same tick, so the second call short-
-  // circuits before any side effects (turn append, sidecar request).
-  const sendInFlightRef = useRef(false)
+  // Synchronous send-in-flight latch, keyed by threadId. Flipping `chatStatus`
+  // to 'streaming' only takes effect on the *next* render, so a fast
+  // double-Enter could squeeze a second handleSend in before the React state
+  // caught up. The set updates immediately on the same tick, so the second
+  // call short-circuits before any side effects (turn append, sidecar
+  // request). Per-thread so a send on session B isn't blocked by an in-flight
+  // send on session A.
+  const sendInFlightRef = useRef<Set<string>>(new Set())
 
   // Single owner of the transcript's scroll position. Every auto-scroll flows
   // through one layout effect that reads this mode — so the bottom-follow and
@@ -204,8 +207,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       ? (pendingPermission.input as { plan?: string } | null)?.plan?.trim()
       : undefined
 
-  // Single hook owns the streaming buffer state, the chat-level status, and
-  // the run() dispatcher. Handlers below (handleSend / handleRegenerate /
+  // Single hook owns the run() dispatcher (the turn lifecycle); the streaming
+  // buffer + status it drives live in the per-thread useTurnState store, read
+  // just below. Handlers below (handleSend / handleRegenerate /
   // executeCommand) just call `runner.run(...)` instead of duplicating the
   // run lifecycle.
   const runner = useChatRunner({
@@ -213,7 +217,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     slug,
     viewingFilePath,
     selectionText,
-    activeId,
     activeThreadModel,
     activeThreadEffort,
     activeThreadMode,
@@ -222,7 +225,15 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     markSessionStarted: threads.markSessionStarted,
     sessionStarted: activeThread?.sessionStarted ?? false,
   })
-  const { status: chatStatus, streaming } = runner
+  // Turn state (status + streaming buffer) lives per-thread in useTurnState.
+  // Scope both reads to the VISIBLE thread — a background session's ticks must
+  // never gate Send here or re-render/re-scroll this transcript.
+  const chatStatus = useTurnState((s) =>
+    (activeId ? s.byThread.get(activeId)?.status : undefined) ?? 'idle',
+  )
+  const streamingTurn = useTurnState((s) =>
+    (activeId ? s.byThread.get(activeId)?.streamingTurn : null) ?? null,
+  )
 
   const handleScroll = useCallback(() => {
     // Ignore our own smooth scrolls (see suppressScrollRef); only genuine user
@@ -297,7 +308,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // scrollTo per run — so bottom-follow and send-anchor can never race. Runs
   // as a layout effect (measures rects, sets scrollTop before paint to avoid a
   // flash) and re-fires whenever the mode, anchor, turns, or streaming buffer
-  // change. During streaming, `streaming` is the only dep that ticks (~120ms).
+  // change. During streaming, `streamingTurn` is the only dep that ticks (~120ms).
   useLayoutEffect(() => {
     const c = scrollRef.current
     if (!c) return
@@ -329,7 +340,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         // Always suppress: after landing, the distance-from-bottom is
         // legitimately large, so an unsuppressed scroll event would flip the
         // mode to FREE and drop the reservation. The send jump is always smooth
-        // (unless reduce-motion) — `streaming` is already truthy here because
+        // (unless reduce-motion) — `streamingTurn` is already truthy here because
         // runner.run seeds it synchronously, so we cannot key off it.
         doScroll(c, top, !reduceMotion, true)
         return
@@ -362,7 +373,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
 
     if (scrollMode === 'FOLLOW_BOTTOM') {
       lastScrolledAnchorRef.current = null
-      const isStreaming = !!streaming
+      const isStreaming = !!streamingTurn
       // Streaming → instant + unsuppressed (self-correcting, lets the user
       // scroll up to pause). Otherwise smooth + suppressed.
       doScroll(
@@ -373,7 +384,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       )
     }
     // FREE: nobody auto-scrolls.
-  }, [scrollMode, anchorId, turnsHook.turns, streaming, doScroll])
+  }, [scrollMode, anchorId, turnsHook.turns, streamingTurn, doScroll])
 
   // Clear the programmatic-scroll suppression as soon as our smooth scroll
   // settles (the timeout in doScroll is only a fallback for engines without
@@ -401,12 +412,12 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // rests naturally (a short answer that fits doesn't move).
   useEffect(() => {
     const wasStreaming = prevStreamingRef.current
-    const nowStreaming = !!streaming
+    const nowStreaming = !!streamingTurn
     prevStreamingRef.current = nowStreaming
     if (wasStreaming && !nowStreaming && scrollMode === 'ANCHORED') {
       setScrollMode('FOLLOW_BOTTOM')
     }
-  }, [streaming, scrollMode])
+  }, [streamingTurn, scrollMode])
 
   // Reset scroll ownership on thread switch so no anchor / reserved room / mode
   // bleeds across; the new thread opens following its latest turn.
@@ -437,18 +448,18 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   }, [])
 
   // Merge the in-flight streaming turn (local) with the persisted turns (Yjs)
-  // for rendering. Only show the streaming turn if it belongs to the thread
-  // we're currently viewing — protects against thread-switch mid-stream.
-  const renderedTurns =
-    streaming && streaming.threadId === activeId
-      ? [...turnsHook.turns, streaming.turn]
-      : turnsHook.turns
+  // for rendering. `streamingTurn` is already scoped to the active thread by
+  // its store selector, so a thread-switch mid-stream can't leak another
+  // session's buffer into this transcript.
+  const renderedTurns = streamingTurn
+    ? [...turnsHook.turns, streamingTurn]
+    : turnsHook.turns
 
   // Regenerate is only offered on the most-recent settled assistant turn —
   // rewriting an older one would orphan every later turn's context. Hidden
   // entirely while a turn is in flight.
   const regeneratableTurnId = (() => {
-    if (chatStatus === 'streaming' || streaming) return null
+    if (chatStatus === 'streaming' || streamingTurn) return null
     for (let i = turnsHook.turns.length - 1; i >= 0; i--) {
       if (turnsHook.turns[i].role === 'assistant') {
         // Don't offer Regenerate on a continuation that follows an
@@ -642,15 +653,14 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     pastedTexts: { preview: string; content: string }[] = [],
   ) {
     if (!ready || chatStatus === 'streaming') return
+    const threadId = activeId
+    if (!threadId) return
     // Latch BEFORE any await / state set so a fast double-Enter can't
     // smuggle a duplicate request through while React is still committing
     // the streaming state.
-    if (sendInFlightRef.current) return
-    sendInFlightRef.current = true
+    if (sendInFlightRef.current.has(threadId)) return
+    sendInFlightRef.current.add(threadId)
     try {
-      const threadId = activeId
-      if (!threadId) return
-
       // Slash command? Route through executeCommand so the .md body becomes
       // the system prompt and any kind-specific tools are wired in.
       const slash = parseSlashInvocation(text)
@@ -734,7 +744,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
 
       await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, attachments, mentionPaths)
     } finally {
-      sendInFlightRef.current = false
+      sendInFlightRef.current.delete(threadId)
     }
   }
 
@@ -749,12 +759,11 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
    * the rerun would replay the literal `/proofread` text as plain chat. */
   async function handleRegenerate(assistantTurnId: string) {
     if (!ready || chatStatus === 'streaming') return
-    if (sendInFlightRef.current) return
-    sendInFlightRef.current = true
+    const threadId = activeId
+    if (!threadId) return
+    if (sendInFlightRef.current.has(threadId)) return
+    sendInFlightRef.current.add(threadId)
     try {
-      const threadId = activeId
-      if (!threadId) return
-
       const turns = turnsHook.turns
       const idx = turns.findIndex((t) => t.id === assistantTurnId)
       if (idx < 0 || turns[idx].role !== 'assistant') return
@@ -808,7 +817,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       const regenMentions = (lastUser.mentions ?? []).map((m) => m.path)
       await runner.run(threadId, history, undefined, regenAttachments, regenMentions)
     } finally {
-      sendInFlightRef.current = false
+      sendInFlightRef.current.delete(threadId)
     }
   }
 
