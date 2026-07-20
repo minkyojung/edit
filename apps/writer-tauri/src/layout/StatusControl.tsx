@@ -31,7 +31,7 @@ export function StatusControl({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label="상태"
+          aria-label="status"
           className={cn(
             badgeVariants({ variant: status ? STATUS_BADGE_VARIANT[status] : 'outline' }),
             'cursor-pointer',

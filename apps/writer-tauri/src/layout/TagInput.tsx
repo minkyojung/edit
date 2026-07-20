@@ -43,7 +43,7 @@ export function TagInput({
           {tag}
           <button
             type="button"
-            aria-label={`${tag} 제거`}
+            aria-label={`Remove ${tag}`}
             // Keep focus in the input so its onBlur doesn't fire first and
             // commit the in-progress draft against a stale tag list.
             onMouseDown={(e) => e.preventDefault()}
@@ -60,7 +60,7 @@ export function TagInput({
         onKeyDown={onKeyDown}
         onBlur={commitDraft}
         placeholder={tags.length === 0 ? '태그 추가…' : ''}
-        aria-label="태그 추가"
+        aria-label="Add tag"
         className="min-w-24 flex-1 bg-transparent text-body outline-none placeholder:text-muted-foreground/60"
       />
     </div>
