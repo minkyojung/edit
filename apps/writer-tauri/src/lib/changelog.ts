@@ -22,6 +22,24 @@ export interface ChangelogEntry {
  * what the "What's new" panel shows after an update. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.0.9',
+    date: '2026-07-20',
+    headline: 'A properties panel you can reorder, rename, and fill in.',
+    notes: [
+      '### A properties panel, like Notion',
+      '',
+      "- Every frontmatter field now shows as an editable row between a note's title and body, in the order they appear in the file.",
+      '- Drag rows by the handle to reorder them — the new order is saved right into your note.',
+      '- Rename or delete a property from its name menu, and add new ones with **Add a property**.',
+      '- Values edit in place: a status badge, tag chips, a read toggle, and custom fields that pick their own editor — a list becomes chips, `true`/`false` a switch, everything else a text box.',
+      '',
+      '### Steadier metadata',
+      '',
+      '- Notes now use the standard `created` and `source` field names, migrated automatically the next time each note is saved.',
+      "- Status and tags always stay put and can't be removed by accident, and digit-only property names are turned away so your row order never shuffles.",
+    ].join('\n'),
+  },
+  {
     version: '0.0.7',
     date: '2026-07-14',
     headline: 'Smarter updates, note templates, and a calmer chat.',

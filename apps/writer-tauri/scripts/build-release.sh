@@ -43,6 +43,10 @@ security find-identity -v -p codesigning | grep -q "$APPLE_TEAM_ID" \
   || { echo "✗ signing cert for team $APPLE_TEAM_ID not in keychain" >&2; exit 1; }
 echo "✓ preflight ok — signing as $APPLE_SIGNING_IDENTITY"
 
+# --- release notes must exist for this version (else the "What's new" card
+#     silently no-shows after the update — see check-changelog.mjs) --------------
+node scripts/check-changelog.mjs
+
 # --- build (Tauri signs, then notarizes because the APPLE_* vars are set) -------
 pnpm tauri build
 
