@@ -163,8 +163,6 @@ export function frontmatterToMeta(
   // a non-string and is dropped rather than mis-assigned.
   const STRING_KEYS = [
     'slug',
-    'createdAt',
-    'sourceUrl',
     'siteName',
     'faviconUrl',
     'savedAt',
@@ -177,6 +175,16 @@ export function frontmatterToMeta(
     const s = str(data[key])
     if (s) meta[key] = s
   }
+
+  // Portable fields carry an Obsidian-standard name on disk (`created`,
+  // `source`) but land on the app's own camelCase meta fields. We accept
+  // the legacy `createdAt`/`sourceUrl` keys too so notes written before the
+  // rename still read; the write path re-emits the standard name, migrating
+  // each note the next time it's saved.
+  const createdAt = str(data.created) ?? str(data.createdAt)
+  if (createdAt) meta.createdAt = createdAt
+  const sourceUrl = str(data.source) ?? str(data.sourceUrl)
+  if (sourceUrl) meta.sourceUrl = sourceUrl
 
   const dur = str(data.durationSec)
   if (dur) {
@@ -219,8 +227,9 @@ export function metaToFrontmatterFields(
 ): Record<string, FrontmatterValue | undefined> {
   return {
     slug: meta.slug,
-    createdAt: meta.createdAt,
-    sourceUrl: meta.sourceUrl,
+    // Obsidian-standard names on disk (see frontmatterToMeta for the read side).
+    created: meta.createdAt,
+    source: meta.sourceUrl,
     siteName: meta.siteName,
     faviconUrl: meta.faviconUrl,
     savedAt: meta.savedAt,
@@ -247,8 +256,14 @@ export function portableFrontmatterFields(
   meta: Partial<DocMetaFile>,
 ): Record<string, FrontmatterValue | undefined> {
   return {
-    createdAt: meta.createdAt,
-    sourceUrl: meta.sourceUrl,
+    // Obsidian-standard names on disk. The legacy `createdAt`/`sourceUrl`
+    // keys are listed as `undefined` so mergeFrontmatter treats them as
+    // app-owned and drops any stale copy left by a note saved before the
+    // rename — a lazy per-note migration on the next save, no bulk rewrite.
+    created: meta.createdAt,
+    createdAt: undefined,
+    source: meta.sourceUrl,
+    sourceUrl: undefined,
     siteName: meta.siteName,
     faviconUrl: meta.faviconUrl,
     savedAt: meta.savedAt,

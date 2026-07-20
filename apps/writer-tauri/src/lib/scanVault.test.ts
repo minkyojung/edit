@@ -24,6 +24,7 @@ import {
 } from './docPaths'
 import {
   composeFrontmatter,
+  mergeFrontmatter,
   splitFrontmatter,
   splitFrontmatterFull,
 } from './frontmatter'
@@ -31,17 +32,58 @@ import {
 const noChildren = new Map<string, string>()
 
 describe('portableFrontmatterFields — what stays in the user .md', () => {
-  it('excludes the app-private slug', () => {
+  it('excludes the app-private slug, emits Obsidian-standard names', () => {
     const fields = portableFrontmatterFields({
       version: 1,
       slug: 'abc12345',
       createdAt: '2026-01-01',
       sourceUrl: 'https://x.test',
     })
-    // Present: portable. Absent: app-private (slug).
-    expect(fields.createdAt).toBe('2026-01-01')
-    expect(fields.sourceUrl).toBe('https://x.test')
+    // Present under the standard names other tools read. Absent: app-private slug.
+    expect(fields.created).toBe('2026-01-01')
+    expect(fields.source).toBe('https://x.test')
     expect('slug' in fields).toBe(false)
+  })
+
+  it('claims the legacy keys so a pre-rename note migrates on save', () => {
+    // The old camelCase keys are listed (as undefined) so mergeFrontmatter
+    // treats them as app-owned and drops any stale copy. Composing over an
+    // existing note that still has `createdAt`/`sourceUrl` must leave only
+    // the standard names behind.
+    const fields = portableFrontmatterFields({ createdAt: '2026-01-01' })
+    expect('createdAt' in fields).toBe(true)
+    expect(fields.createdAt).toBeUndefined()
+    expect('sourceUrl' in fields).toBe(true)
+    expect(fields.sourceUrl).toBeUndefined()
+  })
+
+  it('reads a note written with the legacy key names', () => {
+    // Backward compat: notes saved before the rename still load their
+    // created date and source URL from the old keys.
+    expect(frontmatterToMeta({ createdAt: '2026-01-01' }).createdAt).toBe('2026-01-01')
+    expect(frontmatterToMeta({ sourceUrl: 'https://x.test' }).sourceUrl).toBe('https://x.test')
+    // The standard names take precedence when both somehow appear.
+    expect(
+      frontmatterToMeta({ created: '2026-02-02', createdAt: '2026-01-01' }).createdAt,
+    ).toBe('2026-02-02')
+  })
+
+  it('migrates a legacy note to standard names on save (flush composition)', () => {
+    // Exactly the prod flush path: mergeFrontmatter(existing, portableFields, body).
+    // A note last saved with `createdAt`/`sourceUrl` must come back out with
+    // `created`/`source` and NO leftover legacy keys — no duplicated fields.
+    const existing =
+      '---\ncreatedAt: 2026-01-01\nsourceUrl: https://x.test\ntitle: Kept\n---\n\nold body\n'
+    const meta = frontmatterToMeta(splitFrontmatterFull(existing).data)
+    const merged = mergeFrontmatter(existing, portableFrontmatterFields(meta), 'new body\n')
+
+    expect(merged).toMatch(/^created: 2026-01-01$/m)
+    // The URL contains `:` so it's emitted quoted — assert the key + value.
+    expect(merged).toMatch(/^source: 'https:\/\/x\.test'$/m)
+    expect(merged).not.toMatch(/^createdAt:/m)
+    expect(merged).not.toMatch(/^sourceUrl:/m)
+    // Foreign keys the app doesn't own are still preserved verbatim.
+    expect(merged).toContain('title: Kept')
   })
 })
 
