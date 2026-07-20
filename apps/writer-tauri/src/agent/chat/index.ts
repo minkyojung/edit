@@ -31,7 +31,8 @@ import {
   getPersistentQueryEnabled,
 } from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
-import { pathForDoc } from '@/lib/docPaths'
+import { pathForDoc, pathToKnownSlug, type DocStatus } from '@/lib/docPaths'
+import { queryNotes } from '@/lib/queryNotes'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
 import { readDocBody } from '@/state/docsStore/docBody'
@@ -100,6 +101,16 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       // capture folder into its resting place. Auto-applied (reversible), not
       // queued — see the claude:move-note handler below.
       'move_note',
+      // Fire-and-forget: set a note's workflow status on request. Auto-applied
+      // (reversible), not queued — see the claude:set-status handler below.
+      'set_note_status',
+      // Fire-and-forget: set a note's tags on request. Auto-applied
+      // (reversible), not queued — see the claude:set-tags handler below.
+      'set_note_tags',
+      // Request/response: filter the catalog by status/tags and return
+      // references (path + title + status + tags) — see the claude:query-notes
+      // handler below, which replies via claude_chat_query_result.
+      'query_notes',
     ],
     appendDocument = true,
     viewingFilePath,
@@ -648,6 +659,72 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           console.log('[chat] move-note', { from: relFrom, toFolder: folder, ok })
         },
       ),
+      // set_note_status MCP tool → set a note's workflow status. Resolve via
+      // pathToKnownSlug (not a relPath match) so writing/wiki docs resolve too,
+      // then hand to setDocStatus, which guards non-status doc types itself.
+      listen<{ runId: string; path: string; status: DocStatus }>(
+        'claude:set-status',
+        (e) => {
+          if (e.payload.runId !== runId) return
+          const rel = toVaultRelative(e.payload.path, getActiveVaultPath())
+          if (!rel) {
+            console.warn('[chat] set-status: unresolved path', e.payload.path)
+            return
+          }
+          const slug = pathToKnownSlug(rel, useDocsStore.getState().knownDocs)
+          if (!slug) {
+            console.warn('[chat] set-status: no note at', rel)
+            return
+          }
+          useDocsStore.getState().setDocStatus(slug, e.payload.status)
+          console.log('[chat] set-status', { path: rel, status: e.payload.status })
+        },
+      ),
+      // set_note_tags MCP tool → replace a note's tags. Resolve via
+      // pathToKnownSlug (writing/wiki docs too), then hand to setDocTags,
+      // which trims/de-dupes and guards non-metadata doc types.
+      listen<{ runId: string; path: string; tags: string[] }>(
+        'claude:set-tags',
+        (e) => {
+          if (e.payload.runId !== runId) return
+          const rel = toVaultRelative(e.payload.path, getActiveVaultPath())
+          if (!rel) {
+            console.warn('[chat] set-tags: unresolved path', e.payload.path)
+            return
+          }
+          const slug = pathToKnownSlug(rel, useDocsStore.getState().knownDocs)
+          if (!slug) {
+            console.warn('[chat] set-tags: no note at', rel)
+            return
+          }
+          useDocsStore.getState().setDocTags(slug, e.payload.tags)
+          console.log('[chat] set-tags', { path: rel, tags: e.payload.tags })
+        },
+      ),
+      // query_notes MCP tool → filter the catalog by metadata (status/tags)
+      // and return references. The sidecar awaits this reply (claude_chat_
+      // query_result), so it must always fire, even on empty results.
+      listen<{
+        runId: string
+        queryId: string
+        where?: { status?: DocStatus; tags?: string[] }
+        limit?: number
+        cursor?: string | null
+      }>('claude:query-notes', (e) => {
+        if (e.payload.runId !== runId) return
+        const { knownDocs } = useDocsStore.getState()
+        const getDoc = (s: string) => knownDocs.find((d) => d.slug === s)
+        const { results, nextCursor } = queryNotes(
+          knownDocs,
+          e.payload.where ?? {},
+          e.payload.limit ?? 50,
+          e.payload.cursor ?? null,
+          getDoc,
+        )
+        invoke('claude_chat_query_result', {
+          args: { queryId: e.payload.queryId, results, nextCursor },
+        }).catch((err) => console.warn('[chat] query-result send failed', err))
+      }),
       listen<DoneEvent>('claude:done', (e) => {
         if (!parseDoneEvent(e.payload) || e.payload.runId !== runId) return
         recordContextUsage(threadId, model, e.payload.usage, e.payload.contextUsage)

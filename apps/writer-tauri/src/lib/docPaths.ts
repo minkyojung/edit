@@ -29,7 +29,18 @@
 // shapes without standing up the rest of the app.
 
 import type { KnownDoc } from '@/state/docsStore'
-import type { FrontmatterScalar } from '@/lib/frontmatter'
+import type { FrontmatterValue } from '@/lib/frontmatter'
+import { normalizeTags } from '@/lib/tags'
+
+/**
+ * A note's workflow status. Optional per note; a note carries no `status`
+ * until one is set. Stable English values persist to `.md` frontmatter;
+ * the Korean display labels live only in the UI layer. `DOC_STATUS_VALUES`
+ * is a runtime `const` because {@link frontmatterToMeta} validates against
+ * it — a stored value that isn't one of these is dropped on read.
+ */
+export const DOC_STATUS_VALUES = ['not-started', 'in-progress', 'done'] as const
+export type DocStatus = (typeof DOC_STATUS_VALUES)[number]
 
 /**
  * Doc identity sidecar — the `<stem>.meta.json` file that scanVault
@@ -72,6 +83,15 @@ export interface DocMetaFile {
    * for a youtube capture). Lifted out of the body so the header can
    * render it styled, separate from the editable content. */
   description?: string
+  /** Workflow status (not-started / in-progress / done). Optional and
+   * user-facing: set via the header badge or the AI `set_note_status`
+   * tool, shown as a badge + a sidebar dot. Only editable note types
+   * carry it — see `docSupportsStatus`. */
+  status?: DocStatus
+  /** Free-form tags, persisted to `.md` frontmatter as a YAML list
+   * (`tags:\n  - a\n  - b`). User-facing and editable via the properties
+   * panel. Empty/absent when the note has no tags. */
+  tags?: string[]
 }
 
 /** Lookup a doc by slug. Required by {@link pathForDoc} only for
@@ -124,30 +144,61 @@ export function usesFrontmatter(_doc: Pick<KnownDoc, 'type'>): boolean {
   return true
 }
 
-/** Coerce a parsed frontmatter block (whose values are all raw strings)
- * into the sidecar-shaped meta the catalog overlay reads. Numeric fields
- * are parsed; unrecognised keys are ignored. Mirrors exactly the fields
- * `mdRelToKnownDoc` layers, so a doc whose metadata lives in frontmatter
- * rebuilds identically to one whose metadata lives in a `.meta.json`
- * sidecar. */
+/** Coerce a parsed frontmatter block into the sidecar-shaped meta the
+ * catalog overlay reads. Input comes from `parseFrontmatterFull`, so scalar
+ * fields arrive as strings and list fields (`tags`) as `string[]`; each read
+ * guards its own type so a malformed value (e.g. a scalar key written as a
+ * list) is dropped rather than mis-assigned. Numeric fields are parsed;
+ * unrecognised keys are ignored. Mirrors exactly the fields `mdRelToKnownDoc`
+ * layers. */
 export function frontmatterToMeta(
-  data: Record<string, string>,
+  data: Record<string, string | string[]>,
 ): Partial<DocMetaFile> {
   const meta: Partial<DocMetaFile> = {}
-  if (data.slug) meta.slug = data.slug
-  if (data.createdAt) meta.createdAt = data.createdAt
-  if (data.sourceUrl) meta.sourceUrl = data.sourceUrl
-  if (data.siteName) meta.siteName = data.siteName
-  if (data.faviconUrl) meta.faviconUrl = data.faviconUrl
-  if (data.savedAt) meta.savedAt = data.savedAt
-  if (data.readAt) meta.readAt = data.readAt
-  if (data.videoId) meta.videoId = data.videoId
-  if (data.durationSec) {
-    const n = Number(data.durationSec)
+  const str = (v: string | string[] | undefined): string | undefined =>
+    typeof v === 'string' ? v : undefined
+
+  // Plain string fields: copy each through when it's present as a string. A
+  // malformed value (e.g. a scalar key hand-written as a YAML list) reads as
+  // a non-string and is dropped rather than mis-assigned.
+  const STRING_KEYS = [
+    'slug',
+    'createdAt',
+    'sourceUrl',
+    'siteName',
+    'faviconUrl',
+    'savedAt',
+    'readAt',
+    'videoId',
+    'thumbnailUrl',
+    'description',
+  ] as const
+  for (const key of STRING_KEYS) {
+    const s = str(data[key])
+    if (s) meta[key] = s
+  }
+
+  const dur = str(data.durationSec)
+  if (dur) {
+    const n = Number(dur)
     if (Number.isFinite(n)) meta.durationSec = n
   }
-  if (data.thumbnailUrl) meta.thumbnailUrl = data.thumbnailUrl
-  if (data.description) meta.description = data.description
+  // status must be one of the known values; anything else is dropped.
+  const status = str(data.status)
+  if (status && (DOC_STATUS_VALUES as readonly string[]).includes(status)) {
+    meta.status = status as DocStatus
+  }
+  // Tags: a YAML list, or a scalar `tags: foo` treated as one item. Runs the
+  // same normalization (trim / de-dupe) as the write path so a note read from
+  // disk matches one written in-app.
+  const rawTags = Array.isArray(data.tags)
+    ? data.tags
+    : str(data.tags)
+      ? [str(data.tags) as string]
+      : []
+  const tags = normalizeTags(rawTags)
+  if (tags.length) meta.tags = tags
+
   return meta
 }
 
@@ -165,7 +216,7 @@ export function frontmatterToMeta(
  * metadata on save. */
 export function metaToFrontmatterFields(
   meta: Partial<DocMetaFile>,
-): Record<string, FrontmatterScalar | undefined> {
+): Record<string, FrontmatterValue | undefined> {
   return {
     slug: meta.slug,
     createdAt: meta.createdAt,
@@ -178,6 +229,8 @@ export function metaToFrontmatterFields(
     durationSec: meta.durationSec,
     thumbnailUrl: meta.thumbnailUrl,
     description: meta.description,
+    status: meta.status,
+    tags: meta.tags,
   }
 }
 
@@ -192,7 +245,7 @@ export function metaToFrontmatterFields(
  * a field belongs. */
 export function portableFrontmatterFields(
   meta: Partial<DocMetaFile>,
-): Record<string, FrontmatterScalar | undefined> {
+): Record<string, FrontmatterValue | undefined> {
   return {
     createdAt: meta.createdAt,
     sourceUrl: meta.sourceUrl,
@@ -204,6 +257,8 @@ export function portableFrontmatterFields(
     durationSec: meta.durationSec,
     thumbnailUrl: meta.thumbnailUrl,
     description: meta.description,
+    status: meta.status,
+    tags: meta.tags,
   }
 }
 

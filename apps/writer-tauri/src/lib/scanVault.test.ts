@@ -22,7 +22,11 @@ import {
   portableFrontmatterFields,
   type DocMetaFile,
 } from './docPaths'
-import { composeFrontmatter, splitFrontmatter } from './frontmatter'
+import {
+  composeFrontmatter,
+  splitFrontmatter,
+  splitFrontmatterFull,
+} from './frontmatter'
 
 const noChildren = new Map<string, string>()
 
@@ -316,6 +320,7 @@ describe('meta ⇄ frontmatter round-trip', () => {
       siteName: 'Example',
       savedAt: '2026-06-10T09:00:00.000Z',
       readAt: '2026-06-10T10:00:00.000Z',
+      status: 'in-progress',
     }
 
     const fields = metaToFrontmatterFields(meta)
@@ -324,6 +329,38 @@ describe('meta ⇄ frontmatter round-trip', () => {
 
     expect(frontmatterToMeta(data)).toEqual(meta)
     expect(body).toBe('The note body.\n')
+  })
+
+  it('drops an unknown status value on read', () => {
+    // status is user- and AI-writable, so a value outside the known set is
+    // rejected rather than trusted into the catalog.
+    expect(frontmatterToMeta({ status: 'garbage' }).status).toBeUndefined()
+    expect(frontmatterToMeta({ status: 'done' }).status).toBe('done')
+  })
+
+  it('round-trips a tags list through compose → splitFrontmatterFull', () => {
+    const meta: Partial<DocMetaFile> = {
+      slug: 'note-t',
+      createdAt: '2026-06-11T00:00:00.000Z',
+      tags: ['ai', 'finance'],
+    }
+    const file = composeFrontmatter(metaToFrontmatterFields(meta), 'body\n')
+    const { data } = splitFrontmatterFull(file)
+    expect(frontmatterToMeta(data)).toEqual(meta)
+  })
+
+  it('normalizes a scalar tags value to a single-element list', () => {
+    expect(frontmatterToMeta({ tags: 'solo' }).tags).toEqual(['solo'])
+    expect(frontmatterToMeta({ tags: [] }).tags).toBeUndefined()
+  })
+
+  it('trims and de-duplicates tags on read (matches the write path)', () => {
+    // A hand-written / external file may repeat or pad tags; reading must
+    // normalize the same way setDocTags does, so counts don't inflate.
+    expect(frontmatterToMeta({ tags: ['  ai  ', 'ai', 'finance', ' '] }).tags).toEqual([
+      'ai',
+      'finance',
+    ])
   })
 
   it('round-trips youtube capture fields (durationSec stays numeric)', () => {

@@ -1,13 +1,13 @@
-// Universal palette triggered by ⌘K. A single "doc" provider does a
-// substring search over the vault's notes, plus a small Actions group
-// (capture a URL, open Inbox, rename/archive the active note).
+// Universal palette triggered by ⌘K. All vault notes + templates are
+// rendered as items and cmdk's built-in fuzzy filter does the ranking
+// (matching each item's `value` + `keywords`), plus a small Actions group
+// (capture a URL, open Inbox, rename the active note).
 //
 // The earlier date provider / ⌘G "jump to date" mode was removed with
 // the flat-vault change: there are no daily docs to jump to, and the
 // date-select path used to recreate a daily on disk.
 //
-// Empty query → recent docs (knownDocs order; no per-doc lastAccessed
-// yet).
+// Empty query → recent docs, ordered by session recency (recentDocsStore).
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -20,8 +20,8 @@ import {
   IconFolderOpen,
   IconSettings,
 } from '@tabler/icons-react'
+import { defaultFilter } from 'cmdk'
 import {
-  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -29,10 +29,8 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command'
-import {
-  useDocsStore,
-  type KnownDoc,
-} from '@/state/docsStore'
+import { useDocsStore } from '@/state/docsStore'
+import { useRecentDocsStore } from '@/state/recentDocsStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useSaveArticleDialogStore } from '@/state/saveArticleDialogStore'
 import { useCommandPaletteStore } from '@/state/commandPaletteStore'
@@ -40,10 +38,18 @@ import { openSettings } from '@/settings/useSettingsDialog'
 import { focusLauncher } from '@/lib/projectWindow'
 import { openDoc } from '@/lib/openDoc'
 import { loadTemplates, type Template } from '@/lib/templates'
+import { pathForDoc } from '@/lib/docPaths'
+import { docLabel } from '@/hooks/useDocLabel'
 
-interface DocResult {
-  doc: KnownDoc
-}
+// cmdk scores the query against each item's `value` PLUS its `keywords`. Our
+// doc items use the opaque slug as `value` (a stable unique id cmdk requires;
+// see below), so scoring on `value` would surface notes by random slug text.
+// Match on `keywords` when an item provides them (docs carry label/filename/
+// folder; templates carry their own) so the slug never pollutes results, and
+// fall back to `value` for items that keep their search text there (the
+// Actions group).
+const paletteFilter = (value: string, search: string, keywords?: string[]) =>
+  defaultFilter(keywords?.length ? keywords.join(' ') : value, search)
 
 export function CommandPalette() {
   // Open lives in a store so the sidebar search button can drive the
@@ -59,6 +65,7 @@ export function CommandPalette() {
   }, [open])
 
   const knownDocs = useDocsStore((s) => s.knownDocs)
+  const recentOrder = useRecentDocsStore((s) => s.order)
   const activeSlug = useActiveSlug()
   const renameDoc = useDocsStore((s) => s.renameDoc)
   const createFromTemplate = useDocsStore((s) => s.createFromTemplate)
@@ -123,31 +130,40 @@ export function CommandPalette() {
     [knownDocs],
   )
 
-  // Doc provider — substring match on title/filename. Cheap, no fuse
-  // dependency for now.
-  const docResults = useMemo<DocResult[]>(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) {
-      // Empty query: show recent activity. We don't have a per-doc
-      // lastAccessed yet, so fall back to "recent first" by knownDocs
-      // order, capped.
-      return liveDocs.slice(0, 8).map((doc) => ({ doc }))
+  // Per-doc display + search metadata. cmdk's built-in filter ranks items
+  // by fuzzy-matching the query against each item's `value` + `keywords`,
+  // so we feed it label, filename and folder path (tags don't exist on
+  // KnownDoc). `folder` also renders as a subtext line to disambiguate
+  // same-named notes. Path comes from the one canonical mapping,
+  // `pathForDoc`; `label` from the shared doc-label policy.
+  const docMeta = useMemo(() => {
+    const getDoc = (s: string) => knownDocs.find((d) => d.slug === s)
+    const map = new Map<string, { label: string; folder: string; keywords: string[] }>()
+    for (const doc of liveDocs) {
+      const label = docLabel(doc)
+      const path = pathForDoc(doc, getDoc) ?? doc.relPath ?? ''
+      const filename = path.split('/').pop() ?? ''
+      const folder = path.slice(0, path.length - filename.length).replace(/\/$/, '')
+      map.set(doc.slug, {
+        label,
+        folder,
+        keywords: [label, filename, folder].filter((s) => s.length > 0),
+      })
     }
-    return liveDocs
-      .filter((doc) => (doc.title ?? '').toLowerCase().includes(q))
-      .slice(0, 12)
-      .map((doc) => ({ doc }))
-  }, [liveDocs, query])
+    return map
+  }, [liveDocs, knownDocs])
 
-  // Templates matching the query (by name, or the word "template"). Shown as a
-  // "New from template" group — selecting one creates a note seeded with it.
-  const shownTemplates = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return templates
-    return templates.filter(
-      (t) => t.name.toLowerCase().includes(q) || 'template'.includes(q),
-    )
-  }, [templates, query])
+  // Empty-query "Recent" ordering: sort by session recency (most-recent
+  // first, then the rest in knownDocs order), capped so the empty palette
+  // stays tidy rather than dumping the whole vault. With a query present,
+  // cmdk re-sorts by match score and every doc must stay reachable, so we
+  // hand it the full list unsorted (DOM order there is irrelevant).
+  const orderedDocs = useMemo(() => {
+    if (query.trim()) return liveDocs
+    const rank = new Map(recentOrder.map((slug, i) => [slug, i]))
+    const seen = (slug: string) => rank.get(slug) ?? Number.POSITIVE_INFINITY
+    return [...liveDocs].sort((a, b) => seen(a.slug) - seen(b.slug)).slice(0, 50)
+  }, [liveDocs, recentOrder, query])
 
   const onSelectTemplate = (t: Template) => {
     setOpen(false)
@@ -156,27 +172,27 @@ export function CommandPalette() {
     })
   }
 
-  const onSelect = (r: DocResult) => {
+  const onSelectDoc = (slug: string) => {
     setOpen(false)
-    openDoc(r.doc.slug)
+    openDoc(slug)
   }
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen}>
-      {/* cmdk's built-in filter sorts items by fuzzy match against
-          their `value`. We do our own filtering above. */}
-      {/* Transparent so the CommandDialog's frosted-glass panel shows through
-          (Command's default bg-popover would otherwise cover it). */}
-      <Command shouldFilter={false} className="bg-transparent">
+    <CommandDialog
+      open={open}
+      onOpenChange={setOpen}
+      className="command-palette"
+      filter={paletteFilter}
+    >
       <CommandInput
         placeholder="Search notes…"
         value={query}
         onValueChange={setQuery}
       />
       <CommandList>
-        {/* Actions. "Add URL to Inbox" / "Open Inbox" are always
-            available; rename works for wiki + writing; archive only for
-            writing. */}
+        <CommandEmpty>No matches.</CommandEmpty>
+        {/* Actions — always rendered (cmdk filters them by query); Rename
+            only appears for a renameable active doc (wiki + writing). */}
         <CommandGroup heading="Actions">
           <CommandItem
             value="action:add-to-inbox add url inbox youtube article"
@@ -249,12 +265,13 @@ export function CommandPalette() {
             </CommandItem>
           )}
         </CommandGroup>
-        {shownTemplates.length > 0 && (
+        {templates.length > 0 && (
           <CommandGroup heading="New from template">
-            {shownTemplates.map((t) => (
+            {templates.map((t) => (
               <CommandItem
                 key={`tmpl-${t.name}`}
                 value={`template:${t.name}`}
+                keywords={['template', 'new', t.name]}
                 onSelect={() => onSelectTemplate(t)}
               >
                 <IconFilePlus size={16} stroke={1.75} />
@@ -263,25 +280,32 @@ export function CommandPalette() {
             ))}
           </CommandGroup>
         )}
-        {docResults.length > 0 && (
+        {orderedDocs.length > 0 && (
           <CommandGroup heading={query.trim() ? 'Notes' : 'Recent'}>
-            {docResults.map((r) => (
-              <CommandItem
-                key={`doc-${r.doc.slug}`}
-                value={`doc:${r.doc.slug}:${r.doc.title || 'Untitled'}`}
-                onSelect={() => onSelect(r)}
-              >
-                <IconFileDescription size={16} stroke={1.75} />
-                <span className="flex-1 truncate">
-                  {r.doc.title || 'Untitled'}
-                </span>
-              </CommandItem>
-            ))}
+            {orderedDocs.map((doc) => {
+              const meta = docMeta.get(doc.slug)
+              return (
+                <CommandItem
+                  key={`doc-${doc.slug}`}
+                  value={doc.slug}
+                  keywords={meta?.keywords}
+                  onSelect={() => onSelectDoc(doc.slug)}
+                >
+                  <IconFileDescription size={16} stroke={1.75} />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate">{meta?.label ?? 'Untitled'}</span>
+                    {meta?.folder && (
+                      <span className="truncate text-xs text-muted-foreground">
+                        {meta.folder}
+                      </span>
+                    )}
+                  </span>
+                </CommandItem>
+              )
+            })}
           </CommandGroup>
         )}
-        <CommandEmpty>No matches.</CommandEmpty>
       </CommandList>
-      </Command>
     </CommandDialog>
   )
 }

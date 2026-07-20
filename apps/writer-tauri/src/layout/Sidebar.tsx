@@ -12,8 +12,10 @@ import {
   IconTerminal2,
   IconPalette,
   IconSparkles,
+  IconCircleDashed,
 } from '@tabler/icons-react'
 import { FolderTree } from './FolderTree'
+import { TagList } from './TagList'
 import { useDocsStore } from '@/state/docsStore'
 import { useCommandPaletteStore } from '@/state/commandPaletteStore'
 import { useNewFolderStore } from '@/state/newFolderStore'
@@ -25,6 +27,8 @@ import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
 import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useGitHubAuth } from '@/hooks/useGitHubAuth'
+import { useGoogleAuth } from '@/hooks/useGoogleAuth'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useConnectDialog } from '@/stores/connectDialog'
 import { useConnectGitHubDialog } from '@/stores/connectGitHubDialog'
 import {
@@ -35,6 +39,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useSortStore, SORT_LABELS, type SortMode } from '@/state/sortStore'
+import { useStatusFilterStore } from '@/state/statusFilterStore'
 import {
   Sidebar,
   SidebarContent,
@@ -49,7 +54,7 @@ import { cn } from '@/lib/utils'
 // folder-tree rows (SIDEBAR_ROW_INTERACTION), so hover / focus / selected match
 // exactly. Selected state is driven by `data-active` (not a class), like TreeRow.
 const NAV_ROW = cn(
-  'flex h-9 w-full items-center gap-2 rounded-sm px-2 text-body font-normal',
+  'flex h-9 w-full items-center gap-2 rounded-sm px-2 text-body font-medium',
   SIDEBAR_ROW_INTERACTION,
 )
 
@@ -63,12 +68,17 @@ export function AppSidebar() {
   const githubConnectOpen = useConnectGitHubDialog((s) => s.open)
   const setGithubConnectOpen = useConnectGitHubDialog((s) => s.setOpen)
   const { refresh: refreshGithub } = useGitHubAuth()
+  // Every user signs in with Google, so the Profile row wears the Google
+  // avatar + display name instead of a generic icon + "Profile" label.
+  const { account: googleAccount } = useGoogleAuth()
 
   const createNew = useDocsStore((s) => s.createNew)
   const openPalette = useCommandPaletteStore((s) => s.openPalette)
   const startNewFolder = useNewFolderStore((s) => s.start)
   const sortMode = useSortStore((s) => s.mode)
   const setSortMode = useSortStore((s) => s.setMode)
+  const inProgressOnly = useStatusFilterStore((s) => s.inProgressOnly)
+  const setInProgressOnly = useStatusFilterStore((s) => s.setInProgressOnly)
   const navigate = useNavigate()
   const { pathname } = useLocation()
 
@@ -202,6 +212,21 @@ export function AppSidebar() {
         </DropdownMenu>
         <button
           type="button"
+          aria-label="진행 중만 보기"
+          title="진행 중만 보기"
+          aria-pressed={inProgressOnly}
+          onClick={() => setInProgressOnly(!inProgressOnly)}
+          className={cn(
+            'flex size-8 shrink-0 items-center justify-center rounded-md transition-colors',
+            inProgressOnly
+              ? 'bg-foreground/12 text-sidebar-foreground'
+              : 'text-sidebar-foreground/60 hover:bg-foreground/12 hover:text-sidebar-foreground',
+          )}
+        >
+          <IconCircleDashed size={18} stroke={1.75} />
+        </button>
+        <button
+          type="button"
           aria-label="New folder"
           title="New folder"
           onClick={startNewFolder}
@@ -242,7 +267,7 @@ export function AppSidebar() {
             root <ul> below so both share one content line. */}
         {/* Small muted section label (title-case, aligned to the icon column at
             pl-5) — categorizes the top surfaces vs. the notes tree below. */}
-        <div className="-mb-1 select-none px-5 pt-2 text-footnote font-medium text-sidebar-foreground/50">
+        <div className="-mb-1 select-none px-5 pt-2 text-footnote font-semibold text-sidebar-foreground/50">
           Assistant
         </div>
         <nav className="flex flex-col gap-0.5 pl-3 pr-2">
@@ -252,8 +277,21 @@ export function AppSidebar() {
             data-active={profileActive || undefined}
             className={NAV_ROW}
           >
-            <IconUser size={18} stroke={1.75} className="shrink-0" />
-            <span className="flex-1 truncate text-left">Profile</span>
+            <Avatar size="sm" className="size-[18px]">
+              {googleAccount.picture ? (
+                <AvatarImage
+                  src={googleAccount.picture}
+                  alt={googleAccount.name ?? 'Profile'}
+                  referrerPolicy="no-referrer"
+                />
+              ) : null}
+              <AvatarFallback>
+                <IconUser size={12} stroke={1.75} />
+              </AvatarFallback>
+            </Avatar>
+            <span className="flex-1 truncate text-left">
+              {googleAccount.name ? `${googleAccount.name}'s profile` : 'Profile'}
+            </span>
           </button>
           <button
             type="button"
@@ -310,12 +348,14 @@ export function AppSidebar() {
 
         {/* Section label for the vault's notes, mirroring the "Assistant"
             label above so the two zones read as distinct groups. */}
-        <div className="-mb-1 select-none px-5 pt-3 text-footnote font-medium text-sidebar-foreground/50">
+        <div className="-mb-1 select-none px-5 pt-3 text-footnote font-semibold text-sidebar-foreground/50">
           Notes
         </div>
         {/* Obsidian-style folder tree — the vault's folder structure is
             the sidebar. (Replaced the day/week/month date views.) */}
         <FolderTree />
+        {/* Tags pane below the tree — browse + filter by tag. */}
+        <TagList />
       </SidebarContent>
       <SidebarFooter className="p-0">
         <WhatsNewSidebar />

@@ -19,6 +19,7 @@ import { useDocsStore, isWikiDoc } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { useObservePageTitle } from '@/hooks/useObservePageTitle'
 import { EditableTitleInput } from './EditableTitleInput'
+import { PropertiesPanel } from './PropertiesPanel'
 
 interface Props {
   slug: string
@@ -42,10 +43,17 @@ export function PageHeader({ slug }: Props) {
     return <ReadOnlyHeader label={label} ariaLabel="System page" />
   }
 
-  // User-editable docs (user-owned wiki + writing) get an inline
-  // text input that doubles as the file's name on disk. See
-  // EditableTitleInput for commit semantics (Enter / Blur).
-  return <EditableTitleInput slug={slug} currentTitle={known.title} />
+  // User-editable docs (user-owned wiki + writing + notes) get an inline
+  // title input (doubles as the on-disk filename) followed by the properties
+  // panel below it — the Notion pattern. This branch is exactly the
+  // status-supporting set (daily / system are handled above), so the panel
+  // always applies here.
+  return (
+    <div>
+      <EditableTitleInput slug={slug} currentTitle={known.title} />
+      <PropertiesPanel slug={slug} known={known} />
+    </div>
+  )
 }
 
 /** Read-only label rendered with the same visual weight across kinds

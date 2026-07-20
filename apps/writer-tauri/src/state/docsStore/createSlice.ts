@@ -31,12 +31,13 @@ import type { Template } from '@/lib/templates'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
 
 export interface CreateSlice {
-  /** Empty writing note. Label falls back to 'Untitled' until the
-   * user names it via the inline title input. Returns the new slug
-   * so callers can drive the post-create navigation themselves
-   * (URL is the source of truth — the store no longer sets activeSlug
-   * on its own). */
-  createNew: () => Promise<string>
+  /** Empty writing note. Lands in `folderPath` when given (folder-row
+   * "New note here"), else `inbox/` (⌘N / header "+"). Label falls
+   * back to 'Untitled' until the user names it via the inline title
+   * input. Returns the new slug so callers can drive the post-create
+   * navigation themselves (URL is the source of truth — the store no
+   * longer sets activeSlug on its own). */
+  createNew: (folderPath?: string) => Promise<string>
   /** Create a new note seeded with a template's body. Same placement +
    * lifecycle as {@link createNew} (blank `inbox/Untitled.md`), then the
    * template body is seeded in. Returns the new slug for post-create
@@ -77,17 +78,19 @@ export interface CreateSlice {
   replaceDocBody: (slug: string, markdown: string) => Promise<boolean>
 }
 
-/** First free inbox path for a new untitled note: `inbox/Untitled.md`,
- * then `inbox/Untitled 1.md`, `inbox/Untitled 2.md`, … so two quick
- * ⌘N presses don't collide on the same file. */
-function uniqueInboxPath(knownDocs: KnownDoc[]): string {
+/** First free path for a new untitled note inside `folder` (default
+ * `inbox`): `<folder>/Untitled.md`, then `<folder>/Untitled 1.md`,
+ * `<folder>/Untitled 2.md`, … so two quick creates don't collide on
+ * the same file. Trailing slashes on `folder` are tolerated. */
+function uniqueNotePath(knownDocs: KnownDoc[], folder = 'inbox'): string {
+  const prefix = `${folder.replace(/\/+$/, '')}/`
   const taken = new Set(
     knownDocs.map((d) => d.relPath).filter((p): p is string => Boolean(p)),
   )
-  let candidate = 'inbox/Untitled.md'
+  let candidate = `${prefix}Untitled.md`
   let n = 1
   while (taken.has(candidate)) {
-    candidate = `inbox/Untitled ${n}.md`
+    candidate = `${prefix}Untitled ${n}.md`
     n += 1
   }
   return candidate
@@ -97,23 +100,23 @@ export const createCreateSlice = (
   set: SetDocsState,
   get: GetDocsState,
 ): CreateSlice => ({
-  createNew: async () => {
+  createNew: async (folderPath) => {
     // Flat Obsidian-style note: a plain `note` lands at
-    // `inbox/<name>.md`. (The vault is now a flat tree — the old
-    // "anchor every new note under today's daily as a `writing`"
-    // model was retired.) For `note` docs `relPath` is the only
-    // placement rule pathForDoc knows; without it pathForDoc returns
-    // null, flushDirty skips the doc, and the brand-new note never
-    // reaches disk — so we always set relPath here.
+    // `<folder>/<name>.md` — `inbox/` by default (⌘N / header "+"),
+    // or the folder a caller targets (folder-row "New note here").
+    // For `note` docs `relPath` is the only placement rule pathForDoc
+    // knows; without it pathForDoc returns null, flushDirty skips the
+    // doc, and the brand-new note never reaches disk — so we always
+    // set relPath here.
     const slug = generateClientSlug()
     const createdAt = new Date().toISOString()
-    const relPath = uniqueInboxPath(get().knownDocs)
+    const relPath = uniqueNotePath(get().knownDocs, folderPath)
     const meta: KnownDoc = {
       slug,
       type: 'note',
-      // Filename (sans `inbox/` + `.md`) is the sidebar label; keep
+      // Basename (sans folder + `.md`) is the sidebar label; keep
       // title in sync so CommandPalette / tabs show the same name.
-      title: relPath.slice('inbox/'.length).replace(/\.md$/, ''),
+      title: relPath.split('/').pop()!.replace(/\.md$/, ''),
       relPath,
       createdAt,
     }

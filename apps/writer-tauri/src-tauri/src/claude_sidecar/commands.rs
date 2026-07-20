@@ -336,6 +336,39 @@ pub async fn claude_chat_edit_ack(app: AppHandle, args: ChatEditAckArgs) -> Resu
     .map_err(|e| e.to_string())
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatQueryResultArgs {
+    pub query_id: String,
+    /// The filtered note references (opaque to Rust — forwarded verbatim to
+    /// the sidecar, which hands them to the model as the query_notes result).
+    pub results: Value,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+}
+
+/// Returns the host-filtered result of a `query_notes` tool call to the
+/// sidecar, resolving its parked `#requestQuery` promise (see server.mjs
+/// `#handleQueryResult`). Notification only — no response expected.
+#[tauri::command]
+pub async fn claude_chat_query_result(
+    app: AppHandle,
+    args: ChatQueryResultArgs,
+) -> Result<(), String> {
+    let manager = get_manager(&app)?;
+    let chat = manager.chat_client().await;
+    chat.notify(
+        "chat/query-result",
+        Some(json!({
+            "queryId": args.query_id,
+            "results": args.results,
+            "nextCursor": args.next_cursor,
+        })),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// Runs a single-shot chat on the title sidecar. Used for thread-title
 /// generation. Returns the same ack shape as `claude_chat_start`; events
 /// flow on the same `claude:*` channel.

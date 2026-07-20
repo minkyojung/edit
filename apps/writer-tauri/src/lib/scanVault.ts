@@ -30,7 +30,7 @@ import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import type { KnownDoc } from '@/state/docsStore'
 import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
 import { seedLastWrittenPath } from '@/lib/docFileSync'
-import { splitFrontmatter } from '@/lib/frontmatter'
+import { splitFrontmatterFull } from '@/lib/frontmatter'
 
 /** Mint a fresh slug for `mdRel` and load its portable frontmatter meta.
  *
@@ -44,9 +44,9 @@ import { splitFrontmatter } from '@/lib/frontmatter'
 async function mintDocMeta(
   mdRel: string,
 ): Promise<{ slug: string; meta: Partial<DocMetaFile> }> {
-  let data: Record<string, string> = {}
+  let data: Record<string, string | string[]> = {}
   try {
-    data = splitFrontmatter(await readVaultFile(mdRel)).data
+    data = splitFrontmatterFull(await readVaultFile(mdRel)).data
   } catch {
     // Unreadable `.md` — mint anyway with empty meta.
   }
@@ -132,6 +132,10 @@ export function mdRelToKnownDoc(
   if (typeof meta.durationSec === 'number') overlay.durationSec = meta.durationSec
   if (typeof meta.thumbnailUrl === 'string') overlay.thumbnailUrl = meta.thumbnailUrl
   if (typeof meta.description === 'string') overlay.description = meta.description
+  // Workflow status — already validated to a known value by frontmatterToMeta.
+  if (meta.status) overlay.status = meta.status
+  // Tags list (already normalized to a non-empty string[] by frontmatterToMeta).
+  if (meta.tags) overlay.tags = meta.tags
   return { ...base, ...overlay } as KnownDoc
 }
 

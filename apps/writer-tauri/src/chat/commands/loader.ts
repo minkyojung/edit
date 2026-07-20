@@ -1,18 +1,18 @@
 // Parses a slash command's markdown source into LoadedCommand.
 //
-// We keep the parser tiny and dependency-free: frontmatter is a flat
-// `key: value` block delimited by `---`, with two extras:
-//   - quoted strings ("hint with: colons")
-//   - flow-style arrays ([propose_edit, propose_comment])
-// Anything more exotic (nested objects, multiline) is rejected — built-in
-// .md files are written by us and don't need YAML's full surface.
+// Frontmatter values are read through the shared YAML parser
+// (`parseFrontmatterBlock`); this file owns only the command-specific
+// concerns on top of it: detecting an unclosed block and validating each
+// field. The consumed fields (name, description, kind, model, effort, scope,
+// argument-hint) are all scalars, so the flat string view is exactly right.
 //
 // Frontmatter is OPTIONAL, following the Claude Code slash-command convention
 // so `.claude/commands/*.md` files import as-is: when it's absent, `name` comes
 // from the filename and `description` from the first body line. A present-but-
-// malformed frontmatter block, or an invalid field value, is still a loud
+// unclosed frontmatter block, or an invalid field value, is still a loud
 // load-time error — we relax the *required*-ness, not the validation.
 
+import { parseFrontmatterBlock } from '@/lib/frontmatter'
 import {
   type CommandKindId,
   type CommandScope,
@@ -45,7 +45,7 @@ export function parseCommand(raw: string, source: string): LoadedCommand {
   let fm: FmObject = {}
   let body = raw
   if (m) {
-    fm = parseFrontmatter(m[1], source)
+    fm = parseFrontmatterBlock(m[1])
     body = m[2] ?? ''
   } else if (/^---\r?\n/.test(raw)) {
     // Opened a frontmatter block but never closed it — a real mistake, not a
@@ -56,7 +56,7 @@ export function parseCommand(raw: string, source: string): LoadedCommand {
   // Name: frontmatter `name` wins (back-compat); otherwise the filename stem,
   // matching Claude Code where the filename IS the command name.
   const fileStem = source.split(/[\\/]/).pop()?.replace(/\.md$/i, '') ?? ''
-  const name = optionalString(fm, 'name', source) ?? fileStem
+  const name = optionalString(fm, 'name') ?? fileStem
   if (!/^[a-z][a-z0-9-]*$/.test(name)) {
     throw new CommandParseError(source, `name "${name}" must be lowercase kebab-case`)
   }
@@ -64,7 +64,7 @@ export function parseCommand(raw: string, source: string): LoadedCommand {
   // Description: frontmatter `description`, else the first non-empty body line
   // (Claude Code's fallback), else the name so it is never empty.
   const description =
-    optionalString(fm, 'description', source) ?? firstBodyLine(body) ?? name
+    optionalString(fm, 'description') ?? firstBodyLine(body) ?? name
 
   const kindRaw = (fm.kind as string | undefined) ?? 'chat-message'
   if (!KIND_IDS.includes(kindRaw as CommandKindId)) {
@@ -77,56 +77,14 @@ export function parseCommand(raw: string, source: string): LoadedCommand {
 
   const scope = (optionalEnum(fm, 'scope', SCOPES, source) as CommandScope | undefined) ?? 'none'
 
-  const argumentHint = optionalString(fm, 'argument-hint', source)
+  const argumentHint = optionalString(fm, 'argument-hint')
 
   return { name, description, kind, model, effort, argumentHint, scope, body }
 }
 
 // --- internals ---------------------------------------------------------
 
-type FmValue = string | string[]
-type FmObject = Record<string, FmValue>
-
-function parseFrontmatter(text: string, source: string): FmObject {
-  const out: FmObject = {}
-  const lines = text.split(/\r?\n/)
-  for (const line of lines) {
-    if (!line.trim() || line.trim().startsWith('#')) continue
-    const colon = line.indexOf(':')
-    if (colon === -1) {
-      throw new CommandParseError(source, `frontmatter line missing ':' → "${line}"`)
-    }
-    const key = line.slice(0, colon).trim()
-    const rest = line.slice(colon + 1).trim()
-    out[key] = parseValue(rest, source, key)
-  }
-  return out
-}
-
-function parseValue(raw: string, source: string, key: string): FmValue {
-  if (raw.startsWith('[') && raw.endsWith(']')) {
-    const inner = raw.slice(1, -1).trim()
-    if (!inner) return []
-    return inner.split(',').map((s) => unquote(s.trim(), source, key))
-  }
-  return unquote(raw, source, key)
-}
-
-function unquote(raw: string, source: string, key: string): string {
-  if (
-    (raw.startsWith('"') && raw.endsWith('"')) ||
-    (raw.startsWith("'") && raw.endsWith("'"))
-  ) {
-    return raw.slice(1, -1)
-  }
-  if (raw.includes(':')) {
-    throw new CommandParseError(
-      source,
-      `value for "${key}" contains ':' — quote it ("${raw}")`,
-    )
-  }
-  return raw
-}
+type FmObject = Record<string, string>
 
 /** First non-empty body line, stripped of a leading markdown heading marker —
  * Claude Code's default command description when frontmatter omits one. */
@@ -138,13 +96,8 @@ function firstBodyLine(body: string): string | undefined {
   return undefined
 }
 
-function optionalString(fm: FmObject, key: string, source: string): string | undefined {
-  const v = fm[key]
-  if (v === undefined) return undefined
-  if (typeof v !== 'string') {
-    throw new CommandParseError(source, `field "${key}" must be a string`)
-  }
-  return v
+function optionalString(fm: FmObject, key: string): string | undefined {
+  return fm[key]
 }
 
 function optionalEnum<T extends string>(
@@ -155,9 +108,6 @@ function optionalEnum<T extends string>(
 ): T | undefined {
   const v = fm[key]
   if (v === undefined) return undefined
-  if (typeof v !== 'string') {
-    throw new CommandParseError(source, `field "${key}" must be a string`)
-  }
   if (!allowed.includes(v as T)) {
     throw new CommandParseError(
       source,

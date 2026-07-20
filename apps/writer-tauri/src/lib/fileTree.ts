@@ -12,7 +12,7 @@
 // flow through here unchanged — only the node count grows.
 
 import type { KnownDoc } from '@/state/docsStore'
-import { pathForDoc } from '@/lib/docPaths'
+import { pathForDoc, type DocStatus } from '@/lib/docPaths'
 import type { SortMode } from '@/state/sortStore'
 
 /** Paths hidden from the sidebar tree: `_`-prefixed agent folders
@@ -52,6 +52,9 @@ export interface TreeFile {
   /** Creation timestamp (ISO), carried for the `created-*` sort modes.
    *  Absent on legacy docs — those fall back to a name compare. */
   createdAt?: string
+  /** Workflow status, carried for the sidebar row's status dot. Absent
+   *  when the note has no status set. */
+  status?: DocStatus
 }
 
 export interface TreeFolder {
@@ -80,6 +83,32 @@ export interface TreeAttachment {
 }
 
 export type TreeNode = TreeFile | TreeFolder | TreeAttachment
+
+/** Narrow the doc list to those matching `predicate`, keeping the parent
+ *  chain each match needs to stay reachable. A `writing` note's path
+ *  resolves through its `daily` ancestor (see pathForDoc), so dropping the
+ *  ancestor would make the note vanish from the tree — this walks `parentId`
+ *  up and keeps those ancestors even when they don't match themselves.
+ *
+ *  The predicate shape lets the sidebar compose several filters (status,
+ *  tag, …) by ANDing them, without this function knowing about any of them. */
+export function filterDocsWithAncestors(
+  docs: readonly KnownDoc[],
+  predicate: (doc: KnownDoc) => boolean,
+): KnownDoc[] {
+  const bySlug = new Map(docs.map((d) => [d.slug, d]))
+  const keep = new Set<string>()
+  for (const doc of docs) {
+    if (!predicate(doc)) continue
+    keep.add(doc.slug)
+    let parent = doc.parentId
+    while (parent && !keep.has(parent)) {
+      keep.add(parent)
+      parent = bySlug.get(parent)?.parentId
+    }
+  }
+  return docs.filter((d) => keep.has(d.slug))
+}
 
 /** Build the sidebar tree from the catalog. Archived docs and docs with
  *  no placement (e.g. a daily without a date) are dropped. Folders always
@@ -133,6 +162,7 @@ export function buildFileTree(
       videoId: doc.videoId,
       sourceUrl: doc.sourceUrl,
       createdAt: doc.createdAt,
+      status: doc.status,
     })
   }
 

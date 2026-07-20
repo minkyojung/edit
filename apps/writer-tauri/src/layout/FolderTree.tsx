@@ -29,6 +29,15 @@ import {
 import {
   IconFolder,
   IconFolderOpen,
+  IconFolderPlus,
+  IconPlus,
+  IconFilePlus,
+  IconPencil,
+  IconCopy,
+  IconArrowRight,
+  IconLink,
+  IconExternalLink,
+  IconTrash,
   IconPhoto,
   IconFileTypePdf,
   IconMusic,
@@ -39,9 +48,14 @@ import {
 import { useDocsStore } from '@/state/docsStore'
 import { useNewFolderStore } from '@/state/newFolderStore'
 import { useSortStore } from '@/state/sortStore'
+import { useStatusFilterStore } from '@/state/statusFilterStore'
+import { useTagFilterStore } from '@/state/tagFilterStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
+import { cn } from '@/lib/utils'
+import { STATUS_DOT_CLASS, STATUS_LABEL } from '@/lib/docStatusMeta'
 import {
   buildFileTree,
+  filterDocsWithAncestors,
   isHiddenTreePath,
   type TreeAttachment,
   type TreeFile,
@@ -57,6 +71,7 @@ import {
   TreeRow,
   TreeRowLabel,
   TreeRowLead,
+  TreeRowTrail,
   TreeSub,
 } from '@/components/ui/tree-row'
 import {
@@ -131,13 +146,19 @@ function RenameInput({
  * row (so it becomes the popper anchor) and right-click opens the menu
  * with side="right" align="start". Left-click still falls through to the
  * row (open note / toggle folder). */
-// Folder menu surface — brighter panel that matches the sidebar's selected
-// row color (color-mix foreground 18% + sidebar), frosted via backdrop-blur,
-// wider with a smaller radius. Applied to both the content and the "Move to…"
-// sub-content so the whole menu reads as one bright surface. (Overrides the
-// dropdown-menu defaults bg-popover / min-w-48 / rounded-md via tailwind-merge.)
-const ROW_MENU_SURFACE =
-  'min-w-64 rounded-lg border border-foreground/8 bg-[color-mix(in_oklch,var(--foreground)_18%,var(--sidebar))]/55 backdrop-blur-2xl'
+// Folder/file row menu — a Notion-style SOLID, compact popover. We keep the
+// dropdown-menu defaults (opaque bg-popover, shadow-lg, ring, rounded-md,
+// p-1.5) — i.e. NO more /55 translucency + backdrop-blur that let the editor
+// bleed through — and only (a) narrow the min width and (b) tighten every row:
+// less vertical padding + lighter weight than the app-wide DropdownMenuItem,
+// so more items pack in without wasted space. The density is scoped by
+// data-slot so the shared menu primitive stays untouched everywhere else.
+// Applied to both the content and the "Move to…" sub-content.
+const ROW_MENU_SURFACE = cn(
+  'min-w-56',
+  '[&_[data-slot=dropdown-menu-item]]:gap-2.5 [&_[data-slot=dropdown-menu-item]]:px-2 [&_[data-slot=dropdown-menu-item]]:py-1.5 [&_[data-slot=dropdown-menu-item]]:font-normal',
+  '[&_[data-slot=dropdown-menu-sub-trigger]]:gap-2.5 [&_[data-slot=dropdown-menu-sub-trigger]]:px-2 [&_[data-slot=dropdown-menu-sub-trigger]]:py-1.5 [&_[data-slot=dropdown-menu-sub-trigger]]:font-normal',
+)
 
 function RowContextMenu({
   children,
@@ -200,6 +221,9 @@ interface TreeCtx {
   onCommitFolderRename: (path: string, name: string) => void
   onCancelFolderRename: () => void
   onDeleteFolder: (path: string) => void
+  /** Create a fresh Untitled note inside `path`, expand the folder if
+   * collapsed, and open the note. Folder-row "+" button / context menu. */
+  onNewNote: (path: string) => void
   /** Folder path under which a new subfolder is being named (null = none). */
   creatingSubfolderParent: string | null
   onStartCreateSubfolder: (parentPath: string) => void
@@ -240,13 +264,18 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
         items={
           <>
             <DropdownMenuItem onSelect={() => ctx.onStartRename(node.slug)}>
+              <IconPencil className="text-muted-foreground" />
               Rename
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => ctx.onDuplicate(node.slug)}>
+              <IconCopy className="text-muted-foreground" />
               Duplicate
             </DropdownMenuItem>
             <DropdownMenuSub>
-              <DropdownMenuSubTrigger>Move to…</DropdownMenuSubTrigger>
+              <DropdownMenuSubTrigger>
+                <IconArrowRight className="text-muted-foreground" />
+                Move to…
+              </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className={ROW_MENU_SURFACE}>
                 <DropdownMenuItem onSelect={() => ctx.onMoveTo(node.slug, '')}>
                   (vault root)
@@ -261,29 +290,42 @@ function FileNode({ node, ctx }: { node: TreeFile; ctx: TreeCtx }) {
             </DropdownMenuSub>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => ctx.onCopyPath(node.path)}>
+              <IconLink className="text-muted-foreground" />
               Copy path
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => ctx.onOpenInDefaultApp(node.path)}>
+              <IconExternalLink className="text-muted-foreground" />
               Open in default app
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => ctx.onRevealInFinder(node.path)}>
+              <IconFolderOpen className="text-muted-foreground" />
               Reveal in Finder
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
+              variant="destructive"
               onSelect={() => ctx.onDelete(node.slug)}
-              className="text-destructive focus:text-destructive"
             >
+              <IconTrash />
               Delete
             </DropdownMenuItem>
           </>
         }
       >
         <TreeRow active={isActive}>
-          {/* Empty lead keeps file text aligned under folder labels;
-              files are text-only (no icon) per the Obsidian look. */}
+          {/* Lead keeps file text aligned under folder labels; it holds a
+              small status dot when the note has one, else stays empty (the
+              Obsidian text-only look). */}
           <TreeRowLead asChild>
-            <span aria-hidden />
+            <span>
+              {node.status ? (
+                <span
+                  className={cn('size-1.5 rounded-full', STATUS_DOT_CLASS[node.status])}
+                  title={STATUS_LABEL[node.status]}
+                  aria-label={`상태: ${STATUS_LABEL[node.status]}`}
+                />
+              ) : null}
+            </span>
           </TreeRowLead>
           {isEditing ? (
             <RenameInput
@@ -339,17 +381,24 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
         <RowContextMenu
           items={
             <>
+              <DropdownMenuItem onSelect={() => ctx.onNewNote(node.path)}>
+                <IconFilePlus className="text-muted-foreground" />
+                New note here
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => ctx.onStartCreateSubfolder(node.path)}>
+                <IconFolderPlus className="text-muted-foreground" />
                 New subfolder
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => ctx.onStartFolderRename(node.path)}>
+                <IconPencil className="text-muted-foreground" />
                 Rename
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
+                variant="destructive"
                 onSelect={() => ctx.onDeleteFolder(node.path)}
-                className="text-destructive focus:text-destructive"
               >
+                <IconTrash />
                 Delete
               </DropdownMenuItem>
             </>
@@ -408,6 +457,29 @@ function FolderNode({ node, ctx }: { node: TreeFolder; ctx: TreeCtx }) {
                 >
                   <span className="truncate">{node.name}</span>
                 </TreeRowLabel>
+              )}
+              {!isEditing && (
+                <TreeRowTrail
+                  showOnHover
+                  aria-label="New note in this folder"
+                  title="New note here"
+                  // Match the sidebar's icon-action idiom (header +/folder
+                  // buttons, SidebarMenuAction): muted /60 that fills on hover,
+                  // a foreground/12 hover chip that reads a step above the row's
+                  // own foreground/6 hover, and a 16px glyph like every other
+                  // inline action.
+                  className="rounded-md text-sidebar-foreground/60 transition hover:bg-foreground/12 hover:text-sidebar-foreground [&>svg]:size-4"
+                  // The row's outer div carries the drag listeners; stop the
+                  // pointer here so grabbing the "+" doesn't start a folder drag
+                  // and the click doesn't bubble to the label/toggle.
+                  onPointerDown={(e: MouseEvent) => e.stopPropagation()}
+                  onClick={(e: MouseEvent) => {
+                    e.stopPropagation()
+                    ctx.onNewNote(node.path)
+                  }}
+                >
+                  <IconPlus stroke={1.75} />
+                </TreeRowTrail>
               )}
             </TreeRow>
           </div>
@@ -469,12 +541,15 @@ function AttachmentNode({ node, ctx }: { node: TreeAttachment; ctx: TreeCtx }) {
         items={
           <>
             <DropdownMenuItem onSelect={() => ctx.onCopyPath(node.path)}>
+              <IconLink className="text-muted-foreground" />
               Copy path
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => ctx.onOpenInDefaultApp(node.path)}>
+              <IconExternalLink className="text-muted-foreground" />
               Open in default app
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => ctx.onRevealInFinder(node.path)}>
+              <IconFolderOpen className="text-muted-foreground" />
               Reveal in Finder
             </DropdownMenuItem>
           </>
@@ -511,7 +586,10 @@ function RootDropZone() {
     <div
       ref={setNodeRef}
       className={
-        'ml-3 mr-2 mt-1 min-h-16 flex-1 rounded-lg ' +
+        // A modest fixed drop strip (drag-to-root target) rather than a
+        // flex-1 fill, so the Tags pane sits right below the tree instead of
+        // being pushed to the bottom of the sidebar.
+        'ml-3 mr-2 mt-1 min-h-8 rounded-lg ' +
         (isOver ? 'bg-sidebar-accent ring-1 ring-inset ring-sidebar-ring/50' : '')
       }
     />
@@ -530,16 +608,39 @@ export function FolderTree() {
   const moveFolder = useDocsStore((s) => s.moveFolder)
   const deleteFolder = useDocsStore((s) => s.deleteFolder)
   const duplicateDoc = useDocsStore((s) => s.duplicateDoc)
+  const createNew = useDocsStore((s) => s.createNew)
   const creatingFolder = useNewFolderStore((s) => s.creating)
   const stopNewFolder = useNewFolderStore((s) => s.stop)
   const sortMode = useSortStore((s) => s.mode)
+  const inProgressOnly = useStatusFilterStore((s) => s.inProgressOnly)
+  const activeTag = useTagFilterStore((s) => s.activeTag)
+  const clearTagFilter = useTagFilterStore((s) => s.clear)
   const navigate = useNavigate()
   const activeSlug = useActiveSlug()
 
-  const tree = useMemo(
-    () => buildFileTree(knownDocs, knownFolders, sortMode, knownFiles),
-    [knownDocs, knownFolders, sortMode, knownFiles],
-  )
+  // Self-heal: if the active tag no longer exists on any note (its last
+  // carrier was deleted or retagged), clear the filter — otherwise the tree
+  // would render empty with no way to clear it (its chip is gone from the
+  // Tags pane too).
+  useEffect(() => {
+    if (activeTag && !knownDocs.some((d) => d.tags?.includes(activeTag))) {
+      clearTagFilter()
+    }
+  }, [activeTag, knownDocs, clearTagFilter])
+
+  const tree = useMemo(() => {
+    // Compose the active sidebar filters as AND-ed predicates. No filter →
+    // the full tree; any filter → only the matching notes and the ancestors
+    // they need to stay reachable (no standalone folders/files).
+    const preds: ((d: (typeof knownDocs)[number]) => boolean)[] = []
+    if (inProgressOnly) preds.push((d) => d.status === 'in-progress')
+    if (activeTag) preds.push((d) => !!d.tags?.includes(activeTag))
+    if (preds.length === 0) {
+      return buildFileTree(knownDocs, knownFolders, sortMode, knownFiles)
+    }
+    const match = filterDocsWithAncestors(knownDocs, (d) => preds.every((p) => p(d)))
+    return buildFileTree(match, [], sortMode, [])
+  }, [inProgressOnly, activeTag, knownDocs, knownFolders, sortMode, knownFiles])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [editingSlug, setEditingSlug] = useState<string | null>(null)
   const [editingFolderPath, setEditingFolderPath] = useState<string | null>(null)
@@ -630,6 +731,15 @@ export function FolderTree() {
     void deleteFolder(path).then((next) => {
       if (next) openDoc(next)
     })
+  }
+  const onNewNote = (path: string) => {
+    // Expand the folder first so the fresh note is visible in-tree once
+    // created, then create + open it. Mirrors createNew's flush lifecycle;
+    // the note lands at `<path>/Untitled.md`.
+    setExpanded((prev) => (prev.has(path) ? prev : new Set(prev).add(path)))
+    void createNew(path)
+      .then((slug) => openDoc(slug))
+      .catch((err) => console.error('[docs] new note in folder failed', err))
   }
   const onStartCreateSubfolder = (parentPath: string) => {
     setCreatingSubfolderParent(parentPath)
@@ -722,6 +832,7 @@ export function FolderTree() {
     onCommitFolderRename,
     onCancelFolderRename: () => setEditingFolderPath(null),
     onDeleteFolder,
+    onNewNote,
     creatingSubfolderParent,
     onStartCreateSubfolder,
     onCommitCreateSubfolder,
@@ -737,7 +848,7 @@ export function FolderTree() {
       onDragEnd={onDragEnd}
       onDragCancel={resetDrag}
     >
-      <div className="flex h-full flex-col">
+      <div className="flex flex-col">
         {/* Left gutter (pl-3 = 12px) so row ICON/TEXT lands on the traffic-light
             leading edge (12px gutter + the lead's 8px ml = 20px); the fill may
             spill a touch left, which is intentional. In sync with the Sidebar

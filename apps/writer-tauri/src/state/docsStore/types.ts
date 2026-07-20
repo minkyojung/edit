@@ -22,6 +22,7 @@
  */
 
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
+import type { DocStatus } from '@/lib/docPaths'
 import type { Template } from '@/lib/templates'
 
 /** Slim metadata read straight from the on-disk `.meta.json` sidecar
@@ -89,6 +90,14 @@ export interface KnownDoc {
    * the placement — pathForDoc returns it verbatim — since these files
    * live wherever the user put them. Unset on every typed doc. */
   relPath?: string
+  /** Workflow status (not-started / in-progress / done). Optional; only
+   * editable note types carry it (see `docSupportsStatus`). Persisted to
+   * `.md` frontmatter via `buildMetaForKnownDoc` / `portableFrontmatterFields`,
+   * read back by scanVault at boot. */
+  status?: DocStatus
+  /** Free-form tags, persisted to `.md` frontmatter as a YAML list. Empty
+   * or absent when the note has none. Set via the properties panel. */
+  tags?: string[]
 }
 
 /** Coarse classification used by the DOC_POLICIES table below. Every
@@ -219,7 +228,7 @@ export interface DocsState {
   removeKnownDoc: (slug: string) => void
   ensureOpen: (slug: string) => void
   closeDoc: (slug: string) => string | null
-  createNew: () => Promise<string>
+  createNew: (folderPath?: string) => Promise<string>
   /** Create a new note seeded with a template's body, then return its slug. */
   createFromTemplate: (template: Template) => Promise<string>
   /** Create a folder on disk at `relPath` and add it to knownFolders.
@@ -305,6 +314,11 @@ export interface DocsState {
   /** Toggle a read-it-later article's read/unread state (sets/clears
    * `readAt` and flushes the sidecar). No-op for non-article docs. */
   setArticleRead: (slug: string, read: boolean) => void
+  /** Set (or clear, with `undefined`) a note's workflow status and flush.
+   * No-op for doc types that don't carry status (daily / system). */
+  setDocStatus: (slug: string, status: DocStatus | undefined) => void
+  /** Replace a note's tag list (trimmed/de-duped; empty clears) and flush. */
+  setDocTags: (slug: string, tags: string[]) => void
   /** Switch the sidebar date view. */
   setSidebarTab: (tab: 'day' | 'week' | 'month') => void
   /** Set the Month view's anchor month (YYYY-MM). */

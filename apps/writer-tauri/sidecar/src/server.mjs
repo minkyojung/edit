@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises'
+import { readdir } from 'node:fs/promises'
 import { join, normalize, relative, isAbsolute, resolve as resolvePath } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { query, tool, createSdkMcpServer, getSessionInfo } from '@anthropic-ai/claude-agent-sdk'
@@ -15,6 +15,7 @@ import {
   NOT_INITIALIZED,
   NO_TOKEN,
 } from './jsonrpc.mjs'
+import { readSkillMeta } from './frontmatter.mjs'
 import {
   rateLimitPayload,
   mapSdkError,
@@ -60,6 +61,102 @@ async function sessionPersisted(sessionId) {
   } catch {
     return false
   }
+}
+
+function buildSetNoteStatusTool(getRunId, emit) {
+  return tool(
+    'set_note_status',
+    "Set a note's workflow status when the user asks (e.g. \"이거 완료 처리해줘\" → done, \"진행 중으로\" → in-progress, \"아직 시작 안 함\" → not-started). `path` is the note's vault-relative or absolute path; `status` is one of not-started / in-progress / done. Only editable notes carry a status — a daily journal or a system page will be ignored by the host. Applied IMMEDIATELY (not queued for review) and reversible. Returns immediately — do not wait. This is the ONLY way to change a note's status; never write a `status:` line into a `---` frontmatter block yourself.",
+    {
+      path: z.string(),
+      status: z.enum(['not-started', 'in-progress', 'done']),
+    },
+    async (input) => {
+      emit(
+        notification('chat/set-status', {
+          runId: getRunId(),
+          path: input.path,
+          status: input.status,
+        }),
+      )
+      return {
+        content: [{ type: 'text', text: `Status set: ${input.path} → ${input.status}` }],
+      }
+    },
+  )
+}
+
+function buildSetNoteTagsTool(getRunId, emit) {
+  return tool(
+    'set_note_tags',
+    "Set a note's tags when the user asks (e.g. \"이 노트에 태그 달아줘\", \"ai, 금융 태그 붙여줘\"). `path` is the note's vault-relative or absolute path; `tags` is the COMPLETE list of tags the note should have (this REPLACES the existing tags, so include the ones to keep). Pass an empty list to clear all tags. Only editable notes carry tags — a daily journal or system page is ignored by the host. Applied IMMEDIATELY (not queued) and reversible. Returns immediately — do not wait. This is the ONLY way to change a note's tags; never write a `tags:` block into a `---` frontmatter block yourself.",
+    {
+      path: z.string(),
+      tags: z.array(z.string()),
+    },
+    async (input) => {
+      emit(
+        notification('chat/set-tags', {
+          runId: getRunId(),
+          path: input.path,
+          tags: input.tags,
+        }),
+      )
+      return {
+        content: [
+          { type: 'text', text: `Tags set: ${input.path} → [${input.tags.join(', ')}]` },
+        ],
+      }
+    },
+  )
+}
+
+function buildQueryNotesTool(getRunId, requestQuery) {
+  return tool(
+    'query_notes',
+    "Find notes by their METADATA — workflow status and/or tags — WITHOUT reading files. Use this whenever the user refers to notes by status or tag: \"summarize my in-progress notes\", \"list notes tagged finance\", \"what's not started yet\". `where.status` is one of not-started / in-progress / done; `where.tags` is a list — a note matches if it carries ANY of them (case-sensitive). Returns REFERENCES only — {path, title, status, tags} per note, NEVER the note bodies — so Read the paths you actually want. Do NOT use this for free text inside a note's body (a phrase, a name, a [[wikilink]]) — use Grep for that. Grep is unreliable on the multi-line `tags:` frontmatter block, which is exactly why this tool exists for metadata. If `nextCursor` comes back, pass it as `cursor` to page through more.",
+    {
+      where: z
+        .object({
+          status: z.enum(['not-started', 'in-progress', 'done']).optional(),
+          tags: z.array(z.string()).optional(),
+        })
+        .optional(),
+      limit: z.number().optional(),
+      cursor: z.string().optional(),
+    },
+    async (input) => {
+      try {
+        const { results, nextCursor } = await requestQuery(
+          input.where ?? {},
+          input.limit ?? 50,
+          input.cursor ?? null,
+        )
+        if (results.length === 0) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: 'No notes matched this metadata filter (status / tags). For free text inside note bodies, use Grep instead.',
+              },
+            ],
+          }
+        }
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ results, nextCursor }) }],
+        }
+      } catch (e) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `(query_notes failed: ${e.message}. Retry, or fall back to Glob/Grep.)`,
+            },
+          ],
+        }
+      }
+    },
+  )
 }
 
 const SIDECAR_VERSION = '0.1.0'
@@ -169,6 +266,11 @@ export class Server {
     // files/tool-calls isn't blocked on this — only the SINGLE tool result
     // that hook rewrites, if the host reports it didn't land).
     this.pendingAcks = new Map()
+    // queryId -> { resolve, reject, runId } for an in-flight `query_notes`
+    // tool call awaiting the host's filtered result (references). Unlike
+    // pendingAcks, the tool handler AWAITS this and returns the payload to the
+    // model. Modeled on pendingDecisions (awaited + cancellable + data-carrying).
+    this.pendingQueries = new Map()
     this.shuttingDown = false
     // Pending waiters for the next setToken call. Resolved when a new token
     // is pushed; used by the AUTH-retry path to coordinate refreshes.
@@ -208,6 +310,8 @@ export class Server {
           return this.#handleDecision(params)
         case 'chat/edit-ack':
           return this.#handleEditAck(params)
+        case 'chat/query-result':
+          return this.#handleQueryResult(params)
         case 'shutdown':
           return this.#handleShutdown(id)
         default:
@@ -862,16 +966,9 @@ export class Server {
             options.skills = skillNames
             for (const dir of skillNames) {
               try {
-                const raw = await readFile(join(skillsRoot, dir, 'SKILL.md'), 'utf-8')
-                const fm = raw.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? ''
-                const pick = (k) =>
-                  fm
-                    .split('\n')
-                    .find((l) => l.startsWith(`${k}:`))
-                    ?.slice(k.length + 1)
-                    .trim()
-                    .replace(/^["']|["']$/g, '') ?? ''
-                existingSkills.push({ name: pick('name') || dir, description: pick('description') })
+                existingSkills.push(
+                  await readSkillMeta(join(skillsRoot, dir, 'SKILL.md'), dir),
+                )
               } catch {
                 // Unreadable SKILL.md — skip.
               }
@@ -1459,6 +1556,16 @@ export class Server {
         )
       } else if (name === 'move_note') {
         relayDefs.push(buildMoveNoteTool(getRunId, this.emit))
+      } else if (name === 'set_note_status') {
+        relayDefs.push(buildSetNoteStatusTool(getRunId, this.emit))
+      } else if (name === 'set_note_tags') {
+        relayDefs.push(buildSetNoteTagsTool(getRunId, this.emit))
+      } else if (name === 'query_notes') {
+        relayDefs.push(
+          buildQueryNotesTool(getRunId, (where, limit, cursor) =>
+            this.#requestQuery(getRunId(), where, limit, cursor),
+          ),
+        )
       }
     }
     if (relayDefs.length === 0) return null
@@ -1589,9 +1696,54 @@ export class Server {
     pending.resolve({ ok: !!params?.ok, reason: params?.reason ?? null })
   }
 
+  // Ask the host to filter its note catalog by metadata and return references.
+  // Awaited by the `query_notes` tool handler (unlike the propose_* acks). The
+  // host's filter is a near-instant in-memory pass, so a 5s timeout backstop
+  // (host never answers) plus per-run rejection on cancel is enough — no
+  // controller is threaded through the fire-once relay tools.
+  #requestQuery(runId, where, limit, cursor) {
+    return new Promise((resolve, reject) => {
+      const queryId = globalThis.crypto.randomUUID()
+      let timer = null
+      const settle = (fn) => (v) => {
+        if (timer) clearTimeout(timer)
+        this.pendingQueries.delete(queryId)
+        fn(v)
+      }
+      this.pendingQueries.set(queryId, {
+        runId,
+        resolve: settle(resolve),
+        reject: settle(reject),
+      })
+      timer = setTimeout(() => {
+        const q = this.pendingQueries.get(queryId)
+        if (q) q.reject(new Error('query_notes: host did not respond in time'))
+      }, 5000)
+      this.emit(notification('chat/query-notes', { runId, queryId, where, limit, cursor }))
+    })
+  }
+
+  // Host's filtered result for a parked query_notes call.
+  #handleQueryResult(params) {
+    const queryId = params?.queryId
+    if (typeof queryId !== 'string') return
+    const pending = this.pendingQueries.get(queryId)
+    if (!pending) return
+    pending.resolve({
+      results: Array.isArray(params?.results) ? params.results : [],
+      nextCursor: params?.nextCursor ?? null,
+    })
+  }
+
   #handleCancel(params) {
     const runId = params?.runId
     if (typeof runId !== 'string') return
+
+    // Fail any in-flight query_notes for this run so its slot doesn't linger
+    // until the 5s timeout.
+    for (const q of this.pendingQueries.values()) {
+      if (q.runId === runId) q.reject(new Error('cancelled'))
+    }
 
     // Every chat runs on the thread engine, so the runId maps to a thread.
     // Cancel the TURN only — keep the thread query (and any in-flight background
