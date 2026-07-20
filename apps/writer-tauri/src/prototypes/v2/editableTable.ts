@@ -18,6 +18,7 @@ import { syntaxTree } from '@codemirror/language'
 import { GFM } from '@lezer/markdown'
 import { livePreviewInline } from './livePreview'
 import { addRow, addColumn, deleteRow, deleteColumn, applyContentColumns } from '../tableEdit'
+import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 
 const isDelim = (line: string): boolean => /^[\s|:-]+$/.test(line) && line.includes('-')
 // Split a row into its source cells on UNESCAPED pipes only (a `\|` inside a cell is
@@ -266,6 +267,29 @@ export class EditableTableWidget extends WidgetType {
             markdown({ extensions: [GFM], addKeymap: false }),
             livePreviewInline,
             cellTheme,
+            // Bridge a cell's selection into the editor-agnostic store so the chat
+            // panel's context chip picks it up — the main editor's updateListener
+            // never sees it (the cell is a separate nested EditorView; the table is a
+            // block widget the main selection can't enter). Text is the cell's own
+            // (already-unescaped) doc; the line range is the WHOLE table's main-doc span
+            // (rangeFromDoc) — the chip only needs a label, not char-exact main-doc
+            // offsets, which the `<br>`/`\|` escaping would make unreliable. Empty
+            // selection clears, matching the main editor. Scope: in-cell selection only.
+            EditorView.updateListener.of((u) => {
+              if (!u.selectionSet && !u.docChanged) return
+              const sel = u.state.selection.main
+              const store = useEditorSelectionStore.getState()
+              if (sel.empty) {
+                store.setSelection(null)
+                return
+              }
+              const { from, to } = rangeFromDoc()
+              store.setSelection({
+                text: u.state.sliceDoc(sel.from, sel.to),
+                fromLine: view.state.doc.lineAt(from).number,
+                toLine: view.state.doc.lineAt(to).number,
+              })
+            }),
             EditorView.domEventHandlers({ blur: () => commit() }),
           ],
         }),
