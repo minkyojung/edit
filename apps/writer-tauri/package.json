@@ -50,6 +50,8 @@
   "dependencies": {
     "@codemirror/search": "^6.7.1",
     "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@fontsource-variable/geist": "^5.2.8",
     "@fontsource-variable/nunito-sans": "^5.2.7",
     "@radix-ui/react-use-controllable-state": "^1.2.2",
