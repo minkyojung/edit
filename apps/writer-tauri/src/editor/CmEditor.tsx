@@ -17,6 +17,7 @@ import { useEffect, useRef } from 'react'
 import { EditorState, Prec, Annotation } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands'
+import { highlightSelectionMatches } from '@codemirror/search'
 import { indentUnit } from '@codemirror/language'
 import { markdown, deleteMarkupBackward, pasteURLAsLink } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
@@ -218,6 +219,10 @@ export function CmEditor({ handle, header }: Props) {
             EditorView.contentAttributes.of({ lang: 'en' }),
             markdown({ extensions: [GFM], addKeymap: false }),
             placeholder('Start writing…'),
+            // Highlight other occurrences of the selected text (stock @codemirror/search).
+            // minSelectionLength 2 so a single-char selection doesn't flood the viewport;
+            // viewport-scoped + plain mark decoration → cheap and IME-safe.
+            highlightSelectionMatches({ minSelectionLength: 2 }),
             taskCheckboxClick,
             livePreviewV2,
             blocksV2,

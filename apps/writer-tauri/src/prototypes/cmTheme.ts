@@ -120,6 +120,14 @@ export const cmPrototypeTheme = EditorView.theme({
     {
       backgroundColor: 'color-mix(in oklch, var(--info) 22%, transparent)',
     },
+  // Other occurrences of the selected text (highlightSelectionMatches). A neutral,
+  // subtler wash than the selection's --info tint, so the match reads as "same word
+  // elsewhere" without competing with the active selection. Overrides the package's
+  // default green baseTheme, which clashes on a dark palette.
+  '.cm-selectionMatch': {
+    backgroundColor: 'color-mix(in oklch, var(--foreground) 13%, transparent)',
+    borderRadius: '2px',
+  },
 
   // Headings (line decorations)
   '.cm-h1, .cm-h2, .cm-h3, .cm-h4, .cm-h5, .cm-h6': {
