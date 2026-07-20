@@ -18,7 +18,7 @@ import { EditorState, Prec, Annotation } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands'
 import { indentUnit } from '@codemirror/language'
-import { markdown, deleteMarkupBackward } from '@codemirror/lang-markdown'
+import { markdown, deleteMarkupBackward, pasteURLAsLink } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
@@ -249,6 +249,10 @@ export function CmEditor({ handle, header }: Props) {
             linkClick(openLinkSafely), // Cmd/Ctrl-click [text](url) → open (safe schemes)
             mediaDropPaste(importMediaToVault), // drop/paste media → vault + insert
             htmlPaste, // paste rich web HTML → markdown (after media: files win)
+            // Paste a URL over a non-empty selection → `[selection](url)`. Stock
+            // lang-markdown; disjoint from htmlPaste (it reads text/plain only and
+            // wraps, else returns false) so it slots in after it.
+            pasteURLAsLink,
             richTextCopy, // Cmd+C/X → clipboard carries html + markdown
             cmInBufferReview(handle.slug), // AI suggestions → in-buffer red/green (Option B)
             // Save: mirror the doc text into the handle cache + flag dirty. The flush
