@@ -59,7 +59,7 @@ import { wikilinkMenu, wikilinkKeymap } from '@/editor/wikilinkMenu'
 import { smartEnter, shiftEnter } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
 import { spaceWidthProbe } from '@/prototypes/spaceWidth'
-import { clearTopLevelMarkerBackward, dedentContinuationBackward } from '@/prototypes/listBackspace'
+import { dedentContinuationBackward } from '@/prototypes/listBackspace'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
 import { richTextCopy } from './cmRichCopy'
 import { htmlPaste } from './cmHtmlPaste'
@@ -201,12 +201,9 @@ export function CmEditor({ handle, header }: Props) {
             // (link) is intentionally omitted: it opens the command palette.
             inlineFormatKeymapNoLink,
             keymap.of([
-              // Top-level bullet Backspace → clean delete (no ghost "  "). Runs
-              // BEFORE deleteMarkupBackward; returns false for nested / code /
-              // mid-content so CM's indentation-preserving delete stays intact.
-              { key: 'Backspace', run: clearTopLevelMarkerBackward },
               // Indented, marker-less list continuation (Shift+Enter's output) → one
-              // press clears the whole indent to leave the item. Before deleteMarkupBackward.
+              // press clears the whole indent to leave the item. Before deleteMarkupBackward,
+              // which handles markers (incl. a clean column-0 delete on lang-markdown 6.5).
               { key: 'Backspace', run: dedentContinuationBackward },
               { key: 'Backspace', run: deleteMarkupBackward },
               indentWithTab,
