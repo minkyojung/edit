@@ -40,10 +40,13 @@ describe('portableFrontmatterFields — what stays in the user .md', () => {
       createdAt: '2026-01-01',
       sourceUrl: 'https://x.test',
     })
-    // Present under the standard names other tools read. Absent: app-private slug.
+    // Present under the standard names other tools read. The app-private
+    // slug is CLAIMED (present as undefined) so mergeFrontmatter drops
+    // the stale `slug:` line legacy notes still carry — but never emitted.
     expect(fields.created).toBe('2026-01-01')
     expect(fields.source).toBe('https://x.test')
-    expect('slug' in fields).toBe(false)
+    expect('slug' in fields).toBe(true)
+    expect(fields.slug).toBeUndefined()
   })
 
   it('claims the legacy keys so a pre-rename note migrates on save', () => {

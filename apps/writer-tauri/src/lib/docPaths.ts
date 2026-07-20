@@ -297,13 +297,15 @@ export function portableFrontmatterFields(
 ): Record<string, FrontmatterValue | undefined> {
   return {
     // Obsidian-standard names on disk. The legacy `createdAt`/`sourceUrl`
-    // keys are listed as `undefined` so mergeFrontmatter treats them as
-    // app-owned and drops any stale copy left by a note saved before the
-    // rename — a lazy per-note migration on the next save, no bulk rewrite.
+    // keys — and the app-private `slug` some pre-cleanup notes still
+    // carry — are listed as `undefined` so mergeFrontmatter treats them
+    // as app-owned and drops any stale copy: a lazy per-note migration
+    // on the next save, no bulk rewrite.
     created: meta.createdAt,
     createdAt: undefined,
     source: meta.sourceUrl,
     sourceUrl: undefined,
+    slug: undefined,
     siteName: meta.siteName,
     faviconUrl: meta.faviconUrl,
     savedAt: meta.savedAt,

@@ -30,7 +30,8 @@ import {
   usesFrontmatter,
   type DocMetaFile,
 } from '@/lib/docPaths'
-import { mergeFrontmatter } from '@/lib/frontmatter'
+import { orderedFrontmatterFields } from '@/lib/docProperties'
+import { mergeFrontmatter, splitFrontmatterFull } from '@/lib/frontmatter'
 import {
   readVaultFile,
   renameVaultFile,
@@ -299,12 +300,31 @@ export function markSlugDirty(slug: string): void {
   markDirty(slug)
 }
 
+/** Slugs whose PROPERTIES were mutated (panel edit, typed setter, AI
+ * relay) since their last flush. Gates the flush's frontmatter branch:
+ * only these docs take the ordered-record path that rewrites the whole
+ * block in panel order. Body-only edits stay on the legacy narrow
+ * record, which preserves custom keys byte-for-byte — without this
+ * gate, merely OPENING a note with hand-written frontmatter would
+ * normalize its YAML (quoting, flow-style lists) and flood git with
+ * phantom diffs. */
+const propertyDirtySlugs = new Set<string>()
+
+/** Mark `slug`'s frontmatter as property-mutated so the next flush
+ * serializes the full ordered block (file key order = panel order).
+ * Callers must also `markSlugDirty` + `flushDirty` — this only picks
+ * the flush branch. */
+export function markPropertiesDirty(slug: string): void {
+  propertyDirtySlugs.add(slug)
+}
+
 /** Mark `slug` clean — called by the flush tick after a successful
  * write. Exposed for tests and the future flushDirty implementation
  * (iv.3). */
 export function clearDirty(slug: string): void {
   dirtySlugs.delete(slug)
   dirtyGeneration.delete(slug)
+  propertyDirtySlugs.delete(slug)
 }
 
 /** Capture `slug`'s current edit generation. The flush loop calls this right
@@ -354,6 +374,7 @@ export function installDocSync(slug: string): () => void {
   markDirty(slug)
   return () => {
     dirtySlugs.delete(slug)
+    propertyDirtySlugs.delete(slug)
   }
 }
 
@@ -624,9 +645,20 @@ async function flushDirtyOnce(): Promise<void> {
         } catch {
           // New file or unreadable — nothing to preserve.
         }
+        // Two frontmatter regimes, picked per flush (see markPropertiesDirty):
+        //   body-only edits → the narrow portable record, custom keys
+        //   preserved byte-for-byte (no normalization churn);
+        //   property mutations → the full ordered record, so the panel's
+        //   row order (and deletions) persist as the file's key order.
         fileContent = mergeFrontmatter(
           existing,
-          portableFrontmatterFields(result.meta),
+          propertyDirtySlugs.has(slug)
+            ? orderedFrontmatterFields(
+                known.fm,
+                result.meta,
+                splitFrontmatterFull(existing).data,
+              )
+            : portableFrontmatterFields(result.meta),
           result.md,
         )
       } else {

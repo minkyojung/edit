@@ -9,8 +9,14 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { fmEntriesFromData } from './docProperties'
-import { splitFrontmatterFull } from './frontmatter'
+import {
+  effectiveEntries,
+  fmEntriesFromData,
+  orderedFrontmatterFields,
+  typedFieldPatch,
+} from './docProperties'
+import { mergeFrontmatter, splitFrontmatterFull } from './frontmatter'
+import { portableFrontmatterFields, type DocMetaFile } from './docPaths'
 
 describe('fmEntriesFromData', () => {
   it('preserves file key order through the parser', () => {
@@ -45,5 +51,183 @@ describe('fmEntriesFromData', () => {
 
   it('returns undefined for an empty block (no phantom empty arrays)', () => {
     expect(fmEntriesFromData({})).toBeUndefined()
+  })
+})
+
+describe('effectiveEntries — the shared panel/flush union', () => {
+  it('keeps fm order, re-injects typed values from meta', () => {
+    const fm = [
+      { key: 'custom', value: 'x' },
+      { key: 'status', value: 'stale-copy' },
+      { key: 'created', value: '2026-01-01' },
+    ]
+    const meta: Partial<DocMetaFile> = { status: 'done', createdAt: '2026-01-01' }
+    expect(effectiveEntries(fm, meta)).toEqual([
+      { key: 'custom', value: 'x' },
+      { key: 'status', value: 'done' }, // meta wins over the fm mirror
+      { key: 'created', value: '2026-01-01' },
+    ])
+  })
+
+  it('aliases legacy keys in place (createdAt keeps its row position)', () => {
+    const fm = [
+      { key: 'custom', value: 'x' },
+      { key: 'createdAt', value: '2026-01-01' },
+    ]
+    const entries = effectiveEntries(fm, { createdAt: '2026-01-01' })
+    expect(entries.map((e) => e.key)).toEqual(['custom', 'created'])
+  })
+
+  it('hides slug, de-dupes aliased keys first-wins', () => {
+    const fm = [
+      { key: 'slug', value: 'abc' },
+      { key: 'created', value: '2026-02-02' },
+      { key: 'createdAt', value: '2026-01-01' }, // aliases to created → dup
+    ]
+    const entries = effectiveEntries(fm, { createdAt: '2026-02-02' })
+    expect(entries).toEqual([{ key: 'created', value: '2026-02-02' }])
+  })
+
+  it('appends typed keys with values that fm lacks, in canonical order', () => {
+    const meta: Partial<DocMetaFile> = {
+      status: 'in-progress',
+      tags: ['a'],
+      createdAt: '2026-01-01',
+    }
+    // Fresh doc (no fm): canonical order matches portableFrontmatterFields
+    // emission order so either flush branch serializes identically.
+    expect(effectiveEntries(undefined, meta).map((e) => e.key)).toEqual([
+      'created',
+      'status',
+      'tags',
+    ])
+  })
+
+  it('keeps a placeholder row for a typed key in fm whose value cleared', () => {
+    const fm = [
+      { key: 'status', value: 'done' },
+      { key: 'custom', value: 'x' },
+    ]
+    // status cleared in meta → row survives (position holds in-session)
+    // with an empty value the emitter will drop.
+    expect(effectiveEntries(fm, {})).toEqual([
+      { key: 'status', value: '' },
+      { key: 'custom', value: 'x' },
+    ])
+  })
+})
+
+describe('orderedFrontmatterFields — reorder/delete through the flush', () => {
+  it('round-trips panel order into file key order via mergeFrontmatter', () => {
+    const existing =
+      '---\ncreated: 2026-01-01\ncustom: x\nstatus: done\n---\n\nbody\n'
+    const { data } = splitFrontmatterFull(existing)
+    // Simulate a panel reorder: custom first, then status, then created.
+    const fm = [
+      { key: 'custom', value: 'x' },
+      { key: 'status', value: 'done' },
+      { key: 'created', value: '2026-01-01' },
+    ]
+    const meta: Partial<DocMetaFile> = { status: 'done', createdAt: '2026-01-01' }
+    const merged = mergeFrontmatter(
+      existing,
+      orderedFrontmatterFields(fm, meta, data),
+      'body\n',
+    )
+    expect(Object.keys(splitFrontmatterFull(merged).data)).toEqual([
+      'custom',
+      'status',
+      'created',
+    ])
+  })
+
+  it('makes a panel DELETE stick by claiming the on-disk key', () => {
+    const existing = '---\ncreated: 2026-01-01\ndoomed: bye\n---\n\nbody\n'
+    const { data } = splitFrontmatterFull(existing)
+    // Panel deleted `doomed`: it's absent from fm; the claim from
+    // existingData drops its line instead of preserving it.
+    const fm = [{ key: 'created', value: '2026-01-01' }]
+    const merged = mergeFrontmatter(
+      existing,
+      orderedFrontmatterFields(fm, { createdAt: '2026-01-01' }, data),
+      'body\n',
+    )
+    expect(splitFrontmatterFull(merged).data).toEqual({ created: '2026-01-01' })
+  })
+
+  it('drops legacy slug/createdAt/sourceUrl lines (lazy migration)', () => {
+    const existing =
+      '---\nslug: abc123\ncreatedAt: 2026-01-01\ncustom: x\n---\n\nbody\n'
+    const { data } = splitFrontmatterFull(existing)
+    const fm = fmEntriesFromData(data)
+    const merged = mergeFrontmatter(
+      existing,
+      orderedFrontmatterFields(fm, { createdAt: '2026-01-01' }, data),
+      'body\n',
+    )
+    const out = splitFrontmatterFull(merged).data
+    expect(out).toEqual({ created: '2026-01-01', custom: 'x' })
+    // Aliased in place: created sits where createdAt was (after nothing —
+    // slug was dropped), before custom? createdAt preceded custom, so:
+    expect(Object.keys(out)).toEqual(['created', 'custom'])
+  })
+
+  it('preserves a nested map verbatim (never claimed, pinned by merge)', () => {
+    const existing =
+      '---\nnested:\n  a: 1\ncreated: 2026-01-01\n---\n\nbody\n'
+    const { data } = splitFrontmatterFull(existing) // nested skipped here
+    const fm = fmEntriesFromData(data)
+    const merged = mergeFrontmatter(
+      existing,
+      orderedFrontmatterFields(fm, { createdAt: '2026-01-01' }, data),
+      'body\n',
+    )
+    expect(merged).toContain('nested:\n  a: 1')
+  })
+
+  it('serializes canonical-order docs byte-identically to the legacy branch', () => {
+    // A doc that has never been panel-reordered (fm in canonical order)
+    // must produce the same bytes through either flush branch, so
+    // toggling propertyDirty introduces zero churn.
+    const meta: Partial<DocMetaFile> = {
+      createdAt: '2026-01-01',
+      sourceUrl: 'https://x.test',
+      status: 'done',
+      tags: ['a', 'b'],
+    }
+    const existing = mergeFrontmatter('', portableFrontmatterFields(meta), 'body\n')
+    const { data } = splitFrontmatterFull(existing)
+    const fm = fmEntriesFromData(data)
+    const viaOrdered = mergeFrontmatter(
+      existing,
+      orderedFrontmatterFields(fm, meta, data),
+      'body\n',
+    )
+    expect(viaOrdered).toBe(existing)
+  })
+})
+
+describe('typedFieldPatch — generic edits of typed keys', () => {
+  it('validates status against the known set', () => {
+    expect(typedFieldPatch('status', 'done')).toEqual({ status: 'done' })
+    expect(typedFieldPatch('status', 'garbage')).toBeNull()
+    expect(typedFieldPatch('status', '')).toEqual({ status: undefined })
+  })
+
+  it('normalizes tags and clears on empty', () => {
+    expect(typedFieldPatch('tags', [' a ', 'a', 'b'])).toEqual({ tags: ['a', 'b'] })
+    expect(typedFieldPatch('tags', [])).toEqual({ tags: undefined })
+  })
+
+  it('parses durationSec and rejects non-numbers', () => {
+    expect(typedFieldPatch('durationSec', '72')).toEqual({ durationSec: 72 })
+    expect(typedFieldPatch('durationSec', 'oops')).toBeNull()
+  })
+
+  it('trims plain string fields, empty clears', () => {
+    expect(typedFieldPatch('created', ' 2026-01-01 ')).toEqual({
+      createdAt: '2026-01-01',
+    })
+    expect(typedFieldPatch('source', '')).toEqual({ sourceUrl: undefined })
   })
 })
