@@ -17,6 +17,7 @@
 import { describe, expect, it } from 'vitest'
 import { mdRelToKnownDoc } from './scanVault'
 import {
+  frontmatterDocOverlay,
   frontmatterToMeta,
   metaToFrontmatterFields,
   portableFrontmatterFields,
@@ -24,6 +25,7 @@ import {
 } from './docPaths'
 import {
   composeFrontmatter,
+  mergeFrontmatter,
   splitFrontmatter,
   splitFrontmatterFull,
 } from './frontmatter'
@@ -31,17 +33,61 @@ import {
 const noChildren = new Map<string, string>()
 
 describe('portableFrontmatterFields — what stays in the user .md', () => {
-  it('excludes the app-private slug', () => {
+  it('excludes the app-private slug, emits Obsidian-standard names', () => {
     const fields = portableFrontmatterFields({
       version: 1,
       slug: 'abc12345',
       createdAt: '2026-01-01',
       sourceUrl: 'https://x.test',
     })
-    // Present: portable. Absent: app-private (slug).
-    expect(fields.createdAt).toBe('2026-01-01')
-    expect(fields.sourceUrl).toBe('https://x.test')
-    expect('slug' in fields).toBe(false)
+    // Present under the standard names other tools read. The app-private
+    // slug is CLAIMED (present as undefined) so mergeFrontmatter drops
+    // the stale `slug:` line legacy notes still carry — but never emitted.
+    expect(fields.created).toBe('2026-01-01')
+    expect(fields.source).toBe('https://x.test')
+    expect('slug' in fields).toBe(true)
+    expect(fields.slug).toBeUndefined()
+  })
+
+  it('claims the legacy keys so a pre-rename note migrates on save', () => {
+    // The old camelCase keys are listed (as undefined) so mergeFrontmatter
+    // treats them as app-owned and drops any stale copy. Composing over an
+    // existing note that still has `createdAt`/`sourceUrl` must leave only
+    // the standard names behind.
+    const fields = portableFrontmatterFields({ createdAt: '2026-01-01' })
+    expect('createdAt' in fields).toBe(true)
+    expect(fields.createdAt).toBeUndefined()
+    expect('sourceUrl' in fields).toBe(true)
+    expect(fields.sourceUrl).toBeUndefined()
+  })
+
+  it('reads a note written with the legacy key names', () => {
+    // Backward compat: notes saved before the rename still load their
+    // created date and source URL from the old keys.
+    expect(frontmatterToMeta({ createdAt: '2026-01-01' }).createdAt).toBe('2026-01-01')
+    expect(frontmatterToMeta({ sourceUrl: 'https://x.test' }).sourceUrl).toBe('https://x.test')
+    // The standard names take precedence when both somehow appear.
+    expect(
+      frontmatterToMeta({ created: '2026-02-02', createdAt: '2026-01-01' }).createdAt,
+    ).toBe('2026-02-02')
+  })
+
+  it('migrates a legacy note to standard names on save (flush composition)', () => {
+    // Exactly the prod flush path: mergeFrontmatter(existing, portableFields, body).
+    // A note last saved with `createdAt`/`sourceUrl` must come back out with
+    // `created`/`source` and NO leftover legacy keys — no duplicated fields.
+    const existing =
+      '---\ncreatedAt: 2026-01-01\nsourceUrl: https://x.test\ntitle: Kept\n---\n\nold body\n'
+    const meta = frontmatterToMeta(splitFrontmatterFull(existing).data)
+    const merged = mergeFrontmatter(existing, portableFrontmatterFields(meta), 'new body\n')
+
+    expect(merged).toMatch(/^created: 2026-01-01$/m)
+    // The URL contains `:` so it's emitted quoted — assert the key + value.
+    expect(merged).toMatch(/^source: 'https:\/\/x\.test'$/m)
+    expect(merged).not.toMatch(/^createdAt:/m)
+    expect(merged).not.toMatch(/^sourceUrl:/m)
+    // Foreign keys the app doesn't own are still preserved verbatim.
+    expect(merged).toContain('title: Kept')
   })
 })
 
@@ -380,5 +426,46 @@ describe('meta ⇄ frontmatter round-trip', () => {
     const fields = metaToFrontmatterFields({ version: 1, slug: 'x' })
     expect(fields.slug).toBe('x')
     expect('version' in fields).toBe(false)
+  })
+})
+
+// The ordered frontmatter mirror (fm) rides mdRelToKnownDoc alongside the
+// typed meta so the catalog retains custom keys + file order for the
+// properties panel.
+describe('mdRelToKnownDoc — fm threading', () => {
+  it('attaches the ordered fm mirror to the doc', () => {
+    const fm = [
+      { key: 'custom', value: 'hello' },
+      { key: 'created', value: '2026-01-01' },
+    ]
+    const doc = mdRelToKnownDoc('n1', 'inbox/Note.md', noChildren, {}, true, fm)
+    expect(doc?.fm).toEqual(fm)
+  })
+
+  it('leaves fm absent when the file had no frontmatter', () => {
+    const doc = mdRelToKnownDoc('n2', 'inbox/Bare.md', noChildren, {}, true, undefined)
+    expect(doc && 'fm' in doc).toBe(false)
+  })
+})
+
+// reloadFromVault spreads this overlay onto the live catalog row, so its
+// clearing semantics (explicit undefined for absent fields) are what make
+// an external DELETION of `status:` / `tags:` visible without a reboot.
+describe('frontmatterDocOverlay — fresh projection with clears', () => {
+  it('projects present fields and explicitly clears absent ones', () => {
+    const overlay = frontmatterDocOverlay({ status: 'done', created: '2026-01-01' })
+    expect(overlay.status).toBe('done')
+    expect(overlay.createdAt).toBe('2026-01-01')
+    // Absent fields are PRESENT as undefined so a spread clears them.
+    expect('tags' in overlay).toBe(true)
+    expect(overlay.tags).toBeUndefined()
+  })
+
+  it('spread over a stale doc row clears externally-deleted fields', () => {
+    const stale = { slug: 'x', status: 'in-progress', tags: ['a'], createdAt: '2026-01-01' }
+    const next = { ...stale, ...frontmatterDocOverlay({ created: '2026-01-01' }) }
+    expect(next.status).toBeUndefined()
+    expect(next.tags).toBeUndefined()
+    expect(next.createdAt).toBe('2026-01-01')
   })
 })

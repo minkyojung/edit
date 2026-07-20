@@ -29,6 +29,7 @@ import { getActiveVaultPath } from '@/state/settingsStore'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import type { KnownDoc } from '@/state/docsStore'
 import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
+import { fmEntriesFromData, type FmEntry } from '@/lib/docProperties'
 import { seedLastWrittenPath } from '@/lib/docFileSync'
 import { splitFrontmatterFull } from '@/lib/frontmatter'
 
@@ -43,14 +44,17 @@ import { splitFrontmatterFull } from '@/lib/frontmatter'
  * stay byte-for-byte the user's. */
 async function mintDocMeta(
   mdRel: string,
-): Promise<{ slug: string; meta: Partial<DocMetaFile> }> {
+): Promise<{ slug: string; meta: Partial<DocMetaFile>; fm?: FmEntry[] }> {
   let data: Record<string, string | string[]> = {}
   try {
     data = splitFrontmatterFull(await readVaultFile(mdRel)).data
   } catch {
     // Unreadable `.md` — mint anyway with empty meta.
   }
-  return { slug: generateClientSlug(), meta: frontmatterToMeta(data) }
+  // `meta` is the typed projection (allow-listed fields); `fm` retains
+  // EVERY parsed key in file order for the properties panel. Same single
+  // parse feeds both — no extra read.
+  return { slug: generateClientSlug(), meta: frontmatterToMeta(data), fm: fmEntriesFromData(data) }
 }
 
 /** Walk a vault subdirectory recursively and return every body-.md
@@ -102,6 +106,7 @@ export function mdRelToKnownDoc(
   dailySlugByDate: Map<string, string>,
   meta: Partial<DocMetaFile> = {},
   allowGeneric = false,
+  fm?: FmEntry[],
 ): KnownDoc | null {
   const base = mdRelToBaseDoc(slug, mdRel, dailySlugByDate, allowGeneric)
   if (!base) return null
@@ -136,6 +141,8 @@ export function mdRelToKnownDoc(
   if (meta.status) overlay.status = meta.status
   // Tags list (already normalized to a non-empty string[] by frontmatterToMeta).
   if (meta.tags) overlay.tags = meta.tags
+  // Full ordered frontmatter mirror for the properties panel.
+  if (fm) overlay.fm = fm
   return { ...base, ...overlay } as KnownDoc
 }
 
@@ -234,10 +241,11 @@ export async function scanVault(): Promise<KnownDoc[]> {
     slug: string
     mdRel: string
     meta: Partial<DocMetaFile>
+    fm?: FmEntry[]
   }> = []
   for (const mdRel of allMd) {
-    const { slug, meta } = await mintDocMeta(mdRel)
-    scanned.push({ slug, mdRel, meta })
+    const { slug, meta, fm } = await mintDocMeta(mdRel)
+    scanned.push({ slug, mdRel, meta, fm })
   }
 
   // Daily index: date → slug. Built from the same scan so writings
@@ -250,8 +258,8 @@ export async function scanVault(): Promise<KnownDoc[]> {
 
   // Pass 2: assemble KnownDoc entries. Unrecognised paths drop out.
   const docs: KnownDoc[] = []
-  for (const { slug, mdRel, meta } of scanned) {
-    const doc = mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta, true)
+  for (const { slug, mdRel, meta, fm } of scanned) {
+    const doc = mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta, true, fm)
     if (doc) docs.push(doc)
   }
 
@@ -287,12 +295,12 @@ export async function buildKnownDocForExternalPath(
   mdRel: string,
   catalog: KnownDoc[],
 ): Promise<KnownDoc | null> {
-  const { slug, meta } = await mintDocMeta(mdRel)
+  const { slug, meta, fm } = await mintDocMeta(mdRel)
   const dailySlugByDate = new Map<string, string>()
   for (const d of catalog) {
     if (d.type === 'daily' && d.date) dailySlugByDate.set(d.date, d.slug)
   }
-  return mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta, true)
+  return mdRelToKnownDoc(slug, mdRel, dailySlugByDate, meta, true, fm)
 }
 
 // Dev-only console handle. `await __scanVault()` to inspect what the

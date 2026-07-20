@@ -13,9 +13,25 @@
  * to renameDoc belongs to createSlice (initial content) instead.
  */
 
-import { flushDirty, markSlugDirty, seedLastWrittenPath } from '@/lib/docFileSync'
+import {
+  flushDirty,
+  markPropertiesDirty,
+  markSlugDirty,
+  seedLastWrittenPath,
+} from '@/lib/docFileSync'
 import { renameVaultFile } from '@/lib/vault'
 import { pathForDoc, sanitizeFilename, type DocStatus } from '@/lib/docPaths'
+import {
+  clearTypedFieldPatch,
+  effectiveEntries,
+  isAlwaysShownKey,
+  isNumericKey,
+  RESERVED_PROPERTY_KEYS,
+  TYPED_KEY_TO_META,
+  typedFieldPatch,
+  type FmEntry,
+  type TypedPanelKey,
+} from '@/lib/docProperties'
 import { planFolderMove } from '@/lib/folderMove'
 import { updateWikilinksForRename } from '@/lib/renameWikilinks'
 import { normalizeTags } from '@/lib/tags'
@@ -164,6 +180,19 @@ export interface EditSlice {
   /** Replace a note's tag list (trimmed, de-duped; empty clears the field),
    * then flush. No-op for doc types that don't carry metadata. */
   setDocTags: (slug: string, tags: string[]) => void
+  /** Set a property's value by panel key. Typed keys coerce into their
+   * catalog field (invalid values rejected → false); custom keys upsert
+   * into `fm` (new keys append at the end). */
+  setDocProperty: (slug: string, key: string, value: string | string[]) => boolean
+  /** Add a new property row. Rejects empty / reserved / duplicate keys. */
+  addDocProperty: (slug: string, key: string, value: string | string[]) => boolean
+  /** Rename a property key in place (row position preserved). A typed key
+   * de-types into a plain custom property carrying its current value. */
+  renameDocProperty: (slug: string, oldKey: string, newKey: string) => boolean
+  /** Remove a property row and clear its typed field, if any. */
+  deleteDocProperty: (slug: string, key: string) => void
+  /** Persist the panel's row order into `fm` (file key order on flush). */
+  reorderDocProperties: (slug: string, orderedKeys: string[]) => void
 }
 
 export const createEditSlice = (
@@ -279,6 +308,9 @@ export const createEditSlice = (
     list[idx] = { ...cur, readAt }
     set({ knownDocs: list })
     markSlugDirty(slug)
+    // Property mutation → ordered flush branch, so this write can't
+    // shuffle a panel-ordered frontmatter block back to append-order.
+    markPropertiesDirty(slug)
     void flushDirty()
   },
 
@@ -296,6 +328,7 @@ export const createEditSlice = (
     list[idx] = { ...cur, status }
     set({ knownDocs: list })
     markSlugDirty(slug)
+    markPropertiesDirty(slug)
     void flushDirty()
   },
 
@@ -312,6 +345,135 @@ export const createEditSlice = (
     list[idx] = { ...cur, tags: next.length ? next : undefined }
     set({ knownDocs: list })
     markSlugDirty(slug)
+    markPropertiesDirty(slug)
+    void flushDirty()
+  },
+
+  setDocProperty: (slug, key, value) => {
+    const idx = get().knownDocs.findIndex((d) => d.slug === slug)
+    if (idx < 0) return false
+    const cur = get().knownDocs[idx]
+    if (!docSupportsStatus(cur)) return false
+    const trimmedKey = key.trim()
+    if (!trimmedKey) return false
+    let patch: Partial<KnownDoc>
+    if (trimmedKey in TYPED_KEY_TO_META) {
+      // Typed key: coerce into the authoritative catalog field. fm needs
+      // no touch — the flush re-injects typed values from the field, and
+      // effectiveEntries places a not-yet-present key canonically.
+      const typed = typedFieldPatch(trimmedKey as TypedPanelKey, value)
+      if (!typed) return false
+      patch = typed as Partial<KnownDoc>
+    } else {
+      // Custom key: upsert into fm (append at the end when new — the
+      // Notion "add at the bottom" position).
+      const fm: FmEntry[] = [...(cur.fm ?? [])]
+      const at = fm.findIndex((e) => e.key === trimmedKey)
+      if (at >= 0) fm[at] = { key: trimmedKey, value }
+      else fm.push({ key: trimmedKey, value })
+      patch = { fm }
+    }
+    const list = [...get().knownDocs]
+    list[idx] = { ...cur, ...patch }
+    set({ knownDocs: list })
+    markSlugDirty(slug)
+    markPropertiesDirty(slug)
+    void flushDirty()
+    return true
+  },
+
+  addDocProperty: (slug, key, value) => {
+    const idx = get().knownDocs.findIndex((d) => d.slug === slug)
+    if (idx < 0) return false
+    const cur = get().knownDocs[idx]
+    if (!docSupportsStatus(cur)) return false
+    const trimmedKey = key.trim()
+    if (!trimmedKey || RESERVED_PROPERTY_KEYS.includes(trimmedKey)) return false
+    // Numeric-only names can't hold a stable row position (see isNumericKey).
+    if (isNumericKey(trimmedKey)) return false
+    // Duplicate = already a row in the panel's effective view (covers
+    // both fm entries and typed fields that carry a value).
+    const taken = effectiveEntries(cur.fm, cur).some((e) => e.key === trimmedKey)
+    if (taken) return false
+    return get().setDocProperty(slug, trimmedKey, value)
+  },
+
+  renameDocProperty: (slug, oldKey, newKey) => {
+    const idx = get().knownDocs.findIndex((d) => d.slug === slug)
+    if (idx < 0) return false
+    const cur = get().knownDocs[idx]
+    if (!docSupportsStatus(cur)) return false
+    const nextKey = newKey.trim()
+    if (!nextKey || nextKey === oldKey) return false
+    if (RESERVED_PROPERTY_KEYS.includes(nextKey)) return false
+    // Numeric-only names can't hold a stable row position (see isNumericKey).
+    if (isNumericKey(nextKey)) return false
+    // status/tags are structural affordances — renaming one leaves a
+    // re-pinned empty duplicate behind (see isAlwaysShownKey).
+    if (isAlwaysShownKey(oldKey)) return false
+    // Materialize the effective view so a typed key that isn't in fm yet
+    // (status set via the badge, never panel-placed) can still be renamed
+    // at the position the panel shows it in.
+    const entries = effectiveEntries(cur.fm, cur)
+    const at = entries.findIndex((e) => e.key === oldKey)
+    if (at < 0) return false
+    if (entries.some((e) => e.key === nextKey)) return false
+    const fm = [...entries]
+    // The entry's value was re-injected from the typed field by
+    // effectiveEntries, so de-typing hands the CURRENT value over to the
+    // now-custom key; clearTypedFieldPatch drops the old typed field.
+    fm[at] = { key: nextKey, value: fm[at].value }
+    const list = [...get().knownDocs]
+    list[idx] = { ...cur, fm, ...(clearTypedFieldPatch(oldKey) as Partial<KnownDoc>) }
+    set({ knownDocs: list })
+    markSlugDirty(slug)
+    markPropertiesDirty(slug)
+    void flushDirty()
+    return true
+  },
+
+  deleteDocProperty: (slug, key) => {
+    const idx = get().knownDocs.findIndex((d) => d.slug === slug)
+    if (idx < 0) return
+    const cur = get().knownDocs[idx]
+    if (!docSupportsStatus(cur)) return
+    // status/tags can't be removed — the row would re-pin empty at the top
+    // (see isAlwaysShownKey). Clear their value via the dedicated control.
+    if (isAlwaysShownKey(key)) return
+    const fm = effectiveEntries(cur.fm, cur).filter((e) => e.key !== key)
+    const list = [...get().knownDocs]
+    // The flush claims every scalar key of the on-disk block, so a key
+    // absent from fm (and from the typed fields) has its line dropped —
+    // deletion sticks without a tombstone.
+    list[idx] = { ...cur, fm, ...(clearTypedFieldPatch(key) as Partial<KnownDoc>) }
+    set({ knownDocs: list })
+    markSlugDirty(slug)
+    markPropertiesDirty(slug)
+    void flushDirty()
+  },
+
+  reorderDocProperties: (slug, orderedKeys) => {
+    const idx = get().knownDocs.findIndex((d) => d.slug === slug)
+    if (idx < 0) return
+    const cur = get().knownDocs[idx]
+    if (!docSupportsStatus(cur)) return
+    // Materialize the full union in the requested order. Panel rows the
+    // caller omitted (shouldn't happen, but never lose data over it)
+    // keep their relative order at the end.
+    const byKey = new Map(effectiveEntries(cur.fm, cur).map((e) => [e.key, e]))
+    const fm: FmEntry[] = []
+    for (const key of orderedKeys) {
+      const entry = byKey.get(key)
+      if (!entry) continue
+      fm.push(entry)
+      byKey.delete(key)
+    }
+    fm.push(...byKey.values())
+    const list = [...get().knownDocs]
+    list[idx] = { ...cur, fm }
+    set({ knownDocs: list })
+    markSlugDirty(slug)
+    markPropertiesDirty(slug)
     void flushDirty()
   },
 })

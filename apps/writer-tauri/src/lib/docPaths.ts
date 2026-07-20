@@ -163,8 +163,6 @@ export function frontmatterToMeta(
   // a non-string and is dropped rather than mis-assigned.
   const STRING_KEYS = [
     'slug',
-    'createdAt',
-    'sourceUrl',
     'siteName',
     'faviconUrl',
     'savedAt',
@@ -177,6 +175,16 @@ export function frontmatterToMeta(
     const s = str(data[key])
     if (s) meta[key] = s
   }
+
+  // Portable fields carry an Obsidian-standard name on disk (`created`,
+  // `source`) but land on the app's own camelCase meta fields. We accept
+  // the legacy `createdAt`/`sourceUrl` keys too so notes written before the
+  // rename still read; the write path re-emits the standard name, migrating
+  // each note the next time it's saved.
+  const createdAt = str(data.created) ?? str(data.createdAt)
+  if (createdAt) meta.createdAt = createdAt
+  const sourceUrl = str(data.source) ?? str(data.sourceUrl)
+  if (sourceUrl) meta.sourceUrl = sourceUrl
 
   const dur = str(data.durationSec)
   if (dur) {
@@ -202,6 +210,46 @@ export function frontmatterToMeta(
   return meta
 }
 
+/** Fresh projection of a parsed frontmatter block onto the doc-catalog
+ * metadata fields, with every projectable field explicitly present (as
+ * `undefined` when absent). Spreading the result over an existing KnownDoc
+ * therefore CLEARS fields the external edit removed — e.g. deleting
+ * `status:` in Obsidian clears the badge on reload. scanVault's boot
+ * overlay can't be reused for this: it's set-only, which is fine on a
+ * fresh base row but would leave stale values behind on a live one.
+ * Used by reloadFromVault. Kept beside {@link frontmatterToMeta} so the
+ * projected field list stays in lockstep. */
+export function frontmatterDocOverlay(data: Record<string, string | string[]>): {
+  createdAt: string | undefined
+  sourceUrl: string | undefined
+  siteName: string | undefined
+  faviconUrl: string | undefined
+  savedAt: string | undefined
+  readAt: string | undefined
+  videoId: string | undefined
+  durationSec: number | undefined
+  thumbnailUrl: string | undefined
+  description: string | undefined
+  status: DocStatus | undefined
+  tags: string[] | undefined
+} {
+  const meta = frontmatterToMeta(data)
+  return {
+    createdAt: meta.createdAt,
+    sourceUrl: meta.sourceUrl,
+    siteName: meta.siteName,
+    faviconUrl: meta.faviconUrl,
+    savedAt: meta.savedAt,
+    readAt: meta.readAt,
+    videoId: meta.videoId,
+    durationSec: meta.durationSec,
+    thumbnailUrl: meta.thumbnailUrl,
+    description: meta.description,
+    status: meta.status,
+    tags: meta.tags,
+  }
+}
+
 /** Inverse of {@link frontmatterToMeta}: project the sidecar-shaped meta
  * onto the flat frontmatter fields we emit when a doc stores its metadata
  * in its own `.md` instead of a `.meta.json` sidecar.
@@ -219,8 +267,9 @@ export function metaToFrontmatterFields(
 ): Record<string, FrontmatterValue | undefined> {
   return {
     slug: meta.slug,
-    createdAt: meta.createdAt,
-    sourceUrl: meta.sourceUrl,
+    // Obsidian-standard names on disk (see frontmatterToMeta for the read side).
+    created: meta.createdAt,
+    source: meta.sourceUrl,
     siteName: meta.siteName,
     faviconUrl: meta.faviconUrl,
     savedAt: meta.savedAt,
@@ -247,8 +296,16 @@ export function portableFrontmatterFields(
   meta: Partial<DocMetaFile>,
 ): Record<string, FrontmatterValue | undefined> {
   return {
-    createdAt: meta.createdAt,
-    sourceUrl: meta.sourceUrl,
+    // Obsidian-standard names on disk. The legacy `createdAt`/`sourceUrl`
+    // keys — and the app-private `slug` some pre-cleanup notes still
+    // carry — are listed as `undefined` so mergeFrontmatter treats them
+    // as app-owned and drops any stale copy: a lazy per-note migration
+    // on the next save, no bulk rewrite.
+    created: meta.createdAt,
+    createdAt: undefined,
+    source: meta.sourceUrl,
+    sourceUrl: undefined,
+    slug: undefined,
     siteName: meta.siteName,
     faviconUrl: meta.faviconUrl,
     savedAt: meta.savedAt,

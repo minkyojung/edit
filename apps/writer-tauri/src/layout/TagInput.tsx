@@ -39,18 +39,18 @@ export function TagInput({
   return (
     <div className="flex flex-wrap items-center gap-1">
       {tags.map((tag) => (
-        <Badge key={tag} variant="secondary" className="gap-0.5 pr-1">
+        <Badge key={tag} variant="secondary" className="h-7 gap-1 px-2.5 pr-1.5 text-callout">
           {tag}
           <button
             type="button"
-            aria-label={`${tag} 제거`}
+            aria-label={`Remove ${tag}`}
             // Keep focus in the input so its onBlur doesn't fire first and
             // commit the in-progress draft against a stale tag list.
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onChange(tags.filter((t) => t !== tag))}
             className="rounded-full text-muted-foreground hover:text-foreground"
           >
-            <IconX size={11} stroke={2} />
+            <IconX size={13} stroke={2} />
           </button>
         </Badge>
       ))}
@@ -59,8 +59,8 @@ export function TagInput({
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={onKeyDown}
         onBlur={commitDraft}
-        placeholder={tags.length === 0 ? '태그 추가…' : ''}
-        aria-label="태그 추가"
+        placeholder={tags.length === 0 ? 'Empty' : ''}
+        aria-label="Add tag"
         className="min-w-24 flex-1 bg-transparent text-body outline-none placeholder:text-muted-foreground/60"
       />
     </div>

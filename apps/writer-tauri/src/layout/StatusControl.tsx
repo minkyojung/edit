@@ -31,14 +31,20 @@ export function StatusControl({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label="상태"
+          aria-label="status"
           className={cn(
-            badgeVariants({ variant: status ? STATUS_BADGE_VARIANT[status] : 'outline' }),
-            'cursor-pointer',
-            !status && 'text-muted-foreground',
+            'cursor-pointer text-body',
+            // A value renders as a colored pill; an empty status is a plain
+            // muted placeholder (no pill), matching the text-value rows.
+            status
+              ? cn(
+                  badgeVariants({ variant: STATUS_BADGE_VARIANT[status] }),
+                  'h-7 px-2.5 text-callout',
+                )
+              : 'text-muted-foreground/60',
           )}
         >
-          {status ? STATUS_LABEL[status] : '＋ 상태'}
+          {status ? STATUS_LABEL[status] : 'Empty'}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="bottom" align="start">
@@ -56,7 +62,7 @@ export function StatusControl({
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => setDocStatus(slug, undefined)}>
-              상태 없음
+              Clear
             </DropdownMenuItem>
           </>
         )}

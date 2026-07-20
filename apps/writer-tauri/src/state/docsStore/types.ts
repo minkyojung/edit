@@ -23,6 +23,7 @@
 
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import type { DocStatus } from '@/lib/docPaths'
+import type { FmEntry } from '@/lib/docProperties'
 import type { Template } from '@/lib/templates'
 
 /** Slim metadata read straight from the on-disk `.meta.json` sidecar
@@ -98,6 +99,15 @@ export interface KnownDoc {
   /** Free-form tags, persisted to `.md` frontmatter as a YAML list. Empty
    * or absent when the note has none. Set via the properties panel. */
   tags?: string[]
+  /** Ordered mirror of the note's on-disk frontmatter block: every
+   * top-level scalar / string-list key in file order (nested maps stay
+   * foreign — preserved on write, invisible here). Captured by scanVault
+   * at boot and refreshed by reloadFromVault on external change. The
+   * properties panel renders from it and the flush emits keys in its
+   * order, so file key order IS the persisted row order. The typed
+   * fields above (status/tags/createdAt/…) stay authoritative for their
+   * VALUES; `fm` is authoritative for order and for custom keys. */
+  fm?: FmEntry[]
 }
 
 /** Coarse classification used by the DOC_POLICIES table below. Every
@@ -319,6 +329,24 @@ export interface DocsState {
   setDocStatus: (slug: string, status: DocStatus | undefined) => void
   /** Replace a note's tag list (trimmed/de-duped; empty clears) and flush. */
   setDocTags: (slug: string, tags: string[]) => void
+  /** Set a property's value by panel key. Typed keys (status/tags/
+   * created/…) coerce into their catalog field (invalid values are
+   * rejected — no-op); custom keys upsert into `fm`. Returns false when
+   * the edit was rejected. */
+  setDocProperty: (slug: string, key: string, value: string | string[]) => boolean
+  /** Add a new property row. Rejects empty / reserved / duplicate keys.
+   * Returns false when rejected. */
+  addDocProperty: (slug: string, key: string, value: string | string[]) => boolean
+  /** Rename a property key in place (row position preserved). A typed
+   * key de-types into a plain custom property (its control reverts to
+   * text). Rejects empty / reserved / colliding names. */
+  renameDocProperty: (slug: string, oldKey: string, newKey: string) => boolean
+  /** Remove a property row (and clear its typed field, if any). The
+   * key's line is dropped from the file on the next flush. */
+  deleteDocProperty: (slug: string, key: string) => void
+  /** Persist the panel's row order: materialize the full property union
+   * into `fm` in the given key order. File key order follows on flush. */
+  reorderDocProperties: (slug: string, orderedKeys: string[]) => void
   /** Switch the sidebar date view. */
   setSidebarTab: (tab: 'day' | 'week' | 'month') => void
   /** Set the Month view's anchor month (YYYY-MM). */
