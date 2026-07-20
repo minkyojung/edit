@@ -82,11 +82,22 @@ describe('list markers — tree path + immediate regex fallback', () => {
     expect(style('- parent\n  - child')).toBeTruthy() // parses as a nested list
   })
 
-  it('a hard-break continuation line (no marker) gets the body-column hang', () => {
-    // `- a\nb` — the `b` line has no marker (Shift+Enter → plain newline). It must
-    // still hang at the body column (2.05em) but with text-indent:0, since there's no
-    // marker to pull back — the whole line, first visual row included, sits at the body.
+  it('a flush-left lazy continuation (no marker, no indent) is NOT hung to the body column', () => {
+    // `- a\nb` — `b` has no marker and no indent. CommonMark folds it into the item, but
+    // the user typed it at the margin, so it renders flush-left (not yanked to the body
+    // column). This is the fix for the "type below a list → paragraph jumps right" bug.
     const doc = '- a\nb'
+    const line2From = doc.indexOf('\n') + 1
+    const cont = decos(doc).find(
+      (r) => r.from === line2From && (r.value.spec as { class?: string }).class === 'cm-list-line',
+    )
+    expect(cont).toBeUndefined()
+  })
+
+  it('a continuation INDENTED to the content column DOES hang at the body column', () => {
+    // `- a\n  b` — `b` is indented 2 cols (= the `- ` content column), so it is a real
+    // list continuation and hangs at the body column with text-indent:0.
+    const doc = '- a\n  b'
     const line2From = doc.indexOf('\n') + 1
     const cont = decos(doc).find(
       (r) => r.from === line2From && (r.value.spec as { class?: string }).class === 'cm-list-line',

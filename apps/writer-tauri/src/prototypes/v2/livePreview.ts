@@ -71,13 +71,18 @@ function inCodeContext(state: EditorState, pos: number): boolean {
   return false
 }
 
-/** Hanging-indent level for a marker-LESS line that belongs to a list item (a
- * hard-break / lazy-continuation line under a bullet). Walks up from the line start
- * to the innermost `ListItem` (nested → the child item, i.e. the deeper level), then
- * counts ancestor `BulletList`/`OrderedList` — the SAME `depth`/`level` rule the
- * `ListMark` branch uses, so the continuation lands at that line's body column.
- * `null` when the position isn't inside a list item. */
-function listItemLevelAt(state: EditorState, pos: number): number | null {
+/** Context for a marker-LESS line that the syntax tree places inside a list item (a
+ * hard-break / lazy-continuation line under a bullet). Walks up from the line start to
+ * the innermost `ListItem` (nested → the child item, i.e. the deeper level), counts
+ * ancestor `BulletList`/`OrderedList` for the `level` (the SAME rule the `ListMark`
+ * branch uses so a real continuation lands at that line's body column), and measures
+ * the item's `contentCol` — the character column where the item's content starts
+ * (`indent + marker + gap`). `contentCol` is the CommonMark threshold that separates a
+ * genuinely-indented continuation (>= contentCol → part of the item, hang it) from a
+ * lazy continuation typed at/near the margin (< contentCol → the parser absorbs it but
+ * the user wrote it flush, so DON'T yank it to the body column). `null` when the
+ * position isn't inside a list item. */
+function listItemContextAt(state: EditorState, pos: number): { level: number; contentCol: number } | null {
   let item: SyntaxNode | null = null
   for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1); n; n = n.parent) {
     if (n.name === 'ListItem') {
@@ -90,7 +95,12 @@ function listItemLevelAt(state: EditorState, pos: number): number | null {
   for (let p: SyntaxNode | null = item.parent; p; p = p.parent) {
     if (p.name === 'BulletList' || p.name === 'OrderedList') depth++
   }
-  return Math.max(0, depth - 1)
+  // Content column = length of `indent + marker + gap` on the item's FIRST line. A
+  // continuation is "really in the list" only when indented to at least this column.
+  const itemLine = state.doc.lineAt(item.from)
+  const cm = /^(\s*)([-*+]|\d+[.)])([ \t]+)/.exec(itemLine.text)
+  const contentCol = cm ? cm[0].length : item.from - itemLine.from
+  return { level: Math.max(0, depth - 1), contentCol }
 }
 
 function buildDecos(
@@ -403,13 +413,21 @@ function buildDecos(
           // grid as the marker line, so wrapped and hard-break lines share one x.
           if (line.from === line.to) continue // blank line — nothing to indent
           if (inCodeContext(state, line.from)) continue // literal code line in a list
-          const lvl = listItemLevelAt(state, line.from)
-          if (lvl == null) continue
+          const ctx = listItemContextAt(state, line.from)
+          if (ctx == null) continue
+          // Only hang a continuation that is ACTUALLY indented to the item's content
+          // column. A flush-left / under-indented line is a CommonMark "lazy
+          // continuation" the parser folds into the item, but the user typed it at the
+          // margin — leave it there instead of yanking it to the body column. This is
+          // what stops the paragraph below a list from jumping right the moment the
+          // blank separator line gets a character.
+          const ws = line.text.length - line.text.trimStart().length
+          if (ws < ctx.contentCol) continue
           out.push(
             Decoration.line({
               class: 'cm-list-line',
               attributes: {
-                style: `padding-left:${(lvl + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:0`,
+                style: `padding-left:${(ctx.level + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:0`,
               },
             }).range(line.from),
           )
