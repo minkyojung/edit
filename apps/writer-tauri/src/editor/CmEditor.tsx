@@ -58,6 +58,7 @@ import { refreshTemplateSlashItems } from '@/lib/templates'
 import { wikilinkMenu, wikilinkKeymap } from '@/editor/wikilinkMenu'
 import { smartEnter, shiftEnter } from '@/prototypes/listEnter'
 import { imeListContinue } from '@/prototypes/imeListContinue'
+import { spaceWidthProbe } from '@/prototypes/spaceWidth'
 import { clearTopLevelMarkerBackward, dedentContinuationBackward } from '@/prototypes/listBackspace'
 import { mediaDropPaste } from '@/prototypes/mediaDrop'
 import { richTextCopy } from './cmRichCopy'
@@ -163,6 +164,10 @@ export function CmEditor({ handle, header }: Props) {
           doc: handle.bodyMarkdown,
           extensions: [
             history(),
+            // Measure the body font's space advance → `--cm-space-w`, so list
+            // continuation hanging-indent can pull leading spaces back by their exact
+            // width (not a guess). Must precede livePreviewV2, which reads the variable.
+            spaceWidthProbe(),
             // Safari/WKWebView drops the Enter that confirms an IME composition, so a
             // Korean list item + Enter wouldn't continue the list. Recover it from the
             // browser's own beforeinput (insertParagraph/insertLineBreak) signal.
