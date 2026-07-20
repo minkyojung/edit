@@ -34,7 +34,9 @@ export function StatusControl({
           aria-label="status"
           className={cn(
             badgeVariants({ variant: status ? STATUS_BADGE_VARIANT[status] : 'outline' }),
-            'cursor-pointer',
+            // Bump past the badge defaults (h-5/text-xs) so the pill reads
+            // at the value row's scale, not a tiny tag.
+            'h-7 cursor-pointer px-2.5 text-callout',
             !status && 'text-muted-foreground',
           )}
         >

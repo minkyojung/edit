@@ -55,14 +55,17 @@ describe('fmEntriesFromData', () => {
 })
 
 describe('effectiveEntries — the shared panel/flush union', () => {
-  it('keeps fm order, re-injects typed values from meta', () => {
+  it('keeps fm order, re-injects typed values, leads with the tags affordance', () => {
     const fm = [
       { key: 'custom', value: 'x' },
       { key: 'status', value: 'stale-copy' },
       { key: 'created', value: '2026-01-01' },
     ]
     const meta: Partial<DocMetaFile> = { status: 'done', createdAt: '2026-01-01' }
+    // status is placed by fm (stays there); tags isn't, so its always-shown
+    // affordance leads at the top as an empty placeholder.
     expect(effectiveEntries(fm, meta)).toEqual([
+      { key: 'tags', value: [] },
       { key: 'custom', value: 'x' },
       { key: 'status', value: 'done' }, // meta wins over the fm mirror
       { key: 'created', value: '2026-01-01' },
@@ -75,7 +78,8 @@ describe('effectiveEntries — the shared panel/flush union', () => {
       { key: 'createdAt', value: '2026-01-01' },
     ]
     const entries = effectiveEntries(fm, { createdAt: '2026-01-01' })
-    expect(entries.map((e) => e.key)).toEqual(['custom', 'created'])
+    // Leading affordances first, then fm order with createdAt aliased.
+    expect(entries.map((e) => e.key)).toEqual(['status', 'tags', 'custom', 'created'])
   })
 
   it('hides slug, de-dupes aliased keys first-wins', () => {
@@ -85,34 +89,44 @@ describe('effectiveEntries — the shared panel/flush union', () => {
       { key: 'createdAt', value: '2026-01-01' }, // aliases to created → dup
     ]
     const entries = effectiveEntries(fm, { createdAt: '2026-02-02' })
-    expect(entries).toEqual([{ key: 'created', value: '2026-02-02' }])
+    expect(entries).toEqual([
+      { key: 'status', value: '' },
+      { key: 'tags', value: [] },
+      { key: 'created', value: '2026-02-02' },
+    ])
   })
 
-  it('appends typed keys with values that fm lacks, in canonical order', () => {
+  it('leads with status + tags, then appends other typed keys canonically', () => {
     const meta: Partial<DocMetaFile> = {
       status: 'in-progress',
       tags: ['a'],
       createdAt: '2026-01-01',
     }
-    // Fresh doc (no fm): canonical order matches portableFrontmatterFields
-    // emission order so either flush branch serializes identically.
+    // status/tags pin to the top (their affordance slot); created follows.
     expect(effectiveEntries(undefined, meta).map((e) => e.key)).toEqual([
-      'created',
       'status',
       'tags',
+      'created',
     ])
   })
 
-  it('keeps a placeholder row for a typed key in fm whose value cleared', () => {
-    const fm = [
-      { key: 'status', value: 'done' },
-      { key: 'custom', value: 'x' },
-    ]
-    // status cleared in meta → row survives (position holds in-session)
-    // with an empty value the emitter will drop.
-    expect(effectiveEntries(fm, {})).toEqual([
+  it('always shows status + tags even on a bare note (empty placeholders)', () => {
+    expect(effectiveEntries(undefined, {})).toEqual([
       { key: 'status', value: '' },
+      { key: 'tags', value: [] },
+    ])
+  })
+
+  it('does not re-pin status to the top once the file has placed it', () => {
+    // status in fm renders at its fm position; only tags (absent) leads.
+    const fm = [
       { key: 'custom', value: 'x' },
+      { key: 'status', value: 'done' },
+    ]
+    expect(effectiveEntries(fm, { status: 'done' }).map((e) => e.key)).toEqual([
+      'tags',
+      'custom',
+      'status',
     ])
   })
 })

@@ -41,10 +41,9 @@ function editorFor(key: string, value: string | string[]): RowEditor {
   return 'text'
 }
 
-/** The panel's row list for a doc. Order = effectiveEntries (file key
- * order); status/tags prepend as empty affordance rows when absent, and
- * readAt appends for captured articles so unread ones still show the
- * toggle. */
+/** The panel's row list for a doc. Order = effectiveEntries (leading
+ * status/tags, then file key order); readAt appends for captured
+ * articles so an unread one still shows the toggle. */
 export function panelRows(
   known: Pick<KnownDoc, 'fm' | 'status' | 'tags' | 'createdAt' | 'sourceUrl' |
     'siteName' | 'faviconUrl' | 'savedAt' | 'readAt' | 'videoId' |
@@ -58,13 +57,9 @@ export function panelRows(
       editor: editorFor(e.key, e.value),
       typed: e.key in TYPED_KEY_TO_META,
     }))
-  // Always-shown affordances, mirroring the pre-panel fixed rows.
-  if (!rows.some((r) => r.key === 'tags')) {
-    rows.unshift({ key: 'tags', value: [], editor: 'tags', typed: true })
-  }
-  if (!rows.some((r) => r.key === 'status')) {
-    rows.unshift({ key: 'status', value: '', editor: 'status', typed: true })
-  }
+  // readAt is a bottom affordance for captured articles (effectiveEntries
+  // only emits it once it has a value, so an unread article needs the
+  // toggle added here).
   if (known.sourceUrl && !rows.some((r) => r.key === 'readAt')) {
     rows.push({ key: 'readAt', value: '', editor: 'switch', typed: true })
   }

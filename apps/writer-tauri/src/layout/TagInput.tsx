@@ -39,7 +39,7 @@ export function TagInput({
   return (
     <div className="flex flex-wrap items-center gap-1">
       {tags.map((tag) => (
-        <Badge key={tag} variant="secondary" className="gap-0.5 pr-1">
+        <Badge key={tag} variant="secondary" className="h-7 gap-1 px-2.5 pr-1.5 text-callout">
           {tag}
           <button
             type="button"
@@ -50,7 +50,7 @@ export function TagInput({
             onClick={() => onChange(tags.filter((t) => t !== tag))}
             className="rounded-full text-muted-foreground hover:text-foreground"
           >
-            <IconX size={11} stroke={2} />
+            <IconX size={13} stroke={2} />
           </button>
         </Badge>
       ))}

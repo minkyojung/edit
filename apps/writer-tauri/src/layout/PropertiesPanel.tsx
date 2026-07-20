@@ -241,9 +241,9 @@ function SortableRow({ slug, known, row }: { slug: string; known: KnownDoc; row:
             aria-label={`Reorder ${row.key}`}
             {...attributes}
             {...listeners}
-            className="absolute -left-5 top-1/2 -translate-y-1/2 cursor-grab rounded-sm p-0.5 text-muted-foreground/50 opacity-0 transition-opacity group-hover/prop:opacity-100 hover:text-muted-foreground active:cursor-grabbing"
+            className="flex w-4 shrink-0 cursor-grab items-center justify-center rounded-sm text-muted-foreground/50 opacity-0 transition-opacity group-hover/prop:opacity-100 hover:text-muted-foreground active:cursor-grabbing"
           >
-            <IconGripVertical size={14} stroke={1.75} />
+            <IconGripVertical size={15} stroke={1.75} />
           </button>
         }
         onRename={(newKey) => renameDocProperty(slug, row.key, newKey)}

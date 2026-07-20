@@ -120,31 +120,48 @@ function typedValueOf(
  * sharing it is what makes "screen order = file order" true by
  * construction.
  *
- * Union rule: `fm` entries in file order (legacy keys aliased in place,
- * hidden keys dropped, duplicates first-wins), then typed keys that
- * carry a value but aren't placed yet, in canonical order.
+ * Union rule: leading affordance keys (status, tags) first — ALWAYS
+ * shown, at the top, UNLESS the file already placed them (then they
+ * render at their fm position). Then `fm` entries in file order (legacy
+ * keys aliased in place, hidden keys dropped, duplicates first-wins),
+ * then any remaining typed keys that carry a value, in canonical order.
+ *
+ * Pinning status/tags at the top when the file hasn't placed them is
+ * what keeps them from JUMPING to the canonical tail the moment they get
+ * a value — the empty placeholder and the filled row occupy the same
+ * slot. Once dragged, they live in fm and render at their fm position
+ * like any other key, so reordering still wins.
  *
  * Typed keys re-inject their value from `meta` (fm's copy may be stale —
- * meta is authoritative). A typed key present in fm whose meta value is
- * empty keeps its row as a placeholder (`''` / `[]`) so its position
- * survives in-session; the emitter drops empty values, so placeholders
- * never reach disk.
- */
+ * meta is authoritative). A key with no value keeps its row as an empty
+ * placeholder (`''` / `[]`) so its position survives in-session; the
+ * emitter drops empty values, so placeholders never reach disk. */
+export const ALWAYS_SHOWN_KEYS: readonly TypedPanelKey[] = ['status', 'tags']
+
 export function effectiveEntries(
   fm: FmEntry[] | undefined,
   meta: Partial<DocMetaFile>,
 ): FmEntry[] {
   const result: FmEntry[] = []
   const seen = new Set<string>()
+  const placeholderFor = (key: TypedPanelKey) =>
+    typedValueOf(meta, key) ?? (key === 'tags' ? [] : '')
+  const fmKeys = new Set(
+    (fm ?? []).map((e) => LEGACY_KEY_ALIAS[e.key] ?? e.key),
+  )
+  // Leading affordances at the top, unless the file placed them below.
+  for (const key of ALWAYS_SHOWN_KEYS) {
+    if (fmKeys.has(key)) continue
+    result.push({ key, value: placeholderFor(key) })
+    seen.add(key)
+  }
   for (const entry of fm ?? []) {
     const key = LEGACY_KEY_ALIAS[entry.key] ?? entry.key
     if (HIDDEN_PROPERTY_KEYS.includes(key)) continue
     if (seen.has(key)) continue
     seen.add(key)
     if (key in TYPED_KEY_TO_META) {
-      const typedKey = key as TypedPanelKey
-      const value = typedValueOf(meta, typedKey)
-      result.push({ key, value: value ?? (typedKey === 'tags' ? [] : '') })
+      result.push({ key, value: placeholderFor(key as TypedPanelKey) })
     } else {
       result.push({ key, value: entry.value })
     }
