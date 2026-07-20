@@ -63,29 +63,35 @@ import { mediaDropPaste } from '@/prototypes/mediaDrop'
 import { richTextCopy } from './cmRichCopy'
 import { htmlPaste } from './cmHtmlPaste'
 import { importMediaToVault } from '@/editor/cmMedia'
+import { pageHeaderWidget } from '@/editor/cmPageHeaderWidget'
 
 interface Props {
   handle: CollabHandle | null
   status: CollabStatus
-  header?: React.ReactNode
 }
 
-// The page layout (header/footer overlays + centered 750px column) is owned by this
-// component's wrapper, so neutralise cmPrototypeTheme's own page padding / max-width.
-// `textAlign: justify` flushes prose to both edges; `hyphens: auto` lets the engine
-// break long words so it doesn't open large inter-word gaps ("rivers") on the narrow
-// column. WKWebView (macOS) needs the -webkit- prefix, and hyphenation only fires when
-// a `lang` is set on the content (see EditorView.contentAttributes below). Korean is
-// unaffected (CJK breaks per-character), so this mainly cleans up English prose.
+// CM now OWNS the scroll (.cm-scroller, overflow:auto), so the centered 750px column
+// + vertical breathing room live HERE on .cm-content and scroll with the content —
+// they used to be on an outer React div that owned scrolling (which broke CM's
+// viewport virtualization → the fast-scroll blank-flash). `textAlign: justify`
+// flushes prose to both edges; `hyphens: auto` lets the engine break long words so it
+// doesn't open large inter-word gaps ("rivers") on the narrow column. WKWebView
+// (macOS) needs the -webkit- prefix, and hyphenation only fires when a `lang` is set
+// on the content (see EditorView.contentAttributes below). Korean is unaffected (CJK
+// breaks per-character), so this mainly cleans up English prose.
 const layoutReset = EditorView.theme({
   // Alignment + hyphenation read from CSS vars set on the React wrapper, so the
-  // Settings toggle changes them live without a Compartment reconfigure. Keeping
-  // the rule scoped to `.cm-content` (not inherited from an ancestor) preserves
-  // the specificity needed to beat cmPrototypeTheme's leaking `.cm-content` rule.
+  // Settings toggle changes them live without a Compartment reconfigure. This rule
+  // wins over cmPrototypeTheme's leaking `.cm-content` rule on source order; the
+  // nested-cell reset (`.cm-celledit .cm-content`) is more specific and still beats
+  // the 750px column, so table cells stay full-width.
   '.cm-content': {
-    maxWidth: 'none',
-    margin: '0',
-    padding: '0',
+    maxWidth: '750px',
+    margin: '0 auto',
+    // Top inset clears the window chrome (EditorHeader, --header-h). The title widget
+    // is the first thing inside .cm-content, so this is what keeps it below the chrome
+    // at scroll-top; as you scroll, the title passes UNDER the chrome + glass band.
+    padding: 'calc(var(--header-h) + 1.5rem) 32px 4rem',
     textAlign: 'var(--cm-text-align, justify)',
     WebkitHyphens: 'var(--cm-hyphens, auto)',
     hyphens: 'var(--cm-hyphens, auto)',
@@ -98,7 +104,7 @@ const externalBody = Annotation.define<boolean>()
 
 // `status` is still accepted (callers pass it) but no longer rendered —
 // the connection-state readout lived in the now-removed footer.
-export function CmEditor({ handle, header }: Props) {
+export function CmEditor({ handle }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const slug = handle?.slug ?? null
@@ -206,6 +212,9 @@ export function CmEditor({ handle, header }: Props) {
             markdown({ extensions: [GFM], addKeymap: false }),
             placeholder('Start writing…'),
             taskCheckboxClick,
+            // Note title + properties as a block widget at doc top → scrolls away
+            // with the body, inside CM's scroller (Obsidian inline-title pattern).
+            pageHeaderWidget(handle.slug),
             livePreviewV2,
             blocksV2,
             youtubeCards, // a bare youtube URL line → inline player
@@ -378,28 +387,19 @@ export function CmEditor({ handle, header }: Props) {
             'linear-gradient(to bottom, black 0, black calc(var(--header-h) * 0.7), transparent)',
         }}
       />
-      <div className="flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div
-          className="px-8"
-          style={{
-            // Inline maxWidth/margin instead of Tailwind `max-w-*`: under Tailwind v4
-            // `max-w-2xl` compiles to `max-width: var(--container-2xl)`, and this project
-            // doesn't define those container vars, so the rule is dropped and the column
-            // loses its cap. A literal px value (from settings) is immune to that.
-            maxWidth: '750px',
-            marginInline: 'auto',
-            paddingTop: 'calc(var(--header-h) + 1.5rem)',
-            paddingBottom: '4rem',
-            // Drive the .cm-content alignment/hyphens vars from the setting.
-            // Left-align uses 'manual' so words don't auto-hyphenate (ragged right).
-            '--cm-text-align': textAlign,
-            '--cm-hyphens': textAlign === 'justify' ? 'auto' : 'manual',
-          } as React.CSSProperties}
-        >
-          {header}
-          <div className="cm-prototype" ref={rootRef} />
-        </div>
-      </div>
+      {/* CM owns the scroll (.cm-scroller, overflow:auto) and fills the remaining
+          height (flex-1 + min-h-0 so it can shrink and scroll internally). The
+          alignment/hyphen vars are read by layoutReset's .cm-content rule, so set
+          them here on the scroller's ancestor. Left-align uses 'manual' so words
+          don't auto-hyphenate (ragged right). */}
+      <div
+        className="cm-prototype min-h-0 flex-1"
+        ref={rootRef}
+        style={{
+          '--cm-text-align': textAlign,
+          '--cm-hyphens': textAlign === 'justify' ? 'auto' : 'manual',
+        } as React.CSSProperties}
+      />
       <DocStatsPanel />
     </div>
   )

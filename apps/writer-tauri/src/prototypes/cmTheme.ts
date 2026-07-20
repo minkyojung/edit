@@ -12,13 +12,23 @@ export const cmPrototypeTheme = EditorView.theme({
     backgroundColor: 'transparent',
     color: 'var(--foreground)',
     fontSize: 'var(--prose-base, 16px)',
+    // Fill the flex parent so CM's OWN scroller (.cm-scroller, overflow:auto below)
+    // is the scroll container — not an outer React div. This restores CM6's native
+    // viewport virtualization on its own scroll events, which is why fast scrolling
+    // no longer flashes blank. See CmEditor.tsx's layout notes.
+    height: '100%',
   },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
     fontFamily: 'var(--font-sans)',
     lineHeight: 'var(--prose-lh-body, 1.7)',
-    overflow: 'visible',
+    // CM owns the scroll (was `visible`, which handed scrolling to an outer div and
+    // broke CM's scroll-driven viewport updates). Hide the scrollbar to match the
+    // previous chrome-less look.
+    overflow: 'auto',
+    scrollbarWidth: 'none',
   },
+  '.cm-scroller::-webkit-scrollbar': { display: 'none' },
   '.cm-content': {
     maxWidth: '680px',
     margin: '0 auto',
