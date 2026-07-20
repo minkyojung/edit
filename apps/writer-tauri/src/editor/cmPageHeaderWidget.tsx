@@ -16,7 +16,7 @@
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
-import { StateField, type Extension } from '@codemirror/state'
+import { StateField } from '@codemirror/state'
 import { PageHeader } from '@/layout/PageHeader'
 
 // Stash the React root on the DOM node so destroy() can unmount it (as in mermaidCards).
@@ -61,7 +61,7 @@ class PageHeaderWidget extends WidgetType {
 /** Block widget pinned to document position 0 (side -1 → before the first line). The
  * decoration set is mapped through edits so it stays at the very top as the user
  * types. slug is fixed per editor mount (CmEditor re-mounts on doc switch). */
-export function pageHeaderWidget(slug: string): Extension {
+export function pageHeaderWidget(slug: string): StateField<DecorationSet> {
   const deco = Decoration.set(
     Decoration.widget({ widget: new PageHeaderWidget(slug), block: true, side: -1 }).range(0),
   )

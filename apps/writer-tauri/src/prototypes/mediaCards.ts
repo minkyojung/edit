@@ -108,7 +108,13 @@ function build(state: EditorState): DecorationSet {
 export const mediaField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
-    return tr.docChanged || tr.selection ? build(tr.state) : value
+    // Also rebuild on parse-progress (tree object changed but no doc/selection change):
+    // a just-inserted <video>/<audio> line whose Paragraph node wasn't parsed yet
+    // renders as soon as the parser catches up, instead of staying raw. Cheap pointer
+    // compare.
+    return tr.docChanged || tr.selection || syntaxTree(tr.startState) != syntaxTree(tr.state)
+      ? build(tr.state)
+      : value
   },
   provide: (f) => [
     EditorView.decorations.from(f),
