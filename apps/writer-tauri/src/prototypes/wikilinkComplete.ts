@@ -1,73 +1,18 @@
-// Wikilink autocomplete (`[[`) — the SAME CM CompletionSource pattern as the
-// slash menu (research #3). Replaces the PM wikilinkPalettePlugin + zustand +
-// React WikilinkPalette + keyboard hack. Triggers on `[[` anywhere (wikilinks
-// are mid-text, unlike the slash menu), lists note titles, and inserts the
-// link on pick. Popup/keyboard/focus/position are CM autocomplete's job.
+// Known-note stub — the DEFAULT for livePreview's `wikilinkKnown` facet, used by dev
+// prototypes and headless tests. Production (CmEditor) overrides it via
+// `wikilinkKnown.of(isKnownNoteTitle)` with a real docsStore-backed check, so the
+// static list here only ever drives the prototype's blue-vs-red wikilink styling.
 //
-// Prototype scope: candidate list is a static stand-in for the real
-// docsStore.knownDocs titles; insert form is `[[Title]]` to match the
-// prototype's livePreview rendering. (The real migration picks the canonical
-// stored form — `[Title](note:slug)` — but the autocomplete pattern is
-// identical.)
-
-import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete'
-import type { EditorView } from '@codemirror/view'
-import { inCodeBlock } from './slashCommands'
+// (The autocomplete-based `[[` completion source that used to live here is gone — the
+// live picker is editor/wikilinkMenu.tsx, an owned tooltip. This file kept only the
+// stub the facet default still imports.)
 
 // Stand-in for docsStore.knownDocs titles.
-export const NOTE_TITLES = [
-  'Daily Standup',
-  'Project Brasilia',
-  'Meeting Notes',
-  'Roadmap',
-  'Design Spec',
-]
+export const NOTE_TITLES = ['Daily Standup', 'Project Brasilia', 'Meeting Notes', 'Roadmap', 'Design Spec']
 
 /** Does a note with this title exist? (Real app: docsStore.knownDocs lookup.)
  * Drives broken-link styling. */
 export function isKnownNote(title: string): boolean {
   const t = title.trim().toLowerCase()
   return NOTE_TITLES.some((n) => n.toLowerCase() === t)
-}
-
-function insertWikilink(title: string) {
-  return (view: EditorView, _c: unknown, from: number, to: number) => {
-    const insert = `[[${title}]]`
-    view.dispatch({
-      changes: { from, to, insert },
-      selection: { anchor: from + insert.length },
-    })
-  }
-}
-
-/** Triggers on `[[query` (query may be empty — opens as soon as the second
- * `[` lands). Not line-restricted (wikilinks are mid-text); skipped in code
- * blocks. Filters titles by substring and offers a "create" option for a
- * non-matching query. Exported for headless tests. */
-export function wikilinkSource(context: CompletionContext): CompletionResult | null {
-  const word = context.matchBefore(/\[\[[^\]\n[]*$/)
-  if (!word) return null
-  if (inCodeBlock(context.state, context.pos)) return null
-
-  const query = word.text.slice(2) // drop the leading `[[`
-  const q = query.trim().toLowerCase()
-  const matches = NOTE_TITLES.filter((t) => !q || t.toLowerCase().includes(q))
-
-  const options = matches.map((t) => ({
-    label: t,
-    type: 'variable',
-    apply: insertWikilink(t),
-  }))
-
-  // "Create new note" when the query doesn't exactly match an existing title.
-  if (q && !NOTE_TITLES.some((t) => t.toLowerCase() === q)) {
-    options.push({
-      label: `Create “${query.trim()}”`,
-      type: 'text',
-      apply: insertWikilink(query.trim()),
-    })
-  }
-
-  if (options.length === 0) return null
-  return { from: word.from, to: word.to, filter: false, options }
 }
