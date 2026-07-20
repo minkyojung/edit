@@ -15,7 +15,6 @@ import {
 } from '@tabler/icons-react'
 import type { KnownDoc } from '@/state/docsStore'
 import { useDocsStore } from '@/state/docsStore'
-import { formatDate } from '@/lib/formatDate'
 import { Switch } from '@/components/ui/switch'
 import { PropertyRow } from './PropertyRow'
 import { StatusControl } from './StatusControl'
@@ -33,13 +32,13 @@ export function PropertiesPanel({ slug, known }: { slug: string; known: KnownDoc
         switch (kind) {
           case 'status':
             return (
-              <PropertyRow key={kind} icon={IconCircleDashed} label="상태">
+              <PropertyRow key={kind} icon={IconCircleDashed} label="status">
                 <StatusControl slug={slug} status={known.status} />
               </PropertyRow>
             )
           case 'tags':
             return (
-              <PropertyRow key={kind} icon={IconTag} label="태그">
+              <PropertyRow key={kind} icon={IconTag} label="tags">
                 <TagInput
                   tags={known.tags ?? []}
                   onChange={(next) => setDocTags(slug, next)}
@@ -48,15 +47,15 @@ export function PropertiesPanel({ slug, known }: { slug: string; known: KnownDoc
             )
           case 'created':
             return (
-              <PropertyRow key={kind} icon={IconCalendar} label="생성일">
-                <span className="text-muted-foreground">
-                  {formatDate(known.createdAt as string)}
-                </span>
+              // Obsidian-style: the frontmatter key name and its raw on-disk
+              // value (the full ISO timestamp), not a localized/prettified form.
+              <PropertyRow key={kind} icon={IconCalendar} label="created">
+                <span className="text-muted-foreground">{known.createdAt}</span>
               </PropertyRow>
             )
           case 'source':
             return (
-              <PropertyRow key={kind} icon={IconWorld} label="출처">
+              <PropertyRow key={kind} icon={IconWorld} label="source">
                 <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
                   {known.faviconUrl ? (
                     <img
@@ -65,17 +64,17 @@ export function PropertiesPanel({ slug, known }: { slug: string; known: KnownDoc
                       className="size-3.5 shrink-0 rounded-sm"
                     />
                   ) : null}
-                  <span className="truncate">{known.siteName ?? known.sourceUrl}</span>
+                  <span className="truncate">{known.sourceUrl}</span>
                 </span>
               </PropertyRow>
             )
           case 'read':
             return (
-              <PropertyRow key={kind} icon={IconClock} label="읽음">
+              <PropertyRow key={kind} icon={IconClock} label="readAt">
                 <Switch
                   checked={!!known.readAt}
                   onCheckedChange={(v) => setArticleRead(slug, v)}
-                  aria-label="읽음 표시"
+                  aria-label="readAt"
                 />
               </PropertyRow>
             )
