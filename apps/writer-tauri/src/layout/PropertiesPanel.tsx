@@ -136,9 +136,9 @@ function AddPropertyRow({ onAdd }: { onAdd: (key: string) => boolean }) {
 
   if (adding) {
     return (
-      <div className="-mx-1.5 flex min-h-8 items-center gap-2 rounded-md px-1.5">
-        <div className="flex w-36 shrink-0 items-center gap-1.5 text-footnote">
-          <IconAlignLeft size={15} stroke={2.25} className="shrink-0 text-muted-foreground" />
+      <div className="-mx-1.5 flex min-h-9 items-center gap-2 rounded-md px-1.5">
+        <div className="flex w-40 shrink-0 items-center gap-2 text-body">
+          <IconAlignLeft size={17} stroke={2.25} className="shrink-0 text-muted-foreground" />
           <input
             ref={inputRef}
             value={draft}
@@ -146,7 +146,7 @@ function AddPropertyRow({ onAdd }: { onAdd: (key: string) => boolean }) {
             onBlur={commit}
             onKeyDown={onKeyDown}
             placeholder="Property name"
-            className="w-full min-w-0 rounded-sm bg-input/50 px-1 py-0.5 text-footnote text-foreground outline-none placeholder:text-muted-foreground/60"
+            className="w-full min-w-0 rounded-sm bg-input/50 px-1 py-0.5 text-body text-foreground outline-none placeholder:text-muted-foreground/60"
           />
         </div>
       </div>
@@ -156,9 +156,9 @@ function AddPropertyRow({ onAdd }: { onAdd: (key: string) => boolean }) {
     <button
       type="button"
       onClick={() => setAdding(true)}
-      className="-mx-1.5 flex min-h-8 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-footnote font-medium text-muted-foreground/70 transition-colors hover:bg-accent/40 hover:text-muted-foreground"
+      className="-mx-1.5 flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-1.5 text-body font-medium text-muted-foreground/70 transition-colors hover:bg-accent/40 hover:text-muted-foreground"
     >
-      <IconPlus size={15} stroke={2.25} />
+      <IconPlus size={17} stroke={2.25} />
       Add a property
     </button>
   )

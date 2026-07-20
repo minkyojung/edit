@@ -33,11 +33,15 @@ export function StatusControl({
           type="button"
           aria-label="status"
           className={cn(
-            badgeVariants({ variant: status ? STATUS_BADGE_VARIANT[status] : 'outline' }),
-            // Bump past the badge defaults (h-5/text-xs) so the pill reads
-            // at the value row's scale, not a tiny tag.
-            'h-7 cursor-pointer px-2.5 text-callout',
-            !status && 'text-muted-foreground',
+            'cursor-pointer text-body',
+            // A value renders as a colored pill; an empty status is a plain
+            // muted placeholder (no pill), matching the text-value rows.
+            status
+              ? cn(
+                  badgeVariants({ variant: STATUS_BADGE_VARIANT[status] }),
+                  'h-7 px-2.5 text-callout',
+                )
+              : 'text-muted-foreground/60',
           )}
         >
           {status ? STATUS_LABEL[status] : 'Empty'}

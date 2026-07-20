@@ -96,18 +96,18 @@ export function PropertyRow({
       {...dragProps}
       aria-label={dragProps ? `Reorder ${label}` : undefined}
       className={cn(
-        'relative flex size-[15px] shrink-0 items-center justify-center text-muted-foreground',
+        'relative flex size-4 shrink-0 items-center justify-center text-muted-foreground',
         dragProps && 'cursor-grab active:cursor-grabbing',
       )}
     >
       <Icon
-        size={15}
+        size={17}
         stroke={2.25}
         className={cn('shrink-0', dragProps && 'transition-opacity group-hover/prop:opacity-0')}
       />
       {dragProps ? (
         <IconGripVertical
-          size={15}
+          size={17}
           stroke={2.25}
           className="absolute opacity-0 transition-opacity group-hover/prop:opacity-100"
         />
@@ -116,8 +116,8 @@ export function PropertyRow({
   )
 
   return (
-    <div className="group/prop -mx-1.5 flex min-h-8 items-center gap-2 rounded-md px-1.5 transition-colors hover:bg-accent/40">
-      <div className="flex w-36 shrink-0 items-center gap-1.5 text-footnote font-medium text-muted-foreground">
+    <div className="group/prop -mx-1.5 flex min-h-9 items-center gap-2 rounded-md px-1.5 transition-colors hover:bg-accent/40">
+      <div className="flex w-40 shrink-0 items-center gap-2 text-body font-medium text-muted-foreground">
         {iconSlot}
         {renaming ? (
           <input
