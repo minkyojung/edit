@@ -15,6 +15,7 @@ import { parseFilePathFromPath } from '@/lib/viewUrl'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 import { useDocsStore } from '@/state/docsStore'
+import { readDocBody } from '@/state/docsStore/docBody'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
@@ -427,28 +428,11 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // store as the chip.
   const hasSelection = selection !== null
 
-  // "Edit with AI" from a viz block's toolbar arms a one-shot: it carries the
-  // block's stable id, and the NEXT chat message becomes an edit instruction for
-  // THAT block. The send (handleSend) hands the run a `vizEditTarget` so the
-  // SAME chat agent edits it via the edit_visualization tool — not a separate
-  // pipeline. Holds the target vizId (or null when disarmed); cleared after it
-  // fires or the selection is detached.
-  const editingVizRef = useRef<string | null>(null)
-  useEffect(() => {
-    const arm = (e: Event) => {
-      const id = (e as CustomEvent<{ vizId?: string }>).detail?.vizId
-      if (id) editingVizRef.current = id
-    }
-    window.addEventListener('writer:viz-edit', arm)
-    return () => window.removeEventListener('writer:viz-edit', arm)
-  }, [])
-
   // X-button on the chip detaches the selection: collapse the live selection in
   // whichever editor is mounted (via the store's registered callback). The
   // editor's selection-change listener then publishes the now-empty selection
   // back to the store, so the chip disappears on its own.
   const handleClearSelection = useCallback(() => {
-    editingVizRef.current = null
     useEditorSelectionStore.getState().collapse?.()
   }, [])
 
@@ -504,12 +488,11 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     let systemPrompt: string
     try {
       // Document + selection from the editor-agnostic sources CM publishes: the
-      // open doc's bodyMarkdown cache and the live selection store (the same one
-      // the chip reads). render.ts throws CommandRenderError when scope is
-      // "selection" and nothing is selected — surfaced as an inline error below.
-      const docText = slug
-        ? (useDocsStore.getState().handles[slug]?.bodyMarkdown ?? '')
-        : ''
+      // open doc's body via the canonical reader (live editor when mounted) and
+      // the live selection store (the same one the chip reads). render.ts throws
+      // CommandRenderError when scope is "selection" and nothing is selected —
+      // surfaced as an inline error below.
+      const docText = slug ? readDocBody(slug) : ''
       systemPrompt = renderBody(cmd, {
         document: docText,
         selection: selectionText ?? '',
@@ -706,11 +689,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         return
       }
 
-      // Viz "Edit with AI" read the target block's source from the PM view to
-      // hand the agent its current spec; that path doesn't exist on CM. Clear
-      // any stale arm so it can't leak into this send.
-      editingVizRef.current = null
-
       // Snapshot every composer context chip onto the turn so the bubble renders
       // what was sent: draft-backed file/pasted here + the prop-backed
       // selection/viewing-file via the shared helper (same commit boundary the
@@ -754,7 +732,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       // turn (draft chips were already cleared by the composer's submit).
       resetContextChips()
 
-      await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, undefined, attachments, mentionPaths)
+      await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, attachments, mentionPaths)
     } finally {
       sendInFlightRef.current = false
     }
@@ -828,7 +806,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         .filter((a): a is Extract<Attachment, { type: 'file' }> => a.type === 'file' && !!a.path)
         .map((a) => ({ id: crypto.randomUUID(), name: a.name, mediaType: a.mediaType, path: a.path }))
       const regenMentions = (lastUser.mentions ?? []).map((m) => m.path)
-      await runner.run(threadId, history, undefined, undefined, regenAttachments, regenMentions)
+      await runner.run(threadId, history, undefined, regenAttachments, regenMentions)
     } finally {
       sendInFlightRef.current = false
     }

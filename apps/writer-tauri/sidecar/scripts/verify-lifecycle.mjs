@@ -178,28 +178,6 @@ async function t3() {
   await sleep(50)
 }
 
-// ── T4: B1 rollback — legacy entry tears down the live persistent thread
-async function t4() {
-  console.log('\n[T4] B1: legacy chat on a live thread → persistent thread torn down (flag_rollback)')
-  fakes.length = 0; teardownLog.length = 0
-  const { server, send, ev } = makeServer()
-  const tid = randomUUID(), r1 = randomUUID(), r2 = randomUUID()
-  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
-  const fake = await awaitFake(1)
-  await runTurn(fake, r1, ev)
-  const rec = server.activeThreads.get(tid)
-  check('persistent thread live before rollback', !!rec && !rec.dead)
-  // Flag flipped OFF: same threadId now arrives on the legacy path.
-  send('chat', { runId: r2, threadId: tid, prompt: 'b' /* persistentQuery omitted */ }, nid())
-  check('persistent thread torn down synchronously', !!rec && rec.dead === true)
-  check('teardown reason = flag_rollback', teardownLog.some((l) => l.includes('flag_rollback')), teardownLog.join(' | '))
-  // unblock the legacy fake query so nothing hangs
-  const legacyFake = await awaitFake(2)
-  await waitFor(() => legacyFake.messages.length > 0, 500)
-  legacyFake.pushEvent({ type: 'result', subtype: 'success', stop_reason: 'end_turn', usage: {} })
-  await sleep(80)
-}
-
 // ── T5: A1 refactor — busy (active-turn) thread survives eviction ─────
 async function t5() {
   console.log('\n[T5] A1: #threadBusy protects a busy thread under LRU pressure')
@@ -247,8 +225,63 @@ async function t6() {
   send('chat/close-thread', { threadId: tid }); await sleep(50)
 }
 
+// ── T7: closeAfterResult — a one-shot thread (title / any non-persistent
+// flow) ends after its single result, instead of lingering like a chat. ──
+async function t7() {
+  console.log('\n[T7] closeAfterResult: one-shot thread tears down after its single result')
+  fakes.length = 0; teardownLog.length = 0
+  const { server, send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID()
+  // No persistentQuery → the router derives teardown:'closeAfterResult' (the
+  // flag-off / intake one-shot case, now on the one engine).
+  send('chat', { runId: r1, threadId: tid, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  check('thread live before result', server.activeThreads.has(tid))
+  await runTurn(fake, r1, ev)
+  // The single result closes the input → query ends → finalize teardown.
+  await waitFor(() => !server.activeThreads.has(tid))
+  check('one turn settled (chat/done)', ev.done.length === 1 && ev.err.length === 0, `done=${ev.done.length} err=${ev.err.length}`)
+  check('thread torn down after one result', !server.activeThreads.has(tid), `size=${server.activeThreads.size}`)
+  check('exactly one query (no reuse for a one-shot)', fakes.length === 1, `fakes=${fakes.length}`)
+}
+
+// ── T8: title mode routes onto the thread engine (B2) — a title chat (no
+// threadId, no persistentQuery, exactly what generateThreadTitle sends) runs
+// as a closeAfterResult one-shot on the engine, not the legacy path, and stays
+// single-flight. ──
+async function t8() {
+  console.log('\n[T8] title mode → thread engine, closeAfterResult one-shot, single-flight')
+  fakes.length = 0; teardownLog.length = 0
+  const ev = { done: [], err: [] }
+  const server = new Server({
+    mode: 'title',
+    emit: (m) => {
+      if (m.method === 'chat/done') ev.done.push(m.params)
+      else if (m.method === 'chat/error') ev.err.push(m.params)
+    },
+  })
+  const send = (method, params, id) => server.handle({ jsonrpc: '2.0', id, method, params })
+  send('initialize', {}, 1)
+  send('setToken', { token: 'sk-ant-oat-test-fake' }, 2)
+  const r1 = randomUUID()
+  send('chat', { runId: r1, prompt: 'summarize this' }, nid())
+  const fake = await awaitFake(1)
+  check(
+    'title ran on the thread engine (one activeThreads entry)',
+    server.activeThreads.size === 1,
+    `threads=${server.activeThreads.size}`,
+  )
+  // Single-flight: a second title while one is live must not spawn a 2nd thread.
+  send('chat', { runId: randomUUID(), prompt: 'other' }, nid())
+  check('title stays single-flight (activeThreads guard)', server.activeThreads.size === 1, `threads=${server.activeThreads.size}`)
+  await runTurn(fake, r1, ev)
+  await waitFor(() => server.activeThreads.size === 0)
+  check('title thread torn down after its single result', server.activeThreads.size === 0)
+  check('one chat/done, no error', ev.done.length === 1 && ev.err.length === 0, `done=${ev.done.length} err=${ev.err.length}`)
+}
+
 try {
-  await t1(); await t2(); await t3(); await t4(); await t5(); await t6()
+  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8()
 } finally {
   process.stderr.write = origWrite
 }

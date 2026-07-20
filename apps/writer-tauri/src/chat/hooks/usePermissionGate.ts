@@ -11,6 +11,7 @@
 
 import { useEffect } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { parseDoneEvent, parseErrorEvent } from '@/agent/chat/eventSchemas'
 import { useChatRuns } from '@/stores/chatRuns'
 import { usePendingPermissions } from '@/state/pendingPermissionsStore'
 
@@ -35,12 +36,14 @@ export function usePermissionGate(): void {
       // Clear on run end so a card never outlives its turn. A resolved gate
       // is also cleared at answer time by the card itself; this is the
       // backstop for cancel / error / done-without-answer.
-      listen<{ runId: string }>('claude:done', (e) =>
-        usePendingPermissions.getState().clearByRun(e.payload.runId),
-      ),
-      listen<{ runId: string }>('claude:error', (e) =>
-        usePendingPermissions.getState().clearByRun(e.payload.runId),
-      ),
+      listen<{ runId: string }>('claude:done', (e) => {
+        if (!parseDoneEvent(e.payload)) return
+        usePendingPermissions.getState().clearByRun(e.payload.runId)
+      }),
+      listen<{ runId: string }>('claude:error', (e) => {
+        if (!parseErrorEvent(e.payload)) return
+        usePendingPermissions.getState().clearByRun(e.payload.runId)
+      }),
     ]).then((registered) => {
       if (disposed) {
         registered.forEach((fn) => fn())

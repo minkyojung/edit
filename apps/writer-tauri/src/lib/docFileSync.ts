@@ -148,9 +148,12 @@ export function serializeDocToFiles(slug: string): SerializedDocFiles | null {
   // to the cached `bodyMarkdown`, which the editor's unmount checkpoint refreshed
   // before tearing down — so a slug dirtied moments before navigation still flushes
   // the correct final body.
+  // Use the live editor body when one is mounted; otherwise the cached mirror,
+  // which the editor's unmount checkpoint refreshed before tearing down. Read
+  // locally — the mirror is owned by docBody's setter (updateDocBody /
+  // setBodyMirror) and refreshed at unmount, so the flush doesn't write it.
   const pulled = pullActiveCmBody(slug)
-  if (pulled !== null) handle.bodyMarkdown = pulled
-  const md = handle.bodyMarkdown
+  const md = pulled !== null ? pulled : handle.bodyMarkdown
 
   const known = docs.knownDocs.find((d) => d.slug === slug)
   const meta = buildMetaForKnownDoc(slug, known)

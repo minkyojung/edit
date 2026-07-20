@@ -3,9 +3,9 @@
 // (NOT the vault) so the synced vault stays a clean folder of user files; the
 // path is resolved by `appdata::events_db_path()` and passed in here.
 //
-// Connections are opened per call (SQLite open is sub-millisecond).
-// `init_schema` is idempotent (`IF NOT EXISTS`) so reopening is free and
-// never disturbs existing rows.
+// Connections are opened per call (SQLite open is sub-millisecond). Schema is
+// versioned via `PRAGMA user_version` and brought up to date on every open by
+// `run_migrations` (idempotent — reopening is free and never disturbs rows).
 
 use std::path::Path;
 use std::time::Duration;
@@ -20,61 +20,93 @@ use crate::events::{Entry, EventFilter};
 /// the schema exists. `db_path` is the full file path (see
 /// `appdata::events_db_path()`), in the per-device app-data dir.
 pub fn open(db_path: &Path) -> Result<Connection, String> {
-    let conn = Connection::open(db_path).map_err(|e| format!("open events.db: {e}"))?;
+    let mut conn = Connection::open(db_path).map_err(|e| format!("open events.db: {e}"))?;
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| format!("set WAL: {e}"))?;
     conn.busy_timeout(Duration::from_millis(5000))
         .map_err(|e| format!("busy_timeout: {e}"))?;
-    init_schema(&conn)?;
+    run_migrations(&mut conn)?;
     Ok(conn)
 }
 
-/// Create the three tables + indexes + FTS sync triggers. Idempotent.
-fn init_schema(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS events (
-            id          TEXT PRIMARY KEY,
-            ts          TEXT NOT NULL,
-            ingested_at TEXT NOT NULL,
-            source      TEXT NOT NULL,
-            kind        TEXT NOT NULL,
-            summary     TEXT NOT NULL,
-            entities    TEXT,
-            refs        TEXT,
-            payload     TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_events_ts          ON events(ts);
-        CREATE INDEX IF NOT EXISTS idx_events_source_kind ON events(source, kind);
+/// Ordered schema migrations. `MIGRATIONS[i]` is the SQL that upgrades the DB
+/// from `user_version` `i` to `i + 1`. To change the schema, APPEND a new
+/// migration — never edit or reorder an existing one, since a shipped DB has
+/// already applied it and is stamped past it. `user_version` is an i32 stored
+/// in the DB file; nothing outside this module may touch it.
+const MIGRATIONS: &[&str] = &[
+    // v0 -> v1: initial schema (events + connector_state + FTS + sync
+    // triggers). Idempotent (`IF NOT EXISTS`) so a DB that predates this seam —
+    // left at user_version 0 with these tables already present — re-applies it
+    // harmlessly and is stamped to v1.
+    r#"
+    CREATE TABLE IF NOT EXISTS events (
+        id          TEXT PRIMARY KEY,
+        ts          TEXT NOT NULL,
+        ingested_at TEXT NOT NULL,
+        source      TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        summary     TEXT NOT NULL,
+        entities    TEXT,
+        refs        TEXT,
+        payload     TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_events_ts          ON events(ts);
+    CREATE INDEX IF NOT EXISTS idx_events_source_kind ON events(source, kind);
 
-        CREATE TABLE IF NOT EXISTS connector_state (
-            source     TEXT PRIMARY KEY,
-            watermark  TEXT,
-            etag       TEXT,
-            updated_at TEXT
-        );
+    CREATE TABLE IF NOT EXISTS connector_state (
+        source     TEXT PRIMARY KEY,
+        watermark  TEXT,
+        etag       TEXT,
+        updated_at TEXT
+    );
 
-        CREATE VIRTUAL TABLE IF NOT EXISTS events_fts
-            USING fts5(summary, content='events', content_rowid='rowid');
+    CREATE VIRTUAL TABLE IF NOT EXISTS events_fts
+        USING fts5(summary, content='events', content_rowid='rowid');
 
-        -- Keep events_fts in sync with events. UPSERT fires the UPDATE
-        -- trigger when an existing id is re-inserted, so the old summary
-        -- term is removed before the new one is indexed.
-        CREATE TRIGGER IF NOT EXISTS events_ai AFTER INSERT ON events BEGIN
-            INSERT INTO events_fts(rowid, summary) VALUES (new.rowid, new.summary);
-        END;
-        CREATE TRIGGER IF NOT EXISTS events_ad AFTER DELETE ON events BEGIN
-            INSERT INTO events_fts(events_fts, rowid, summary)
-                VALUES ('delete', old.rowid, old.summary);
-        END;
-        CREATE TRIGGER IF NOT EXISTS events_au AFTER UPDATE ON events BEGIN
-            INSERT INTO events_fts(events_fts, rowid, summary)
-                VALUES ('delete', old.rowid, old.summary);
-            INSERT INTO events_fts(rowid, summary) VALUES (new.rowid, new.summary);
-        END;
-        "#,
-    )
-    .map_err(|e| format!("init schema: {e}"))
+    -- Keep events_fts in sync with events. UPSERT fires the UPDATE
+    -- trigger when an existing id is re-inserted, so the old summary
+    -- term is removed before the new one is indexed.
+    CREATE TRIGGER IF NOT EXISTS events_ai AFTER INSERT ON events BEGIN
+        INSERT INTO events_fts(rowid, summary) VALUES (new.rowid, new.summary);
+    END;
+    CREATE TRIGGER IF NOT EXISTS events_ad AFTER DELETE ON events BEGIN
+        INSERT INTO events_fts(events_fts, rowid, summary)
+            VALUES ('delete', old.rowid, old.summary);
+    END;
+    CREATE TRIGGER IF NOT EXISTS events_au AFTER UPDATE ON events BEGIN
+        INSERT INTO events_fts(events_fts, rowid, summary)
+            VALUES ('delete', old.rowid, old.summary);
+        INSERT INTO events_fts(rowid, summary) VALUES (new.rowid, new.summary);
+    END;
+    "#,
+];
+
+/// Bring the schema up to the latest version. Reads `user_version`, then
+/// applies each pending migration in its own transaction and bumps the version
+/// — so a failed migration rolls back cleanly and is retried on the next open,
+/// never leaving a half-applied schema stamped as done.
+fn run_migrations(conn: &mut Connection) -> Result<(), String> {
+    let current: i32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|e| format!("read user_version: {e}"))?;
+    for (i, sql) in MIGRATIONS.iter().enumerate() {
+        let target = (i + 1) as i32;
+        if current >= target {
+            continue;
+        }
+        let tx = conn
+            .transaction()
+            .map_err(|e| format!("begin migration tx v{target}: {e}"))?;
+        tx.execute_batch(sql)
+            .map_err(|e| format!("apply migration v{i}->v{target}: {e}"))?;
+        // user_version can't be a bound parameter; `target` is a trusted int.
+        tx.pragma_update(None, "user_version", target)
+            .map_err(|e| format!("stamp user_version v{target}: {e}"))?;
+        tx.commit()
+            .map_err(|e| format!("commit migration v{target}: {e}"))?;
+    }
+    Ok(())
 }
 
 /// UPSERT each entry keyed by `id` — re-importing the same external event
@@ -397,6 +429,57 @@ mod tests {
         )
         .unwrap();
         assert_eq!(github.len(), 2);
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn user_version(conn: &Connection) -> i32 {
+        conn.pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn fresh_db_is_stamped_to_latest_and_reopen_is_noop() {
+        let dir = temp_vault("migrate_fresh");
+        let db_path = dir.join("events.db");
+
+        let conn = open(&db_path).unwrap();
+        assert_eq!(user_version(&conn), MIGRATIONS.len() as i32);
+        drop(conn);
+
+        // Re-open: every migration already applied → no-op, still valid.
+        let mut conn2 = open(&db_path).unwrap();
+        assert_eq!(user_version(&conn2), MIGRATIONS.len() as i32);
+        upsert_events(&mut conn2, &[sample()]).unwrap();
+        assert_eq!(
+            query_events(&conn2, &EventFilter::default()).unwrap().len(),
+            1
+        );
+
+        drop(conn2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_v0_db_with_tables_is_adopted_without_loss() {
+        let dir = temp_vault("migrate_legacy");
+        let db_path = dir.join("events.db");
+
+        // Simulate a DB created before this seam: schema present, but
+        // user_version never stamped (still the default 0).
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            assert_eq!(user_version(&conn), 0, "precondition: legacy DB at v0");
+        }
+
+        // open() adopts it: the idempotent migration re-runs harmlessly over the
+        // existing tables and stamps the DB to v1, losing nothing.
+        let mut conn = open(&db_path).unwrap();
+        assert_eq!(user_version(&conn), 1);
+        upsert_events(&mut conn, &[sample()]).unwrap();
+        assert_eq!(search_events(&conn, "review", 10).unwrap().len(), 1);
 
         drop(conn);
         let _ = std::fs::remove_dir_all(&dir);

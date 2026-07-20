@@ -14,6 +14,11 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import {
+  parseChatEvent,
+  parseDoneEvent,
+  parseErrorEvent,
+} from '@/agent/chat/eventSchemas'
 import { discoverAndFetch, type Document } from './adapters'
 import {
   PROFILE_SECTIONS,
@@ -307,7 +312,7 @@ function callSection(systemPrompt: string, prompt: string): Promise<CallOnceResu
 
     Promise.all([
       listen<SectionChatEvent>('claude:event', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseChatEvent(e.payload) || e.payload.runId !== runId) return
         const ev = e.payload.event
         if (ev?.type !== 'assistant') return
         for (const b of ev.message?.content ?? []) {
@@ -317,7 +322,7 @@ function callSection(systemPrompt: string, prompt: string): Promise<CallOnceResu
         }
       }),
       listen<SectionDoneEvent>('claude:done', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseDoneEvent(e.payload) || e.payload.runId !== runId) return
         clearTimeout(timer)
         if (!text.trim()) {
           settle({ kind: 'fatal', error: new Error('no text content in response') })
@@ -326,7 +331,7 @@ function callSection(systemPrompt: string, prompt: string): Promise<CallOnceResu
         settle({ kind: 'ok', text })
       }),
       listen<SectionErrorEvent>('claude:error', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseErrorEvent(e.payload) || e.payload.runId !== runId) return
         clearTimeout(timer)
         const code = e.payload.code
         if (code === 'RATE_LIMIT') {

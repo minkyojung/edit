@@ -12,6 +12,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::RwLock;
 
 use super::client::{ExitHandler, NotificationHandler, SidecarClient, SidecarError};
+use super::state::{set_sidecar_state, SidecarState};
 
 // Self-reference handle for exit closures. Set after the SidecarManager Arc
 // is created, so the closures can find their way back to call restart_*.
@@ -36,7 +37,7 @@ impl Mode {
 // dies *immediately and repeatedly* (e.g. a broken bundle in a packaged build)
 // must not hot-loop forever pegging the CPU and flooding logs. Each respawn
 // waits an exponentially growing backoff, and after too many consecutive fast
-// deaths we stop trying and surface a terminal `sidecar:died { fatal: true }`.
+// deaths we stop trying and surface a terminal `SidecarState::Dead { fatal }`.
 const MAX_CONSECUTIVE_RESTARTS: u32 = 5;
 /// An instance that lived at least this long before dying is treated as a
 /// healthy process that eventually died — not a crash loop — so its death
@@ -126,8 +127,11 @@ impl SidecarManager {
         let handler = build_notification_handler(app.clone());
         let self_ref: SelfRef = Arc::new(OnceLock::new());
 
-        let chat_exit = build_exit(self_ref.clone(), Mode::Chat, app.clone());
-        let title_exit = build_exit(self_ref.clone(), Mode::Title, app.clone());
+        let chat_exit = build_exit(self_ref.clone(), Mode::Chat);
+        let title_exit = build_exit(self_ref.clone(), Mode::Title);
+
+        set_sidecar_state(app, SidecarState::Starting { mode: Mode::Chat.as_str().into() });
+        set_sidecar_state(app, SidecarState::Starting { mode: Mode::Title.as_str().into() });
 
         let chat = SidecarClient::spawn_initialized(
             &launcher.program,
@@ -147,6 +151,9 @@ impl SidecarManager {
         .await?;
 
         eprintln!("[sidecar manager] both sidecars initialized");
+
+        set_sidecar_state(app, SidecarState::Running { mode: Mode::Chat.as_str().into() });
+        set_sidecar_state(app, SidecarState::Running { mode: Mode::Title.as_str().into() });
 
         let mgr = Arc::new(Self {
             chat: RwLock::new(Arc::new(chat)),
@@ -304,13 +311,13 @@ impl SidecarManager {
     async fn handle_exit(&self, mode: Mode) {
         // Decide backoff vs give-up from how the just-dead instance behaved.
         // The lock is released at the end of this block, before any await.
-        let (give_up, delay) = {
+        let (give_up, delay, attempt) = {
             let mut g = self.restart_guard(mode).lock().unwrap();
             let (next, action) = restart_decision(g.consecutive, g.last_spawn.elapsed());
             g.consecutive = next;
             match action {
-                RestartAction::GiveUp => (true, Duration::ZERO),
-                RestartAction::Backoff(d) => (false, d),
+                RestartAction::GiveUp => (true, Duration::ZERO, next),
+                RestartAction::Backoff(d) => (false, d, next),
             }
         };
 
@@ -320,11 +327,24 @@ impl SidecarManager {
                 mode.as_str(),
                 MAX_CONSECUTIVE_RESTARTS,
             );
-            let _ = self
-                .app
-                .emit("sidecar:died", json!({ "mode": mode.as_str(), "fatal": true }));
+            set_sidecar_state(
+                &self.app,
+                SidecarState::Dead { mode: mode.as_str().into(), fatal: true },
+            );
             return;
         }
+
+        // Announce the impending respawn. Consumers settle in-flight work on
+        // this transition. `attempt` is the consecutive-fast-death count; the
+        // process is gone until the next `Running`.
+        set_sidecar_state(
+            &self.app,
+            SidecarState::Restarting {
+                mode: mode.as_str().into(),
+                attempt,
+                max: MAX_CONSECUTIVE_RESTARTS,
+            },
+        );
 
         if !delay.is_zero() {
             eprintln!(
@@ -343,15 +363,16 @@ impl SidecarManager {
                 "[sidecar manager] {} sidecar restart failed: {e}",
                 mode.as_str()
             );
-            let _ = self
-                .app
-                .emit("sidecar:died", json!({ "mode": mode.as_str(), "fatal": true }));
+            set_sidecar_state(
+                &self.app,
+                SidecarState::Dead { mode: mode.as_str().into(), fatal: true },
+            );
         }
     }
 
     async fn restart(&self, mode: Mode) -> Result<(), SidecarError> {
         eprintln!("[sidecar manager] {} sidecar exited; respawning", mode.as_str());
-        let exit_handler = build_exit(self.self_ref.clone(), mode, self.app.clone());
+        let exit_handler = build_exit(self.self_ref.clone(), mode);
         let client = SidecarClient::spawn_initialized(
             &self.launcher.program,
             &self.launcher.args_for(mode.as_str()),
@@ -378,8 +399,19 @@ impl SidecarManager {
         self.restart_guard(mode).lock().unwrap().last_spawn = Instant::now();
 
         eprintln!("[sidecar manager] {} sidecar respawned", mode.as_str());
+        set_sidecar_state(&self.app, SidecarState::Running { mode: mode.as_str().into() });
         Ok(())
     }
+}
+
+/// Map a sidecar notification method to the frontend Tauri event name the
+/// bridge emits: `chat/<x>` → `claude:<x>`, any other `<ns>/<x>` → `<ns>:<x>`.
+/// `None` for a non-namespaced method (no `/`), which the caller logs and drops.
+/// `auth/refreshNeeded` is intercepted before this and never passed in.
+fn notification_event_name(method: &str) -> Option<String> {
+    let (ns, rest) = method.split_once('/')?;
+    let prefix = if ns == "chat" { "claude" } else { ns };
+    Some(format!("{prefix}:{rest}"))
 }
 
 fn build_notification_handler(app: AppHandle) -> NotificationHandler {
@@ -404,82 +436,33 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
             });
             return;
         }
-        let event_name = match method.as_str() {
-            "chat/event" => "claude:event",
-            "chat/done" => "claude:done",
-            "chat/error" => "claude:error",
-            // Background subagent lifecycle (persistent-query path): the sidecar
-            // forwards task_started / task_progress / task_updated /
-            // task_notification on this dedicated channel (threadId-tagged) so
-            // the frontend routes them by thread, independent of any turn's runId.
-            "chat/task" => "claude:task",
-            "chat/proposal" => "claude:proposal",
-            // Host-applies proposal (Phase E6): emitted whenever the
-            // sidecar's `propose_edit` / `propose_write` /
-            // `propose_multi_edit` MCP tools run. The host queues the
-            // proposal in `pendingChangesStore` and applies it on
-            // user Keep via the inline review widget.
-            "chat/edit-pending" => "claude:edit-pending",
-            // propose_skill MCP tool (Phase 2B): the sidecar relays a
-            // proposed reusable skill (name / description / body); the host
-            // renders a Keep/Reject card and, on approval, writes it to
-            // `_system/agent/skills/<name>/SKILL.md`.
-            "chat/skill-pending" => "claude:skill-pending",
-            // move_note MCP tool: the sidecar relays a note relocation
-            // (fromPath → toFolder). Applied IMMEDIATELY by the host
-            // (docsStore.moveDocToFolder) — no review card, since a move is
-            // reversible and loses no content.
-            "chat/move-note" => "claude:move-note",
-            // set_note_status MCP tool: the sidecar relays a status change
-            // (path → status). Applied IMMEDIATELY by the host
-            // (docsStore.setDocStatus) — reversible, no review card.
-            "chat/set-status" => "claude:set-status",
-            // set_note_tags MCP tool: the sidecar relays a tags change
-            // (path → tags[]). Applied IMMEDIATELY by the host
-            // (docsStore.setDocTags) — reversible, no review card.
-            "chat/set-tags" => "claude:set-tags",
-            // query_notes MCP tool: the sidecar asks the host to filter the
-            // note catalog by metadata; the host replies via the
-            // claude_chat_query_result command (chat/query-result).
-            "chat/query-notes" => "claude:query-notes",
-            // edit_visualization MCP tool: the sidecar relays the new chart
-            // spec (chartId + VizNode tree) via this notification; the chat
-            // runner re-validates it and applies it to the target block by id
-            // in the live editor (immediate, Cmd+Z to undo).
-            "chat/viz-apply" => "claude:viz-apply",
-            // Plan-mode interactive gate (canUseTool): the sidecar parks an
-            // ExitPlanMode / AskUserQuestion decision and emits this so the
-            // host can render the approval / question card. The user's choice
-            // returns via the `claude_chat_decision` command (chat/decision).
-            "chat/permission" => "claude:permission",
-            // Structured ingest output. The sidecar's
-            // submit_ingest_result MCP tool relays its full input
-            // payload via this notification; the frontend's ingest
-            // path listens for it instead of parsing free-form JSON.
-            "ingest/result" => "ingest:result",
-            _ => return,
+        // Forward every namespaced sidecar notification to the frontend as a
+        // Tauri event by a mechanical rule: `chat/<x>` → `claude:<x>`, and any
+        // other `<ns>/<x>` → `<ns>:<x>`. New channels flow through with zero
+        // edits here, and an unexpected shape is logged rather than silently
+        // dropped — the previous hardcoded match's `_ => return` swallowed any
+        // method not in its table, so a new sidecar channel did nothing until
+        // someone remembered to extend the table. (`auth/*` is host-internal
+        // and already handled above; it never reaches this point.) The channel
+        // catalogue and payload shapes live in PROTOCOL.md §4.
+        let Some(event_name) = notification_event_name(&method) else {
+            eprintln!("[sidecar manager] ignoring non-namespaced notification: {method}");
+            return;
         };
-        if let Err(e) = app.emit(event_name, params) {
+        if let Err(e) = app.emit(event_name.as_str(), params) {
             eprintln!("[sidecar manager] emit {event_name} failed: {e}");
         }
     })
 }
 
-fn build_exit(self_ref: SelfRef, mode: Mode, app: AppHandle) -> ExitHandler {
+fn build_exit(self_ref: SelfRef, mode: Mode) -> ExitHandler {
     Arc::new(move || {
-        // Tell the frontend the sidecar is gone before we attempt restart.
-        // In-flight chat runs are blocked waiting on `claude:event` /
-        // `claude:done` / `claude:error` notifications that will never
-        // arrive once the producer is dead — without this signal, the UI
-        // sits in `streaming` forever. The frontend chat loop listens for
-        // this and settles affected runs with an error so the user gets
-        // a Retry-able card instead of a frozen spinner.
-        if let Err(e) = app.emit("sidecar:died", json!({ "mode": mode.as_str() })) {
-            eprintln!(
-                "[sidecar manager] failed to emit sidecar:died for {}: {e}",
-                mode.as_str()
-            );
-        }
+        // The observable death signal is emitted by `handle_exit` below, which
+        // transitions the sidecar to `restarting` (respawning) or `dead`
+        // (terminal). In-flight chat runs listen for that transition and settle
+        // with an error instead of hanging forever on `claude:event` /
+        // `claude:done` notifications that will never arrive once the producer
+        // is gone.
         let self_ref = self_ref.clone();
         tauri::async_runtime::spawn(async move {
             let weak = match self_ref.get() {
@@ -752,5 +735,36 @@ mod tests {
         let (next, action) = restart_decision(MAX_CONSECUTIVE_RESTARTS, HEALTHY_UPTIME);
         assert_eq!(next, 1);
         assert!(matches!(action, RestartAction::Backoff(d) if d == Duration::from_millis(500)));
+    }
+
+    #[test]
+    fn event_name_matches_the_old_hardcoded_table() {
+        // Golden test pinning behaviour-equivalence with the hardcoded match
+        // this transform replaced: every method the sidecar actually emits must
+        // map to the exact same Tauri event the old table produced.
+        for (method, expected) in [
+            ("chat/event", "claude:event"),
+            ("chat/done", "claude:done"),
+            ("chat/error", "claude:error"),
+            ("chat/task", "claude:task"),
+            ("chat/proposal", "claude:proposal"),
+            ("chat/edit-pending", "claude:edit-pending"),
+            ("chat/skill-pending", "claude:skill-pending"),
+            ("chat/move-note", "claude:move-note"),
+            ("chat/permission", "claude:permission"),
+            ("ingest/result", "ingest:result"),
+        ] {
+            assert_eq!(notification_event_name(method).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn event_name_forwards_new_channels_and_drops_non_namespaced() {
+        // A brand-new namespaced channel flows through with no bridge edit...
+        assert_eq!(notification_event_name("chat/whatever").as_deref(), Some("claude:whatever"));
+        assert_eq!(notification_event_name("profile/result").as_deref(), Some("profile:result"));
+        // ...while a malformed, non-namespaced method is dropped (logged), not
+        // forwarded as a bare event.
+        assert_eq!(notification_event_name("shutdown"), None);
     }
 }

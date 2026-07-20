@@ -103,6 +103,22 @@ export default tseslint.config(
         },
       ],
 
+      // A doc's body mirror (`handle.bodyMarkdown`) may ONLY be written through
+      // the owner module state/docsStore/docBody.ts (updateDocBody /
+      // setBodyMirror), which makes the read-modify-write atomic. A raw
+      // assignment anywhere else is the scattered-writer pattern that caused
+      // silent save-loss. TypeScript already blocks it (the field is readonly);
+      // this is the backstop that also catches `as`-cast bypasses and .tsx.
+      // Disabled in docBody.ts (the owner) and test files (mock setup) below.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "AssignmentExpression[left.property.name='bodyMarkdown']",
+          message:
+            'Never assign handle.bodyMarkdown directly — route through updateDocBody()/setBodyMirror() in state/docsStore/docBody.ts.',
+        },
+      ],
+
       // Hand-written types/anys leak constantly in third-party glue;
       // tighten only the bits that bite us, leave the rest pragmatic.
       '@typescript-eslint/no-explicit-any': 'off',
@@ -111,6 +127,12 @@ export default tseslint.config(
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
     },
+  },
+  {
+    // The body-write owner and test mock-setup legitimately assign
+    // bodyMarkdown; exempt them from the no-direct-assignment rule.
+    files: ['src/state/docsStore/docBody.ts', 'src/**/*.test.{ts,tsx}'],
+    rules: { 'no-restricted-syntax': 'off' },
   },
   {
     // Build/CI helper scripts run under Node, not the browser — declare its

@@ -88,11 +88,16 @@ Handshake. Must be the first request after spawn. The sidecar is in an "uninitia
 **result**:
 ```json
 {
+  "protocolVersion": 1,
   "sidecarVersion": "0.1.0",
   "sdkVersion": "0.2.121",
   "node": "v20.11.0"
 }
 ```
+
+`protocolVersion` is asserted by the host (see §9). `params.protocolVersion`
+carries the host's expected version; `sidecarVersion`/`clientVersion` remain
+advisory (telemetry only).
 
 ---
 
@@ -253,6 +258,13 @@ sidecar's stdin and wait for process exit.
 ---
 
 ## 4. Notifications (sidecar → Rust)
+
+The Rust bridge forwards every namespaced notification to the frontend as a
+Tauri event by a mechanical rule — `chat/<x>` → `claude:<x>`, any other
+`<ns>/<x>` → `<ns>:<x>` — passing `params` through untouched. Adding a channel
+therefore needs no bridge change, and an unexpected method is logged rather
+than dropped. The sole exception is `auth/refreshNeeded`, which the bridge
+consumes itself (token refresh) and never forwards.
 
 ### `chat/event`
 
@@ -521,7 +533,16 @@ Title-sidecar activity does not trigger the modal (titles complete in <1s).
 
 ## 9. Versioning
 
-- `clientVersion` and `sidecarVersion` in `initialize` are advisory — used for
-  telemetry and bug reports. Major-version mismatch logs a warning but does
-  not refuse to operate. Breaking protocol changes bump `sidecarVersion`'s
-  major number; the host can choose to refuse if the major doesn't match.
+Two independent version signals travel in `initialize`:
+
+- **`protocolVersion`** (integer) — the wire-contract version, asserted for
+  **exact equality**. The host sends its expected value in `params` and the
+  sidecar reports its own in the result; on any mismatch the host refuses to
+  use the sidecar (`ProtocolMismatch`). Client and sidecar ship in the same app
+  bundle, so a mismatch is never a compatibility spread to negotiate — it means
+  the bundled sidecar is stale (typically `pnpm pack:sidecar` wasn't re-run).
+  Bump this integer, in lockstep on both sides (`sidecar/src/server.mjs` and
+  `src-tauri/src/claude_sidecar/client.rs`), on any breaking change to the
+  request/notification shapes in this document.
+- **`clientVersion` / `sidecarVersion`** (semver strings) — advisory only, used
+  for telemetry and bug reports; never gate behavior.

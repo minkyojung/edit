@@ -9,14 +9,19 @@
 //   2. The model emits text deltas (`claude:event`) which we
 //      concatenate, AND it calls the structured-output tool exactly
 //      once which the sidecar forwards as a custom notification.
-//   3. `claude:done` settles the promise; `claude:error` or
-//      `sidecar:died` reject.
+//   3. `claude:done` settles the promise; `claude:error` or a
+//      `sidecar:state` transition to restarting/dead reject.
 //
 // Callers parameterise the result event name (e.g. `ingest:result`
 // or `profile:result`) and the expected `TInput` shape; everything
 // else is fixed.
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import {
+  parseChatEvent,
+  parseDoneEvent,
+  parseErrorEvent,
+} from '@/agent/chat/eventSchemas'
 
 export interface ChatRunOutcome<TInput> {
   /** Structured output emitted via the run's relay tool. Null when
@@ -81,7 +86,7 @@ export function awaitChatRun<TInput>(
           message?: { content?: Array<{ type: string; text?: string }> }
         }
       }>('claude:event', (e) => {
-        if (e.payload.runId !== runId) return
+        if (!parseChatEvent(e.payload) || e.payload.runId !== runId) return
         const ev = e.payload.event
         if (ev?.type === 'stream_event') {
           const inner = ev.event
@@ -108,19 +113,22 @@ export function awaitChatRun<TInput>(
       listen<{ runId: string; stopReason: string | null }>(
         'claude:done',
         (e) => {
-          if (e.payload.runId !== runId) return
+          if (!parseDoneEvent(e.payload) || e.payload.runId !== runId) return
           settleOk()
         },
       ),
       listen<{ runId: string; code: string; message: string }>(
         'claude:error',
         (e) => {
-          if (e.payload.runId !== runId) return
+          if (!parseErrorEvent(e.payload) || e.payload.runId !== runId) return
           settleErr(new Error(`${e.payload.code}: ${e.payload.message}`))
         },
       ),
-      listen<{ mode: string }>('sidecar:died', (e) => {
+      listen<{ status: string; mode: string }>('sidecar:state', (e) => {
         if (e.payload.mode !== 'chat') return
+        // The chat process this run is streaming from is gone (respawning or
+        // terminally dead) — its SDK session can't resume, so fail the run.
+        if (e.payload.status !== 'restarting' && e.payload.status !== 'dead') return
         settleErr(new Error('SIDECAR_DIED: chat sidecar crashed'))
       }),
     ])

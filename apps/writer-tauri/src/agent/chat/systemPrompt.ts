@@ -13,7 +13,7 @@
 // view doc extraction) and feeds the results in.
 
 import type { Attachment, ChatTurn } from '@/chat/types'
-import { DOC_CHAR_CAP, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type VizEditTarget } from './types'
+import { DOC_CHAR_CAP, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from './types'
 
 /** Derive the user prompt for the current SDK call from the thread
  * history. SDK session resume keeps prior turns server-side — we
@@ -119,10 +119,6 @@ export interface SystemBlocksArgs {
    * them BEFORE answering (unlike inline base64, a path is only "seen" once
    * Read). */
   attachedFiles?: string[]
-  /** When set, a high-salience block naming the visualization being edited
-   * (id + current spec) is pinned past the cache boundary, instructing the
-   * model to apply changes via the edit_visualization tool. */
-  vizEditTarget?: VizEditTarget
   /** Today's date as local `YYYY-MM-DD` (from `todayLocalDate()`). Injected
    * past the cache boundary so the model can resolve "today" / "today's
    * daily note" without guessing — and so the daily-changing value never
@@ -168,7 +164,6 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     selectionText,
     mentionFiles,
     attachedFiles,
-    vizEditTarget,
     today,
   } = args
   const prefix: string[] = []
@@ -258,22 +253,12 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   }
 
   // Dynamic suffix — pinned past the SDK cache boundary because it changes
-  // per turn. The viz-edit block comes before the document so it reads as the
-  // immediate task.
+  // per turn.
   const dynamic: string[] = []
   if (today) {
     dynamic.push(
       `--- TODAY ---\nToday's date is ${today} (the user's local timezone). ` +
         `When the user says "today" / "the daily note", resolve it against this date.`,
-    )
-  }
-  if (vizEditTarget) {
-    dynamic.push(
-      `--- VISUALIZATION TO EDIT ---\n` +
-        `The user is editing the visualization already in the document with id "${vizEditTarget.id}". ` +
-        `Apply the user's request by calling the edit_visualization tool with chartId "${vizEditTarget.id}" ` +
-        `and the FULL updated tree as root. Do NOT write a \`\`\`chart fence or any HTML for this edit, ` +
-        `and preserve data you weren't asked to change.\n\nCurrent spec:\n${vizEditTarget.source}`,
     )
   }
   if (currentFilePath) {

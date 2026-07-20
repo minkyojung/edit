@@ -25,7 +25,7 @@ import { todayLocalDate } from '@/hooks/useDocMeta'
 import { flushDirty, markSlugDirty } from '@/lib/docFileSync'
 import { createVaultFolder, readVaultFile } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
-import { applyMarkdownToActiveCmEditor } from '../activeCmEditor'
+import { updateDocBody } from './docBody'
 import { interpolate, CURSOR_TOKEN } from '@/lib/interpolate'
 import type { Template } from '@/lib/templates'
 import type { GetDocsState, KnownDoc, SetDocsState } from './types'
@@ -323,48 +323,25 @@ export const createCreateSlice = (
 
   seedDocBody: async (slug, markdown) => {
     if (!markdown.trim()) return false
-    await get().ensureHandle(slug)
-    const handle = get().handles[slug]
-    if (!handle) return false
-    // Wait for the vault load chain to complete before reading or
-    // writing the cache. Without this we race: the read path below
-    // sees an empty cache, the seed lands a fresh body, and the
-    // vault-loaded content that arrives microseconds later
-    // overwrites it.
-    await handle.contentReady
-    // Don't double-seed. Treat any non-whitespace content in the
-    // cache as "body already exists" — same outcome the old
-    // `deriveLabel` check produced for a fragment populated with
-    // real text. Brand-new docs (cache is empty after contentReady)
-    // proceed to the seed.
-    if (handle.bodyMarkdown.trim().length > 0) return false
-    // Active-editor branch: when the slug we're seeding is the doc the user is
-    // currently viewing, push it into the live CodeMirror editor so the seed
-    // lands immediately. Inactive slugs only update the cache — the next mount
-    // hydrates it, and markSlugDirty kicks the flush so the seed reaches disk
-    // regardless of whether the user opens the doc.
-    handle.bodyMarkdown = markdown
-    markSlugDirty(slug)
-    applyMarkdownToActiveCmEditor(slug, markdown)
-    return true
+    // Seed only when the body is still empty. The "already has content" guard
+    // lives inside the transform: returning `prev` unchanged is a no-op skip,
+    // so `changed` is false and we report "didn't seed". The funnel owns the
+    // hydration wait, per-slug serialization, live-editor push, and dirty-mark.
+    const result = await updateDocBody(
+      slug,
+      (prev) => (prev.trim().length > 0 ? prev : markdown),
+      { source: 'seed' },
+    )
+    return result.ok && result.changed
   },
 
   replaceDocBody: async (slug, markdown) => {
     if (!markdown.trim()) return false
-    await get().ensureHandle(slug)
-    const handle = get().handles[slug]
-    if (!handle) return false
-    // Same readiness wait as seedDocBody — the rewrite races vault
-    // hydration otherwise and the replace can land mid-load, leaving
-    // the page in a mixed state on next render.
-    await handle.contentReady
-    // Active-editor branch — same rationale as seedDocBody above. Profile
-    // rebuilds and wiki ingest rewrites that target the current view land in
-    // the live CM editor; everything else updates the cache + kicks the flush.
-    handle.bodyMarkdown = markdown
-    markSlugDirty(slug)
-    applyMarkdownToActiveCmEditor(slug, markdown)
-    return true
+    // Wholesale rewrite (profile rebuilds, wiki ingest). The funnel handles
+    // hydration/serialization/editor-push/dirty; it also now refuses to
+    // overwrite a doc with an unresolved external conflict (reports ok:false).
+    const result = await updateDocBody(slug, () => markdown, { source: 'local' })
+    return result.ok
   },
 })
 

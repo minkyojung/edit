@@ -12,12 +12,16 @@
 // architectural, not here. (It replaces the old `it.fails` R1 reproduction.)
 import { describe, it, expect, vi } from 'vitest'
 
-const { handle } = vi.hoisted(() => ({ handle: { bodyMarkdown: '' } }))
+const { handle } = vi.hoisted(() => ({
+  handle: { bodyMarkdown: '', contentReady: Promise.resolve() },
+}))
 
 vi.mock('@/state/activeCmEditor', () => ({
   applyMarkdownToActiveCmEditor: () => false, // not the active editor → dirty path
+  pullActiveCmBody: () => null, // no mounted editor → funnel reads the mirror
 }))
-vi.mock('@/lib/docFileSync', () => ({ markSlugDirty: () => {} }))
+vi.mock('@/lib/docFileSync', () => ({ markSlugDirty: () => {}, clearDirty: () => {} }))
+vi.mock('@/state/externalConflictStore', () => ({ hasExternalConflict: () => false }))
 vi.mock('@/state/docsStore', () => ({
   useDocsStore: {
     getState: () => ({
