@@ -94,39 +94,19 @@ describe('list markers — tree path + immediate regex fallback', () => {
     expect(cont).toBeUndefined()
   })
 
-  it('a continuation INDENTED to the content column: body-column spacer + exact pull-back', () => {
-    // `- a\n  b` — `b` is indented 2 cols (= the `- ` content column). Its leading indent
-    // becomes a body-column spacer (width 2.05em) and the line pulls back by that SAME
-    // width, so `b` and any wrapped row land at the body column — no space-advance guess.
+  it('a continuation INDENTED to the content column hangs at the body column, its leading spaces pulled back', () => {
+    // `- a\n  b` — `b` is indented 2 cols (= the `- ` content column), so it is a real
+    // list continuation and hangs at the body column (2.05em). Its 2 literal spaces are
+    // pulled back by text-indent (2 × LIST_MARKER_SPACE 0.25 = 0.5em) so the first row
+    // and any wrapped row both land at the body column — no double indent.
     const doc = '- a\n  b'
     const line2From = doc.indexOf('\n') + 1
-    const ds = decos(doc)
-    const lineStyle =
-      (
-        ds.find((r) => r.from === line2From && (r.value.spec as { class?: string }).class === 'cm-list-line')?.value
-          .spec as { attributes?: { style?: string } }
-      )?.attributes?.style ?? ''
-    expect(lineStyle).toContain('padding-left:2.05em')
-    expect(lineStyle).toContain('text-indent:-2.05em')
-    const spacer = ds.find((r) => (r.value.spec as { class?: string }).class === 'cm-list-cont-indent')
-    expect(spacer?.from).toBe(line2From)
-    expect(spacer?.to).toBe(line2From + 2) // the two leading spaces
-    expect((spacer?.value.spec as { attributes?: { style?: string } })?.attributes?.style).toContain('width:2.05em')
-  })
-
-  it('an EMPTY indented continuation (Shift+Enter, before typing) also lands at the body column', () => {
-    // `- item\n  ` — Lezer leaves the whitespace-only line OUTSIDE the ListItem, so the
-    // context is inherited from the item above. It still gets the spacer + pull-back, so
-    // the caret sits at the body column, not the ambiguous mid-indent spot (the bug).
-    const doc = '- item\n  '
-    const line2From = doc.indexOf('\n') + 1
-    const ds = decos(doc)
-    expect(
-      ds.find((r) => r.from === line2From && (r.value.spec as { class?: string }).class === 'cm-list-line'),
-    ).toBeDefined()
-    const spacer = ds.find((r) => (r.value.spec as { class?: string }).class === 'cm-list-cont-indent')
-    expect(spacer?.from).toBe(line2From)
-    expect(spacer?.to).toBe(line2From + 2)
+    const cont = decos(doc).find(
+      (r) => r.from === line2From && (r.value.spec as { class?: string }).class === 'cm-list-line',
+    )
+    const style = (cont?.value.spec as { attributes?: { style?: string } })?.attributes?.style ?? ''
+    expect(style).toContain('padding-left:2.05em')
+    expect(style).toContain('text-indent:-0.5em')
   })
 })
 

@@ -13,7 +13,7 @@
 
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
-import { Facet, type EditorState, type Line, type Range } from '@codemirror/state'
+import { Facet, type EditorState, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
 import { isKnownNote } from '../wikilinkComplete'
 import { inProofRawRange } from '@/editor/proofRawRanges'
@@ -101,20 +101,6 @@ function listItemContextAt(state: EditorState, pos: number): { level: number; co
   const cm = /^(\s*)([-*+]|\d+[.)])([ \t]+)/.exec(itemLine.text)
   const contentCol = cm ? cm[0].length : item.from - itemLine.from
   return { level: Math.max(0, depth - 1), contentCol }
-}
-
-/** Context for a continuation LINE, resolving the one place listItemContextAt can't:
- * a WHITESPACE-ONLY continuation (what Shift+Enter leaves before you type). Lezer keeps
- * such a trailing blank/whitespace line OUTSIDE the ListItem (it resolves to Document),
- * so we inherit the context from the previous non-empty line, where the item is still
- * open. `null` when neither the line nor its predecessor sits in a list item. */
-function listContinuationContextAt(state: EditorState, line: Line): { level: number; contentCol: number } | null {
-  const direct = listItemContextAt(state, line.from)
-  if (direct) return direct
-  if (line.text.trim() !== '' || line.number <= 1) return null
-  const prev = state.doc.line(line.number - 1)
-  if (prev.length === 0) return null // a real blank line closed the item — not a continuation
-  return listItemContextAt(state, prev.to - 1)
 }
 
 function buildDecos(
@@ -420,35 +406,31 @@ function buildDecos(
         if (listLinesDone.has(line.from)) continue // Lezer already styled this line
         const lm = /^(\s*)([-*+]|\d+[.)])\s/.exec(line.text)
         if (!lm) {
-          // No marker — a continuation line of the list item above (incl. the empty one
-          // Shift+Enter just made). Render it exactly like the marker line does its
-          // marker: turn the leading indent into a fixed body-column SPACER, then pull
-          // the row back by that same width. Content + caret land at the body column for
-          // empty AND filled lines, with no space-advance guess and no per-case split.
-          if (line.from === line.to) continue // truly blank line (paragraph break) — skip
+          // No marker — a continuation line the tree folds into a list item. Hang it at
+          // the item's body column so its wrapped rows align under the content.
+          if (line.from === line.to) continue // blank line — nothing to indent
           if (inCodeContext(state, line.from)) continue // literal code line in a list
-          const ctx = listContinuationContextAt(state, line)
+          const ctx = listItemContextAt(state, line.from)
           if (ctx == null) continue
-          // Only a continuation ACTUALLY indented to the item's content column belongs to
-          // the list. A flush-left / under-indented line is a CommonMark lazy continuation
-          // the parser folds in, but the user typed it at the margin — leave it there.
-          // This is what keeps the paragraph below a list from jumping right on a keystroke.
+          // Only hang a continuation that is ACTUALLY indented to the item's content
+          // column. A flush-left / under-indented line is a CommonMark "lazy
+          // continuation" the parser folds into the item, but the user typed it at the
+          // margin — leave it there instead of yanking it to the body column. This is
+          // what stops the paragraph below a list from jumping right the moment the
+          // blank separator line gets a character.
           const ws = line.text.length - line.text.trimStart().length
           if (ws < ctx.contentCol) continue
-          const bodyCol = (ctx.level + 1) * LIST_INDENT + LIST_MARKER_SPACE
-          // Spacer: force the leading whitespace to the body-column width (like
-          // `.cm-list-marker`). Mark (not replace) → the caret stays a real position in
-          // the whitespace, IME-safe. `text-indent:-bodyCol` cancels it on the first row.
-          out.push(
-            Decoration.mark({ class: 'cm-list-cont-indent', attributes: { style: `width:${bodyCol}em` } }).range(
-              line.from,
-              line.from + ws,
-            ),
-          )
+          // The line's own leading spaces render, so pull the first visual row back by
+          // their width (≈ `ws` × the font's space advance, the same LIST_MARKER_SPACE
+          // approximation the marker line uses). Net: the first row's text and every
+          // wrapped row both land at the body column — no double indent, no measuring,
+          // still line-decoration-only → IME-safe.
           out.push(
             Decoration.line({
               class: 'cm-list-line',
-              attributes: { style: `padding-left:${bodyCol}em;text-indent:-${bodyCol}em` },
+              attributes: {
+                style: `padding-left:${(ctx.level + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:-${ws * LIST_MARKER_SPACE}em`,
+              },
             }).range(line.from),
           )
           continue
