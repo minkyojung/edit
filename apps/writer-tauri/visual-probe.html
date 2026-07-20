@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- Headless visual probe for the list hanging-indent work (see src/visualProbe.ts).
+     Served by the normal vite dev server: http://localhost:1420/visual-probe.html
+     Mounts the REAL livePreview + theme stack (no Tauri needed) on fixture docs and
+     dumps per-visual-row x-coordinates as JSON into #out, so a headless browser run
+     (chrome \-\-headless \-\-dump-dom) can verify alignment numerically.
+     Query params: ?align=left  → override the app's default text-align:justify. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>visual probe</title>
+    <style>
+      body {
+        margin: 0;
+        background: #1e1e1e;
+        color: #ddd;
+        font-family: -apple-system, 'Helvetica Neue', sans-serif;
+      }
+      /* Match the app's prose scale so measurements are representative. */
+      #host {
+        --prose-base: 18px;
+        --prose-lh-body: 1.6;
+        width: 420px; /* narrow → forces soft wrap on the fixture lines */
+        margin: 20px;
+        border: 1px solid #444;
+      }
+      #out {
+        font: 11px/1.4 monospace;
+        white-space: pre-wrap;
+        margin: 20px;
+        color: #9d9;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="host"></div>
+    <pre id="out">measuring…</pre>
+    <script type="module" src="/src/visualProbe.ts"></script>
+  </body>
+</html>
