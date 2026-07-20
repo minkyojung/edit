@@ -210,6 +210,46 @@ export function frontmatterToMeta(
   return meta
 }
 
+/** Fresh projection of a parsed frontmatter block onto the doc-catalog
+ * metadata fields, with every projectable field explicitly present (as
+ * `undefined` when absent). Spreading the result over an existing KnownDoc
+ * therefore CLEARS fields the external edit removed — e.g. deleting
+ * `status:` in Obsidian clears the badge on reload. scanVault's boot
+ * overlay can't be reused for this: it's set-only, which is fine on a
+ * fresh base row but would leave stale values behind on a live one.
+ * Used by reloadFromVault. Kept beside {@link frontmatterToMeta} so the
+ * projected field list stays in lockstep. */
+export function frontmatterDocOverlay(data: Record<string, string | string[]>): {
+  createdAt: string | undefined
+  sourceUrl: string | undefined
+  siteName: string | undefined
+  faviconUrl: string | undefined
+  savedAt: string | undefined
+  readAt: string | undefined
+  videoId: string | undefined
+  durationSec: number | undefined
+  thumbnailUrl: string | undefined
+  description: string | undefined
+  status: DocStatus | undefined
+  tags: string[] | undefined
+} {
+  const meta = frontmatterToMeta(data)
+  return {
+    createdAt: meta.createdAt,
+    sourceUrl: meta.sourceUrl,
+    siteName: meta.siteName,
+    faviconUrl: meta.faviconUrl,
+    savedAt: meta.savedAt,
+    readAt: meta.readAt,
+    videoId: meta.videoId,
+    durationSec: meta.durationSec,
+    thumbnailUrl: meta.thumbnailUrl,
+    description: meta.description,
+    status: meta.status,
+    tags: meta.tags,
+  }
+}
+
 /** Inverse of {@link frontmatterToMeta}: project the sidecar-shaped meta
  * onto the flat frontmatter fields we emit when a doc stores its metadata
  * in its own `.md` instead of a `.meta.json` sidecar.

@@ -17,6 +17,7 @@
 import { describe, expect, it } from 'vitest'
 import { mdRelToKnownDoc } from './scanVault'
 import {
+  frontmatterDocOverlay,
   frontmatterToMeta,
   metaToFrontmatterFields,
   portableFrontmatterFields,
@@ -422,5 +423,46 @@ describe('meta ⇄ frontmatter round-trip', () => {
     const fields = metaToFrontmatterFields({ version: 1, slug: 'x' })
     expect(fields.slug).toBe('x')
     expect('version' in fields).toBe(false)
+  })
+})
+
+// The ordered frontmatter mirror (fm) rides mdRelToKnownDoc alongside the
+// typed meta so the catalog retains custom keys + file order for the
+// properties panel.
+describe('mdRelToKnownDoc — fm threading', () => {
+  it('attaches the ordered fm mirror to the doc', () => {
+    const fm = [
+      { key: 'custom', value: 'hello' },
+      { key: 'created', value: '2026-01-01' },
+    ]
+    const doc = mdRelToKnownDoc('n1', 'inbox/Note.md', noChildren, {}, true, fm)
+    expect(doc?.fm).toEqual(fm)
+  })
+
+  it('leaves fm absent when the file had no frontmatter', () => {
+    const doc = mdRelToKnownDoc('n2', 'inbox/Bare.md', noChildren, {}, true, undefined)
+    expect(doc && 'fm' in doc).toBe(false)
+  })
+})
+
+// reloadFromVault spreads this overlay onto the live catalog row, so its
+// clearing semantics (explicit undefined for absent fields) are what make
+// an external DELETION of `status:` / `tags:` visible without a reboot.
+describe('frontmatterDocOverlay — fresh projection with clears', () => {
+  it('projects present fields and explicitly clears absent ones', () => {
+    const overlay = frontmatterDocOverlay({ status: 'done', created: '2026-01-01' })
+    expect(overlay.status).toBe('done')
+    expect(overlay.createdAt).toBe('2026-01-01')
+    // Absent fields are PRESENT as undefined so a spread clears them.
+    expect('tags' in overlay).toBe(true)
+    expect(overlay.tags).toBeUndefined()
+  })
+
+  it('spread over a stale doc row clears externally-deleted fields', () => {
+    const stale = { slug: 'x', status: 'in-progress', tags: ['a'], createdAt: '2026-01-01' }
+    const next = { ...stale, ...frontmatterDocOverlay({ created: '2026-01-01' }) }
+    expect(next.status).toBeUndefined()
+    expect(next.tags).toBeUndefined()
+    expect(next.createdAt).toBe('2026-01-01')
   })
 })

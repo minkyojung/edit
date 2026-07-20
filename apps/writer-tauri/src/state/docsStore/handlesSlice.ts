@@ -16,8 +16,9 @@ import { useIngestStore } from '../ingestStore'
 import { installDocSync, markSlugDirty } from '@/lib/docFileSync'
 import { updateDocBody, setBodyMirror } from './docBody'
 import { useExternalConflictStore } from '@/state/externalConflictStore'
-import { pathForDoc, usesFrontmatter } from '@/lib/docPaths'
-import { splitFrontmatter } from '@/lib/frontmatter'
+import { frontmatterDocOverlay, pathForDoc, usesFrontmatter } from '@/lib/docPaths'
+import { fmEntriesFromData } from '@/lib/docProperties'
+import { splitFrontmatterFull } from '@/lib/frontmatter'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import { isWikiDoc } from './helpers'
@@ -128,6 +129,18 @@ export const createHandlesSlice = (
       source: 'external',
       resolvesConflict: true,
     })
+    // Metadata follows the same disk-wins rule: refresh the catalog row's
+    // frontmatter mirror + typed projections from the read we just did.
+    // frontmatterDocOverlay is explicitly-undefined for absent fields, so
+    // an externally DELETED key (say `status:`) clears here rather than
+    // lingering until the next boot scan.
+    set((s) => ({
+      knownDocs: s.knownDocs.map((d) =>
+        d.slug === slug
+          ? { ...d, fm: fmEntriesFromData(result.fmData), ...frontmatterDocOverlay(result.fmData) }
+          : d,
+      ),
+    }))
     console.log(`[vault:reload] ${slug} hydrated from external edit`)
   },
 
@@ -298,7 +311,14 @@ function seedBodyFirstLine(handle: CollabHandle, text: string): void {
  *   "do nothing on hydrate" rule applies; the next watcher event
  *   re-triggers the read. */
 export type LoadBodyResult =
-  | { kind: 'loaded'; markdown: string }
+  | {
+      kind: 'loaded'
+      markdown: string
+      /** Parsed frontmatter of the read file (empty record when the doc
+       * has no block). Lets reloadFromVault refresh the catalog row's
+       * metadata (fm + typed fields) from the same single read. */
+      fmData: Record<string, string | string[]>
+    }
   | { kind: 'missing' }
   | { kind: 'error'; error: unknown }
 
@@ -323,10 +343,11 @@ async function loadBodyMarkdown(
     // never see (it would render as raw YAML and the user could clobber
     // identity fields). Strip it here so `bodyMarkdown` is body-only; the
     // flush re-attaches it on save (see usesFrontmatter in docFileSync).
-    const markdown = usesFrontmatter(known)
-      ? splitFrontmatter(raw).body
-      : raw
-    return { kind: 'loaded', markdown }
+    if (usesFrontmatter(known)) {
+      const { data, body } = splitFrontmatterFull(raw)
+      return { kind: 'loaded', markdown: body, fmData: data }
+    }
+    return { kind: 'loaded', markdown: raw, fmData: {} }
   } catch (error) {
     console.warn('[vault:load] bodyMarkdown read failed for', slug, error)
     return { kind: 'error', error }

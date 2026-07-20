@@ -23,6 +23,7 @@
 
 import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
 import type { DocStatus } from '@/lib/docPaths'
+import type { FmEntry } from '@/lib/docProperties'
 import type { Template } from '@/lib/templates'
 
 /** Slim metadata read straight from the on-disk `.meta.json` sidecar
@@ -98,6 +99,15 @@ export interface KnownDoc {
   /** Free-form tags, persisted to `.md` frontmatter as a YAML list. Empty
    * or absent when the note has none. Set via the properties panel. */
   tags?: string[]
+  /** Ordered mirror of the note's on-disk frontmatter block: every
+   * top-level scalar / string-list key in file order (nested maps stay
+   * foreign — preserved on write, invisible here). Captured by scanVault
+   * at boot and refreshed by reloadFromVault on external change. The
+   * properties panel renders from it and the flush emits keys in its
+   * order, so file key order IS the persisted row order. The typed
+   * fields above (status/tags/createdAt/…) stay authoritative for their
+   * VALUES; `fm` is authoritative for order and for custom keys. */
+  fm?: FmEntry[]
 }
 
 /** Coarse classification used by the DOC_POLICIES table below. Every
