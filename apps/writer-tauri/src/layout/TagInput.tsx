@@ -59,7 +59,7 @@ export function TagInput({
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={onKeyDown}
         onBlur={commitDraft}
-        placeholder={tags.length === 0 ? '태그 추가…' : ''}
+        placeholder={tags.length === 0 ? 'Empty' : ''}
         aria-label="Add tag"
         className="min-w-24 flex-1 bg-transparent text-body outline-none placeholder:text-muted-foreground/60"
       />

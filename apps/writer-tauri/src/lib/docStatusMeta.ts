@@ -9,11 +9,11 @@ import type { VariantProps } from 'class-variance-authority'
 
 type BadgeVariant = NonNullable<VariantProps<typeof badgeVariants>['variant']>
 
-/** Korean display label for each status. */
+/** Display label for each status. */
 export const STATUS_LABEL: Record<DocStatus, string> = {
-  'not-started': '안 함',
-  'in-progress': '진행 중',
-  done: '완료',
+  'not-started': 'Not started',
+  'in-progress': 'In progress',
+  done: 'Done',
 }
 
 /** Badge variant per status (used by the header control). */

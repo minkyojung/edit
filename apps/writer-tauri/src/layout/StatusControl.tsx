@@ -40,7 +40,7 @@ export function StatusControl({
             !status && 'text-muted-foreground',
           )}
         >
-          {status ? STATUS_LABEL[status] : '＋ 상태'}
+          {status ? STATUS_LABEL[status] : 'Empty'}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="bottom" align="start">
@@ -58,7 +58,7 @@ export function StatusControl({
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => setDocStatus(slug, undefined)}>
-              상태 없음
+              Clear
             </DropdownMenuItem>
           </>
         )}

@@ -102,13 +102,13 @@ export function PropertyRow({
     >
       <Icon
         size={15}
-        stroke={1.75}
+        stroke={2.25}
         className={cn('shrink-0', dragProps && 'transition-opacity group-hover/prop:opacity-0')}
       />
       {dragProps ? (
         <IconGripVertical
           size={15}
-          stroke={1.75}
+          stroke={2.25}
           className="absolute opacity-0 transition-opacity group-hover/prop:opacity-100"
         />
       ) : null}
@@ -117,7 +117,7 @@ export function PropertyRow({
 
   return (
     <div className="group/prop -mx-1.5 flex min-h-8 items-center gap-2 rounded-md px-1.5 transition-colors hover:bg-accent/40">
-      <div className="flex w-36 shrink-0 items-center gap-1.5 text-footnote text-muted-foreground">
+      <div className="flex w-36 shrink-0 items-center gap-1.5 text-footnote font-medium text-muted-foreground">
         {iconSlot}
         {renaming ? (
           <input
@@ -167,7 +167,7 @@ export function PropertyRow({
           <span className="truncate px-1">{label}</span>
         )}
       </div>
-      <div className="min-w-0 flex-1 text-body text-foreground">{children}</div>
+      <div className="min-w-0 flex-1 text-body font-medium text-foreground">{children}</div>
     </div>
   )
 }

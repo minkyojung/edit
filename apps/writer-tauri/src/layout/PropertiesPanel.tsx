@@ -138,7 +138,7 @@ function AddPropertyRow({ onAdd }: { onAdd: (key: string) => boolean }) {
     return (
       <div className="-mx-1.5 flex min-h-8 items-center gap-2 rounded-md px-1.5">
         <div className="flex w-36 shrink-0 items-center gap-1.5 text-footnote">
-          <IconAlignLeft size={15} stroke={1.75} className="shrink-0 text-muted-foreground" />
+          <IconAlignLeft size={15} stroke={2.25} className="shrink-0 text-muted-foreground" />
           <input
             ref={inputRef}
             value={draft}
@@ -156,9 +156,9 @@ function AddPropertyRow({ onAdd }: { onAdd: (key: string) => boolean }) {
     <button
       type="button"
       onClick={() => setAdding(true)}
-      className="-mx-1.5 flex min-h-8 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-footnote text-muted-foreground/70 transition-colors hover:bg-accent/40 hover:text-muted-foreground"
+      className="-mx-1.5 flex min-h-8 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-footnote font-medium text-muted-foreground/70 transition-colors hover:bg-accent/40 hover:text-muted-foreground"
     >
-      <IconPlus size={15} stroke={1.75} />
+      <IconPlus size={15} stroke={2.25} />
       Add a property
     </button>
   )
