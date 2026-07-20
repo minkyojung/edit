@@ -20,6 +20,7 @@ import {
   IconFolderOpen,
   IconSettings,
 } from '@tabler/icons-react'
+import { defaultFilter } from 'cmdk'
 import {
   CommandDialog,
   CommandEmpty,
@@ -39,6 +40,16 @@ import { openDoc } from '@/lib/openDoc'
 import { loadTemplates, type Template } from '@/lib/templates'
 import { pathForDoc } from '@/lib/docPaths'
 import { docLabel } from '@/hooks/useDocLabel'
+
+// cmdk scores the query against each item's `value` PLUS its `keywords`. Our
+// doc items use the opaque slug as `value` (a stable unique id cmdk requires;
+// see below), so scoring on `value` would surface notes by random slug text.
+// Match on `keywords` when an item provides them (docs carry label/filename/
+// folder; templates carry their own) so the slug never pollutes results, and
+// fall back to `value` for items that keep their search text there (the
+// Actions group).
+const paletteFilter = (value: string, search: string, keywords?: string[]) =>
+  defaultFilter(keywords?.length ? keywords.join(' ') : value, search)
 
 export function CommandPalette() {
   // Open lives in a store so the sidebar search button can drive the
@@ -167,7 +178,12 @@ export function CommandPalette() {
   }
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen} className="command-palette">
+    <CommandDialog
+      open={open}
+      onOpenChange={setOpen}
+      className="command-palette"
+      filter={paletteFilter}
+    >
       <CommandInput
         placeholder="Search notes…"
         value={query}
