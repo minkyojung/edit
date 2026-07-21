@@ -76,6 +76,48 @@ describe('updateDocBody', () => {
     expect(r).toEqual({ ok: true, changed: true })
   })
 
+  it('refuses a whole-doc overwrite when the live body diverged from expectedBase (stale)', async () => {
+    // The scenario: AI computed a whole-doc rewrite against a 3-line base;
+    // the user typed a 4th line into the open editor meanwhile. The CAS
+    // guard must refuse rather than clobber the user's line.
+    const base = '# 회의록\n## 참석자\n- 민교'
+    state.livePull = '# 회의록\n## 참석자\n- 민교\n- 윌리엄'
+    const r = await updateDocBody('note', () => 'AI REWRITE', {
+      expectedBase: base,
+    })
+    expect(r).toEqual({
+      ok: false,
+      reason: 'stale',
+      stale: {
+        base,
+        latest: state.livePull,
+        changedLines: [{ from: 4, to: 4 }],
+      },
+    })
+    // Never touched the mirror or marked dirty — the user's edit survives.
+    expect(state.handle.bodyMarkdown).toBe('')
+    expect(state.markDirty).not.toHaveBeenCalled()
+    expect(state.applyToEditor).not.toHaveBeenCalled()
+  })
+
+  it('applies a whole-doc overwrite when the live body still equals expectedBase', async () => {
+    const base = 'line one\nline two'
+    state.livePull = base
+    const r = await updateDocBody('note', () => 'REWRITTEN', {
+      expectedBase: base,
+    })
+    expect(r).toEqual({ ok: true, changed: true })
+    expect(state.handle.bodyMarkdown).toBe('REWRITTEN')
+    expect(state.markDirty).toHaveBeenCalledWith('note')
+  })
+
+  it('tolerates a trailing-newline-only difference against expectedBase', async () => {
+    state.livePull = 'a\nb\n'
+    const r = await updateDocBody('note', () => 'c', { expectedBase: 'a\nb' })
+    expect(r).toEqual({ ok: true, changed: true })
+    expect(state.handle.bodyMarkdown).toBe('c')
+  })
+
   it('reports conflict without mutating the mirror', async () => {
     state.handle.bodyMarkdown = 'original'
     state.conflict = true
