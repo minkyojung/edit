@@ -56,6 +56,13 @@ jobs:
             fi
           fi
 
+      # Release notes discipline: the sidebar "What's new" card no-shows when the
+      # shipped version has no changelog entry (changelogFor → null). Fail fast
+      # before the expensive build so a version bump can't ship without notes.
+      - name: Verify release notes exist for this version
+        working-directory: apps/writer-tauri
+        run: node scripts/check-changelog.mjs
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
