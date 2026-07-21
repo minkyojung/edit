@@ -10,7 +10,10 @@
 //       reload so any future open of the page shows fresh content.
 
 import { useDocsStore } from '@/state/docsStore'
-import { updateDocBody } from '@/state/docsStore/docBody'
+import {
+  updateDocBody,
+  type UpdateDocBodyResult,
+} from '@/state/docsStore/docBody'
 import { looseReplace } from '@/lib/looseMatch'
 import { splitFrontmatter } from '@/lib/frontmatter'
 import { appendToBackground } from '@/profile/markers'
@@ -183,6 +186,26 @@ export async function applyWriteWikiPage(
   changeId?: string,
 ): Promise<boolean> {
   return applyToWikiPage(slug, () => content, changeId)
+}
+
+/** Whole-doc overwrite WITH a compare-and-swap guard. `expectedBase` is the
+ * body the model wrote against; when the live body has diverged, the funnel
+ * returns `{ ok:false, reason:'stale', … }` instead of clobbering, so the
+ * caller can bounce the divergence back to the model. Pass `expectedBase`
+ * undefined to skip the CAS (no recorded base → today's behavior). Returns the
+ * full result (not a boolean) so the caller can read the `stale` payload. */
+export async function applyWriteWikiPageChecked(
+  slug: string,
+  content: string,
+  expectedBase: string | undefined,
+  changeId?: string,
+): Promise<UpdateDocBodyResult> {
+  const known = useDocsStore.getState().knownDocs.find((d) => d.slug === slug)
+  if (!known) {
+    console.warn('[apply] unknown slug', slug)
+    return { ok: false, reason: 'no-handle' }
+  }
+  return updateDocBody(slug, () => content, { changeId, expectedBase })
 }
 
 
