@@ -1580,7 +1580,12 @@ export class Server {
   #postToolUseHooks() {
     return [
       {
-        matcher: 'propose_edit|propose_write|propose_multi_edit',
+        // The tools are in-process MCP tools, so their real names are
+        // namespaced `mcp__writer-relay__propose_*` — the SDK matches this
+        // pattern against the FULL name, so the bare `propose_*` form never
+        // matched and this ack-confirmation hook silently never fired.
+        matcher:
+          'mcp__writer-relay__propose_edit|mcp__writer-relay__propose_write|mcp__writer-relay__propose_multi_edit',
         // Seconds. Local IPC to the host's own process — generous but bounded
         // so a host hang can't stall the agent loop forever.
         timeout: 5,
@@ -1692,7 +1697,10 @@ export class Server {
     if (typeof pendingId !== 'string') return
     const pending = this.pendingAcks.get(pendingId)
     if (!pending) return
-    this.pendingAcks.delete(pendingId)
+    // Resolve but DON'T delete: the ack can arrive before the PostToolUse hook
+    // fires (the host round-trip is fast), and if we deleted here the hook's
+    // later `pendingAcks.get` would miss the result and fail open. The hook is
+    // the sole deleter (after it reads the settled value).
     pending.resolve({ ok: !!params?.ok, reason: params?.reason ?? null })
   }
 
