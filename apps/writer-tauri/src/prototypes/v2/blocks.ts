@@ -18,8 +18,9 @@
 // re-render via that selection rebuild when it leaves.
 
 import { syntaxTree } from '@codemirror/language'
-import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
+import { Decoration, EditorView, keymap, type DecorationSet } from '@codemirror/view'
 import {
+  Prec,
   StateField,
   type EditorState,
   type Extension,
@@ -200,7 +201,60 @@ const blocksField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 })
 
-export const blocksV2: Extension = [blocksField]
+/** The full-line [from, to] span of the GFM table on `lineNo`, or null if that line
+ * isn't inside a table. Resolves 1 char into the line (table lines always have `|`)
+ * so the syntax lookup lands inside the Table node. */
+function tableRangeOnLine(state: EditorState, lineNo: number): { from: number; to: number } | null {
+  const line = state.doc.line(lineNo)
+  let n: SyntaxNode | null = syntaxTree(state).resolveInner(Math.min(line.from + 1, line.to), 1)
+  while (n && n.name !== 'Table') n = n.parent
+  if (!n) return null
+  return {
+    from: state.doc.lineAt(n.from).from,
+    to: state.doc.lineAt(Math.min(n.to, state.doc.length)).to,
+  }
+}
+
+/** Backspace at the start of the line right AFTER a table (or Delete at the end of the
+ * line right BEFORE one): SELECT the whole table block instead of eating the newline
+ * into the widget's hidden source (which silently corrupts the table). A second press
+ * then deletes the now-selected block. This is Obsidian's two-step "backspace to select
+ * the table, backspace again to delete it", and — with `atomicRanges` below — the
+ * canonical way to make a rendered block deletable without exposing its raw source. */
+function selectAdjacentTable(view: EditorView, forward: boolean): boolean {
+  const { state } = view
+  const sel = state.selection.main
+  if (!sel.empty) return false // a selection already exists (e.g. the table we just selected) → let the default delete it
+  const line = state.doc.lineAt(sel.head)
+  let range: { from: number; to: number } | null = null
+  if (forward) {
+    if (sel.head !== line.to || line.number >= state.doc.lines) return false
+    range = tableRangeOnLine(state, line.number + 1)
+  } else {
+    if (sel.head !== line.from || line.number <= 1) return false
+    range = tableRangeOnLine(state, line.number - 1)
+  }
+  if (!range) return false
+  view.dispatch({ selection: { anchor: range.from, head: range.to }, userEvent: 'select' })
+  return true
+}
+
+const tableDeleteGuard = Prec.high(
+  keymap.of([
+    { key: 'Backspace', run: (v) => selectAdjacentTable(v, false) },
+    { key: 'Delete', run: (v) => selectAdjacentTable(v, true) },
+  ]),
+)
+
+export const blocksV2: Extension = [
+  blocksField,
+  // Treat every block widget's range (table / image / media replace) as an ATOMIC
+  // unit for cursor motion and deletion, per the CM decoration guide: arrows skip it
+  // instead of landing in hidden source, and a delete that reaches into it removes the
+  // whole range at once rather than nibbling invisible characters one at a time.
+  EditorView.atomicRanges.of((view) => view.state.field(blocksField)),
+  tableDeleteGuard,
+]
 
 // Test-only: the selection gate predicate + the field, so the "cursor move through
 // prose keeps the mapped set (no rebuild) but a move onto a block line reveals" the
