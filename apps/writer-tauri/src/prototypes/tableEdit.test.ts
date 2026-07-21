@@ -37,4 +37,9 @@ describe('tableEdit', () => {
     const T = ['| a\\|b | c | d |', '| --- | --- | --- |', '| 1 | 2 | 3 |'].join('\n')
     expect(deleteColumn(T, 1).split('\n')).toEqual(['| a\\|b | d |', '| --- | --- |', '| 1 | 3 |'])
   })
+
+  it('deleteColumn on the LAST column returns "" (signal to delete the whole table)', () => {
+    const T = ['| a |', '| --- |', '| 1 |'].join('\n')
+    expect(deleteColumn(T, 0)).toBe('')
+  })
 })

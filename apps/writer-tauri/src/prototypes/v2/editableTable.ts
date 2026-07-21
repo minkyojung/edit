@@ -12,7 +12,7 @@
 
 import { EditorState, Prec } from '@codemirror/state'
 import { EditorView, WidgetType, keymap, drawSelection } from '@codemirror/view'
-import { history, defaultKeymap, historyKeymap, insertNewlineAndIndent } from '@codemirror/commands'
+import { defaultKeymap, insertNewlineAndIndent, undo, redo } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
 import { GFM } from '@lezer/markdown'
@@ -148,15 +148,27 @@ export class EditableTableWidget extends WidgetType {
       const next = serialize(table, this.delim)
       const { from, to } = rangeFromDoc()
       if (view.state.doc.sliceString(from, to) === next) return
-      view.dispatch({ changes: { from, to, insert: next } })
+      // `userEvent: input` lets the parent history coalesce a run of cell keystrokes
+      // into one undo step (CM groups same-userEvent changes within newGroupDelay).
+      view.dispatch({ changes: { from, to, insert: next }, userEvent: 'input' })
     }
     const structOp = (fn: (src: string) => string) => (e: MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
       const next = fn(serialize(table, this.delim))
       const { from, to } = rangeFromDoc()
+      // An empty / data-less result means the op removed the last column (or row) —
+      // the table can't exist, so delete its whole document range plus one bounding
+      // newline (trailing if there is one, else leading) so no blank line is orphaned.
+      if (!next.split('\n').some((l) => l.includes('|') && !isDelim(l))) {
+        const delTo = to < view.state.doc.length ? to + 1 : to
+        const delFrom = delTo > to ? from : Math.max(0, from - 1)
+        view.dispatch({ changes: { from: delFrom, to: delTo }, userEvent: 'delete' })
+        view.focus()
+        return
+      }
       if (view.state.doc.sliceString(from, to) !== next) {
-        view.dispatch({ changes: { from, to, insert: next } })
+        view.dispatch({ changes: { from, to, insert: next }, userEvent: 'input' })
       }
       view.focus() // so Cmd-Z reaches CM history (cells ignoreEvent the keypress)
     }
@@ -287,6 +299,14 @@ export class EditableTableWidget extends WidgetType {
         { key: 'Enter', run: (v) => enterDown(v) },
         { key: 'Shift-Enter', run: insertNewlineAndIndent },
         { key: 'Escape', run: (v) => ((v.contentDOM as HTMLElement).blur(), true) },
+        // Undo/redo belong to the PARENT (the single source of truth). With
+        // commit-through, every cell edit already lives in the parent history, so we
+        // forward Mod-z/Mod-Shift-z there instead of keeping a divergent per-cell
+        // history (ProseMirror nested-editor pattern). commit() first flushes any
+        // not-yet-committed cell state so the undo boundary is consistent.
+        { key: 'Mod-z', run: () => (commit(), undo(view)) },
+        { key: 'Mod-Shift-z', run: () => (commit(), redo(view)) },
+        { key: 'Mod-y', run: () => (commit(), redo(view)) },
       ]),
     )
 
@@ -296,9 +316,9 @@ export class EditableTableWidget extends WidgetType {
         state: EditorState.create({
           doc: cellToDoc(text),
           extensions: [
-            history(),
+            // NO per-cell history — undo is the parent's (see cellKeymap Mod-z).
             cellKeymap,
-            keymap.of([...defaultKeymap, ...historyKeymap]),
+            keymap.of(defaultKeymap),
             drawSelection(),
             EditorView.lineWrapping,
             markdown({ extensions: [GFM], addKeymap: false }),
@@ -313,6 +333,14 @@ export class EditableTableWidget extends WidgetType {
             // offsets, which the `<br>`/`\|` escaping would make unreliable. Empty
             // selection clears, matching the main editor. Scope: in-cell selection only.
             EditorView.updateListener.of((u) => {
+              // Commit-through: mirror every cell edit into the parent doc the moment
+              // it happens, so the parent (the source of truth) never lags the cell.
+              // This closes the data-loss window where a rebuild between a cell edit
+              // and blur re-rendered the table from the STALE parent source, resurrecting
+              // deleted text. EXCEPT during IME composition — a mid-composition parent
+              // rewrite churns the widget and corrupts the composition; the composition-
+              // end handler below flushes it once the syllable is committed.
+              if (u.docChanged && !u.view.composing) commit()
               if (!u.selectionSet && !u.docChanged) return
               const sel = u.state.selection.main
               const store = useEditorSelectionStore.getState()
@@ -327,7 +355,12 @@ export class EditableTableWidget extends WidgetType {
                 toLine: view.state.doc.lineAt(to).number,
               })
             }),
-            EditorView.domEventHandlers({ blur: () => commit() }),
+            EditorView.domEventHandlers({
+              blur: () => commit(), // backstop: nav/click-away still commits
+              // Flush the composition once it ends (updateListener skipped it while
+              // composing). Microtask so the cell doc has the final composed text.
+              compositionend: () => void queueMicrotask(commit),
+            }),
           ],
         }),
       })

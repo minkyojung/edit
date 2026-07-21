@@ -31,10 +31,13 @@ export function addColumn(source: string): string {
 }
 
 /** Remove the `col`-th cell (0-based) from every row, including the delimiter.
- * No-op when the table has a single column (would leave a degenerate `||` row). */
+ * Deleting the LAST remaining column returns '' — the signal to delete the whole
+ * table (a zero-column table can't exist), which the widget's structOp turns into a
+ * removal of the table's document range. */
 export function deleteColumn(source: string, col: number): string {
   const header = source.split('\n').find((l) => l.includes('|'))
-  if (!header || columnCount(header) <= 1) return source
+  if (!header) return source
+  if (columnCount(header) <= 1) return ''
   return source
     .split('\n')
     .map((line) => {
