@@ -65,8 +65,10 @@ import { parseChatEvent, parseDoneEvent, parseErrorEvent } from './eventSchemas'
 import { resolveAgent } from '../agents'
 import { buildEditOutcomeNote } from './buildEditOutcomeNote'
 import {
+  attachedFilesBlock,
   buildUserPrompt,
   composeSystemBlocks,
+  referencedFilesBlock,
   shouldResumeSession,
   truncateDocForPrompt,
 } from './systemPrompt'
@@ -156,9 +158,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // so behaviour is unchanged; the seam lets roles plug in later.
   const agent = await resolveAgent(useThreadsStore.getState().threads[threadId]?.agentId)
   const systemBody = systemPrompt ?? agent.systemPrompt
-  // Attachments now ride as vault paths (written to `.octave/attachments/` on attach),
-  // injected as an orientation block the model Reads on demand — same channel
-  // as @-mentions. No base64 in the prompt.
+  // Attachments ride as vault paths (written to `.octave/attachments/` on attach),
+  // rendered into the USER message as a block the model Reads on demand — same
+  // channel as @-mentions, assembled into `prompt` below. No base64 in the prompt.
   const attachedFiles = (attachments ?? []).map((a) => a.path)
   // Attachment-only sends carry no text, but an empty user message is invalid —
   // fall back to a minimal instruction so the ATTACHED FILES block has a turn to
@@ -176,7 +178,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // `outcomeIds` is stamped delivered only after the run actually starts,
   // so a failed start doesn't silently consume the outcomes.
   const outcome = promptOverride ? { note: null, ids: [] } : buildEditOutcomeNote(threadId)
-  const prompt = outcome.note ? `${outcome.note}\n\n${basePrompt}` : basePrompt
 
   // Chat mode — Karpathy / Claude Code shape: only the always-on
   // schema (CLAUDE.md + profile) lands in the system prompt. The wiki
@@ -212,6 +213,21 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     return { path, body: body && body.trim() ? body : undefined }
   })
 
+  // Per-turn file context rides the USER message, not the system prompt. A
+  // persistent thread freezes its system prompt at the first turn's value (the
+  // SDK has no setSystemPrompt), so @-mentions / attachments added on a later
+  // turn only reach the model through the per-turn user message. Order: host
+  // note → user text → referenced files → attached files. Empty blocks (no
+  // mentions / attachments, or a null outcome note) drop out via filter.
+  const prompt = [
+    outcome.note,
+    basePrompt,
+    referencedFilesBlock(mentionFiles),
+    attachedFilesBlock(attachedFiles),
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+
   const system = composeSystemBlocks({
     docForPrompt,
     systemBody,
@@ -233,8 +249,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     currentFilePath,
     viewingFilePath,
     selectionText,
-    mentionFiles,
-    attachedFiles,
     today: todayLocalDate(),
   })
   const runId = crypto.randomUUID()

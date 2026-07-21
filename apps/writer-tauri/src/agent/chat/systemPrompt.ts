@@ -108,17 +108,6 @@ export interface SystemBlocksArgs {
    * "rewrite this" resolve to the selection, not the whole document. Slash
    * commands handle selection via `{{selection}}` and don't pass this. */
   selectionText?: string | null
-  /** Files the user @-mentioned in the composer, rendered in a
-   * `--- REFERENCED FILES ---` block. When `body` is present (the note is open
-   * / loaded, so its in-memory content is fresher than disk) it's injected
-   * inline; otherwise the model is told to Read the path. */
-  mentionFiles?: { path: string; body?: string }[]
-  /** Vault-relative paths of files the user attached via the composer
-   * (paperclip / drag / paste). Written to the hidden `.octave/attachments/` folder;
-   * rendered in an `--- ATTACHED FILES ---` block that tells the model to Read
-   * them BEFORE answering (unlike inline base64, a path is only "seen" once
-   * Read). */
-  attachedFiles?: string[]
   /** Today's date as local `YYYY-MM-DD` (from `todayLocalDate()`). Injected
    * past the cache boundary so the model can resolve "today" / "today's
    * daily note" without guessing — and so the daily-changing value never
@@ -162,8 +151,6 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     currentFilePath,
     viewingFilePath,
     selectionText,
-    mentionFiles,
-    attachedFiles,
     today,
   } = args
   const prefix: string[] = []
@@ -291,29 +278,12 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         selectionText,
     )
   }
-  if (mentionFiles && mentionFiles.length > 0) {
-    const blocks = mentionFiles.map((f) =>
-      f.body
-        ? `File \`${f.path}\` (current content — use this, it's fresher than disk):\n\n${f.body}`
-        : `\`${f.path}\` — Read this exact path for its content.`,
-    )
-    dynamic.push(
-      `--- REFERENCED FILES ---\n` +
-        `The user @-mentioned these files in their message. Treat them as ` +
-        `attached context for this turn — use them before answering, even if ` +
-        `the message doesn't name them again:\n\n${blocks.join('\n\n')}`,
-    )
-  }
-  if (attachedFiles && attachedFiles.length > 0) {
-    const list = attachedFiles.map((p) => `\`${p}\``).join('\n')
-    dynamic.push(
-      `--- ATTACHED FILES ---\n` +
-        `The user attached these files to THIS message. Before answering, Read ` +
-        `each one — they are the subject of the request even if the message ` +
-        `doesn't name them (Read ingests PDFs and images directly). Do not answer ` +
-        `about their contents without reading them first:\n\n${list}`,
-    )
-  }
+  // NOTE: @-mentioned and attached files are NOT injected here. They belong to
+  // a specific turn, but a persistent thread freezes its system prompt at the
+  // first turn's value (the SDK has no setSystemPrompt), so files added on a
+  // later turn would never reach the model through this channel. They ride the
+  // USER message instead — see attachedFilesBlock / referencedFilesBlock, built
+  // into the prompt in runChat.
   if (appendDocument) dynamic.push(`--- DOCUMENT ---\n${docForPrompt}`)
 
   if (dynamic.length > 0) {
@@ -326,6 +296,45 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   // have those blocks, so the bare fallback never yields an empty prompt.
   if (prefix.length > 1) return prefix
   return systemBody
+}
+
+/** The `--- ATTACHED FILES ---` block for files the user attached to a turn
+ * (paperclip / drag / paste), written to the hidden `.octave/attachments/`
+ * folder. Rendered into the USER message — NOT the system prompt — so it
+ * travels with the turn it belongs to: a persistent thread freezes its system
+ * prompt at the first turn, so attachments added on a later turn must ride the
+ * user message to reach the model. Returns '' when there are no attachments. */
+export function attachedFilesBlock(attachedFiles: string[]): string {
+  if (!attachedFiles || attachedFiles.length === 0) return ''
+  const list = attachedFiles.map((p) => `\`${p}\``).join('\n')
+  return (
+    `--- ATTACHED FILES ---\n` +
+    `The user attached these files to THIS message. Before answering, Read ` +
+    `each one — they are the subject of the request even if the message ` +
+    `doesn't name them (Read ingests PDFs and images directly). Do not answer ` +
+    `about their contents without reading them first:\n\n${list}`
+  )
+}
+
+/** The `--- REFERENCED FILES ---` block for files the user @-mentioned in a
+ * turn. When `body` is present (the note is open / loaded, so its in-memory
+ * content is fresher than disk) it's injected inline; otherwise the model is
+ * told to Read the path. Like {@link attachedFilesBlock}, this rides the USER
+ * message so it reaches the model on the exact turn it was mentioned. Returns
+ * '' when nothing was mentioned. */
+export function referencedFilesBlock(mentionFiles: { path: string; body?: string }[]): string {
+  if (!mentionFiles || mentionFiles.length === 0) return ''
+  const blocks = mentionFiles.map((f) =>
+    f.body
+      ? `File \`${f.path}\` (current content — use this, it's fresher than disk):\n\n${f.body}`
+      : `\`${f.path}\` — Read this exact path for its content.`,
+  )
+  return (
+    `--- REFERENCED FILES ---\n` +
+    `The user @-mentioned these files in their message. Treat them as ` +
+    `attached context for this turn — use them before answering, even if ` +
+    `the message doesn't name them again:\n\n${blocks.join('\n\n')}`
+  )
 }
 
 /** Pick between the `sessionId` (first turn) and `resume` (subsequent)
