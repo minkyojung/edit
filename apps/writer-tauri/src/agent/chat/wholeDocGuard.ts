@@ -41,6 +41,13 @@ export async function guardedWholeDocWrite(
   }
   if (res.reason === 'stale') {
     if (bumpStale(slug)) return { kind: 'parked' }
+    // Advance the base to the latest body — the exact content we now hand the
+    // model to rebase against. Without this the resubmit's CAS still compares
+    // the live body to the ORIGINAL base (which diverged, or it wouldn't have
+    // been stale), so every rebase re-stales and the model's change can never
+    // land. We advance to `latest` (what the model rewrites against), NOT to the
+    // rejected `body` (which never touched disk).
+    setModelBase(slug, res.stale.latest)
     return {
       kind: 'stale',
       ackReason: buildStaleReason(filePath, res.stale.changedLines, res.stale.latest),

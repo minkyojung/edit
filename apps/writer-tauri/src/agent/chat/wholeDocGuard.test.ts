@@ -66,8 +66,31 @@ describe('guardedWholeDocWrite', () => {
       expect(out.ackReason).toContain('- the user line') // latest inline
       expect(out.ackReason).toContain('3') // changed line hint
     }
-    // A refused write must NOT advance the base — nothing landed.
-    expect(getModelBase('note')).toBeUndefined()
+    // The base advances to the LATEST body (not the rejected write) — this is
+    // exactly what the model is told to rebase against, so the resubmit's CAS
+    // compares the live body to `latest` and can actually land.
+    expect(getModelBase('note')).toBe('a\nb\n- the user line')
+  })
+
+  it('lets the rebased resubmit land — base advanced to latest, no re-stale loop', async () => {
+    // The model was shown B0; the user edited it to B1 while it generated.
+    setModelBase('note', 'B0')
+    // First write: live body (B1) diverged from B0 → stale, latest is B1.
+    checked.mockResolvedValueOnce({
+      ok: false,
+      reason: 'stale',
+      stale: { base: 'B0', latest: 'B1', changedLines: [{ from: 1, to: 1 }] },
+    })
+    const first = await guardedWholeDocWrite('note', 'MODEL v1', 'c1', 'f.md')
+    expect(first.kind).toBe('stale')
+
+    // The model rebases onto B1 and resubmits. The CAS now runs against B1 (the
+    // advanced base) — matching the live body — so it applies instead of
+    // re-staling forever.
+    checked.mockResolvedValueOnce({ ok: true, changed: true })
+    const second = await guardedWholeDocWrite('note', 'MODEL v2', 'c1', 'f.md')
+    expect(second.kind).toBe('applied')
+    expect(checked).toHaveBeenLastCalledWith('note', 'MODEL v2', 'B1', 'c1')
   })
 
   it('parks after the retry cap instead of looping against a user who keeps typing', async () => {
