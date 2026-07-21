@@ -5,9 +5,11 @@
 // renders nothing (see src/components/WhatsNew.tsx). This is exactly how 0.0.8
 // shipped with no card.
 //
-// Run from the release-build preflight (build-release.sh), NOT the dev test
-// suite: during normal development the current version is legitimately ahead of
-// the changelog until a release is cut, so this must only gate an actual ship.
+// Run from both ship paths — the CI release workflow (.github/workflows/
+// release.yml, the tag-driven path that actually publishes) and the local
+// release preflight (build-release.sh). NOT the dev test suite: during normal
+// development the current version is legitimately ahead of the changelog until
+// a release is cut, so this must only gate an actual ship.
 
 import { readFileSync } from 'node:fs'
 
