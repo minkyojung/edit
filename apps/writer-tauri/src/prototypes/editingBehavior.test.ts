@@ -2,7 +2,7 @@
 // for FREE? Runs the stock markdown commands (Enter/Backspace) +
 // indentMore/indentLess (Tab) on EditorStates and asserts the result. Each
 // passing test = a behavior we DON'T have to build. Failures map the gaps to
-// fill later (B/C/D). See docs/codemirror-editing-behavior-plan.md.
+// fill later (B/C/D). See docs/archive/codemirror-editing-behavior-plan.md.
 
 import { describe, expect, it } from 'vitest'
 import { EditorState, type StateCommand } from '@codemirror/state'
