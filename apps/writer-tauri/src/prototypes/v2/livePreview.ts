@@ -515,8 +515,27 @@ function previewPlugin(inlineOnly: boolean) {
       // final rebuild on the first update after composing goes false (view.composing
       // can linger true for a tick, so we can't rely on a clean trailing event).
       paused = false
+      view: EditorView
       constructor(view: EditorView) {
+        this.view = view
         this.deco = this.build(view)
+      }
+      // The freeze has a wake-up gap: Korean composes PER SYLLABLE, so during
+      // continuous typing every update lands while composing=true (frozen), and
+      // after the LAST syllable's compositionend nothing dispatches another
+      // update — `paused` then waits for the next keystroke (usually Enter), so
+      // a just-typed list marker stays a raw `-` until then. (English never hits
+      // this: no composition, every keystroke rebuilds.) Nudge an empty
+      // transaction once composition has really ended; the `paused` branch in
+      // update() turns it into the pending full rebuild. setTimeout(0) puts it
+      // after CM's own composition flush (dispatching from inside an update
+      // throws), and the composing re-check makes a mid-word nudge (next
+      // syllable already composing) a no-op — that syllable's own
+      // compositionend reschedules.
+      wake() {
+        setTimeout(() => {
+          if (this.paused && !this.view.composing) this.view.dispatch({})
+        }, 0)
       }
       build(view: EditorView): DecorationSet {
         // Cell mode reveals by focus (a single-line cell is always "on its line").
@@ -547,7 +566,14 @@ function previewPlugin(inlineOnly: boolean) {
         }
       }
     },
-    { decorations: (v) => v.deco },
+    {
+      decorations: (v) => v.deco,
+      eventObservers: {
+        compositionend() {
+          this.wake()
+        },
+      },
+    },
   )
 }
 
