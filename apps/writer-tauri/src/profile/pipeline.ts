@@ -28,10 +28,8 @@ import {
 import { assembleProfileMarkdown, replaceZone } from './markers'
 import { hasAnySources, readAllSources, saveSources } from './sources'
 import { useDocsStore } from '@/state/docsStore'
-import {
-  ensureProfileWikiSlug,
-  readSelfProfile,
-} from '@/state/wikiService'
+import { updateDocBody } from '@/state/docsStore/docBody'
+import { ensureProfileWikiSlug } from '@/state/wikiService'
 
 // Haiku for the section calls. The OAuth-token budget the app
 // shares with chat/ingest/Claude Code itself is the real bottleneck
@@ -134,14 +132,18 @@ export async function runSection(
   const slug = await ensureProfileWikiSlug()
   if (!slug) return { ok: false, reason: 'no_profile_slug' }
 
-  const current = await readSelfProfile()
-  const spliced = current ? replaceZone(current, key, content) : null
-  const next =
-    spliced ??
-    assembleMarkdownFromSections({ [key]: content }, documents)
-
-  const ok = await useDocsStore.getState().replaceDocBody(slug, next)
-  return ok ? { ok: true, slug } : { ok: false, reason: 'write_failed' }
+  // Splice the regenerated zone INSIDE the write funnel's transform so it runs
+  // against the live editor body at write time (updateDocBody reads the mounted
+  // CodeMirror doc, not the stale mirror). The previous shape read the profile
+  // via readSelfProfile() up front, then wrote the whole doc back with a
+  // discard transform — so any keystrokes the user typed into another zone
+  // (Background / Notes) while this async generation was in flight were
+  // silently clobbered. replaceZone still preserves the other zones.
+  const res = await updateDocBody(slug, (current) => {
+    const spliced = current ? replaceZone(current, key, content) : null
+    return spliced ?? assembleMarkdownFromSections({ [key]: content }, documents)
+  })
+  return res.ok ? { ok: true, slug } : { ok: false, reason: 'write_failed' }
 }
 
 /** Prefer disk over network. If the vault already has persisted

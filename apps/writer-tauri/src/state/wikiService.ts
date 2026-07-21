@@ -20,6 +20,7 @@ import {
   useDocsStore,
   type KnownDoc,
 } from './docsStore'
+import { readDocBody } from './docsStore/docBody'
 import { readVaultFile, vaultFileExists } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
 import { getDefaultNoteFolder } from '@/state/settingsStore'
@@ -353,12 +354,13 @@ export function readWikiMarkdown(slug: string | null): string {
   const handle = docs.handles[slug]
   if (!handle) return ''
 
-  // Phase 5a of the Yjs-removal migration: read `handle.bodyMarkdown`
-  // instead of the Y.Doc fragment. The cache survives schema
-  // structure (headings, lists, links) where the previous
-  // `fragment.toString()` collapsed everything to flat text — same
-  // win as the ingest reader migration.
-  const trimmed = handle.bodyMarkdown.trim()
+  // Read the LIVE editor body when one is mounted on this slug, falling back
+  // to the mirror only when it isn't — `readDocBody` owns that choice. Reading
+  // `handle.bodyMarkdown` directly here lagged the editor between mount and
+  // unmount (the flush no longer writes the mirror back), so a regenerate/merge
+  // that read this stale value and then wrote the whole doc back silently lost
+  // the user's unflushed keystrokes.
+  const trimmed = readDocBody(slug).trim()
   if (isEffectivelyEmpty(trimmed)) return ''
   return trimmed
 }
