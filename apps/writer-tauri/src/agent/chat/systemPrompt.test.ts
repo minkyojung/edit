@@ -8,7 +8,12 @@
 // Layer B — observed in dogfood, not assertable here.)
 
 import { describe, expect, it } from 'vitest'
-import { composeSystemBlocks, type SystemBlocksArgs } from './systemPrompt'
+import {
+  attachedFilesBlock,
+  composeSystemBlocks,
+  referencedFilesBlock,
+  type SystemBlocksArgs,
+} from './systemPrompt'
 
 /** Minimal valid args → a stable cacheable-prefix-only prompt (no
  * dynamic suffix, so no boundary sentinel). Override per test. */
@@ -86,5 +91,35 @@ describe('composeSystemBlocks — growing blocks ordered last (cache stability)'
     expect(idx('--- CAPTURE FOLDER ---')).toBeLessThan(idx('--- SELF PROFILE ---'))
     // Persona stays first of all.
     expect(idx('PERSONA')).toBe(0)
+  })
+})
+
+// Per-turn file context (attachments + @-mentions) must NOT live in the system
+// prompt: a persistent thread freezes its system prompt at the first turn, so
+// files added on a later turn would never reach the model there. They ride the
+// USER message via the block helpers below. These tests pin that channel so a
+// future refactor can't quietly move them back into the frozen system prompt.
+describe('per-turn file context rides the user message, not the system prompt', () => {
+  it('composeSystemBlocks never emits ATTACHED / REFERENCED file blocks', () => {
+    const out = text(composeSystemBlocks(args({ vaultRoot: '/v', appendDocument: false })))
+    expect(out).not.toContain('--- ATTACHED FILES ---')
+    expect(out).not.toContain('--- REFERENCED FILES ---')
+  })
+
+  it('attachedFilesBlock renders the paths and Read instruction; empty → ""', () => {
+    expect(attachedFilesBlock([])).toBe('')
+    const block = attachedFilesBlock(['.octave/attachments/abc/report.pdf'])
+    expect(block).toContain('--- ATTACHED FILES ---')
+    expect(block).toContain('`.octave/attachments/abc/report.pdf`')
+    expect(block).toContain('Read')
+  })
+
+  it('referencedFilesBlock inlines a present body and tells the model to Read an absent one', () => {
+    expect(referencedFilesBlock([])).toBe('')
+    const inlined = referencedFilesBlock([{ path: 'wiki/A.md', body: 'BODY_TEXT' }])
+    expect(inlined).toContain('--- REFERENCED FILES ---')
+    expect(inlined).toContain('BODY_TEXT')
+    const readIt = referencedFilesBlock([{ path: 'wiki/B.md' }])
+    expect(readIt).toContain('`wiki/B.md` — Read this exact path')
   })
 })
