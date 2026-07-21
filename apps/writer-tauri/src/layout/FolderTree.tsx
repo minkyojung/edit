@@ -49,7 +49,6 @@ import { useDocsStore } from '@/state/docsStore'
 import { useNewFolderStore } from '@/state/newFolderStore'
 import { useSortStore } from '@/state/sortStore'
 import { useStatusFilterStore } from '@/state/statusFilterStore'
-import { useTagFilterStore } from '@/state/tagFilterStore'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { cn } from '@/lib/utils'
 import { STATUS_DOT_CLASS, STATUS_LABEL } from '@/lib/docStatusMeta'
@@ -613,20 +612,8 @@ export function FolderTree() {
   const stopNewFolder = useNewFolderStore((s) => s.stop)
   const sortMode = useSortStore((s) => s.mode)
   const inProgressOnly = useStatusFilterStore((s) => s.inProgressOnly)
-  const activeTag = useTagFilterStore((s) => s.activeTag)
-  const clearTagFilter = useTagFilterStore((s) => s.clear)
   const navigate = useNavigate()
   const activeSlug = useActiveSlug()
-
-  // Self-heal: if the active tag no longer exists on any note (its last
-  // carrier was deleted or retagged), clear the filter — otherwise the tree
-  // would render empty with no way to clear it (its chip is gone from the
-  // Tags pane too).
-  useEffect(() => {
-    if (activeTag && !knownDocs.some((d) => d.tags?.includes(activeTag))) {
-      clearTagFilter()
-    }
-  }, [activeTag, knownDocs, clearTagFilter])
 
   const tree = useMemo(() => {
     // Compose the active sidebar filters as AND-ed predicates. No filter →
@@ -634,13 +621,12 @@ export function FolderTree() {
     // they need to stay reachable (no standalone folders/files).
     const preds: ((d: (typeof knownDocs)[number]) => boolean)[] = []
     if (inProgressOnly) preds.push((d) => d.status === 'in-progress')
-    if (activeTag) preds.push((d) => !!d.tags?.includes(activeTag))
     if (preds.length === 0) {
       return buildFileTree(knownDocs, knownFolders, sortMode, knownFiles)
     }
     const match = filterDocsWithAncestors(knownDocs, (d) => preds.every((p) => p(d)))
     return buildFileTree(match, [], sortMode, [])
-  }, [inProgressOnly, activeTag, knownDocs, knownFolders, sortMode, knownFiles])
+  }, [inProgressOnly, knownDocs, knownFolders, sortMode, knownFiles])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [editingSlug, setEditingSlug] = useState<string | null>(null)
   const [editingFolderPath, setEditingFolderPath] = useState<string | null>(null)
