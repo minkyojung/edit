@@ -38,7 +38,14 @@ import { useDocsStore } from '@/state/docsStore'
 import { readDocBody } from '@/state/docsStore/docBody'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useGitStore, aiEditSubject } from '@/state/gitStore'
-import { applyWriteWikiPage } from '@/agent/applyIngest'
+import { applyWriteWikiPage, applyWriteWikiPageChecked } from '@/agent/applyIngest'
+import {
+  getModelBase,
+  setModelBase,
+  bumpStale,
+  resetStale,
+} from '@/agent/modelBodyBase'
+import { buildStaleReason } from '@/agent/staleFeedback'
 import { useSkillProposalStore } from '@/state/skillProposalStore'
 import { notify } from '@/lib/notify'
 import {
@@ -150,6 +157,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // canonical reader — the live editor when one is mounted, so the model sees
   // what's on screen (not the mirror, which lags mid-edit).
   const docText = pageContextMarkdown ?? (slug ? readDocBody(slug) : '')
+  // Record what the model is shown for this note as the compare-and-swap base:
+  // a later whole-doc overwrite is refused if the live body diverged from this
+  // (the user edited it while the model generated).
+  if (slug) setModelBase(slug, docText)
   const docForPrompt = truncateDocForPrompt(docText)
   // Resolve this thread's agent (role) — the prompt body + memory
   // namespace come from here. Currently always the built-in default,
@@ -209,6 +220,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       (d) => pathForDoc(d, (s) => knownDocs.find((x) => x.slug === s)) === path,
     )
     const body = doc ? handles[doc.slug]?.bodyMarkdown : undefined
+    // Same CAS base as the current doc: a mentioned note's shown body is what a
+    // later whole-doc overwrite must not silently clobber.
+    if (doc && body) setModelBase(doc.slug, body)
     return { path, body: body && body.trim() ? body : undefined }
   })
 
@@ -399,6 +413,56 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // so its PostToolUse hook can stop telling the model "queued" when it
         // silently wasn't (the eager-success gap the pipeline audit found).
         let ackOk = false
+        // When a whole-doc write is refused as stale, the reason (with the
+        // latest body inline) rides the ack back to the round-trip propose_write
+        // tool, which returns it to the model as an error so it rebases.
+        let ackReason: string | undefined
+
+        // Whole-doc overwrite with a compare-and-swap guard. Refuses (never
+        // clobbers) when the live body diverged from what the model wrote
+        // against, feeding the stale body back via `ackReason` so the model
+        // rebases. Retries are capped — a user who keeps typing parks the change
+        // for manual review instead of looping forever. Returns whether the
+        // write landed.
+        const writeWholeDocGuarded = async (
+          docSlug: string,
+          body: string,
+          changeId: string,
+          filePath: string,
+        ): Promise<boolean> => {
+          const res = await applyWriteWikiPageChecked(
+            docSlug,
+            body,
+            getModelBase(docSlug),
+            changeId,
+          )
+          if (res.ok) {
+            // The model's new baseline for any further write to this note this
+            // turn — so its OWN write doesn't read as a stale divergence next.
+            setModelBase(docSlug, body)
+            resetStale(docSlug)
+            return true
+          }
+          if (res.reason === 'stale') {
+            if (bumpStale(docSlug)) {
+              // Retries exhausted — stop asking the model to rebase; leave the
+              // change pending for manual review. ackOk stays true so the turn
+              // ends rather than looping against a user who keeps typing.
+              notify.autoAcceptWriteFailed()
+              return false
+            }
+            ackOk = false
+            ackReason = buildStaleReason(
+              filePath,
+              res.stale.changedLines,
+              res.stale.latest,
+            )
+            return false
+          }
+          // Hard failure (no-handle / hydrate / conflict).
+          notify.autoAcceptWriteFailed()
+          return false
+        }
 
         const myTail = (async (): Promise<{ pageSlug: string; pendingId: string } | null> => {
           // The whole body is wrapped in try/catch: without this, a throw
@@ -539,31 +603,34 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             // the Keep button drives, just triggered automatically. Undo still
             // flows through the editor (Cmd-Z → reopen).
             if (autoAcceptEdits) {
-              if (createdNewNote) {
-                // A brand-new note isn't open in any editor yet, so the async
-                // applier would RACE the navigate-to-open below: if the editor
-                // mounts before the applier's write lands, it reads an empty
-                // buffer and the body never appears (the change is already
-                // 'accepted', so the in-buffer review won't re-render it). Write
-                // the body into the handle HERE and await it, so the note is
-                // populated before we open it. Accept with the body as
-                // resolvedResult so the applier's own write is an idempotent
-                // whole-doc no-op (bodyMarkdown already matches) rather than a
-                // second, doubling append.
+              if (e.payload.toolName === 'Write') {
+                // Whole-doc overwrite — guard it with CAS (writeWholeDocGuarded)
+                // so a stale write (the user edited the note while the model
+                // generated) is refused and fed back to the model instead of
+                // clobbering. Runs synchronously here, BEFORE the ack below that
+                // the round-trip propose_write tool blocks on. For a brand-new
+                // note this also writes the body into the handle before we open
+                // it (the note is populated before the editor mounts — the race
+                // the createdNewNote path used to guard by hand); accept with the
+                // body as resolvedResult so the applier's own write is an
+                // idempotent no-op.
                 const body = mapped.edits.map((ed) => ed.after ?? '').join('\n\n')
-                const ok = await applyWriteWikiPage(mapped.pageSlug, body, mapped.id)
-                if (ok) {
+                const filePath = String(e.payload.input?.file_path ?? mapped.pageSlug)
+                const landed = await writeWholeDocGuarded(
+                  mapped.pageSlug,
+                  body,
+                  mapped.id,
+                  filePath,
+                )
+                if (landed) {
                   usePendingChangesStore.getState().accept(mapped.id, body)
-                } else {
-                  // The note WAS materialized (it has a slug + catalog entry) —
-                  // only the write failed. Leave it pending so the user can
-                  // retry via a manual Keep, and say so immediately (no later
-                  // checkpoint will catch this in auto-accept mode).
-                  notify.autoAcceptWriteFailed()
                 }
+                // Stale/failed: the guard set ackReason (or parked); leave the
+                // change pending so the user's edit survives and the model can
+                // rebase.
               } else {
-                // Existing note: its editor is already mounted, so the applier's
-                // live-CM write path updates the open buffer with no race.
+                // Range edit (Edit/MultiEdit): the applier's live-CM write path
+                // is already protected by updateDocBody's live read — no CAS.
                 usePendingChangesStore.getState().accept(mapped.id)
               }
             }
@@ -601,7 +668,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // the hook fails open on its own timeout if this never arrives, so a
         // failure here is a lost confirmation, not a stuck turn.
         invoke('claude_chat_edit_ack', {
-          args: { pendingId: e.payload.pendingId, ok: ackOk },
+          args: { pendingId: e.payload.pendingId, ok: ackOk, reason: ackReason },
         }).catch((err) => {
           console.warn('[chat] edit-ack send failed', err)
         })
