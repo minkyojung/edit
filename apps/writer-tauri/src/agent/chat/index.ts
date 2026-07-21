@@ -38,14 +38,9 @@ import { useDocsStore } from '@/state/docsStore'
 import { readDocBody } from '@/state/docsStore/docBody'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useGitStore, aiEditSubject } from '@/state/gitStore'
-import { applyWriteWikiPage, applyWriteWikiPageChecked } from '@/agent/applyIngest'
-import {
-  getModelBase,
-  setModelBase,
-  bumpStale,
-  resetStale,
-} from '@/agent/modelBodyBase'
-import { buildStaleReason } from '@/agent/staleFeedback'
+import { applyWriteWikiPage } from '@/agent/applyIngest'
+import { setModelBase } from '@/agent/modelBodyBase'
+import { guardedWholeDocWrite } from '@/agent/chat/wholeDocGuard'
 import { useSkillProposalStore } from '@/state/skillProposalStore'
 import { notify } from '@/lib/notify'
 import {
@@ -418,52 +413,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // tool, which returns it to the model as an error so it rebases.
         let ackReason: string | undefined
 
-        // Whole-doc overwrite with a compare-and-swap guard. Refuses (never
-        // clobbers) when the live body diverged from what the model wrote
-        // against, feeding the stale body back via `ackReason` so the model
-        // rebases. Retries are capped — a user who keeps typing parks the change
-        // for manual review instead of looping forever. Returns whether the
-        // write landed.
-        const writeWholeDocGuarded = async (
-          docSlug: string,
-          body: string,
-          changeId: string,
-          filePath: string,
-        ): Promise<boolean> => {
-          const res = await applyWriteWikiPageChecked(
-            docSlug,
-            body,
-            getModelBase(docSlug),
-            changeId,
-          )
-          if (res.ok) {
-            // The model's new baseline for any further write to this note this
-            // turn — so its OWN write doesn't read as a stale divergence next.
-            setModelBase(docSlug, body)
-            resetStale(docSlug)
-            return true
-          }
-          if (res.reason === 'stale') {
-            if (bumpStale(docSlug)) {
-              // Retries exhausted — stop asking the model to rebase; leave the
-              // change pending for manual review. ackOk stays true so the turn
-              // ends rather than looping against a user who keeps typing.
-              notify.autoAcceptWriteFailed()
-              return false
-            }
-            ackOk = false
-            ackReason = buildStaleReason(
-              filePath,
-              res.stale.changedLines,
-              res.stale.latest,
-            )
-            return false
-          }
-          // Hard failure (no-handle / hydrate / conflict).
-          notify.autoAcceptWriteFailed()
-          return false
-        }
-
         const myTail = (async (): Promise<{ pageSlug: string; pendingId: string } | null> => {
           // The whole body is wrapped in try/catch: without this, a throw
           // anywhere below (materialize, disk write, ...) would reject this
@@ -616,18 +565,25 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 // idempotent no-op.
                 const body = mapped.edits.map((ed) => ed.after ?? '').join('\n\n')
                 const filePath = String(e.payload.input?.file_path ?? mapped.pageSlug)
-                const landed = await writeWholeDocGuarded(
+                const outcome = await guardedWholeDocWrite(
                   mapped.pageSlug,
                   body,
                   mapped.id,
                   filePath,
                 )
-                if (landed) {
+                if (outcome.kind === 'applied') {
                   usePendingChangesStore.getState().accept(mapped.id, body)
+                } else if (outcome.kind === 'stale') {
+                  // Bounce the divergence back to the model (via the ack) so it
+                  // rebases; leave the change pending so the user's edit survives.
+                  ackOk = false
+                  ackReason = outcome.ackReason
+                } else {
+                  // 'parked' (retries exhausted) or 'failed' — leave the change
+                  // pending for a manual Keep and say so. ackOk stays true so the
+                  // turn ends rather than looping.
+                  notify.autoAcceptWriteFailed()
                 }
-                // Stale/failed: the guard set ackReason (or parked); leave the
-                // change pending so the user's edit survives and the model can
-                // rebase.
               } else {
                 // Range edit (Edit/MultiEdit): the applier's live-CM write path
                 // is already protected by updateDocBody's live read — no CAS.
