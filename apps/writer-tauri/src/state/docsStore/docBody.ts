@@ -28,10 +28,22 @@ import {
   pullActiveCmBody,
 } from '@/state/activeCmEditor'
 import { useDocsStore } from '@/state/docsStore'
+import { bodiesEqual, changedLineRanges, type LineRange } from '@/lib/bodyStale'
+
+/** What the live body diverged into, when a whole-doc write is refused as
+ * stale. `latest` is the current body the write should rebase against;
+ * `changedLines` locates the divergence so the model needn't re-read the
+ * whole doc. */
+export interface StaleInfo {
+  base: string
+  latest: string
+  changedLines: LineRange[]
+}
 
 export type UpdateDocBodyResult =
   | { ok: true; changed: boolean }
   | { ok: false; reason: 'no-handle' | 'hydrate-failed' | 'conflict' }
+  | { ok: false; reason: 'stale'; stale: StaleInfo }
 
 export interface UpdateDocBodyOpts {
   /** Tag the CodeMirror transaction so a later Cmd-Z reopens this change
@@ -44,6 +56,12 @@ export interface UpdateDocBodyOpts {
   /** Set only when this write IS the resolution of an external conflict
    * (watcher "reopen"), so the conflict gate below is bypassed. */
   resolvesConflict?: boolean
+  /** Whole-doc overwrite guard (compare-and-swap). The body the caller's
+   * write was computed against; if the LIVE body has diverged from it, the
+   * write is refused as `stale` (never clobbers) so the caller/model can
+   * rebase against the returned `latest`. Omit for range edits — they
+   * transform the live body directly and need no CAS. */
+  expectedBase?: string
 }
 
 /**
@@ -108,6 +126,24 @@ export async function updateDocBody(
     // write is that resolution. Report, don't clobber.
     if (!opts.resolvesConflict && hasExternalConflict(slug)) {
       return { ok: false, reason: 'conflict' }
+    }
+
+    // Compare-and-swap for whole-doc overwrites: if the live body diverged
+    // from the base the caller's write was computed against, refuse rather
+    // than clobber. The caller (AI whole-doc write) rebases against `latest`.
+    if (
+      opts.expectedBase !== undefined &&
+      !bodiesEqual(current, opts.expectedBase)
+    ) {
+      return {
+        ok: false,
+        reason: 'stale',
+        stale: {
+          base: opts.expectedBase,
+          latest: current,
+          changedLines: changedLineRanges(opts.expectedBase, current),
+        },
+      }
     }
 
     const next = transform(current)

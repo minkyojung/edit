@@ -141,6 +141,7 @@ export function buildProposeWriteTool(getRunId, emit, registerAck) {
     },
     async (input) => {
       const pendingId = globalThis.crypto.randomUUID()
+      const { promise, cleanup } = registerAck(pendingId)
       emit(
         notification('chat/edit-pending', {
           runId: getRunId(),
@@ -149,7 +150,36 @@ export function buildProposeWriteTool(getRunId, emit, registerAck) {
           input,
         }),
       )
-      registerAck(pendingId)
+      // Round-trip: block on the host's apply verdict and return it DIRECTLY.
+      // A whole-doc write can be refused — the file changed under the model
+      // (compare-and-swap), or the edit didn't map — and the model must SEE
+      // that deterministically and rewrite. Unlike the fire-and-forget
+      // propose_edit path, this does NOT return an optimistic "queued": that
+      // would let a stale overwrite look successful. Fail open if the host
+      // never answers, so a lost ack can't wedge the turn.
+      let verdict
+      try {
+        verdict = await Promise.race([
+          promise,
+          new Promise((r) => setTimeout(() => r({ ok: true, reason: null }), 15000)),
+        ])
+      } finally {
+        cleanup()
+      }
+      if (verdict && verdict.ok === false) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `(error: the write was NOT applied — ` +
+                `${verdict.reason ?? 'the file changed since you read it'}. ` +
+                `Do not resubmit the same content; rewrite against the current ` +
+                `content shown above and call the write tool again.)`,
+            },
+          ],
+        }
+      }
       return {
         content: [
           {

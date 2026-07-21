@@ -1580,7 +1580,16 @@ export class Server {
   #postToolUseHooks() {
     return [
       {
-        matcher: 'propose_edit|propose_write|propose_multi_edit',
+        // The tools are in-process MCP tools, so their real names are
+        // namespaced `mcp__writer-relay__propose_*` — the SDK matches this
+        // pattern against the FULL name, so the bare `propose_*` form never
+        // matched and this ack-confirmation hook silently never fired.
+        // `propose_write` is NOT here: it round-trips in its own handler (awaits
+        // the verdict and returns the error directly), which is race-free —
+        // this hook's rewrite only reliably lands ~2/3 of the time. The
+        // fire-and-forget edit/multi_edit paths still rely on it.
+        matcher:
+          'mcp__writer-relay__propose_edit|mcp__writer-relay__propose_multi_edit',
         // Seconds. Local IPC to the host's own process — generous but bounded
         // so a host hang can't stall the agent loop forever.
         timeout: 5,
@@ -1679,6 +1688,11 @@ export class Server {
       resolve = r
     })
     this.pendingAcks.set(pendingId, { promise, resolve })
+    // The round-trip caller (propose_write) awaits `promise` and then calls
+    // `cleanup` — it holds the promise ref, so deletion can't lose its value.
+    // The fire-and-forget callers (propose_edit/multi_edit) ignore the return
+    // and let the PostToolUse hook read + delete the slot instead.
+    return { promise, cleanup: () => this.pendingAcks.delete(pendingId) }
   }
 
   // Host's answer to "did this propose_* proposal actually get queued?"
@@ -1692,7 +1706,10 @@ export class Server {
     if (typeof pendingId !== 'string') return
     const pending = this.pendingAcks.get(pendingId)
     if (!pending) return
-    this.pendingAcks.delete(pendingId)
+    // Resolve but DON'T delete: the ack can arrive before the PostToolUse hook
+    // fires (the host round-trip is fast), and if we deleted here the hook's
+    // later `pendingAcks.get` would miss the result and fail open. The hook is
+    // the sole deleter (after it reads the settled value).
     pending.resolve({ ok: !!params?.ok, reason: params?.reason ?? null })
   }
 
