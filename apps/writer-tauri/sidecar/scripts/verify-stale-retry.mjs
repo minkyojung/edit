@@ -15,15 +15,15 @@
 //   CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat... \
 //   node scripts/verify-stale-retry.mjs
 //
-// FINDING (2026-07-21): after fixing two real production bugs this uncovered —
-// the PostToolUse ack-hook matcher never matched the namespaced MCP tool names
-// (`mcp__writer-relay__propose_*`), and `#handleEditAck` deleted the ack slot
-// before the hook read it — the loop WORKS but delivery of the stale error to
-// the model via the hook rewrite is flaky (~2/3 runs): the rewrite races the
-// model's consumption of the tool result. The model always retries, but only
-// sometimes sees the stale body and rebases. Conclusion: the reliable path is a
-// ROUND-TRIP write tool (handler awaits the host verdict and returns the error
-// directly), not the PostToolUse-rewrite shortcut.
+// HISTORY (2026-07-21): this harness first ran against the PostToolUse-hook
+// delivery path and uncovered two real production bugs — the ack-hook matcher
+// never matched the namespaced MCP tool names (`mcp__writer-relay__propose_*`),
+// and `#handleEditAck` deleted the ack slot before the hook read it. Even with
+// both fixed, hook-rewrite delivery was flaky (~2/3): the rewrite races the
+// model's consumption of the tool result. So `propose_write` was converted to a
+// ROUND-TRIP tool (its handler awaits the host verdict and returns the stale
+// error DIRECTLY as the tool result). That path is deterministic — this harness
+// now passes 3/3: the model always sees the stale body and rebases.
 
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
