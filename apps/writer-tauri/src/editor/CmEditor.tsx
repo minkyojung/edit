@@ -1,6 +1,6 @@
 // CmEditor — Stage 1 of the ProseMirror→CodeMirror swap. A production editor shell
 // wired to the REAL doc load/save path, mounted behind a DEV flag ALONGSIDE
-// MilkdownEditor (which is left untouched). See docs/codemirror-migration-decision.md
+// MilkdownEditor (which is left untouched). See docs/archive/codemirror-migration-decision.md
 // §9 / §11.5.
 //
 // Scope (Stage 1, intentionally minimal & reversible):
