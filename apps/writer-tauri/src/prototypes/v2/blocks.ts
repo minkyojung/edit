@@ -235,7 +235,7 @@ function selectAdjacentBlock(view: EditorView, forward: boolean): boolean {
   const sel = state.selection.main
   if (!sel.empty) return false // a selection already exists (e.g. the block we just selected) → let the default delete it
   const line = state.doc.lineAt(sel.head)
-  let range: { from: number; to: number } | null = null
+  let range: { from: number; to: number } | null
   if (forward) {
     if (sel.head !== line.to || line.number >= state.doc.lines) return false
     range = blockRangeCoveringLine(view, line.number + 1)
