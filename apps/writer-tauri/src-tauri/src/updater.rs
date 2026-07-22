@@ -109,6 +109,13 @@ struct Inner {
     ready_version: Option<String>,
     /// Release notes of the staged version, re-emitted on the short-circuit.
     ready_notes: Option<String>,
+    /// Armed by the update-ready toast's "Restart when idle". Process-global
+    /// so it survives closing the window that armed it — the old JS poller
+    /// died with its webview. Read by the idle-restart loop below.
+    armed_restart: bool,
+    /// A window vetoed the pending restart (in-flight chat / unsaved edits).
+    /// Set by `updater_restart_veto`, reset before each probe by the loop.
+    restart_vetoed: bool,
 }
 
 /// Managed via `.manage(UpdaterState::default())` in lib.rs.
@@ -342,6 +349,101 @@ async fn do_run(app: &AppHandle, origin: CheckOrigin) {
     }
 }
 
+// ── Restart when idle ─────────────────────────────────────────────
+//
+// A staged `ready` update applies on the next natural quit regardless, so this
+// is a convenience: relaunch during a lull instead of making the user quit.
+// The authority lives here in Rust — a process-global armed flag plus a tokio
+// loop reading the NATIVE system idle time — because the prior JS poller had
+// two structural defects: its webview `setInterval` was throttled by App Nap
+// exactly when the app went idle (the moment it needed to fire), and its armed
+// state lived in one window's memory, so closing that window silently lost it.
+
+// The loop that consumes these is release-only (spawned under
+// `not(debug_assertions)` in lib.rs), so debug builds see them as dead — same
+// convention as `CheckOrigin::Scheduled`.
+/// System must be idle at least this long before an armed restart fires.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+const RESTART_IDLE_SECS: f64 = 45.0;
+/// Idle-restart loop poll cadence.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+const RESTART_POLL: Duration = Duration::from_secs(5);
+/// After the system is idle, windows get this long to veto — all local IPC,
+/// so 500ms is generous.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+const RESTART_VETO_WINDOW: Duration = Duration::from_millis(500);
+/// Event asking every window "safe to restart?" — a busy window replies by
+/// calling `updater_restart_veto`.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+const CONFIRM_RESTART_EVENT: &str = "updater:confirm-restart";
+
+/// Seconds since the last system-wide HID input (keyboard / mouse / trackpad),
+/// read from Core Graphics — the same source Sparkle uses. Runs in Rust, so
+/// it's immune to the App Nap / WKWebView timer throttling that stalled the old
+/// JS idle poller precisely when the app went idle.
+#[cfg(target_os = "macos")]
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn system_idle_secs() -> f64 {
+    // CFTimeInterval CGEventSourceSecondsSinceLastEventType(
+    //     CGEventSourceStateID source, CGEventType eventType);
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventSourceSecondsSinceLastEventType(source: i32, event_type: u32) -> f64;
+    }
+    // kCGEventSourceStateHIDSystemState = 1, kCGAnyInputEventType = ~0.
+    unsafe { CGEventSourceSecondsSinceLastEventType(1, u32::MAX) }
+}
+
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn armed_restart(app: &AppHandle) -> bool {
+    app.try_state::<UpdaterState>()
+        .and_then(|s| s.inner.lock().ok().map(|i| i.armed_restart))
+        .unwrap_or(false)
+}
+
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn restart_vetoed(app: &AppHandle) -> bool {
+    app.try_state::<UpdaterState>()
+        .and_then(|s| s.inner.lock().ok().map(|i| i.restart_vetoed))
+        .unwrap_or(false)
+}
+
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn set_restart_vetoed(app: &AppHandle, vetoed: bool) {
+    if let Some(s) = app.try_state::<UpdaterState>() {
+        if let Ok(mut i) = s.inner.lock() {
+            i.restart_vetoed = vetoed;
+        }
+    }
+}
+
+/// Once armed, wait for the system to go idle, confirm no window has in-flight
+/// work, then relaunch into the staged update. Spawned once from lib.rs on
+/// release + macOS. A veto (or the system becoming active again) just defers to
+/// the next lull — the arm stays set until it fires or the app quits.
+#[cfg(target_os = "macos")]
+#[cfg_attr(debug_assertions, allow(dead_code))]
+pub async fn run_idle_restart_loop(app: AppHandle) {
+    loop {
+        tokio::time::sleep(RESTART_POLL).await;
+        if !armed_restart(&app) {
+            continue;
+        }
+        if system_idle_secs() < RESTART_IDLE_SECS {
+            continue;
+        }
+        // Idle long enough. Ask every window whether it's safe; a window with a
+        // streaming chat or unsaved edits vetoes, and we wait for the next lull.
+        set_restart_vetoed(&app, false);
+        let _ = app.emit(CONFIRM_RESTART_EVENT, ());
+        tokio::time::sleep(RESTART_VETO_WINDOW).await;
+        if restart_vetoed(&app) {
+            continue;
+        }
+        app.restart();
+    }
+}
+
 // ── Commands ──────────────────────────────────────────────────────
 
 /// Manual/scheduled check → auto-download → install. Drives `run_check`;
@@ -359,6 +461,24 @@ pub async fn updater_check(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn updater_install(app: AppHandle) -> Result<(), String> {
     app.restart();
+}
+
+/// Arm "restart when idle" (the update-ready toast action). Idempotent — the
+/// process-global idle-restart loop does the rest.
+#[tauri::command]
+pub fn updater_arm_restart_when_idle(state: tauri::State<'_, UpdaterState>) {
+    if let Ok(mut i) = state.inner.lock() {
+        i.armed_restart = true;
+    }
+}
+
+/// A window's reply to the pre-restart probe: it has in-flight work (streaming
+/// chat / unsaved edits), so defer. Reset before each probe by the loop.
+#[tauri::command]
+pub fn updater_restart_veto(state: tauri::State<'_, UpdaterState>) {
+    if let Ok(mut i) = state.inner.lock() {
+        i.restart_vetoed = true;
+    }
 }
 
 /// Snapshot of the current state for a window that mounts its listener

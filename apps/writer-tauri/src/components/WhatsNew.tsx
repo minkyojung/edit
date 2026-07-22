@@ -9,7 +9,6 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { IconX, IconChevronRight } from '@tabler/icons-react'
 import { getVersion } from '@tauri-apps/api/app'
-import { WINDOW_ROOT } from '@/lib/windowRoot'
 import { useSettingsStore } from '@/state/settingsStore'
 import { useWhatsNewStore } from '@/state/whatsNewStore'
 import { openSettings } from '@/settings/useSettingsDialog'
@@ -147,9 +146,9 @@ export function WhatsNewCard({
 
 /** Show the sidebar teaser once per version after an update lands (running
  * version differs from the last one acknowledged). Clicking opens Settings ▸
- * About; either that or the × marks the version seen. Suppressed during onboarding /
- * fresh installs and in per-project windows. Renders nothing when nothing's
- * new. */
+ * About; either that or the × marks the version seen. Suppressed until
+ * bootstrap completes (onboarding / fresh installs). Renders nothing when
+ * nothing's new. */
 export function WhatsNewSidebar() {
   const lastSeen = useSettingsStore((s) => s.lastWhatsNewVersion)
   const setLastSeen = useSettingsStore((s) => s.setLastWhatsNewVersion)
@@ -157,7 +156,7 @@ export function WhatsNewSidebar() {
   const [entry, setEntry] = useState<ChangelogEntry | null>(null)
 
   useEffect(() => {
-    if (WINDOW_ROOT !== null || !bootstrapCompleted) return
+    if (!bootstrapCompleted) return
     let alive = true
     void getVersion()
       .then((v) => {
