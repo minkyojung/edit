@@ -18,8 +18,9 @@
 // re-render via that selection rebuild when it leaves.
 
 import { syntaxTree } from '@codemirror/language'
-import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
+import { Decoration, EditorView, keymap, type DecorationSet } from '@codemirror/view'
 import {
+  Prec,
   StateField,
   type EditorState,
   type Extension,
@@ -200,7 +201,69 @@ const blocksField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 })
 
-export const blocksV2: Extension = [blocksField]
+/** The [from, to] of an atomic block widget that FULLY covers `lineNo`, or null. Reads
+ * `EditorView.atomicRanges` — the one place every block provider (this field's tables/
+ * images/media, plus youtubeCards and mermaidCards) registers — so the guard protects
+ * all of them uniformly, not just tables. "Fully covers" (range.from ≤ line.from and
+ * range.to ≥ line.to) is what distinguishes a BLOCK widget (spans whole lines) from an
+ * INLINE replace (an image mid-paragraph): only a block has a hidden boundary newline a
+ * neighbouring backspace could eat, so only a block needs the select-first guard. */
+function blockRangeCoveringLine(view: EditorView, lineNo: number): { from: number; to: number } | null {
+  const line = view.state.doc.line(lineNo)
+  let found: { from: number; to: number } | null = null
+  for (const getRanges of view.state.facet(EditorView.atomicRanges)) {
+    getRanges(view).between(line.from, line.to, (from, to) => {
+      if (from <= line.from && to >= line.to) {
+        found = { from, to }
+        return false
+      }
+    })
+    if (found) break
+  }
+  return found
+}
+
+/** Backspace at the start of the line right AFTER a block widget (or Delete at the end
+ * of the line right BEFORE one): SELECT the whole block instead of eating the hidden
+ * boundary newline into the widget's source (which corrupts a table / breaks a card's
+ * parse). A second press then deletes the now-selected block. Obsidian's two-step
+ * "backspace to select, backspace again to delete" — the canonical way to make a
+ * rendered block deletable without exposing its raw source. Generalised across ALL
+ * block widgets via `atomicRanges` (tables, images, media, youtube, mermaid). */
+function selectAdjacentBlock(view: EditorView, forward: boolean): boolean {
+  const { state } = view
+  const sel = state.selection.main
+  if (!sel.empty) return false // a selection already exists (e.g. the block we just selected) → let the default delete it
+  const line = state.doc.lineAt(sel.head)
+  let range: { from: number; to: number } | null
+  if (forward) {
+    if (sel.head !== line.to || line.number >= state.doc.lines) return false
+    range = blockRangeCoveringLine(view, line.number + 1)
+  } else {
+    if (sel.head !== line.from || line.number <= 1) return false
+    range = blockRangeCoveringLine(view, line.number - 1)
+  }
+  if (!range) return false
+  view.dispatch({ selection: { anchor: range.from, head: range.to }, userEvent: 'select' })
+  return true
+}
+
+const blockDeleteGuard = Prec.high(
+  keymap.of([
+    { key: 'Backspace', run: (v) => selectAdjacentBlock(v, false) },
+    { key: 'Delete', run: (v) => selectAdjacentBlock(v, true) },
+  ]),
+)
+
+export const blocksV2: Extension = [
+  blocksField,
+  // Treat every block widget's range (table / image / media replace) as an ATOMIC
+  // unit for cursor motion and deletion, per the CM decoration guide: arrows skip it
+  // instead of landing in hidden source, and a delete that reaches into it removes the
+  // whole range at once rather than nibbling invisible characters one at a time.
+  EditorView.atomicRanges.of((view) => view.state.field(blocksField)),
+  blockDeleteGuard,
+]
 
 // Test-only: the selection gate predicate + the field, so the "cursor move through
 // prose keeps the mapped set (no rebuild) but a move onto a block line reveals" the
