@@ -147,6 +147,14 @@ function keep(view: EditorView, changeId: string) {
   // After the dispatch the doc + field are updated; the saved text is the doc
   // minus the REMAINING green. Pass it as resolvedResult so the store applier
   // (which also fires on accept) is a no-op (oldMd === newMd) — no double apply.
+  //
+  // Why this direct call AND the acceptEffect dispatched above (which makes
+  // acceptUndoWatcher queue its OWN store.accept in a microtask) is NOT a
+  // double-decision: this synchronous call runs first and flips the status to
+  // 'accepted'; the watcher's microtask call then hits store.accept's
+  // `status !== 'pending'` guard and no-ops WITHOUT clobbering resolvedResult.
+  // reject() needs no resolvedResult, so it lets the watcher do the whole thing
+  // (the asymmetry is intentional — don't "unify" it into a second dispatch).
   const resolved = savedBodyOf(view.state)
   usePendingChangesStore.getState().accept(changeId, resolved)
 }
