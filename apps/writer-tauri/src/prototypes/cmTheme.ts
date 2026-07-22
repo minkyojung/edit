@@ -1,8 +1,8 @@
-// Typography theme for the CM Live Preview spike. Re-maps the app's prose
-// tokens (defined in index.css off `.ProseMirror`) onto CodeMirror's
-// `.cm-content`/`.cm-line` + our decoration classes, so the prototype
-// looks like the real editor under the same ThemeProvider/FontProvider.
-// Everything is scoped by EditorView.theme, so it can't leak.
+// Typography theme for the CodeMirror editor — the production theme, mounted at
+// Prec.lowest. Re-maps the app's prose tokens (defined in index.css off
+// `.ProseMirror`) onto CodeMirror's `.cm-content`/`.cm-line` + our decoration
+// classes, so the editor renders under the same ThemeProvider/FontProvider as the
+// rest of the app. Everything is scoped by EditorView.theme, so it can't leak.
 
 import { EditorView } from '@codemirror/view'
 import { LIST_INDENT, LIST_MARKER_END_PAD } from './v2/livePreview'

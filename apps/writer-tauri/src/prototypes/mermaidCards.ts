@@ -1,11 +1,11 @@
-// Proof spike: render ```mermaid fences as live diagrams in CodeMirror by
-// REUSING the existing React <MermaidBlock> inside a block-replace widget.
-// This validates the riskiest part of the card redesign (§5.1 of
-// docs/archive/codemirror-cards-redesign-research.md): can a React viz survive
-// CodeMirror's per-edit widget churn without remount/flicker, and stay
-// editable via cursor-reveal?
+// Render ```mermaid fences as live diagrams in CodeMirror by REUSING the
+// existing React <MermaidBlock> inside a block-replace widget. Originated as the
+// riskiest proof of the card redesign (§5.1 of
+// docs/archive/codemirror-cards-redesign-research.md) — can a React viz survive
+// CodeMirror's per-edit widget churn without remount/flicker, and stay editable
+// via cursor-reveal? — and is now the shipped mermaid renderer.
 //
-// Key disciplines proved here:
+// Key disciplines:
 //   - block replace decoration provided from a StateField (not ViewPlugin)
 //   - eq() on the fence source → unchanged diagram keeps its DOM + React root
 //     across unrelated edits (no remount, no flicker, SVG preserved)

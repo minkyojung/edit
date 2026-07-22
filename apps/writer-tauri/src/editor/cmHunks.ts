@@ -23,8 +23,15 @@ export type CmHunk = {
 }
 
 /** Where an `add` lands: end of doc for the empty anchor (append), else just
- * after the LAST occurrence of the anchor text. Mirrors the applier's insertion
- * rule so "a widget shows" ⟺ "Keep inserts there". */
+ * after the LAST occurrence of the anchor text.
+ *
+ * ⚠️ DIVERGENCE (see Phase 6 of the editor-refactor plan): the REAL disk applier
+ * (`applyIngest.appendMarkdownToWikiPage`) ALWAYS appends to end of doc — it does
+ * not honor a non-empty anchor. So for an `add` with a non-empty `anchorBefore`
+ * this preview would show the green at a DIFFERENT spot than where Keep actually
+ * lands it. It only matches today because `add` edits currently carry an empty
+ * anchor (→ end of doc). Reconcile with `lib/pendingDiff.applyEditsToText` before
+ * relying on non-empty anchors. */
 export function resolveAddInsertion(doc: string, anchor: string): number | null {
   if (anchor.length === 0) return doc.length
   const i = doc.lastIndexOf(anchor)

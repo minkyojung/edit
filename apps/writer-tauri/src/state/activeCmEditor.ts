@@ -1,12 +1,13 @@
-// Editor-neutral bridge for pushing fresh markdown into a mounted CodeMirror editor.
+// Bridge for pushing fresh markdown into (and pulling it out of) the mounted
+// CodeMirror editor — the single seam between the docsStore body paths and the
+// live view.
 //
 // The docsStore body-replace paths (reloadFromVault / seedDocBody / replaceDocBody)
-// already push markdown into the active ProseMirror view via applyMarkdownToEditor.
-// CmEditor doesn't publish a PM view, so those paths would silently skip it — meaning
-// an external file edit (vault watcher) or a background rewrite wouldn't reach an open
-// CM editor (a DATA-INTEGRITY hole). This tiny registry lets a mounted CM editor
-// register a body-setter; the store paths try it before the PM path. Only one doc is
-// active at a time, so a single slug-keyed setter suffices (mirrors editorViewStore).
+// must reach an open editor, or an external file edit (vault watcher) or a
+// background rewrite wouldn't land in the buffer the user is looking at (a
+// DATA-INTEGRITY hole). CmEditor registers a body-setter (+ a body-getter and the
+// review/scroll callbacks) here on mount; the store paths go through this registry.
+// Only one doc is active at a time, so a single slug-keyed registration suffices.
 
 // `changeId` (when set) means this body-set is an ACCEPT of that pending change — the
 // bridge tags the transaction so Cmd-Z can reopen it. Absent = external reload / seed
