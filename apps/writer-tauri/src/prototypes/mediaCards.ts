@@ -1,18 +1,12 @@
-// Spike: render `<video>` / `<audio>` HTML blocks as media cards in
-// CodeMirror, REUSING the app's vanilla `createMediaControls` (play/seek/
-// volume) and the existing [data-card-controls] CSS unchanged. Same proof as
-// the chart spike: a block-replace widget whose eq() preserves the live media
-// element (and its playback position) across unrelated edits, editable via
-// cursor-reveal.
+// `<video>` / `<audio>` media detection + block widget. The widget's eq()
+// preserves the live media element (and its playback position) across unrelated
+// edits. Placement/reveal (which lines render as a card) is owned by the v2
+// block field (`v2/blocks`), which imports `detectMedia` + `MediaWidget` here.
 //
-// vs the ProseMirror card: the audio "title" here is just the `title="..."`
-// markdown attribute (edit by revealing source) — the WebKit contenteditable
-// input hack disappears.
+// The audio "title" is just the `title="..."` markdown attribute (edit by
+// revealing the raw source).
 
-import { syntaxTree } from '@codemirror/language'
-import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
-import { StateField, type EditorState, type Extension, type Range } from '@codemirror/state'
-import { activeLines } from './reveal'
+import { EditorView, WidgetType } from '@codemirror/view'
 import { setVaultAssetSrc } from './setAssetSrc'
 
 type MediaKind = 'video' | 'audio'
@@ -75,51 +69,3 @@ export class MediaWidget extends WidgetType {
     return true
   }
 }
-
-function build(state: EditorState): DecorationSet {
-  const out: Range<Decoration>[] = []
-  const active = activeLines(state)
-  syntaxTree(state).iterate({
-    enter: (node) => {
-      // lang-markdown parses `<video>/<audio>` as a Paragraph holding HTMLTag
-      // children (they're not CommonMark HTML-block tags), so match the
-      // Paragraph whose text is a media tag.
-      if (node.name !== 'Paragraph') return undefined
-      const text = state.doc.sliceString(node.from, node.to)
-      const media = detectMedia(text)
-      if (!media) return undefined
-      const lineFrom = state.doc.lineAt(node.from)
-      const lineTo = state.doc.lineAt(Math.min(node.to, state.doc.length))
-      for (let n = lineFrom.number; n <= lineTo.number; n++) {
-        if (active.has(n)) return false // cursor here → show raw source
-      }
-      out.push(
-        Decoration.replace({
-          widget: new MediaWidget(media.kind, media.src, media.title),
-          block: true,
-        }).range(lineFrom.from, lineTo.to),
-      )
-      return false // don't descend into the HTMLTag children
-    },
-  })
-  return Decoration.set(out, true)
-}
-
-export const mediaField = StateField.define<DecorationSet>({
-  create: (state) => build(state),
-  update: (value, tr) => {
-    // Also rebuild on parse-progress (tree object changed but no doc/selection change):
-    // a just-inserted <video>/<audio> line whose Paragraph node wasn't parsed yet
-    // renders as soon as the parser catches up, instead of staying raw. Cheap pointer
-    // compare.
-    return tr.docChanged || tr.selection || syntaxTree(tr.startState) != syntaxTree(tr.state)
-      ? build(tr.state)
-      : value
-  },
-  provide: (f) => [
-    EditorView.decorations.from(f),
-    EditorView.atomicRanges.of((view) => view.state.field(f)),
-  ],
-})
-
-export const mediaCards: Extension = mediaField

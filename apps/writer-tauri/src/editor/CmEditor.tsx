@@ -21,7 +21,7 @@ import { highlightSelectionMatches } from '@codemirror/search'
 import { indentUnit } from '@codemirror/language'
 import { markdown, deleteMarkupBackward, pasteURLAsLink } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
-import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
+import type { CollabHandle } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
 import { setBodyMirror } from '@/state/docsStore/docBody'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
@@ -69,7 +69,6 @@ import { pageHeaderWidget } from '@/editor/cmPageHeaderWidget'
 
 interface Props {
   handle: CollabHandle | null
-  status: CollabStatus
 }
 
 // CM now OWNS the scroll (.cm-scroller, overflow:auto), so the centered 750px column
@@ -104,8 +103,6 @@ const layoutReset = EditorView.theme({
 // dirty-tracking update listener ignores it — it's a load FROM disk, not a user edit.
 const externalBody = Annotation.define<boolean>()
 
-// `status` is still accepted (callers pass it) but no longer rendered —
-// the connection-state readout lived in the now-removed footer.
 export function CmEditor({ handle }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)

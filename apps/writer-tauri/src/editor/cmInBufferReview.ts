@@ -1,7 +1,7 @@
 // In-buffer AI-suggestion review (Cursor-style, Option B). Unlike the widget
 // version, the proposal lives as REAL buffer text so editing is fully native:
 //   • on arrival → insert each proposal's NEW text right under the OLD text
-//     (planProposals), record the red/green ranges, mark them RAW (renderers skip
+//     (planAdditional), record the red/green ranges, mark them RAW (renderers skip
 //     them → proposal shows verbatim, tables don't render) and FREEZE the red.
 //   • Keep → delete the red; the (edited) green stays and becomes saved content.
 //   • Reject → delete the green; the red is restored.
@@ -376,16 +376,13 @@ export function cmInBufferReview(slug: string): Extension {
 }
 
 /** Is `changeId` currently shown as an in-buffer proposal in this editor? The
- * chat-panel accept path checks this and routes through `acceptInBuffer` (the same
- * keep() the inline ✓ uses) instead of the applier's whole-doc replace — ONE path,
+ * chat-panel accept path checks this (via `isChangeMaterializedInActiveCm`): when
+ * true it lets the store flip the status and the reconciler's CLEANUP phase apply
+ * the decision in-buffer, instead of the applier's whole-doc replace — ONE path,
  * so Cmd-Z restores the proposal consistently instead of duplicating it. */
 export function isMaterialized(state: EditorState, changeId: string): boolean {
   return state.field(matField, false)?.some((m) => m.changeId === changeId) ?? false
 }
-
-/** Accept an in-buffer proposal (delete red, keep the edited green) — the chat
- * panel delegates here for materialized changes so both buttons share one path. */
-export const acceptInBuffer = keep
 
 // Test-only: the field + effects + undo link, so the "Reject → Undo restores the
 // proposal (no duplicate)" invariant can be asserted headlessly.

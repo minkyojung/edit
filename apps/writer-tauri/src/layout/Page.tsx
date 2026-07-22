@@ -25,10 +25,10 @@ interface Props {
 // no longer stitches a header above the editor.
 const CmEditor = lazy(() => import('@/editor/CmEditor').then((m) => ({ default: m.CmEditor })))
 
-export function Page({ handle, status }: Props) {
+export function Page({ handle }: Props) {
   return (
     <Suspense fallback={null}>
-      <CmEditor handle={handle} status={status} />
+      <CmEditor handle={handle} />
     </Suspense>
   )
 }

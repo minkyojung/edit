@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { planProposals, planAdditional, cleanToReal, greenRangesOf, redRangesOf, stripRanges } from './proposalPlan'
+import { planAdditional, cleanToReal, greenRangesOf, redRangesOf, stripRanges } from './proposalPlan'
 import type { PendingChange } from '@/state/pendingChangesStore'
 
 // Minimal PendingChange factory for a single 'replace' edit.
@@ -27,10 +27,11 @@ function applyInsertions(doc: string, insertions: { from: number; insert: string
   return text
 }
 
-describe('planProposals', () => {
+// A fresh batch materialized into a clean doc = planAdditional with no existing green.
+describe('planAdditional — fresh batch into a clean doc', () => {
   it('inserts the proposal as real text after the old line', () => {
     const clean = 'apple is red.\nbanana is yellow.\n'
-    const plan = planProposals(clean, [replaceChange('c1', 'apple is red.', 'apple is ripe red.')])
+    const plan = planAdditional(clean, [], [replaceChange('c1', 'apple is red.', 'apple is ripe red.')])
     const doc = applyInsertions(clean, plan.insertions)
     // both old and new present, stacked
     expect(doc).toContain('apple is red.')
@@ -39,14 +40,14 @@ describe('planProposals', () => {
 
   it('ROUND-TRIP: stripping green returns the exact clean doc (what we save)', () => {
     const clean = 'apple is red.\nbanana is yellow.\n'
-    const plan = planProposals(clean, [replaceChange('c1', 'apple is red.', 'apple is ripe red.')])
+    const plan = planAdditional(clean, [], [replaceChange('c1', 'apple is red.', 'apple is ripe red.')])
     const doc = applyInsertions(clean, plan.insertions)
     expect(stripRanges(doc, greenRangesOf(plan.mats))).toBe(clean)
   })
 
   it('green range actually covers the proposal text', () => {
     const clean = 'apple is red.\nbanana is yellow.\n'
-    const plan = planProposals(clean, [replaceChange('c1', 'apple is red.', 'apple is ripe red.')])
+    const plan = planAdditional(clean, [], [replaceChange('c1', 'apple is red.', 'apple is ripe red.')])
     const doc = applyInsertions(clean, plan.insertions)
     const g = greenRangesOf(plan.mats)[0]
     expect(doc.slice(g.from, g.to)).toContain('apple is ripe red.')
@@ -54,7 +55,7 @@ describe('planProposals', () => {
 
   it('ROUND-TRIP holds with TWO changes on different lines', () => {
     const clean = 'one\ntwo\nthree\n'
-    const plan = planProposals(clean, [
+    const plan = planAdditional(clean, [], [
       replaceChange('a', 'one', 'ONE'),
       replaceChange('b', 'three', 'THREE'),
     ])
@@ -80,7 +81,7 @@ describe('planAdditional — a fresh proposal alongside an existing one', () => 
   it('places the new proposal correctly in the already-dirty doc', () => {
     const clean = 'AAA\nBBB\nCCC\n'
     // first proposal materialized: AAA → XXX
-    const plan1 = planProposals(clean, [replaceChange('a', 'AAA', 'XXX')])
+    const plan1 = planAdditional(clean, [], [replaceChange('a', 'AAA', 'XXX')])
     const realDoc = applyInsertions(clean, plan1.insertions) // now has green "XXX"
     const greens1 = greenRangesOf(plan1.mats)
 
@@ -96,13 +97,5 @@ describe('planAdditional — a fresh proposal alongside an existing one', () => 
     expect(realDoc2.slice(g.from, g.to)).toContain('ZZZ')
     const r = redRangesOf(plan2.mats)[0]
     expect(realDoc2.slice(r.from, r.to)).toContain('CCC')
-  })
-
-  it('equals planProposals when there is no existing green', () => {
-    const clean = 'one\ntwo\n'
-    const a = planProposals(clean, [replaceChange('x', 'one', 'ONE')])
-    const b = planAdditional(clean, [], [replaceChange('x', 'one', 'ONE')])
-    expect(b.insertions).toEqual(a.insertions)
-    expect(b.mats).toEqual(a.mats)
   })
 })
