@@ -24,12 +24,12 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '0.0.10',
     date: '2026-07-22',
-    headline: 'Korean typing in lists, and steadier tables.',
+    headline: 'IME typing in lists, and steadier tables.',
     notes: [
-      '### Korean in lists',
+      '### Typing with an IME in lists',
       '',
-      '- Pressing Enter after typing Korean in a bulleted or numbered list now starts a new item, instead of just a plain line break.',
-      '- A list marker renders the moment you stop typing Korean, rather than staying raw until your next keystroke.',
+      '- Pressing Enter after typing in an IME language (such as Korean) in a bulleted or numbered list now starts a new item, instead of just a plain line break.',
+      '- A list marker renders the moment you stop composing, rather than staying raw until your next keystroke.',
       '',
       '### Steadier tables',
       '',
