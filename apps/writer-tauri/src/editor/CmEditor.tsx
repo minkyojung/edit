@@ -45,11 +45,10 @@ import {
   cmInBufferReview,
   acceptEffect,
   rejectEffect,
-  greenRangesForSave,
-  isDecisionTx,
+  savedBodyOf,
+  shouldRemirror,
   isMaterialized,
 } from '@/editor/cmInBufferReview'
-import { stripRanges } from '@/editor/proposalPlan'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore } from '@/state/settingsStore'
 import { DocStatsPanel } from '@/editor/DocStatsPanel'
@@ -278,7 +277,7 @@ export function CmEditor({ handle }: Props) {
               // there leaves bodyMarkdown holding the pre-accept body, so an
               // auto-accepted append to the open note is silently dropped on flush.
               // A decision transaction changes the exclusion set → must re-mirror.
-              if (!u.docChanged && !isDecisionTx(u.transactions)) return
+              if (!shouldRemirror(u.docChanged, u.transactions)) return
               // Publish live word/char counts (display-only, debounced — no toString
               // on the keystroke). Also fires for programmatic loads.
               scheduleStats(u.state)
@@ -350,7 +349,7 @@ export function CmEditor({ handle }: Props) {
         // Body reader: the flush PULLS the current saved body from here (CM state is
         // the source of truth). Excludes pending-green proposal text (disk only holds
         // accepted content), matching what the old per-keystroke mirror wrote.
-        () => (view ? stripRanges(view.state.doc.toString(), greenRangesForSave(view.state)) : ''),
+        () => (view ? savedBodyOf(view.state) : ''),
       )
     })
 
@@ -365,7 +364,7 @@ export function CmEditor({ handle }: Props) {
       // one. flushDirty then persists it (Obsidian "save on note switch").
       if (view) {
         const h = useDocsStore.getState().handles[handle.slug]
-        if (h) setBodyMirror(h, stripRanges(view.state.doc.toString(), greenRangesForSave(view.state)))
+        if (h) setBodyMirror(h, savedBodyOf(view.state))
       }
       void flushDirty()
       if (statsTimer !== null) window.clearTimeout(statsTimer)

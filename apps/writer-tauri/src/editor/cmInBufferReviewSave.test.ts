@@ -6,11 +6,11 @@
 // (INCLUDED). This pins the fix: a decision (accept/reject) transaction must
 // re-mirror the saved body even with no doc change.
 //
-// The `savedBodyFor` helper below reproduces CmEditor.tsx's updateListener guard +
-// body computation — but it calls the SAME `isDecisionTx` / `greenRangesForSave` /
-// `stripRanges` the real listener uses, so the decision logic under test is the
-// production code, not a copy. (The listener itself lives inside the React
-// component and can't be mounted headlessly here.)
+// `savedBodyFor` below is the exact composition CmEditor.tsx's updateListener runs
+// — the production `shouldRemirror` guard and the production `savedBodyOf` body
+// computation, both imported from the real module (no re-implementation). The
+// listener itself lives inside the React component and can't be mounted headlessly,
+// so this exercises the two pure functions it delegates to.
 import { describe, it, expect } from 'vitest'
 import { EditorState, type Transaction } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
@@ -20,16 +20,14 @@ import {
   _setMat,
   _dropChange,
   _acceptEffect,
-  greenRangesForSave,
-  isDecisionTx,
+  savedBodyOf,
+  shouldRemirror,
 } from './cmInBufferReview'
-import { stripRanges } from './proposalPlan'
 
 /** What CmEditor's save listener would mirror to disk: the body on a doc-change OR
- * a decision transaction, else null (listener bailed). Uses the real isDecisionTx. */
+ * a decision transaction, else null (listener bailed). */
 function savedBodyFor(u: { docChanged: boolean; transactions: readonly Transaction[]; state: EditorState }): string | null {
-  if (!u.docChanged && !isDecisionTx(u.transactions)) return null
-  return stripRanges(u.state.doc.toString(), greenRangesForSave(u.state))
+  return shouldRemirror(u.docChanged, u.transactions) ? savedBodyOf(u.state) : null
 }
 
 describe('in-buffer review — save mirror on accept', () => {

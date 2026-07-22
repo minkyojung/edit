@@ -72,6 +72,14 @@ export function greenRangesForSave(state: EditorState): RawRange[] {
   return greenRangesOf(state.field(matField, false) ?? [])
 }
 
+/** The body to PERSIST for `state`: the doc minus the pending-green proposal
+ * ranges (disk only ever holds accepted content). The single source of this
+ * computation — CmEditor's getBody, its unmount checkpoint, and keep()'s
+ * resolvedResult all go through here, and the save test asserts against it. */
+export function savedBodyOf(state: EditorState): string {
+  return stripRanges(state.doc.toString(), greenRangesForSave(state))
+}
+
 /** True when any transaction carries an accept/reject DECISION. Such a decision
  * flips a proposal between pending-green (EXCLUDED from greenRangesForSave) and
  * accepted (INCLUDED), so the saved body changes even when the doc text doesn't —
@@ -82,6 +90,19 @@ export function isDecisionTx(transactions: readonly Transaction[]): boolean {
   return transactions.some((t) =>
     t.effects.some((e) => e.is(acceptEffect) || e.is(rejectEffect)),
   )
+}
+
+/** Whether CmEditor's save listener must re-mirror the saved body for a given
+ * update: on a real doc change, OR on an accept/reject decision (which flips text
+ * between pending-green EXCLUDED and accepted INCLUDED even with NO doc change —
+ * bailing on `!docChanged` alone silently dropped auto-accepted appends). The
+ * listener guard and the save test both call this, so the decision under test is
+ * the production code. */
+export function shouldRemirror(
+  docChanged: boolean,
+  transactions: readonly Transaction[],
+): boolean {
+  return docChanged || isDecisionTx(transactions)
 }
 
 // ── Undo wiring ────────────────────────────────────────────────────────────
@@ -126,7 +147,7 @@ function keep(view: EditorView, changeId: string) {
   // After the dispatch the doc + field are updated; the saved text is the doc
   // minus the REMAINING green. Pass it as resolvedResult so the store applier
   // (which also fires on accept) is a no-op (oldMd === newMd) — no double apply.
-  const resolved = stripRanges(view.state.doc.toString(), greenRangesForSave(view.state))
+  const resolved = savedBodyOf(view.state)
   usePendingChangesStore.getState().accept(changeId, resolved)
 }
 
