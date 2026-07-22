@@ -22,6 +22,27 @@ export interface ChangelogEntry {
  * what the "What's new" panel shows after an update. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.0.10',
+    date: '2026-07-22',
+    headline: 'Korean typing in lists, and steadier tables.',
+    notes: [
+      '### Korean in lists',
+      '',
+      '- Pressing Enter after typing Korean in a bulleted or numbered list now starts a new item, instead of just a plain line break.',
+      '- A list marker renders the moment you stop typing Korean, rather than staying raw until your next keystroke.',
+      '',
+      '### Steadier tables',
+      '',
+      '- Cell edits save the instant you make them, closing a window where text you just deleted could reappear.',
+      "- Rendered tables are now deletable: press Backspace or Delete at a table's edge to select it, then again to remove it.",
+      '- Removing the last remaining column deletes the whole table, instead of leaving an empty shell behind.',
+      '',
+      '### Sidebar',
+      '',
+      '- The tag filter pane is gone for now while it gets redesigned.',
+    ].join('\n'),
+  },
+  {
     version: '0.0.9',
     date: '2026-07-20',
     headline: 'A properties panel you can reorder, rename, and fill in.',
