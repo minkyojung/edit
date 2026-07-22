@@ -208,14 +208,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   // @-mentioned files. Resolve each path back to its doc so we can inject the
   // in-memory body when the note is open/loaded (fresher than disk — the
-  // editor flushes lazily, so a just-edited note reads empty off disk). Unloaded
-  // notes fall back to a "Read this path" instruction.
-  const handles = useDocsStore.getState().handles
+  // editor flushes lazily, so a just-edited note reads empty off disk).
+  // `readDocBody` returns the LIVE editor body when one is mounted (the mirror
+  // lags it), else the mirror. Unloaded notes fall back to a "Read this path"
+  // instruction.
   const mentionFiles = (mentionPaths ?? []).map((path) => {
     const doc = knownDocs.find(
       (d) => pathForDoc(d, (s) => knownDocs.find((x) => x.slug === s)) === path,
     )
-    const body = doc ? handles[doc.slug]?.bodyMarkdown : undefined
+    const body = doc ? readDocBody(doc.slug) : undefined
     // Same CAS base as the current doc: a mentioned note's shown body is what a
     // later whole-doc overwrite must not silently clobber.
     if (doc && body) setModelBase(doc.slug, body)

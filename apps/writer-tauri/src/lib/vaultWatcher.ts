@@ -458,6 +458,10 @@ async function findMovedOpenDocSlug(rel: string): Promise<string | null> {
   if (body.trim() === '') return null
   const newHash = await hashContent(body)
   const { handles } = useDocsStore.getState()
+  // Deliberately the MIRROR (`h.bodyMarkdown`, ≈ last-flushed disk bytes), NOT
+  // `readDocBody` (the live editor): a file move copies on-disk bytes, so we
+  // correlate against disk-ish state. A dirty open doc's live body wouldn't match
+  // the moved file anyway (see the dirty-case note above) → falls back to add.
   const openDocHashes = await Promise.all(
     Object.entries(handles)
       .filter((e): e is [string, NonNullable<(typeof e)[1]>] => !!e[1])

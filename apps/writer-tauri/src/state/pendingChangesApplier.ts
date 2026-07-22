@@ -25,6 +25,7 @@ import {
   applyWriteWikiPage,
 } from '@/agent/applyIngest'
 import { useDocsStore } from './docsStore'
+import { readDocBody } from './docsStore/docBody'
 import { isChangeMaterializedInActiveCm } from './activeCmEditor'
 import { useGitStore, aiEditSubject, type AiEditType } from './gitStore'
 import { notify } from '@/lib/notify'
@@ -236,10 +237,11 @@ function cleanupRejectedNewNote(change: PendingChange): void {
     (o) => o.id !== change.id && o.pageSlug === slug && o.status !== 'rejected',
   )
   if (stillTargeted) return
-  const docs = useDocsStore.getState()
-  const body = docs.handles[slug]?.bodyMarkdown
-  if (body != null && body.trim().length > 0) return // user typed real content — keep
-  void docs.deleteToTrash(slug).then((result) => {
+  // Read the LIVE editor body (readDocBody) — if the user is typing in this
+  // just-created note, its content lives in the mounted editor, not yet the
+  // mirror; reading the stale mirror could see "empty" and trash real work.
+  if (readDocBody(slug).trim().length > 0) return // user typed real content — keep
+  void useDocsStore.getState().deleteToTrash(slug).then((result) => {
     if (result === null) {
       console.info('[applier] rejected new note not deletable, left as-is', slug)
     } else {
@@ -281,7 +283,9 @@ async function pruneStaleAnchorsOnce(): Promise<void> {
     } catch {
       continue // couldn't hydrate this note — leave its changes alone, don't guess
     }
-    const body = useDocsStore.getState().handles[slug]?.bodyMarkdown ?? ''
+    // Live editor body when one is mounted (readDocBody), else the mirror — an
+    // anchor must validate against what the user currently sees, not a stale copy.
+    const body = readDocBody(slug)
     for (const change of changes) {
       const anchored = change.edits.filter(
         (e): e is typeof e & { before: string } => e.kind !== 'add' && !!e.before,

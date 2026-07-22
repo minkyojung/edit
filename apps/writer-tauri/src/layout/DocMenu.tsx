@@ -20,6 +20,7 @@ import {
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useDocsStore } from '@/state/docsStore'
+import { readDocBody } from '@/state/docsStore/docBody'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { openDoc } from '@/lib/openDoc'
 import { isAgentAssetPath, deleteAssetByPath } from '@/lib/deleteAsset'
@@ -49,10 +50,11 @@ export function DocMenu() {
   // Copy the whole note to the clipboard with its formatting intact, so
   // pasting into an external rich editor (Substack, Notion, Docs) keeps
   // headings / bullets / bold rather than dumping raw markdown source.
-  // Reads the live body cache — the CM change listener keeps it current.
+  // Reads the LIVE editor body (readDocBody) so an in-progress edit that hasn't
+  // flushed to the mirror yet still copies — the mirror lags a mounted editor.
   const handleCopyRichText = async () => {
     if (!activeSlug) return
-    const md = useDocsStore.getState().handles[activeSlug]?.bodyMarkdown ?? ''
+    const md = readDocBody(activeSlug)
     if (!md.trim()) {
       toast.info('Nothing to copy')
       return
